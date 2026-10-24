@@ -219,8 +219,20 @@ predicate producers. HighC compiles at O0/O2; both paths inspect emitted text
 sections for exact machine words. Raw local functions pass CFG/SSA and both
 output routes. Every vector/predicate input requires a local definition;
 malformed shapes cannot preserve call setup. Temporary-name collision tests
-compile the standalone C renderer. These checks do not execute CPA hardware,
-admit MOVPRFX, or add scalable LLVM-to-C/ABI support.
+compile the standalone C renderer. These checks do not execute CPA hardware
+or add scalable LLVM-to-C/ABI support.
+
+`AArch64SVEPrefix` in `NeverDAArch64SVEPredicateTests` checks independent
+MOVPRFX/CPA raw pairs through full, fast and lightweight decoding, all three
+prefix forms, high and overlapping registers, merging versus zeroing lanes,
+and canonical predicates across element widths. Invalid or incomplete pairs
+fail before appending LowIR, including in permissive mode. Reused decoder
+occurrences and classification-only scans cannot retain follower evidence.
+Missing operand detail fails explicitly. Raw CFG/SSA tests keep a branch
+into the consumer separate from the prefixed path; LLVM verification, native
+object inspection and HighC compilation at O0/O2 retain the checked consumer.
+These tests do not execute SVE or establish a scalable calling convention.
+
 The local-state suite also checks scalar PAuth, explicit PAuth_LR and resolved
 PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z

@@ -11,11 +11,25 @@
 
 #include "neverd/decode/AArch64/AArch64NativeDecode.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEPrefix.h"
 #include "neverd/lift/AArch64/AArch64Lifter.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include <cstdint>
 
 namespace neverd {
+
+void Decoder::recordAArch64PrefixWords(const uint8_t *Bytes, size_t Len,
+                                       DecodedInsn &Out) const {
+  using namespace aarch64_sve;
+  Out.AArch64Prefix.reset();
+  // Classification-only scans can leave the previous operand detail in place.
+  if (Detail && Text && Out.Id == AARCH64_INS_MOVPRFX &&
+      Out.Size == kPrefixInstructionBytes && Len >= kPrefixPairBytes)
+    Out.AArch64Prefix =
+        AArch64PrefixWords{readLE<uint32_t>(Bytes),
+                           readLE<uint32_t>(Bytes + kPrefixInstructionBytes)};
+}
 
 int Decoder::decodeAArch64ForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
                                   DecodedInsn &Out) {
@@ -37,6 +51,7 @@ int Decoder::decodeAArch64ForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
       Out.Size = static_cast<uint16_t>(InsnBuf->size);
       Out.Id = InsnBuf->id;
       Out.Raw = InsnBuf;
+      recordAArch64PrefixWords(Bytes, Len, Out);
       return Out.Size;
     }
   }
@@ -59,7 +74,21 @@ void Decoder::liftAArch64ToLow(
             Scalar.FieldVA == Insn.Raw->address && Scalar.Width == 4 &&
             Scalar.EncodedValue == Word;
   }
-  AArch64->lift(Insn.Raw, Ops, ScalarWideImmediate);
+  std::optional<uint32_t> FollowingWord;
+  if (Insn.Id == AARCH64_INS_MOVPRFX) {
+    // InsnBuf is reused. Bind the snapshot to this exact address and word,
+    // so copying a DecodedInsn cannot pair a later decode with old evidence.
+    if (!Insn.Raw || !Insn.AArch64Prefix || Insn.Raw->id != Insn.Id ||
+        Insn.Raw->address != Insn.Addr ||
+        Insn.Raw->size != aarch64_sve::kPrefixInstructionBytes ||
+        Insn.Size != Insn.Raw->size ||
+        readLE<uint32_t>(Insn.Raw->bytes) != Insn.AArch64Prefix->Prefix)
+      throw UnliftedInstruction(
+          Insn.Addr, intrinsicAsmMnemonic(Intrinsic::A64_SveMovprfxZero),
+          nullptr);
+    FollowingWord = Insn.AArch64Prefix->Follower;
+  }
+  AArch64->lift(Insn.Raw, Ops, ScalarWideImmediate, FollowingWord);
 }
 
 } // namespace neverd

@@ -67,6 +67,13 @@ inline bool aarch64VectorMedShapeIsValid(const MedOp &Op) {
                             Shape);
 }
 
+inline bool aarch64SVEPrefixMedShapeIsValid(const MedOp &Op) {
+  return aarch64VectorMedShapeIsValid(Op) &&
+         aarch64_sve::prefixOperation(
+             static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
+             .has_value();
+}
+
 inline bool aarch64SVECPAMedShapeIsValid(const MedOp &Op) {
   return aarch64VectorMedShapeIsValid(Op) &&
          aarch64_sve::cpaOperation(
@@ -561,6 +568,7 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
          !aarch64PAuthMedShapeIsValid(Op) &&
          !aarch64PAuthLoadMedShapeIsValid(Op) &&
          !aarch64CPAMedShapeIsValid(Op) && !aarch64SVECPAMedShapeIsValid(Op) &&
+         !aarch64SVEPrefixMedShapeIsValid(Op) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
 }
 

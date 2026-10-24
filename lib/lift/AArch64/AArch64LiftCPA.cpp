@@ -24,6 +24,30 @@ bool liftCPA(AArch64Lifter &L, AArch64Lifter::LiftState &S, const cs_insn *Insn,
     throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
   };
   const uint32_t Word = readLE<uint32_t>(Insn->bytes);
+  if (Insn->id == AARCH64_INS_MOVPRFX) {
+    using namespace aarch64_sve;
+    const auto Prefix = cpaPrefix(Word, S.FollowingWord, S.Addr);
+    if (!Prefix || Insn->size != kPrefixInstructionBytes ||
+        A.op_count != Prefix->RawCount)
+      reject();
+    const auto Dst =
+        NdVar::reg(a64reg::Z(Prefix->Destination), kVectorStorageBytes);
+    const auto Src = NdVar::reg(a64reg::Z(Prefix->Source), kVectorStorageBytes);
+    if (Prefix->Form == PrefixForm::Unpredicated) {
+      S.emit(NdOp::COPY, Dst, {Src});
+    } else {
+      const auto Pred =
+          NdVar::reg(a64reg::P(Prefix->Predicate), kPredicateStorageBytes);
+      const auto Element = NdVar::cst(kCPAElementBytes, kElementOperandBytes);
+      if (Prefix->Form == PrefixForm::Merging)
+        S.emitIntrinsic(Intrinsic::A64_SveMovprfxMerge, Dst,
+                        {Pred, Src, Dst, Element});
+      else
+        S.emitIntrinsic(Intrinsic::A64_SveMovprfxZero, Dst,
+                        {Pred, Src, Element});
+    }
+    return true;
+  }
   std::optional<aarch64_sve::CPAOperation> Scalable;
 #define NEVERD_A64_SVE_CPA_OPERATION(Id, InsnId, Name, Form, Mask, Encoding,   \
                                      ...)                                      \

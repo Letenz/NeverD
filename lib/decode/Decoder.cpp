@@ -197,6 +197,7 @@ bool Decoder::decodeArchitectureFallback(const uint8_t *Bytes, size_t Len,
 
 int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
                        DecodedInsn &Out) {
+  Out.AArch64Prefix.reset();
   if (!Handle || !InsnBuf)
     return 0;
   const uint8_t *Code = Bytes;
@@ -216,6 +217,8 @@ int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
   Out.Size = static_cast<uint16_t>(InsnBuf->size);
   Out.Id = InsnBuf->id;
   Out.Raw = InsnBuf;
+  if (AArch64)
+    recordAArch64PrefixWords(Bytes, Len, Out);
   // The lift path and CFG classification read the mnemonic (when they need it
   // at all, e.g. x86 push/pop/VCMP width, ARM push/pop, NEON lane) directly
   // from Out.Raw->mnemonic, which capstone already filled.  Copying it into a
@@ -226,6 +229,7 @@ int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
 
 int Decoder::decodeOneForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
                               DecodedInsn &Out) {
+  Out.AArch64Prefix.reset();
   if (AArch64)
     if (const int Size = decodeAArch64ForLift(Bytes, Len, Addr, Out))
       return Size;
@@ -234,6 +238,7 @@ int Decoder::decodeOneForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
 
 int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
                             DecodedInsn &Out) {
+  Out.AArch64Prefix.reset();
   if (!Handle || !InsnBuf)
     return 0;
   const uint8_t *Code = Bytes;
@@ -250,6 +255,8 @@ int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
   Out.Size = static_cast<uint16_t>(InsnBuf->size);
   Out.Id = InsnBuf->id;
   Out.Raw = InsnBuf;
+  if (AArch64)
+    recordAArch64PrefixWords(Bytes, Len, Out);
   return Out.Size;
 }
 

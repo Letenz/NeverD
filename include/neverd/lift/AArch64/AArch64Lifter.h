@@ -16,6 +16,8 @@
 #include "neverd/lift/AArch64/AArch64Regs.h"
 
 #include <capstone/capstone.h>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace neverd {
@@ -25,7 +27,8 @@ public:
   explicit AArch64Lifter(Arch TargetArch);
 
   void lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
-            bool ScalarWideImmediate = false);
+            bool ScalarWideImmediate = false,
+            std::optional<uint32_t> FollowingWord = std::nullopt);
 
   void setStrict(bool S) { Strict = S; }
   bool isStrict() const { return Strict; }
@@ -63,6 +66,7 @@ public:
 
   struct LiftState : LiftStateBase {
     bool ScalarWideImmediate = false;
+    std::optional<uint32_t> FollowingWord = std::nullopt;
     NdVar wideImmediate(uint64_t Value, uint16_t Size) const {
       return ScalarWideImmediate ? NdVar::scalar(Value, Size)
                                  : NdVar::cst(Value, Size);

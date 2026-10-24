@@ -310,19 +310,24 @@ NdVar AArch64Lifter::operandWrite(const cs_aarch64_op &Op) {
 // ===----------------------------------------------------------------------===//
 
 void AArch64Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
-                         bool ScalarWideImmediate) {
+                         bool ScalarWideImmediate,
+                         std::optional<uint32_t> FollowingWord) {
   // A decoded spelling is still useful for inspection, but an illegal or
   // architecturally unpredictable encoding has no ordinary LowIR semantics.
   // Refuse it even in permissive mode, before emitting any operations.
   if (Insn->illegal)
     throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   auto *Detail = Insn->detail;
-  if (!Detail)
+  if (!Detail) {
+    if (Insn->id == AARCH64_INS_MOVPRFX)
+      throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
     return;
+  }
 
   auto &ARM64 = Detail->aarch64;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
   S.ScalarWideImmediate = ScalarWideImmediate;
+  S.FollowingWord = FollowingWord;
 
   bool Handled = liftPAuth(*this, S, Insn, ARM64) ||
                  liftCPA(*this, S, Insn, ARM64) || liftCore(S, Insn, ARM64) ||

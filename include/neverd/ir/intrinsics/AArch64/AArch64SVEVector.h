@@ -13,6 +13,7 @@
 
 #include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEPredicate.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEPrefix.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <array>
@@ -51,6 +52,9 @@ inline std::optional<VectorOperation> vectorOperation(Intrinsic Id) {
     return VectorOperation{Roles.Count + 1, Roles.Count, true, Roles.Vectors,
                            Roles.Predicates};
   }
+  if (const auto Prefix = prefixOperation(Id))
+    return VectorOperation{Prefix->Count + 1, Prefix->Count, true,
+                           Prefix->Vectors, Prefix->Predicates};
   switch (Id) {
 #define NEVERD_A64_SVE_VECTOR_OPERATION(Id, Count, Element, Produces, Vectors, \
                                         Predicates)                            \
@@ -91,7 +95,7 @@ inline bool isValidVectorShape(Intrinsic Id, const VectorShape &Shape) {
         Ops[I].Bytes != kPredicateStorageBytes)
       return false;
   }
-  if (cpaOperation(Id))
+  if (cpaOperation(Id) || prefixOperation(Id))
     return Shape.OutputBytes == kVectorStorageBytes &&
            *Element.Constant == kCPAElementBytes;
   if (Operation->ProducesVector) {
