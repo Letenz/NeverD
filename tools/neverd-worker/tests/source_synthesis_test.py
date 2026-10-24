@@ -528,6 +528,7 @@ if __name__ == "__main__":
             ("carry-product-32", *carry_product_elf(32)),
             ("carry-product-64", *carry_product_elf(64, False)),
             ("carry-cofactor-8", *carry_product_elf(8, True, 5, 2)),
+            ("carry-cofactor-projection-24", *carry_product_elf(24, True, 5, 2)),
             ("carry-cofactor-partial-32", *carry_product_elf(32, True, 7, 2)),
             ("carry-product-paired-64", *carry_product_elf(64, True, 7, 2)),
             ("carry-product-paired-128", *carry_product_elf(128, True, 8, 3)),

@@ -1864,10 +1864,11 @@ public:
         Position = Atoms.size();
         const auto Input = SymRef(uint32_t(Key));
         const auto Bit = variableBit(Key);
+        // The recipe is purely bitwise, so projection commutes with every
+        // operation. Keep shifted inputs intact and mask once at the result;
+        // per-input masks otherwise obscure shorter shared Boolean readings.
         Atoms.push_back(Ctx.mkZExtOrTrunc(
-            Ctx.mkAnd(Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)),
-                      Ctx.mkConst(Ctx.width(Input), 1)),
-            Width));
+            Ctx.mkLShr(Input, Ctx.mkConst(Ctx.width(Input), Bit)), Width));
       }
       auto Table = TruthTable::zero(Arity);
       for (size_t Pattern = 0; Pattern < Count; ++Pattern) {

@@ -343,6 +343,31 @@ TEST(SymMBALazyPolynomial, PartialPairingBoundariesPreserveRefusedWords) {
       }
 }
 
+TEST(SymMBALazyPolynomial, BooleanRecipesShareTheFinalBitProjection) {
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, Width, 2, 24, 5, false, true);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    // Reconstruct y[1] XOR (y[0] OR z[1]) before the single final mask.
+    // Masking every recipe input made this exact reading appear too costly.
+    EXPECT_LE(Result.SizeAfter, 25u);
+    EXPECT_LT(Result.Work, 14000u);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+    if (solver::Z3Solver::available()) {
+      solver::Z3SolverOptions VerifyOptions;
+      VerifyOptions.TimeoutMs = 30000;
+      solver::Z3Solver Verifier(Ctx, VerifyOptions);
+      EXPECT_EQ(Verifier.checkDistinct(F.Input, Result.Expr),
+                solver::SatResult::Unsat)
+          << Verifier.reasonUnknown();
+    }
+  }
+}
+
 TEST(SymMBALazyPolynomial, SignatureOperandsSurviveLowWordInterning) {
   for (unsigned Width : {8u, 16u, 32u, 64u}) {
     SCOPED_TRACE(Width);
