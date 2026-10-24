@@ -64,7 +64,9 @@ displayedEnumerators(const types::EnumDef &Enum, unsigned Bytes) {
 
 class Converter {
 public:
-  explicit Converter(const types::TypeLibrary &Library) : Library(Library) {}
+  explicit Converter(const types::TypeLibrary &Library,
+                     const types::TypeSpeller *PrototypeSpeller = nullptr)
+      : Library(Library), PrototypeSpeller(PrototypeSpeller) {}
 
   TypeRef convert(const types::TypeExpr &Type, unsigned Depth) {
     if (Depth > kMaxLocalTypeConversionDepth)
@@ -132,6 +134,12 @@ private:
       Integer->SourceName = "bool";
     else if (Builtin == types::Builtin::HResult)
       Integer->SourceName = "HRESULT";
+    // Equal machine widths do not imply compatible C pointer types. Use
+    // the prototype's scalar spelling for its call conversions as well,
+    // without adding the source object's const/volatile to machine values.
+    if (PrototypeSpeller && Integer->SourceName.empty())
+      Integer->SourceName =
+          PrototypeSpeller->spell(*types::makeBuiltin(Builtin));
     return Integer;
   }
 
@@ -330,6 +338,7 @@ private:
   }
 
   const types::TypeLibrary &Library;
+  const types::TypeSpeller *PrototypeSpeller;
   llvm::StringMap<TypeRef> Records;
 };
 
@@ -358,10 +367,11 @@ TypeRef decompilerTypeOf(const types::TypeLibrary &Library,
   return Converter(Library).convert(Type, 0);
 }
 
-std::optional<FunctionSym> signatureOf(const types::TypeLibrary &Library,
-                                       const types::FunctionDef &Function,
-                                       llvm::StringRef Name) {
-  Converter Convert(Library);
+std::optional<FunctionSym>
+signatureOf(const types::TypeLibrary &Library,
+            const types::FunctionDef &Function, llvm::StringRef Name,
+            const types::TypeSpeller *PrototypeSpeller) {
+  Converter Convert(Library, PrototypeSpeller);
   FunctionSym Declared;
   Declared.Name = Name.str();
   Declared.IsVariadic = Function.Variadic;
@@ -743,7 +753,14 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   const auto Function = Types->prototypes().find(Name);
   if (Function == Types->prototypes().end() || !Function->second)
     return Signature;
-  Signature = signatureOf(*Types, *Function->second, Name);
+  types::RenderOptions PortableOptions;
+  PortableOptions.Lang = types::Language::C;
+  PortableOptions.Spelling = types::BuiltinSpelling::Portable;
+  PortableOptions.PrototypeIntegerIdentity = true;
+  auto &Portable = PortablePrototypeSpeller;
+  if (!Portable)
+    Portable = std::make_unique<types::TypeSpeller>(*Types, PortableOptions);
+  Signature = signatureOf(*Types, *Function->second, Name, Portable.get());
   if (!Signature)
     return Signature;
   const std::optional<types::HeaderLibrary> Header =
@@ -764,11 +781,6 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
   Signature->PrototypeDeclaration =
       (Function->second->NoReturn ? "_Noreturn " : "") +
       Speller->spell(*types::makeFunction(Function->second), Name.str());
-  Options.Spelling = types::BuiltinSpelling::Portable;
-  Options.PrototypeIntegerIdentity = true;
-  auto &Portable = PortablePrototypeSpeller;
-  if (!Portable)
-    Portable = std::make_unique<types::TypeSpeller>(*Types, Options);
   auto PortableFunction = Function->second;
   if (PortableFunction->Convention == types::CallingConvention::Cdecl ||
       PortableFunction->Convention == types::CallingConvention::Stdcall) {

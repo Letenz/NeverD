@@ -18,6 +18,10 @@
 
 namespace neverd::limits::ir {
 
+#define NEVERD_A64_SVE_STATE_LIMIT(Name, Value)                                \
+  inline constexpr size_t Name = Value;
+#include "neverd/ir/med/AArch64SVEState.def"
+
 /// Shared HighIR text printing, including structured statement children.
 inline constexpr unsigned kMaxHighIRPrintNesting = 200;
 
@@ -80,6 +84,8 @@ inline constexpr int64_t kSourceStackFrameMaxFrame = 1 << 20;
 // lib/ir/SourceVariableFlow.cpp
 inline constexpr size_t kSourceVariableFlowMaxNodes = 20000;
 inline constexpr size_t kSourceVariableFlowMaxWork = 2000000;
+// Shared per-function budget for source-only proofs of unwritten frame bytes.
+inline constexpr size_t kUnwrittenSourceFrameReadWork = 262144;
 
 // lib/ir/high/HighSourceFlow.cpp
 inline constexpr size_t kHighSourceFlowMaxDiagnostics = 4096;

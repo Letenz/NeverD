@@ -12,11 +12,13 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/X86AmxAsm.h"
+#include "neverd/backend/llvm/X86AmxNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <vector>
@@ -28,6 +30,54 @@ llvm::Value *MedLLVMEmitter::emitX86AmxState(const MedOp &Op,
     llvm::report_fatal_error("invalid AMX architectural bank contract");
   const auto D = *S.Descriptor;
   const auto K = x86AmxOperation(D);
+  // Require the complete explicit-control API before selecting this route.
+  // Older pinned SDKs retain the exact owned assembly implementation below.
+  const auto ID =
+      llvm::Intrinsic::lookupIntrinsicID("llvm.x86." + x86AmxNativeSuffix(D));
+  if (llvm::Intrinsic::lookupIntrinsicID("llvm.x86.ldtilecfg.address") && ID) {
+    auto *Function = B.GetInsertBlock()->getParent();
+    std::string Features =
+        Function->getFnAttribute("target-features").getValueAsString().str();
+    llvm::SmallVector<llvm::StringRef, 8> Required;
+    const auto FeatureNames = x86AmxNativeFeatures(D);
+    llvm::StringRef(FeatureNames).split(Required, ',');
+    for (const auto Feature : Required) {
+      if (!Features.empty())
+        Features += ',';
+      Features += "+" + Feature.str();
+    }
+    Function->addFnAttr("target-features", Features);
+    std::vector<llvm::Value *> NativeArgs;
+    if (x86AmxIsTileMemory(K) || x86AmxIsRow(K) || x86AmxIsCompute(K) ||
+        K == X86AmxOp::Zero)
+      NativeArgs.push_back(B.getInt8(x86AmxTile(D)));
+    if (x86AmxIsMemory(K)) {
+      auto *Base =
+          resolveAtomicMemoryPtr(Op.Inputs[1], x86AmxIsTileMemory(K) ? 1 : 64,
+                                 B.getInt8Ty(), B, S.MemoryAddressSpace);
+      NativeArgs.push_back(B.CreatePtrToInt(Base, B.getInt64Ty()));
+      if (x86AmxIsTileMemory(K))
+        NativeArgs.push_back(B.CreateZExtOrTrunc(
+            getRawSegmentOffset(Op.Inputs[3], B), B.getInt64Ty()));
+      NativeArgs.push_back(B.getInt32(D & X86AmxAddress32 ? 32 : 64));
+      NativeArgs.push_back(
+          B.getInt32(x86AmxNativePrefix(D, S.MemoryAddressSpace)));
+      NativeArgs.push_back(B.getInt32(bool(D & X86AmxEvexMemory)));
+    } else if (x86AmxIsRow(K)) {
+      NativeArgs.push_back(B.CreateZExtOrTrunc(
+          getRawSegmentOffset(Op.Inputs[3], B), B.getInt32Ty()));
+      if (!(D & X86AmxImmediateRow))
+        NativeArgs.push_back(B.getInt32(bool(D & X86AmxExtendedRow)));
+    } else if (x86AmxIsCompute(K)) {
+      NativeArgs.push_back(B.getInt8(x86AmxTile(D, 1)));
+      NativeArgs.push_back(B.getInt8(x86AmxTile(D, 2)));
+    }
+    auto *Call = B.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(Function->getParent(), ID),
+        NativeArgs);
+    return x86AmxIsRow(K) ? B.CreateBitCast(Call, sizeToType(X86AmxRowBytes))
+                          : nullptr;
+  }
   const auto P = x86AmxAsm(D, S.MemoryAddressSpace);
   if (!P)
     llvm::report_fatal_error("invalid AMX native assembly contract");

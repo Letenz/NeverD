@@ -11,6 +11,7 @@
 #include "ChooserView.h"
 #include "Icons.h"
 #include "ItemViewActivation.h"
+#include "ModelessDialog.h"
 #include "Session.h"
 #include "ShortcutHint.h"
 #include "ShrinkableRow.h"
@@ -399,15 +400,15 @@ void PathfinderView::add(Address node, const Node &described, Role role,
 void PathfinderView::choose(Role role) {
   if (!session_.loaded() || !session_.findsCallPaths())
     return;
-  // Functions and imports, as IDA's waypoint chooser lists functions.
-  QDialog dialog(this);
-  dialog.setObjectName(QStringLiteral("pathfinderChooser"));
-  dialog.setWindowTitle(role == Role::Waypoint ? tr("Add a Waypoint")
-                                               : tr("Exclude a Function"));
-  dialog.setWindowIcon(icon(QStringLiteral("pathfinder")));
-  dialog.resize(640, 420);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *tabs = new QTabWidget(&dialog);
+  const auto epoch = session_.epoch();
+  auto *dialog = new QDialog(this);
+  dialog->setObjectName(QStringLiteral("pathfinderChooser"));
+  dialog->setWindowTitle(role == Role::Waypoint ? tr("Add a Waypoint")
+                                                : tr("Exclude a Function"));
+  dialog->setWindowIcon(icon(QStringLiteral("pathfinder")));
+  dialog->resize(640, 420);
+  auto *layout = new QVBoxLayout(dialog);
+  auto *tabs = new QTabWidget(dialog);
   auto *functions =
       new ChooserView(session_, space_, ChooserKind::Functions, tabs);
   auto *imports = new ChooserView(session_, space_, ChooserKind::Imports, tabs);
@@ -415,32 +416,31 @@ void PathfinderView::choose(Role role) {
   tabs->addTab(imports, icon(QStringLiteral("imports")), tr("Imports"));
   layout->addWidget(tabs, 1);
   auto *buttons = new QDialogButtonBox(
-      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
   buttons->button(QDialogButtonBox::Ok)
       ->setText(role == Role::Waypoint ? tr("Add") : tr("Exclude"));
   layout->addWidget(buttons);
-  std::optional<Address> chosen;
-  connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-    chosen =
-        qobject_cast<ChooserView *>(tabs->currentWidget())->currentAddress();
-    dialog.accept();
-  });
-  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
   // These lists are created after the session's initial load notification.
   for (ChooserView *view : {functions, imports}) {
     view->model().reload();
-    connect(view, &ChooserView::activated, &dialog, [&](Address address) {
-      chosen = address;
-      dialog.accept();
-    });
+    connect(view, &ChooserView::activated, dialog, &QDialog::accept);
   }
+  connect(dialog, &QDialog::accepted, this, [this, tabs, role, epoch] {
+    if (!session_.loaded() || session_.epoch() != epoch)
+      return;
+    const auto chosen =
+        qobject_cast<ChooserView *>(tabs->currentWidget())->currentAddress();
+    if (!chosen)
+      return;
+    if (role == Role::Waypoint)
+      addWaypoint(*chosen);
+    else
+      addExclusion(*chosen);
+  });
+  showModelessDialog(dialog, this, &session_);
   functions->focusFilter();
-  if (dialog.exec() != QDialog::Accepted || !chosen)
-    return;
-  if (role == Role::Waypoint)
-    addWaypoint(*chosen);
-  else
-    addExclusion(*chosen);
 }
 
 void PathfinderView::chooseWaypoint() { choose(Role::Waypoint); }

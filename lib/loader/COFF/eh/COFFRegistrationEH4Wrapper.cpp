@@ -9,6 +9,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/Limits.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/ISAEncoding.h"
@@ -46,12 +47,7 @@ std::optional<va_t> getDirectCookieCheck(const BinaryImage &Img,
   if (!Img.isCodeAddress(CheckVA) || !Img.readVA(CheckVA, 1) || !Import ||
       !Img.readVA(Import->IATAddr, 4) ||
       Import->Name != "_except_handler4_common" ||
-      (!llvm::StringRef(Import->Module).equals_insensitive("msvcrt.dll") &&
-       !llvm::StringRef(Import->Module).equals_insensitive("ucrtbase.dll") &&
-       !llvm::StringRef(Import->Module)
-            .equals_insensitive("vcruntime140.dll") &&
-       !llvm::StringRef(Import->Module)
-            .equals_insensitive("vcruntime140d.dll")))
+      !isX86SEHHandlerProvider(Import->Module))
     return std::nullopt;
   return CheckVA;
 }
@@ -87,13 +83,7 @@ bool isCommonHandlerThunk(const BinaryImage &Image, va_t Address) {
       }
     return Runtime && Slot <= UINT32_MAX - 3 && Image.readVA(Slot, 4) &&
            Runtime->Name == "_except_handler4_common" &&
-           (llvm::StringRef(Runtime->Module).equals_insensitive("msvcrt.dll") ||
-            llvm::StringRef(Runtime->Module)
-                .equals_insensitive("ucrtbase.dll") ||
-            llvm::StringRef(Runtime->Module)
-                .equals_insensitive("vcruntime140.dll") ||
-            llvm::StringRef(Runtime->Module)
-                .equals_insensitive("vcruntime140d.dll"));
+           isX86SEHHandlerProvider(Runtime->Module);
   }
   return false;
 }

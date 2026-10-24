@@ -7,7 +7,9 @@
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/X87GuardedValue.h"
 #include "neverd/ir/X87Value.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 
@@ -67,6 +69,8 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
     return invalid("intrinsic has no constant intrinsic ID");
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (isAArch64ExceptionReturnIntrinsic(Id))
+    return invalid(kAArch64ExceptionReturnUnsupported);
   // The lifter publishes PACM as a pending instruction prefix. CFG resolves
   // its executed successor before MedIR, where this marker is not admissible.
   if (Id == Intrinsic::A64_PACMPending) {
@@ -76,10 +80,14 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
       return invalid(kAArch64PAuthMalformedOperation);
     return llvm::Error::success();
   }
+  if (isAArch64PAuthLoadIntrinsic(Id) && !lowAArch64PAuthLoadShapeIsValid(Op))
+    return invalid(kPAuthLoadMalformed);
   if (isAArch64PAuthIntrinsic(Id) && !lowAArch64PAuthShapeIsValid(Op))
     return invalid(kAArch64PAuthMalformedOperation);
   if (aarch64CPAOperation(Id) && !lowAArch64CPAShapeIsValid(Op))
     return invalid(kAArch64CPAMalformedOperation);
+  if (aarch64_sve::vectorOperation(Id) && !lowAArch64VectorShapeIsValid(Op))
+    return invalid(aarch64_sve::kMalformedVector);
   if (Id == Intrinsic::A64_SvePtrue && !lowAArch64PtrueShapeIsValid(Op))
     return invalid(aarch64_sve::kMalformedPtrue);
   if (isX87ConstantControlIntrinsic(Id) &&
@@ -105,6 +113,16 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
             Id, x86VirtualizationLowShape(Op, Arch::Unknown)))
       return invalid("x86 virtualization intrinsic has an invalid "
                      "operand/output contract");
+    return llvm::Error::success();
+  }
+  if (isX86DescriptorStateIntrinsic(Id)) {
+    if (Op.Inputs[0].Size != 2 ||
+        Op.Inputs[0].Offset != static_cast<uint64_t>(Id) ||
+        !x86DescriptorStateShapeIsValid(
+            Id, Arch::Unknown, Op.NumInputs, Op.Output.Size,
+            Op.NumInputs > 1 ? Op.Inputs[1].Size : 0, Op.MemoryAddressSpace,
+            Op.MemoryOrdering))
+      return invalid("x86 descriptor state intrinsic has an invalid shape");
     return llvm::Error::success();
   }
   if (Id == Intrinsic::X86AMXState && !x86AmxShapeIsValid(x86AmxLowShape(Op)))

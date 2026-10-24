@@ -1,0 +1,89 @@
+//===- ModelessDialog.cpp - Browsers owned by their source pane -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Follow native window ownership without blocking input to analysis panes.
+//===----------------------------------------------------------------------===//
+
+#include "ModelessDialog.h"
+
+#include "Session.h"
+
+#include <QApplication>
+#include <QDialog>
+#include <QEvent>
+#include <QObject>
+#include <QTimer>
+#include <QWidget>
+#include <QWindow>
+#include <kddockwidgets/qtwidgets/views/DockWidget.h>
+
+namespace neverd::gui {
+namespace {
+constexpr char OwnerName[] = "modelessDialogOwner";
+
+class DialogOwner final : public QObject {
+public:
+  DialogOwner(QDialog *dialog, QWidget *source, Session *session)
+      : QObject(dialog), Dialog(dialog), Source(source) {
+    setObjectName(QLatin1String(OwnerName));
+    if (session)
+      connect(session, &Session::unloaded, this, [this] { Dialog->reject(); });
+    for (auto *parent = source; parent; parent = parent->parentWidget())
+      if (auto *dock =
+              qobject_cast<KDDockWidgets::QtWidgets::DockWidget *>(parent)) {
+        connect(dock, &KDDockWidgets::QtWidgets::DockWidget::isOpenChanged,
+                this, [this](bool open) {
+                  if (!open)
+                    Dialog->reject();
+                });
+        break;
+      }
+    if (auto *parent = qobject_cast<QDialog *>(source))
+      connect(parent, &QDialog::finished, this, [this] { Dialog->reject(); });
+    qApp->installEventFilter(this);
+  }
+
+  ~DialogOwner() override { qApp->removeEventFilter(this); }
+
+private:
+  bool eventFilter(QObject *object, QEvent *event) override {
+    // Qt retains the old transient parent when an ancestor is reparented.
+    // Wait until the destination window exists, including grouped docking.
+    if (event->type() == QEvent::ParentChange || event->type() == QEvent::Show)
+      if (auto *widget = qobject_cast<QWidget *>(object);
+          widget && (widget == Source || widget->isAncestorOf(Source)))
+        QTimer::singleShot(0, this, [this] {
+          if (Dialog->isVisible())
+            if (auto *window = Dialog->windowHandle())
+              window->setTransientParent(Source->window()->windowHandle());
+        });
+    return false;
+  }
+
+  QDialog *Dialog;
+  QWidget *Source;
+};
+} // namespace
+
+void showModelessDialog(QDialog *dialog, QWidget *source, Session *session) {
+  if (auto *owner = dialog->findChild<QObject *>(QLatin1String(OwnerName),
+                                                 Qt::FindDirectChildrenOnly))
+    delete owner;
+  if (!dialog->objectName().isEmpty())
+    for (auto *previous : source->findChildren<QDialog *>(
+             dialog->objectName(), Qt::FindDirectChildrenOnly))
+      if (previous != dialog && previous->isVisible())
+        previous->reject();
+  if (dialog->parentWidget() != source)
+    dialog->setParent(source, dialog->windowFlags());
+  dialog->setWindowModality(Qt::NonModal);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  new DialogOwner(dialog, source, session);
+  dialog->show();
+  dialog->raise();
+  dialog->activateWindow();
+}
+} // namespace neverd::gui

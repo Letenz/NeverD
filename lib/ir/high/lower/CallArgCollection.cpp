@@ -470,6 +470,26 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     return ParameterRegister(Arg);
   };
 
+  if (CallIdx < Ops.size() && Ops[CallIdx].IntegerCallSignature) {
+    const auto &Call = Ops[CallIdx];
+    if (!hasBoundIntegerCallArguments(Call))
+      throw std::runtime_error("An integer header call lost its operands");
+    std::vector<ExprPtr> Arguments;
+    for (unsigned I = 1; I < Call.NumInputs; ++I) {
+      ExprPtr Value = medvarToExpr(Call.Inputs[I]);
+      const auto Bytes = Call.IntegerCallSignature->Parameters[I - 1].Bytes;
+      if (!Value || !Value->Type || Value->Type->Size < Bytes)
+        throw std::runtime_error("An integer header argument is incomplete");
+      if (Value->Type->Size > Bytes) {
+        Value = HighExpr::makeBinop(NdOp::SUBBYTES, Value,
+                                    HighExpr::makeConst(0, 4));
+        Value->Type = NdType::makeInt(Bytes, false);
+      }
+      Arguments.push_back(std::move(Value));
+    }
+    return Arguments;
+  }
+
   if (CallIdx < Ops.size() && Ops[CallIdx].ScalarCallSignature) {
     const auto &Call = Ops[CallIdx];
     const auto &Signature = *Call.ScalarCallSignature;

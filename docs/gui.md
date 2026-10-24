@@ -505,6 +505,14 @@ and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
 
+Reference lists and jump browsers stay open while you use the workbench.
+Reference selections retain their originating code or disassembly view, and
+jump browsers keep their original navigation context when focus moves elsewhere.
+Relative expressions such as `here+0x10` use the address where the browser opened.
+Browsers follow their source pane when it floats or docks, and close with that
+pane. Project-specific browsers also close when the project closes. Reopening
+the same browser in a pane replaces its previous window.
+
 **View → Open subviews → Type libraries** (Shift+F11, as IDA's) lists the
 libraries of a system's headers whose types and prototypes join the
 program's: the image's own first, in the order they join, then those the
@@ -546,9 +554,15 @@ In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
 lists its occurrences in the current function, with source line, column and
 code. The list uses the variable's identity from the complete loaded document,
 so similarly spelled names, member names, strings and comments are excluded.
-Selecting an occurrence stays in the originating code window, expands any fold
-that hides the row and selects the identifier. Renamed locals keep their
-original identity. A source reload or project close retires the old list.
+Single-clicking an occurrence or selecting it with the arrow keys immediately
+reveals it in the originating code window, expands any fold that hides the row
+and selects the identifier while the reference list stays open. Enter,
+double-click or **OK** closes the list; Escape closes it with the last selected
+occurrence still visible. The list is modeless: the code and disassembly remain
+usable, and the source pane can float, dock or switch tabs while the list is
+open. Selecting a reference reveals its source tab. Renamed locals keep their
+original identity. Reopening local references replaces the previous list; a
+source reload, source-pane close or project close retires it.
 
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
@@ -703,6 +717,12 @@ workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
 the selected lines of a disassembly, pseudocode or IR window (the current line
 when nothing is selected), the selected rows of a list with their columns
 separated by tabs, or the text selected in a field.
+
+Export previews, Find, shortcut help, calculator results, connection and tool
+schema information, and the Pathfinder, type-library and comparison counterpart
+choosers also allow you to keep using their source windows. Type-library choices
+close when project edits make their catalogue stale. The command palette
+dismisses like a popup and runs its selection in the originating pane.
 
 GNOME attaches a modal dialog to its parent window, so dragging the dialog
 would drag the whole workbench. On GNOME the workbench keeps dialogs

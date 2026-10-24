@@ -173,6 +173,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallEntryStackSlots(&Result.CallEntryStackSlots);
     Local.setCallEntryArgumentCounts(&Result.CallEntryArgumentCounts);
     Local.setCallEntryFloatingArguments(&Result.CallEntryFloatingArguments);
+    Local.setCallEntryIntegerArguments(&Result.CallEntryIntegerArguments);
     Local.setCallEntryVariadicArguments(&Result.CallEntryVariadicArguments);
     Local.setUserPrototypeCallees(&Result.CallUserPrototypes);
     Local.setCallDispatchThunks(&Result.CallDispatchThunks);
@@ -293,6 +294,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallDispatchThunks);
   COPY_SOURCE_FACT(CallEntryArgumentCounts);
   COPY_SOURCE_FACT(CallEntryFloatingArguments);
+  COPY_SOURCE_FACT(CallEntryIntegerArguments);
   COPY_SOURCE_FACT(CallEntryVariadicArguments);
   COPY_SOURCE_FACT(OmittedCalleeVariadicArguments);
   COPY_SOURCE_FACT(CallEntryReadGPRs);
@@ -305,6 +307,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
   COPY_SOURCE_FACT(OmittedCalleeFloatingArguments);
+  COPY_SOURCE_FACT(OmittedCalleeIntegerArguments);
   COPY_SOURCE_FACT(OmittedCalleeStackArgs);
   COPY_SOURCE_FACT(OmittedCalleeStackSlots);
   COPY_SOURCE_FACT(OmittedCallees);

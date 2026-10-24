@@ -113,3 +113,6 @@ SIDEEFFECT(Intrinsic::A64_AuthBranch);
   SIDEEFFECT(Intrinsic::Id);
 #include "neverd/ir/intrinsics/AArch64PAuthM.def"
 SIDEEFFECT(Intrinsic::A64_PACMPending);
+
+#define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) SIDEEFFECT(Intrinsic::Id);
+#include "neverd/ir/intrinsics/AArch64PAuthLoad.def"

@@ -24,8 +24,10 @@ namespace neverd {
 bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff);
 
 /// Mark source-mode prologue saves and return-address reads using one frame
-/// access analysis. Only annotation flags change; the analysis is discarded
-/// before returning, so later IR mutations cannot reuse its coordinates.
+/// access analysis. Complete fixed integer call operands reading private frame
+/// bytes proved never written on any incoming path become explicit unavailable
+/// values in source only. General partial-byte observations are separate. The
+/// analysis is discarded before returning; operation positions stay stable.
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format,
                              StackEntryKind Entry = StackEntryKind::Call);

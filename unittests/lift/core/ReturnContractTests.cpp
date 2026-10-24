@@ -361,6 +361,19 @@ TEST(ReturnContracts, ValidatedX86SystemCompletionsRemainReturnValues) {
     std::vector<MedVar> Inputs;
   };
   const Case Cases[] = {
+      {Intrinsic::Verr, 1, {Constant(0x23, 2)}},
+      {Intrinsic::Verw, 1, {Constant(0x23, 2)}},
+      {Intrinsic::Verr, 1, {Constant(0x3000, 8)}},
+      {Intrinsic::Verw, 1, {Constant(0x3000, 8)}},
+      {Intrinsic::Sldt, 2, {}},
+      {Intrinsic::Sldt, 4, {}},
+      {Intrinsic::Sldt, 8, {}},
+      {Intrinsic::Str, 2, {}},
+      {Intrinsic::Str, 4, {}},
+      {Intrinsic::Str, 8, {}},
+      {Intrinsic::Smsw, 2, {}},
+      {Intrinsic::Smsw, 4, {}},
+      {Intrinsic::Smsw, 8, {}},
       {Intrinsic::X86ReadPid, 8, {}},
       {Intrinsic::X86ReadFsBase, 8, {}},
       {Intrinsic::X86UserWait,

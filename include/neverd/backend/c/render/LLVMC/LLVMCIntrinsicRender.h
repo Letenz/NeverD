@@ -69,6 +69,13 @@ std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
 
 //--- Arch-specific (LLVMCIntrinsicRenderX86.cpp) ---
 /// Recognize the complete scalar MSR/port call with ordered native effects.
+bool isX86DescriptorStateNativeName(llvm::StringRef Name);
+std::optional<InlineAsmRender>
+renderX86DescriptorStateCall(Arch TheArch, BinaryFormat Format,
+                             const llvm::CallBase &Call,
+                             const std::string &ResultName, bool ResultLive,
+                             const std::vector<std::string> &Args);
+
 bool isX86ScalarSystemNativeName(llvm::StringRef Name);
 std::optional<InlineAsmRender>
 renderX86ScalarSystemCall(Arch TheArch, BinaryFormat Format,
@@ -97,6 +104,10 @@ std::string renderX86SegmentedLoad(
     const std::function<std::string(const llvm::Value *)> &ValueStr);
 
 //--- Arch-specific (LLVMCIntrinsicRenderARM.cpp) ---
+std::optional<InlineAsmRender>
+renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,
+                           const std::string &ResultName, bool ResultLive,
+                           const std::vector<std::string> &Args);
 const char *lookupArmAsmToC(const char *Mnem);
 InlineAsmRender renderARMInlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,

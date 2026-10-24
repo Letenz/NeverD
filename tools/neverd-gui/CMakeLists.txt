@@ -152,12 +152,13 @@ if(BUILD_TESTING)
     add_dependencies(neverd-gui-comparison-tests neverd-worker)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
       set(_neverd_diff_effect_fixture "${CMAKE_CURRENT_BINARY_DIR}/comparison-effects.so")
+      set(_neverd_diff_effect_source "${CMAKE_CURRENT_SOURCE_DIR}/../../unittests/diff/call_effects_fixture.c")
       add_custom_command(OUTPUT "${_neverd_diff_effect_fixture}"
         COMMAND "${CMAKE_C_COMPILER}" -shared -nostdlib -fPIC -O1 -fno-builtin
           -fno-asynchronous-unwind-tables -fno-stack-protector
-          "${CMAKE_SOURCE_DIR}/unittests/diff/call_effects_fixture.c"
+          "${_neverd_diff_effect_source}"
           -o "${_neverd_diff_effect_fixture}"
-        DEPENDS "${CMAKE_SOURCE_DIR}/unittests/diff/call_effects_fixture.c"
+        DEPENDS "${_neverd_diff_effect_source}"
         VERBATIM)
       add_custom_target(neverd-gui-comparison-effects-fixture DEPENDS "${_neverd_diff_effect_fixture}")
       add_dependencies(neverd-gui-comparison-tests neverd-gui-comparison-effects-fixture)

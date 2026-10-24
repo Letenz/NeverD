@@ -25,6 +25,7 @@
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64PointerC.h"
 #include "neverd/backend/c/render/X87GuardedValueRender.h"
 #include "neverd/debug/UserPrototype.h"
@@ -40,6 +41,7 @@
 #include "neverd/ir/high/X87ValueShape.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
@@ -2080,6 +2082,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (E.SourceCallHint)
     return renderSourceCallExpr(E);
   if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+      !isX86DescriptorStateIntrinsic(E.IntrinsicId) &&
       !isX86FPStateMemoryIntrinsic(E.IntrinsicId) &&
       x86VirtualizationContract(E.IntrinsicId).MemoryArgument < 0)
     llvm::report_fatal_error(
@@ -2130,6 +2133,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                    ? "__asm { " + Instruction + " }"
                    : "__asm__ volatile(\"" + Instruction + "\" ::: \"memory\")";
     }
+
+    if (isAArch64PAuthLoadIntrinsic(E.IntrinsicId) &&
+        (Opts.TheArch != Arch::AArch64 || !aarch64PAuthLoadHighShapeIsValid(E)))
+      throw std::invalid_argument(kPAuthLoadMalformed);
 
     std::optional<unsigned> LinuxSyscallArgs;
     if (E.IntrinsicId == Intrinsic::X64Syscall && E.Operands.size() == 5 &&

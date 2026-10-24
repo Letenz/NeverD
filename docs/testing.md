@@ -41,6 +41,12 @@ unavailable execution is an explicit skip. Unresolved terminal prefixes and
 implicit-entry joins cannot escape into ordinary source. Frame fixtures reject
 mixed implicit/explicit signing recipes and preserve unrelated tail-call proofs
 across function-lifetime mode temporaries.
+`AArch64ExceptionReturnSemantics` rejects plain ERET in both decoder routes
+and strict/permissive lifting. Handwritten LowIR, MedIR and HighIR cannot
+bypass the ELR/SPSR/PSTATE requirement through void/value, masked-body or
+cross-target emission. Ordinary RET remains supported. Authenticated exception
+returns retain their existing explicit refusal; this is not an exception-level
+runtime implementation.
 Malformed-input checks reject invalid scalar kinds, mode widths and operand
 counts in every PACM operation. Pending prefixes require their exact LowIR
 shape and remain inadmissible in MedIR and native output.
@@ -53,7 +59,10 @@ optimized LLVM output. Its ordinary arm64 process must produce a nonzero
 generic signature. PAC/AUT can be disabled in that process despite hardware
 feature discovery, so it cannot qualify pointer authentication.
 `NativeKeysAgreeWithBothCProjections` instead compiles an arm64e execution
-probe and explicitly skips if the host refuses it. On an eligible host it
+probe and explicitly skips unless all four signing keys change pointers and
+PACGA produces a nonzero signature in that process. A requested target triple
+or a runnable empty main cannot establish this: a linker may produce ordinary
+arm64 with inactive keys. On an eligible host it
 compares PAC/AUT/XPAC/PACGA using all four pointer keys and zero/nonzero
 modifiers; each key must change at least one pointer, excluding a NOP profile.
 Other architectures skip the native checks.
@@ -173,6 +182,30 @@ canonical predicate conversions across element widths, LLVM verification and
 object compilation, HighC projection and malformed LowIR/MedIR refusal.
 `NeverDBinaryDiffSDKTests` retains incomplete analysis for unmodelled MOVPRFX.
 These tests do not execute SVE hardware or qualify scalable calling conventions.
+The same target's `AArch64SVEVector` cases exercise all producer/consumer
+element widths, canonical HighC Z storage, COPY and real diamond/loop PHIs,
+typed LLVM boundaries and O0/O2 C compilation. Shared MedIR state admission
+rejects undefined, late or dead producers, invalid CFG/PHI edges, exhausted
+budgets, scalable ABI escape, opaque calls and unmodelled V/Z overlap through
+both Med-to-High and masked/unmasked LLVM emission. Run the existing
+`AArch64_SVEState`, `AArch64_SVEStore`, `AArch64_SVELength` and ordinary NEON/FP
+cases in `NeverDLiftTests` after changing these shared boundaries.
+The local-state suite also checks scalar PAuth, explicit PAuth_LR and resolved
+PACM operations, rejecting malformed shapes and unresolved PACM. A raw
+PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
+state must return a normal error for both one-function serial and eight-function
+sharded LLVM emission, with and without optimization.
+`AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
+writeback and dead-result retention through a single combined authenticated
+load, with independent emitted-word checks at O0/O2 through LLVM and both C
+routes. Malformed IR and unavailable SP execution contracts fail explicitly.
+HighC also validates supplied authenticated-load expressions before hiding or
+preparing source, rejecting extra outputs, indirect callees, dynamic encodings,
+invalid widths, SP execution and cross-target use without partial C output.
+These object checks do not qualify FPAC/FPACCOMBINE trap behavior on hardware.
+`AArch64_PAuth.CombinedLoadsRetainEarlierCallArguments` checks real LDRAA/LDRAB
+sequences with and without writeback before an imported call, at both LLVM
+optimization settings. The argument set before the load must remain intact.
 `MachONativeInplace.*` and the public-entry cases in `MachOPatchTransaction`
 check raw arm64e/x1 subtype capabilities, absent caller annotations and output
 rollback, with genuine ordinary arm64 writes as positive controls.
@@ -346,6 +379,23 @@ qualifiers, convention ownership and `_Noreturn`. The original SDK check's
 `UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
 Windows architectures, independently of the synthetic import names.
 The qualifier execution cases also cover void results.
+`Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
+checks the same contract for explicit local declarations.
+`LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
+on x64 and ARM64 across COFF, ELF and Mach-O. Independent C providers observe
+nested qualified pointers, void and pointer results, narrow signed/unsigned
+parameters, narrow integer results and no-parameter calls at O0/O2 with UBSan.
+Incompatible counts, carriers, conventions, live void results and observed
+upper bits beyond a local source result's width must retain
+their machine declarations, independently of call order. These emitter checks
+do not certify native platform execution. `NeverDWorkerStackText` also checks
+the qualified local declaration through fresh x64/ARM64 PE sessions on both
+C routes.
+The worker also compiles a `const long long *` call against an independent
+definition on the host, where `int64_t *` need not be compatible.
+`LocalTypesDebugContext.PortablePrototypesRetainIntegerKeywordIdentity` checks
+that both the declaration and scalar call conversions retain the same target
+integer identity across ILP32, LLP64 and LP64 models.
 They supply complete local struct/union layouts as well: pointer-only imports
 must keep forward declarations and compile alongside independent definitions.
 `LocalTypesDebugContext.PointerDeclarationsDoNotRequireRecordLayouts` checks
@@ -1825,6 +1875,24 @@ Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
 repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
 and function-edit controller cases check that their scoped Ctrl+E still wins.
 
+`localVariableReferencesStayInTheirCodeWindow` exercises single-click and arrow
+selection in local-variable reference lists for pseudocode, C and LLVM C, both
+docked and floating. It checks clicking the initially selected row, unfolding a
+distant occurrence, distinct columns on the same line, renamed locals, focus
+remaining in the list, and closing with OK, Enter, double-click or Escape.
+`localReferencesAllowWorkbenchInteraction` exercises source keyboard navigation,
+scrolling, function-list navigation, the native dock button and tab switching
+while the modeless list remains open. It checks that the list follows the
+source's native window and still selects exact occurrences after docking.
+On Wayland, provide activation through the test compositor: QtTest cannot
+activate another window while the modeless list has focus.
+`changedSourceDismissesLocalReferences` covers reloads, function/representation
+changes, pane closure, list replacement and workbench destruction, both docked
+and floating.
+`closingFileDismissesLocalVariableReferences` closes the project after a live
+reference selection. These cases also run in the native Windows/macOS checks;
+`NEVERD_SHORTCUT_CAPTURES` captures the source selection and list in both themes.
+
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
 its dock button and the tab context menu in both themes.
 `closedFloatingDocksReopenInWorkbench` closes floating panes through their
@@ -1837,6 +1905,19 @@ to the main window even when its previous tab group and disassembly are floating
 transient parenting for floating text, graph, pseudocode and IR views.
 `floatingCommandDialogsStayWithTheirView` checks search, calculator input and
 results, options and other command dialogs against their floating owner.
+`analysisBrowsersStayInteractive` covers ordinary xrefs, address and location
+jumps, export, Find, shortcut help, connections, calculator, About and x87
+information. Each browser permits real keyboard navigation behind it, follows
+floating/docked transitions, handles reopening, and closes with its pane or
+project as appropriate. `auxiliaryChoosersStayInteractive` checks Pathfinder
+and type-library choices, including invalidation by a project edit.
+`jumpBrowserKeepsItsOpeningAddress` evaluates relative expressions after
+background navigation. `commandPaletteReturnsToItsSource` checks cancellation
+and dispatch into the original docked or floating pane. Ordinary source xrefs
+also accept into their original code view after another code view gains focus.
+`changedSourceDismissesReferenceBrowsers` closes an already open ordinary xref
+browser when its source reloads, changes function or changes representation.
+These browser cases run with native Windows/macOS windows as well as offscreen.
 `floatingWindowsKeepMouseHistory` checks mouse Back and Forward in a floating
 listing. The Desktop GUI workflow runs these interactions with the native Qt
 platform on Windows and macOS, retaining separate logs beside the offscreen
@@ -2156,6 +2237,18 @@ and Clang O0/O2; the checks also build the actual native objects. Linux x64
 compares fault signal/code with original bytes, then injects controlled
 completions through sigreturn to check all result transports. This is not a
 successful privileged SGX or enclave-memory concurrency qualification.
+
+With `NEVERD_TEST_NEVERC` pointing to the qualified compiler,
+`X86SgxSource.NeverCCompletionMatchesOriginalRegistersAndFlags` executes both C
+routes against the same original-byte/sigreturn oracle.
+`NeverCCompilesNativeCompletionAndCombinedAmxFeatures` builds 192 native IR
+modules and 192 objects per SDK, including functions with both SGX and AMX;
+this catches lost features when separate target attributes would override one
+another. Native declaration validation rejects lost memory effects, wrong word
+sizes, mismatched operands and nonreturning/defined intrinsic impostors. The
+pinned SDK skips only the new native-declaration check; generated C still
+selects the current NeverC APIs. The separate PUSHF fixture snapshot retains
+its own LLVM implementation and is not an SGX assembly fallback.
 
 `NeverDX86VirtualizationTests` checks 32/64-bit VMX/SVM operand shapes,
 VMREAD success/failure merges, instruction-owned memory, segmented addresses and
@@ -4921,6 +5014,15 @@ checks that 32 independent entries remain executable after their first copies
 fold away during MedIR-to-HighIR conversion. An independent interpreter enters
 each original address and checks its return value on x86, x64, ARM and AArch64.
 
+`HighControlFlowSemantics.NestedRegionSplicesRetainTheirOuterFollow` checks
+single-entry region moves through block, if/else and switch parents up to 41
+levels deep. Independent branch results distinguish the enclosing follow from
+sibling/default returns across repeated reductions.
+`ARegionNeverSplicesIntoItsOwnDescendant` keeps an ancestor region intact when
+its only incoming jump sits inside that region, including deeply nested sites.
+These cases cover the parent-path metadata used by goto reduction; existing
+handler and landing-pad cases retain the exception-boundary coverage.
+
 `HighBoundPrivateFrameCopies.*` in `NeverDHighControlFlowTests` checks copies through nonescaping private frame slots after call ABI binding, including branches, slot reuse and agreement across guard contexts. For x64 and AArch64, the emitted C runs at `-O0` and `-O2` with undefined-behavior traps and independent arithmetic checks. Negative cases preserve the original function for frame escape, unknown call ABIs, missing or inconsistent frame aliases, reassigned entry inputs, overlapping accesses, ordered or atomic memory, malformed statements, cycles and exhausted budgets. Ordinary value conversions must not become PHI copies.
 
 `HighIntegerSignedness.*` in `NeverDHighControlFlowTests` checks the late pass that declares each register or temporary local signed or unsigned by what most of its uses read. Wrapping arithmetic, logical shifts and unsigned comparisons favor unsigned; signed comparisons, signed division, arithmetic shifts and sign extension favor signed; a conversion to an integer as wide as its operand favors the signedness it converts to; a shift count reads unsigned, so its masking arithmetic prints without a signed view; a local with any non-integer use keeps its types. The emitted C runs at `-O0` and `-O2` with undefined-behavior traps against independent reference arithmetic, including a signed comparison of a local that became unsigned.
@@ -7566,6 +7668,22 @@ imports through both IAT calls and jump veneers. Provider, name, delayed-import,
 conflicting-slot, addend, backing-byte, metadata, architecture and caller-cleanup
 mutations must refuse; every accepted stack fact still lacks an object or
 initializer memory contract.
+The portable `CRTImportQueriesKeepTheirStorageProofs` case covers nineteen
+CRT identity/provider combinations without optional corpus inputs. It requeries
+the same image after changing names, providers, delay flags, slot evidence,
+addends, backing bytes, conflicts, overlapping fixups, mapping or target traits.
+Both stack-cleanup facts and `_controlfp_s` recognition retain their complete
+current-storage checks. Run the registration-callee-stack, SEH-runtime-memory,
+read-only-bytes and pipeline-outcome owners after changing these queries.
+`RuntimeProviderSetsKeepDistinctContracts` prevents one runtime contract from
+borrowing another's DLL set, including debug runtimes, PE32/Win64 control-FP,
+math/stdio API sets and C++ exception providers. Paths, suffixes and embedded
+NULs remain invalid identities. `ControlFPProviderIdentityDoesNotBorrowPE32Contracts`
+checks those Win64 distinctions through decoded calls and the frame proof.
+`X87ImportCall.RecognizedNamesDoNotGrantUnsupportedTransport` keeps unsupported
+register-stack entries distinct from ordinary C calls and retains exact symbol
+case and provider checks. Changes to the shared `.def` inventories also require
+the x87 call-graph, registration state/EH/frame and exception-edge owners.
 `NestedReturningStackProofIsBoundedAndNonCircular` checks multi-level callee
 cleanup, mismatched pops, recursive dependencies, the depth boundary and shared
 work exhaustion. It does not admit dispatcher-entered parent returns through

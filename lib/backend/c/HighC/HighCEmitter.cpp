@@ -19,6 +19,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86DescriptorState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86ScalarSystem.h"
 #include "../render/X86SystemRegister.h"
@@ -29,10 +30,12 @@
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/FloatingPointContract.h"
 #include "neverd/backend/c/render/AArch64PAuthC.h"
+#include "neverd/backend/c/render/AArch64PAuthLoadC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86FPStateShape.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
@@ -689,7 +692,9 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       const bool InstructionMemory =
           E.Kind == ExprKind::Call &&
           (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
-           x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0);
+           x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
+           isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
+           E.IntrinsicId == Intrinsic::X86AMXState);
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
       if (!MsvcSegmentedScalar && !InstructionMemory)
         HasSegmentedMemory = true;
@@ -1542,6 +1547,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if ((Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF) &&
           x86SystemRegisterName(Ex.IntrinsicId, 0))
         NeedsX86SystemRegisterDispatch = true;
+      if (Opts.TheArch == Arch::X64 &&
+          isX86DescriptorStateIntrinsic(Ex.IntrinsicId))
+        NeedsX86DescriptorStateDispatch = true;
       if ((Opts.TheArch == Arch::X64 || Opts.TheArch == Arch::X86) &&
           isX86ScalarSystemIntrinsic(Ex.IntrinsicId))
         NeedsX86ScalarSystemDispatch = true;
@@ -4424,6 +4432,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86DescriptorStateDispatch)
+    OS << X86DescriptorStateCompilerDispatch;
   if (NeedsX86ScalarSystemDispatch)
     OS << X86ScalarSystemCompilerDispatch;
   if (NeedsX86VirtualizationDispatch)
@@ -4522,18 +4532,27 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   const bool Portable =
       PortableInterface && Funcs.size() == 1 && &Funcs.front() == PortableBody;
   std::set<const HighExpr *> Seen;
-  std::function<void(const ExprPtr &)> CheckRequirement =
-      [&](const ExprPtr &Expr) {
-        if (!Expr || !Seen.insert(Expr.get()).second)
-          return;
-        if (isPortableX87Intrinsic(Expr->IntrinsicId) && !Portable)
-          throw std::invalid_argument(
-              "portable x87 helpers require a prepared emission entry");
-        if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
-          throw std::invalid_argument(
-              "raw environment requirement has no C runtime contract");
-        Expr->forEachChildExpr(CheckRequirement);
-      };
+  std::function<void(const ExprPtr &)> CheckRequirement;
+  CheckRequirement = [&](const ExprPtr &Expr) {
+    if (!Expr || !Seen.insert(Expr.get()).second)
+      return;
+    if (isAArch64PAuthLoadIntrinsic(Expr->IntrinsicId)) {
+      if (Opts.TheArch != Arch::AArch64 ||
+          !aarch64PAuthLoadHighShapeIsValid(*Expr))
+        throw std::invalid_argument(kPAuthLoadMalformed);
+      if (aarch64PAuthLoadInstruction(Expr->Operands[1]->ConstVal)->stackBase())
+        throw std::invalid_argument(kPAuthLoadSPUnsupported);
+    }
+    if (isAArch64ExceptionReturnIntrinsic(Expr->IntrinsicId))
+      throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
+    if (isPortableX87Intrinsic(Expr->IntrinsicId) && !Portable)
+      throw std::invalid_argument(
+          "portable x87 helpers require a prepared emission entry");
+    if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
+      throw std::invalid_argument(
+          "raw environment requirement has no C runtime contract");
+    Expr->forEachChildExpr(CheckRequirement);
+  };
   for (const auto &Func : Funcs)
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       forEachExpr(Stmt, CheckRequirement);

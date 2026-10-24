@@ -25,6 +25,8 @@
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
+#include "../render/X86AmxState.h"
+#include "../render/X86DescriptorState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86ScalarSystem.h"
 #include "../render/X86SystemRegister.h"
@@ -60,6 +62,7 @@
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/libc/LibCFixedIntegerArguments.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCVariadicArguments.h"
@@ -772,6 +775,7 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   bool NeedsX86SystemRegisterDispatch = false;
   bool NeedsX86ScalarSystemDispatch = false;
+  bool NeedsX86DescriptorStateDispatch = false;
   bool NeedsX86VirtualizationDispatch = false;
   bool NeedsX86SystemStateDispatch = false;
   bool HasFloatingArithmetic = false;
@@ -870,6 +874,16 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
+          if (auto Descriptor = renderX86DescriptorStateCall(
+                  Opts.TheArch, Opts.Format, *CI, "result", true,
+                  std::vector<std::string>(CI->arg_size(), "0"))) {
+            NeedsX86DescriptorStateDispatch |= Opts.TheArch == Arch::X64;
+            if (Descriptor->SetIntrinsics) {
+              Headers.insert("intrin.h");
+              HasCIntrinsics = true;
+            }
+            continue;
+          }
           if (auto System = renderX86ScalarSystemCall(
                   Opts.TheArch, Opts.Format, *CI, "result", true,
                   std::vector<std::string>(CI->arg_size(), "0"))) {
@@ -1077,6 +1091,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   }
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86DescriptorStateDispatch)
+    OS << X86DescriptorStateCompilerDispatch;
   if (NeedsX86ScalarSystemDispatch)
     OS << X86ScalarSystemCompilerDispatch;
   if (NeedsX86VirtualizationDispatch)
@@ -1822,16 +1838,25 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           }
           continue;
         }
-        // A checked local floating declaration uses the same import adapter.
-        // Other user declarations retain their existing source-call model.
-        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating)
-          continue;
         Fits &= ScalarParameters;
         const auto Layout =
             Fits && !Floating
                 ? integerCallArguments(Opts.TheArch, Opts.Format,
                                        Source->ReturnType, Parameters)
                 : std::nullopt;
+        // Local scalar register declarations use the shared dense carrier
+        // layout. Stack and floating signatures require their bound adapters.
+        // Every call below must still agree on argument and result carriers.
+        const auto FixedInteger = Fits ? libc::fixedIntegerCallArguments(
+                                             *Source, Opts.TheArch, Opts.Format)
+                                       : std::nullopt;
+        const bool ScalarRegisters = Layout && !Source->IsVariadic &&
+                                     Source->ParamEntryLocations.empty() &&
+                                     !Layout->ResultPointer &&
+                                     Layout->Positions == Layout->Registers;
+        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating &&
+            !FixedInteger && !ScalarRegisters)
+          continue;
         Fits &=
             (Floating || (Layout && Layout->Positions == Parameters.size())) &&
             (Source->IsVariadic ? Parameters.size() <= Call->arg_size()
@@ -1864,6 +1889,15 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           Fits =
               Scalar(Source->ReturnType) && (Call->getType()->isIntegerTy() ||
                                              Call->getType()->isPointerTy());
+        // A local declaration does not prove the upper bits of a wider
+        // machine result. Keep that result's carrier when it remains live.
+        if (Fits && Source->PrototypeLibrary == UserPrototypeLibrary &&
+            (Source->ReturnType->Kind == NdTypeKind::Int ||
+             (Source->ReturnType->Kind == NdTypeKind::Struct &&
+              Source->ReturnType->IsEnum)) &&
+            Mod.getDataLayout().getTypeStoreSize(Call->getType()) >
+                Source->ReturnType->Size)
+          Fits = !valueFeedsPrintedUse(Call);
         if (Fits)
           SourceImportPrototypes.insert_or_assign(Name, *Source);
         else {
@@ -2523,6 +2557,9 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (isX86AmxNativeRowCall(*Call, TheArch))
+      return true;
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (const auto Shape = classifyX86FPStateAsm(*Call);
         Shape && isX86FPNumericalStateIntrinsic(Shape->first))

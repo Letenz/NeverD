@@ -388,6 +388,8 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       // Do this only after every binding check succeeds, so an unavailable
       // or invalid source declaration leaves the generic arguments intact.
       Op.NumInputs = 1;
+      Op.IntegerCallSignature.reset();
+      Op.ScalarCallSignature.reset();
       Op.CalleeRegisterArgs = -1;
       Op.CalleeVariadicFrom = -1;
       Op.CalleeVectorArgs = -1;

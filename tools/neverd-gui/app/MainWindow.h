@@ -282,6 +282,7 @@ private:
   void chooseLocation(ChooserKind kind, ActionId command);
   QWidget *commandFocusWidget() const;
   QWidget *commandWindow() const;
+  QWidget *commandView() const;
   /// Edit > Copy: the selection of the view holding the focus.
   void copySelection();
   void showCommandPalette();
@@ -371,6 +372,7 @@ private:
   QJsonArray bookmarks_;
   QPointer<QDialog> quickStart_;
   QPointer<FindInViewDialog> FindDialog;
+  QPointer<QDialog> LocalReferencesDialog;
   QPointer<web::PackageReviewDialog> packageReview_;
   QPointer<ComparisonDialog> comparison_;
   bool startupQuickStartPending_ = false;

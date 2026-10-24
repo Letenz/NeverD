@@ -119,6 +119,16 @@ jobs:
             floatingAnalysisMenusStayWithTheirView \
             floatingWindowsKeepMouseHistory \
             floatingCommandDialogsStayWithTheirView \
+            analysisBrowsersStayInteractive \
+            auxiliaryChoosersStayInteractive \
+            jumpBrowserKeepsItsOpeningAddress \
+            commandPaletteReturnsToItsSource \
+            xrefsReturnToTheOriginatingCodeWindow \
+            changedSourceDismissesReferenceBrowsers \
+            localVariableReferencesStayInTheirCodeWindow \
+            localReferencesAllowWorkbenchInteraction \
+            changedSourceDismissesLocalReferences \
+            closingFileDismissesLocalVariableReferences \
             classicJumpChoosersSelectAndCancel \
             selectedBytesExportWithIdasKey \
             shortcutsCanBeFoundByKeyAndScope \

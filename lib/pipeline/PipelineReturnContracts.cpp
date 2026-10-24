@@ -622,10 +622,19 @@ private:
         Paths.push_back(ReturnedValue::SystemCallResult);
         return;
       }
-      if (isAArch64PAuthIntrinsic(Id) || aarch64CPAOperation(Id)) {
+      if (isAArch64PAuthIntrinsic(Id) || aarch64CPAOperation(Id) ||
+          isAArch64PAuthLoadIntrinsic(Id)) {
         Paths.push_back(Img.Arch == Arch::AArch64 &&
                                 (aarch64PAuthMedShapeIsValid(Op) ||
-                                 aarch64CPAMedShapeIsValid(Op))
+                                 aarch64CPAMedShapeIsValid(Op) ||
+                                 aarch64PAuthLoadMedShapeIsValid(Op))
+                            ? ReturnedValue::Other
+                            : ReturnedValue::Undefined);
+        return;
+      }
+      if (isX86DescriptorStateIntrinsic(Id)) {
+        Paths.push_back(Op.Output.Size &&
+                                x86DescriptorStateMedShapeIsValid(Op, Img.Arch)
                             ? ReturnedValue::Other
                             : ReturnedValue::Undefined);
         return;

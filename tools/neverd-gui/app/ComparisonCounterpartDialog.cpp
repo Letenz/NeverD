@@ -38,7 +38,6 @@ ComparisonCounterpartDialog::ComparisonCounterpartDialog(
   setObjectName("comparisonCounterpartDialog");
   setWindowTitle(tr("Choose counterpart — NeverD"));
   setWindowIcon(icon("compare"));
-  setWindowModality(Qt::WindowModal);
   setSizeGripEnabled(true);
   resize(::neverd::limits::gui::kComparisonCounterpartInitialWidth,
          ::neverd::limits::gui::kComparisonCounterpartInitialHeight);

@@ -4,15 +4,18 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// No helper calls or assumed-success flags: emit the owned native assembly.
+/// Native compiler calls and owned assembly share the same completion contract.
 //===----------------------------------------------------------------------===//
 
 #include "X86Sgx.h"
 
 #include "neverd/backend/llvm/X86SgxAsm.h"
+#include "neverd/backend/llvm/X86SgxNative.h"
 
+#include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 
 #include <array>
 #include <stdexcept>
@@ -26,8 +29,9 @@ std::string wordType(const X86SgxAsm &P) {
 }
 
 std::string renderAsm(const X86SgxAsm &P,
-                      const std::array<std::string, 3> &Outputs,
-                      const std::vector<std::string> &Arguments) {
+                      const std::vector<std::string> &Outputs,
+                      const std::vector<std::string> &Arguments,
+                      bool FullRegisters = false) {
   std::string Text;
   for (const char C : P.Text)
     Text += C == '%'    ? "%%"
@@ -42,29 +46,117 @@ std::string renderAsm(const X86SgxAsm &P,
         C.replace(At, 4, Letter);
     return C;
   };
+  std::vector<std::string> OutConstraints(P.OutputConstraints.begin(),
+                                          P.OutputConstraints.end());
+  std::vector<std::string> InConstraints(P.InputConstraints.begin(),
+                                         P.InputConstraints.end());
+  if (FullRegisters) {
+    OutConstraints.insert(OutConstraints.begin() + 2, {"={cx}", "={dx}"});
+    InConstraints[2] = "2";
+    InConstraints[3] = "3";
+  }
   Text = "__asm__ volatile(\"" + Text + "\" : ";
-  for (unsigned I = 0; I < P.OutputConstraints.size(); ++I) {
+  for (unsigned I = 0; I < OutConstraints.size(); ++I) {
     if (I)
       Text += ", ";
-    Text +=
-        "\"" + Constraint(P.OutputConstraints[I]) + "\"(" + Outputs[I] + ")";
+    Text += "\"" + Constraint(OutConstraints[I]) + "\"(" + Outputs[I] + ")";
   }
   Text += " : ";
-  for (unsigned I = 0; I < P.InputConstraints.size(); ++I) {
+  for (unsigned I = 0; I < InConstraints.size(); ++I) {
     if (I)
       Text += ", ";
-    Text += "\"" + Constraint(P.InputConstraints[I]) + "\"((" + wordType(P) +
-            ")(" + Arguments[I] + "))";
+    Text += "\"" + Constraint(InConstraints[I]) + "\"((" + wordType(P) + ")(" +
+            Arguments[I] + "))";
   }
   return Text + " : \"cc\", \"memory\"); ";
 }
 
-const std::array<std::string, 3> Locals = {"__neverd_sgx_ax", "__neverd_sgx_bx",
-                                           "__neverd_sgx_flags"};
-
-std::string declarations(const X86SgxAsm &P) {
-  return wordType(P) + " " + Locals[0] + ", " + Locals[1] + "; uint16_t " +
-         Locals[2] + "; ";
+std::string localPrefix(const std::vector<std::string> &Arguments,
+                        const std::vector<std::string> &Outputs = {}) {
+  std::string Prefix = "neverd_sgx_";
+  for (;;) {
+    bool Collision = false;
+    for (const auto *List : {&Arguments, &Outputs})
+      for (const auto &Text : *List)
+        Collision |= Text.find(Prefix) != std::string::npos;
+    if (!Collision)
+      return Prefix;
+    Prefix += '_';
+  }
+}
+std::vector<std::string> locals(const std::string &Prefix, bool Full) {
+  if (Full)
+    return {Prefix + "ax", Prefix + "bx", Prefix + "cx", Prefix + "dx",
+            Prefix + "flags"};
+  return {Prefix + "ax", Prefix + "bx", Prefix + "flags"};
+}
+std::string declarations(const X86SgxAsm &P,
+                         const std::vector<std::string> &Locals) {
+  std::string Text;
+  for (unsigned I = 0; I + 1 < Locals.size(); ++I)
+    Text += wordType(P) + " " + Locals[I] + "; ";
+  return Text + "uint16_t " + Locals.back() + "; ";
+}
+std::string native(const X86SgxAsm &P, const std::vector<std::string> &Outputs,
+                   const std::vector<std::string> &Arguments, bool Compact) {
+  const auto Prefix = localPrefix(Arguments, Outputs);
+  const auto Regs = Prefix + "registers";
+  const auto Flags = Prefix + "status";
+  std::string Text = "unsigned long long " + Regs + "[3]; unsigned char " +
+                     Flags + "; " + Outputs[0] + " = __builtin_ia32_" +
+                     P.Text.substr(0, P.Text.find('\n')) + "(";
+  for (const auto &Arg : Arguments)
+    Text += "(unsigned long long)(" + Arg + "), ";
+  Text += Regs + ", &" + Flags + "); ";
+  for (unsigned I = 1; I + 1 < Outputs.size(); ++I)
+    Text += Outputs[I] + " = " + Regs + "[" + std::to_string(I - 1) + "]; ";
+  Text += Outputs.back() + " = ";
+  return Text +
+         (Compact
+              ? Flags
+              : "(" + Flags + " & 1) | ((uint16_t)(" + Flags + " & 2) << 7)") +
+         "; ";
+}
+std::string dispatch(const X86SgxAsm &P,
+                     const std::vector<std::string> &Outputs,
+                     const std::vector<std::string> &Arguments,
+                     bool Compact = false) {
+  std::string Fallback;
+  if (Compact) {
+    const auto Flags = localPrefix(Arguments, Outputs) + "status16";
+    auto AssemblyOutputs = Outputs;
+    AssemblyOutputs.back() = Flags;
+    Fallback = "uint16_t " + Flags + "; " +
+               renderAsm(P, AssemblyOutputs, Arguments, true) + Outputs.back() +
+               " = (" + Flags + " & 1) | ((" + Flags + " >> 7) & 2); ";
+  } else
+    Fallback = renderAsm(P, Outputs, Arguments);
+  // NeverC's native API is x64-only. i386 always uses the owned assembly.
+  if (P.WordBytes != 8)
+    return Fallback;
+  return "NEVERD_X86_SGX(({ " + native(P, Outputs, Arguments, Compact) +
+         "}), ({ " + Fallback + "})); ";
+}
+std::optional<Intrinsic> nativeId(const llvm::CallInst &Call, Arch A) {
+  const auto *F = Call.getCalledFunction();
+  if (!F || !isX86SgxNativeName(F->getName().str()))
+    return {};
+  const auto Id = F->getName().starts_with("llvm.x86.encls")
+                      ? Intrinsic::X86Encls
+                      : Intrinsic::X86Enclv;
+  const auto ID = llvm::Intrinsic::lookupIntrinsicID(F->getName());
+  if (F->getName() != x86SgxNativeName(Id, A) || !ID || !F->isDeclaration() ||
+      F->getIntrinsicID() != ID ||
+      F->getFunctionType() != llvm::Intrinsic::getType(Call.getContext(), ID) ||
+      Call.getFunctionType() != F->getFunctionType() || Call.arg_size() != 4 ||
+      Call.getNumOperandBundles() || Call.onlyReadsMemory() ||
+      Call.onlyWritesMemory() || Call.doesNotReturn())
+    throw std::invalid_argument("invalid SGX native type, mode or effects");
+  for (unsigned I = 0; I < Call.arg_size(); ++I)
+    if (Call.getArgOperand(I)->getType() !=
+        F->getFunctionType()->getParamType(I))
+      throw std::invalid_argument("invalid SGX native operand type");
+  return Id;
 }
 
 } // namespace
@@ -98,8 +190,13 @@ renderX86SgxExpression(Arch A, const HighExpr &E,
   std::vector<std::string> Arguments;
   for (const auto &V : E.Operands)
     Arguments.push_back(Expr(*V));
+  std::vector<std::string> OutputNames;
+  for (const auto &V : E.IntrinsicOutputs)
+    if (Alive(V))
+      OutputNames.push_back(Var(V));
+  const auto Locals = locals(localPrefix(Arguments, OutputNames), false);
   std::string Text =
-      "({ " + declarations(*P) + renderAsm(*P, Locals, Arguments);
+      "({ " + declarations(*P, Locals) + dispatch(*P, Locals, Arguments);
   for (unsigned I = 0; I < X86SgxAuxiliaryOutputs; ++I) {
     const auto &V = E.IntrinsicOutputs[I];
     if (V.Kind != MedVar::Temp || V.Id < 0 ||
@@ -114,6 +211,19 @@ renderX86SgxExpression(Arch A, const HighExpr &E,
 std::optional<std::string>
 renderX86SgxCall(Arch A, const llvm::CallInst &Call, const std::string &Result,
                  bool ResultLive, const std::vector<std::string> &Arguments) {
+  if (const auto Id = nativeId(Call, A)) {
+    if (Arguments.size() != Call.arg_size() || (ResultLive && Result.empty()))
+      throw std::invalid_argument("invalid SGX native result");
+    const auto P = *x86SgxAsm(*Id, A);
+    auto Outputs = locals(localPrefix(Arguments), true);
+    std::string Text = "{ ";
+    if (ResultLive)
+      for (unsigned I = 0; I < Outputs.size(); ++I)
+        Outputs[I] = Result + ".field_" + std::to_string(I);
+    else
+      Text += declarations(P, Outputs);
+    return Text + dispatch(P, Outputs, Arguments, true) + "}\n";
+  }
   const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
   if (!Asm)
     return {};
@@ -146,12 +256,14 @@ renderX86SgxCall(Arch A, const llvm::CallInst &Call, const std::string &Result,
   if (!Valid || (ResultLive && Result.empty()))
     throw std::invalid_argument("unsupported SGX inline assembly contract");
   if (ResultLive)
-    return renderAsm(
+    return dispatch(
                *P,
                {Result + ".field_0", Result + ".field_1", Result + ".field_2"},
                Arguments) +
            '\n';
-  return "{ " + declarations(*P) + renderAsm(*P, Locals, Arguments) + "}\n";
+  const auto Locals = locals(localPrefix(Arguments), false);
+  return "{ " + declarations(*P, Locals) + dispatch(*P, Locals, Arguments) +
+         "}\n";
 }
 
 } // namespace neverd

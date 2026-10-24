@@ -25,6 +25,7 @@
 #include "LocalTypesView.h"
 #include "MapPromptDialog.h"
 #include "MicrosoftSymbols.h"
+#include "ModelessDialog.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "PathfinderView.h"
@@ -153,7 +154,22 @@ QString chooserDockId(ChooserKind kind) {
   return QStringLiteral("chooser-%1").arg(int(kind));
 }
 
-/// Cross references in a modal chooser, like a classic xrefs dialog.
+/// A popup must consume shortcuts before its owning analysis pane sees them.
+class CommandPaletteDialog final : public QDialog {
+public:
+  using QDialog::QDialog;
+
+protected:
+  bool event(QEvent *event) override {
+    if (event->type() == QEvent::ShortcutOverride) {
+      event->accept();
+      return true;
+    }
+    return QDialog::event(event);
+  }
+};
+
+/// Browse references while keeping the originating analysis pane usable.
 class ReferencesDialog final : public QDialog {
 public:
   ReferencesDialog(Session &session, const AddressSpace &space,
@@ -162,6 +178,7 @@ public:
       : QDialog(parent),
         view_(new ChooserView(session, space, ChooserKind::CrossReferences,
                               this)) {
+    setObjectName(QStringLiteral("referencesDialog"));
     setWindowTitle(title);
     setWindowIcon(icon(QStringLiteral("xrefs")));
     resize(760, 360);
@@ -1890,12 +1907,9 @@ void MainWindow::connectActions() {
   on(ActionId::SearchHighlightDown, [this] { searchHighlight(true); });
   on(ActionId::SearchInView, [this] {
     auto *code = focusedCodeView();
-    if (!FindDialog) {
-      FindDialog = new FindInViewDialog(commandWindow());
-      connect(&session_, &Session::unloaded, FindDialog, &QDialog::reject);
-    }
-    if (FindDialog->parentWidget() != commandWindow())
-      FindDialog->setParent(commandWindow(), FindDialog->windowFlags());
+    if (!FindDialog)
+      FindDialog = new FindInViewDialog(commandView());
+    showModelessDialog(FindDialog, commandView(), &session_);
     FindDialog->search(code ? code->text() : nullptr, disassembly_->listing());
   });
 
@@ -2043,28 +2057,24 @@ void MainWindow::connectActions() {
     if (!PC || !session_.loaded() || !session_.reportsUnwindFrames() ||
         focusedCodeView())
       return;
-    auto *Dialog =
-        new UnwindInfoDialog(session_.queries(), *PC, commandWindow());
-    Dialog->setAttribute(Qt::WA_DeleteOnClose);
+    auto *Dialog = new UnwindInfoDialog(session_.queries(), *PC, commandView());
     const auto Update = [this, Dialog] {
       Dialog->setProviderAvailable(session_.connected() && session_.loaded(),
                                    session_.reportsUnwindFrames());
     };
     connect(&session_, &Session::stateChanged, Dialog, Update);
     Update();
-    Dialog->show();
+    showModelessDialog(Dialog, Dialog->parentWidget(), &session_);
   });
   on(ActionId::HelpX87Capabilities, [this] {
-    auto *Dialog =
-        new X87CapabilitiesDialog(session_.queries(), commandWindow());
-    Dialog->setAttribute(Qt::WA_DeleteOnClose);
+    auto *Dialog = new X87CapabilitiesDialog(session_.queries(), commandView());
     const auto Update = [this, Dialog] {
       Dialog->setProviderAvailable(session_.connected(),
                                    session_.reportsX87Capabilities());
     };
     connect(&session_, &Session::stateChanged, Dialog, Update);
     Update();
-    Dialog->show();
+    showModelessDialog(Dialog, Dialog->parentWidget());
   });
 }
 
@@ -2899,10 +2909,40 @@ void MainWindow::comment() {
 void MainWindow::jumpAnywhere() {
   if (!session_.loaded())
     return;
-  JumpDialog dialog(session_, commandWindow());
-  if (dialog.exec() != QDialog::Accepted)
-    return;
-  navigateExpression(dialog.result());
+  const auto epoch = session_.epoch();
+  const auto base = currentAddress();
+  const QPointer<DisassemblyView> assembly = disassembly_;
+  const bool hex = hexActive_;
+  auto *dialog = new JumpDialog(session_, commandView());
+  dialog->setObjectName(QStringLiteral("jumpDialog"));
+  connect(dialog, &QDialog::accepted, this,
+          [this, dialog, epoch, base, assembly, hex] {
+            if (!assembly || session_.epoch() != epoch)
+              return;
+            const auto text = dialog->result();
+            const auto serial = ++codeNavigationSerial_;
+            resolveExpression(
+                session_, this, text, base,
+                [this, text, epoch, serial, assembly,
+                 hex](std::optional<Address> value, const QString &error) {
+                  if (!assembly || session_.epoch() != epoch ||
+                      serial != codeNavigationSerial_)
+                    return;
+                  if (!value) {
+                    output_->append(
+                        tr("Cannot jump to %1: %2").arg(text, error), 2);
+                    return;
+                  }
+                  disassembly_ = assembly;
+                  overview_->setGraph(assembly->graph());
+                  hexActive_ = hex;
+                  jump(*value);
+                  (hex ? static_cast<QWidget *>(hex_) : assembly.data())
+                      ->window()
+                      ->activateWindow();
+                });
+          });
+  showModelessDialog(dialog, dialog->parentWidget(), &session_);
 }
 
 void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
@@ -2964,7 +3004,7 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
       QStringLiteral("resolve"), {{"query", query}}, view,
       [this, view, to, valid](const QJsonObject &payload) {
         const auto address = addressValue(payload.value("address"));
-        // Release the query delivery barrier before the modal chooser asks
+        // Release the query delivery barrier before the chooser asks
         // the same dispatcher to read its reference pages.
         QTimer::singleShot(0, view, [this, view, to, valid, address] {
           if (valid())
@@ -2983,29 +3023,40 @@ void MainWindow::showLocalReferences(CodeView *origin,
   auto references = view->text()->localReferences(target);
   if (references.isEmpty())
     return;
+  if (LocalReferencesDialog)
+    LocalReferencesDialog->reject();
+  QPointer<Dock> sourceDock;
+  for (auto *dock : std::as_const(docks_))
+    if (dock->widget() == view) {
+      sourceDock = dock;
+      break;
+    }
   const auto epoch = session_.epoch();
-  const auto serial = codeNavigationSerial_;
   const auto function = view->text()->function();
   const auto representation = view->representation();
   const auto version = view->text()->documentVersion();
-  const auto valid = [this, view, epoch, serial, function, representation,
+  const auto valid = [this, view, sourceDock, epoch, function, representation,
                       version] {
-    return view && session_.loaded() && view->isVisible() &&
-           epoch == session_.epoch() && serial == codeNavigationSerial_ &&
+    return view && sourceDock && sourceDock->isOpen() && session_.loaded() &&
+           view->text()->complete() && epoch == session_.epoch() &&
            function == view->text()->function() &&
            representation == view->representation() &&
            version == view->text()->documentVersion();
   };
-  QDialog dialog(view->window());
-  dialog.setObjectName(QStringLiteral("localReferencesDialog"));
-  dialog.setWindowTitle(tr("xrefs to %1").arg(target.value("name").toString()));
-  dialog.setWindowIcon(icon(QStringLiteral("xrefs")));
-  dialog.resize(760, 360);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *table = new QTableView(&dialog);
+  // The source view survives floating/docking; its temporary top-level
+  // window does not. Keep the modeless list owned by that stable view.
+  auto *dialog = new QDialog(view);
+  LocalReferencesDialog = dialog;
+  dialog->setObjectName(QStringLiteral("localReferencesDialog"));
+  dialog->setWindowTitle(
+      tr("xrefs to %1").arg(target.value("name").toString()));
+  dialog->setWindowIcon(icon(QStringLiteral("xrefs")));
+  dialog->resize(760, 360);
+  auto *layout = new QVBoxLayout(dialog);
+  auto *table = new QTableView(dialog);
   table->setObjectName(QStringLiteral("localReferencesTable"));
   auto *model = new LocalReferencesModel(
-      std::move(references), {tr("Line"), tr("Column"), tr("Code")}, &dialog);
+      std::move(references), {tr("Line"), tr("Column"), tr("Code")}, dialog);
   table->setModel(model);
   table->setSelectionBehavior(QAbstractItemView::SelectRows);
   table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -3018,28 +3069,45 @@ void MainWindow::showLocalReferences(CodeView *origin,
       1, QHeaderView::ResizeToContents);
   table->horizontalHeader()->setStretchLastSection(true);
   table->selectRow(0);
+  // Preview inside the originating document without taking focus from the
+  // list. clicked also covers clicking its already selected initial row.
+  const auto preview = [view, sourceDock, model, target,
+                        valid](const QModelIndex &index) {
+    if (valid())
+      if (const auto *reference = model->reference(index.row()))
+        if (view->text()->selectLocalReference(target, *reference))
+          sourceDock->setAsCurrentTab();
+  };
+  connect(table, &QTableView::clicked, dialog, preview);
+  connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged,
+          dialog, preview);
+  activateOnReturn(*table);
   layout->addWidget(table);
   auto *buttons = new QDialogButtonBox(
-      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
   layout->addWidget(buttons);
-  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  connect(table, &QTableView::activated, &dialog,
-          [&dialog](const QModelIndex &) { dialog.accept(); });
-  connect(&session_, &Session::unloaded, &dialog, &QDialog::reject);
-  connect(view, &QObject::destroyed, &dialog, &QDialog::reject);
-  connect(view->text(), &CodeText::statusChanged, &dialog, [&dialog, valid] {
+  connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+  connect(table, &QTableView::activated, dialog,
+          [dialog](const QModelIndex &) { dialog->accept(); });
+  connect(view->text(), &CodeText::statusChanged, dialog, [dialog, valid] {
     if (!valid())
-      dialog.reject();
+      dialog->reject();
   });
+  connect(dialog, &QDialog::accepted, dialog,
+          [view, sourceDock, model, table, target, valid] {
+            if (!valid())
+              return;
+            if (const auto *chosen =
+                    model->reference(table->currentIndex().row()))
+              if (view->text()->selectLocalReference(target, *chosen)) {
+                sourceDock->raise();
+                view->window()->activateWindow();
+                view->text()->setFocus();
+              }
+          });
+  showModelessDialog(dialog, view, &session_);
   table->setFocus();
-  if (dialog.exec() != QDialog::Accepted || !valid())
-    return;
-  if (const auto *chosen = model->reference(table->currentIndex().row()))
-    if (view->text()->selectLocalReference(target, *chosen)) {
-      view->window()->activateWindow();
-      view->text()->setFocus();
-    }
 }
 
 void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
@@ -3047,34 +3115,51 @@ void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
   if (!address || !session_.loaded())
     return;
   const QPointer<CodeView> view = origin;
+  const QPointer<DisassemblyView> assembly = disassembly_;
+  auto *source = origin ? static_cast<QWidget *>(origin) : commandView();
   const auto epoch = session_.epoch();
-  const auto serial = codeNavigationSerial_;
   const auto function = view ? view->text()->function() : std::nullopt;
   const auto representation = view ? view->representation() : QString();
-  const auto sourceOptions =
-      view ? view->text()->sourceOptions() : QJsonObject();
+  const auto version = view ? view->text()->documentVersion() : 0;
+  const auto valid = [this, view, assembly, epoch, function, representation,
+                      version, code = bool(view)] {
+    return session_.loaded() && session_.epoch() == epoch && assembly &&
+           (!code || (view && view->text()->function() == function &&
+                      view->representation() == representation &&
+                      view->text()->documentVersion() == version));
+  };
   const int digits = session_.bitness() == 64 ? 16 : 8;
   const QString title = (to ? tr("xrefs to %1") : tr("xrefs from %1"))
                             .arg(displayAddress(*address, digits));
-  ReferencesDialog dialog(
+  auto *dialog = new ReferencesDialog(
       session_, space_, title,
       {{"address", hexAddress(*address)}, {"direction", to ? "to" : "from"}},
-      commandWindow());
-  if (dialog.exec() != QDialog::Accepted || epoch != session_.epoch() ||
-      serial != codeNavigationSerial_)
-    return;
-  if (const auto chosen = dialog.chosen()) {
-    if (origin) {
-      if (view && view->isVisible() && view->text()->function() == function &&
-          view->text()->sourceOptions() == sourceOptions &&
-          view->representation() == representation)
-        activateCodeName(view, hexAddress(*chosen), true);
-    } else {
-      navigate(*chosen);
-      disassembly_->window()->activateWindow();
-      disassembly_->focusContent();
-    }
-  }
+      source);
+  if (view)
+    connect(view->text(), &CodeText::statusChanged, dialog, [dialog, valid] {
+      if (!valid())
+        dialog->reject();
+    });
+  connect(dialog, &QDialog::accepted, this,
+          [this, dialog, view, assembly, valid] {
+            if (!valid())
+              return;
+            if (const auto chosen = dialog->chosen()) {
+              disassembly_ = assembly;
+              overview_->setGraph(assembly->graph());
+              if (view) {
+                for (auto *dock : std::as_const(docks_))
+                  if (dock->widget() == view)
+                    dock->setAsCurrentTab();
+                activateCodeName(view, hexAddress(*chosen), true);
+              } else {
+                navigate(*chosen);
+                assembly->window()->activateWindow();
+                assembly->focusContent();
+              }
+            }
+          });
+  showModelessDialog(dialog, source, &session_);
 }
 
 void MainWindow::showPseudocode(const QString &representation,
@@ -3257,7 +3342,7 @@ void MainWindow::queryRegister(const QString &kind) {
     return;
   const auto epoch = session_.epoch();
   const auto revision = session_.revision();
-  const QPointer<QWidget> owner = commandWindow();
+  const QPointer<QWidget> owner = commandView();
   const auto token = disassembly_->currentToken();
   QJsonObject request{{"address", hexAddress(*function)},
                       {"instruction", hexAddress(*address)},
@@ -3311,14 +3396,17 @@ void MainWindow::queryRegister(const QString &kind) {
                   currentFunction() != function || currentAddress() != address)
                 return;
               if (kind == "value") {
-                QMessageBox::information(
-                    owner, tr("Static register value"),
+                auto *dialog = new QMessageBox(
+                    QMessageBox::Information, tr("Static register value"),
                     reply.value("register").toString() + " @ " +
                         hexAddress(*address) + " (before instruction)\n" +
                         (reply.value("value").isString()
                              ? reply.value("value").toString()
                              : tr("Unknown: ") +
-                                   reply.value("reason").toString()));
+                                   reply.value("reason").toString()),
+                    QMessageBox::Ok, owner);
+                dialog->setObjectName(QStringLiteral("registerValueDialog"));
+                showModelessDialog(dialog, owner, &session_);
                 return;
               }
               auto items = reply.value("items").toArray();
@@ -3392,44 +3480,58 @@ void MainWindow::stepFunction(bool forward) {
 }
 
 void MainWindow::showCalculator() {
-  const QPointer<QWidget> owner = commandWindow();
+  const QPointer<QWidget> owner = commandView();
   const auto epoch = session_.epoch();
-  bool ok = false;
-  const auto text =
-      QInputDialog::getText(owner, tr("Evaluate expression"), tr("Expression:"),
-                            QLineEdit::Normal, {}, &ok);
-  if (!ok || text.trimmed().isEmpty())
-    return;
-  resolveExpression(
-      session_, this, text, currentAddress(),
-      [this, owner, epoch](std::optional<Address> value, const QString &error) {
-        if (!owner || session_.epoch() != epoch)
-          return;
-        if (!value) {
-          QMessageBox::warning(owner, tr("Evaluate expression"), error);
-          return;
-        }
-        const QString result =
-            tr("Hex: %1h\nDecimal: %2\nOctal: %3\nSigned: %4")
-                .arg(displayAddress(*value))
-                .arg(*value)
-                .arg(QString::number(*value, 8))
-                .arg(qint64(*value));
-        QMessageBox::information(owner, tr("Evaluate expression"), result);
-        output_->append(
-            result.split(QLatin1Char('\n')).join(QStringLiteral("  ")), 0);
-      });
+  const auto base = currentAddress();
+  auto *input = new QInputDialog(owner);
+  input->setObjectName(QStringLiteral("calculatorDialog"));
+  input->setWindowTitle(tr("Evaluate expression"));
+  input->setLabelText(tr("Expression:"));
+  input->setInputMode(QInputDialog::TextInput);
+  connect(input, &QDialog::accepted, this, [this, input, owner, epoch, base] {
+    const auto text = input->textValue();
+    if (text.trimmed().isEmpty() || !owner || session_.epoch() != epoch)
+      return;
+    resolveExpression(
+        session_, this, text, base,
+        [this, owner, epoch](std::optional<Address> value,
+                             const QString &error) {
+          if (!owner || session_.epoch() != epoch)
+            return;
+          const QString result =
+              value ? tr("Hex: %1h\nDecimal: %2\nOctal: %3\nSigned: %4")
+                          .arg(displayAddress(*value))
+                          .arg(*value)
+                          .arg(QString::number(*value, 8))
+                          .arg(qint64(*value))
+                    : error;
+          auto *dialog = new QMessageBox(
+              value ? QMessageBox::Information : QMessageBox::Warning,
+              tr("Evaluate expression"), result, QMessageBox::Ok, owner);
+          dialog->setObjectName(QStringLiteral("calculatorResultDialog"));
+          showModelessDialog(dialog, owner, &session_);
+          if (value)
+            output_->append(
+                result.split(QLatin1Char('\n')).join(QStringLiteral("  ")), 0);
+        });
+  });
+  showModelessDialog(input, owner, &session_);
 }
 
 void MainWindow::showAbout() {
-  QMessageBox::about(
-      commandWindow(), tr("About NeverD"),
+  auto *dialog = new QMessageBox(
+      QMessageBox::NoIcon, tr("About NeverD"),
       tr("<h3>NeverD %1</h3><p>Interactive disassembler and decompiler "
          "workbench.</p><p>Licensed under the GNU Affero General Public "
          "License v3. Icons are original NeverD artwork.</p>"
          "<p><a href=\"https://github.com/NeverSight/NeverD\">"
          "github.com/NeverSight/NeverD</a></p>")
-          .arg(QCoreApplication::applicationVersion()));
+          .arg(QCoreApplication::applicationVersion()),
+      QMessageBox::Ok, commandView());
+  dialog->setObjectName(QStringLiteral("aboutDialog"));
+  dialog->setIconPixmap(
+      windowIcon().pixmap(style()->pixelMetric(QStyle::PM_MessageBoxIconSize)));
+  showModelessDialog(dialog, dialog->parentWidget());
 }
 
 void MainWindow::chooseFont() {
@@ -3620,6 +3722,18 @@ QWidget *MainWindow::commandFocusWidget() const {
   return QApplication::focusWidget();
 }
 
+QWidget *MainWindow::commandView() const {
+  if (auto *focus = commandFocusWidget())
+    for (auto *dock : docks_)
+      if (dock == focus || dock->isAncestorOf(focus))
+        return dock->widget();
+  if (auto *active = QApplication::activeWindow())
+    for (auto *dock : docks_)
+      if (dock->QWidget::window() == active && dock->isFocused())
+        return dock->widget();
+  return const_cast<MainWindow *>(this);
+}
+
 QWidget *MainWindow::commandWindow() const {
   if (auto *focus = commandFocusWidget())
     for (auto *dock : docks_)
@@ -3639,9 +3753,9 @@ void MainWindow::exportData() {
                                 : disassembly_->listing()->byteSelection();
   if (!range || focusedCodeView())
     return;
-  ExportDataDialog dialog(session_, range->first, range->second,
-                          commandWindow());
-  dialog.exec();
+  auto *dialog = new ExportDataDialog(session_, range->first, range->second,
+                                      commandView());
+  showModelessDialog(dialog, dialog->parentWidget(), &session_);
 }
 
 void MainWindow::copySelection() {
@@ -3675,66 +3789,83 @@ void MainWindow::copySelection() {
 }
 
 void MainWindow::chooseLocation(ChooserKind kind, ActionId command) {
-  QDialog dialog(commandWindow());
-  dialog.setObjectName(QStringLiteral("locationChooser"));
-  dialog.setWindowTitle(
+  const auto epoch = session_.epoch();
+  const QPointer<DisassemblyView> assembly = disassembly_;
+  const QPointer<CodeView> code = lastCodeView_;
+  const bool hex = hexActive_;
+  auto *dialog = new QDialog(commandView());
+  dialog->setObjectName(QStringLiteral("locationChooser"));
+  dialog->setWindowTitle(
       actions_.action(command)->text().remove(QLatin1Char('&')));
-  dialog.resize(::neverd::limits::gui_config::kLocationChooserDialogSize);
-  dialog.setSizeGripEnabled(true);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *view = new ChooserView(session_, space_, kind, &dialog);
+  dialog->resize(::neverd::limits::gui_config::kLocationChooserDialogSize);
+  dialog->setSizeGripEnabled(true);
+  auto *layout = new QVBoxLayout(dialog);
+  auto *view = new ChooserView(session_, space_, kind, dialog);
   view->setObjectName(QStringLiteral("locationChooserView"));
   view->table()->setSelectionMode(QAbstractItemView::SingleSelection);
   layout->addWidget(view);
   auto *buttons = new QDialogButtonBox(
-      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
   auto *ok = buttons->button(QDialogButtonBox::Ok);
   ok->setEnabled(false);
   layout->addWidget(buttons);
-  connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+  connect(buttons, &QDialogButtonBox::accepted, dialog, [view, dialog] {
     if (view->currentAddress())
-      dialog.accept();
+      dialog->accept();
   });
-  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  connect(view, &ChooserView::activated, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+  connect(view, &ChooserView::activated, dialog, &QDialog::accept);
   connect(view->table()->selectionModel(), &QItemSelectionModel::currentChanged,
-          &dialog,
+          dialog,
           [view, ok] { ok->setEnabled(view->currentAddress().has_value()); });
-  connect(&view->model(), &ChooserModel::totalChanged, &dialog,
+  connect(&view->model(), &ChooserModel::totalChanged, dialog,
           [view, ok](int total) {
             if (total && !view->table()->currentIndex().isValid())
               view->table()->setCurrentIndex(view->model().index(0, 0));
             ok->setEnabled(view->currentAddress().has_value());
           });
-  connect(&session_, &Session::unloaded, &dialog, &QDialog::reject);
   view->model().reload();
   view->table()->setFocus();
-  if (dialog.exec() == QDialog::Accepted)
-    if (const auto target = view->currentAddress()) {
-      if (kind == ChooserKind::Functions)
-        activateFunction(*target);
-      else
-        jump(*target);
-    }
+  connect(dialog, &QDialog::accepted, this,
+          [this, view, assembly, code, hex, epoch, kind] {
+            if (!assembly || session_.epoch() != epoch)
+              return;
+            if (const auto target = view->currentAddress()) {
+              disassembly_ = assembly;
+              overview_->setGraph(assembly->graph());
+              lastCodeView_ = code;
+              hexActive_ = hex;
+              if (kind == ChooserKind::Functions) {
+                if (code)
+                  for (auto *dock : std::as_const(docks_))
+                    if (dock->widget() == code)
+                      dock->setAsCurrentTab();
+                activateFunction(*target);
+              } else {
+                jump(*target);
+              }
+            }
+          });
+  showModelessDialog(dialog, dialog->parentWidget(), &session_);
 }
 
 void MainWindow::showShortcuts() {
-  QDialog dialog(commandWindow());
-  dialog.setObjectName(QStringLiteral("shortcutsDialog"));
-  dialog.setWindowTitle(tr("Shortcuts"));
-  dialog.resize(::neverd::limits::gui_config::kShortcutsDialogSize);
-  dialog.setSizeGripEnabled(true);
-  auto *layout = new QVBoxLayout(&dialog);
+  auto *dialog = new QDialog(commandView());
+  dialog->setObjectName(QStringLiteral("shortcutsDialog"));
+  dialog->setWindowTitle(tr("Shortcuts"));
+  dialog->resize(::neverd::limits::gui_config::kShortcutsDialogSize);
+  dialog->setSizeGripEnabled(true);
+  auto *layout = new QVBoxLayout(dialog);
   auto *note = new QLabel(
-      tr("List commands take priority while their list has focus."), &dialog);
+      tr("List commands take priority while their list has focus."), dialog);
   note->setWordWrap(true);
   layout->addWidget(note);
-  auto *filter = new QLineEdit(&dialog);
+  auto *filter = new QLineEdit(dialog);
   filter->setObjectName(QStringLiteral("shortcutsFilter"));
   filter->setPlaceholderText(tr("Filter by action, shortcut or scope"));
   filter->setClearButtonEnabled(true);
   layout->addWidget(filter);
-  auto *tree = new QTreeWidget(&dialog);
+  auto *tree = new QTreeWidget(dialog);
   tree->setObjectName(QStringLiteral("shortcutsList"));
   tree->setHeaderLabels({tr("Action"), tr("Shortcut"), tr("Scope")});
   tree->setRootIsDecorated(false);
@@ -3773,37 +3904,38 @@ void MainWindow::showShortcuts() {
   tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
   tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   tree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-  connect(
-      filter, &QLineEdit::textChanged, &dialog, [tree](const QString &text) {
-        const QString query = text.trimmed();
-        for (int row = 0; row < tree->topLevelItemCount(); ++row) {
-          auto *item = tree->topLevelItem(row);
-          bool matches = item->data(1, Qt::UserRole)
-                             .toString()
-                             .contains(query, Qt::CaseInsensitive);
-          for (int column = 0; column < tree->columnCount(); ++column)
-            matches |= item->text(column).contains(query, Qt::CaseInsensitive);
-          item->setHidden(!matches);
-        }
-      });
+  connect(filter, &QLineEdit::textChanged, dialog, [tree](const QString &text) {
+    const QString query = text.trimmed();
+    for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+      auto *item = tree->topLevelItem(row);
+      bool matches = item->data(1, Qt::UserRole)
+                         .toString()
+                         .contains(query, Qt::CaseInsensitive);
+      for (int column = 0; column < tree->columnCount(); ++column)
+        matches |= item->text(column).contains(query, Qt::CaseInsensitive);
+      item->setHidden(!matches);
+    }
+  });
   layout->addWidget(tree);
-  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
   layout->addWidget(buttons);
   filter->setFocus();
-  dialog.exec();
+  showModelessDialog(dialog, dialog->parentWidget());
 }
 
 void MainWindow::showCommandPalette() {
-  auto *owner = commandWindow();
-  QDialog dialog(owner, Qt::Popup | Qt::FramelessWindowHint);
-  dialog.setObjectName(QStringLiteral("commandPalette"));
-  dialog.setWindowTitle(tr("Command palette"));
-  dialog.resize(560, 420);
-  auto *layout = new QVBoxLayout(&dialog);
-  auto *filter = new QLineEdit(&dialog);
+  auto *owner = commandView();
+  const QPointer<QWidget> focus = commandFocusWidget();
+  auto *dialog =
+      new CommandPaletteDialog(owner, Qt::Popup | Qt::FramelessWindowHint);
+  dialog->setObjectName(QStringLiteral("commandPalette"));
+  dialog->setWindowTitle(tr("Command palette"));
+  dialog->resize(560, 420);
+  auto *layout = new QVBoxLayout(dialog);
+  auto *filter = new QLineEdit(dialog);
   filter->setPlaceholderText(tr("Type a command"));
-  auto *list = new QListWidget(&dialog);
+  auto *list = new QListWidget(dialog);
   activateOnReturn(*list);
   // Shortcuts line up at the right of their commands.
   list->setItemDelegate(new SecondaryTextDelegate(std::nullopt, list));
@@ -3826,21 +3958,29 @@ void MainWindow::showCommandPalette() {
       list->setCurrentRow(0);
   };
   populate({});
-  connect(filter, &QLineEdit::textChanged, &dialog, populate);
-  connect(filter, &QLineEdit::returnPressed, &dialog, &QDialog::accept);
-  connect(list, &QListWidget::itemActivated, &dialog, &QDialog::accept);
-  filter->installEventFilter(&dialog);
-  dialog.move(owner->mapToGlobal(owner->rect().center()) -
-              dialog.rect().center());
-  if (dialog.exec() != QDialog::Accepted || !list->currentItem())
-    return;
-  const QString id = list->currentItem()->data(Qt::UserRole).toString();
-  for (auto *action : actions_.allActions())
-    if (action->objectName() == id) {
-      lastPaletteCommand_ = id;
-      action->trigger();
+  connect(filter, &QLineEdit::textChanged, dialog, populate);
+  connect(filter, &QLineEdit::returnPressed, dialog, &QDialog::accept);
+  connect(list, &QListWidget::itemActivated, dialog, &QDialog::accept);
+  dialog->move(owner->mapToGlobal(owner->rect().center()) -
+               dialog->rect().center());
+  connect(dialog, &QDialog::accepted, this, [this, list, focus] {
+    if (!list->currentItem())
       return;
-    }
+    const QString id = list->currentItem()->data(Qt::UserRole).toString();
+    // Release the popup grab before a command opens another dialog. The
+    // command still belongs to the analysis widget that opened the palette.
+    QTimer::singleShot(0, this, [this, id, focus] {
+      QScopedValueRollback<QPointer<QWidget>> context(contextMenuFocus_, focus);
+      for (auto *action : actions_.allActions())
+        if (action->objectName() == id && action->isEnabled()) {
+          lastPaletteCommand_ = id;
+          action->trigger();
+          return;
+        }
+    });
+  });
+  showModelessDialog(dialog, owner, &session_);
+  filter->setFocus();
 }
 
 void MainWindow::exportCurrent(bool pseudocode) {
@@ -5183,8 +5323,8 @@ QString MainWindow::bookmarksKey() const {
 }
 
 void MainWindow::showConnections() {
-  ConnectionsDialog dialog(session_, mcp_, broker_, commandWindow());
-  dialog.exec();
+  auto *dialog = new ConnectionsDialog(session_, mcp_, broker_, commandView());
+  showModelessDialog(dialog, dialog->parentWidget());
 }
 
 void MainWindow::changeEvent(QEvent *event) {

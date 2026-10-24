@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
+#include "neverd/backend/llvm/X86DescriptorStateNative.h"
 #include "neverd/backend/llvm/X86ScalarSystemNative.h"
 #include "neverd/backend/llvm/X86SystemRegisterAsm.h"
 
@@ -29,6 +30,7 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -398,32 +400,6 @@ bool MedLLVMEmitter::emitX86SystemAsm(const MedOp &Op, Intrinsic IC,
                                       llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
-  // Descriptor-table loads/stores + INVLPG: single memory-address operand.
-  const char *MemMn = nullptr;
-  switch (IC) {
-  case I::Lgdt:
-    MemMn = "lgdt";
-    break;
-  case I::Lidt:
-    MemMn = "lidt";
-    break;
-  case I::Sgdt:
-    MemMn = "sgdt";
-    break;
-  case I::Sidt:
-    MemMn = "sidt";
-    break;
-  case I::Invlpg:
-    MemMn = "invlpg";
-    break;
-  default:
-    break;
-  }
-  if (MemMn) {
-    emitX86MemPtrAsm(MemMn, Op, Builder);
-    return true;
-  }
-
   // XABORT imm8: immediate baked into the asm text (like INT N).
   if (IC == I::Xabort) {
     auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
@@ -442,51 +418,6 @@ bool MedLLVMEmitter::emitX86SystemAsm(const MedOp &Op, Intrinsic IC,
   if (IC == I::Out) {
     emitX86ScalarSystem(Op, IC, Builder);
     return true;
-  }
-
-  // r/m16 system-register loads (read): LLDT/LTR/LMSW.
-  const char *RmRead = nullptr;
-  switch (IC) {
-  case I::Lldt:
-    RmRead = "lldt";
-    break;
-  case I::Ltr:
-    RmRead = "ltr";
-    break;
-  case I::Lmsw:
-    RmRead = "lmsw";
-    break;
-  default:
-    break;
-  }
-  if (RmRead) {
-    if (Op.NumInputs > 1 && Op.Inputs[1].Size == 8) {
-      emitX86MemPtrAsm(RmRead, Op, Builder); // memory form: `mnemonic (addr)`
-    } else if (Op.NumInputs > 1) {
-      auto *V = getVar(Op.Inputs[1], Builder); // register form: `mnemonic reg`
-      auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
-      auto *FnTy = llvm::FunctionType::get(VoidTy, {V->getType()}, false);
-      auto *IA = llvm::InlineAsm::get(FnTy, std::string(RmRead) + " $0",
-                                      "r,~{memory}", /*hasSideEffects=*/true);
-      Builder.CreateCall(IA, {V});
-    } else {
-      emitX86MemPtrAsm(RmRead, Op, Builder); // no operand captured: bare
-    }
-    return true;
-  }
-
-  // r/m16 system-register stores: SLDT/STR/SMSW.  Memory form is a side-effect
-  // (store through pointer); the register-destination form is value-producing
-  // and handled in the value emitter (return false here).
-  if (IC == I::Sldt || IC == I::Str || IC == I::Smsw) {
-    if (Op.NumInputs > 1) {
-      const char *Mn = (IC == I::Sldt)  ? "sldt"
-                       : (IC == I::Str) ? "str"
-                                        : "smsw";
-      emitX86MemPtrAsm(Mn, Op, Builder);
-      return true;
-    }
-    return false;
   }
 
   // BOUND idx, (base) — 32-bit range check (side-effect).
@@ -509,20 +440,59 @@ bool MedLLVMEmitter::emitX86SystemAsm(const MedOp &Op, Intrinsic IC,
   return false;
 }
 
-//===----------------------------------------------------------------------===//
-// SLDT/STR/SMSW with a register destination (value-producing)
-//===----------------------------------------------------------------------===//
-
-llvm::Value *MedLLVMEmitter::emitX86SysRegStore(const MedOp &Op, Intrinsic IC,
-                                                llvm::IRBuilder<> &Builder) {
-  using I = Intrinsic;
-  const char *Mn = (IC == I::Sldt) ? "sldt" : (IC == I::Str) ? "str" : "smsw";
-  unsigned Bytes = Op.Output.Size ? Op.Output.Size : 2;
-  auto *Ty = sizeToType(Bytes);
-  auto *FnTy = llvm::FunctionType::get(Ty, {}, false);
-  auto *IA = llvm::InlineAsm::get(FnTy, std::string(Mn) + " $0", "=r,~{memory}",
-                                  /*hasSideEffects=*/true);
-  return Builder.CreateCall(IA, {});
+// Descriptor memory accesses remain inside their native instruction.
+llvm::Value *
+MedLLVMEmitter::emitX86DescriptorState(const MedOp &Op, Intrinsic IC,
+                                       llvm::IRBuilder<> &Builder) {
+  if (!x86DescriptorStateMedShapeIsValid(Op, TargetArch) ||
+      Op.Inputs[0].ConstVal != unsigned(IC))
+    llvm::report_fatal_error(
+        llvm::Twine("invalid x86 descriptor state contract: ") +
+        intrinsicName(IC) + ", inputs=" + llvm::Twine(unsigned(Op.NumInputs)) +
+        ", output bytes=" + llvm::Twine(Op.Output.Size) + ", output kind=" +
+        llvm::Twine(unsigned(Op.Output.Kind)) + ", operand bytes=" +
+        llvm::Twine(Op.NumInputs > 1 ? Op.Inputs[1].Size : 0) +
+        ", operand kind=" +
+        llvm::Twine(Op.NumInputs > 1 ? unsigned(Op.Inputs[1].Kind) : 0));
+  const auto P = x86DescriptorStateNative(
+      IC, TargetArch, Op.NumInputs == 2 && Op.Inputs[1].Size == 8,
+      Op.Output.Size, Op.MemoryAddressSpace);
+  if (!P)
+    llvm::report_fatal_error("invalid x86 descriptor state mode");
+  llvm::SmallVector<llvm::Value *, 3> Arguments;
+  if (P->OperandBytes) {
+    llvm::Value *Value;
+    if (P->Memory && Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      Value = resolveAtomicMemoryPtr(Op.Inputs[1], P->MemoryBytes,
+                                     Builder.getInt8Ty(), Builder);
+    else
+      Value = P->Memory ? getRawSegmentOffset(Op.Inputs[1], Builder)
+                        : getVar(Op.Inputs[1], Builder);
+    if (!P->Memory || P->Address) {
+      auto *Ty = sizeToType(P->OperandBytes);
+      Value = Value->getType()->isPointerTy()
+                  ? Builder.CreatePtrToInt(Value, Ty)
+                  : Builder.CreateZExtOrTrunc(Value, Ty);
+    }
+    Arguments.push_back(Value);
+  }
+  const auto Native = llvm::Intrinsic::lookupIntrinsicID(P->LLVMName);
+  if (Native != llvm::Intrinsic::not_intrinsic) {
+    if (P->Address) {
+      Arguments.push_back(Builder.getInt32(P->Address->Bits));
+      Arguments.push_back(Builder.getInt32(P->Address->Prefix));
+    }
+    return Builder.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(Mod, Native), Arguments);
+  }
+  llvm::SmallVector<llvm::Type *, 1> Types;
+  for (const auto *Value : Arguments)
+    Types.push_back(Value->getType());
+  auto *ResultTy =
+      P->ResultBytes ? sizeToType(P->ResultBytes) : Builder.getVoidTy();
+  auto *FnTy = llvm::FunctionType::get(ResultTy, Types, false);
+  return Builder.CreateCall(
+      llvm::InlineAsm::get(FnTy, P->Text, P->Constraints, true), Arguments);
 }
 
 //===----------------------------------------------------------------------===//
@@ -799,28 +769,6 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
         llvm::InlineAsm::get(FnTy, std::string("mov ${0:w}, %") + Segment,
                              "r,~{memory}", /*hasSideEffects=*/true);
     Builder.CreateCall(IA, {Value});
-    return true;
-  }
-
-  // VERR/VERW whose ZF is dead keep their effect; with a live ZF the value
-  // emitter lowers them.
-  if (IC == I::Verr || IC == I::Verw) {
-    if (Op.Output.Size != 0)
-      return false;
-    const char *Mn = IC == I::Verr ? "verr" : "verw";
-    if (Op.NumInputs == 2 && Op.Inputs[1].Size == 8) {
-      emitX86MemPtrAsm(Mn, Op, Builder);
-    } else if (Op.NumInputs == 2) {
-      auto *V = getVar(Op.Inputs[1], Builder);
-      auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
-                                           {V->getType()}, false);
-      auto *IA = llvm::InlineAsm::get(FnTy, std::string(Mn) + " $0",
-                                      "r,~{cc},~{memory}",
-                                      /*hasSideEffects=*/true);
-      Builder.CreateCall(IA, {V});
-    } else {
-      llvm::report_fatal_error("x86 VERR/VERW has an invalid operand shape");
-    }
     return true;
   }
 

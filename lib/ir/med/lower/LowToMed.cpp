@@ -21,10 +21,12 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/RuntimeRoutineIntrinsics.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/intrinsics/X86DescriptorState.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -366,6 +368,44 @@ bool LowToMedConverter::bindFormattedCall(MedBlock &MB, MedOp &MOp,
   return true;
 }
 
+MedVar LowToMedConverter::loadCallStackArgument(MedBlock &Block,
+                                                const LowOp &Call,
+                                                int64_t EntryOffset,
+                                                uint16_t Bytes, bool TailCall) {
+  const auto &TRI = getTargetRegInfo(TargetArch);
+  const auto Temporary = [&](uint16_t Size) {
+    MedVar Value;
+    Value.Kind = MedVar::Temp;
+    Value.Id = allocVarId();
+    Value.Size = Size;
+    Value.TheArch = TargetArch;
+    return Value;
+  };
+  // CALL's lift is SP-neutral. Only x86 pushes a physical return address;
+  // a tail jump already sees the destination's entry stack position.
+  const int64_t Bias =
+      (TargetArch == Arch::X64 || TargetArch == Arch::X86) && !TailCall
+          ? TRI.PointerSize
+          : 0;
+  MedOp Address;
+  Address.Opcode = NdOp::INT_ADD;
+  Address.Addr = Call.Addr;
+  Address.Output = Temporary(TRI.PointerSize);
+  Address.addInput(
+      ndVarToMedVar(NdVar::reg(TRI.StackPointer, TRI.PointerSize)));
+  Address.addInput(MedVar::makeConst(EntryOffset - Bias, TRI.PointerSize,
+                                     ConstantAddressProvenance::Scalar));
+  MedOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.Addr = Call.Addr;
+  Load.Output = Temporary(Bytes);
+  Load.addInput(Address.Output);
+  const auto Value = Load.Output;
+  Block.Ops.push_back(std::move(Address));
+  Block.Ops.push_back(std::move(Load));
+  return Value;
+}
+
 unsigned LowToMedConverter::variadicImportFixedCount(va_t Key) const {
   if (!Image || !Key)
     return 0;
@@ -442,6 +482,28 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
   const int8_t Slots =
       static_cast<int8_t>(std::min<size_t>(ArgRegs.size(), kTrackedArgSlots));
   if (Convention && Convention->ImportArgumentsFromPrototype &&
+      CallEntryIntegerArguments && MOp.NumInputs == 1)
+    if (const auto I = CallEntryIntegerArguments->find(ArgumentsKey);
+        I != CallEntryIntegerArguments->end()) {
+      MOp.IntegerCallSignature =
+          std::make_shared<FixedIntegerCallArguments>(I->second);
+      MOp.CalleeRegisterArgs = 0;
+      MOp.CalleeVectorArgs = 0;
+      MOp.CalleeStackArgs = I->second.Parameters.size();
+      for (const auto &Parameter : I->second.Parameters) {
+        if (Parameter.Kind == SourceABICarrierKind::Stack) {
+          MOp.addInput(loadCallStackArgument(Block, LOp, Parameter.StackOffset,
+                                             Parameter.Bytes, TailCall));
+        } else {
+          MOp.addInput(ndVarToMedVar(NdVar::reg(
+              Parameter.Register, TargetArch == Arch::AArch64
+                                      ? std::max<uint16_t>(4, Parameter.Bytes)
+                                      : Parameter.Bytes)));
+          ++MOp.CalleeRegisterArgs;
+        }
+      }
+    }
+  if (Convention && Convention->ImportArgumentsFromPrototype &&
       CallEntryVariadicArguments && MOp.NumInputs == 1)
     if (const auto V = CallEntryVariadicArguments->find(ArgumentsKey);
         V != CallEntryVariadicArguments->end()) {
@@ -497,29 +559,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
                     : Parameter.Bytes)));
             continue;
           }
-          // Ordinary x64 CALL pushes a return PC; the lift is SP-neutral.
-          // A tail jump already sees the callee's entry stack position.
-          const int64_t Bias =
-              (TargetArch == Arch::X64 || TargetArch == Arch::X86) && !TailCall
-                  ? TRI.PointerSize
-                  : 0;
-          MedOp Address;
-          Address.Opcode = NdOp::INT_ADD;
-          Address.Addr = LOp.Addr;
-          Address.Output = Temporary(TRI.PointerSize);
-          Address.addInput(
-              ndVarToMedVar(NdVar::reg(TRI.StackPointer, TRI.PointerSize)));
-          Address.addInput(
-              MedVar::makeConst(Parameter.StackOffset - Bias, TRI.PointerSize,
-                                ConstantAddressProvenance::Scalar));
-          MedOp Load;
-          Load.Opcode = NdOp::LOAD;
-          Load.Addr = LOp.Addr;
-          Load.Output = Temporary(Parameter.Bytes);
-          Load.addInput(Address.Output);
-          MOp.addInput(Load.Output);
-          Block.Ops.push_back(std::move(Address));
-          Block.Ops.push_back(std::move(Load));
+          MOp.addInput(loadCallStackArgument(Block, LOp, Parameter.StackOffset,
+                                             Parameter.Bytes, TailCall));
         }
         MOp.CalleeFloatReturnBytes =
             Signature.ReturnElements ? 0 : Signature.ReturnBytes;
@@ -552,7 +593,7 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
   // integer arguments, the registers' first: its calls pass those and no
   // other register.  The setup supplies the values.  Its stack arguments
   // are counted as positions, the registers' included, or 0 for none.
-  if (!MOp.ScalarCallSignature && Convention &&
+  if (!MOp.ScalarCallSignature && !MOp.IntegerCallSignature && Convention &&
       Convention->ArgumentsFromCallSetup &&
       Convention->ImportArgumentsFromPrototype &&
       !Convention->RegparmOnlyForInternalCalls && CallEntryArgumentCounts)
@@ -733,6 +774,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
           llvm::report_fatal_error("intrinsic has no constant intrinsic ID");
         const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+        if (isAArch64ExceptionReturnIntrinsic(Id))
+          throw LowToMedConversionError(kAArch64ExceptionReturnUnsupported);
         if (Id == Intrinsic::A64_PACMPending)
           throw LowToMedConversionError(kAArch64PAuthMalformedOperation);
         if (isApxAtomicIntrinsic(Id)) {
@@ -740,6 +783,16 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
                                               apxAtomicLowShape(Op, TheArch)))
             llvm::report_fatal_error(
                 "APX atomic intrinsic has an invalid operand/output contract");
+          continue;
+        }
+        if (isX86DescriptorStateIntrinsic(Id)) {
+          if (Op.Inputs[0].Size != 2 ||
+              Op.Inputs[0].Offset != static_cast<uint64_t>(Id) ||
+              !x86DescriptorStateShapeIsValid(
+                  Id, TheArch, Op.NumInputs, Op.Output.Size,
+                  Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
+                  Op.MemoryAddressSpace, Op.MemoryOrdering))
+            llvm::report_fatal_error("invalid descriptor state LowIR shape");
           continue;
         }
         if (Id == Intrinsic::X86AMXState) {

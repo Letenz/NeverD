@@ -264,3 +264,9 @@ SIDEEFFECT(Intrinsic::X86Enclv);
 SIDEEFFECT(Intrinsic::X86SegmentedBlockMemory);
 
 SIDEEFFECT(Intrinsic::X86AMXState);
+
+// Legacy descriptor-table operand sizes.
+SIDEEFFECT(Intrinsic::X86Lgdt16);
+SIDEEFFECT(Intrinsic::X86Lidt16);
+SIDEEFFECT(Intrinsic::X86Sgdt16);
+SIDEEFFECT(Intrinsic::X86Sidt16);
