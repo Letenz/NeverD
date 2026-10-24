@@ -16,6 +16,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/SourceFrameBytes.h"
@@ -295,6 +296,9 @@ struct MedOp {
   uint16_t CalleeFloatReturnBytes = 0;
   /// Complete mixed header operands, bound in source order before SSA.
   std::shared_ptr<const FloatingCallArguments> ScalarCallSignature;
+  /// Complete fixed integer/pointer operands bound before SSA, including
+  /// exact-width loads of the outgoing stack arguments at the call site.
+  std::shared_ptr<const FixedIntegerCallArguments> IntegerCallSignature;
   /// The bytes the callee reads of input \p Input, a vector argument, or 0.
   uint16_t vectorArgumentWidth(unsigned Input) const {
     if (ScalarCallSignature && Input > 0 &&

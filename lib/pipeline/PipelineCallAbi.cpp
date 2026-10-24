@@ -69,6 +69,13 @@ omittedCalleeArgumentCounts(const PipelineResult &Result) {
              : Result.CallEntryArgumentCounts;
 }
 
+const std::map<va_t, FixedIntegerCallArguments> &
+omittedCalleeIntegerArguments(const PipelineResult &Result) {
+  return Result.OmittedCalleeIntegerArguments
+             ? *Result.OmittedCalleeIntegerArguments
+             : Result.CallEntryIntegerArguments;
+}
+
 const std::map<va_t, FloatingCallArguments> &
 omittedCalleeFloatingArguments(const PipelineResult &Result) {
   return Result.OmittedCalleeFloatingArguments
@@ -115,6 +122,9 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   const std::map<va_t, int> &Counts = omittedCalleeArgumentCounts(Result);
   if (const auto It = Counts.find(Key); It != Counts.end())
     Read.ArgumentCount = It->second;
+  const auto &Integer = omittedCalleeIntegerArguments(Result);
+  if (const auto It = Integer.find(Key); It != Integer.end())
+    Read.IntegerArguments = It->second;
   const auto &Floating = omittedCalleeFloatingArguments(Result);
   if (const auto It = Floating.find(Key); It != Floating.end())
     Read.FloatingArguments = It->second;
@@ -274,9 +284,14 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
       Converted.Bytes += sizeof(MedBlock) + Block.Ops.size() * sizeof(MedOp) +
                          Block.Phis.size() * sizeof(PhiNode);
       // Expanded operand storage remains allocated when an operation shrinks.
-      for (const MedOp &Op : Block.Ops)
+      for (const MedOp &Op : Block.Ops) {
         if (Op.Inputs.capacity() > MedOp::InlineInputs)
           Converted.Bytes += Op.Inputs.capacity() * sizeof(MedVar);
+        if (Op.IntegerCallSignature)
+          Converted.Bytes += sizeof(FixedIntegerCallArguments) +
+                             Op.IntegerCallSignature->Parameters.capacity() *
+                                 sizeof(FixedIntegerCallArguments::Parameter);
+      }
     }
     if (const auto &Summary = Converted.Summary)
       Converted.Bytes +=
@@ -292,10 +307,14 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
     Bytes -= Holder.Conversions.back().Bytes;
     Holder.Conversions.pop_back();
   }
-  for (const SummaryRead &Read : Converted.Reads)
+  for (const SummaryRead &Read : Converted.Reads) {
     if (Read.ExitConstants)
       Converted.Bytes +=
           Read.ExitConstants->capacity() * sizeof(GPRExitConstants::value_type);
+    if (Read.IntegerArguments)
+      Converted.Bytes += Read.IntegerArguments->Parameters.capacity() *
+                         sizeof(FixedIntegerCallArguments::Parameter);
+  }
   Bytes += Converted.Bytes;
   Holder.Conversions.insert(Holder.Conversions.begin(), std::move(Converted));
   if (Bytes > MaxBytes) {
@@ -472,6 +491,8 @@ public:
       Converter.setCallEntryStackSlots(&omittedCalleeStackSlots(Result));
       Converter.setCallEntryArgumentCounts(
           &omittedCalleeArgumentCounts(Result));
+      Converter.setCallEntryIntegerArguments(
+          &omittedCalleeIntegerArguments(Result));
       Converter.setCallEntryFloatingArguments(
           &omittedCalleeFloatingArguments(Result));
       Converter.setCallEntryVariadicArguments(

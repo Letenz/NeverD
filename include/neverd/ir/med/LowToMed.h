@@ -16,6 +16,7 @@
 #define NEVERD_IR_MED_LOWTOMED_H
 
 #include "neverd/ir/FloatingCallArguments.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/FormattedCall.h"
@@ -146,6 +147,10 @@ public:
   /// calls their arguments (PipelineResult::CallEntryArgumentCounts).
   void setCallEntryArgumentCounts(const std::map<va_t, int> *M) {
     CallEntryArgumentCounts = M;
+  }
+  void setCallEntryIntegerArguments(
+      const std::map<va_t, FixedIntegerCallArguments> *M) {
+    CallEntryIntegerArguments = M;
   }
   void setCallEntryFloatingArguments(
       const std::map<va_t, FloatingCallArguments> *M) {
@@ -369,6 +374,9 @@ private:
   /// Bind the arguments of a formatted call as its inputs, adding to \p MB
   /// the extraction of each floating one; false for any other operation.
   bool bindFormattedCall(MedBlock &MB, MedOp &MOp, const LowOp &LOp);
+  MedVar loadCallStackArgument(MedBlock &Block, const LowOp &Call,
+                               int64_t EntryOffset, uint16_t Bytes,
+                               bool TailCall);
   /// The import slot the register an INDIR_CALL being converted goes
   /// through was loaded from, else 0.
   va_t RegisterCallSlot = 0;
@@ -439,6 +447,8 @@ private:
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallEntryStackSlots = nullptr;
   const std::map<va_t, int> *CallEntryArgumentCounts = nullptr;
+  const std::map<va_t, FixedIntegerCallArguments> *CallEntryIntegerArguments =
+      nullptr;
   const std::map<va_t, FloatingCallArguments> *CallEntryFloatingArguments =
       nullptr;
   const std::set<va_t> *UserPrototypeCallees = nullptr;

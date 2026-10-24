@@ -29,6 +29,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/libc/LibCFixedIntegerArguments.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/LibCRecordArguments.h"
@@ -3441,6 +3442,7 @@ struct ImportPrototypeArguments {
   /// of each call gives it its arguments (Windows on ARM64).
   std::map<va_t, int> Counts;
   std::map<va_t, FloatingCallArguments> FloatingArguments;
+  std::map<va_t, FixedIntegerCallArguments> IntegerArguments;
   std::map<va_t, std::vector<uint16_t>> VariadicArguments;
   /// The imports whose integer arguments a user declaration or header record
   /// layout specifies, overriding the parameter counts in the arity tables.
@@ -3742,6 +3744,17 @@ ImportPrototypeArguments importPrototypeArguments(
     if (!Name.empty()) {
       if (const uint16_t Bytes = RoutineFloatReturn(Name))
         Result.FloatReturns[Addr] = Bytes;
+      // Bind a complete fixed declaration before SSA, including stack values
+      // written in predecessor blocks. Counts alone cannot retain those uses.
+      if (Convention && Convention->ImportArgumentsFromPrototype)
+        if (const auto Function = Declared(Name))
+          if (auto Integer = libc::fixedIntegerCallArguments(
+                  *Function, Img.Arch, Img.abiFormat())) {
+            Result.IntegerArguments.emplace(Addr, std::move(*Integer));
+            Result.PrototypeDeclared.insert(Addr);
+            if (Function->PrototypeLibrary == UserPrototypeLibrary)
+              Result.UserDeclared.insert(Addr);
+          }
       Routine = UserArguments(Name);
       UserDeclared = Routine.has_value();
       PrototypeOwnsArguments = Routine.has_value();
@@ -3957,6 +3970,7 @@ std::shared_ptr<const ImageImportCounts> imageImportArguments(
         Img.Exports.size(), std::move(Prototyped.Counts),
         std::move(Prototyped.StackArgs), std::move(Prototyped.StackSlots),
         std::move(Prototyped.FloatingArguments),
+        std::move(Prototyped.IntegerArguments),
         std::move(Prototyped.VariadicArguments)});
     if (Kept)
       *Kept = Everywhere;
@@ -3987,6 +4001,9 @@ void setOmittedImportArguments(
     Result.OmittedCalleeArgumentCounts =
         std::shared_ptr<const std::map<va_t, int>>(Arguments,
                                                    &Arguments->Counts);
+    Result.OmittedCalleeIntegerArguments =
+        std::shared_ptr<const std::map<va_t, FixedIntegerCallArguments>>(
+            Arguments, &Arguments->IntegerArguments);
     Result.OmittedCalleeFloatingArguments =
         std::shared_ptr<const std::map<va_t, FloatingCallArguments>>(
             Arguments, &Arguments->FloatingArguments);
@@ -4031,6 +4048,7 @@ void computeCallRegisterEffects(
       Result.CallEntryStackPops = std::move(Prototyped.StackPops);
       Result.CallEntryFloatingArguments =
           std::move(Prototyped.FloatingArguments);
+      Result.CallEntryIntegerArguments = std::move(Prototyped.IntegerArguments);
       Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
@@ -4046,6 +4064,7 @@ void computeCallRegisterEffects(
       Result.CallEntryArgumentCounts = std::move(Prototyped.Counts);
       Result.CallEntryFloatingArguments =
           std::move(Prototyped.FloatingArguments);
+      Result.CallEntryIntegerArguments = std::move(Prototyped.IntegerArguments);
       Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
       Result.CallPrototypeArguments = std::move(Prototyped.PrototypeDeclared);
       Result.CallUserPrototypes = std::move(Prototyped.UserDeclared);
@@ -4348,6 +4367,7 @@ void computeCallRegisterEffects(
         Change(Effect->second)->StackArgs = Count;
     Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
     Result.CallEntryFloatingArguments = std::move(Prototyped.FloatingArguments);
+    Result.CallEntryIntegerArguments = std::move(Prototyped.IntegerArguments);
     Result.CallEntryVariadicArguments = std::move(Prototyped.VariadicArguments);
   }
   CallRegisterSummaries Summaries =

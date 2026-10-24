@@ -61,6 +61,7 @@
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/libc/LibCFixedIntegerArguments.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCResult.h"
 #include "neverd/libc/LibCVariadicArguments.h"
@@ -1836,9 +1837,14 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           }
           continue;
         }
-        // A checked local floating declaration uses the same import adapter.
-        // Other user declarations retain their existing source-call model.
-        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating)
+        // Checked local floating and fixed scalar stack declarations use
+        // the same carrier adapters as headers. Other user declarations
+        // retain their separate source-call model.
+        const auto FixedInteger = Fits ? libc::fixedIntegerCallArguments(
+                                             *Source, Opts.TheArch, Opts.Format)
+                                       : std::nullopt;
+        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating &&
+            !FixedInteger)
           continue;
         Fits &= ScalarParameters;
         const auto Layout =

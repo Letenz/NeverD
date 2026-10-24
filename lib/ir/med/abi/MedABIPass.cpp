@@ -394,6 +394,30 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
 extern const AbiCallPolicy Win64AbiCallPolicy;
 extern const AbiCallPolicy I386AbiCallPolicy;
 
+bool hasBoundIntegerCallArguments(const MedOp &Op) {
+  if (!Op.IntegerCallSignature || Op.ScalarCallSignature || Op.SourceCallHint ||
+      Op.CalleeVariadicFrom >= 0 ||
+      (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+      Op.NumInputs != Op.IntegerCallSignature->Parameters.size() + 1 ||
+      Op.Inputs.size() < Op.NumInputs)
+    return false;
+  bool HasStack = false;
+  for (size_t I = 0; I < Op.IntegerCallSignature->Parameters.size(); ++I) {
+    const auto &Parameter = Op.IntegerCallSignature->Parameters[I];
+    if ((Parameter.Bytes != 1 && Parameter.Bytes != 2 && Parameter.Bytes != 4 &&
+         Parameter.Bytes != 8) ||
+        Op.Inputs[I + 1].Size < Parameter.Bytes ||
+        (Parameter.Kind != SourceABICarrierKind::IntegerRegister &&
+         Parameter.Kind != SourceABICarrierKind::Stack) ||
+        (HasStack && Parameter.Kind != SourceABICarrierKind::Stack))
+      return false;
+    HasStack |= Parameter.Kind == SourceABICarrierKind::Stack;
+  }
+  if (!HasStack)
+    return false;
+  return true;
+}
+
 std::optional<FloatingCallArguments>
 boundFloatingCallArguments(const MedOp &Op, Arch A, BinaryFormat F) {
   const auto &Registers = getTargetRegInfo(A);
@@ -983,6 +1007,24 @@ void recoverCallAbi(
       noteRead(CI.TargetAddr);
       if (CallSlot)
         noteRead(*CallSlot);
+      if (hasBoundIntegerCallArguments(Op)) {
+        CI.Args.assign(Op.Inputs.begin() + 1, Op.Inputs.begin() + Op.NumInputs);
+        CI.IntegerRegisterArgCount = 0;
+        CI.FloatingRegisterArgCount = 0;
+        const auto Layout = getTargetRegInfo(TheArch).integerArgumentLayout(
+            Img ? Img->abiFormat() : BinaryFormat::Unknown);
+        CI.StackArgumentSlotBytes = Layout.SlotBytes;
+        for (const auto &Parameter : Op.IntegerCallSignature->Parameters) {
+          CI.ArgReadBytes.push_back(Parameter.Bytes);
+          if (Parameter.Kind == SourceABICarrierKind::IntegerRegister)
+            ++CI.IntegerRegisterArgCount;
+          else
+            CI.StackArgumentOffsets.push_back(Parameter.StackOffset -
+                                              Layout.EntryStackBase);
+        }
+        Func.CallInfos.push_back(std::move(CI));
+        continue;
+      }
       // These complete header operands were bound before SSA. Recovering
       // them again from local setup would lose untouched forwarding inputs.
       if (Op.ScalarCallSignature &&

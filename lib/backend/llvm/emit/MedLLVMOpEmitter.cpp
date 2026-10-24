@@ -1196,7 +1196,13 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         if (!Sym)
           if (auto C = traceStoredAddress()) {
             const Segment *Seg = Img->getSegmentFor(*C);
-            if (Seg && Seg->isReadable() && !Seg->isWritable() &&
+            // Reuse getVar's address intent instead of treating mapped bytes
+            // as evidence that a stored integer is a pointer. Exact address
+            // producers still authorize low-address objects.
+            if ((StoredAddressRelation ||
+                 getVarHasDirectDataSymbolizationIntent(*C,
+                                                        Op.Inputs[1].Size)) &&
+                Seg && Seg->isReadable() && !Seg->isWritable() &&
                 !Seg->isExecutable() && !Seg->Data.empty())
               Sym = tryResolveGlobalData(*C, Op.Inputs[1].Size);
           }
