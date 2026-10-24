@@ -3,15 +3,23 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
 /// \file
 /// Shared admission and storage policy for bounded positive dladdr queries.
-#ifndef NEVERD_EMULATION_ANDROIDDLFCN_H
-#define NEVERD_EMULATION_ANDROIDDLFCN_H
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_EMULATION_OS_LINUX_ANDROID_ANDROIDDLFCN_H
+#define NEVERD_EMULATION_OS_LINUX_ANDROID_ANDROIDDLFCN_H
 
 #include "neverd/emulation/AndroidNative.h"
 #include "neverd/emulation/Limits.h"
 
 #include "llvm/Support/Error.h"
+
+#include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace neverd::emulation::android_model {
 namespace dladdr_model {
@@ -28,4 +36,4 @@ inline constexpr uint64_t StorageBase = 0x7050000000;
 llvm::Error validateDladdrObservations(
     const std::optional<std::vector<NativeDladdrObservation>> &Observations);
 } // namespace neverd::emulation::android_model
-#endif
+#endif // NEVERD_EMULATION_OS_LINUX_ANDROID_ANDROIDDLFCN_H

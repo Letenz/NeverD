@@ -3,6 +3,12 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Verify complete stopped-register inventories and all-or-error snapshots.
+///
+//===----------------------------------------------------------------------===//
+
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 

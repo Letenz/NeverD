@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
 /// \file
 /// Independently assembled baseline CMLT forms. Define
 /// NEVERD_AARCH64_SIGNED_ZERO_CASE(Word, ElementBits, ElementCount).

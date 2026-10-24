@@ -3,8 +3,14 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-// Assembled with llvm-mc -triple=aarch64 -show-encoding. Every legal byte
-// offset occurs for both baseline widths; sources are V1/V2, destination V31.
+///
+/// \file
+/// Assembled with llvm-mc -triple=aarch64 -show-encoding. Every legal byte
+/// offset occurs for both baseline widths; sources are V1/V2, destination V31.
+/// Define NEVERD_AARCH64_EXTRACT_CASE(Word, VectorBytes, ByteOffset).
+///
+//===----------------------------------------------------------------------===//
+
 #ifdef NEVERD_AARCH64_EXTRACT_CASE
 // ext v31.8b, v1.8b, v2.8b, #0
 NEVERD_AARCH64_EXTRACT_CASE(0x2e02003f, 8, 0)

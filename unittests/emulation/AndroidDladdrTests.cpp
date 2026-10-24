@@ -3,9 +3,12 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
 /// \file
 /// Independent guest callers check module identity, borrowed strings and
 /// faults.
+///
+//===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
 

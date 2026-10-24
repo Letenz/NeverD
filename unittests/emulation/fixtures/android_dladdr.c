@@ -3,8 +3,12 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
 /// \file
 /// Independent Android LP64 Dl_info caller; no host headers or libraries.
+///
+//===----------------------------------------------------------------------===//
+
 typedef struct {
   const char *dli_fname;
   void *dli_fbase;
