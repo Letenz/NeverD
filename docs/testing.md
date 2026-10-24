@@ -944,6 +944,13 @@ and full-width Z3 checks at 8/16/32/64 bits. Dense public-entry work and cost
 ceilings protect the corresponding reduction in repeated bit-level work.
 Low-word constant views also complete a degree-96 mixed masked product at
 native widths; the independent oracle retains its full arithmetic wraparound.
+Partial blocks also admit proved pairs from a smaller trial period. A degree-32
+mixed product must finish below 45,000 work units with cost at most 27; nearby
+factor counts, complemented parity and short budgets retain exact values.
+The real worker and both CLI source projections execute that product at C O0/O2.
+The degree-47 mixed product also exercises operand-pool growth during recursive
+signature construction; run its regression with AddressSanitizer to detect stale
+operand views, and retain the independent full-width value oracle.
 `SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
 normalized products, nested additions, multi-input XOR carries and changed
 parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor

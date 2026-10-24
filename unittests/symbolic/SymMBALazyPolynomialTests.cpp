@@ -39,11 +39,12 @@ struct DenseCarryFixture {
   unsigned Observed;
   bool ComplementParity = false;
   bool MixedMasks = false;
+  uint64_t Coefficient = 3;
 
   unsigned inputWidth(unsigned) const { return Width; }
 
   llvm::APInt oracle(const std::array<llvm::APInt, 4> &V) const {
-    auto Result = llvm::APInt(Width, 3).shl(Width - Observed);
+    auto Result = llvm::APInt(Width, Coefficient).shl(Width - Observed);
     const auto Mask = ~llvm::APInt::getLowBitsSet(Width, HighBits);
     const auto X = V[0] ^ llvm::APInt(Width, ComplementParity);
     for (unsigned I = 0; I < Degree; ++I) {
@@ -62,11 +63,14 @@ DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
                                     unsigned HighBits, unsigned Degree = 48,
                                     unsigned Observed = 7,
                                     bool ComplementParity = false,
-                                    bool MixedMasks = false) {
+                                    bool MixedMasks = false,
+                                    uint64_t Coefficient = 3) {
   // Preserve the public expression parser's construction order: the measured
   // cost/work bounds below belong to these two complete public-entry inputs.
   llvm::SmallString<96> Scale;
-  llvm::APInt(Width, 3).shl(Width - Observed).toString(Scale, 10, false);
+  llvm::APInt(Width, Coefficient)
+      .shl(Width - Observed)
+      .toString(Scale, 10, false);
   std::string Expression = "(" + Scale.str().str();
   const std::string X = ComplementParity ? "(x^1)" : "x";
   for (unsigned I = 0; I < Degree; ++I) {
@@ -81,8 +85,8 @@ DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
   Expression += ")+(x^y)+2*(x&y)+(z|w)+(z&w)";
   const auto Parsed = parseSymExpr(Ctx, Expression, Width);
   EXPECT_TRUE(Parsed.ok()) << Parsed.Error;
-  return {Parsed.Root,      Width,     HighBits, Degree, Observed,
-          ComplementParity, MixedMasks};
+  return {Parsed.Root,      Width,      HighBits,   Degree, Observed,
+          ComplementParity, MixedMasks, Coefficient};
 }
 
 struct BitPolynomialFixture {
@@ -302,6 +306,55 @@ TEST(SymMBALazyPolynomial, LowWordConstantViewsFinishDegree96MixedProducts) {
     EXPECT_LT(Result.Work, 60000u);
     EXPECT_LE(Result.SizeAfter, 19u);
     EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
+}
+
+TEST(SymMBALazyPolynomial, PartialBlocksFinishDegree32MixedProducts) {
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, Width, 2, 32, 7, false, true);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LT(Result.Work, 45000u);
+    EXPECT_LE(Result.SizeAfter, 27u);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
+}
+
+TEST(SymMBALazyPolynomial, PartialPairingBoundariesPreserveRefusedWords) {
+  for (unsigned Degree : {16u, 17u, 31u, 32u, 33u})
+    for (bool Complement : {false, true})
+      for (size_t Work : {1024u, 16384u, 65536u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Degree << ':' << Complement << ':' << Work);
+        SymContext Ctx;
+        const auto F =
+            denseCarryFixture(Ctx, 32, 2, Degree, 7, Complement, true);
+        MBAOptions Options;
+        Options.MaxWork = Work;
+        const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+        EXPECT_LE(Result.Work, Work);
+        EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+        checkFullWidthOracle(Ctx, F, Result.Expr);
+      }
+}
+
+TEST(SymMBALazyPolynomial, SignatureOperandsSurviveLowWordInterning) {
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    // Reduced constant views grow the operand pool while a recursive wide
+    // signature still needs its siblings. ASan caught a stale span here.
+    const auto F = denseCarryFixture(Ctx, Width, 2, 47, 7, false, true, 5);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LE(Result.Work, Options.MaxWork);
+    EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
     checkFullWidthOracle(Ctx, F, Result.Expr);
   }
 }

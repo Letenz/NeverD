@@ -1076,6 +1076,8 @@ class LowWordDecisions {
     return Identity;
   }
 
+  // Recursive low-word construction can grow the context operand pool.
+  // Reacquire operands by stable node/index instead of retaining its spans.
   ResidueSignature residueSignature(PairingState &State, SymRef R,
                                     unsigned Count, unsigned Depth = 0) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
@@ -1096,15 +1098,16 @@ class LowWordDecisions {
       Result = {internSignature(State, {0, Count, Low & (Top - 1)}),
                 uint32_t(bool(Low & Top))};
     } else if (Op == SymOp::Add || Op == SymOp::Xor) {
-      const auto Operands = Ctx.operands(R);
-      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      if (!charge(OperandCount * (1 + std::bit_width(OperandCount)),
+                  2 * (OperandCount + 3) * sizeof(uint64_t)))
         return {};
       uint64_t Literal = 0;
       uint32_t Flip = 0;
       SignatureKey Children;
-      Children.reserve(Operands.size() + 3);
-      for (auto Child : Operands) {
+      Children.reserve(OperandCount + 3);
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         if (Ctx.isConst(Child)) {
           auto Value = literal(Child);
           if (!Value)
@@ -1162,14 +1165,15 @@ class LowWordDecisions {
                            Mask & Top ? Child.Flip : 0};
       }
     } else if (Op == SymOp::Mul) {
-      const auto Operands = Ctx.operands(R);
-      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
-                      2 * (4 * Operands.size() + 1) * sizeof(uint32_t)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      if (!charge(OperandCount * (1 + std::bit_width(OperandCount)),
+                  2 * (OperandCount + 3) * sizeof(uint64_t) +
+                      2 * (4 * OperandCount + 1) * sizeof(uint32_t)))
         return {};
       unsigned TotalZeros = 0;
       llvm::SmallVector<unsigned, 16> Zeros;
-      for (auto Child : Operands) {
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         const auto Zero = std::min(Count, knownZeros(Child));
         Zeros.push_back(Zero);
         TotalZeros = std::min(Count, TotalZeros + Zero);
@@ -1178,11 +1182,12 @@ class LowWordDecisions {
         Result = {internSignature(State, {0, Count, 0}), 0};
       else if (Count - TotalZeros >= 2) {
         SignatureKey Children;
-        Children.reserve(Operands.size() + 2);
+        Children.reserve(OperandCount + 2);
         Bits Flips;
-        for (size_t I = 0; I < Operands.size(); ++I) {
-          const auto Value = residueSignature(
-              State, Operands[I], Count - TotalZeros + Zeros[I], Depth + 1);
+        for (size_t I = 0; I < OperandCount; ++I) {
+          const auto Value =
+              residueSignature(State, Ctx.operand(R, I),
+                               Count - TotalZeros + Zeros[I], Depth + 1);
           Children.push_back(Value.Identity);
           Flips.push_back(Value.Flip);
         }
@@ -1193,13 +1198,13 @@ class LowWordDecisions {
           // two bits, so products of two highest-bit disturbances vanish.
           // Prefix and suffix parities retain every linear contribution,
           // including even normalized operands, without division.
-          Bits Parities, Prefix(Operands.size() + 1, 1);
-          for (size_t I = 0; I < Operands.size(); ++I) {
-            Parities.push_back(word(Operands[I], Zeros[I] + 1)[Zeros[I]]);
+          Bits Parities, Prefix(OperandCount + 1, 1);
+          for (size_t I = 0; I < OperandCount; ++I) {
+            Parities.push_back(word(Ctx.operand(R, I), Zeros[I] + 1)[Zeros[I]]);
             Prefix[I + 1] = apply(And, Prefix[I], Parities.back());
           }
           uint32_t Suffix = 1;
-          for (size_t I = Operands.size(); I-- != 0;) {
+          for (size_t I = OperandCount; I-- != 0;) {
             if (Flips[I])
               Flip = apply(Xor, Flip,
                            apply(And, Flips[I], apply(And, Prefix[I], Suffix)));
@@ -1323,16 +1328,17 @@ class LowWordDecisions {
       Result = {internSignature(State, {0, Count, Low & (Unit - 1)}),
                 {uint32_t(bool(Low & Unit)), uint32_t(bool(Low & (2 * Unit)))}};
     } else if (Op == SymOp::Add || Op == SymOp::Xor) {
-      const auto Operands = Ctx.operands(R);
-      const auto Nonconstant = Operands.size() - Ctx.isConst(Operands.front());
-      if (!charge(Operands.size() + Nonconstant * std::bit_width(Nonconstant),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
-                      2 * Operands.size() * sizeof(WideSignature)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      const auto Nonconstant = OperandCount - Ctx.isConst(Ctx.operand(R, 0));
+      if (!charge(OperandCount + Nonconstant * std::bit_width(Nonconstant),
+                  2 * (OperandCount + 3) * sizeof(uint64_t) +
+                      2 * OperandCount * sizeof(WideSignature)))
         return {};
       SignatureKey Children;
       llvm::SmallVector<WideSignature, 8> Values;
       uint64_t Literal = 0;
-      for (auto Child : Operands) {
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         if (Ctx.isConst(Child)) {
           auto Value = literal(Child);
           if (!Value)
@@ -1364,15 +1370,15 @@ class LowWordDecisions {
           if (Value.Delta[1])
             D[1] = apply(Xor, D[1], Value.Delta[1]);
         }
-        for (size_t I = 0; I < Operands.size(); ++I) {
-          if (Ctx.isConst(Operands[I]))
+        for (size_t I = 0; I < OperandCount; ++I) {
+          if (Ctx.isConst(Ctx.operand(R, I)))
             continue;
           const auto Coefficient =
               Values[I].Delta[0] ? apply(Xor, D[0], Values[I].Delta[0]) : D[0];
           if (Coefficient)
-            D[1] = apply(
-                Xor, D[1],
-                apply(And, Coefficient, highestBit(Operands[I], Count - 1)));
+            D[1] = apply(Xor, D[1],
+                         apply(And, Coefficient,
+                               highestBit(Ctx.operand(R, I), Count - 1)));
         }
         if (Literal & Unit)
           D[1] = apply(Xor, D[1], D[0] ^ 1);
@@ -1425,14 +1431,15 @@ class LowWordDecisions {
         }
       }
     } else if (Op == SymOp::Mul) {
-      const auto Operands = Ctx.operands(R);
-      if (!charge(Operands.size() * (1 + std::bit_width(Operands.size())),
-                  2 * (Operands.size() + 3) * sizeof(uint64_t) +
-                      2 * (4 * Operands.size() + 1) * sizeof(Bits)))
+      const size_t OperandCount = Ctx.numOperands(R);
+      if (!charge(OperandCount * (1 + std::bit_width(OperandCount)),
+                  2 * (OperandCount + 3) * sizeof(uint64_t) +
+                      2 * (4 * OperandCount + 1) * sizeof(Bits)))
         return {};
       unsigned TotalZeros = 0;
       llvm::SmallVector<unsigned, 16> Zeros;
-      for (auto Child : Operands) {
+      for (size_t I = 0; I < OperandCount; ++I) {
+        const auto Child = Ctx.operand(R, I);
         const auto Z = std::min(Count, knownZeros(Child));
         Zeros.push_back(Z);
         TotalZeros = std::min(Count, TotalZeros + Z);
@@ -1443,8 +1450,8 @@ class LowWordDecisions {
         SignatureKey Children;
         llvm::SmallVector<Bits, 16> Deltas, Low, Prefix;
         bool Changed = false;
-        for (size_t I = 0; I < Operands.size(); ++I) {
-          auto S = wideSignature(State, Operands[I],
+        for (size_t I = 0; I < OperandCount; ++I) {
+          auto S = wideSignature(State, Ctx.operand(R, I),
                                  Count - TotalZeros + Zeros[I], Depth + 1);
           Children.push_back(S.Identity);
           Deltas.push_back(Delta(S));
@@ -1453,13 +1460,13 @@ class LowWordDecisions {
         Bits D(2, 0);
         if (Changed) {
           Prefix.push_back({1, 0});
-          for (size_t I = 0; I < Operands.size(); ++I) {
-            const auto &V = word(Operands[I], Zeros[I] + 2);
+          for (size_t I = 0; I < OperandCount; ++I) {
+            const auto &V = word(Ctx.operand(R, I), Zeros[I] + 2);
             Low.push_back({V[Zeros[I]], V[Zeros[I] + 1]});
             Prefix.push_back(multiplyCorrection(Prefix.back(), Low.back()));
           }
           Bits Suffix{1, 0};
-          for (size_t I = Operands.size(); I-- != 0;) {
+          for (size_t I = OperandCount; I-- != 0;) {
             D = sumCorrection(
                 D, multiplyCorrection(Deltas[I],
                                       multiplyCorrection(Prefix[I], Suffix)));
@@ -1680,11 +1687,15 @@ public:
     // factor must independently be odd under the current assumption.
     const size_t PairingBlock = size_t(1) << (Observed - 1);
     const size_t WideBlock = size_t(1) << (Observed - std::min(Observed, 2u));
+    // Partial blocks can already contain pairs one smaller period apart.
+    // The probe only admits a search; signatures still prove every pair.
+    const size_t WideProbeBlock =
+        WideBlock / limits::kResidueDecisionPartialPairingDivisor;
     const bool FullBlock =
         Nonconstant >= PairingBlock && !(Nonconstant % PairingBlock);
     bool AllOdd = Assumption &&
                   Observed >= limits::kMinResidueDecisionPairingBits &&
-                  (FullBlock || Nonconstant > WideBlock);
+                  (FullBlock || Nonconstant > WideProbeBlock);
     llvm::SmallVector<SymRef, 16> Nonconstants;
     if (AllOdd) {
       if (!charge(Factors.size(), Factors.size() * sizeof(SymRef)))
@@ -1711,13 +1722,15 @@ public:
       bool Wide = false;
       if (!PreferSingle &&
           Observed >= limits::kMinResidueDecisionWidePairingBits &&
-          Nonconstants.size() > WideBlock &&
+          Nonconstants.size() > WideProbeBlock &&
           charge(1, sizeof(WidePairingState))) {
         State.Wide = std::make_unique<WidePairingState>();
         const auto A =
             wideSignature(*State.Wide, Nonconstants.front(), Observed);
+        const auto Probe =
+            Nonconstants.size() > WideBlock ? WideBlock : WideProbeBlock;
         const auto B =
-            wideSignature(*State.Wide, Nonconstants[WideBlock], Observed);
+            wideSignature(*State.Wide, Nonconstants[Probe], Observed);
         Wide = A.Identity == B.Identity;
       }
       Product = Wide        ? widePairedProduct(State, Nonconstants, Observed)
