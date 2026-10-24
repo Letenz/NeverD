@@ -25,6 +25,7 @@
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64PointerC.h"
 #include "neverd/backend/c/render/X87GuardedValueRender.h"
 #include "neverd/debug/UserPrototype.h"
@@ -2126,6 +2127,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                    ? "__asm { " + Instruction + " }"
                    : "__asm__ volatile(\"" + Instruction + "\" ::: \"memory\")";
     }
+
+    if (isAArch64PAuthLoadIntrinsic(E.IntrinsicId) &&
+        (Opts.TheArch != Arch::AArch64 || !aarch64PAuthLoadHighShapeIsValid(E)))
+      throw std::invalid_argument(kPAuthLoadMalformed);
 
     std::optional<unsigned> LinuxSyscallArgs;
     if (E.IntrinsicId == Intrinsic::X64Syscall && E.Operands.size() == 5 &&

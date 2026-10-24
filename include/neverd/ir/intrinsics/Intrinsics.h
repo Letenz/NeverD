@@ -420,6 +420,10 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64PAuthM.def"
 
+// Append-only: combined authentication, memory access and base writeback.
+#define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64PAuthLoad.def"
+
   _Count = 16000
 };
 

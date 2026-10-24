@@ -248,7 +248,8 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 
 std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
-                                   uint16_t ResultBytes, bool &HasCIntrinsics);
+                                   uint16_t ResultBytes, bool &HasCIntrinsics,
+                                   llvm::ArrayRef<uint16_t> OperandBytes = {});
 
 /// An ACLE vector intrinsic whose C name ends in its element kind
 /// (`vaeseq_u8`, `vmul_p8`) and whose result is that vector: each operand

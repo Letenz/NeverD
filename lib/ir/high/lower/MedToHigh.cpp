@@ -27,6 +27,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighFlowOracle.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/AArch64SVEState.h"
 #include "neverd/ir/med/I386PicAddress.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1279,6 +1280,8 @@ void MedToHighConverter::validateCallContracts(const MedFunc &Med) {
 }
 
 HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
+  if (const char *Error = validateAArch64SVEState(Med, TheArch))
+    throw std::runtime_error(Error);
   validateCallContracts(Med);
   const ExceptionFunction *EH =
       Med.ExceptionMetadata ? &*Med.ExceptionMetadata : nullptr;

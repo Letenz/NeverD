@@ -20,7 +20,9 @@
 #include "neverd/ir/X87Value.h"
 #include "neverd/ir/intrinsics/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64PAuthLoad.h"
 #include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
+#include "neverd/ir/intrinsics/AArch64SVEVector.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86AmxState.h"
 #include "neverd/ir/intrinsics/X86Sgx.h"
@@ -35,6 +37,51 @@ namespace neverd {
 inline bool hasValidMedIntrinsicId(const MedOp &Op) {
   return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
          Op.NumInputs <= Op.Inputs.size() && Op.Inputs.front().isConst();
+}
+
+inline bool aarch64VectorMedShapeIsValid(const MedOp &Op) {
+  using namespace aarch64_sve;
+  if (!hasValidMedIntrinsicId(Op) || !Op.IntrinsicOutputs.empty() ||
+      Op.NumInputs > kVectorMaxOperands + 1 ||
+      Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      (Op.Output.Size &&
+       (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp)))
+    return false;
+  VectorShape Shape;
+  Shape.NumOperands = Op.NumInputs - 1;
+  Shape.OutputBytes = Op.Output.Size;
+  for (unsigned I = 1; I != Op.NumInputs; ++I) {
+    const auto &Input = Op.Inputs[I];
+    if (Input.Kind != MedVar::Reg && Input.Kind != MedVar::Temp &&
+        Input.Kind != MedVar::Param && !Input.isConst())
+      return false;
+    Shape.Operands[I - 1] = {
+        Input.Size, Input.isConst() ? std::optional<uint64_t>(Input.ConstVal)
+                                    : std::nullopt};
+  }
+  return isValidVectorShape(static_cast<Intrinsic>(Op.Inputs[0].ConstVal),
+                            Shape);
+}
+
+inline bool aarch64PAuthLoadMedShapeIsValid(const MedOp &Op) {
+  if (!hasValidMedIntrinsicId(Op) ||
+      Op.NumInputs != kPAuthLoadOperandCount + 1 ||
+      Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      !Op.IntrinsicOutputs.empty() ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      (!Op.Inputs[1].isConst() && Op.Inputs[1].Kind != MedVar::Reg &&
+       Op.Inputs[1].Kind != MedVar::Temp &&
+       Op.Inputs[1].Kind != MedVar::Param) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return aarch64PAuthLoadShapeIsValid(
+      static_cast<Intrinsic>(Op.Inputs[0].ConstVal), Op.NumInputs,
+      Op.Output.Size, Op.Inputs[1].Size, Op.Inputs[2].Size,
+      Op.Inputs[2].isConst() ? std::optional<uint64_t>(Op.Inputs[2].ConstVal)
+                             : std::nullopt);
 }
 
 inline bool aarch64PtrueMedShapeIsValid(const MedOp &Op) {

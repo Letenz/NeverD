@@ -1,4 +1,5 @@
 add_neverd_component_library(NeverDIRMed
+  AArch64SVEState.cpp
   MedLibraryRecognition.cpp
   MedComLibraryRecognition.cpp
   MedDispatchSlots.cpp

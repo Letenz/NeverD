@@ -41,6 +41,12 @@ unavailable execution is an explicit skip. Unresolved terminal prefixes and
 implicit-entry joins cannot escape into ordinary source. Frame fixtures reject
 mixed implicit/explicit signing recipes and preserve unrelated tail-call proofs
 across function-lifetime mode temporaries.
+`AArch64ExceptionReturnSemantics` rejects plain ERET in both decoder routes
+and strict/permissive lifting. Handwritten LowIR, MedIR and HighIR cannot
+bypass the ELR/SPSR/PSTATE requirement through void/value, masked-body or
+cross-target emission. Ordinary RET remains supported. Authenticated exception
+returns retain their existing explicit refusal; this is not an exception-level
+runtime implementation.
 Malformed-input checks reject invalid scalar kinds, mode widths and operand
 counts in every PACM operation. Pending prefixes require their exact LowIR
 shape and remain inadmissible in MedIR and native output.
@@ -173,6 +179,19 @@ canonical predicate conversions across element widths, LLVM verification and
 object compilation, HighC projection and malformed LowIR/MedIR refusal.
 `NeverDBinaryDiffSDKTests` retains incomplete analysis for unmodelled MOVPRFX.
 These tests do not execute SVE hardware or qualify scalable calling conventions.
+The same target's `AArch64SVEVector` cases exercise all producer/consumer
+element widths, canonical HighC Z storage, COPY and real diamond/loop PHIs,
+typed LLVM boundaries and O0/O2 C compilation. Shared MedIR state admission
+rejects undefined, late or dead producers, invalid CFG/PHI edges, exhausted
+budgets, scalable ABI escape, opaque calls and unmodelled V/Z overlap through
+both Med-to-High and masked/unmasked LLVM emission. Run the existing
+`AArch64_SVEState`, `AArch64_SVEStore`, `AArch64_SVELength` and ordinary NEON/FP
+cases in `NeverDLiftTests` after changing these shared boundaries.
+`AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
+writeback and dead-result retention through a single combined authenticated
+load, with independent emitted-word checks at O0/O2 through LLVM and both C
+routes. Malformed IR and unavailable SP execution contracts fail explicitly.
+These object checks do not qualify FPAC/FPACCOMBINE trap behavior on hardware.
 `MachONativeInplace.*` and the public-entry cases in `MachOPatchTransaction`
 check raw arm64e/x1 subtype capabilities, absent caller annotations and output
 rollback, with genuine ordinary arm64 writes as positive controls.

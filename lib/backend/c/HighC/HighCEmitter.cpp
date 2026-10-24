@@ -30,6 +30,7 @@
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86FPStateShape.h"
+#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
@@ -4500,6 +4501,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       [&](const ExprPtr &Expr) {
         if (!Expr || !Seen.insert(Expr.get()).second)
           return;
+        if (isAArch64ExceptionReturnIntrinsic(Expr->IntrinsicId))
+          throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
         if (Expr->IntrinsicId == Intrinsic::RawEnvironmentRequirementV1)
           throw std::invalid_argument(
               "raw environment requirement has no C runtime contract");

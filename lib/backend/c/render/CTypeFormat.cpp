@@ -17,6 +17,7 @@
 #include "neverd/backend/Limits.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/intrinsics/AArch64SVEVector.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/RelocationProvenance.h"
@@ -960,6 +961,9 @@ std::string typeToCLLVM(llvm::Type *Ty) {
 
   if (auto *ST = llvm::dyn_cast<llvm::StructType>(Ty))
     return llvmStructName(ST);
+
+  if (llvm::isa<llvm::ScalableVectorType>(Ty))
+    throw std::invalid_argument(aarch64_sve::kUnsupportedLLVMVectorC);
 
   if (auto *VT = llvm::dyn_cast<llvm::FixedVectorType>(Ty)) {
     if (!isCVectorType(VT))

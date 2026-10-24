@@ -18,6 +18,10 @@
 
 namespace neverd::limits::ir {
 
+#define NEVERD_A64_SVE_STATE_LIMIT(Name, Value)                                \
+  inline constexpr size_t Name = Value;
+#include "neverd/ir/med/AArch64SVEState.def"
+
 /// Shared HighIR text printing, including structured statement children.
 inline constexpr unsigned kMaxHighIRPrintNesting = 200;
 

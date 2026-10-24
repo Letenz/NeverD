@@ -622,10 +622,12 @@ private:
         Paths.push_back(ReturnedValue::SystemCallResult);
         return;
       }
-      if (isAArch64PAuthIntrinsic(Id) || aarch64CPAOperation(Id)) {
+      if (isAArch64PAuthIntrinsic(Id) || aarch64CPAOperation(Id) ||
+          isAArch64PAuthLoadIntrinsic(Id)) {
         Paths.push_back(Img.Arch == Arch::AArch64 &&
                                 (aarch64PAuthMedShapeIsValid(Op) ||
-                                 aarch64CPAMedShapeIsValid(Op))
+                                 aarch64CPAMedShapeIsValid(Op) ||
+                                 aarch64PAuthLoadMedShapeIsValid(Op))
                             ? ReturnedValue::Other
                             : ReturnedValue::Undefined);
         return;

@@ -1,6 +1,21 @@
+//===- AArch64_SVEStateTests.cpp - SVE pipeline state coverage -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Check architectural scalable registers and typed LLVM/ACLE projections.
+//===----------------------------------------------------------------------===//
+
 #include "NeverDLiftFixture.h"
 
 #include "neverd/lift/AArch64Regs.h"
+
+namespace {
+#define NEVERD_SVE_VECTOR_FIXTURE(Type, Name, Value)                           \
+  constexpr Type Name = Value;
+#include "AArch64SVEVectorFixtures.def"
+} // namespace
 
 class AArch64_SVEState : public NeverDLiftTest {
 protected:
@@ -65,11 +80,9 @@ TEST_F(AArch64_SVEState, LastbPreservesPredicateAndVectorSemantics) {
   auto r = liftToLLVMIR(sveStateObj());
   ASSERT_EQ(r.exitCode, 0) << r.err;
   EXPECT_NE(r.out.find("llvm.aarch64.sve.ptrue"), std::string::npos) << r.out;
-  EXPECT_NE(r.out.find("llvm.aarch64.sve.dup.x.nxv16i8"),
-            std::string::npos)
+  EXPECT_NE(r.out.find("llvm.aarch64.sve.dup.x.nxv16i8"), std::string::npos)
       << r.out;
-  EXPECT_NE(r.out.find("llvm.aarch64.sve.lastb.nxv16i8"),
-            std::string::npos)
+  EXPECT_NE(r.out.find("llvm.aarch64.sve.lastb.nxv16i8"), std::string::npos)
       << r.out;
   EXPECT_EQ(r.out.find("ret i64 0"), std::string::npos) << r.out;
 }
@@ -102,7 +115,7 @@ TEST_F(AArch64_SVEState, HighCUsesStandardSVEACLEAndCompiles) {
   std::string source((std::istreambuf_iterator<char>(input)),
                      std::istreambuf_iterator<char>());
   EXPECT_NE(source.find("svptrue_b8()"), std::string::npos) << source;
-  EXPECT_NE(source.find("svdup_n_u8(1)"), std::string::npos) << source;
+  EXPECT_NE(source.find(kImmediateDupC), std::string::npos) << source;
   EXPECT_NE(source.find("svlastb_u8("), std::string::npos) << source;
   EXPECT_EQ(source.find("_BitInt(256)"), std::string::npos) << source;
   EXPECT_EQ(source.find("_BitInt(512)"), std::string::npos) << source;
@@ -124,14 +137,14 @@ TEST_F(AArch64_SVEState, HighCIndexUsesStandardSVEACLEAndCompiles) {
   auto Bytes = functionC(source, "test_sve_index_const_last");
   ASSERT_FALSE(Bytes.empty()) << source;
   EXPECT_NE(Bytes.find("svindex_u8("), std::string::npos) << Bytes;
-  EXPECT_NE(Bytes.find("(uint8_t)(5)"), std::string::npos) << Bytes;
-  EXPECT_NE(Bytes.find("(uint8_t)(0)"), std::string::npos) << Bytes;
+  EXPECT_NE(Bytes.find(kImmediateByteStartC), std::string::npos) << Bytes;
+  EXPECT_NE(Bytes.find(kImmediateByteStepC), std::string::npos) << Bytes;
 
   auto DWords = functionC(source, "test_sve_index_step_last");
   ASSERT_FALSE(DWords.empty()) << source;
   EXPECT_NE(DWords.find("svindex_u64("), std::string::npos) << DWords;
-  EXPECT_NE(DWords.find("(uint64_t)(7)"), std::string::npos) << DWords;
-  EXPECT_NE(DWords.find("(uint64_t)(3)"), std::string::npos) << DWords;
+  EXPECT_NE(DWords.find(kImmediateWideStartC), std::string::npos) << DWords;
+  EXPECT_NE(DWords.find(kImmediateWideStepC), std::string::npos) << DWords;
 
   expectPairedClangSyntax(cFile, source);
 }
