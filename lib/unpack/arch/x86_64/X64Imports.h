@@ -4,8 +4,14 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#ifndef NEVERD_UNPACK_ARCH_X64IMPORTS_H
-#define NEVERD_UNPACK_ARCH_X64IMPORTS_H
+///
+/// \file
+/// x64 import instruction forms justified by observed execution witnesses.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_UNPACK_ARCH_X86_64_X64IMPORTS_H
+#define NEVERD_UNPACK_ARCH_X86_64_X64IMPORTS_H
 
 #include "llvm/ADT/ArrayRef.h"
 
@@ -37,4 +43,4 @@ importSite(llvm::ArrayRef<uint8_t> Memory, uint64_t ReturnRVA, bool AddressLoad,
 void writeImport(llvm::MutableArrayRef<uint8_t> Memory, const ImportSite &Site,
                  uint64_t SlotRVA);
 } // namespace neverd::unpack::x64
-#endif
+#endif // NEVERD_UNPACK_ARCH_X86_64_X64IMPORTS_H

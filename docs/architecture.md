@@ -6,12 +6,15 @@
 
 Compiler and IR architecture-specific implementation belongs beneath its owning
 component and phase in an `X86/`, `ARM/`, or `AArch64/` directory. X86 includes i386, x64 and
-x87. Shared dispatchers, IR interfaces and target-independent helpers stay at
+x87. ARM includes ARM32 and shared Arm-family code; AArch64-specific code uses
+`AArch64/`. Shared dispatchers, IR interfaces and target-independent helpers stay at
 the component level. The C renderer groups its architecture helpers, intrinsic
 spelling tables and HighC/LLVMC adapters together under `render/<architecture>/`;
 its route-independent interfaces retain `render/HighC/` and `render/LLVMC/`.
 LLVM architecture headers mirror the existing backend implementation directories.
 Decoder, lifter, IR state, ABI and translation files follow the same ownership.
+Execution models and unpacking adapters extend their existing `arch/<target>/`
+layout, including the public execution models.
 
 Binary-format implementation remains grouped by ELF, COFF and Mach-O, including
 format-owned architecture encodings and unwind records. Platform emulator
@@ -9818,7 +9821,7 @@ Windows virtual memory adds `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `Vi
 
 Execution-watch handoffs expose `ProcessView::watchedMemoryUnchanged()` only when RAM covered by the preceding write watches could not have changed. OS services and exception or invocation continuations conservatively withdraw that guarantee. The transfer observer reuses validated snapshots at clean handoffs, but a newly visited page still refreshes its possible fetch tail. WHP retains captured sticky debug status across acknowledged single steps and resets it before free execution, avoiding a redundant register installation for each checked instruction without weakening private-stop authentication.
 
-`arch/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
+`arch/x86_64/X64Imports.cpp` owns x64 import instruction decoding and emission. `dynamic/ProcessImports.cpp` proves pure export calls and address-load results from read-only process observations; the PE writer consumes that evidence without duplicating the instruction rules.
 
 Export addresses belong to one process. Helper evidence carries the module and export name or ordinal resolved in the proving run; the PE writer compares these identities by value. A discovery address may become bound after entry, but only its current export identity authorizes repair.
 
