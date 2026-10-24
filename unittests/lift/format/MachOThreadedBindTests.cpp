@@ -385,11 +385,30 @@ TEST(MachOThreadedBind, ClassicLinkerRecoversStrippedObjectiveCMetadata) {
     EXPECT_TRUE(Image->isArm64e());
     EXPECT_TRUE(Image->MachOHasChainedFixups);
     EXPECT_FALSE(Image->MachOAuthenticatedPointers.empty());
+    bool SawWeakFunction = false;
     for (const auto &[Slot, Recipe] : Image->MachOAuthenticatedPointers) {
       ASSERT_TRUE(Recipe.EncodedValue);
+      EXPECT_EQ(Recipe.LibraryOrdinal.has_value(), !Recipe.Symbol.empty());
       EXPECT_EQ(readLE<uint64_t>(Image->readVA(Slot, kPointerBytes)),
                 *Recipe.EncodedValue);
+      if (Recipe.Symbol == kWeakFunction) {
+        SawWeakFunction = true;
+        EXPECT_EQ(Recipe.LibraryOrdinal, kWeakLookupOrdinal);
+        EXPECT_FALSE(Recipe.WeakImport);
+      }
     }
+    ASSERT_FALSE(Image->DyldBindSlots.empty());
+    bool SawWeakValue = false;
+    for (const auto &[Slot, Binding] : Image->DyldBindSlots) {
+      EXPECT_TRUE(Binding.LibraryOrdinal);
+      if (Binding.Name == kWeakValue) {
+        SawWeakValue = true;
+        EXPECT_EQ(Binding.LibraryOrdinal, kWeakLookupOrdinal);
+        EXPECT_FALSE(Binding.WeakImport);
+      }
+    }
+    EXPECT_TRUE(SawWeakFunction);
+    EXPECT_TRUE(SawWeakValue);
     ASSERT_EQ(Image->ObjCClasses.size(), 1);
     ASSERT_EQ(Image->ObjCMethods.size(), 1);
     const auto &Method = Image->ObjCMethods.front();

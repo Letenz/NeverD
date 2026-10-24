@@ -1921,6 +1921,7 @@ add_neverd_unittest(NeverDArm64eAnalysisTests
   aarch64/AArch64PAuthSemanticTests.cpp
   aarch64/AArch64_FastClassifyParityTests.cpp
   format/MachOArm64eTests.cpp
+  format/MachOBindingIdentityTests.cpp
   format/MachOThreadedBindTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode Lift Loader
 )

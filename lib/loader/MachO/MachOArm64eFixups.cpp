@@ -76,6 +76,7 @@ decodeArm64eFixup(uint64_t Raw, const arm64e::ChainFormat &Format, va_t Slot,
       F.Authentication->Module = F.Import->Module;
       F.Authentication->Addend = F.Addend;
       F.Authentication->WeakImport = F.Import->WeakImport;
+      F.Authentication->LibraryOrdinal = F.Import->LibraryOrdinal;
     }
   } else {
     F.Target = Auth ? arm64e::kAuthenticatedTarget.extract(Raw)
@@ -104,7 +105,8 @@ void publishArm64eFixups(llvm::ArrayRef<Arm64eFixup> Fixups, BinaryImage &Img) {
       if (Img.isValidImportStorageSlot(F.Slot, F.Import->Name)) {
         detail::clearLocalPointerClassification(Img, F.Slot);
         if (Img.recordDyldBindSlot(F.Slot, F.Import->Name, F.Addend,
-                                   F.Import->Module, F.Import->WeakImport))
+                                   F.Import->Module, F.Import->WeakImport,
+                                   F.Import->LibraryOrdinal))
           joinImportSlot(Img, F.Import->Name, F.Import->DisplayModule, F.Slot);
       }
     } else {

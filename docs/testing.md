@@ -112,6 +112,16 @@ encoded authenticated bytes remain unchanged. A host Apple `ld-classic`
 fixture at O0/O2 removes local symbols before class/method recovery. Missing
 Apple tools are explicit skips. The format reference is
 [Apple dyld's original arm64e chain reader](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/common/MachOAnalyzer.cpp#L1953).
+`MachOBindingIdentity` checks original lookup ordinals through classic/lazy,
+threaded and modern chained readers, including every arm64e import layout.
+Independent `.def` fixtures distinguish SELF from absent scope, retain all
+special lookups and high positive ordinals, and reject conflicting same-name
+bindings in both orders. Duplicate install names cannot collapse two load
+command ordinals. Metadata readers reject an import scope attached to a local
+recipe; the shared-cache suite also checks explicit SELF against cache slide
+provenance. These tests preserve lookup identity, not runtime symbol resolution.
+The real classic-linker producer includes weak data and authenticated function
+pointers: both retain weak-lookup ordinals without becoming weak imports.
 Analysis-only metadata tests follow local authentication recipes for every
 supported chained format and for authenticated object relocations. Stale
 bytes, signing-field mismatches, conflicting provenance, overlapping storage

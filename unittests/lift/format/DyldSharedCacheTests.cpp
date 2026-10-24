@@ -762,7 +762,13 @@ TEST(DyldSharedCache, MetadataRecipesResolveOutsideTheSelectedImage) {
     EXPECT_FALSE(readMetadataPointerTarget(Image, Base + 0x2018));
     Image.ImportPtrSlots.clear();
     if (Version != 2) {
-      auto &Recipe = Image.MachOAuthenticatedPointers.at(Base + 0x2018);
+      const auto Entry = Image.MachOAuthenticatedPointers.find(Base + 0x2018);
+      ASSERT_NE(Entry, Image.MachOAuthenticatedPointers.end());
+      auto &Recipe = Entry->second;
+      Recipe.LibraryOrdinal = llvm::MachO::BIND_SPECIAL_DYLIB_SELF;
+      EXPECT_FALSE(readMetadataPointerTarget(Image, Entry->first));
+      Recipe.LibraryOrdinal.reset();
+      EXPECT_TRUE(readMetadataPointerTarget(Image, Entry->first));
       Recipe.Diversity ^= 1;
       EXPECT_FALSE(readMetadataPointerTarget(Image, Base + 0x2018));
       Recipe.Diversity ^= 1;
