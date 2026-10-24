@@ -3018,6 +3018,17 @@ void MainWindow::showLocalReferences(CodeView *origin,
       1, QHeaderView::ResizeToContents);
   table->horizontalHeader()->setStretchLastSection(true);
   table->selectRow(0);
+  // Preview inside the originating document without taking focus from the
+  // list. clicked also covers clicking its already selected initial row.
+  const auto preview = [view, model, target, valid](const QModelIndex &index) {
+    if (valid())
+      if (const auto *reference = model->reference(index.row()))
+        view->text()->selectLocalReference(target, *reference);
+  };
+  connect(table, &QTableView::clicked, &dialog, preview);
+  connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged,
+          &dialog, preview);
+  activateOnReturn(*table);
   layout->addWidget(table);
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);

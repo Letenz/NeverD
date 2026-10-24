@@ -1805,6 +1805,15 @@ Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
 repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
 and function-edit controller cases check that their scoped Ctrl+E still wins.
 
+`localVariableReferencesStayInTheirCodeWindow` exercises single-click and arrow
+selection in local-variable reference lists for pseudocode, C and LLVM C, both
+docked and floating. It checks clicking the initially selected row, unfolding a
+distant occurrence, distinct columns on the same line, renamed locals, focus
+remaining in the list, and closing with OK, Enter, double-click or Escape.
+`closingFileDismissesLocalVariableReferences` closes the project after a live
+reference selection. Both cases also run in the native Windows/macOS checks;
+`NEVERD_SHORTCUT_CAPTURES` captures the source selection and list in both themes.
+
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
 its dock button and the tab context menu in both themes.
 `closedFloatingDocksReopenInWorkbench` closes floating panes through their

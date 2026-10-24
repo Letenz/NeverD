@@ -119,6 +119,8 @@ jobs:
             floatingAnalysisMenusStayWithTheirView \
             floatingWindowsKeepMouseHistory \
             floatingCommandDialogsStayWithTheirView \
+            localVariableReferencesStayInTheirCodeWindow \
+            closingFileDismissesLocalVariableReferences \
             classicJumpChoosersSelectAndCancel \
             selectedBytesExportWithIdasKey \
             shortcutsCanBeFoundByKeyAndScope \
