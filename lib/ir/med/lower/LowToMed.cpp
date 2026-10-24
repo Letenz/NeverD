@@ -1305,6 +1305,28 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
             {Reload->second.BlockId, Reload->second.OperationIndex}));
       }
       MB.Ops.push_back(MOp);
+      if (CallExitConstants && LOp.Opcode == NdOp::CALL &&
+          MOp.Opcode == NdOp::CALL && !MOp.DoesNotReturn && LOp.NumInputs &&
+          LOp.Inputs[0].isConst())
+        if (const auto Exit = CallExitConstants->find(LOp.Inputs[0].Offset);
+            Exit != CallExitConstants->end())
+          for (const auto &[Register, Value] : Exit->second) {
+            // Ordinary call results retain their ABI contract. These extra
+            // definitions carry proved scalar machine state into SSA before
+            // either C route can replace a volatile register with unknown.
+            if (TheArch != Arch::X64 || ConventionRegs.isReturnReg(Register) ||
+                Register == x86reg::RSP || !gprFamilyOf(TheArch, Register) ||
+                Register % sizeof(uint64_t))
+              continue;
+            MedOp Write;
+            Write.Opcode = NdOp::COPY;
+            Write.Addr = LOp.Addr;
+            Write.Output =
+                ndVarToMedVar(NdVar::reg(Register, sizeof(uint64_t)));
+            Write.addInput(MedVar::makeConst(
+                Value, sizeof(uint64_t), ConstantAddressProvenance::Scalar));
+            MB.Ops.push_back(std::move(Write));
+          }
       if (const auto Snapshot = ImportSnapshots.find(Position);
           Snapshot != ImportSnapshots.end()) {
         MedOp Save;

@@ -27,6 +27,14 @@ replace with zero. Recover the actual state contract or retain an explicit
 unsupported value through both projections; disabling optimization or deleting
 arguments does not establish that contract. Generic FP/vector summary operands
 need the same audit, including register-bank and scalar-width preservation.
+Bounded call-free x64 callees now publish scalar constants agreed at every
+return, before SSA, through the shared register-effect summary. Ordinary ABI
+result registers, addresses, exceptional roots and unknown paths remain outside
+that proof. Public caller stores execute through both C routes and real PE/ELF
+consumers, including cached query order; dynamic outputs such as CPUID and VM
+state still require a real call-state contract. HighC's explicit zero fallback
+for unknown memory stores is a separate confirmed gap, alongside LLVM's
+`freeze undef`; neither is closed by recovering the provable constants.
 Complete header and explicit local FP/HFA declarations share the same checked
 carrier adapter. ARM64 cached imports retain the original loaded callable
 through bounded private-frame proofs. Selected LLVMC output includes the

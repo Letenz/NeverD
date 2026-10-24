@@ -121,6 +121,9 @@ public:
   void setCallMayWriteGPRs(const std::map<va_t, uint32_t> *M) {
     CallMayWriteGPRs = M;
   }
+  void setCallExitConstants(const std::map<va_t, GPRExitConstants> *M) {
+    CallExitConstants = M;
+  }
   /// Direct-callee entry-read summaries (PipelineResult::CallEntryReadGPRs).
   void setCallEntryReadGPRs(const std::map<va_t, GPRReadWidths> *M) {
     CallEntryReadGPRs = M;
@@ -430,6 +433,7 @@ private:
   /// Per-callee callee-cleanup pop (entry VA -> bytes); see setCalleePopMap.
   const std::map<va_t, int> *CalleePopMap = nullptr;
   const std::map<va_t, uint32_t> *CallMayWriteGPRs = nullptr;
+  const std::map<va_t, GPRExitConstants> *CallExitConstants = nullptr;
   const std::map<va_t, GPRReadWidths> *CallEntryReadGPRs = nullptr;
   const std::map<va_t, va_t> *CallArgumentSources = nullptr;
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;

@@ -5030,6 +5030,19 @@ For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
 
+The same owner proves scalar exit constants for bounded, complete x64 bodies
+without calls, intrinsics, unresolved control flow or exceptional/independent
+entries. It uses the existing LowIR scalar evaluator within each return block
+and intersects the full-register constants at every return. It does not read
+image memory or turn an address identity into an integer fact. The operation
+budget lives in `Limits.h`; there is no inter-block symbolic search. LowToMed
+publishes these extra register definitions after the call, before SSA, for
+both C routes. Ordinary ABI result registers keep their existing return
+contract. Deferred source views, native session recovery and omitted-callee
+memo keys retain the same facts, including their memory accounting. Dynamic
+callee outputs and constants requiring predecessor reasoning remain separate
+machine-state recovery work.
+
 A call through a function-pointer variable passes the arguments of the routine
 the variable starts at (`collectPointerVariableCallees`): another module's
 routine, by the prototype the variable's absolute relocation names, or a
@@ -5055,8 +5068,9 @@ that passes a two-load target's object finds none in a register that holds the
 target. HighIR's stack scan takes no prologue save for an indirect call either
 (`isIncomingRegisterSave`, shared with recovery).
 
-A caller-saved register holds, after a call, only what that call left in it,
-so no compiler passes that value on as an argument. `ValuesLeftByCalls`
+A caller-saved register holds, after a call, whatever that call left in it.
+Without a proved exit value, that residue alone supplies no evidence of an
+additional source argument. `ValuesLeftByCalls`
 (`MedCallLeftovers.h`) names such values: each call's clobber of a register it
 may change whole, and each join of nothing else, loops of joins included.
 Clobbers that keep a preserved low half do not count, nor do clobbers the

@@ -148,6 +148,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setObjCBlockCaptureReceivers(&Opts.ObjCBlockCaptureReceivers);
     Local.setCalleePopMap(&CalleePop);
     Local.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
+    Local.setCallExitConstants(&Result.CallExitConstants);
     Local.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
     Local.setCallArgumentSources(&Result.CallArgumentSources);
     Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
@@ -288,6 +289,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallEntryStackPops);
   COPY_SOURCE_FACT(CallEntryStackSlots);
   COPY_SOURCE_FACT(CallMayWriteGPRs);
+  COPY_SOURCE_FACT(CallExitConstants);
   COPY_SOURCE_FACT(CallVariadicFrom);
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);
