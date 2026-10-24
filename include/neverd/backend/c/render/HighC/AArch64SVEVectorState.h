@@ -80,8 +80,10 @@ inline std::set<std::string> aarch64SVEVectorLocalNames(
         E.Kind == ExprKind::Call && Op) {
       if (TheArch != Arch::AArch64 || !aarch64VectorHighShapeIsValid(E))
         throw std::invalid_argument(kMalformedVector);
-      if (Op->ConsumesVector) {
-        const auto &Input = *E.Operands[kVectorInputIndex];
+      for (unsigned I = 0; I != Op->OperandCount; ++I) {
+        if (!Op->consumesVector(I))
+          continue;
+        const auto &Input = *E.Operands[I];
         if (isSVEVectorName(Input))
           Seeds.insert(NameOf(Input.Var));
         else if (!isSVEVectorProducer(Input))
@@ -144,8 +146,7 @@ inline std::set<std::string> aarch64SVEVectorLocalNames(
                                              : std::nullopt;
     for (size_t I = 0; I != E.Operands.size(); ++I)
       if (E.Operands[I])
-        Check(*E.Operands[I],
-              Op && Op->ConsumesVector && I == kVectorInputIndex);
+        Check(*E.Operands[I], Op && Op->consumesVector(I));
     if (E.IndirectTarget)
       Check(*E.IndirectTarget, false);
   };
@@ -158,7 +159,12 @@ inline std::set<std::string> aarch64SVEVectorLocalNames(
       const bool WholeAssignment = S.Kind == StmtKind::Assign && E == S.Val &&
                                    S.Dst && isSVEVectorName(*S.Dst) &&
                                    Names.count(NameOf(S.Dst->Var));
-      Check(*E, WholeAssignment);
+      // A validated checked-pointer operation must still execute when its
+      // vector result is discarded. This is not a scalable ABI escape.
+      const bool DiscardedCheck = S.Kind == StmtKind::ExprStmt && E == S.Val &&
+                                  E->Kind == ExprKind::Call &&
+                                  cpaOperation(E->IntrinsicId).has_value();
+      Check(*E, WholeAssignment || DiscardedCheck);
     });
   });
   return Names;

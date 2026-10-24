@@ -12,6 +12,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/render/AArch64SVECPAC.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/AArch64SVEVectorState.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
@@ -19,18 +20,23 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/med/AArch64SVEState.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/lift/AArch64Regs.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Object/ObjectFile.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -51,6 +57,27 @@ namespace {
 #define NEVERD_SVE_VECTOR_FIXTURE(Type, Name, Value)                           \
   constexpr Type Name = Value;
 #include "AArch64SVEVectorFixtures.def"
+
+#define NEVERD_SVE_CPA_FIXTURE(Type, Name, Value) constexpr Type Name = Value;
+#include "AArch64SVECPAFixtures.def"
+
+struct CPACase {
+  uint32_t Word;
+  Intrinsic Id;
+  unsigned Destination;
+  unsigned Count;
+  unsigned Predicates;
+  std::array<unsigned, 3> Sources;
+  uint32_t EmittedWord;
+};
+
+constexpr CPACase CPACases[] = {
+#define NEVERD_SVE_CPA_CASE(Word, Id, Dst, Count, Predicates, First, Second,   \
+                            Third, Emitted)                                    \
+  {Word,       Intrinsic::Id,          Dst,    Count,                          \
+   Predicates, {First, Second, Third}, Emitted},
+#include "AArch64SVECPAFixtures.def"
+};
 
 constexpr unsigned Widths[] = {
 #define NEVERD_SVE_VECTOR_WIDTH(Bytes) Bytes,
@@ -203,7 +230,27 @@ std::string highSource(const MedFunc &F) {
   return Source;
 }
 
-void compileSource(const std::string &Source) {
+void expectInstruction(llvm::StringRef Data, uint32_t Word) {
+  auto Object = llvm::object::ObjectFile::createObjectFile(
+      llvm::MemoryBufferRef(Data, kFunction));
+  ASSERT_TRUE(static_cast<bool>(Object)) << llvm::toString(Object.takeError());
+  unsigned Count = 0;
+  for (const auto &Section : (*Object)->sections()) {
+    if (!Section.isText())
+      continue;
+    auto Bytes = Section.getContents();
+    ASSERT_TRUE(static_cast<bool>(Bytes)) << llvm::toString(Bytes.takeError());
+    for (size_t I = 0; I + kInstructionBytes <= Bytes->size();
+         I += kInstructionBytes)
+      Count +=
+          readLE<uint32_t>(reinterpret_cast<const uint8_t *>(Bytes->data()) +
+                           I) == Word;
+  }
+  EXPECT_GT(Count, 0u);
+}
+
+void compileSource(const std::string &Source,
+                   std::optional<uint32_t> ExpectedWord = std::nullopt) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -248,6 +295,11 @@ void compileSource(const std::string &Source) {
     uint64_t ObjectBytes = 0;
     ASSERT_FALSE(llvm::sys::fs::file_size(ObjectPath, ObjectBytes));
     EXPECT_GT(ObjectBytes, 0u);
+    if (ExpectedWord) {
+      auto Bytes = llvm::MemoryBuffer::getFile(ObjectPath);
+      ASSERT_TRUE(Bytes);
+      expectInstruction((*Bytes)->getBuffer(), *ExpectedWord);
+    }
   }
   EXPECT_FALSE(llvm::sys::fs::remove(SourcePath));
   EXPECT_FALSE(llvm::sys::fs::remove(ObjectPath));
@@ -903,4 +955,346 @@ TEST(AArch64SVEVector, SharedStateAdmissionRequiresActualBranchTarget) {
   Duplicate.Blocks[kAlternateBlock].StartAddr =
       Duplicate.Blocks[kLoopBlock].StartAddr;
   expectStateRejected(Duplicate);
+}
+
+namespace {
+MedFunc checkedVectorFunction(const CPACase &Case, bool Discard = false,
+                              unsigned PredicateElement = kWideElement) {
+  MedFunc F;
+  F.Name = kCPAFunction;
+  F.Entry = kEntry;
+  F.ReturnType = NdType::makeInt(kScalarBytes, false);
+  F.ReturnValueEvidence = MedReturnValueEvidence::ReturnsInteger;
+  F.Blocks.resize(1);
+  auto &Block = F.Blocks.front();
+  Block.Id = 0;
+  Block.StartAddr = kEntry;
+  Block.EndAddr = kEntry + kBlockStride;
+  const auto Predicate = temporary(kPredicateId, kPredicateBytes);
+  Block.Ops.push_back(intrinsic(Intrinsic::A64_SvePtrue, Predicate,
+                                {constant(kVL2, kPatternBytes),
+                                 constant(PredicateElement, kElementBytes)}));
+  for (unsigned I = 0; I != 3; ++I)
+    Block.Ops.push_back(
+        intrinsic(Intrinsic::A64_SveIndex, temporary(kCPAInitialId + I),
+                  {constant(kIndexStart + I), constant(kIndexStep),
+                   constant(kWideElement, kElementBytes)}));
+  const auto Checked = temporary(kCPAResultId);
+  auto CPA = intrinsic(Case.Id, Checked, {});
+  for (unsigned I = 0; I != Case.Count; ++I)
+    CPA.addInput(Case.Predicates & (1u << I) ? Predicate
+                                             : temporary(kCPAInitialId + I));
+  CPA.addInput(constant(kWideElement, kElementBytes));
+  Block.Ops.push_back(CPA);
+  const auto Result = temporary(kResultId, kScalarBytes);
+  Block.Ops.push_back(
+      intrinsic(Intrinsic::A64_SveLastb, Result,
+                {Predicate, Discard ? temporary(kCPAInitialId) : Checked,
+                 constant(kWideElement, kElementBytes)}));
+  Block.Ops.push_back(operation(NdOp::RETURN, {}, {Result}));
+  return F;
+}
+
+void optimizeCheckedVectors(llvm::Module &Module) {
+  llvm::LoopAnalysisManager Loops;
+  llvm::FunctionAnalysisManager Functions;
+  llvm::CGSCCAnalysisManager SCCs;
+  llvm::ModuleAnalysisManager Modules;
+  llvm::PassBuilder Builder;
+  Builder.registerModuleAnalyses(Modules);
+  Builder.registerCGSCCAnalyses(SCCs);
+  Builder.registerFunctionAnalyses(Functions);
+  Builder.registerLoopAnalyses(Loops);
+  Builder.crossRegisterProxies(Loops, Functions, SCCs, Modules);
+  auto Passes =
+      Builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+  Passes.run(Module, Modules);
+}
+} // namespace
+
+TEST(AArch64SVECPA, SixRawFormsRetainEveryOperandIncludingAliases) {
+  Decoder Decode;
+  ASSERT_TRUE(Decode.init(Arch::AArch64));
+  Decode.setStrict(true);
+  for (const auto &Case : CPACases)
+    for (bool Fast : {false, true}) {
+      SCOPED_TRACE(Case.Word);
+      std::array<uint8_t, kInstructionBytes> Bytes;
+      writeLE<uint32_t>(Bytes.data(), Case.Word);
+      DecodedInsn Instruction;
+      ASSERT_EQ(Fast ? Decode.decodeOneForLift(Bytes.data(), Bytes.size(),
+                                               kEntry, Instruction)
+                     : Decode.decodeOne(Bytes.data(), Bytes.size(), kEntry,
+                                        Instruction),
+                Bytes.size());
+      std::vector<LowOp> Ops;
+      ASSERT_NO_THROW(Decode.liftToLow(Instruction, Ops));
+      ASSERT_EQ(Ops.size(), 1u);
+      const auto &Op = Ops.front();
+      ASSERT_TRUE(lowAArch64SVECPAShapeIsValid(Op));
+      EXPECT_EQ(Op.Inputs[0].Offset, static_cast<uint64_t>(Case.Id));
+      EXPECT_EQ(Op.Output,
+                NdVar::reg(a64reg::Z(Case.Destination), kVectorBytes));
+      ASSERT_EQ(Op.NumInputs, Case.Count + 2);
+      for (unsigned I = 0; I != Case.Count; ++I) {
+        const bool Predicate = Case.Predicates & (1u << I);
+        EXPECT_EQ(Op.Inputs[I + 1],
+                  NdVar::reg(Predicate ? a64reg::P(Case.Sources[I])
+                                       : a64reg::Z(Case.Sources[I]),
+                             Predicate ? kPredicateBytes : kVectorBytes));
+      }
+      EXPECT_EQ(Op.Inputs[Op.NumInputs - 1],
+                NdVar::cst(kWideElement, kElementBytes));
+      EXPECT_TRUE(isSideeffectIntrinsic(Case.Id));
+      for (unsigned I = 1; I <= Case.Count; ++I) {
+        auto Bad = Op;
+        Bad.Inputs[I] = NdVar::cst(0, Bad.Inputs[I].Size);
+        EXPECT_FALSE(lowAArch64SVECPAShapeIsValid(Bad));
+        Bad = Op;
+        Bad.Inputs[I].Size = kCPANeonBytes;
+        EXPECT_FALSE(lowAArch64SVECPAShapeIsValid(Bad));
+      }
+    }
+}
+
+TEST(AArch64SVECPA, LLVMAndHighCKeepRealInstructionsWithDeadResults) {
+  for (unsigned C = 0; C != kCPAFormCount; ++C)
+    for (bool Discard : {false, true}) {
+      const auto &Case = CPACases[C];
+      SCOPED_TRACE(Case.Word);
+      const auto F = checkedVectorFunction(Case, Discard, kByteElement);
+      ASSERT_EQ(validateAArch64SVEState(F, Arch::AArch64), nullptr);
+      ASSERT_TRUE(verifyMedFunc(F, kFunction));
+      for (bool Optimize : {false, true}) {
+        llvm::LLVMContext Context;
+        auto Module =
+            MedLLVMEmitter().emit({F}, Context, kFunction, Arch::AArch64);
+        ASSERT_TRUE(Module);
+        ASSERT_FALSE(llvm::verifyModule(*Module));
+        if (Optimize)
+          optimizeCheckedVectors(*Module);
+        bool Found = false;
+        for (const auto &Block : *Module->getFunction(F.Name))
+          for (const auto &Inst : Block)
+            if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst))
+              if (const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(
+                      Call->getCalledOperand())) {
+                Found = true;
+                EXPECT_TRUE(Asm->hasSideEffects());
+                EXPECT_EQ(Call->arg_size(), Case.Count);
+                EXPECT_EQ(Asm->getConstraintString(),
+                          Case.Predicates   ? kCPAMergingConstraints
+                          : Case.Count == 2 ? kCPABinaryConstraints
+                                            : kCPAMultiplyConstraints);
+                EXPECT_EQ(Asm->getAsmString(),
+                          llvm::formatv(kCPAAsmFormat, Case.EmittedWord).str());
+                const auto *Type =
+                    llvm::dyn_cast<llvm::ScalableVectorType>(Call->getType());
+                ASSERT_TRUE(Type);
+                EXPECT_EQ(Type->getElementCount().getKnownMinValue(),
+                          kMinimumBytes / kWideElement);
+                for (unsigned I = 0; I != Case.Count; ++I) {
+                  const auto *Input = llvm::dyn_cast<llvm::ScalableVectorType>(
+                      Call->getArgOperand(I)->getType());
+                  ASSERT_TRUE(Input);
+                  EXPECT_EQ(Input->getElementCount().getKnownMinValue(),
+                            Case.Predicates & (1u << I)
+                                ? kMinimumBytes
+                                : kMinimumBytes / kWideElement);
+                }
+              }
+        EXPECT_TRUE(Found);
+        auto Object = Codegen().compile(*Module, Arch::AArch64,
+                                        BinaryFormat::ELF, kTriple);
+        ASSERT_TRUE(Object.Success);
+        expectInstruction(llvm::StringRef(reinterpret_cast<const char *>(
+                                              Object.ObjectData.data()),
+                                          Object.ObjectData.size()),
+                          Case.EmittedWord);
+      }
+      const auto Source = highSource(F);
+      compileSource(Source, Case.EmittedWord);
+    }
+}
+
+TEST(AArch64SVECPA, EveryStateInputNeedsCompleteLocalProvenance) {
+  for (unsigned C = 0; C != kCPAFormCount; ++C) {
+    const auto &Case = CPACases[C];
+    const auto F = checkedVectorFunction(Case);
+    const auto &Op = F.Blocks[0].Ops[kCPAInstructionIndex];
+    ASSERT_TRUE(aarch64SVECPAMedShapeIsValid(Op));
+    EXPECT_FALSE(endsCallArgumentSetup(Op));
+    for (unsigned I = 1; I <= Case.Count; ++I) {
+      auto Missing = F;
+      Missing.Blocks[0].Ops[kCPAInstructionIndex].Inputs[I].Id += kCPAInitialId;
+      expectStateRejected(Missing);
+      auto BadWidth = F;
+      auto &Bad = BadWidth.Blocks[0].Ops[kCPAInstructionIndex];
+      Bad.Inputs[I].Size = kScalarBytes;
+      EXPECT_FALSE(aarch64SVECPAMedShapeIsValid(Bad));
+      EXPECT_TRUE(endsCallArgumentSetup(Bad));
+      expectStateRejected(BadWidth);
+      auto Literal = F;
+      auto &Input = Literal.Blocks[0].Ops[kCPAInstructionIndex].Inputs[I];
+      Input = constant(0, Input.Size);
+      expectStateRejected(Literal);
+    }
+    auto BadElement = F;
+    BadElement.Blocks[0].Ops[kCPAInstructionIndex].Inputs[Op.NumInputs - 1] =
+        constant(kByteElement, kElementBytes);
+    expectStateRejected(BadElement);
+    auto Extra = F;
+    Extra.Blocks[0].Ops[kCPAInstructionIndex].addInput(constant(0));
+    expectStateRejected(Extra);
+    auto MissingOutput = F;
+    MissingOutput.Blocks[0].Ops[kCPAInstructionIndex].Output = {};
+    expectStateRejected(MissingOutput);
+  }
+}
+
+TEST(AArch64SVECPA, HighCAssemblyTemporariesCannotCaptureInputs) {
+  for (unsigned C = 0; C != kCPAFormCount; ++C) {
+    const auto &Case = CPACases[C];
+    const auto CPA = aarch64_sve::cpaOperation(Case.Id);
+    ASSERT_TRUE(CPA);
+    std::vector<std::string> Args = {kCPAFirstArg, kCPASecondArg};
+    if (Case.Count == 3)
+      Args.push_back(kCPAThirdArg);
+    if (Case.Predicates)
+      Args = {kCPAPredicateArg, kCPAFirstArg, kCPASecondArg};
+    const auto Text = aarch64SVECPAC(*CPA, Args);
+    compileSource(llvm::formatv(kCPAStandaloneSource, Text).str(),
+                  Case.EmittedWord);
+  }
+}
+
+TEST(AArch64SVECPA, RawLocalFunctionsSurviveCFGAndSSA) {
+  for (unsigned C = 0; C != kCPAFormCount; ++C) {
+    const auto &Case = CPACases[C];
+    const uint32_t Words[] = {
+#define NEVERD_SVE_CPA_SETUP(Word) Word,
+#include "AArch64SVECPAFixtures.def"
+        Case.Word,
+        Case.Destination == kCPAMaximumRegister ? kCPALastFinal : kCPALastFirst,
+        kCPAReturn};
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Image.Format = BinaryFormat::ELF;
+    Image.Bits = Bitness::Bits64;
+    Segment Text;
+    Text.VA = kEntry;
+    Text.Size = Text.FileSz = sizeof(Words);
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(sizeof(Words));
+    for (size_t I = 0; I != std::size(Words); ++I)
+      writeLE<uint32_t>(Text.Data.data() + I * kInstructionBytes, Words[I]);
+    Image.Segments.push_back(std::move(Text));
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Arch::AArch64));
+    Decode.setStrict(true);
+    auto Low = CFGBuilder().build(Image, Decode, kEntry, kCPAFunction);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::ELF);
+    ASSERT_EQ(validateAArch64SVEState(Med, Arch::AArch64), nullptr);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Med}, Context, kFunction, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    optimizeCheckedVectors(*Module);
+    const auto Object =
+        Codegen().compile(*Module, Arch::AArch64, BinaryFormat::ELF, kTriple);
+    ASSERT_TRUE(Object.Success);
+    expectInstruction(llvm::StringRef(reinterpret_cast<const char *>(
+                                          Object.ObjectData.data()),
+                                      Object.ObjectData.size()),
+                      Case.EmittedWord);
+    compileSource(highSource(Med), Case.EmittedWord);
+  }
+}
+
+TEST(AArch64SVECPA, CheckedResultsRetainWholeCopyDiamondAndLoopTransport) {
+  for (unsigned C = 0; C != kCPAFormCount; ++C)
+    for (auto Mode : {Transport::Copy, Transport::Diamond, Transport::Loop}) {
+      const auto &Case = CPACases[C];
+      auto F = vectorFunction(kWideElement, kWideElement, Mode);
+      auto &Block = F.Blocks[Mode == Transport::Loop ? kLoopBlock : 0];
+      const unsigned Producer = Mode == Transport::Loop ? 0 : kVectorOperation;
+      auto &Seed = Block.Ops[Producer];
+      const auto Output = Seed.Output;
+      Seed.Output = temporary(kCPAInitialId);
+      auto CPA = intrinsic(Case.Id, Output, {});
+      for (unsigned I = 0; I != Case.Count; ++I)
+        CPA.addInput(Case.Predicates & (1u << I)
+                         ? temporary(kPredicateId, kPredicateBytes)
+                     : Mode == Transport::Loop && I == 0 ? temporary(kCopyId)
+                                                         : Seed.Output);
+      CPA.addInput(constant(kWideElement, kElementBytes));
+      Block.Ops.insert(Block.Ops.begin() + Producer + 1, CPA);
+      ASSERT_EQ(validateAArch64SVEState(F, Arch::AArch64), nullptr);
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({F}, Context, kFunction, Arch::AArch64);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      compileSource(highSource(F), Case.EmittedWord);
+    }
+}
+
+TEST(AArch64SVECPA, RenderersRejectMalformedAndCrossTargetContracts) {
+  for (unsigned C = 0; C != kCPAFormCount; ++C) {
+    const auto &Case = CPACases[C];
+    std::vector<std::string> Args(Case.Count, kCPAFirstArg);
+    std::vector<uint16_t> Widths(Case.Count, kVectorBytes);
+    for (unsigned I = 0; I != Case.Count; ++I)
+      if (Case.Predicates & (1u << I)) {
+        Args[I] = kCPAPredicateArg;
+        Widths[I] = kPredicateBytes;
+      }
+    Args.emplace_back(kWideElementC);
+    Widths.push_back(kElementBytes);
+    bool Intrinsics = false;
+    EXPECT_FALSE(renderIntrinsicCall(Case.Id, Arch::AArch64, Args, kVectorBytes,
+                                     Intrinsics, true, Widths)
+                     .empty());
+    EXPECT_THROW(renderIntrinsicCall(Case.Id, Arch::X64, Args, kVectorBytes,
+                                     Intrinsics, true, Widths),
+                 std::invalid_argument);
+    for (unsigned I = 0; I != Widths.size(); ++I) {
+      auto Invalid = Widths;
+      Invalid[I] = kCPANeonBytes;
+      EXPECT_THROW(renderIntrinsicCall(Case.Id, Arch::AArch64, Args,
+                                       kVectorBytes, Intrinsics, true, Invalid),
+                   std::invalid_argument);
+    }
+    EXPECT_THROW(renderIntrinsicCall(Case.Id, Arch::AArch64, Args, 0,
+                                     Intrinsics, true, Widths),
+                 std::invalid_argument);
+  }
+}
+
+TEST(AArch64SVECPA, DiscardedHighIRCallsStillExecuteTheCheck) {
+  for (unsigned C = 0; C != kCPAFormCount; ++C) {
+    const auto &Case = CPACases[C];
+    auto High = MedToHighConverter().convert(checkedVectorFunction(Case, true),
+                                             Arch::AArch64);
+    bool Found = false;
+    walkStmts(High.Body, [&](HighStmt &Statement) {
+      if (!Statement.Val || Statement.Val->Kind != ExprKind::Call ||
+          Statement.Val->IntrinsicId != Case.Id)
+        return;
+      Found = true;
+      Statement.Kind = StmtKind::ExprStmt;
+      Statement.Dst.reset();
+    });
+    ASSERT_TRUE(Found);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.EmitComments = false;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
+    compileSource(Source, Case.EmittedWord);
+  }
 }

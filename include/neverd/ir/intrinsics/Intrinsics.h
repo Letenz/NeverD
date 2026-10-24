@@ -439,6 +439,10 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64PAuthLoad.def"
 
+// Append-only: scalable checked pointer operations.
+#define NEVERD_A64_SVE_CPA_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64SVECPA.def"
+
   _Count = 16000
 };
 

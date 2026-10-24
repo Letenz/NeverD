@@ -220,8 +220,7 @@ both C projections. The machine instruction observes the execution host's
 checking controls and preserves poisoning behavior. Fixed scratch registers
 and raw instruction words support assemblers predating CPA mnemonics, with
 explicit operand and clobber constraints. Compilation does not establish CPU
-feature availability. SVE CPA forms fail explicitly until scalable state is
-modelled. These operations preserve call argument setup and frame taint,
+feature availability. These operations preserve call argument setup and frame taint,
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
@@ -297,11 +296,22 @@ LLVM converts typed predicates at the producer and consumer boundaries. All
 architectural PTRUE patterns are retained, including reserved empty patterns.
 MOVPRFX and flag-setting PTRUES remain unsupported until their paired-instruction
 and NZCV contracts are modelled. This does not establish V/Z aliasing, an SVE
-call ABI or the six SVE checked-pointer instruction forms.
+call ABI.
 
 `AArch64SVEVector.def` owns typed DUP/INDEX/LASTB/ST1/STNT1 shapes. HighC
 stores local Z values as `svuint8_t` and reinterprets them at typed operation
 boundaries; LLVM retains its integer backing with scalable typed views.
+`AArch64SVECPA.def` owns all six scalable CPA forms: unpredicated and merging
+ADDPT/SUBPT, MADPT and MLAPT. Original words retain destructive inputs and
+MADPT's multiplicand versus MLAPT's addend. LLVM and HighC emit real checked
+instructions over active-width Z values and canonical predicates, preserving
+inactive destination lanes, signed multiply-overflow checks and runtime enable
+controls. The shared vector contract records every vector and predicate input;
+none may acquire a scalar or constant substitute. Dead results still execute
+the checking operation. MOVPRFX pairs remain refused until their adjacent
+consumer contract is modelled. This is local instruction preservation, without
+native SVE/CPA execution qualification or a scalable LLVM-to-C carrier.
+
 IRMed's `validateAArch64SVEState` owns bounded, complete local Z/P definition
 and COPY/PHI closure for both Med-to-High and LLVM emission. It checks the
 executed CFG and every incoming definition before a consumer can use state.

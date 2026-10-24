@@ -379,10 +379,6 @@ TEST(AArch64CPASemantics, ScalarOperandsRetainChecksThroughBothDecoders) {
       EXPECT_TRUE(Zero[0].Inputs[I].isConst());
       EXPECT_EQ(Zero[0].Inputs[I].Offset, 0);
     }
-    // Vector ADDPT/SUBPT/MADPT/MLAPT cannot fall through to integer or
-    // fixed-width vector arithmetic while scalable state is unmodelled.
-    for (uint32_t Word : {0x04e20820u, 0x04e20c20u, 0x44c1d840u, 0x44c2d020u})
-      EXPECT_THROW(lift(Word, Fast), UnliftedInstruction);
   }
 }
 
