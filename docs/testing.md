@@ -11813,3 +11813,11 @@ through both C routes, with source optimization enabled and disabled, at C
 O0/O2 with UBSan. The oracle observes the non-return register's stored value
 and the ordinary call result. This qualifies bounded scalar constants, not
 dynamic machine-state returns or other architectures.
+The opaque CPUID-exit counterexample checks that both C routes report an
+observed missing value before modifying the caller's output, after exactly one
+provider call. It covers serial and sharded LLVM source emission, optimized and
+unoptimized source, and C O0/O2 across the three x64 formats. Marker tests also
+check distinct observations after LLVM optimization, unused values and a real
+function whose name collides with the internal marker spelling. These tests
+certify explicit source unavailability, not a reconstructed dynamic call-state
+contract.

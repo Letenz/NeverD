@@ -621,6 +621,8 @@ public:
   static bool pointsToVoid(const TypeRef &Ty);
   /// Pointer object used as an `INDIR_CALL` base, without `(uintptr_t)`.
   std::string pointerObjectStr(const HighExpr &E);
+  /// An unavailable value retains its pointer type as well as its failure.
+  std::string unknownValueText(const HighExpr &E, llvm::StringRef Kind);
   /// The failure an unknown value prints at its use, or empty when \p E
   /// names a value the function defines.
   std::string unknownVarUse(const HighExpr &E, const std::string &Name,

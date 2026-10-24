@@ -990,8 +990,6 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                (ValueText.front() == '&' || isStringLiteralText(ValueText)))
         OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
            << ")";
-      else if (isUnknownCallOperand(Stmt.Val.get()))
-        OS << "0";
       else if (auto Enum = enumConstDisplay(varName(Stmt.Dst->Var), *Stmt.Val))
         OS << *Enum;
       else if (std::optional<std::string> Converted =
@@ -1129,81 +1127,77 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         }
         emitIndent(Indent);
         OS << *Member << " = ";
-        if (isUnknownCallOperand(Stmt.StoreVal.get()))
-          OS << "0";
-        else {
-          std::string Value = exprStr(*Stmt.StoreVal);
-          const TypeRef StoredType = Stmt.StoreVal->Type;
-          const TypeRef MemberType = typedMemberType(
-              *Stmt.StoreAddr, StoredType ? StoredType->Size : 0,
-              accessClassOf(Stmt.StoreVal.get()));
-          // A constant stored to an enumeration names its enumerator.
-          if (MemberType && MemberType->Kind == NdTypeKind::Struct &&
-              MemberType->IsEnum)
-            if (const HighExpr *Const = peelIntegerViewOps(Stmt.StoreVal.get());
-                Const && Const->Kind == ExprKind::Const)
-              if (auto Name = enumeratorDisplay(MemberType, Const->ConstVal))
-                Value = *Name;
-          // A sign/zero-extended integer call can reuse an 8-byte pointer
-          // field. Make the C conversion explicit without widening the store.
-          if (!Overlayed && isIntegerOverlayStore(*Stmt.StoreVal) &&
-              MemberType && MemberType->Kind == NdTypeKind::Ptr && StoredType &&
-              StoredType->Kind == NdTypeKind::Int &&
-              StoredType->Size == MemberType->Size) {
-            const bool Signed = StoredType->IsSigned ||
-                                (Stmt.StoreVal->Kind == ExprKind::UnaryOp &&
-                                 Stmt.StoreVal->Op == NdOp::INT_SEXT);
-            Value = "(" + typeToC(MemberType) + ")(" +
-                    (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value + ")";
-          } else if (!Overlayed && MemberType && StoredType &&
-                     MemberType->Kind != NdTypeKind::Float &&
-                     StoredType->Kind != NdTypeKind::Float &&
-                     (MemberType->Kind == NdTypeKind::Ptr ||
-                      StoredType->Kind == NdTypeKind::Ptr) &&
-                     !isZeroConstant(*Stmt.StoreVal) &&
-                     memberOfDefinedRecord(*Stmt.StoreAddr)) {
-            // A member the unit's definitions declare takes their type,
-            // which C converts the stored bytes' type to only by a cast:
-            // an address to a pointer of another type, or an integer.  An
-            // address the code holds as an integer is cast as the address.
-            // C converts an untyped pointer to an object pointer itself.
-            const auto untyped = [&](const TypeRef &Type) {
-              return Type && Type->Kind == NdTypeKind::Ptr &&
-                     (!Type->Pointee ||
-                      Type->Pointee->Kind == NdTypeKind::Void) &&
-                     Type->Size == MemberType->Size;
-            };
-            const bool ObjectMember =
-                MemberType->Kind == NdTypeKind::Ptr &&
-                !(MemberType->Pointee &&
-                  MemberType->Pointee->Kind == NdTypeKind::Func);
-            bool Untyped = untyped(StoredType);
-            if (MemberType->Kind == NdTypeKind::Ptr)
-              if (const HighExpr *Address =
-                      peelIntegerViewOps(Stmt.StoreVal.get())) {
-                if (Address != Stmt.StoreVal.get() && Address->Type &&
-                    Address->Type->Kind == NdTypeKind::Ptr &&
-                    Address->Type->Size == MemberType->Size) {
-                  Value = exprStr(*Address);
-                  Untyped = untyped(Address->Type);
-                }
-                // A parameter the signature types as a pointer, stored
-                // whole, is its address.
-                else if ((Address->Kind == ExprKind::Var ||
-                          Address->Kind == ExprKind::Phi) &&
-                         Address->Var.Kind == MedVar::Param)
-                  if (const TypeRef Declared = debugParamType(Address->Var);
-                      Declared && Declared->Kind == NdTypeKind::Ptr &&
-                      Declared->Size == MemberType->Size) {
-                    Value = copyForwardName(varName(Address->Var));
-                    Untyped = untyped(Declared);
-                  }
+        std::string Value = exprStr(*Stmt.StoreVal);
+        const TypeRef StoredType = Stmt.StoreVal->Type;
+        const TypeRef MemberType =
+            typedMemberType(*Stmt.StoreAddr, StoredType ? StoredType->Size : 0,
+                            accessClassOf(Stmt.StoreVal.get()));
+        // A constant stored to an enumeration names its enumerator.
+        if (MemberType && MemberType->Kind == NdTypeKind::Struct &&
+            MemberType->IsEnum)
+          if (const HighExpr *Const = peelIntegerViewOps(Stmt.StoreVal.get());
+              Const && Const->Kind == ExprKind::Const)
+            if (auto Name = enumeratorDisplay(MemberType, Const->ConstVal))
+              Value = *Name;
+        // A sign/zero-extended integer call can reuse an 8-byte pointer
+        // field. Make the C conversion explicit without widening the store.
+        if (!Overlayed && isIntegerOverlayStore(*Stmt.StoreVal) && MemberType &&
+            MemberType->Kind == NdTypeKind::Ptr && StoredType &&
+            StoredType->Kind == NdTypeKind::Int &&
+            StoredType->Size == MemberType->Size) {
+          const bool Signed = StoredType->IsSigned ||
+                              (Stmt.StoreVal->Kind == ExprKind::UnaryOp &&
+                               Stmt.StoreVal->Op == NdOp::INT_SEXT);
+          Value = "(" + typeToC(MemberType) + ")(" +
+                  (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value + ")";
+        } else if (!Overlayed && MemberType && StoredType &&
+                   MemberType->Kind != NdTypeKind::Float &&
+                   StoredType->Kind != NdTypeKind::Float &&
+                   (MemberType->Kind == NdTypeKind::Ptr ||
+                    StoredType->Kind == NdTypeKind::Ptr) &&
+                   !isZeroConstant(*Stmt.StoreVal) &&
+                   memberOfDefinedRecord(*Stmt.StoreAddr)) {
+          // A member the unit's definitions declare takes their type,
+          // which C converts the stored bytes' type to only by a cast:
+          // an address to a pointer of another type, or an integer.  An
+          // address the code holds as an integer is cast as the address.
+          // C converts an untyped pointer to an object pointer itself.
+          const auto untyped = [&](const TypeRef &Type) {
+            return Type && Type->Kind == NdTypeKind::Ptr &&
+                   (!Type->Pointee ||
+                    Type->Pointee->Kind == NdTypeKind::Void) &&
+                   Type->Size == MemberType->Size;
+          };
+          const bool ObjectMember =
+              MemberType->Kind == NdTypeKind::Ptr &&
+              !(MemberType->Pointee &&
+                MemberType->Pointee->Kind == NdTypeKind::Func);
+          bool Untyped = untyped(StoredType);
+          if (MemberType->Kind == NdTypeKind::Ptr)
+            if (const HighExpr *Address =
+                    peelIntegerViewOps(Stmt.StoreVal.get())) {
+              if (Address != Stmt.StoreVal.get() && Address->Type &&
+                  Address->Type->Kind == NdTypeKind::Ptr &&
+                  Address->Type->Size == MemberType->Size) {
+                Value = exprStr(*Address);
+                Untyped = untyped(Address->Type);
               }
-            if (!(ObjectMember && Untyped))
-              Value = "(__typeof__(" + *Member + "))(" + Value + ")";
-          }
-          OS << Value;
+              // A parameter the signature types as a pointer, stored
+              // whole, is its address.
+              else if ((Address->Kind == ExprKind::Var ||
+                        Address->Kind == ExprKind::Phi) &&
+                       Address->Var.Kind == MedVar::Param)
+                if (const TypeRef Declared = debugParamType(Address->Var);
+                    Declared && Declared->Kind == NdTypeKind::Ptr &&
+                    Declared->Size == MemberType->Size) {
+                  Value = copyForwardName(varName(Address->Var));
+                  Untyped = untyped(Declared);
+                }
+            }
+          if (!(ObjectMember && Untyped))
+            Value = "(__typeof__(" + *Member + "))(" + Value + ")";
         }
+        OS << Value;
         OS << ";\n";
         break;
       }
@@ -1236,10 +1230,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                 ProjectedDestType->Size < ProjectedSlot->second.Type->Size))
             ProjectedDestType = ProjectedSlot->second.Type;
         }
-        if (isUnknownCallOperand(Stmt.StoreVal.get()))
-          OS << "0";
-        else if (ProjectedDestType &&
-                 ProjectedDestType->Kind == NdTypeKind::Ptr)
+        if (ProjectedDestType && ProjectedDestType->Kind == NdTypeKind::Ptr)
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
         else if (ProjectedDestType &&
@@ -1259,17 +1250,12 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         if (auto Name = imageObjectName(*VA)) {
           emitIndent(Indent);
           OS << *Name << " = ";
-          if (isUnknownCallOperand(Stmt.StoreVal.get()))
-            OS << "0";
-          else {
-            // An integer the object's type holds converts implicitly, as a
-            // store through any other path does (storedValueText).
-            const TypeRef Declared = assignedImageObjectType(*VA);
-            OS << assignedText(
-                Declared, *Stmt.StoreVal,
-                implicitIntegerConversion(*Stmt.StoreVal, Declared)
-                    .value_or(exprStr(*Stmt.StoreVal)));
-          }
+          // An integer the object's type holds converts implicitly, as a
+          // store through any other path does (storedValueText).
+          const TypeRef Declared = assignedImageObjectType(*VA);
+          OS << assignedText(Declared, *Stmt.StoreVal,
+                             implicitIntegerConversion(*Stmt.StoreVal, Declared)
+                                 .value_or(exprStr(*Stmt.StoreVal)));
           OS << ";\n";
           break;
         }
@@ -1279,10 +1265,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         writeFrameRecordStore(
             *Stmt.StoreAddr, Stmt.StoreVal->Type, *Stmt.StoreVal, Indent, [&] {
-              return isUnknownCallOperand(Stmt.StoreVal.get())
-                         ? std::string("0")
-                         : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
-                                           Stmt.MemoryOrdering);
+              return storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                                     Stmt.MemoryOrdering);
             }))
       break;
     bool ExactImageBytes = false;
@@ -1293,10 +1277,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         Stmt.StoreVal->Type,
         addrStr(*Stmt.StoreAddr, 0,
                 Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default),
-        isUnknownCallOperand(Stmt.StoreVal.get())
-            ? "0"
-            : storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
-                              Stmt.MemoryOrdering),
+        storedValueText(*Stmt.StoreVal, Stmt.StoreVal->Type,
+                        Stmt.MemoryOrdering),
         Stmt.MemoryOrdering, Stmt.MemoryAddressSpace, ExactImageBytes, Indent);
     break;
   }

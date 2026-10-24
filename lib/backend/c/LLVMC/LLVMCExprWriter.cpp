@@ -3240,6 +3240,8 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     if (auto It = SelectUseText.find(LI); It != SelectUseText.end())
       return It->second;
   }
+  if (llvm_source_unknown::isValue(V))
+    return "(__builtin_trap(), 0 /* unknown machine state */)";
   if (isCallClobberValue(V))
     return "0 /* unknown */";
   if (llvm::isa<llvm::FreezeInst>(V))

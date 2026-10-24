@@ -2146,6 +2146,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
 }
 
 bool LLVMCWriter::isUnknownCopyInst(const llvm::Instruction &Inst) const {
+  if (llvm_source_unknown::isValue(&Inst))
+    return true;
   if (isCallClobberName(Inst.getName()))
     return true;
   if (const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst)) {
