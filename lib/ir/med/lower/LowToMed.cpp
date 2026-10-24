@@ -698,6 +698,15 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
         Count = Passed;
       }
       MOp.CalleeRegisterArgs = Count;
+      // A positional summary can also prove that no vector register is
+      // read. Publish that absence explicitly: later ABI recovery may no
+      // longer have the callee body and must not infer an extra argument
+      // from an unrelated XMM write or call-clobbered PHI. A vector read in
+      // any tracked family keeps the existing positional contract instead.
+      if (VectorSlots && std::none_of(R->second.begin() + kX64VectorFamilyBase,
+                                      R->second.end(),
+                                      [](uint8_t Width) { return Width != 0; }))
+        MOp.CalleeVectorArgs = 0;
       // The floating arguments follow, each in the next vector register the
       // callee reads: the whole register, whose value every write reaches,
       // and the bytes the callee reads of it.

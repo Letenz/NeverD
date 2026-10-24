@@ -43,6 +43,11 @@ zero. This exposes missing state; recovering its actual dynamic contract and
 partially preserved vector suffixes remains open. Generic FP/vector summary
 operands need the same audit, including register-bank and scalar-width
 preservation.
+Scalar-only summaries now preserve explicit zero vector demand through
+deferred ABI recovery. Residual XMM writes and unknown vector PHIs cannot add
+an argument when the complete read summary excludes that bank. Unknown demand,
+real floating inputs and overlapping register-bank reads stay distinct; this
+does not recover genuinely observed clobbers or partially preserved lanes.
 Bounded call-free x64 callees now publish scalar constants agreed at every
 return, before SSA, through the shared register-effect summary. Ordinary ABI
 result registers, addresses, exceptional roots and unknown paths remain outside

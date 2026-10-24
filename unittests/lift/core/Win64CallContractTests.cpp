@@ -27,6 +27,8 @@
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -47,6 +49,235 @@
 
 namespace {
 using namespace neverd;
+
+TEST(SummarizedCallArguments, PublishesAnEmptyVectorBankForScalarCallees) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    const auto &Registers = getTargetRegInfo(Arch::X64);
+    const auto Integers = Registers.integerParamRegs(Format);
+    const auto Vectors = Registers.floatingParamRegs(Format);
+    for (unsigned Floating : {0u, 1u, 2u}) {
+      SCOPED_TRACE(Floating);
+      GPRReadWidths Reads{};
+      Reads[Integers[0] / 8] = 8;
+      if (Floating == 1)
+        Reads[kX64VectorFamilyBase + 1] = 4;
+      else
+        Reads[Integers[1] / 8] = 1;
+      if (Floating == 2)
+        Reads[kX64VectorFamilyBase] = 4;
+      const std::map<va_t, GPRReadWidths> Summaries{{0x2000, Reads}};
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      Low.Name = "forward_values";
+      Low.Blocks.resize(1);
+      Low.Blocks[0].Id = 0;
+      Low.Blocks[0].StartAddr = Low.Entry;
+      LowOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Addr = Low.Entry;
+      Call.Output = NdVar::reg(Registers.IntReturnReg, 8);
+      Call.addInput(NdVar::cst(0x2000, 8));
+      Low.Blocks[0].Ops.push_back(Call);
+      LowOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Low.Entry + 5;
+      Return.addInput(Call.Output);
+      Low.Blocks[0].Ops.push_back(Return);
+      LowToMedConverter Converter;
+      Converter.setCallEntryReadGPRs(&Summaries);
+      const MedFunc Function = Converter.convert(Low, Arch::X64, Format);
+      const MedOp *Bound = nullptr;
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL)
+            Bound = &Op;
+      ASSERT_NE(Bound, nullptr);
+      if (!Floating) {
+        EXPECT_EQ(Bound->CalleeRegisterArgs, 2);
+        EXPECT_EQ(Bound->CalleeVectorArgs, 0);
+        EXPECT_EQ(Bound->CalleeVectorSlots, 0);
+        EXPECT_EQ(Bound->NumInputs, 3u);
+      } else if (Floating == 1) {
+        // The absence of a separate bank must not erase a positional float,
+        // or a nonconsecutive vector register in the independent bank.
+        ASSERT_EQ(Bound->NumInputs, 3u);
+        EXPECT_EQ(Bound->Inputs[2].RegOff, Vectors[1]);
+        EXPECT_EQ(Bound->vectorArgumentWidth(2), 4u);
+      } else {
+        // Simultaneous integer/vector reads of one positional slot are not
+        // evidence of an empty bank, even without an ordinary C signature.
+        EXPECT_NE(Bound->CalleeVectorArgs, 0);
+      }
+    }
+  }
+}
+
+TEST(SummarizedCallArguments, ScalarCallsDoNotAcquireIncidentalVectorState) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool Indirect : {false, true})
+      for (bool HasVectorSummary : {false, true})
+        for (bool Phi : {false, true}) {
+          SCOPED_TRACE(testing::Message()
+                       << unsigned(Format) << ':' << Indirect << ':'
+                       << HasVectorSummary << ':' << Phi);
+          BinaryImage Image;
+          Image.Arch = Arch::X64;
+          Image.Format = Format;
+          Image.Bits = Bitness::Bits64;
+          MedFunc Function;
+          Function.Entry = 0x1000;
+          Function.Name = "caller";
+          Function.Blocks.resize(Phi ? 2 : 1);
+          for (size_t I = 0; I < Function.Blocks.size(); ++I)
+            Function.Blocks[I].Id = I;
+          auto &Block = Function.Blocks.back();
+          MedVar Scratch;
+          Scratch.Kind = MedVar::Reg;
+          Scratch.Id = 1;
+          Scratch.SSAVer = 1;
+          Scratch.RegOff = x86reg::XMM0;
+          Scratch.Size = 16;
+          Scratch.TheArch = Arch::X64;
+          if (Phi) {
+            Function.Blocks.front().Succs = {Block.Id};
+            Block.Preds = {0};
+            PhiNode Merge;
+            Merge.Output = Scratch;
+            Merge.Args = {{0, MedVar::makeUnspecified(16, Arch::X64)}};
+            Block.Phis.push_back(Merge);
+          } else {
+            MedOp Copy;
+            Copy.Opcode = NdOp::COPY;
+            Copy.Output = Scratch;
+            Copy.addInput(MedVar::makeUnspecified(16, Arch::X64));
+            Block.Ops.push_back(Copy);
+          }
+          MedOp Call;
+          Call.Opcode = Indirect ? NdOp::INDIR_CALL : NdOp::CALL;
+          Call.Addr = Function.Entry + 8;
+          Call.addInput(MedVar::makeConst(0x2000, 8));
+          const std::vector<MedVar> Arguments = {MedVar::makeConst(19, 8),
+                                                 MedVar::makeConst(29, 1)};
+          for (const auto &Argument : Arguments)
+            Call.addInput(Argument);
+          Call.CalleeRegisterArgs = Arguments.size();
+          Call.CalleeVectorArgs = HasVectorSummary ? 0 : -1;
+          Call.CalleeStackArgs = 0;
+          Block.Ops.push_back(Call);
+          // Source preparation may no longer have the omitted callee's body
+          // or its FP arity map. The published operands remain authoritative.
+          for (unsigned Repeat = 0; Repeat < 2; ++Repeat) {
+            recoverCallAbi(Function, Arch::X64, {{0x2000, "consumer"}}, &Image);
+            ASSERT_EQ(Function.CallInfos.size(), 1u);
+            const auto &Recovered = Function.CallInfos.front().Args;
+            ASSERT_EQ(Recovered.size(), HasVectorSummary ? 2u : 3u);
+            EXPECT_EQ(Recovered[0], Arguments[0]);
+            EXPECT_EQ(Recovered[1], Arguments[1]);
+            if (!HasVectorSummary)
+              EXPECT_EQ(Recovered[2], Scratch);
+          }
+        }
+}
+
+TEST(SummarizedCallArguments, ScalarCallsExecuteWithoutUnobservedVectorTraps) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Format = Format;
+    Image.Bits = Bitness::Bits64;
+    MedFunc Function;
+    Function.Entry = 0x1000;
+    Function.Name = "call_scalar";
+    Function.ReturnType = NdType::makeInt(8, false);
+    Function.Blocks.resize(1);
+    auto &Block = Function.Blocks.front();
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    MedOp Scratch;
+    Scratch.Opcode = NdOp::COPY;
+    Scratch.Output.Kind = MedVar::Reg;
+    Scratch.Output.Id = 1;
+    Scratch.Output.SSAVer = 1;
+    Scratch.Output.Size = 16;
+    Scratch.Output.RegOff = x86reg::XMM0;
+    Scratch.Output.TheArch = Arch::X64;
+    Scratch.addInput(MedVar::makeUnspecified(16, Arch::X64));
+    Block.Ops.push_back(Scratch);
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Addr = Function.Entry + 4;
+    Call.Output.Kind = MedVar::Temp;
+    Call.Output.Id = 2;
+    Call.Output.SSAVer = 1;
+    Call.Output.Size = 8;
+    Call.Output.TheArch = Arch::X64;
+    Call.addInput(MedVar::makeConst(0x2000, 8));
+    Call.addInput(MedVar::makeConst(19, 8));
+    Call.addInput(MedVar::makeConst(29, 1));
+    Call.CalleeRegisterArgs = 2;
+    Call.CalleeVectorArgs = 0;
+    Call.CalleeStackArgs = 0;
+    Block.Ops.push_back(Call);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Function.Entry + 9;
+    Return.addInput(Call.Output);
+    Block.Ops.push_back(Return);
+    recoverCallAbi(Function, Arch::X64, {{0x2000, "consume_scalar"}}, &Image);
+    ASSERT_EQ(Function.CallInfos.size(), 1u);
+    ASSERT_EQ(Function.CallInfos.front().Args.size(), 2u);
+    llvm::LLVMContext Context;
+    MedLLVMEmitter Emitter;
+    Emitter.setPreserveUnknownSourceValues(true);
+    auto Module = Emitter.emit({Function}, Context, "scalar_only", Arch::X64,
+                               {{0x2000, "consume_scalar"}}, &Image, Format);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    ASSERT_NE(Module->getFunction("consume_scalar"), nullptr);
+    EXPECT_EQ(Module->getFunction("consume_scalar")->arg_size(), 2u);
+    Pipeline::optimizeOrPromoteModule(*Module);
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      if (LLVM) {
+        ASSERT_TRUE(LLVMCEmitter().emit(*Module, Output, {}));
+      } else {
+        const std::map<va_t, std::string> Names{{0x2000, "consume_scalar"}};
+        MedToHighConverter Converter;
+        Converter.setFuncNames(&Names);
+        auto High = Converter.convert(Function, Arch::X64);
+        ASSERT_TRUE(HighCEmitter().emit({High}, Output));
+      }
+      EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+      // An independently typed provider rejects an extra argument at compile
+      // time and checks both exact-width values and the call's execution.
+      const std::string Provider =
+          "#include <stdint.h>\nstatic unsigned observed;\n" +
+          std::string(LLVM ? "uint64_t consume_scalar(uint64_t a, uint8_t b)"
+                           : "int64_t consume_scalar(int64_t a, int b)") +
+          R"( {
+  ++observed;
+  return a == 19 && b == 29 ? UINT64_C(0x123456789ABCDE) : 0;
+}
+)";
+      const std::string Main = R"(
+int main(void) {
+  return call_scalar() != UINT64_C(0x123456789ABCDE) || observed != 1;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Provider + Source + Main,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+  }
+}
 
 TEST(SummarizedCallArguments, RetainsReachingOperandsWithoutSetupWrites) {
   for (BinaryFormat Format :

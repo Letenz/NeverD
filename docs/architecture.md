@@ -5189,6 +5189,14 @@ For Win64 calls LowToMed publishes those argument registers as CALL inputs.
 SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
 
+A complete scalar register summary also publishes an empty vector bank.
+Win64 does so only when no tracked vector family is read; a positional float
+or overlapping integer/vector input retains its existing contract. The shared
+MedIR ABI pass keeps this zero distinct from unknown vector demand when an
+omitted callee's FP metadata is unavailable. Incidental XMM writes and
+call-clobbered PHIs therefore cannot become extra source-call arguments.
+Count-only and unsummarized calls still use ordinary argument recovery.
+
 The same owner proves scalar exit constants for bounded, complete x64 bodies
 without calls, intrinsics, unresolved control flow or exceptional/independent
 entries. It uses the existing LowIR scalar evaluator within each return block

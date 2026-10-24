@@ -408,6 +408,15 @@ qualifiers, convention ownership and `_Noreturn`. The original SDK check's
 `UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
 Windows architectures, independently of the synthetic import names.
 The qualifier execution cases also cover void results.
+
+`SummarizedCallArguments.*` in `NeverDWin64CallContractTests` checks that
+known scalar-only calls retain their exact operands without acquiring unused
+vector writes or PHIs. COFF, ELF and Mach-O cases cover direct/indirect calls,
+repeated recovery without omitted-callee metadata, unknown vector-demand
+controls, positional floating inputs and overlapping integer/vector reads.
+Independent providers compile and execute both C routes at O0/O2 with UBSan.
+Run the SysV, AAPCS64, i386 and FP-parameter suites alongside this shared ABI
+change; it does not recover unknown state that a callee actually observes.
 `Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
 checks the same contract for explicit local declarations.
 `LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
