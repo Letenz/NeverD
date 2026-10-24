@@ -183,6 +183,7 @@ struct QueryService::State {
     bool cancelRequested = false, discoveredAnalysis = false;
     int graphRetries = 0;
     QJsonObject summary, result;
+    QJsonObject BackgroundSnapshot;
     QString summaryRevision;
     QElapsedTimer sent;
   };
@@ -423,6 +424,7 @@ struct QueryService::State {
 
   void dispatch(const JobPtr &job, const QString &operation,
                 const QJsonObject &payload) {
+    job->BackgroundSnapshot = {};
     job->wireOperation = operation;
     job->wireProject = project;
     job->wireRevision = revision;
@@ -536,6 +538,13 @@ struct QueryService::State {
         return;
     }
     removeJob(job);
+    if (!job->BackgroundSnapshot.isEmpty() && job->epoch == epoch &&
+        job->BackgroundSnapshot.value("project_id").toString() == project &&
+        job->BackgroundSnapshot.value("revision").toString() == revision) {
+      emit q->backgroundSnapshotReady(job->BackgroundSnapshot);
+      if (!guard)
+        return;
+    }
     if (job->discoveredAnalysis && job->epoch == epoch) {
       const auto discoveredEpoch = epoch;
       QTimer::singleShot(0, q, [this, discoveredEpoch] {
@@ -649,6 +658,16 @@ struct QueryService::State {
         response.value("analysis_state") == "complete" && !analysisComplete) {
       analysisComplete = true;
       job->discoveredAnalysis = true;
+    }
+
+    if (!admissionFailure && status != "cancelled" && !project.isEmpty() &&
+        response.value("background").isObject() &&
+        response.value("background_sequence").isString()) {
+      job->BackgroundSnapshot = {
+          {"project_id", project},
+          {"revision", revision},
+          {"background", response.value("background")},
+          {"background_sequence", response.value("background_sequence")}};
     }
 
     if (job->kind == Graph && !job->cancelRequested) {

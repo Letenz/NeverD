@@ -42,6 +42,13 @@ DataFlowGraph buildLLVMParameterDataFlow(
     uint64_t Entry, llvm::StringRef Revision, llvm::StringRef ABI,
     bool NativeComplete, const DataFlowOptions &Options = {},
     const ComparisonControl &Control = {});
+/// Include parameter views and independently derived finite-execution
+/// contracts. Unsupported cyclic proofs retain the exact source attributes.
+DataFlowGraph buildLLVMProgressDataFlow(
+    const llvm::Function &Function, const LLVMSourceMap &Sources,
+    uint64_t Entry, llvm::StringRef Revision, llvm::StringRef ABI,
+    bool NativeComplete, const DataFlowOptions &Options = {},
+    const ComparisonControl &Control = {});
 } // namespace diff
 } // namespace neverd
 

@@ -2,6 +2,12 @@
 #ifndef FINAL_ADD
 #define FINAL_ADD 3u
 #endif
+#ifndef LOOP_MASK
+#define LOOP_MASK 7u
+#endif
+#ifndef LOOP_MUL
+#define LOOP_MUL 7u
+#endif
 #ifndef FAMILY
 #define FAMILY 1
 #endif
@@ -22,9 +28,9 @@ __attribute__((noinline, used)) unsigned transform(unsigned x, unsigned y) {
   else
     x = (x + 17u) ^ (y * 13u);
 #else
-  unsigned n = y & 7u;
+  unsigned n = y & LOOP_MASK;
   while (n--) {
-    x = (x ^ 23u) * 7u + 9u;
+    x = (x ^ 23u) * LOOP_MUL + 9u;
     x = (x >> 5) | (x << 27);
   }
 #endif

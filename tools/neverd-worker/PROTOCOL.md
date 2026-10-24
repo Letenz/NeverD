@@ -72,6 +72,18 @@ function lists once when a lazy query completes analysis. Ordinary edit
 revisions do not imply a new analysis. Administrative replies may omit this
 additive field.
 
+Native executor replies also carry the published `background` object and
+`background_sequence`, a decimal uint64 string that increases on every state
+publication within one worker process. Heartbeats carry the same sequence.
+A client must validate request correlation and project/revision before using a
+reply's state, and apply it after installing the reply (opening resets the
+client's session). Discard older or duplicate sequences, including a heartbeat
+written after a newer reply. Cached responses must not republish their snapshots.
+Reset the accepted sequence on session/transport retirement. Older workers can
+omit these additive fields; once a sequenced snapshot has been accepted, an
+unsequenced heartbeat cannot supersede it. Administrative and web replies do
+not publish native executor snapshots.
+
 Session calls run serially on an execution thread; a separate input loop admits
 requests and cancellation while the synchronous engine runs. The queue holds at
 most 32 waiting requests and 16 MiB of request bodies; excess receives
@@ -171,7 +183,15 @@ revision checks and cooperative cancellation contract as source inspection.
 `refresh`. Both require `dataflow:true` or a bounded settings object at start.
 The settings object accepts `profile:"med-ssa-v2"` (default) or
 `profile:"llvm-ssa-v1"` (optimized machine integer SSA), or
-`profile:"llvm-parameter-ssa-v1"` (eligible native low-bit parameter views).
+`profile:"llvm-parameter-ssa-v1"` (eligible native low-bit parameter views), or
+`profile:"llvm-progress-ssa-v1"` (parameter views and independently proved
+return progress). Schema 5 adds `progress` with `kind`, `source_contract`,
+`observed_contract` and `loop_count`; full reports also contain `loops` witnesses
+with block/counter/update/compare IDs. Metadata pages omit that array and node
+rows include only their block's `progress_loop` or null. Proof rows share retained
+storage limits. Unproved loops remain available with their original attributes;
+progress does not establish equal iteration counts or results. Fresh restore
+binds the original contract and proof to the actual source projection.
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
 allowance; public node counts and coverage still count operations. Metadata

@@ -108,6 +108,9 @@ signals:
   void pendingChanged();
   void idle();
   void loadProgress(const QJsonObject &payload);
+  /// Validated executor state, after subscribers have installed the reply.
+  /// Cached reads never republish an older snapshot.
+  void backgroundSnapshotReady(const QJsonObject &snapshot);
 
 private:
   struct State;

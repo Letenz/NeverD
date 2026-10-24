@@ -30,6 +30,7 @@ struct Arm64eImportRecord {
   int64_t Addend = 0;
   bool WeakImport = false;
   bool Valid = false;
+  std::optional<int64_t> LibraryOrdinal;
 };
 
 /// Import pointers borrow a completed, immutable ordinal table until publish.

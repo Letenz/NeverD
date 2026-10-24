@@ -6377,6 +6377,14 @@ Coverage: %7</source>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>매개변수 뷰는 조건에 맞는 64비트 네이티브 매개변수의 하위 32비트를 비교합니다. 원래 비트 너비와 출처도 확인할 수 있습니다.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>루프 분석을 포함한 최적화 SSA</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>루프 분석은 지원 범위에서 종료성을 증명한 후 연산을 비교합니다. 매개변수 보기를 포함하며 증명되지 않은 루프의 원래 계약을 유지합니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6429,8 +6437,8 @@ Select an operation to follow dependencies. Synthetic operations have block prov
         <translation>원본 함수 살펴보기</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>관찰된 SSA 의존성입니다. 호출, 별칭 및 미해결 제어 흐름은 명시적인 공백으로 남습니다. 의미 검증은 수행되지 않았습니다.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>관찰된 SSA 의존성입니다. 호출, 별칭 및 미해결 제어 흐름은 명시적인 공백으로 남습니다. 이 관찰 결과는 전체 함수의 동등성을 증명하지 않습니다.</translation>
     </message>
     <message>
         <source>Primary input</source>
@@ -6479,6 +6487,34 @@ Select an operation to follow dependencies. Synthetic operations have block prov
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>매개변수 뷰가 포함된 최적화 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>루프 분석을 포함한 최적화 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>종료성 증명됨: 순환 없는 제어 흐름.</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>종료성 증명됨 · 카운터 루프: %1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>종료성 미증명: 원래 계약 유지.</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>원래 계약:
+%1
+관찰된 계약:
+%2
+종료성은 루프 횟수나 함수 결과가 같음을 증명하지 않습니다.</translation>
     </message>
 </context>
 <context>

@@ -358,6 +358,128 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     QCOMPARE(Failures.size(), 0);
   }
+  void loopProgressExplainsProofAndRestoresSelection() {
+    const auto A = Directory.filePath("progress-before.bin");
+    const auto B = Directory.filePath("progress-after.bin");
+    // Owned control_regions_fixture.c, family 2, x64 ELF O0/O2; never executed.
+    QVERIFY(write(A, QByteArray::fromHex("554889e5897dfc8975f88b45f883e0078945f"
+                                         "48b45f489c183c1ff894df483f80074228b"
+                                         "45fc83f0176bc00783c0098945fc8b45fcc1e"
+                                         "8058b4dfcc1e11b09c88945fcebce8b45fc"
+                                         "3345f883c0035dc3")));
+    QVERIFY(write(B, QByteArray::fromHex("89f889f183e1070f84ae00000083f0178d14c"
+                                         "50000000029c283c20989d0c1c01b83f901"
+                                         "0f849100000083f0178d14c50000000029c28"
+                                         "3c20989d0c1c01b83f902747883f0178d14"
+                                         "c50000000029c283c20989d0c1c01b83f9037"
+                                         "45f83f0178d14c50000000029c283c20989"
+                                         "d0c1c01b83f904744683f0178d14c50000000"
+                                         "029c283c20989d0c1c01b83f905742d83f0"
+                                         "178d14c50000000029c283c20989d0c1c01b8"
+                                         "3f906741483f0178d0cc50000000029c183"
+                                         "c109c1c11b89c831f083c003c3")));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    View.findChild<QLineEdit *>("comparisonPrimary")->setText(A);
+    View.findChild<QLineEdit *>("comparisonSecondary")->setText(B);
+    for (const auto *Name : {"primaryLoader", "secondaryLoader"})
+      View.findChild<QComboBox *>(Name)->setCurrentIndex(1);
+    View.findChild<QLineEdit *>("primaryBase")->setText("0x1000");
+    View.findChild<QLineEdit *>("secondaryBase")->setText("0x8000");
+    View.findChild<QCheckBox *>("comparisonFlowFragments")->setChecked(true);
+    auto *Profile = View.findChild<QComboBox *>("comparisonFlowProfile");
+    const int ProgressProfile = Profile->findData("llvm-progress-ssa-v1");
+    QVERIFY(ProgressProfile >= 0);
+    Profile->setCurrentIndex(ProgressProfile);
+    QTest::mouseClick(View.findChild<QToolButton *>("comparisonSettings"),
+                      Qt::LeftButton);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonStart"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Failures.size(), 0);
+    QVERIFY(
+        Session.summary()["flow_regions"].toObject()["anchor_count"].toInt() >
+        0);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonFlowReview"),
+                      Qt::LeftButton);
+    auto *Dialog =
+        View.findChild<ComparisonFlowDialog *>("comparisonFlowDialog");
+    QVERIFY(Dialog);
+    auto *Side = Dialog->findChild<QComboBox *>("flowSide");
+    Side->setCurrentIndex(Side->findData("primary"));
+    auto *Table = Dialog->findChild<QTableView *>("flowNodes");
+    auto *Rows = qobject_cast<ComparisonModel *>(Table->model());
+    QTRY_VERIFY_WITH_TIMEOUT(Rows->rowCount() && !Rows->row(0).isEmpty(),
+                             Timeout);
+    int Proved = -1;
+    for (int N = 0; N < Rows->rowCount(); ++N)
+      if (Rows->row(N)["progress_loop"].isObject()) {
+        Proved = N;
+        break;
+      }
+    QVERIFY(Proved >= 0);
+    QVERIFY(Rows->data(Rows->index(Proved, 4), Qt::ToolTipRole)
+                .toString()
+                .contains("progress_loop"));
+    auto *Status = Dialog->findChild<QLabel *>("flowFunctionStatus");
+    QVERIFY(Status->text().contains("Counter loops"));
+    QVERIFY(Status->toolTip().contains("Source contract:"));
+    QVERIFY(Status->toolTip().contains("willreturn"));
+    QVERIFY(Dialog->findChild<QLabel *>("flowSummary")
+                ->text()
+                .contains("loop analysis"));
+    Table->selectRow(Proved);
+    QTest::mouseClick(Dialog->findChild<QPushButton *>("flowBackward"),
+                      Qt::LeftButton);
+    auto *Slice = Dialog->findChild<QTableView *>("flowSlice");
+    QTRY_VERIFY_WITH_TIMEOUT(Slice->model()->rowCount(), Timeout);
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        Dialog->resize(1280, 800);
+        QTest::qWait(40);
+        QVERIFY(
+            Dialog->grab().save(Captures + (Mode == Theme::Mode::Dark
+                                                ? "/loop-progress-dark.png"
+                                                : "/loop-progress-light.png")));
+      }
+    }
+    Side->setCurrentIndex(Side->findData("secondary"));
+    QTRY_VERIFY_WITH_TIMEOUT(Status->text().contains("acyclic control flow"),
+                             Timeout);
+    const auto Saved = Directory.filePath("progress.nddiff");
+    Session.command("comparison_save", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && QFile::exists(Saved), Timeout);
+    Dialog->hide();
+    Profile->setCurrentIndex(Profile->findData("med-ssa-v2"));
+    bool Selected = false;
+    QTimer Select;
+    connect(&Select, &QTimer::timeout, this, [&] {
+      if (auto *File =
+              qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+        File->selectFile(Saved);
+        if (auto *Name = File->findChild<QLineEdit *>("fileNameEdit"))
+          Name->setText(Saved);
+        Selected = true;
+        static_cast<QDialog *>(File)->accept();
+      }
+    });
+    Select.start(10);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonReopen"),
+                      Qt::LeftButton);
+    Select.stop();
+    QVERIFY(Selected);
+    QTRY_COMPARE_WITH_TIMEOUT(Profile->currentData().toString(),
+                              QString("llvm-progress-ssa-v1"), Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Failures.size(), 0);
+  }
   void sharedFragmentsKeepExternalInputsSeparateAndRestoreSettings() {
     const auto A = Directory.filePath("fragments-before.bin");
     const auto B = Directory.filePath("fragments-after.bin");

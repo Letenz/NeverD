@@ -12,6 +12,7 @@
 
 #include "FlowContract.h"
 #include "FlowParameterViews.h"
+#include "FlowProgress.h"
 
 #include "neverd/diff/StableHash.h"
 
@@ -263,7 +264,7 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
           (!N.Phi ||
            !llvm::is_contained(Blocks[I.Predecessor].Successors, N.Block)))
         return "dataflow PHI input is not attached to an incoming CFG edge";
-      if (Profile == LLVMParameterDataFlowProfile &&
+      if (hasParameterViews(Profile) &&
           I.Type == FlowOperand::Kind::Parameter) {
         if (I.Value >= ParameterViews.size())
           return "dataflow parameter has no source argument record";
@@ -273,6 +274,16 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
           return "dataflow parameter disagrees with its observed bit view";
       }
     }
+  }
+  try {
+    if (auto Error = validateFlowProgress(*this, Options, [&](uint64_t N) {
+          if (N > Options.MaxWork - Inputs)
+            throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+          Inputs += N;
+        }))
+      return Error;
+  } catch (const DataFlowInterrupted &) {
+    return "progress evidence exceeds the work allowance";
   }
   return {};
 }

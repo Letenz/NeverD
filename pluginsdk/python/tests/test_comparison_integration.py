@@ -74,6 +74,39 @@ class ComparisonIntegrationTests(unittest.TestCase):
             abi.CancelProbeCallback(), None,
         ), 1)
 
+    def test_loop_progress_keeps_proof_and_source_binding(self) -> None:
+        from neverd_plugin import abi
+
+        # Owned x64 O0 loop fixture; only inspect its bytes.
+        self.binary.write_bytes(bytes.fromhex(
+            "554889e5897dfc8975f88b45f883e0078945f48b45f489c183c1ff894df483f80074228b"
+            "45fc83f0176bc00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fcebce8b45fc"
+            "3345f883c0035dc3"))
+        left, right = self.session(), self.session()
+        for session in (left, right):
+            self.assertEqual(self.host.call("neverd_session_load", session,
+                                            str(self.binary).encode()), 1)
+        comparison = self.comparison()
+        options = b'{"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v1"}}'
+        self.assertEqual(self.host.call("neverd_comparison_run", comparison,
+            left, right, options, abi.ComparisonProgressCallback(), None), 1)
+        page = json.loads(self.host.owned_string("neverd_comparison_dataflow_json",
+            comparison, b'{"kind":"nodes","address":"0x1000","limit":200}'))
+        self.assertEqual(page["schema_version"], 5)
+        self.assertEqual(page["progress"]["kind"], "counter_loops")
+        self.assertNotIn("loops", page["progress"])
+        self.assertTrue(any(node["progress_loop"] for node in page["rows"]))
+        saved = self.host.owned_string("neverd_comparison_export_json", comparison)
+        self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                        saved.encode()), 1)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
+        forged = json.loads(saved)
+        proof = forged["dataflow"]["primary"]["entries"][0]["graph"]["progress"]
+        proof["source_contract"] = proof["observed_contract"]
+        self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                        json.dumps(forged).encode()), 0)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
+
     def test_native_parameter_views_use_the_shared_report_abi(self) -> None:
         from neverd_plugin import abi
 

@@ -6413,6 +6413,14 @@ Abdeckung: %7</translation>
         <source>Parameter views compare the low 32 bits of eligible 64-bit native parameters. Original widths and sources remain available for review.</source>
         <translation>Parameteransichten vergleichen die unteren 32 Bit geeigneter nativer 64-Bit-Parameter. Ursprüngliche Bitbreiten und Quellen bleiben einsehbar.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>Optimierte SSA mit Schleifenanalyse</translation>
+    </message>
+    <message>
+        <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
+        <translation>Die Schleifenanalyse weist, soweit unterstützt, die Terminierung vor dem Vergleich von Berechnungen nach. Sie umfasst Parametersichten und behält unbewiesene Schleifenverträge bei.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6465,8 +6473,8 @@ Wählen Sie eine Operation, um Abhängigkeiten zu verfolgen. Synthetische Operat
         <translation>Originalfunktion untersuchen</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>Beobachtete SSA-Abhängigkeiten. Aufrufe, Aliase und unaufgelöster Kontrollfluss bleiben ausdrückliche Lücken. Keine semantische Validierung durchgeführt.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>Beobachtete SSA-Abhängigkeiten. Aufrufe, Aliase und unaufgelöster Kontrollfluss bleiben ausdrückliche Lücken. Diese Beobachtungen beweisen keine Äquivalenz der gesamten Funktion.</translation>
     </message>
     <message>
         <source>Primary input</source>
@@ -6515,6 +6523,34 @@ Wählen Sie eine Operation, um Abhängigkeiten zu verfolgen. Synthetische Operat
     <message>
         <source>Optimized SSA with parameter views</source>
         <translation>Optimiertes SSA mit Parameteransichten</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with loop analysis</source>
+        <translation>Optimierte SSA mit Schleifenanalyse</translation>
+    </message>
+    <message>
+        <source>Return progress proved: acyclic control flow.</source>
+        <translation>Terminierung nachgewiesen: azyklischer Kontrollfluss.</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1</source>
+        <translation>Terminierung nachgewiesen · Zählerschleifen: %1</translation>
+    </message>
+    <message>
+        <source>Return progress unproved: original contracts retained.</source>
+        <translation>Terminierung nicht nachgewiesen: ursprüngliche Verträge beibehalten.</translation>
+    </message>
+    <message>
+        <source>Source contract:
+%1
+Observed contract:
+%2
+Progress does not establish equal loop counts or function results.</source>
+        <translation>Ursprünglicher Vertrag:
+%1
+Beobachteter Vertrag:
+%2
+Terminierung belegt keine gleichen Schleifenzahlen oder Funktionsergebnisse.</translation>
     </message>
 </context>
 <context>

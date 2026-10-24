@@ -166,6 +166,13 @@ def run(executable):
         revision = opened["revision"]
         assert opened["payload"]["entry_address"] == BASE
         assert opened["payload"]["function_count"] == 600
+        assert isinstance(opened["background_sequence"], str), opened
+        assert int(opened["background_sequence"]) > 0, opened
+        assert isinstance(opened["background"], dict), opened
+        snapshot_reply = client.call("overview", {"buckets": 8})
+        assert int(snapshot_reply["background_sequence"]) > int(opened["background_sequence"]), snapshot_reply
+        assert snapshot_reply["background"]["generation"] == snapshot_reply["payload"]["generation"], snapshot_reply
+        assert snapshot_reply["background"]["functions"] == 600, snapshot_reply
         functions = client.call("functions", {"limit": 3})["payload"]
         assert len(functions["items"]) == 3 and functions["next_offset"] == 3 and not functions["complete"]
         assert functions["items"][0]["address"] == BASE
@@ -210,6 +217,7 @@ def run(executable):
         analyze_id = client.send("analyze")
         heartbeat = client.next(lambda item: item.get("type") == "heartbeat" and item.get("active_request_id") == analyze_id)
         assert heartbeat["revision"] != "0"
+        assert int(heartbeat["background_sequence"]) >= int(snapshot_reply["background_sequence"]), heartbeat
         pending = [client.send("metadata", request_id=f"queued-{index}") for index in range(40)]
         cancel = client.call("cancel", {"request_id": analyze_id})["payload"]
         assert cancel["accepted"] and not cancel["stopped"] and cancel["requires_restart"]
