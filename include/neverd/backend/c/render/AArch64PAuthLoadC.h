@@ -31,7 +31,9 @@ namespace neverd {
 inline bool aarch64PAuthLoadHighShapeIsValid(const HighExpr &Expression) {
   if (Expression.Kind != ExprKind::Call ||
       Expression.Operands.size() != kPAuthLoadOperandCount ||
-      !Expression.Operands[0] || !Expression.Operands[1] ||
+      !Expression.IntrinsicOutputs.empty() || Expression.IsIndirectCall ||
+      Expression.IndirectTarget || !Expression.Operands[0] ||
+      !Expression.Operands[1] ||
       Expression.MemoryOrdering != NdMemoryOrdering::None ||
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;

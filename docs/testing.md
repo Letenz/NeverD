@@ -196,6 +196,9 @@ sharded LLVM emission, with and without optimization.
 writeback and dead-result retention through a single combined authenticated
 load, with independent emitted-word checks at O0/O2 through LLVM and both C
 routes. Malformed IR and unavailable SP execution contracts fail explicitly.
+HighC also validates supplied authenticated-load expressions before hiding or
+preparing source, rejecting extra outputs, indirect callees, dynamic encodings,
+invalid widths, SP execution and cross-target use without partial C output.
 These object checks do not qualify FPAC/FPACCOMBINE trap behavior on hardware.
 `AArch64_PAuth.CombinedLoadsRetainEarlierCallArguments` checks real LDRAA/LDRAB
 sequences with and without writeback before an imported call, at both LLVM

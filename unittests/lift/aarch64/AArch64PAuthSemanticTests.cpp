@@ -1169,6 +1169,85 @@ TEST(AArch64PAuthLoadSemantics, SourceAdaptersRejectMalformedOwnedOperations) {
   EXPECT_FALSE(aarch64PAuthLoadHighShapeIsValid(Expression));
 }
 
+TEST(AArch64PAuthLoadSemantics, HighCRejectsMalformedLoadsBeforeHiding) {
+  using namespace pauth_load_fixture;
+  enum class Mutation {
+    ExtraOutput,
+    IndirectCall,
+    IndirectTarget,
+    NonCall,
+    WrongWidth,
+    DynamicWord,
+    StackBase,
+    CrossArchitecture
+  };
+  for (bool Hidden : {false, true})
+    for (const auto Change :
+         {Mutation::ExtraOutput, Mutation::IndirectCall,
+          Mutation::IndirectTarget, Mutation::NonCall, Mutation::WrongWidth,
+          Mutation::DynamicWord, Mutation::StackBase,
+          Mutation::CrossArchitecture}) {
+      SCOPED_TRACE(static_cast<int>(Change));
+      SCOPED_TRACE(Hidden);
+      HighFunc Function;
+      Function.Entry = kEntry;
+      Function.Name = kName;
+      Function.ReturnType = NdType::makeVoid();
+      auto Load = std::make_shared<HighExpr>();
+      Load->Kind = ExprKind::Call;
+      Load->IntrinsicId = Intrinsic::A64_Ldraa;
+      Load->Type = NdType::makeInt(kPairBytes, false);
+      Load->Operands = {HighExpr::makeConst(kEntry, kScalarBytes),
+                        HighExpr::makeConst(kFirst, kWordBytes)};
+      ASSERT_TRUE(aarch64PAuthLoadHighShapeIsValid(*Load));
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      switch (Change) {
+      case Mutation::ExtraOutput:
+        Load->IntrinsicOutputs.push_back(MedVar::makeConst(0, kScalarBytes));
+        break;
+      case Mutation::IndirectCall:
+        Load->IsIndirectCall = true;
+        break;
+      case Mutation::IndirectTarget:
+        Load->IndirectTarget = HighExpr::makeConst(kEntry, kScalarBytes);
+        break;
+      case Mutation::NonCall:
+        Load->Kind = ExprKind::Const;
+        break;
+      case Mutation::WrongWidth:
+        Load->Type = NdType::makeInt(kScalarBytes, false);
+        break;
+      case Mutation::DynamicWord:
+        Load->Operands.back()->Kind = ExprKind::Var;
+        break;
+      case Mutation::StackBase:
+        Load->Operands.back()->ConstVal = kStackBase;
+        break;
+      case Mutation::CrossArchitecture:
+        Options.TheArch = Arch::X64;
+        break;
+      }
+      HighStmt Invoke;
+      Invoke.Kind = StmtKind::ExprStmt;
+      Invoke.Val = Load;
+      if (Hidden) {
+        HighStmt Branch;
+        Branch.Kind = StmtKind::If;
+        Branch.Cond = HighExpr::makeConst(0, kBooleanBytes);
+        Branch.Body.push_back(Invoke);
+        Function.Body.push_back(Branch);
+      } else {
+        Function.Body.push_back(Invoke);
+      }
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      EXPECT_THROW(HighCEmitter().emit({Function}, Out, Options),
+                   std::invalid_argument);
+      EXPECT_TRUE(Source.empty()) << Source;
+    }
+}
+
 TEST(AArch64PAuthLoadSemantics, CTemporariesDoNotCaptureBaseExpression) {
   using namespace pauth_load_fixture;
   const auto Expression =
