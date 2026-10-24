@@ -226,30 +226,28 @@ MedLLVMEmitter::materializeImageFunctionDeclaration(va_t Entry,
   return Function;
 }
 
-namespace {
 /// The image function symbol starting at \p Address, and the one ending
 /// there (its exclusive end).
 std::pair<const Symbol *, const Symbol *>
-imageFunctionSymbolsAt(const BinaryImage &Img, va_t Address) {
-  const Symbol *Exact = nullptr;
-  const Symbol *Ending = nullptr;
-  for (const Symbol &Sym : Img.Symbols) {
-    if (!Sym.IsFunc)
-      continue;
-    const va_t Entry = normalizeCodeAddress(Sym.Addr, Img.Arch, Img.Mode);
-    const bool IsExact = Entry == Address;
-    const bool IsEnding =
-        Sym.Size != 0 && Entry <= Address && Address - Entry == Sym.Size;
-    if ((!IsExact && !IsEnding) || !Img.isFunctionEntryCandidateAt(Sym.Addr))
-      continue;
-    if (IsExact)
-      Exact = &Sym;
-    if (IsEnding)
-      Ending = &Sym;
+MedLLVMEmitter::imageFunctionSymbolsAt(va_t Address) {
+  if (!ImageFunctionSymbolsIndexed) {
+    for (const Symbol &Sym : Img->Symbols) {
+      if (!Sym.IsFunc || !Img->isFunctionEntryCandidateAt(Sym.Addr))
+        continue;
+      const va_t Entry = normalizeCodeAddress(Sym.Addr, Img->Arch, Img->Mode);
+      ImageFunctionEntrySymbols[Entry] = &Sym;
+      if (Sym.Size && Sym.Size <= InvalidVA - Entry)
+        ImageFunctionEndSymbols[Entry + Sym.Size] = &Sym;
+    }
+    ImageFunctionSymbolsIndexed = true;
   }
-  return {Exact, Ending};
+  const auto Exact = ImageFunctionEntrySymbols.find(Address);
+  const auto Ending = ImageFunctionEndSymbols.find(Address);
+  return {Exact == ImageFunctionEntrySymbols.end() ? nullptr : Exact->second,
+          Ending == ImageFunctionEndSymbols.end() ? nullptr : Ending->second};
 }
 
+namespace {
 /// Whether runtime ownership or unwind metadata proves a function entry
 /// without a symbol naming it.
 bool isImageFunctionEntry(const BinaryImage &Img, va_t Address) {
@@ -322,7 +320,7 @@ llvm::Function *MedLLVMEmitter::resolveImageFunctionEntry(va_t Address) {
     return nullptr;
   if (!Img->isFunctionEntryCandidateAt(Address))
     return nullptr;
-  if (const Symbol *Exact = imageFunctionSymbolsAt(*Img, Address).first)
+  if (const Symbol *Exact = imageFunctionSymbolsAt(Address).first)
     return materializeImageFunctionDeclaration(Address, Exact->Name);
   return (isImageFunctionEntry(*Img, Address) ||
           verifyRelocatedImageFunctionEntry(Address))
@@ -335,7 +333,7 @@ llvm::Constant *MedLLVMEmitter::resolveImageFunctionAddress(va_t Address) {
     return Lifted;
   if (!Img || !Mod || !Ctx)
     return nullptr;
-  const auto [Exact, Ending] = imageFunctionSymbolsAt(*Img, Address);
+  const auto [Exact, Ending] = imageFunctionSymbolsAt(Address);
   // Adjacent functions share an address with the previous function's end.
   // Independent entry evidence owns that address before the end fallback.
   if (!Exact && (isImageFunctionEntry(*Img, Address) ||
@@ -367,7 +365,7 @@ llvm::Constant *MedLLVMEmitter::resolveDeclaredFunctionInterior(va_t Address) {
   const va_t Owner = imageFunctionEntryContaining(*Img, Address);
   if (Owner == InvalidVA || resolveLiftedFunctionEntry(Owner))
     return nullptr;
-  const Symbol *Named = imageFunctionSymbolsAt(*Img, Owner).first;
+  const Symbol *Named = imageFunctionSymbolsAt(Owner).first;
   llvm::Function *Function = materializeImageFunctionDeclaration(
       Owner,
       Named ? Named->Name : (kAutoFuncPrefix + llvm::utohexstr(Owner)).str());
@@ -381,7 +379,9 @@ llvm::Constant *MedLLVMEmitter::resolveDeclaredFunctionInterior(va_t Address) {
 llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
     uint64_t SlotVA, uint64_t &OutSegVA,
     std::optional<uint64_t> InCodeObjectAddr) {
-  if (!Img)
+  // A failed pointer proof already makes the complete module inadmissible.
+  // Do not retry a large mirror on every subsequent use of the same run.
+  if (!Img || FatalCodePointerResolution || FatalDataPointerResolution)
     return nullptr;
   ensureImportStorageSnapshot();
   const unsigned PtrSz = Img->getPointerSize();
