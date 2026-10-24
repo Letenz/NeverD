@@ -87,7 +87,16 @@ NEVERD_THREADED_TEXT(kClass, "ThreadedMetadata")
 NEVERD_THREADED_TEXT(kSelector, "increment:")
 NEVERD_THREADED_TEXT(kMethod, "-[ThreadedMetadata increment:]")
 NEVERD_THREADED_TEXT(kSupported, "supported")
+NEVERD_THREADED_TEXT(kWeakValue, "_threaded_weak_value")
+NEVERD_THREADED_TEXT(kWeakFunction, "_threaded_weak_function")
+NEVERD_THREADED_VALUE(int64_t, kWeakLookupOrdinal, -3)
 NEVERD_THREADED_TEXT(kObjCSource, R"(
+__attribute__((weak)) int threaded_weak_value = 7;
+__attribute__((weak,noinline)) int threaded_weak_function(int value) {
+  return value + threaded_weak_value;
+}
+int *threaded_weak_address = &threaded_weak_value;
+int (*threaded_weak_function_pointer)(int) = threaded_weak_function;
 __attribute__((objc_root_class))
 @interface ThreadedMetadata
 - (int)increment:(int)value;

@@ -227,7 +227,7 @@ std::optional<ThreadedPlan> plan(llvm::ArrayRef<uint8_t> Bytes,
           !charge(DisplayModule.size()))
         return std::nullopt;
       Plan.Imports.push_back({Symbol.str(), Module.str(), DisplayModule.str(),
-                              Addend, WeakImport, true});
+                              Addend, WeakImport, true, *Library});
       break;
     }
     case arm64e::kThreadedOpcode:

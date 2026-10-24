@@ -244,6 +244,13 @@ if(BUILD_TESTING)
   set_tests_properties(NeverDGuiUnits PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
+  qt_add_executable(neverd-gui-docking-tests tests/DockingTests.cpp)
+  target_link_libraries(neverd-gui-docking-tests PRIVATE neverd_gui_app Qt6::Test)
+  set_target_properties(neverd-gui-docking-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME NeverDGuiDocking COMMAND neverd-gui-docking-tests)
+  set_tests_properties(NeverDGuiDocking PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
   if(TARGET neverd-worker-test-server)
     qt_add_executable(neverd-gui-symbol-tests tests/MicrosoftSymbolsTests.cpp)
     target_link_libraries(neverd-gui-symbol-tests PRIVATE neverd_gui_app Qt6::Test)

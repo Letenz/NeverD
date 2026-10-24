@@ -138,6 +138,17 @@ words retain their bytes; plain rebases and binds use the same canonical slot
 records as modern chains. Mixed weak/lazy/classic rebase streams are rejected
 until their joint binding semantics are represented.
 
+Native dyld binding records and authenticated import recipes also retain the
+original signed library ordinal. SELF, main-executable, flat and weak lookup
+scopes remain distinct even when their module strings are empty; duplicate
+dependency names do not erase load-command identity. The shared
+`recordDyldBindSlot` operation rejects incompatible known scopes in either
+order and can refine absent legacy scope evidence without treating it as SELF.
+Classic, modern chained and threaded readers all use this model. A recipe with
+an import lookup scope cannot prove a local metadata pointer, including when
+the scope is numerically zero. Local object relocations and dyld-cache slide
+recipes retain their separate target provenance without an import ordinal.
+
 Generated C temporaries avoid every operand expression, preserving parameters
 and results that already use the renderer's preferred local names.
 Validated pointer-authentication operations preserve argument setup across

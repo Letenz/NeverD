@@ -81,7 +81,7 @@ std::optional<va_t> readCachePointer(const BinaryImage &Image, va_t Slot) {
           Recipe.Diversity != Expected.Diversity ||
           Recipe.AddressDiversity != Expected.AddressDiversity ||
           !Recipe.Symbol.empty() || !Recipe.Module.empty() || Recipe.Addend ||
-          Recipe.WeakImport)
+          Recipe.WeakImport || Recipe.LibraryOrdinal)
         return std::nullopt;
     }
     const va_t First = Slot >= arm64e::kPointerBytes - 1
@@ -172,7 +172,7 @@ std::optional<va_t> readMetadataPointerTarget(const BinaryImage &Image,
       Recipe.Key != arm64e::kKey.extract(Raw) ||
       Recipe.Diversity != arm64e::kDiversity.extract(Raw) ||
       Recipe.AddressDiversity != bool(arm64e::kAddressDiversity.extract(Raw)) ||
-      Recipe.Target == InvalidVA)
+      Recipe.Target == InvalidVA || Recipe.LibraryOrdinal)
     return std::nullopt;
   const auto *Target = Image.getSegmentFor(Recipe.Target);
   if (!Target || !Target->isReadable() ||

@@ -176,6 +176,7 @@ decodeChainedImports(const uint8_t *BasePtr, size_t FileSize,
         DylibName.empty() ? kExternModule.str() : std::move(DylibName);
     Records[I].Addend = Addend;
     Records[I].WeakImport = WeakImport;
+    Records[I].LibraryOrdinal = LibOrdinal;
     Records[I].Valid = true;
   }
   return Records;
@@ -450,9 +451,9 @@ void parseChainedFixupsRebases(const uint8_t *BasePtr, size_t FileSize,
                                                    EffectiveAddend)) {
               if (Img.isValidImportStorageSlot(ChainVA, Record.Name)) {
                 detail::clearLocalPointerClassification(Img, ChainVA);
-                if (Img.recordDyldBindSlot(ChainVA, Record.Name,
-                                           EffectiveAddend, Record.Module,
-                                           Record.WeakImport)) {
+                if (Img.recordDyldBindSlot(
+                        ChainVA, Record.Name, EffectiveAddend, Record.Module,
+                        Record.WeakImport, Record.LibraryOrdinal)) {
                   detail::joinImportSlot(Img, Record.Name, Record.DisplayModule,
                                          ChainVA);
                   ++NumRecorded;

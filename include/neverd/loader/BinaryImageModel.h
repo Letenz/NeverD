@@ -69,6 +69,9 @@ struct ImportBindSlot {
   /// means no specific dependency is known; it is never an aggregate lookup.
   std::string Module = {};
   bool WeakImport = false;
+  /// Exact dyld lookup scope, including SELF=0 and negative special ordinals.
+  /// Absent means legacy evidence did not record the scope, never SELF.
+  std::optional<int64_t> LibraryOrdinal;
 };
 
 /// A dyld signing recipe, not a runtime pointer value. The original slot bytes
@@ -84,6 +87,9 @@ struct MachOAuthenticatedPointer {
   uint8_t Key = 0;
   bool AddressDiversity = false;
   bool WeakImport = false;
+  /// Present only for a dyld import recipe, not a local rebase or object
+  /// relocation. It distinguishes special lookups with an empty Module.
+  std::optional<int64_t> LibraryOrdinal;
 };
 
 /// One dependency load command, including duplicate names and invalid-name
@@ -2218,14 +2224,17 @@ struct BinaryImage {
     return Accepted;
   }
 
-  /// Publish an exact dyld binding without collapsing provider or weakness
-  /// disagreements into the format-neutral name/addend view. A conflicting
-  /// native or canonical identity poisons both records permanently.
-  bool recordDyldBindSlot(va_t SlotVA, llvm::StringRef Name, int64_t Addend,
-                          llvm::StringRef Module, bool WeakImport) {
+  /// Publish an exact dyld binding without collapsing provider, lookup scope or
+  /// weakness disagreements into the format-neutral name/addend view. A
+  /// conflicting native or canonical identity poisons both records permanently.
+  bool
+  recordDyldBindSlot(va_t SlotVA, llvm::StringRef Name, int64_t Addend,
+                     llvm::StringRef Module, bool WeakImport,
+                     std::optional<int64_t> LibraryOrdinal = std::nullopt) {
     if (!isValidImportStorageSlot(SlotVA, Name))
       return false;
-    ImportBindSlot Incoming{Name.str(), Addend, Module.str(), WeakImport};
+    ImportBindSlot Incoming{Name.str(), Addend, Module.str(), WeakImport,
+                            LibraryOrdinal};
     auto Reject = [&]() {
       ConflictingImportStorageSlots.insert(SlotVA);
       DyldBindSlots.erase(SlotVA);
@@ -2240,7 +2249,9 @@ struct BinaryImage {
       if (Existing.Name != Incoming.Name ||
           Existing.Addend != Incoming.Addend ||
           Existing.Module != Incoming.Module ||
-          Existing.WeakImport != Incoming.WeakImport)
+          Existing.WeakImport != Incoming.WeakImport ||
+          (Existing.LibraryOrdinal && Incoming.LibraryOrdinal &&
+           Existing.LibraryOrdinal != Incoming.LibraryOrdinal))
         return Reject();
     }
     if (!recordImportStorageSlot(SlotVA, Incoming.Name, Incoming.Addend,
@@ -2248,6 +2259,8 @@ struct BinaryImage {
       return Reject();
     if (It == DyldBindSlots.end())
       DyldBindSlots.emplace(SlotVA, std::move(Incoming));
+    else if (!It->second.LibraryOrdinal)
+      It->second.LibraryOrdinal = LibraryOrdinal;
     return true;
   }
 

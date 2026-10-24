@@ -112,6 +112,16 @@ encoded authenticated bytes remain unchanged. A host Apple `ld-classic`
 fixture at O0/O2 removes local symbols before class/method recovery. Missing
 Apple tools are explicit skips. The format reference is
 [Apple dyld's original arm64e chain reader](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/common/MachOAnalyzer.cpp#L1953).
+`MachOBindingIdentity` checks original lookup ordinals through classic/lazy,
+threaded and modern chained readers, including every arm64e import layout.
+Independent `.def` fixtures distinguish SELF from absent scope, retain all
+special lookups and high positive ordinals, and reject conflicting same-name
+bindings in both orders. Duplicate install names cannot collapse two load
+command ordinals. Metadata readers reject an import scope attached to a local
+recipe; the shared-cache suite also checks explicit SELF against cache slide
+provenance. These tests preserve lookup identity, not runtime symbol resolution.
+The real classic-linker producer includes weak data and authenticated function
+pointers: both retain weak-lookup ordinals without becoming weak imports.
 Analysis-only metadata tests follow local authentication recipes for every
 supported chained format and for authenticated object relocations. Stale
 bytes, signing-field mismatches, conflicting provenance, overlapping storage
@@ -256,6 +266,14 @@ without any `ObjCSourceReferences`. These checks qualify static cached-image ana
 they do not qualify native execution or standalone cache reconstruction.
 `NeverDDebugInfoTests` rejects automatic container companion discovery while
 retaining explicit per-image debug-file diagnostics.
+
+`HighCPointerAddresses.CompilerDispatchDoesNotDependOnIncludes` checks all five
+x86 compiler-dispatch families through HighC and LLVMC, across COFF/ELF/Mach-O.
+Disabling includes must retain the required definitions; each unmodified source
+unit is syntax-checked for the Windows x64 target with externally supplied
+standard integer declarations. The trailing-argument fixture uses real dynamic
+CPUID outputs, so scalar constant recovery cannot make its unknown-state
+assertions vacuous. PHI copies retain the explicit unknown marker.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -1903,6 +1921,34 @@ reference selection. These cases also run in the native Windows/macOS checks;
 
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
 its dock button and the tab context menu in both themes.
+`NeverDGuiDocking` checks the floating caption with both native-caption settings.
+Its native `dragIntoWorkbench` cases press and drag the title bar or tab, verify
+the drop preview, and release into a tab group or horizontal/vertical split.
+They also release away from the indicators to verify cancellation. Run these
+in both themes with a window manager and `xdotool` for native X11 input (Xvfb
+alone has no window stacking list):
+
+```sh
+xvfb-run -a -s '-screen 0 1920x1080x24' sh -c '
+  openbox >/tmp/neverd-test-openbox.log 2>&1 &
+  manager=$!
+  trap "kill $manager 2>/dev/null || true" EXIT
+  QT_QPA_PLATFORM=xcb build-gui/bin/neverd-gui-docking-tests
+'
+python tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-docking-tests
+python tools/neverd-gui/tests/run_wayland_docking.py --scale 1.5 \
+  build-gui/bin/neverd-gui-docking-tests
+```
+
+The Wayland runner requires GNOME Shell and creates a private headless desktop
+and D-Bus session. It supplies trusted pointer events, since synthetic QtTest
+mouse events cannot authorize Wayland drag-and-drop. It also checks moving the
+floating window with its title icon and resizing its edges. No input is sent
+to the existing desktop. `NEVERD_SHORTCUT_CAPTURES` saves floating-window and
+drop-preview captures. The desktop CI runs native drag cases on X11, Windows
+and macOS; offscreen runs skip gestures requiring native windows.
+
 `closedFloatingDocksReopenInWorkbench` closes floating panes through their
 native window and dock action, then reopens them in the main window. It covers
 disassembly, hex, functions, pseudocode, IR, types, analysis queries, output,
