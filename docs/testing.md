@@ -884,6 +884,10 @@ also require independent full-width Z3 proofs. Fused sum/carry decisions must
 finish both degree-64 carry products at the same benchmark allowance, with
 lower output costs. Exhausting all 65,536 low-byte input pairs for each product
 checks the resulting carries independently of the decision implementation.
+Single- and two-group cofactor partitions also avoid redundant maps and sorts.
+A degree-24 fixture must finish within the shared work budget; exhaustive
+eight-bit supports and independent 8–257-bit arithmetic oracles retain
+remainders with variables outside the reused cofactor's support.
 `SymMBAWidePairs` extends pairing to two high bits, including asymmetric masks,
 normalized products, nested additions, multi-input XOR carries and changed
 parity. Independent APInt oracles cover 8–257-bit words; a separate 128-factor

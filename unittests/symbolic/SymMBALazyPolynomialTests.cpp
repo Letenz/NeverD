@@ -296,6 +296,78 @@ TEST(SymMBALazyPolynomial, ExhaustsDegree64CarryLowWords) {
   }
 }
 
+TEST(SymMBALazyPolynomial, SingleCofactorGroupingFinishesTheSharedBudget) {
+  SymContext Ctx;
+  const auto F = denseCarryFixture(Ctx, 32, 3, 24, 7);
+  MBAOptions Options;
+  Options.MaxWork = 65536;
+  const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+  // This product's finished reading is larger than its original form. The
+  // shared search must finish without wasting work on a one-entry partition.
+  EXPECT_LT(Result.Work, Options.MaxWork);
+  EXPECT_EQ(Result.SizeBefore, 255u);
+  EXPECT_EQ(Result.SizeAfter, 245u);
+  checkFullWidthOracle(Ctx, F, Result.Expr);
+}
+
+struct CofactorFixture {
+  SymRef Input;
+  unsigned Width;
+  bool Outside;
+
+  unsigned inputWidth(unsigned) const { return Width; }
+
+  llvm::APInt oracle(const std::array<llvm::APInt, 4> &V) const {
+    bool High = false;
+    for (unsigned I = 0; I < 6; ++I)
+      for (unsigned J = I + 1; J < 6; ++J)
+        High ^= bool(V[0][I] && V[0][J]);
+    bool Low =
+        High ^ bool(V[0][0] && V[0][1]) ^ bool(V[0][0] && V[0][1] && V[0][2]);
+    if (Outside)
+      Low ^= bool(V[0][7] && V[0][0] && V[0][1]) ^
+             bool(V[0][7] && V[0][0] && V[0][2]);
+    return llvm::APInt(Width, Low ^ bool(V[0][6] && High)).shl(Width - 1);
+  }
+};
+
+TEST(SymMBALazyPolynomial, CofactorSupportIncludesEveryRemainderVariable) {
+  for (unsigned Width : {8u, 32u, 64u, 65u, 128u, 257u})
+    for (const bool Outside : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Outside);
+      SymContext Ctx;
+      const auto X = Ctx.mkVar("x", Width);
+      std::array<SymRef, 8> Bits;
+      for (unsigned I = 0; I < Bits.size(); ++I)
+        Bits[I] = Ctx.mkLShr(X, Ctx.mkConst(Width, I));
+      std::vector<SymRef> Terms;
+      for (unsigned I = 0; I < 6; ++I)
+        for (unsigned J = I + 1; J < 6; ++J) {
+          if (I != 0 || J != 1)
+            Terms.push_back(Ctx.mkAnd(Bits[I], Bits[J]));
+          Terms.push_back(Ctx.mkAnd({Bits[6], Bits[I], Bits[J]}));
+        }
+      Terms.push_back(Ctx.mkAnd({Bits[0], Bits[1], Bits[2]}));
+      if (Outside) {
+        Terms.push_back(Ctx.mkAnd({Bits[7], Bits[0], Bits[1]}));
+        Terms.push_back(Ctx.mkAnd({Bits[7], Bits[0], Bits[2]}));
+      }
+      const auto Input = Ctx.mkMul(
+          Ctx.mkConst(llvm::APInt(Width, 1).shl(Width - 1)), Ctx.mkXor(Terms));
+      const CofactorFixture F{Input, Width, Outside};
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      bool Complete = false;
+      const auto Result = detail::foldResidueDecisions(
+          Ctx, Input, Budget, Storage, false, 65536, nullptr, &Complete);
+      ASSERT_TRUE(Complete);
+      EXPECT_LE(Ctx.readability(Result), Ctx.readability(Input));
+      // The first 256 oracle inputs exhaust all eight bits used by this
+      // polynomial; the remaining inputs also exercise native and wide words.
+      checkFullWidthOracle(Ctx, F, Result);
+    }
+}
+
 TEST(SymMBALazyPolynomial, DenseCarryValuesRemainExactAcrossWordBoundaries) {
   for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
     for (const unsigned HighBits : {2u, 3u}) {

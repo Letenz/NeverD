@@ -2162,11 +2162,15 @@ public:
         const unsigned Variable = Best - Frequencies.begin();
         const auto Bit = uint64_t(1) << Variable;
         Polynomial Low, High;
+        uint64_t LowSupport = 0, HighSupport = 0;
         for (auto Term : P) {
-          if (Term & Bit)
+          if (Term & Bit) {
             High.push_back(Term ^ Bit);
-          else
+            HighSupport |= Term ^ Bit;
+          } else {
             Low.push_back(Term);
+            LowSupport |= Term;
+          }
         }
         // Equal cofactors give Low AND NOT x. Cofactors differing only in
         // their constant term give Low OR x. Compare the canonical tails
@@ -2199,37 +2203,59 @@ public:
         // cofactor: Low = R XOR (Q AND High), hence
         // P = R XOR ((x XOR Q) AND High). Symmetric difference proves the
         // remainder, including complemented and partially matching groups.
-        if (Low.size() > High.size() / 2 &&
-            !(High.size() == 1 && !High.front())) {
-          if (!charge(High.size() + Low.size(),
-                      Low.size() * (sizeof(uint64_t) + sizeof(Polynomial) +
-                                    4 * sizeof(void *) + 2 * sizeof(uint64_t))))
+        // When Low has no variables outside High's support, its partition
+        // has one group. The same exact difference needs no map or re-sort.
+        const bool Reusable = Low.size() > High.size() / 2 &&
+                              !(High.size() == 1 && !High.front());
+        const bool SingleGroup = !(LowSupport & ~HighSupport);
+        if (Reusable && SingleGroup) {
+          const auto Size = Low.size() + High.size();
+          if (!charge(Size, sizeof(Polynomial) + 2 * Size * sizeof(uint64_t)))
             return {};
-          uint64_t Support = 0;
-          for (auto Term : High)
-            Support |= Term;
-          std::map<uint64_t, Polynomial> Groups;
-          for (auto Term : Low) {
-            if (!charge(1 + std::bit_width(Groups.size())))
+          Polynomial Difference;
+          Difference.reserve(Size);
+          std::set_symmetric_difference(Low.begin(), Low.end(), High.begin(),
+                                        High.end(),
+                                        std::back_inserter(Difference));
+          if (Difference.size() < Low.size()) {
+            Polynomial Quotient{0, Bit};
+            auto Q = Self(Self, Quotient, Basis, Cache, false),
+                 H = Self(Self, High, Basis, Cache, false),
+                 R = Self(Self, Difference, Basis, Cache, false);
+            if (!Q || !H || !R ||
+                !charge(2, 2 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
               return {};
-            Groups[Term & ~Support].push_back(Term & Support);
+            auto Value = Ctx.mkXor(R, Ctx.mkAnd(Q, H));
+            Cache.emplace(P, Value);
+            return Value;
           }
+        }
+        if (Reusable && !SingleGroup) {
+          const auto OutsideMask = LowSupport & ~HighSupport;
+          const bool TwoGroups = std::has_single_bit(OutsideMask);
+          const size_t Bytes =
+              TwoGroups
+                  ? 2 * sizeof(Polynomial) + 4 * Low.size() * sizeof(uint64_t)
+                  : Low.size() * (sizeof(uint64_t) + sizeof(Polynomial) +
+                                  4 * sizeof(void *) + 2 * sizeof(uint64_t));
+          if (!charge(High.size() + Low.size(), Bytes))
+            return {};
           Polynomial Quotient{Bit}, Remainder;
           bool Found = false;
-          for (const auto &[Outside, Inside] : Groups) {
+          auto ReuseGroup = [&](uint64_t Outside, const Polynomial &Inside) {
             // |Inside XOR High| < |Inside| requires more than half of High
             // to occur in Inside. Smaller groups cannot reuse this cofactor;
             // retain them directly instead of scanning High for every group.
             if (Inside.size() <= High.size() / 2) {
               if (!charge(Inside.size()))
-                return {};
+                return false;
               for (auto Term : Inside)
                 Remainder.push_back(Term | Outside);
-              continue;
+              return true;
             }
             const auto Size = Inside.size() + High.size();
-            if (!charge(Size, Size * sizeof(uint64_t)))
-              return {};
+            if (!charge(Size, sizeof(Polynomial) + 2 * Size * sizeof(uint64_t)))
+              return false;
             Polynomial Difference;
             std::set_symmetric_difference(Inside.begin(), Inside.end(),
                                           High.begin(), High.end(),
@@ -2241,6 +2267,27 @@ public:
             }
             for (auto Term : Reuse ? Difference : Inside)
               Remainder.push_back(Term | Outside);
+            return true;
+          };
+          if (TwoGroups) {
+            // One outside variable selects exactly two possible groups.
+            // Clearing that fixed bit preserves each group's term order.
+            std::array<Polynomial, 2> Groups;
+            for (auto Term : Low)
+              Groups[bool(Term & OutsideMask)].push_back(Term & HighSupport);
+            for (unsigned I = 0; I < Groups.size(); ++I)
+              if (!ReuseGroup(I ? OutsideMask : 0, Groups[I]))
+                return {};
+          } else {
+            std::map<uint64_t, Polynomial> Groups;
+            for (auto Term : Low) {
+              if (!charge(1 + std::bit_width(Groups.size())))
+                return {};
+              Groups[Term & ~HighSupport].push_back(Term & HighSupport);
+            }
+            for (const auto &[Outside, Inside] : Groups)
+              if (!ReuseGroup(Outside, Inside))
+                return {};
           }
           if (Found) {
             const auto Size = Quotient.size() + Remainder.size();
