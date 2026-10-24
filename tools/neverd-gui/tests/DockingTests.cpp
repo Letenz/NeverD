@@ -12,6 +12,10 @@
 #include "Theme.h"
 #include "WindowFrame.h"
 
+#ifdef Q_OS_MACOS
+#include "NativeWindowState.h"
+#endif
+
 #include <QApplication>
 #include <QCursor>
 #include <QDebug>
@@ -182,13 +186,17 @@ public:
     return SendInput(1, &input, sizeof(input)) == 1;
 #else
     const QPoint global = widget.mapToGlobal(point);
-    QCursor::setPos(global);
-    if (QGuiApplication::platformName() == QLatin1String("xcb"))
+    if (QGuiApplication::platformName() == QLatin1String("xcb")) {
+      QCursor::setPos(global);
       return true;
+    }
 #ifdef Q_OS_MACOS
+    // Cocoa's QCursor::setPos posts an ordinary mouse-moved event. Sending it
+    // before a held drag would inject a second, incompatible event type.
     return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
                        global);
 #else
+    QCursor::setPos(global);
     QWidget *receiver = Pressed ? Pressed.data() : &widget;
     QMouseEvent event(QEvent::MouseMove, receiver->mapFromGlobal(global),
                       global, Qt::NoButton,
@@ -706,9 +714,17 @@ private slots:
                                        "throw Error('window did not restore');")
                             .arg(nativeWindow(*floating))));
     QTRY_COMPARE(floating->size(), normalSize);
+#ifdef Q_OS_MACOS
+    QVERIFY(neverd::gui::test::setNativeFullScreen(*floating, true));
+#else
     floating->showFullScreen();
+#endif
     QTRY_VERIFY(floating->isFullScreen());
+#ifdef Q_OS_MACOS
+    QVERIFY(neverd::gui::test::setNativeFullScreen(*floating, false));
+#else
     floating->showNormal();
+#endif
     QTRY_VERIFY(!floating->isFullScreen());
     QTRY_COMPARE(floating->size(), normalSize);
     QVERIFY(desktop.titleBar());

@@ -1632,15 +1632,26 @@ private slots:
       QVERIFY(palette);
       QCOMPARE(QApplication::activePopupWidget(), palette.data());
       QVERIFY(!QApplication::activeModalWidget());
-      QVERIFY(activateTestWindow(palette));
-      QTRY_COMPARE(QGuiApplication::focusWindow(), palette->windowHandle());
+      if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
+        // Cocoa popup panels retain their owner's native key window. Qt
+        // routes that window's keys to the active popup's focused widget.
+        QTRY_COMPARE(QGuiApplication::focusWindow(),
+                     assembly->window()->windowHandle());
+      } else {
+        QVERIFY(activateTestWindow(palette));
+        QTRY_COMPARE(QGuiApplication::focusWindow(), palette->windowHandle());
+      }
       auto *input = palette->findChild<QLineEdit *>();
       QVERIFY(input);
       QTRY_VERIFY(input->hasFocus());
+      QVERIFY(QGuiApplication::focusWindow());
+      QTest::keyClick(QGuiApplication::focusWindow(), 'a');
+      QTRY_COMPARE(input->text(), QStringLiteral("a"));
       input->setText(bench.action(ActionId::JumpAnywhere)->text().remove('&'));
       QSignalSpy operand(bench.action(ActionId::JumpOperand),
                          &QAction::triggered);
-      QTest::keyClick(input, accept ? Qt::Key_Return : Qt::Key_Escape);
+      QTest::keyClick(QGuiApplication::focusWindow(),
+                      accept ? Qt::Key_Return : Qt::Key_Escape);
       QVERIFY(operand.isEmpty());
       QTRY_VERIFY(!palette);
       if (accept) {
