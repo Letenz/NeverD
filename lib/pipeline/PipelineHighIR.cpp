@@ -177,7 +177,7 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   for (MedFunc &MF : Result.MedFuncs)
     if (!MF.SourceParametersBound)
       inferMedTypes(MF, Img.Arch);
-  modelWideIntReturns(Img, Result);
+  modelWideIntReturns(Img, Result, MedStackProjection::Source);
   // Calls remodeled to return a packed register pair must agree with the
   // corresponding definition on the HighIR route as well as the LLVM route.
   recoverStructReturnFromCallers(Img, Result);

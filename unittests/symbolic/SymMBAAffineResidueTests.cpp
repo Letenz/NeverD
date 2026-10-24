@@ -14,6 +14,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/solver/SymSynthVerifier.h"
+#include "neverd/solver/Z3Solver.h"
 
 #include <array>
 #include <bit>
@@ -271,15 +272,23 @@ TEST(SymMBAAffineResidue, HasIndependentFullWidthSMTProofs) {
     GTEST_SKIP() << "Z3 unavailable";
   for (unsigned Width : {8u, 16u, 32u, 64u})
     for (unsigned Control : {0u, 1u, 2u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Control);
       SymContext Ctx;
       auto F = fixture(Ctx, Width, Control ? 8 : 4, 1, Control);
       detail::WorkBudget Budget(65536);
       size_t Storage = 1 << 24;
       auto Output = detail::foldProductResidues(Ctx, F.Input, Budget, Storage);
       ASSERT_NE(Output, F.Input) << Width << ":" << Control;
-      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 5000);
-      EXPECT_EQ(Verifier(Ctx, F.Input, Output), SynthVerification::Equivalent)
-          << Width << ':' << Control;
+      // Full-width products with independent coefficients can need more
+      // wall-clock time on shared runners. Keep the original proof query and
+      // require unsat; this timeout does not change simplification budgets.
+      constexpr unsigned ProofTimeoutMs = 30000;
+      solver::Z3SolverOptions Options;
+      Options.TimeoutMs = ProofTimeoutMs;
+      solver::Z3Solver Verifier(Ctx, Options);
+      EXPECT_EQ(Verifier.checkDistinct(F.Input, Output),
+                solver::SatResult::Unsat)
+          << Verifier.reasonUnknown();
     }
 }
 

@@ -116,7 +116,8 @@ std::optional<va_t> resolveCallTargetVA(const MedFunc &MF,
 // whose caller consumes the high half into one producing a 64-bit temp; the
 // target of such a call returns i64, so override its (low-half-only) inferred
 // return type to match the call site and splice both halves at its RETURN.
-void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
+void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
+                         MedStackProjection StackProjection) {
   const auto &TRI = getTargetRegInfo(Img.Arch);
   if (TRI.PointerSize == 4 && TRI.IntReturnReg2 != 0) {
     std::set<va_t> WideRetCallees;
@@ -592,6 +593,10 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result) {
         NewMF.DebugName = Result.LowFuncs[I].DebugName;
         NewMF.SourceFile = Result.LowFuncs[I].SourceFile;
         NewMF.SourceLine = Result.LowFuncs[I].SourceLine;
+        // Reconversion replaces the operation sequence. Repeat the same stack
+        // proofs as the initial conversion before either source emitter reads
+        // it.
+        prepareMedStackAccesses(NewMF, Img, StackProjection);
         Result.MedFuncs[I] = std::move(NewMF);
         inferMedTypes(Result.MedFuncs[I], Img.Arch);
         if (SelfWide)

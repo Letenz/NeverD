@@ -18,6 +18,10 @@
 
 namespace neverd::symbolic::detail::limits {
 
+/// Residual recovery reuses the small exact Boolean recipes without building
+/// the four-input exhaustive table.
+inline constexpr unsigned kMaxResidualSynthesisAtoms = 3;
+
 inline constexpr std::size_t kMaxLinearTailTerms = 128;
 inline constexpr std::size_t kMaxLinearTailNodes = 32;
 inline constexpr unsigned kMinLinearTailSummands = 2;
@@ -78,6 +82,8 @@ inline constexpr unsigned kMaxResidueDecisionInputs = 3;
 inline constexpr unsigned kResidueDecisionPriorityBits = 4;
 inline constexpr unsigned kMinResidueDecisionPairingBits = 6;
 inline constexpr unsigned kMinResidueDecisionWidePairingBits = 6;
+// Admission probe for partial blocks; every matched pair still needs a proof.
+inline constexpr std::size_t kResidueDecisionPartialPairingDivisor = 2;
 inline constexpr unsigned kResidueDecisionPolynomialFirstBits = 6;
 inline constexpr std::size_t kResidueDecisionPolynomialFirstNodes = 512;
 inline constexpr std::size_t kResidueDecisionMinMapBuckets = 64;

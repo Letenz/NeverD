@@ -4760,6 +4760,12 @@ Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
 
+`prepareMedStackAccesses` owns the post-conversion entry-kind, alignment and
+annotation sequence. Register-pair return recovery calls it again after
+reconverting a caller from LowIR: old operation flags cannot describe that new
+sequence. HighC and LLVM C request the source projection; machine lift,
+patching and analysis keep the original stack operations.
+
 The entry-stack proof keeps definitions, joins, ambiguity and transient active
 flags in one ordered index. Each visit still consumes its ordinary work and
 depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
@@ -6707,6 +6713,8 @@ Finite-value enumeration may observe feasible tuples without changing the proof 
 `NeverDLoader` owns `PEFixedImageView` and shares complete base-relocation parsing with ordinary PE loading. The binary interpreter adapter consumes this authenticated preferred-base view for both recovery and native proofs; it does not parse PE tables itself. Preparation validates import write footprints, mapping identity and complete raw fields before certifying bytes. The view borrows an unchanged image and makes no ASLR or initialization-equivalence claim.
 
 `PEHeaderMapping` owns the optional file-backed `<PE headers>` mapping in linked PE images. It appends a normalized segment and region after real COFF sections, preserving their indexes, and copies original file bytes even when LLVM needs a zero-VirtualSize reader projection. Complete headers, target-width bounds, ordinary page alignment, and disjoint raw and virtual section ownership are required. Padding beyond SizeOfHeaders is not admitted. Unsupported layouts retain `pe.headers_unmapped` and grant no header read authority.
+
+Windows process and driver admission share `COFFLoader::hasExpectedPEMappingInventory` to validate the real-section count and the optional header's exact bytes, position and read-only identity; each retains its independent execution preflight and creates exactly one guest header region.
 
 `PEHeaderInitialization` bounds the loader write footprint before publishing this read-only mapping. Ordinary import lookup/IAT extents, scalar base relocations and legacy load-configuration cookie destinations must exclude header pages. `PELoaderWriteRanges` shares the metadata-overlap rule with the fixed-image reader, so one write cannot change a later descriptor, terminator or configuration field. A rebased cookie destination requires its own complete scalar fixup. TLS, delay/bound imports, extended load configurations and other unmodeled writer protocols retain the refusal. The four-million-unit budget charges visited metadata bytes and section/record queries; fixed-image validation also charges that work to its caller's limits. This proves storage initialization, not a callee's effects or an unreachable control branch.
 

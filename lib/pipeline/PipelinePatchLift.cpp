@@ -206,7 +206,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
   }
 
-  modelWideIntReturns(Img, Result);
+  modelWideIntReturns(Img, Result, medStackProjection(Opts));
 
   recoverStructReturnFromCallers(Img, Result);
 
