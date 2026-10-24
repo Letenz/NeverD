@@ -116,6 +116,13 @@ evidence; overlapping paths, data and section boundaries invalidate it.
 Independent symbols, exports, direct calls and relocated pointers retain their
 separate authority.
 
+Parallel x86 call sweeps retain contiguous instruction ends and sparse direct
+call targets. A piece's start is implicit in its first boundary, and later
+starts are the preceding ends. Joining still redecodes a misaligned prefix
+until it reaches the canonical sweep; nested ranges retain their independent
+end-boundary checks. Joined pieces release their storage immediately instead
+of retaining two complete instruction logs through discovery.
+
 The COFF CFG reader also requires unique, complete file-backed storage for the
 target's minimum instruction unit. The table must be immutable, while target
 code may be writable or execute-only. Import-thunk decoding requires the full
