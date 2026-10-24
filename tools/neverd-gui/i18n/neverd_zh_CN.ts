@@ -6401,6 +6401,10 @@ Coverage: %7</source>
         <source>Optimized SSA with multi-block loop analysis</source>
         <translation>带多块循环分析的优化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>带嵌套循环分析的优化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6535,6 +6539,10 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Optimized SSA with multi-block loop analysis</source>
         <translation>带多块循环分析的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>带嵌套循环分析的优化 SSA</translation>
     </message>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>

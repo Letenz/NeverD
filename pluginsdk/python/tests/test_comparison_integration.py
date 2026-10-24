@@ -139,6 +139,52 @@ class ComparisonIntegrationTests(unittest.TestCase):
                                         json.dumps(forged).encode()), 0)
         self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
 
+    def test_nested_progress_pages_and_authenticates_both_layers(self) -> None:
+        from neverd_plugin import abi
+
+        # Owned family4 x64 O0 fixture; inspect its two loops without execution.
+        self.binary.write_bytes(bytes.fromhex(
+            "554889e5897dfc8975f88b45f883e0078945f48b45f489c183c1ff894df483f800745b"
+            "8b45fc83e00783c0018945f08b45f089c183c1ff894df083f800742e8b45fc83f0176b"
+            "c00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fc8b45fc0345f43345f889"
+            "45fcebc28b45fcc1e0070345f43345fc8945fceb958b45fc3345f883c0035dc3"))
+        left, right = self.session(), self.session()
+        for session in (left, right):
+            self.assertEqual(self.host.call("neverd_session_load", session,
+                                            str(self.binary).encode()), 1)
+        comparison = self.comparison()
+        options = b'{"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v3"}}'
+        self.assertEqual(self.host.call("neverd_comparison_run", comparison,
+            left, right, options, abi.ComparisonProgressCallback(), None), 1)
+        latches = set()
+        offset, total = 0, 1
+        while offset < total:
+            query = {"kind": "nodes", "address": "0x1000", "limit": 1, "offset": offset}
+            page = json.loads(self.host.owned_string("neverd_comparison_dataflow_json",
+                comparison, json.dumps(query).encode()))
+            self.assertEqual(page["schema_version"], 7)
+            self.assertEqual(page["progress"]["kind"], "counter_loops")
+            self.assertEqual(page["progress"]["loop_count"], 2)
+            self.assertNotIn("loops", page["progress"])
+            self.assertEqual(len(page["rows"]), 1)
+            row = page["rows"][0]
+            if row["progress_loop"]:
+                self.assertEqual(row["progress_loop"]["block"], row["block"])
+                latches.add(row["progress_loop"]["block"])
+            offset, total = offset + 1, page["total"]
+        self.assertEqual(len(latches), 2)
+        saved = self.host.owned_string("neverd_comparison_export_json", comparison)
+        self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                        saved.encode()), 1)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
+        for layer in range(2):
+            forged = json.loads(saved)
+            proof = forged["dataflow"]["primary"]["entries"][0]["graph"]["progress"]
+            proof["loops"][layer]["header"] = 0
+            self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                            json.dumps(forged).encode()), 0)
+            self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
+
     def test_native_parameter_views_use_the_shared_report_abi(self) -> None:
         from neverd_plugin import abi
 

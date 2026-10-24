@@ -287,7 +287,7 @@ def parameter_views(client, args, root, fixture):
 
 def loop_progress(client, args, root, fixture):
     source = fixture.with_name("control_regions_fixture.c")
-    for family, version in ((2, 1), (3, 2)):
+    for family, version in ((2, 1), (3, 2), (4, 3)):
         for arch, target in (("x64", "x86_64-unknown-linux-gnu"),
                              ("aarch64", "aarch64-unknown-linux-gnu")):
             paths = [root / f"progress-v{version}-{arch}-O{level}.o" for level in (0, 2)]
@@ -313,11 +313,15 @@ def loop_progress(client, args, root, fixture):
                 if row["progress_loop"]:
                     proof = row["progress_loop"]
                     assert all(proof[key] < page["total"] for key in ("counter", "update", "compare"))
+                    if version >= 2:
+                        assert proof["header"] < page["block_count"]
                     if version == 2:
                         assert proof["header"] != proof["block"]
-                        assert proof["header"] < page["block_count"]
                     witnesses.append(proof)
             assert witnesses
+            if version == 3:
+                assert page["progress"]["loop_count"] == 2
+                assert len({proof["block"] for proof in witnesses}) == 2
             sliced = ok(client, "comparison_slice", {"side": "primary", "address": address,
                         "seeds": [witnesses[0]["update"]], "limit": 1})
             assert sliced["schema_version"] == 4 + version and sliced["rows"]

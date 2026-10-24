@@ -30,7 +30,15 @@ __attribute__((noinline, used)) unsigned transform(unsigned x, unsigned y) {
 #else
   unsigned n = y & LOOP_MASK;
   while (n--) {
-#if FAMILY == 3
+#if FAMILY == 4
+    unsigned m = (x & 7u) + 1u;
+    while (m--) {
+      x = (x ^ 23u) * LOOP_MUL + 9u;
+      x = (x >> 5) | (x << 27);
+      x = (x + n) ^ y;
+    }
+    x ^= (x << 7) + n;
+#elif FAMILY == 3
     if (x & 1u) {
       x = (x ^ 23u) * LOOP_MUL + 9u;
       x = (x >> 5) | (x << 27);

@@ -6437,6 +6437,10 @@ Copertura: %7</translation>
         <source>Optimized SSA with multi-block loop analysis</source>
         <translation>SSA ottimizzata con analisi dei cicli su più blocchi</translation>
     </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli annidati</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6571,6 +6575,10 @@ La terminazione non dimostra che il numero di iterazioni o i risultati delle fun
     <message>
         <source>Optimized SSA with multi-block loop analysis</source>
         <translation>SSA ottimizzata con analisi dei cicli su più blocchi</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with nested loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli annidati</translation>
     </message>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>

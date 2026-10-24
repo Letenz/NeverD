@@ -461,7 +461,8 @@ DataFlowGraph readDataFlowGraph(const Value &V,
       require(++Edges <= Options.MaxWork, "loop proofs exceed work allowance");
       const auto &L = object(Row);
       const bool MultiBlock =
-          G.Profile == LLVMMultiBlockProgressDataFlowProfile;
+          G.Profile == LLVMMultiBlockProgressDataFlowProfile ||
+          G.Profile == LLVMNestedProgressDataFlowProfile;
       if (MultiBlock)
         fields(L, {"block", "counter", "update", "compare", "header"});
       else

@@ -314,8 +314,11 @@ void ComparisonFlowDialog::selectSide() {
     Summary->setText(
         Summary->text() + '\n' +
         tr("SSA representation: %1")
-            .arg(Profile == ::neverd::limits::diff::
-                                kLLVMMultiBlockProgressSSAProfile
+            .arg(Profile ==
+                         ::neverd::limits::diff::kLLVMNestedProgressSSAProfile
+                     ? tr("Optimized SSA with nested loop analysis")
+                 : Profile == ::neverd::limits::diff::
+                                  kLLVMMultiBlockProgressSSAProfile
                      ? tr("Optimized SSA with multi-block loop analysis")
                  : Profile == ::neverd::limits::diff::kLLVMProgressSSAProfile
                      ? tr("Optimized SSA with loop analysis")

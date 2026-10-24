@@ -46,9 +46,12 @@ inline constexpr llvm::StringLiteral
     LLVMProgressDataFlowProfile(limits::diff::kLLVMProgressSSAProfile);
 inline constexpr llvm::StringLiteral LLVMMultiBlockProgressDataFlowProfile(
     limits::diff::kLLVMMultiBlockProgressSSAProfile);
+inline constexpr llvm::StringLiteral LLVMNestedProgressDataFlowProfile(
+    limits::diff::kLLVMNestedProgressSSAProfile);
 inline bool hasProgressProof(llvm::StringRef Profile) {
   return Profile == LLVMProgressDataFlowProfile ||
-         Profile == LLVMMultiBlockProgressDataFlowProfile;
+         Profile == LLVMMultiBlockProgressDataFlowProfile ||
+         Profile == LLVMNestedProgressDataFlowProfile;
 }
 inline bool hasParameterViews(llvm::StringRef Profile) {
   return Profile == LLVMParameterDataFlowProfile || hasProgressProof(Profile);
@@ -168,7 +171,7 @@ llvm::StringRef flowProgressName(FlowProgressKind Kind);
 struct FlowLoopProgress {
   uint32_t Block = NoIndex, Counter = NoIndex, Update = NoIndex,
            Compare = NoIndex;
-  /// v2 names the header separately from Block (the backedge latch). The
+  /// v2/v3 name the header separately from Block (the backedge latch). The
   /// published v1 self-loop record retains NoIndex and its four wire fields.
   uint32_t Header = NoIndex;
   bool operator==(const FlowLoopProgress &) const = default;

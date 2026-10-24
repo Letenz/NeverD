@@ -17,6 +17,7 @@
 #include "neverd/diff/Limits.h"
 #include "neverd/diff/Program.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Operator.h"
 
@@ -145,7 +146,8 @@ struct FlowComponents {
 /// internal predecessor inventory before scanning any counter PHI. Otherwise
 /// many rejected latches could repeatedly scan a large externally seeded PHI.
 FlowComponents components(const DataFlowGraph &G,
-                          llvm::function_ref<void(uint64_t)> Charge) {
+                          llvm::function_ref<void(uint64_t)> Charge,
+                          llvm::ArrayRef<uint32_t> Cut = {}) {
   const auto Size = G.Blocks.size();
   Charge(10 * uint64_t(Size));
   FlowComponents C{std::vector<uint32_t>(Size, NoIndex),
@@ -178,6 +180,8 @@ FlowComponents components(const DataFlowGraph &G,
       const auto Block = Top.Block;
       if (Top.Next < G.Blocks[Block].Successors.size()) {
         const auto To = G.Blocks[Block].Successors[Top.Next++];
+        if (!Cut.empty() && Cut[Block] == To)
+          continue;
         if (Order[To] == NoIndex)
           Visit(To);
         else if (OnStack[To])
@@ -210,6 +214,8 @@ FlowComponents components(const DataFlowGraph &G,
   };
   if (G.EntryBlock != NoIndex)
     Entry(G.EntryBlock);
+  // Keep original entries, including cut edges. A residual component must
+  // never acquire a proof by hiding an entry from an earlier round.
   for (uint32_t From = 0; From < Size; ++From) {
     Charge(1);
     for (const auto To : G.Blocks[From].Successors) {
@@ -223,6 +229,8 @@ FlowComponents components(const DataFlowGraph &G,
     const auto Id = C.Id[From];
     for (const auto To : G.Blocks[From].Successors) {
       Charge(1);
+      if (!Cut.empty() && Cut[From] == To)
+        continue;
       if (C.Id[To] == Id && To == C.Header[Id]) {
         C.Latch[Id] = From;
         ++C.Backedges[Id];
@@ -236,7 +244,7 @@ FlowComponents components(const DataFlowGraph &G,
 FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
                                const DataFlowOptions &Options,
                                llvm::function_ref<void(uint64_t)> Charge,
-                               bool MultiBlock) {
+                               FlowProgressMode Mode) {
   if (auto Error = validateFiniteLLVMFlow(G, Contract, Charge))
     throw std::invalid_argument(*Error);
   FlowProgress P;
@@ -247,42 +255,55 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
   const uint64_t Retained = G.Nodes.size() + G.ParameterViews.size() + 1;
   if (Retained > Options.MaxNodes)
     throw DataFlowInterrupted(ComparisonState::ResourceLimited);
-  std::optional<FlowComponents> C;
-  if (MultiBlock)
-    C = components(G, Charge);
-  for (uint32_t I = 0; I < G.Blocks.size(); ++I) {
-    Charge(1 + G.Blocks[I].Successors.size());
-    auto Header = I;
-    if (C) {
-      const auto Id = C->Id[I];
-      Header = C->Header[Id];
-      if (Header == NoIndex || C->MultipleEntries[Id] ||
-          C->Backedges[Id] != 1 || C->Latch[Id] != I)
+  const bool Nested = Mode == FlowProgressMode::Nested;
+  do {
+    const auto Previous = P.Loops.size();
+    std::optional<FlowComponents> C;
+    if (Mode != FlowProgressMode::SelfLoop)
+      C = components(G, Charge,
+                     Nested ? llvm::ArrayRef<uint32_t>(Cut)
+                            : llvm::ArrayRef<uint32_t>());
+    for (uint32_t I = 0; I < G.Blocks.size(); ++I) {
+      Charge(1 + G.Blocks[I].Successors.size());
+      if (Nested && Cut[I] != NoIndex)
         continue;
-      bool InternalExit = false;
-      for (const auto To : G.Blocks[I].Successors)
-        InternalExit |= To != Header && C->Id[To] == Id;
-      if (InternalExit)
-        continue;
-    }
-    if (auto L = counterLoop(G, I, Header, Contract, Charge)) {
+      auto Header = I;
       if (C) {
-        bool Reset = false;
-        for (const auto &Input : G.Nodes[L->Counter].Inputs) {
-          Charge(1);
-          Reset |=
-              Input.Predecessor != I && C->Id[Input.Predecessor] == C->Id[I];
-        }
-        if (Reset)
+        const auto Id = C->Id[I];
+        Header = C->Header[Id];
+        if (Header == NoIndex || C->MultipleEntries[Id] ||
+            C->Backedges[Id] != 1 || C->Latch[Id] != I)
           continue;
-        L->Header = Header;
+        bool InternalExit = false;
+        for (const auto To : G.Blocks[I].Successors)
+          InternalExit |= To != Header && C->Id[To] == Id;
+        if (InternalExit)
+          continue;
       }
-      if (P.Loops.size() == Options.MaxNodes - Retained)
-        throw DataFlowInterrupted(ComparisonState::ResourceLimited);
-      P.Loops.push_back(*L);
-      Cut[I] = Header;
+      if (auto L = counterLoop(G, I, Header, Contract, Charge)) {
+        if (C) {
+          bool Reset = false;
+          for (const auto &Input : G.Nodes[L->Counter].Inputs) {
+            Charge(1);
+            Reset |=
+                Input.Predecessor != I && C->Id[Input.Predecessor] == C->Id[I];
+          }
+          if (Reset)
+            continue;
+          L->Header = Header;
+        }
+        if (P.Loops.size() == Options.MaxNodes - Retained)
+          throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+        P.Loops.push_back(*L);
+        Cut[I] = Header;
+      }
     }
-  }
+    // A round only proves finite traversal of these backedges. An inner
+    // cycle may still run forever; publish no progress until every residual
+    // cycle is discharged. Each productive round cuts a new, distinct latch.
+    if (!Nested || P.Loops.size() == Previous)
+      break;
+  } while (true);
   Charge(G.Blocks.size());
   std::vector<uint32_t> Degree(G.Blocks.size()), Ready;
   for (uint32_t I = 0; I < G.Blocks.size(); ++I)
@@ -309,6 +330,12 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
     P.Loops.clear();
     return P;
   }
+  if (Nested)
+    std::sort(P.Loops.begin(), P.Loops.end(),
+              [&](const FlowLoopProgress &A, const FlowLoopProgress &B) {
+                Charge(1);
+                return A.Block < B.Block;
+              });
   P.Kind = P.Loops.empty() ? FlowProgressKind::Acyclic
                            : FlowProgressKind::CounterLoops;
   return P;
@@ -336,9 +363,8 @@ validateFlowProgress(const DataFlowGraph &G, const DataFlowOptions &Options,
     return "progress evidence exceeds its allowance or changes an unproved "
            "contract";
   try {
-    const auto Derived =
-        proveFlowProgress(G, P.ObservedContract, Options, Charge,
-                          G.Profile == LLVMMultiBlockProgressDataFlowProfile);
+    const auto Derived = proveFlowProgress(G, P.ObservedContract, Options,
+                                           Charge, flowProgressMode(G.Profile));
     if (Derived.Kind != P.Kind || Derived.Loops != P.Loops)
       return "progress witnesses do not prove the represented control flow";
   } catch (const std::invalid_argument &Error) {
