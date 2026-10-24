@@ -611,12 +611,20 @@ llvm::Expected<BinaryImage> MachOLoader::loadBufferImpl(
     if (auto Error = macho_loader::applyCacheSlideFixups(Img, Progress))
       return std::move(Error);
   } else {
-    macho_loader::parseBindStreams(BasePtr, FileSize, DyldInfo, Img);
-    macho_loader::parseRebaseStream(BasePtr, FileSize, DyldInfo, Img);
-    macho_loader::parseChainedFixupsImports(BasePtr, FileSize, ChainedFixups,
-                                            Img);
-    macho_loader::parseChainedFixupsRebases(BasePtr, FileSize, ChainedFixups,
-                                            TextVMAddr, Img);
+    // Both chain containers establish the same exact-slot provenance. Keep
+    // load-command presence separate from that post-parse image property.
+    const bool HasModernChainedFixups = Img.MachOHasChainedFixups;
+    macho_loader::parseBindStreams(BasePtr, FileSize, DyldInfo, Img,
+                                   HasTextVMAddr ? TextVMAddr : InvalidVA);
+    if (Img.MachOChainedFixupsError.empty()) {
+      macho_loader::parseRebaseStream(BasePtr, FileSize, DyldInfo, Img);
+      if (HasModernChainedFixups) {
+        macho_loader::parseChainedFixupsImports(BasePtr, FileSize,
+                                                ChainedFixups, Img);
+        macho_loader::parseChainedFixupsRebases(BasePtr, FileSize,
+                                                ChainedFixups, TextVMAddr, Img);
+      }
+    }
   }
   if (!Img.MachOChainedFixupsError.empty())
     return llvm::make_error<llvm::StringError>(Img.MachOChainedFixupsError,

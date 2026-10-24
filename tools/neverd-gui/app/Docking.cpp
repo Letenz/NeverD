@@ -2,12 +2,15 @@
 
 #include "../Config.h"
 #include "Theme.h"
+#include "WindowFrame.h"
 
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QCursor>
 #include <QEnterEvent>
+#include <QGuiApplication>
 #include <QHoverEvent>
+#include <QLabel>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMouseEvent>
@@ -15,6 +18,7 @@
 #include <QStyle>
 #include <QTimer>
 #include <QVariantAnimation>
+#include <QWindow>
 #include <cmath>
 #include <kddockwidgets/Config.h>
 #include <kddockwidgets/KDDockWidgets.h>
@@ -22,15 +26,21 @@
 #include <kddockwidgets/core/MainWindow.h>
 #include <kddockwidgets/core/Separator.h>
 #include <kddockwidgets/core/TabBar.h>
+#include <kddockwidgets/core/TitleBar.h>
 #include <kddockwidgets/qtcommon/View.h>
 #include <kddockwidgets/qtwidgets/ViewFactory.h>
 #include <kddockwidgets/qtwidgets/views/FloatingWindow.h>
 #include <kddockwidgets/qtwidgets/views/Group.h>
 #include <kddockwidgets/qtwidgets/views/Separator.h>
 #include <kddockwidgets/qtwidgets/views/TabBar.h>
+#include <kddockwidgets/qtwidgets/views/TitleBar.h>
 
 namespace neverd::gui {
 namespace {
+bool onWayland() {
+  return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
+}
+
 // A pointer that only crosses a separator does not light it up.
 constexpr int SeparatorHoverDelayMs = 300;
 constexpr int SeparatorFadeInMs = 150;
@@ -257,24 +267,72 @@ private:
   int hovered_ = -1;
 };
 
-/// A floating window has no native frame.  Its outline is the border of the
-/// workbench's other popups.
+/// Wayland's native caption only moves a window; it cannot start a docking
+/// drag. Keep one client caption for docking, with its icon as a separate
+/// system-move handle for arranging floating windows on the desktop.
+class DockTitleBar final : public KDDockWidgets::QtWidgets::TitleBar {
+public:
+  using TitleBar::TitleBar;
+
+protected:
+  void init() override {
+    TitleBar::init();
+    if (onWayland() && titleBar()->floatingWindow() && m_dockWidgetIcon) {
+      m_dockWidgetIcon->setObjectName(
+          QStringLiteral("floatingWindowMoveHandle"));
+      m_dockWidgetIcon->setToolTip(
+          QCoreApplication::translate("Docking", "Move window"));
+      m_dockWidgetIcon->setCursor(Qt::SizeAllCursor);
+      m_dockWidgetIcon->installEventFilter(this);
+    }
+  }
+
+  bool eventFilter(QObject *object, QEvent *event) override {
+    if (object == m_dockWidgetIcon &&
+        event->type() == QEvent::MouseButtonPress &&
+        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+      if (auto *handle = QWidget::window()->windowHandle())
+        return handle->startSystemMove();
+    }
+    return TitleBar::eventFilter(object, event);
+  }
+};
+
+/// Floating panes use the same docking title bar on every desktop. Wayland
+/// needs our frame to resize without its otherwise non-docking native caption.
 class DockFloatingWindow final
     : public KDDockWidgets::QtWidgets::FloatingWindow {
 public:
   using FloatingWindow::FloatingWindow;
 
 protected:
+  bool event(QEvent *event) override {
+    if (event->type() == QEvent::Polish && onWayland() && !Frame)
+      Frame = WindowFrame::attach(*this, nullptr, WindowFrame::Caption::Client);
+    return FloatingWindow::event(event);
+  }
+
   void paintEvent(QPaintEvent *) override {
+    if (Frame)
+      return; // WindowFrame paints the border and shadow.
     QPainter painter(this);
     painter.setPen(
         Theme::instance().chrome(QStringLiteral("FloatingWindowBorder")));
     painter.drawRect(rect().adjusted(0, 0, -1, -1));
   }
+
+private:
+  WindowFrame *Frame = nullptr;
 };
 
 class DockViewFactory final : public KDDockWidgets::QtWidgets::ViewFactory {
 public:
+  KDDockWidgets::Core::View *
+  createTitleBar(KDDockWidgets::Core::TitleBar *controller,
+                 KDDockWidgets::Core::View *parent) const override {
+    return new DockTitleBar(controller, parent);
+  }
+
   KDDockWidgets::Core::View *
   createGroup(KDDockWidgets::Core::Group *controller,
               KDDockWidgets::Core::View *parent) const override {
@@ -311,8 +369,7 @@ void configureDocking() {
   KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
   auto &config = KDDockWidgets::Config::self();
   // Every docked window carries a closable tab, as in classic disassemblers.
-  // Floating windows keep the client title bar: on Wayland the native title
-  // bar only moves windows, while the client bar performs docking drags.
+  // The floating window's only title bar must remain a docking drag source.
   config.setFlags(KDDockWidgets::Config::Flag_AlwaysShowTabs |
                   KDDockWidgets::Config::Flag_HideTitleBarWhenTabsVisible |
                   KDDockWidgets::Config::Flag_AlwaysTitleBarWhenFloating |

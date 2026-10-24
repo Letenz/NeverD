@@ -128,6 +128,16 @@ Capstone classifiers, lifter, intrinsic metadata and emitters consume those
 rows. Checked emulation reuses only the unchanged disabled-key HINT subset.
 `AArch64PAuthC.def` owns the C syntax shared by both projections;
 `MachOArm64e.def` owns chained format strides, pointer fields and diagnostics.
+`MachOArm64eFixups` owns the pointer-word decoder and signing-recipe publication
+shared by modern chained fixups and the original arm64e threaded bind format.
+The threaded bytecode reader plans the entire ordinal table and every chain
+before mutating the image. Exact load-command segment and library ordinals,
+header-mapping base, writable file-backed storage, unique ownership and
+existing import provenance are validated before publication. Authenticated
+words retain their bytes; plain rebases and binds use the same canonical slot
+records as modern chains. Mixed weak/lazy/classic rebase streams are rejected
+until their joint binding semantics are represented.
+
 Generated C temporaries avoid every operand expression, preserving parameters
 and results that already use the renderer's preferred local names.
 Validated pointer-authentication operations preserve argument setup across
