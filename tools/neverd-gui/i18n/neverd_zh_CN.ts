@@ -6397,6 +6397,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>循环分析在比较计算前证明支持范围内的终止性。此模式包含参数视图，并保留未能证明的循环原始契约。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>带多块循环分析的优化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6527,6 +6531,14 @@ Progress does not establish equal loop counts or function results.</source>
 观察契约：
 %2
 终止性不能证明循环次数或函数结果相同。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>带多块循环分析的优化 SSA</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>已证明的循环：入口块 %1 → 回边块 %2 · 计数器 #%3 → 更新 #%4 · 条件 #%5</translation>
     </message>
 </context>
 <context>

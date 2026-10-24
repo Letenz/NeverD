@@ -6433,6 +6433,10 @@ Coverage: %7</translation>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Optimized SSA with multi-block loop analysis</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6563,6 +6567,14 @@ Progress does not establish equal loop counts or function results.</source>
 Observed contract:
 %2
 Progress does not establish equal loop counts or function results.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>Optimized SSA with multi-block loop analysis</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</translation>
     </message>
 </context>
 <context>

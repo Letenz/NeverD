@@ -144,10 +144,13 @@ Object parameterView(const FlowParameterView &V) {
   return Out;
 }
 Object loopProgress(const FlowLoopProgress &L) {
-  return Object{{"block", L.Block},
-                {"counter", L.Counter},
-                {"update", L.Update},
-                {"compare", L.Compare}};
+  Object Out{{"block", L.Block},
+             {"counter", L.Counter},
+             {"update", L.Update},
+             {"compare", L.Compare}};
+  if (L.Header != NoIndex)
+    Out["header"] = L.Header;
+  return Out;
 }
 Object progress(const FlowProgress &P) {
   return Object{{"kind", flowProgressName(P.Kind)},
@@ -407,7 +410,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   G.Profile = text(field(O, "profile"), limits::kMaxFlowIdentityBytes);
   const bool Extended = isLLVMDataFlowProfile(G.Profile);
   const bool Parameters = hasParameterViews(G.Profile);
-  const bool Progress = G.Profile == LLVMProgressDataFlowProfile;
+  const bool Progress = hasProgressProof(G.Profile);
   if (!Progress)
     require(!O.get("progress"), "legacy graph contains progress evidence");
   if (Progress)
@@ -457,11 +460,18 @@ DataFlowGraph readDataFlowGraph(const Value &V,
     for (const auto &Row : array(field(P, "loops"), Options.MaxNodes - 1)) {
       require(++Edges <= Options.MaxWork, "loop proofs exceed work allowance");
       const auto &L = object(Row);
-      fields(L, {"block", "counter", "update", "compare"});
-      Record.Loops.push_back({uint32_t(count(field(L, "block"))),
-                              uint32_t(count(field(L, "counter"))),
-                              uint32_t(count(field(L, "update"))),
-                              uint32_t(count(field(L, "compare")))});
+      const bool MultiBlock =
+          G.Profile == LLVMMultiBlockProgressDataFlowProfile;
+      if (MultiBlock)
+        fields(L, {"block", "counter", "update", "compare", "header"});
+      else
+        fields(L, {"block", "counter", "update", "compare"});
+      Record.Loops.push_back(
+          {uint32_t(count(field(L, "block"))),
+           uint32_t(count(field(L, "counter"))),
+           uint32_t(count(field(L, "update"))),
+           uint32_t(count(field(L, "compare"))),
+           MultiBlock ? uint32_t(count(field(L, "header"))) : NoIndex});
     }
     require(count(field(P, "loop_count")) == Record.Loops.size(),
             "progress loop count disagrees with witnesses");

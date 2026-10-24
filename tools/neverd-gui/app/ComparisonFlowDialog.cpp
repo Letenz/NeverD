@@ -106,6 +106,10 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
   NodeTable->horizontalHeader()->setSectionResizeMode(
       5, QHeaderView::ResizeToContents);
   TopLayout->addWidget(NodeTable, 1);
+  LoopStatus = label(Top, {});
+  LoopStatus->setObjectName("flowLoopStatus");
+  LoopStatus->hide();
+  TopLayout->addWidget(LoopStatus);
   auto *Actions = new QHBoxLayout;
   Backward = new QPushButton(tr("Trace inputs"), Top);
   Backward->setObjectName("flowBackward");
@@ -241,6 +245,20 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
   refresh();
 }
 void ComparisonFlowDialog::controls() {
+  const auto Loop =
+      Nodes->row(NodeTable->currentIndex().row())["progress_loop"].toObject();
+  LoopStatus->setVisible(!Loop.isEmpty());
+  LoopStatus->setText(
+      Loop.isEmpty() ? QString()
+                     : tr("Proved loop: header block %1 → latch block %2 · "
+                          "counter #%3 → update #%4 · guard #%5")
+                           .arg(Loop.contains("header") ? Loop["header"].toInt()
+                                                        : Loop["block"].toInt())
+                           .arg(Loop["block"].toInt())
+                           .arg(Loop["counter"].toInt())
+                           .arg(Loop["update"].toInt())
+                           .arg(Loop["compare"].toInt()));
+
   const bool Node = !Nodes->row(NodeTable->currentIndex().row()).isEmpty();
   const bool Idle =
       Session.ready() && !Session.busy() && !Session.cancellable();
@@ -296,7 +314,10 @@ void ComparisonFlowDialog::selectSide() {
     Summary->setText(
         Summary->text() + '\n' +
         tr("SSA representation: %1")
-            .arg(Profile == ::neverd::limits::diff::kLLVMProgressSSAProfile
+            .arg(Profile == ::neverd::limits::diff::
+                                kLLVMMultiBlockProgressSSAProfile
+                     ? tr("Optimized SSA with multi-block loop analysis")
+                 : Profile == ::neverd::limits::diff::kLLVMProgressSSAProfile
                      ? tr("Optimized SSA with loop analysis")
                  : Profile == ::neverd::limits::diff::kLLVMParameterSSAProfile
                      ? tr("Optimized SSA with parameter views")

@@ -358,7 +358,15 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     QCOMPARE(Failures.size(), 0);
   }
+  void loopProgressExplainsProofAndRestoresSelection_data() {
+    QTest::addColumn<bool>("MultiBlock");
+    QTest::newRow("self-loop-v1") << false;
+    QTest::newRow("multi-block-v2") << true;
+  }
   void loopProgressExplainsProofAndRestoresSelection() {
+    QFETCH(bool, MultiBlock);
+    const auto RequestedProfile =
+        MultiBlock ? "llvm-progress-ssa-v2" : "llvm-progress-ssa-v1";
     const auto A = Directory.filePath("progress-before.bin");
     const auto B = Directory.filePath("progress-after.bin");
     // Owned control_regions_fixture.c, family 2, x64 ELF O0/O2; never executed.
@@ -378,6 +386,17 @@ private slots:
                                          "178d14c50000000029c283c20989d0c1c01b8"
                                          "3f906741483f0178d0cc50000000029c183"
                                          "c109c1c11b89c831f083c003c3")));
+    if (MultiBlock) {
+      // Owned family3 O0 has a branched loop body; both sides retain it.
+      const auto Bytes = QByteArray::fromHex(
+          "554889e5897dfc8975f88b45f883e0078945f48b45f489c183c1ff894df483f80074"
+          "6e8b45fc83e00183f80074528b45fc83f0176bc00783c0098945fc8b45fcc1e8058b"
+          "4dfcc1e11b09c88945fc8b45fc05674523013345f88945fc8b45fc8b4dfcc1e90b31"
+          "c86bc00d8945fc8b45fcc1e0078b4dfcc1e91909c88945fceb0f8b45fc83c0116b4d"
+          "f80d31c88945fceb828b45fc3345f883c0035dc3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
     ComparisonDialog View(TEST_COMPARISON_WORKER);
     auto &Session = View.session();
     QSignalSpy Failures(&Session, &ComparisonSession::failed);
@@ -391,7 +410,7 @@ private slots:
     View.findChild<QLineEdit *>("secondaryBase")->setText("0x8000");
     View.findChild<QCheckBox *>("comparisonFlowFragments")->setChecked(true);
     auto *Profile = View.findChild<QComboBox *>("comparisonFlowProfile");
-    const int ProgressProfile = Profile->findData("llvm-progress-ssa-v1");
+    const int ProgressProfile = Profile->findData(RequestedProfile);
     QVERIFY(ProgressProfile >= 0);
     Profile->setCurrentIndex(ProgressProfile);
     QTest::mouseClick(View.findChild<QToolButton *>("comparisonSettings"),
@@ -433,6 +452,13 @@ private slots:
                 ->text()
                 .contains("loop analysis"));
     Table->selectRow(Proved);
+    auto *LoopStatus = Dialog->findChild<QLabel *>("flowLoopStatus");
+    QVERIFY(LoopStatus && LoopStatus->isVisible());
+    QVERIFY(LoopStatus->text().contains("header block"));
+    if (MultiBlock) {
+      const auto Witness = Rows->row(Proved)["progress_loop"].toObject();
+      QVERIFY(Witness["header"] != Witness["block"]);
+    }
     QTest::mouseClick(Dialog->findChild<QPushButton *>("flowBackward"),
                       Qt::LeftButton);
     auto *Slice = Dialog->findChild<QTableView *>("flowSlice");
@@ -444,15 +470,17 @@ private slots:
         Theme::instance().setMode(Mode);
         Dialog->resize(1280, 800);
         QTest::qWait(40);
-        QVERIFY(
-            Dialog->grab().save(Captures + (Mode == Theme::Mode::Dark
-                                                ? "/loop-progress-dark.png"
-                                                : "/loop-progress-light.png")));
+        QVERIFY(Dialog->grab().save(
+            Captures + (MultiBlock ? "/multiblock" : "/singleblock") +
+            (Mode == Theme::Mode::Dark ? "-loop-progress-dark.png"
+                                       : "-loop-progress-light.png")));
       }
     }
     Side->setCurrentIndex(Side->findData("secondary"));
-    QTRY_VERIFY_WITH_TIMEOUT(Status->text().contains("acyclic control flow"),
-                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        Status->text().contains(MultiBlock ? "Counter loops"
+                                           : "acyclic control flow"),
+        Timeout);
     const auto Saved = Directory.filePath("progress.nddiff");
     Session.command("comparison_save", {{"path", Saved}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && QFile::exists(Saved), Timeout);
@@ -476,7 +504,7 @@ private slots:
     Select.stop();
     QVERIFY(Selected);
     QTRY_COMPARE_WITH_TIMEOUT(Profile->currentData().toString(),
-                              QString("llvm-progress-ssa-v1"), Timeout);
+                              QString(RequestedProfile), Timeout);
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     QCOMPARE(Failures.size(), 0);
   }

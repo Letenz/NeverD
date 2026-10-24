@@ -30,8 +30,20 @@ __attribute__((noinline, used)) unsigned transform(unsigned x, unsigned y) {
 #else
   unsigned n = y & LOOP_MASK;
   while (n--) {
+#if FAMILY == 3
+    if (x & 1u) {
+      x = (x ^ 23u) * LOOP_MUL + 9u;
+      x = (x >> 5) | (x << 27);
+      x = (x + 0x1234567u) ^ y;
+      x = (x ^ (x >> 11)) * 13u;
+      x = (x << 7) | (x >> 25);
+    } else {
+      x = (x + 17u) ^ (y * 13u);
+    }
+#else
     x = (x ^ 23u) * LOOP_MUL + 9u;
     x = (x >> 5) | (x << 27);
+#endif
   }
 #endif
 #ifdef HIGH_INPUT

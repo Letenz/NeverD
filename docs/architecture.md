@@ -597,6 +597,16 @@ the proof root and witnesses; work/cancellation stays within the original
 projection allowance. Graph validation reruns the same proof and finite-op
 admission; fresh source binding authenticates source-to-observed attributes.
 CLI, SDK, worker and Qt share this owner and do not derive their own loop facts.
+The separate `llvm-progress-ssa-v2` selects multi-block proof explicitly, before
+changing the detached graph profile. An iterative charged Tarjan traversal
+finds components, their unique external-entry target and exact internal header
+edge inventory. Only a single latch can reach PHI admission, preventing
+candidate-by-seed quadratic work. Header PHIs receive the exact nowrap update
+through the sole backedge, or outside seeds. The update is computed in the header
+or latch; the direct latch comparison/branch consumes its poison.
+The residual whole CFG must be a DAG. Schema 6 names header and latch separately;
+v1 keeps its original scanner, accounting and four-field schema 5 witnesses.
+No loader, optimizer, ABI or transport adapter acquires a second proof owner.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.

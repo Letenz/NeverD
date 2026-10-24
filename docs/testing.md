@@ -1828,6 +1828,20 @@ held-out accuracy benchmark. Worker, Python and Qt tests inspect the same
 proofs and saved reports; GUI proof/selection checks run in light/dark and at
 fractional DPI. Offscreen renders do not qualify native window-manager behavior.
 
+`BinaryDiffMultiBlockProgress` adds real LLVM diamond/early-exit and sequential
+loops, header-hoisted updates, multiple outside seeds, reversed block layout,
+reset/bypass/nested and re-entering cycle refusals, duplicate backedges, strict
+schema 6 header binding,
+version isolation, many-seed/many-latch linear work and shared storage/work/
+cancellation checks. The SDK test
+`MultiBlockProgressBindsPagedHeadersAndFreshSource` inspects owned x64 family3
+machine bytes, retains distinct header/latch witnesses, slices/reopens them and
+rejects forged headers or source promises. The compiler corpus adds 36 family3
+comparisons across x64/AArch64 ELF/COFF/Mach-O, including explicit v1 unproven
+controls, changed final constant, bound and body arithmetic. Worker/Python/Qt
+checks retain both published profile versions. Frozen v1 proved and unproven
+reports in complete/limited/cancelled states are replayed byte-for-byte.
+
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
 missing/stack/overlapping sites, detached and foreign users, raw and retained

@@ -6397,6 +6397,10 @@ Coverage: %7</source>
         <source>Loop analysis proves return progress where supported before comparing computations. It includes parameter views and preserves unproved loop contracts.</source>
         <translation>ループ解析は、対応する範囲で終了性を証明してから計算を比較します。パラメータビューを含み、証明できないループの元の契約は保持します。</translation>
     </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>複数ブロックのループ解析付き最適化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6527,6 +6531,14 @@ Progress does not establish equal loop counts or function results.</source>
 観測された契約：
 %2
 終了性はループ回数や関数の結果の一致を証明するものではありません。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with multi-block loop analysis</source>
+        <translation>複数ブロックのループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
+        <translation>証明済みループ：ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · 条件 #%5</translation>
     </message>
 </context>
 <context>
