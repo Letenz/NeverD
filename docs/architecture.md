@@ -8193,6 +8193,11 @@ preparation reject memory-to-memory reads rather than consuming them early.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+The shared checked ARM64 catalogue admits integer `CMLT #0` for scalar D and
+fixed 8B/16B/4H/8H/2S/4S/2D vectors. The existing vector-effect owner retains
+register and immediate-form validation. This admission adds no FP comparison
+semantics, scalable registers or reserved scalar/narrow forms.
+
 Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
 The original instructions execute on the selected checked CPU transport; OS
 models do not replace them with scalar stubs. Optional/scalable forms still fail

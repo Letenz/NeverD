@@ -463,6 +463,80 @@ TEST_P(AArch64SIMD, CMHIProducesUnsignedElementMasksAndPreservesOtherState) {
     }
   }
 }
+TEST_P(AArch64SIMD, SignedZeroComparisonPreservesFullState) {
+  struct Comparison {
+    uint32_t Word;
+    unsigned Bits, Elements;
+  };
+  constexpr Comparison Cases[] = {
+#define NEVERD_AARCH64_SIGNED_ZERO_CASE(Word, Bits, Count) {Word, Bits, Count},
+#include "AArch64SignedZeroCases.def"
+#undef NEVERD_AARCH64_SIGNED_ZERO_CASE
+  };
+  constexpr RegisterValue Inputs[] = {
+      {0, 0},
+      {UINT64_MAX, UINT64_MAX},
+      {0x80ff7f000102ff80ULL, 0xffffffff00000001ULL},
+      {0x8000000000000000ULL, 0x7fffffffffffffffULL}};
+  for (unsigned Index = 0; Index <= unsigned(AArch64Register::X30); ++Index)
+    llvm::cantFail(
+        CPU->setReg(AArch64Register(Index), 0xabcdef0000000000ULL + Index));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPCR,
+                             DefaultNaN | FlushToZero | (1u << RoundingShift)));
+  llvm::cantFail(CPU->setReg(AArch64Register::FPSR, InitialFPSR));
+  std::array<uint8_t, 64> Guard;
+  Guard.fill(0xa5);
+  llvm::cantFail(CPU->write(Stack, Guard));
+  for (const auto &C : Cases)
+    for (unsigned Source : {0u, 1u, 31u})
+      for (unsigned Destination : {0u, 1u, 31u})
+        for (const auto &Input : Inputs) {
+          SCOPED_TRACE(C.Word);
+          SCOPED_TRACE(Source);
+          SCOPED_TRACE(Destination);
+          vector(Source, Input);
+          auto ExpectedVectors = vectors();
+          auto ExpectedScalars = scalars();
+          ExpectedScalars[unsigned(AArch64Register::PC)] = Code + 4;
+          const uint64_t Mask =
+              C.Bits == 64 ? UINT64_MAX : (uint64_t(1) << C.Bits) - 1;
+          RegisterValue Expected{};
+          // An integer's sign bit selects the complete element mask. No host
+          // signed conversion, floating-point operation or signed shift is
+          // used.
+          for (unsigned E = 0; E < C.Elements; ++E) {
+            const unsigned Word = E * C.Bits / 64;
+            const unsigned Shift = E * C.Bits % 64;
+            if ((Input[Word] >> (Shift + C.Bits - 1)) & 1)
+              Expected[Word] |= Mask << Shift;
+          }
+          ExpectedVectors[Destination] = Expected;
+          const uint32_t Word =
+              (C.Word & ~0x3ffu) | (Source << 5) | Destination;
+          ASSERT_NO_FATAL_FAILURE(expectSuccess(run(Word)));
+          EXPECT_EQ(vectors(), ExpectedVectors);
+          EXPECT_EQ(scalars(), ExpectedScalars);
+          std::array<uint8_t, 64> After;
+          llvm::cantFail(CPU->snapshotBacking(Stack, After));
+          EXPECT_EQ(After, Guard);
+        }
+}
+// Rejection is terminal, so every reserved/scalable word gets a fresh fixture.
+TEST_P(AArch64SIMD, SignedZeroComparisonRejectsSingleDoubleVector) {
+  expectRejected(0x0ee0a83f);
+}
+TEST_P(AArch64SIMD, SignedZeroComparisonRejectsScalarByte) {
+  expectRejected(0x5e20a83f);
+}
+TEST_P(AArch64SIMD, SignedZeroComparisonRejectsScalarHalf) {
+  expectRejected(0x5e60a83f);
+}
+TEST_P(AArch64SIMD, SignedZeroComparisonRejectsScalarWord) {
+  expectRejected(0x5ea0a83f);
+}
+TEST_P(AArch64SIMD, SignedZeroComparisonRejectsScalablePredicate) {
+  expectRejected(0x25002020);
+}
 TEST_P(AArch64SIMD, IntegerComparisonsAndReductionsPreserveFullState) {
   enum Operation { Equal, Zero, Unzip, Narrow, NarrowHigh, Maximum };
   struct LaneCase {

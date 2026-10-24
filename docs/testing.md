@@ -9948,6 +9948,14 @@ cmake -S . -B build-native -G Ninja \
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+`AArch64SIMD.SignedZeroComparison*` checks all eight baseline `CMLT #0`
+forms against an integer sign-bit oracle, including source/destination aliasing,
+zero, signed extrema and unused upper lanes. Every accepted execution compares
+all scalar/vector registers and guarded RAM at both checked privilege levels.
+Each reserved or scalable encoding gets a fresh fixture and must leave state
+unchanged. Run the complete AArch64 FP/SIMD, state and register-snapshot owners
+across available transports when changing this catalogue entry.
+
 `AArch64WidenCases.def` records 36 independently assembled SSHLL/USHLL and
 SSHLL2/USHLL2 forms, including zero-shift SXTL/UXTL aliases. Independent integer
 oracles check signed extension, unsigned high bits, both source halves, all
