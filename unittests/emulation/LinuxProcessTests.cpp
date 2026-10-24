@@ -516,6 +516,100 @@ TEST_P(LinuxProcess, XAttrsKeepUnknownKernelAndExistingObjectBoundaries) {
     Options.LinuxKernel.reset();
   }
 }
+struct XAttrImportCase {
+  LinuxXAttrQueryImport Import;
+  const char *Mode;
+};
+// Independent fixture modes retain their literal errno and buffer assertions.
+constexpr XAttrImportCase XAttrImports[] = {
+    {LinuxXAttrQueryImport::TargetBeforeName, "X"},
+    {LinuxXAttrQueryImport::NameBeforeTarget, "Y"}};
+
+TEST_P(LinuxProcess, XAttrQueryImportExecutesIndependentRawErrorOrders) {
+  Options.LinuxFiles.emplace().Files["/fixture/data"] = {0, 0xff};
+  for (const auto &C : XAttrImports) {
+    SCOPED_TRACE(C.Mode);
+    Options.LinuxKernel.emplace().XAttrQueryImport = C.Import;
+    for (const char *Opt : {"O0", "O2"}) {
+      SCOPED_TRACE(Opt);
+      const auto Fixture = Path.parent_path() /
+                           (Path.stem().string() + "-files-" + Opt + ".elf");
+      Options.Arguments = {"files", C.Mode};
+      auto R = llvm::cantFail(
+          emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+      ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+      EXPECT_EQ(R.ExitStatus, 0u);
+    }
+  }
+}
+
+TEST_P(LinuxProcess, XAttrQueryImportKeepsObjectAndSymbolicLinkBoundaries) {
+  for (const auto &C : XAttrImports) {
+    SCOPED_TRACE(C.Mode);
+    Options.LinuxKernel.emplace().XAttrQueryImport = C.Import;
+    for (const char *Opt : {"O0", "O2"}) {
+      SCOPED_TRACE(Opt);
+      const auto Fixture = Path.parent_path() /
+                           (Path.stem().string() + "-files-" + Opt + ".elf");
+      Options.LinuxFiles.emplace().Files["/fixture/data"] = {0};
+      for (char Mode : {'U', 'V', 'W', 'J'}) {
+        SCOPED_TRACE(Mode);
+        Options.Arguments = {"files", std::string(1, Mode)};
+        auto R = llvm::cantFail(
+            emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_NE(R.Diagnostic.find("extended attributes"), std::string::npos);
+        ASSERT_FALSE(R.Services.empty());
+        EXPECT_FALSE(R.Services.back().Result);
+      }
+      Options.LinuxFiles->Files.clear();
+      for (bool Directory : {false, true}) {
+        SCOPED_TRACE(Directory);
+        Options.LinuxFiles->SymbolicLinks.clear();
+        const char *Link = Directory ? "/fixture" : "/fixture/data";
+        Options.LinuxFiles->SymbolicLinks[Link] = {'/', 't'};
+        Options.Arguments = {"files", Directory ? "V" : "U"};
+        auto R = llvm::cantFail(
+            emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_NE(R.Diagnostic.find("symbolic-link"), std::string::npos);
+        ASSERT_FALSE(R.Services.empty());
+        EXPECT_FALSE(R.Services.back().Result);
+      }
+    }
+  }
+}
+
+TEST_P(LinuxProcess, XAttrQueryImportKeepsPidFDAbsenceIndependent) {
+  auto &Kernel = Options.LinuxKernel.emplace();
+  for (const auto &C : XAttrImports) {
+    Kernel.XAttrQueryImport = C.Import;
+    for (const char *Opt : {"O0", "O2"}) {
+      const auto Fixture = Path.parent_path() /
+                           (Path.stem().string() + "-pidfd-" + Opt + ".elf");
+      Options.Arguments = {"pidfd", "m", "0"};
+      Kernel.UnavailableSyscalls.clear();
+      auto Unknown = llvm::cantFail(
+          emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+      EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService)
+          << Unknown.Diagnostic;
+      ASSERT_FALSE(Unknown.Services.empty());
+      EXPECT_EQ(Unknown.Services.back().Number, 434u);
+      EXPECT_FALSE(Unknown.Services.back().Result);
+      Kernel.UnavailableSyscalls.insert(LinuxUnavailableSyscall::PidFDOpen);
+      auto Absent = llvm::cantFail(
+          emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options));
+      ASSERT_EQ(Absent.Stop, ProcessStopReason::Exited) << Absent.Diagnostic;
+      EXPECT_EQ(Absent.ExitStatus, 91u);
+      ASSERT_EQ(Absent.Services.size(), 3u);
+      EXPECT_EQ(Absent.Services[1].Number, 434u);
+      EXPECT_EQ(Absent.Services[1].Result, uint64_t(-38));
+    }
+  }
+}
+
 TEST_P(LinuxProcess, TimeFaultsPreserveKernelErrnosAndOrderedWrites) {
   Options.LinuxTime.emplace();
   Options.LinuxTime->Clocks[0] = {4294967297, 987654321};

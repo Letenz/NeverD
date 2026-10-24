@@ -10322,6 +10322,17 @@ See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
 
+`LinuxKernelAvailability.cpp` owns the import order through `xattrQueryImport` for
+`getxattr`, `lgetxattr` and `fgetxattr`. An explicit
+`LinuxKernelOptions::XAttrQueryImport` selects target-before-name or
+name-before-target independently of a released GKI contract. Supplying both
+authorities is invalid even when they select the same order. The existing GKI
+table remains authoritative when only GKI is supplied. `LinuxFiles` consumes
+this shared decision for raw syscalls and Bionic imports; JSON only parses the
+explicit declaration. This option supplies no attribute values, symbolic-link
+traversal, namespace policy or other kernel capabilities. Unknown attributes
+retain their unsupported boundary without reading or writing the value buffer.
+
 Frame-offset proof keys normalize a top-level 64-bit address sum by removing its constant bias and subtracting the same entry root. Cold proofs retain the complete predicate and the existing remainder expression. Completed domains subtract the bias before insertion and restore the requested bias on lookup, preserving modular wrap, empty domains and nonuniqueness. Keys follow the original address so a change in the bounded remainder rewrite from a binary to an n-ary sum cannot change proof identity. All new nodes count against the existing node limit.
 
 ## Mobile source assembly

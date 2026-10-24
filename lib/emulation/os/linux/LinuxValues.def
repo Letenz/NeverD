@@ -319,7 +319,8 @@ NEVERD_LINUX_DIAGNOSTIC(DeviceMappingAdvice,
                         "Linux device mapping advice is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(
     XAttrKernel,
-    "extended attribute queries require explicit released GKI input")
+    "extended attribute queries require explicit released GKI input or "
+    "xattr_query_import")
 NEVERD_LINUX_DIAGNOSTIC(
     XAttrObservation,
     "extended attributes for this catalogue object are unmodeled")

@@ -10799,6 +10799,16 @@ page-edge imports, descriptor narrowing, unchanged cursors and value canaries.
 Android’s `ReleasedGKIXAttrsShareRawAndBionicErrorOrder` repeats raw/named calls
 and independent errno checks across packing profiles. Corresponding boundary
 cases retain missing GKI and existing-object attribute uncertainty.
+`XAttrQueryImport*` covers both explicit import orders independently of GKI,
+strict typed/JSON admission, contradictory authorities, and unchanged GKI
+selection. The original O0/O2 Linux fixtures check literal errno precedence,
+page edges, low descriptor carriers, cursor preservation and untouched value
+canaries on each available x64/AArch64 backend. Android repeats raw/Bionic
+calls and missing-input, object and symbolic-link boundaries across its
+packing profiles. The pidfd control proves that selecting xattr import order
+does not provide another service's implementation or absence observation.
+`ProcessPublic.XAttrQueryImportMatchesSDKAndCLI` compares full C SDK/CLI reports
+for both orders, architectures and optimization levels.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.

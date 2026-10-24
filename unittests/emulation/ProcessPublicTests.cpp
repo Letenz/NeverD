@@ -3616,6 +3616,51 @@ TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {
   EXPECT_TRUE(takeString(neverd_last_error(Session)).empty());
 }
 
+TEST_F(ProcessPublic, XAttrQueryImportMatchesSDKAndCLI) {
+#ifndef NEVERD_PROCESS_FIXTURE_DIR
+  GTEST_SKIP() << MissingTools;
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *ISA : {"X64", "AArch64"}) {
+    SCOPED_TRACE(ISA);
+    for (const char *Opt : {"O0", "O2"}) {
+      SCOPED_TRACE(Opt);
+      Path = (std::filesystem::path(NEVERD_PROCESS_FIXTURE_DIR) /
+              (std::string(ISA) + "-files-" + Opt + ".elf"))
+                 .string();
+      for (bool NameFirst : {false, true}) {
+        SCOPED_TRACE(NameFirst);
+        llvm::json::Object Request{
+            {"backend", "unicorn"},
+            {"arguments", llvm::json::Array{"files", NameFirst ? "Y" : "X"}},
+            {"linux_files",
+             llvm::json::Object{{"files", llvm::json::Array{llvm::json::Object{
+                                              {"path", "/fixture/data"},
+                                              {"bytes_hex", "00ff"}}}}}},
+            {"linux_kernel",
+             llvm::json::Object{
+                 {"xattr_query_import",
+                  NameFirst ? "name-before-target" : "target-before-name"}}}};
+        const auto Options = jsonText(std::move(Request));
+        auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), LinuxELF64, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::cantFail(llvm::json::parse(Text));
+        EXPECT_EQ(Report.getAsObject()->getString(field::Stop), "exited");
+        EXPECT_EQ(Report.getAsObject()->getInteger(field::ExitStatus), 0);
+        EXPECT_EQ(runCLIRequest(Path, LinuxELF64, Options, Output),
+                  process_cli::Success);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+      }
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, CompilerStartupRunsThroughTheSharedSDKAndCLI) {
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));

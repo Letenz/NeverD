@@ -173,7 +173,7 @@ also apply without a GKI selection; they do not infer procfs content or mounts.
 
 ## Extended-attribute query import and target errors
 
-With explicit GKI and `linux_files` selection, raw x64/AArch64 `getxattr`,
+With explicit query import order and `linux_files` selection, raw x64/AArch64 `getxattr`,
 `lgetxattr` and `fgetxattr` share the file owner with their three named Bionic
 imports. The model admits errors determined by importing the attribute name
 or resolving a declared target. Empty names and names with no terminator in
@@ -187,6 +187,21 @@ and unreadable name return ENOENT and EFAULT respectively. The order is
 source-pinned in [5.10 `path_getxattr` and `fgetxattr`](https://android.googlesource.com/kernel/common/+/b14525331e0d5d335b037d6ed17d40424ed47b0a/fs/xattr.c),
 [6.12](https://android.googlesource.com/kernel/common/+/894a317b5382555614ef2be7a79cca79083c6cf2/fs/xattr.c)
 and [6.18 `path_getxattrat`](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/fs/xattr.c).
+
+GKI selection supplies this order from the release table. To declare only the
+observed order without selecting the other GKI contracts, use:
+
+```json
+{"linux_kernel":{"xattr_query_import":"target-before-name"},"linux_files":{"files":[]}}
+```
+
+The other accepted value is `"name-before-target"`. The values are exact and
+case sensitive. Supplying `gki` together with `xattr_query_import` is rejected,
+even when they agree. Without either input, these queries remain unsupported.
+This declaration
+does not supply attribute values, permission or namespace policy, link
+traversal, task observations or any other syscall's semantics. Explicit absence
+observations such as `unavailable_syscalls:["pidfd_open"]` remain independent.
 The name limit comes from each pin's
 [UAPI limits](https://android.googlesource.com/kernel/common/+/bab5f6aca819542b9dd13a70d3c62271e81b8e85/include/uapi/linux/limits.h).
 
