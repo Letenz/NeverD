@@ -19,6 +19,7 @@
 #include <vector>
 namespace llvm {
 class CallInst;
+class Function;
 }
 namespace neverd {
 std::string renderX86AmxExpression(Arch A, const HighExpr &E,
@@ -26,6 +27,11 @@ std::string renderX86AmxExpression(Arch A, const HighExpr &E,
                                    const std::string &Type);
 std::optional<std::string>
 renderX86AmxCall(Arch A, const llvm::CallInst &Call,
-                 const std::vector<std::string> &Arguments);
+                 const std::vector<std::string> &Arguments,
+                 const std::string &Result = {}, bool ResultLive = false,
+                 const std::string &Type = "unsigned _BitInt(512)");
+bool isX86AmxNativeRowCall(const llvm::CallInst &Call, Arch A);
+std::string x86AmxFunctionPreamble(const HighFunc &Function);
+std::string x86AmxFunctionPreamble(const llvm::Function &Function);
 } // namespace neverd
 #endif // NEVERD_LIB_BACKEND_C_RENDER_X86AMXSTATE_H

@@ -461,6 +461,28 @@ the new instructions/features and earlier register-effect fixes; both target
 schemas pass their generator check. Its lockstep digest changes, so plugins
 must negotiate the updated schema instead of retaining old feature IDs.
 
+The explicit AMX batch adds thirteen matching LLVM/NeverC APIs: seven memory
+forms preserve offset, stride, 32/64-bit address width, segment override and
+forced VEX/EVEX; six register-row forms preserve the legacy/extended GPR class
+and all row-selector bits. Existing immediate-row interfaces remain native.
+`X86AmxNative.h` maps NeverD's bank descriptor to these APIs and the exact
+function feature requirements. HighC and LLVM-to-C select NeverC builtins via
+the compiler capability marker, with the existing exact assembly fallback for
+other compilers and old SDKs. LLVM-to-C validates the native declaration,
+operand controls and unknown-memory effects before admitting row vectors.
+The LLVM release pin and submodule remain unchanged pending the remaining
+instruction work and final release qualification.
+
+Each compiler route passes 11,136 explicit-control checks, including both
+assembly dialects and 512-bit result flow under register pressure. These
+controlled completions are not physical AMX arithmetic/fault/restart results.
+NeverD's generated HighC and LLVM-to-C complete 1,512 native IR compilations
+and 1,512 target-object compilations per SDK across ELF/COFF/MachO and O0/O2.
+This includes constant-zero extended row selectors and uses the machine
+verifier; native IR generation alone did not expose NeverC's old R16D zeroing
+pseudo restriction. The NeverC backend now follows the full fork's REX2 XOR
+expansion for that case.
+
 LAR/LSL now have twelve native result/status interfaces, covering 16/32/64-bit
 results and register/memory selectors. NeverC's spellings are
 `__builtin_ia32_{lar,lsl}_{reg,mem}{16,32,64}(selector, prior, zf_pointer)`.
@@ -1294,8 +1316,9 @@ instructions. APX memory uses EVEX even for low GPRs; extended row selectors
 retain an extended GPR. Native memory retains the source segment, address width,
 byte stride and instruction-owned feature, permission and fault checks.
 Successful execution still requires the relevant CPU features and OS state
-permission. Generated source uses GNU-compatible assembly, including Clang for
-Windows; this does not add an MSVC C spelling for AMX.
+permission. Generated source selects NeverC's native builtins where available;
+other compilers use GNU-compatible assembly, including Clang for Windows.
+This does not add an MSVC C spelling for AMX.
 
 The concrete evaluator owns the same physical bank in its register state and
 reuses the existing tile/configuration arithmetic and memory evaluators. It

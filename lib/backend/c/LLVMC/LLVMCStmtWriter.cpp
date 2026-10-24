@@ -42,6 +42,7 @@
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/backend/llvm/LLVMX87ValueAsm.h"
+#include "neverd/backend/llvm/X86AmxNative.h"
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCRecordArguments.h"
@@ -3841,6 +3842,26 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (x86AmxNativeDescriptor(Callee->getName().str())) {
+    const auto *Instruction = llvm::dyn_cast<llvm::CallInst>(&Call);
+    if (!Instruction)
+      throw std::invalid_argument(
+          "AMX native intrinsic requires a direct call");
+    std::vector<std::string> Arguments;
+    for (const auto &Argument : Call.args())
+      Arguments.push_back(valueStr(Argument.get()));
+    const bool ResultLive =
+        !Call.getType()->isVoidTy() && valueFeedsPrintedUse(&Call);
+    const auto Code = renderX86AmxCall(Opts.TheArch, *Instruction, Arguments,
+                                       ResultLive ? getName(&Call) : "",
+                                       ResultLive, typeToCLLVM(Call.getType()));
+    if (!Code)
+      throw std::invalid_argument("invalid AMX native intrinsic");
+    emitIndent(Indent);
+    OS << *Code;
+    return true;
+  }
+
   if (isX86VirtualizationNativeName(Callee->getName()) ||
       isX86SystemStateNativeName(Callee->getName()) ||
       isX86SystemRegisterNativeName(Callee->getName()) ||
@@ -5008,7 +5029,8 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     HasCIntrinsics |= SystemRegister->SetIntrinsics;
     return true;
   }
-  if (auto Amx = renderX86AmxCall(Opts.TheArch, Call, ArgStrs)) {
+  if (auto Amx = renderX86AmxCall(Opts.TheArch, Call, ArgStrs, Name, ResultLive,
+                                  typeToCLLVM(Call.getType()))) {
     emitIndent(Indent);
     OS << *Amx;
     return true;

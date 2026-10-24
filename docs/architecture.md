@@ -33,10 +33,15 @@ effects, undefined arithmetic flags and native faults, including dead reads.
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
 semantics; they do not expose TILECFG or TMM values through an ordinary function
-ABI. Native LLVM, HighC and LLVM-to-C consume `X86AmxAsm.h`, keeping the bank in
-the CPU with complete TMM and memory effects. Native faults retain hardware
-partial progress and restart state. Row instructions explicitly publish their
-64-byte ZMM result to ordinary SSA through private storage. The concrete
+ABI. `X86AmxNative.h` maps this descriptor to native LLVM intrinsics, NeverC
+builtins and the required function features. Explicit address width, segment,
+VEX/EVEX and row-register class controls survive native code generation.
+`X86AmxAsm.h` retains the exact assembly contract for older SDKs and source
+compilers without the builtins. Both routes keep the bank in the CPU with
+complete TMM and memory effects; faults retain hardware partial progress and
+restart state. Native row intrinsics publish a 64-byte vector to ordinary SSA;
+source projection validates the complete intrinsic signature, controls and
+effects before admitting that vector boundary. The concrete
 executor owns the same physical bank and reuses the existing tile evaluators;
 unknown required bank contents fail. Legacy value-form AMX operations remain
 separate and guarded at native emission. See

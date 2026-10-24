@@ -25,6 +25,7 @@
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
+#include "../render/X86AmxState.h"
 #include "../render/X86DescriptorState.h"
 #include "../render/X86FPStateHelpers.h"
 #include "../render/X86ScalarSystem.h"
@@ -2547,6 +2548,9 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (isX86AmxNativeRowCall(*Call, TheArch))
+      return true;
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (const auto Shape = classifyX86FPStateAsm(*Call);
         Shape && isX86FPNumericalStateIntrinsic(Shape->first))

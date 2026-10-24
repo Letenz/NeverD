@@ -13,6 +13,7 @@
 
 #include "../VariadicImportStub.h"
 #include "../X86GetPcThunk.h"
+#include "../render/X86AmxState.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -1038,6 +1039,8 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
     writeAnalysisOnlyFunction(Func);
     return;
   }
+  if (EmitFunctionWrapper)
+    OS << x86AmxFunctionPreamble(Func);
   writeFunctionProjection(Func);
 }
 

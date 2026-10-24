@@ -12,15 +12,176 @@
 #include "X86AmxState.h"
 
 #include "neverd/backend/llvm/X86AmxAsm.h"
+#include "neverd/backend/llvm/X86AmxNative.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 
+#include <algorithm>
+#include <functional>
+#include <set>
 #include <stdexcept>
 namespace neverd {
 namespace {
+struct NativeCall {
+  uint32_t Descriptor;
+  NdMemoryAddressSpace Space = NdMemoryAddressSpace::Default;
+  unsigned Prefix = 0;
+  unsigned Base = 0;
+  unsigned RowOrStride = 0;
+};
+std::optional<NativeCall> nativeCall(const llvm::CallInst &Call) {
+  const auto *F = Call.getCalledFunction();
+  if (!F)
+    return {};
+  const auto Descriptor = x86AmxNativeDescriptor(F->getName().str());
+  if (!Descriptor)
+    return {};
+  const auto ID = llvm::Intrinsic::lookupIntrinsicID(F->getName());
+  if (!ID || !F->isDeclaration() || F->getIntrinsicID() != ID ||
+      F->getFunctionType() != llvm::Intrinsic::getType(Call.getContext(), ID) ||
+      Call.getFunctionType() != F->getFunctionType() ||
+      Call.arg_size() != F->arg_size() || Call.getNumOperandBundles() ||
+      Call.onlyReadsMemory() || Call.onlyWritesMemory() || Call.doesNotReturn())
+    throw std::invalid_argument("invalid AMX native type or effects");
+  for (unsigned I = 0; I < Call.arg_size(); ++I)
+    if (Call.getArgOperand(I)->getType() !=
+        F->getFunctionType()->getParamType(I))
+      throw std::invalid_argument("invalid AMX native operand type");
+  auto Constant = [&](unsigned Index, uint64_t Maximum) -> unsigned {
+    if (Index >= Call.arg_size())
+      throw std::invalid_argument("missing AMX native control");
+    const auto *C =
+        llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(Index));
+    if (!C || C->getValue().ugt(Maximum))
+      throw std::invalid_argument("invalid AMX native constant control");
+    return C->getZExtValue();
+  };
+  NativeCall P{*Descriptor};
+  const auto K = x86AmxOperation(P.Descriptor);
+  if (x86AmxIsTileMemory(K) || x86AmxIsRow(K) || x86AmxIsCompute(K) ||
+      K == X86AmxOp::Zero)
+    P.Descriptor = (P.Descriptor & ~(7u << 5)) | (Constant(0, 7) << 5);
+  if (x86AmxIsMemory(K)) {
+    P.Base = x86AmxIsTileMemory(K) ? 1 : 0;
+    P.RowOrStride = 2;
+    const unsigned WidthIndex = x86AmxIsTileMemory(K) ? 3 : 1;
+    const unsigned Bits = Constant(WidthIndex, 64);
+    P.Prefix = Constant(WidthIndex + 1, UINT8_MAX);
+    if ((Bits != 32 && Bits != 64) ||
+        (P.Prefix && P.Prefix != 0x26 && P.Prefix != 0x2e && P.Prefix != 0x36 &&
+         P.Prefix != 0x3e && P.Prefix != 0x64 && P.Prefix != 0x65))
+      throw std::invalid_argument("invalid AMX native address");
+    if (Bits == 32)
+      P.Descriptor |= X86AmxAddress32;
+    if (Constant(WidthIndex + 2, 1))
+      P.Descriptor |= X86AmxEvexMemory;
+    if (P.Prefix == 0x36)
+      P.Descriptor |= X86AmxStackSegment;
+    if (P.Prefix == 0x64)
+      P.Space = NdMemoryAddressSpace::X86FS;
+    if (P.Prefix == 0x65)
+      P.Space = NdMemoryAddressSpace::X86GS;
+  } else if (x86AmxIsRow(K)) {
+    P.RowOrStride = 1;
+    if (P.Descriptor & X86AmxImmediateRow)
+      (void)Constant(1, UINT8_MAX);
+    else if (Constant(2, 1))
+      P.Descriptor |= X86AmxExtendedRow;
+  } else if (x86AmxIsCompute(K)) {
+    P.Descriptor = (P.Descriptor & ~((7u << 8) | (7u << 11))) |
+                   (Constant(1, 7) << 8) | (Constant(2, 7) << 11);
+  }
+  if (!x86AmxDescriptorIsValid(P.Descriptor))
+    throw std::invalid_argument("invalid AMX native bank descriptor");
+  return P;
+}
+std::string builtin(uint32_t D, unsigned Prefix,
+                    const std::vector<std::string> &Inputs) {
+  const auto K = x86AmxOperation(D);
+  std::string Name = x86AmxNativeSuffix(D);
+  std::replace(Name.begin(), Name.end(), '.', '_');
+  std::vector<std::string> Args;
+  if (x86AmxIsTileMemory(K) || x86AmxIsRow(K) || x86AmxIsCompute(K) ||
+      K == X86AmxOp::Zero)
+    Args.push_back(std::to_string(x86AmxTile(D)));
+  if (x86AmxIsMemory(K)) {
+    Args.push_back("(uint64_t)(uintptr_t)(" + Inputs[0] + ")");
+    if (x86AmxIsTileMemory(K))
+      Args.push_back("(uint64_t)(" + Inputs[1] + ")");
+    Args.push_back(D & X86AmxAddress32 ? "32" : "64");
+    Args.push_back(std::to_string(Prefix));
+    Args.push_back(D & X86AmxEvexMemory ? "1" : "0");
+  } else if (x86AmxIsRow(K)) {
+    Args.push_back("(uint32_t)(" + Inputs[1] + ")");
+    if (!(D & X86AmxImmediateRow))
+      Args.push_back(D & X86AmxExtendedRow ? "1" : "0");
+  } else if (x86AmxIsCompute(K)) {
+    Args.push_back(std::to_string(x86AmxTile(D, 1)));
+    Args.push_back(std::to_string(x86AmxTile(D, 2)));
+  }
+  std::string Text = "__builtin_ia32_" + Name + "(";
+  for (const auto &Arg : Args) {
+    if (Text.back() != '(')
+      Text += ", ";
+    Text += Arg;
+  }
+  Text += ')';
+  if (x86AmxIsRow(K)) {
+    std::string Temporary = "neverd_amx_native_row";
+    while (Text.find(Temporary) != std::string::npos ||
+           Inputs[0].find(Temporary) != std::string::npos)
+      Temporary += '_';
+    Text = "({ __auto_type " + Temporary + " = " + Text +
+           "; __builtin_memcpy((void *)(uintptr_t)(" + Inputs[0] + "), &" +
+           Temporary + ", " + std::to_string(X86AmxRowBytes) + "); })";
+  }
+  return Text;
+}
+std::string dispatch(const std::string &Native, const std::string &Fallback) {
+  return "NEVERD_X86_AMX(" + Native + ", ({ " + Fallback + " }))";
+}
+std::string preamble(const std::set<std::string> &Features) {
+  if (Features.empty())
+    return {};
+  std::string Text = "#ifndef NEVERD_X86_AMX\n"
+                     "#if defined(__NEVERC_X86_AMX_CONTROLS__) && "
+                     "__NEVERC_X86_AMX_CONTROLS__ >= 1\n"
+                     "#define NEVERD_X86_AMX(native, ...) native\n"
+                     "#define NEVERD_X86_AMX_TARGET(features) "
+                     "__attribute__((target(features)))\n"
+                     "#endif\n"
+                     "#if !defined(NEVERD_X86_AMX) && defined(__has_builtin)\n"
+                     "#if __has_builtin(__builtin_ia32_ldtilecfg_address) && "
+                     "__has_builtin(__builtin_ia32_tilemovrow_reg)\n"
+                     "#define NEVERD_X86_AMX(native, ...) native\n"
+                     "#define NEVERD_X86_AMX_TARGET(features) "
+                     "__attribute__((target(features)))\n"
+                     "#endif\n#endif\n"
+                     "#ifndef NEVERD_X86_AMX\n"
+                     "#define NEVERD_X86_AMX(native, ...) __VA_ARGS__\n"
+                     "#define NEVERD_X86_AMX_TARGET(features)\n"
+                     "#endif\n#endif\nNEVERD_X86_AMX_TARGET(\"";
+  bool First = true;
+  for (const auto &Feature : Features) {
+    if (!First)
+      Text += ',';
+    First = false;
+    Text += Feature;
+  }
+  return Text + "\")\n";
+}
+void addFeatures(std::set<std::string> &Features, uint32_t D) {
+  const auto Names = x86AmxNativeFeatures(D);
+  llvm::SmallVector<llvm::StringRef, 8> Parts;
+  llvm::StringRef(Names).split(Parts, ',');
+  for (const auto Part : Parts)
+    Features.insert(Part.str());
+}
 std::string gnuText(const std::string &S) {
   std::string R;
   for (size_t I = 0; I < S.size(); ++I) {
@@ -129,22 +290,67 @@ std::string renderX86AmxExpression(Arch A, const HighExpr &E,
   const auto P = x86AmxAsm(*S.Descriptor, S.MemoryAddressSpace);
   std::vector<std::string> Inputs;
   std::string Text = "({ ";
+  std::string RowName = "neverd_amx_row";
+  for (const auto &Arg : Args)
+    while (Arg.find(RowName) != std::string::npos)
+      RowName += '_';
   if (P->Memory) {
     Inputs.push_back(Args[0]);
     if (x86AmxIsTileMemory(K))
       Inputs.push_back(Args[2]);
   } else if (P->Row) {
-    Text += Type + " __neverd_amx_row; ";
-    Inputs = {"&__neverd_amx_row", Args[2]};
+    Text += Type + " " + RowName + "; ";
+    Inputs = {"&" + RowName, Args[2]};
   }
-  Text += render(*P, Inputs);
+  Text +=
+      dispatch(builtin(*S.Descriptor,
+                       x86AmxNativePrefix(*S.Descriptor, S.MemoryAddressSpace),
+                       Inputs),
+               render(*P, Inputs)) +
+      ";";
   if (P->Row)
-    Text += " __neverd_amx_row;";
+    Text += " " + RowName + ";";
   return Text + " })";
 }
-std::optional<std::string>
-renderX86AmxCall(Arch A, const llvm::CallInst &Call,
-                 const std::vector<std::string> &Args) {
+std::optional<std::string> renderX86AmxCall(
+    Arch A, const llvm::CallInst &Call, const std::vector<std::string> &Args,
+    const std::string &Result, bool ResultLive, const std::string &Type) {
+  if (const auto N = nativeCall(Call)) {
+    if (A != Arch::X64 || Args.size() != Call.arg_size())
+      throw std::invalid_argument("invalid AMX native C route");
+    auto P = *x86AmxAsm(N->Descriptor, N->Space);
+    if (P.Memory &&
+        (N->Prefix == 0 || N->Prefix == 0x26 || N->Prefix == 0x2e)) {
+      const auto At = P.Text.find("%ds:");
+      P.Text.replace(At, 4,
+                     N->Prefix == 0      ? ""
+                     : N->Prefix == 0x26 ? "%es:"
+                                         : "%cs:");
+    }
+    std::vector<std::string> Inputs;
+    std::string Local = Result;
+    std::string Text = "{ ";
+    if (P.Memory) {
+      Inputs.push_back(Args[N->Base]);
+      if (x86AmxIsTileMemory(x86AmxOperation(N->Descriptor)))
+        Inputs.push_back(Args[N->RowOrStride]);
+    } else if (P.Row) {
+      if (!ResultLive) {
+        Local = "neverd_amx_discard";
+        for (const auto &Arg : Args)
+          while (Arg.find(Local) != std::string::npos)
+            Local += '_';
+        Text += Type + " " + Local + "; ";
+      }
+      if (Local.empty())
+        throw std::invalid_argument("missing AMX C row destination");
+      Inputs = {"&" + Local, Args[N->RowOrStride]};
+    }
+    return Text +
+           dispatch(builtin(N->Descriptor, N->Prefix, Inputs),
+                    render(P, Inputs)) +
+           "; }\n";
+  }
   const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
   if (!Asm ||
       !llvm::StringRef(Asm->getAsmString()).starts_with(X86AmxAsmMarker))
@@ -184,6 +390,60 @@ renderX86AmxCall(Arch A, const llvm::CallInst &Call,
       throw std::invalid_argument("invalid AMX row immediate");
   }
   // Scope the fixed r16 binding if more than one row instruction is emitted.
-  return "{ " + render(*P, Args) + " }\n";
+  return "{ " +
+         dispatch(
+             builtin(Descriptor,
+                     x86AmxNativePrefix(
+                         Descriptor, static_cast<NdMemoryAddressSpace>(Space)),
+                     Args),
+             render(*P, Args)) +
+         "; }\n";
+}
+bool isX86AmxNativeRowCall(const llvm::CallInst &Call, Arch A) {
+  const auto Plan = nativeCall(Call);
+  return A == Arch::X64 && Plan &&
+         x86AmxIsRow(x86AmxOperation(Plan->Descriptor));
+}
+std::string x86AmxFunctionPreamble(const HighFunc &Function) {
+  std::set<std::string> Features;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    if (E->IntrinsicId == Intrinsic::X86AMXState && E->Operands.size() >= 2 &&
+        E->Operands[1] && E->Operands[1]->Kind == ExprKind::Const &&
+        E->Operands[1]->ConstVal <= UINT32_MAX &&
+        x86AmxDescriptorIsValid(E->Operands[1]->ConstVal))
+      addFeatures(Features, E->Operands[1]->ConstVal);
+    for (const auto &Operand : E->Operands)
+      Visit(Operand);
+  };
+  walkStmts(Function.Body, [&](const HighStmt &S) { forEachExpr(S, Visit); });
+  return preamble(Features);
+}
+std::string x86AmxFunctionPreamble(const llvm::Function &Function) {
+  std::set<std::string> Features;
+  for (const auto &Block : Function)
+    for (const auto &Instruction : Block) {
+      const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction);
+      if (!Call)
+        continue;
+      if (const auto N = nativeCall(*Call)) {
+        addFeatures(Features, N->Descriptor);
+        continue;
+      }
+      const auto *Asm =
+          llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+      if (!Asm ||
+          !llvm::StringRef(Asm->getAsmString()).starts_with(X86AmxAsmMarker))
+        continue;
+      uint32_t D;
+      if (!llvm::StringRef(Asm->getAsmString())
+               .drop_front(llvm::StringRef(X86AmxAsmMarker).size())
+               .split(' ')
+               .first.getAsInteger(10, D) &&
+          x86AmxDescriptorIsValid(D))
+        addFeatures(Features, D);
+    }
+  return preamble(Features);
 }
 } // namespace neverd
