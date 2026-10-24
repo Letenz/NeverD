@@ -53,6 +53,59 @@ std::string render(const llvm::json::Value &V) {
   return S;
 }
 
+// Inspection cancellation is cooperative: a request may race the last poll or
+// the operation may finish before this thread observes it. Only a successfully
+// completed attempt can be retried, with refresh, within one shared deadline.
+// Errors and other stop states return immediately so the caller's assertions
+// still fail. The test must obtain an actual cancelled result before
+// proceeding.
+template <typename Inspect>
+std::string cancelRunningInspection(neverd_comparison_t C,
+                                    llvm::StringRef Phase,
+                                    Inspect InspectFresh) {
+  const auto Deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  std::string Text;
+  do {
+    std::promise<void> Start;
+    auto Ready = Start.get_future();
+    auto Future = std::async(std::launch::async, [&] {
+      Ready.wait();
+      return take(InspectFresh());
+    });
+    Start.set_value();
+    while (Future.wait_for(std::chrono::milliseconds(0)) !=
+               std::future_status::ready &&
+           std::chrono::steady_clock::now() < Deadline) {
+      const auto Status = parsed(neverd_comparison_status_json(C));
+      const auto *O = Status.getAsObject();
+      if (O && O->getBoolean("running").value_or(false) &&
+          O->getString("phase") == Phase)
+        neverd_comparison_cancel(C);
+      std::this_thread::yield();
+    }
+    if (Future.wait_for(std::chrono::seconds(10)) !=
+        std::future_status::ready) {
+      ADD_FAILURE() << "Inspection did not stop: "
+                    << take(neverd_comparison_status_json(C));
+      return {};
+    }
+    Text = Future.get();
+    auto Result = llvm::json::parse(Text);
+    if (!Result) {
+      ADD_FAILURE() << llvm::toString(Result.takeError()) << "\n" << Text;
+      return Text;
+    }
+    const auto *O = Result->getAsObject();
+    if (!O || O->getString("state") != "complete")
+      return Text;
+  } while (std::chrono::steady_clock::now() < Deadline);
+  ADD_FAILURE() << "No in-flight cancellation was acknowledged: " << Text
+                << "\nStatus: " << take(neverd_comparison_status_json(C))
+                << "\nError: " << take(neverd_comparison_last_error(C));
+  return Text;
+}
+
 class BinaryDiffSDK : public ::testing::Test {
 protected:
   std::filesystem::path Directory;
@@ -1564,28 +1617,10 @@ TEST_F(BinaryDiffSDK, CallEffectInspectionCanCancelCacheAndRefresh) {
   Code.insert(Code.end(), {0xff, 0xd0, 0xc3});
   auto C = compare(input(Code), input(Code));
   const char *Query = R"({"seeds":["0x1000"],"kind":"effects","limit":1})";
-  auto Future = std::async(std::launch::async, [&] {
-    return take(neverd_comparison_impact_json(C, Query));
+  const auto Text = cancelRunningInspection(C, "impact:effects", [&] {
+    return neverd_comparison_impact_json(
+        C, R"({"seeds":["0x1000"],"kind":"effects","limit":1,"refresh":true})");
   });
-  bool Cancelled = false;
-  const auto Deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(10);
-  while (Future.wait_for(std::chrono::milliseconds(0)) !=
-             std::future_status::ready &&
-         std::chrono::steady_clock::now() < Deadline) {
-    const auto Status = parsed(neverd_comparison_status_json(C));
-    const auto *O = Status.getAsObject();
-    if (O && O->getBoolean("running").value_or(false) &&
-        O->getString("phase") == "impact:effects") {
-      neverd_comparison_cancel(C);
-      Cancelled = true;
-    }
-    std::this_thread::yield();
-  }
-  ASSERT_EQ(Future.wait_for(std::chrono::seconds(10)),
-            std::future_status::ready);
-  ASSERT_TRUE(Cancelled);
-  const auto Text = Future.get();
   auto Stopped = llvm::json::parse(Text);
   ASSERT_TRUE(bool(Stopped));
   const auto *O = Stopped->getAsObject();
@@ -1617,29 +1652,10 @@ TEST_F(BinaryDiffSDK, FunctionDetailCancellationCacheAndRefreshKeepState) {
   std::vector<uint8_t> Code(60000, 0x90);
   Code.push_back(0xc3);
   auto C = compare(input(Code), input(Code));
-  auto Future = std::async(std::launch::async, [&] {
-    return take(neverd_comparison_function_page_json(
-        C, R"({"address":"0x1000","refresh":true,"limit":1})"));
+  const auto Text = cancelRunningInspection(C, "detail:compare", [&] {
+    return neverd_comparison_function_page_json(
+        C, R"({"address":"0x1000","refresh":true,"limit":1})");
   });
-  bool Cancelled = false;
-  const auto Deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(10);
-  while (Future.wait_for(std::chrono::milliseconds(0)) !=
-             std::future_status::ready &&
-         std::chrono::steady_clock::now() < Deadline) {
-    const auto Status = parsed(neverd_comparison_status_json(C));
-    const auto *O = Status.getAsObject();
-    if (O && O->getBoolean("running").value_or(false) &&
-        O->getString("phase") == "detail:compare") {
-      neverd_comparison_cancel(C);
-      Cancelled = true;
-    }
-    std::this_thread::yield();
-  }
-  ASSERT_EQ(Future.wait_for(std::chrono::seconds(10)),
-            std::future_status::ready);
-  ASSERT_TRUE(Cancelled);
-  const auto Text = Future.get();
   auto Stopped = llvm::json::parse(Text);
   ASSERT_TRUE(bool(Stopped));
   const auto *O = Stopped->getAsObject();
