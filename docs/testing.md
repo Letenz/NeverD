@@ -346,6 +346,17 @@ qualifiers, convention ownership and `_Noreturn`. The original SDK check's
 `UseCRTUnicode` case checks the real `_o__wcsicmp` declaration on all three
 Windows architectures, independently of the synthetic import names.
 The qualifier execution cases also cover void results.
+`Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
+checks the same contract for explicit local declarations.
+`LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
+on x64 and ARM64 across COFF, ELF and Mach-O. Independent C providers observe
+nested qualified pointers, void and pointer results, narrow signed/unsigned
+parameters, narrow integer results and no-parameter calls at O0/O2 with UBSan.
+Incompatible counts, carriers, conventions and live void results must retain
+their machine declarations, independently of call order. These emitter checks
+do not certify native platform execution. `NeverDWorkerStackText` also checks
+the qualified local declaration through fresh x64/ARM64 PE sessions on both
+C routes.
 They supply complete local struct/union layouts as well: pointer-only imports
 must keep forward declarations and compile alongside independent definitions.
 `LocalTypesDebugContext.PointerDeclarationsDoNotRequireRecordLayouts` checks

@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Shared admission of portable header spellings after call-layout checks.
+/// Shared admission of portable source spellings after call-layout checks.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -15,17 +15,19 @@
 #include "LibraryPrototype.h"
 
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/UserPrototype.h"
 
 #include "llvm/ADT/StringRef.h"
 
 namespace neverd::c_library {
-/// Source qualifiers belong to the selected header, not to the machine
-/// carrier type. Reuse that spelling only after the caller has checked the
+/// Source qualifiers belong to the selected header or local declaration,
+/// not to the machine carrier type. Reuse that spelling after checking the
 /// call layout, and never replace an aggregate's lowered ABI with its source
 /// signature. The outer calling convention is supplied separately.
 inline llvm::StringRef portableScalarDeclaration(const FunctionSym &Function,
                                                  llvm::StringRef Name) {
-  if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary) ||
+  if ((!Function.PrototypeFromHeader && !Function.PrototypeFromCLibrary &&
+       Function.PrototypeLibrary != UserPrototypeLibrary) ||
       !Function.PlatformConvention || !Function.ParamEntryLocations.empty() ||
       (Function.CallConv != DebugCallConv::Unknown &&
        Function.CallConv != DebugCallConv::Cdecl &&

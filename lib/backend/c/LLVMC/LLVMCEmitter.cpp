@@ -1837,21 +1837,25 @@ void LLVMCWriter::prepareSourceImportPrototypes(llvm::Module &Mod) {
           }
           continue;
         }
-        // Checked local floating and fixed scalar stack declarations use
-        // the same carrier adapters as headers. Other user declarations
-        // retain their separate source-call model.
-        const auto FixedInteger = Fits ? libc::fixedIntegerCallArguments(
-                                             *Source, Opts.TheArch, Opts.Format)
-                                       : std::nullopt;
-        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating &&
-            !FixedInteger)
-          continue;
         Fits &= ScalarParameters;
         const auto Layout =
             Fits && !Floating
                 ? integerCallArguments(Opts.TheArch, Opts.Format,
                                        Source->ReturnType, Parameters)
                 : std::nullopt;
+        // Local scalar register declarations use the shared dense carrier
+        // layout. Stack and floating signatures require their bound adapters.
+        // Every call below must still agree on argument and result carriers.
+        const auto FixedInteger = Fits ? libc::fixedIntegerCallArguments(
+                                             *Source, Opts.TheArch, Opts.Format)
+                                       : std::nullopt;
+        const bool ScalarRegisters = Layout && !Source->IsVariadic &&
+                                     Source->ParamEntryLocations.empty() &&
+                                     !Layout->ResultPointer &&
+                                     Layout->Positions == Layout->Registers;
+        if (Source->PrototypeLibrary == UserPrototypeLibrary && !Floating &&
+            !FixedInteger && !ScalarRegisters)
+          continue;
         Fits &=
             (Floating || (Layout && Layout->Positions == Parameters.size())) &&
             (Source->IsVariadic ? Parameters.size() <= Call->arg_size()

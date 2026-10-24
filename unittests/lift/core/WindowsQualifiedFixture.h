@@ -13,6 +13,7 @@
 #define NEVERD_TEST_WINDOWSQUALIFIEDFIXTURE_H
 
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/UserPrototype.h"
 
 #include <cstdint>
 #include <optional>
@@ -26,6 +27,7 @@ public:
   bool Record = false;
   bool Union = false;
   bool VoidResult = false;
+  bool Local = false;
   uint16_t PointerBytes = 8;
   DebugCallConv Convention = DebugCallConv::Cdecl;
   std::string element() const {
@@ -60,8 +62,9 @@ public:
     Function.Params = {{"input", Nested ? Pointer(Result) : Result},
                        {"output", Pointer(NdType::makeInt(4, false))}};
     Function.CallConv = Convention;
-    Function.PrototypeFromHeader = true;
-    Function.PrototypeLibrary = "test-windows-header";
+    Function.PrototypeFromHeader = !Local;
+    Function.PrototypeLibrary =
+        Local ? UserPrototypeLibrary.str() : "test-windows-header";
     Function.PortablePrototypeDeclaration = declaration();
     return Function;
   }

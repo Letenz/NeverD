@@ -1325,8 +1325,7 @@ TEST(Win64CallContract, AFloatArgumentReachesItsImportsSlot) {
   EXPECT_EQ(Body.find("unknown"), std::string::npos) << Body;
 }
 
-TEST(Win64CallContract,
-     HeaderPointerQualifiersAgreeWithIndependentDefinitions) {
+void checkPointerQualifiers(bool Local) {
   auto Image = makeImage(throughSlot(Text, Iat, true),
                          {{Text, "forward_qualified"}}, {"fixture_qualified"});
   ASSERT_TRUE(Image.recordImportStorageSlot(Iat, "fixture_qualified", 0,
@@ -1340,6 +1339,7 @@ TEST(Win64CallContract,
           SCOPED_TRACE(VoidResult);
           SCOPED_TRACE(LLVM);
           windows_qualified_test::Header Debug;
+          Debug.Local = Local;
           Debug.Slot = Iat;
           Debug.Nested = Nested;
           Debug.Record = Record;
@@ -1414,7 +1414,18 @@ TEST(Win64CallContract,
               (VoidResult ? "" : "result != (uintptr_t)&value || ") +
               "output != 42;\n}\n";
           source_call_execution_test::compileAndRun(Source + Definition);
+          if (::testing::Test::HasFailure())
+            return;
         }
+}
+
+TEST(Win64CallContract,
+     HeaderPointerQualifiersAgreeWithIndependentDefinitions) {
+  checkPointerQualifiers(false);
+}
+
+TEST(Win64CallContract, LocalPointerQualifiersAgreeWithIndependentDefinitions) {
+  checkPointerQualifiers(true);
 }
 
 TEST(Win64CallContract, MixedHeaderScalarsKeepRegistersAndStackArguments) {
