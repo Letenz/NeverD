@@ -1551,6 +1551,10 @@ time separately; use both when the host has competing workloads.
 `SessionCAPITest.Exports*` checks complete export JSON spelling, row order and
 duplicates, zero and high addresses, the full ordinal width, escaped and invalid
 UTF-8 names, and later edits to the image's export table.
+`NeverDExportTableTests` checks complete CLI text, duplicate rows, embedded NUL,
+Unicode, full-width ordinals and tables above the transport frame budget. It
+also rejects malformed SDK responses before printing a partial table. Run it
+with SIMD JSON enabled and disabled when changing this adapter.
 
 The [radare2 CLI read comparison](../tools/neverd-bench/radare2-cli.md) checks
 complete mapped ranges against file bytes before accepting timing observations.
