@@ -199,6 +199,24 @@ struct Workbench {
   }
 };
 
+QDialog *visibleDialog(const QString &name = {}) {
+  for (auto *widget : QApplication::topLevelWidgets())
+    if (auto *dialog = qobject_cast<QDialog *>(widget);
+        dialog && dialog->isVisible() &&
+        (name.isEmpty() || dialog->objectName() == name))
+      return dialog;
+  return nullptr;
+}
+
+bool activateTestWindow(QWidget *window) {
+  window->activateWindow();
+  // Qt can report a transient family as active before native keyboard focus
+  // reaches this particular window. Wait for both before sending test input.
+  return QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
+           return QGuiApplication::focusWindow() == window->windowHandle();
+         });
+}
+
 /// Bound a regression to exec() so a modal reference list fails rather than
 /// hanging the native interaction tests.
 QPointer<QDialog> openLocalReferences(Workbench &bench, CodeView *view) {
@@ -701,7 +719,7 @@ private slots:
     int inspected = 0;
     QTimer inspect;
     connect(&inspect, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QPointer<QDialog> dialog = visibleDialog();
       // About can also be presented as a modeless panel.
       if (!dialog && ActionId(command) == ActionId::HelpAbout)
         for (auto *widget : QApplication::topLevelWidgets())
@@ -713,11 +731,11 @@ private slots:
       if (!dialog || !dialog->isVisible() || !dialog->windowHandle())
         return;
       const auto close = qScopeGuard([&] {
-        if (dialog->isVisible())
+        if (dialog && dialog->isVisible())
           dialog->reject();
       });
       ++inspected;
-      QCOMPARE(dialog->parentWidget(), owner);
+      QCOMPARE(dialog->parentWidget()->window(), owner);
       QCOMPARE(dialog->windowHandle()->transientParent(),
                owner->windowHandle());
       if (calculator && inspected == 1) {
@@ -738,7 +756,7 @@ private slots:
     QTimer deadline;
     deadline.setSingleShot(true);
     connect(&deadline, &QTimer::timeout, this, [] {
-      if (auto *dialog = QApplication::activeModalWidget())
+      if (auto *dialog = visibleDialog())
         dialog->close();
     });
     deadline.start(OpenTimeoutMs);
@@ -756,6 +774,299 @@ private slots:
         QTest::newRow(qPrintable(QString(hex ? "hex" : "listing") +
                                  (floating ? "-floating" : "-docked")))
             << hex << floating;
+  }
+
+  void analysisBrowsersStayInteractive_data() {
+    QTest::addColumn<int>("command");
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<bool>("floating");
+    QTest::addColumn<bool>("sessionBound");
+    struct Case {
+      ActionId Command;
+      const char *Name;
+      bool SessionBound = true;
+    };
+    for (const bool floating : {false, true})
+      for (const auto &item :
+           {Case{ActionId::JumpXrefsTo, "referencesDialog"},
+            Case{ActionId::JumpXrefsFrom, "referencesDialog"},
+            Case{ActionId::JumpAnywhere, "jumpDialog"},
+            Case{ActionId::JumpEntry, "locationChooser"},
+            Case{ActionId::JumpFunction, "locationChooser"},
+            Case{ActionId::JumpByName, "locationChooser"},
+            Case{ActionId::JumpSegment, "locationChooser"},
+            Case{ActionId::EditExportData, "exportDataDialog"},
+            Case{ActionId::SearchInView, "findInViewDialog"},
+            Case{ActionId::OptionsShortcuts, "shortcutsDialog", false},
+            Case{ActionId::ViewConnections, "connectionsDialog", false},
+            Case{ActionId::ViewCalculator, "calculatorDialog"},
+            Case{ActionId::HelpAbout, "aboutDialog", false},
+            Case{ActionId::HelpX87Capabilities, "x87Capabilities", false}})
+        QTest::newRow(qPrintable(QStringLiteral("%1-%2")
+                                     .arg(int(item.Command))
+                                     .arg(floating ? "floating" : "docked")))
+            << int(item.Command) << QString::fromLatin1(item.Name) << floating
+            << item.SessionBound;
+  }
+
+  void analysisBrowsersStayInteractive() {
+    QFETCH(int, command);
+    QFETCH(QString, name);
+    QFETCH(bool, floating);
+    QFETCH(bool, sessionBound);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "byte-export.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *listing = assembly->listing();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(Base + 0x140));
+    auto *dock = bench.dockFor(assembly);
+    QVERIFY(dock);
+    if (floating)
+      dock->setFloating(true);
+    const auto open = [&] {
+      QVERIFY(activateTestWindow(assembly->window()));
+      assembly->focusContent();
+      QTRY_VERIFY(listing->hasFocus());
+      if (ActionId(command) == ActionId::EditExportData) {
+        QTRY_VERIFY(ListingViewTestAccess::settled(*listing));
+        QTest::keyClick(listing, Qt::Key_Home);
+        QTest::keyClick(listing, Qt::Key_End, Qt::ShiftModifier);
+        QVERIFY(listing->byteSelection().has_value());
+      }
+      QVERIFY(bench.action(ActionId(command))->isEnabled());
+      QTimer guard;
+      guard.setSingleShot(true);
+      connect(&guard, &QTimer::timeout, &guard, [] {
+        if (auto *modal = QApplication::activeModalWidget())
+          modal->close();
+      });
+      guard.start(OpenTimeoutMs);
+      bench.action(ActionId(command))->trigger();
+      QTRY_VERIFY(visibleDialog(name));
+    };
+    open();
+    QPointer<QDialog> dialog = visibleDialog(name);
+    QVERIFY(dialog);
+    QCOMPARE(dialog->parentWidget(), assembly);
+    QCOMPARE(dialog->windowModality(), Qt::NonModal);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(activateTestWindow(dialog));
+
+    // Background keyboard input remains usable while browsing. The list is
+    // a snapshot of its opening location, not tied to the new cursor.
+    QVERIFY(activateTestWindow(assembly->window()));
+    assembly->focusContent();
+    QTRY_VERIFY(listing->hasFocus());
+    const auto address = assembly->currentAddress();
+    QTest::keyClick(listing, Qt::Key_Down);
+    QTRY_VERIFY(assembly->currentAddress() != address);
+    QVERIFY(dialog && dialog->isVisible());
+    dock->setFloating(!floating);
+    dock->raise();
+    QTRY_COMPARE(dock->isFloating(), !floating);
+    QTRY_VERIFY(assembly->isVisible());
+    QVERIFY(dialog && dialog->isVisible());
+    QTRY_COMPARE(dialog->windowHandle()->transientParent(),
+                 assembly->window()->windowHandle());
+
+    // Reopening replaces the same browser; Find reuses its existing field.
+    open();
+    QPointer<QDialog> replacement = visibleDialog(name);
+    QVERIFY(replacement);
+    if (ActionId(command) != ActionId::SearchInView) {
+      QVERIFY(replacement != dialog);
+      QTRY_VERIFY(!dialog);
+    }
+    QCOMPARE(assembly->findChildren<QDialog *>(name, Qt::FindDirectChildrenOnly)
+                 .size(),
+             1);
+    dock->forceClose();
+    QTRY_VERIFY(!replacement);
+    bench.action(ActionId::ViewDisassembly)->trigger();
+    QTRY_VERIFY(assembly->isVisible());
+    open();
+    dialog = visibleDialog(name);
+    QVERIFY(dialog);
+    bench.session.closeFile();
+    if (sessionBound) {
+      QTRY_VERIFY(!dialog);
+    } else {
+      QVERIFY(dialog && dialog->isVisible());
+      dialog->reject();
+      QTRY_VERIFY(!dialog);
+    }
+  }
+
+  void auxiliaryChoosersStayInteractive_data() {
+    QTest::addColumn<bool>("types");
+    QTest::addColumn<bool>("floating");
+    for (const bool types : {false, true})
+      for (const bool floating : {false, true})
+        QTest::newRow(
+            qPrintable(QString(types ? "type-libraries" : "pathfinder") +
+                       (floating ? "-floating" : "-docked")))
+            << types << floating;
+  }
+
+  void auxiliaryChoosersStayInteractive() {
+    QFETCH(bool, types);
+    QFETCH(bool, floating);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "local-types.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench
+        .action(types ? ActionId::ViewTypeLibraries : ActionId::ViewPathfinder)
+        ->trigger();
+    QWidget *source = types
+                          ? static_cast<QWidget *>(
+                                bench.window->findChild<TypeLibrariesView *>())
+                          : bench.window->findChild<PathfinderView *>();
+    QVERIFY(source);
+    auto *dock = bench.dockFor(source);
+    QVERIFY(dock);
+    if (floating)
+      dock->setFloating(true);
+    QVERIFY(activateTestWindow(source->window()));
+    auto *add = source->findChild<QToolButton *>(
+        types ? QStringLiteral("typeLibrariesAdd")
+              : QStringLiteral("pathfinderAdd"));
+    QVERIFY(add);
+    QTRY_VERIFY(add->isEnabled());
+    QTest::mouseClick(add, Qt::LeftButton);
+    QPointer<QDialog> dialog =
+        visibleDialog(types ? QStringLiteral("addTypeLibraryDialog")
+                            : QStringLiteral("pathfinderChooser"));
+    QVERIFY(dialog);
+    QCOMPARE(dialog->parentWidget(), source);
+    QCOMPARE(dialog->windowModality(), Qt::NonModal);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(activateTestWindow(dialog));
+    QVERIFY(activateTestWindow(bench.window.get()));
+    bench.action(ActionId::ViewDisassembly)->trigger();
+    auto *assembly = bench.window->disassembly();
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    const auto before = assembly->currentAddress();
+    QTest::keyClick(assembly->listing(), Qt::Key_Down);
+    QTRY_VERIFY(assembly->currentAddress() != before);
+    dock->setFloating(!floating);
+    dock->raise();
+    QTRY_COMPARE(dock->isFloating(), !floating);
+    QTRY_VERIFY(source->isVisible());
+    QVERIFY(dialog && dialog->isVisible());
+    QTRY_COMPARE(dialog->windowHandle()->transientParent(),
+                 source->window()->windowHandle());
+    if (types) {
+      bench.session.rename(Base, QStringLiteral("updated_while_choosing"));
+      QTRY_VERIFY(!dialog);
+      QTRY_VERIFY(add->isEnabled());
+      QVERIFY(activateTestWindow(source->window()));
+      QTest::mouseClick(add, Qt::LeftButton);
+      dialog = visibleDialog(QStringLiteral("addTypeLibraryDialog"));
+      QVERIFY(dialog);
+    }
+    bench.session.closeFile();
+    QTRY_VERIFY(!dialog);
+  }
+
+  void jumpBrowserKeepsItsOpeningAddress_data() {
+    QTest::addColumn<bool>("floating");
+    QTest::newRow("docked") << false;
+    QTest::newRow("floating") << true;
+  }
+
+  void jumpBrowserKeepsItsOpeningAddress() {
+    QFETCH(bool, floating);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "classic-jumps.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *dock = bench.dockFor(assembly);
+    QVERIFY(dock);
+    if (floating)
+      dock->setFloating(true);
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(Base + 0x140));
+    QVERIFY(activateTestWindow(assembly->window()));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    bench.action(ActionId::JumpAnywhere)->trigger();
+    QPointer<QDialog> dialog = visibleDialog("jumpDialog");
+    QVERIFY(dialog);
+    QVERIFY(activateTestWindow(dialog));
+    auto *input = dialog->findChild<QLineEdit *>();
+    QVERIFY(input);
+    input->setText(QStringLiteral("here+0x23"));
+    QVERIFY(activateTestWindow(assembly->window()));
+    assembly->navigate(Base + 0x180);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(Base + 0x180));
+    QVERIFY(activateTestWindow(dialog));
+    input->setFocus();
+    QTRY_VERIFY(input->hasFocus());
+    QTest::keyClick(input, Qt::Key_Return);
+    QTRY_VERIFY(!dialog);
+    QTRY_COMPARE(assembly->currentAddress(),
+                 std::optional<Address>(Base + 0x163));
+  }
+
+  void commandPaletteReturnsToItsSource_data() {
+    jumpBrowserKeepsItsOpeningAddress_data();
+  }
+
+  void commandPaletteReturnsToItsSource() {
+    QFETCH(bool, floating);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "classic-jumps.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *dock = bench.dockFor(assembly);
+    QVERIFY(dock);
+    if (floating)
+      dock->setFloating(true);
+    for (const bool accept : {false, true}) {
+      QVERIFY(activateTestWindow(assembly->window()));
+      assembly->focusContent();
+      QTRY_VERIFY(assembly->listing()->hasFocus());
+      bench.action(ActionId::OptionsPalette)->trigger();
+      QPointer<QDialog> palette = visibleDialog("commandPalette");
+      QVERIFY(palette);
+      QCOMPARE(QApplication::activePopupWidget(), palette.data());
+      QVERIFY(!QApplication::activeModalWidget());
+      QVERIFY(activateTestWindow(palette));
+      QTRY_COMPARE(QGuiApplication::focusWindow(), palette->windowHandle());
+      auto *input = palette->findChild<QLineEdit *>();
+      QVERIFY(input);
+      QTRY_VERIFY(input->hasFocus());
+      input->setText(bench.action(ActionId::JumpAnywhere)->text().remove('&'));
+      QSignalSpy operand(bench.action(ActionId::JumpOperand),
+                         &QAction::triggered);
+      QTest::keyClick(input, accept ? Qt::Key_Return : Qt::Key_Escape);
+      QVERIFY(operand.isEmpty());
+      QTRY_VERIFY(!palette);
+      if (accept) {
+        QTRY_VERIFY(visibleDialog("jumpDialog"));
+        auto *jump = visibleDialog("jumpDialog");
+        QCOMPARE(jump->parentWidget(), assembly);
+        QCOMPARE(jump->windowHandle()->transientParent(),
+                 assembly->window()->windowHandle());
+        jump->reject();
+      } else {
+        QVERIFY(!visibleDialog("jumpDialog"));
+      }
+    }
   }
 
   void selectedBytesExportWithIdasKey() {
@@ -803,17 +1114,20 @@ private slots:
     bool seen = false;
     QTimer inspect;
     connect(&inspect, &QTimer::timeout, this, [&] {
-      auto *dialog =
-          qobject_cast<ExportDataDialog *>(QApplication::activeModalWidget());
+      QPointer<ExportDataDialog> dialog = qobject_cast<ExportDataDialog *>(
+          visibleDialog(QStringLiteral("exportDataDialog")));
       if (!dialog)
         return;
       auto *save = dialog->findChild<QPushButton *>("exportSave");
       if (!save->isEnabled())
         return;
       inspect.stop();
-      const auto close = qScopeGuard([&] { dialog->reject(); });
+      const auto close = qScopeGuard([&] {
+        if (dialog)
+          dialog->reject();
+      });
       seen = true;
-      QCOMPARE(dialog->parentWidget(), owner);
+      QCOMPARE(dialog->parentWidget()->window(), owner);
       auto *format = dialog->findChild<QComboBox *>("exportFormat");
       auto *preview = dialog->findChild<QPlainTextEdit *>("exportPreview");
       auto *copy = dialog->findChild<QPushButton *>("exportCopy");
@@ -851,12 +1165,12 @@ private slots:
     QTimer deadline;
     deadline.setSingleShot(true);
     connect(&deadline, &QTimer::timeout, this, [] {
-      if (auto *dialog = QApplication::activeModalWidget())
+      if (auto *dialog = visibleDialog())
         dialog->close();
     });
     deadline.start(OpenTimeoutMs);
     QTest::keyClick(keys, Qt::Key_E, Qt::ShiftModifier);
-    QVERIFY(seen);
+    QTRY_VERIFY(seen);
   }
 
   void byteExportsRejectHolesAndRetireStaleReads() {
@@ -978,12 +1292,11 @@ private slots:
         qWarning() << "Chooser timeout; active window:"
                    << QApplication::activeWindow()
                    << "focus:" << QApplication::focusWidget();
-        if (auto *dialog = QApplication::activeModalWidget())
+        if (auto *dialog = visibleDialog())
           dialog->close();
       });
       connect(&answer, &QTimer::timeout, this, [&] {
-        auto *dialog =
-            qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        QPointer<QDialog> dialog = visibleDialog();
         if (!dialog || dialog->objectName() != "locationChooser")
           return;
         auto *view = dialog->findChild<ChooserView *>("locationChooserView");
@@ -1001,9 +1314,12 @@ private slots:
         if (accept && !filter.isEmpty() && view->model().filter() != filter)
           return;
         answer.stop();
-        auto closeOnFailure = qScopeGuard([dialog] { dialog->reject(); });
+        auto closeOnFailure = qScopeGuard([dialog] {
+          if (dialog)
+            dialog->reject();
+        });
         sawDialog = true;
-        QCOMPARE(dialog->parentWidget(), owner);
+        QCOMPARE(dialog->parentWidget()->window(), owner);
         QCOMPARE(int(view->model().kind()), kind);
         QVERIFY(dialog->windowTitle().contains("Jump"));
         QCOMPARE(assembly->currentAddress(), std::optional<Address>(original));
@@ -1027,6 +1343,7 @@ private slots:
       answer.start(10);
       deadline.start(OpenTimeoutMs);
       QTest::keyClick(assembly->listing(), Qt::Key(key), Qt::ControlModifier);
+      QTRY_VERIFY_WITH_TIMEOUT(sawDialog || timedOut, OpenTimeoutMs);
       deadline.stop();
       answer.stop();
       QVERIFY(!timedOut);
@@ -1049,11 +1366,14 @@ private slots:
     bool inspected = false;
     QTimer answer;
     connect(&answer, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QPointer<QDialog> dialog = visibleDialog();
       if (!dialog || dialog->objectName() != "shortcutsDialog")
         return;
       answer.stop();
-      const auto close = qScopeGuard([dialog] { dialog->reject(); });
+      const auto close = qScopeGuard([dialog] {
+        if (dialog)
+          dialog->reject();
+      });
       inspected = true;
       auto *filter = dialog->findChild<QLineEdit *>("shortcutsFilter");
       auto *tree = dialog->findChild<QTreeWidget *>("shortcutsList");
@@ -1091,7 +1411,7 @@ private slots:
     });
     answer.start(10);
     bench.action(ActionId::OptionsShortcuts)->trigger();
-    QVERIFY(inspected);
+    QTRY_VERIFY(inspected);
   }
 
   void commandButtonsExposeTheirKeys_data() {
@@ -2520,7 +2840,8 @@ private slots:
     QString dialogState;
     QTimer chooser;
     connect(&chooser, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QPointer<QDialog> dialog =
+          visibleDialog(QStringLiteral("referencesDialog"));
       auto *list = dialog ? dialog->findChild<ChooserView *>() : nullptr;
       if (!list || list->model().kind() != ChooserKind::CrossReferences ||
           !dialog->isActiveWindow() || !list->table()->hasFocus())
@@ -2535,6 +2856,16 @@ private slots:
       for (int i = 0; i < list->model().total(); ++i)
         if (list->model().addressAt(i) == Base + 0x163) {
           chooser.stop();
+          // Browsing elsewhere must not redirect acceptance to that pane.
+          bench.window->activateWindow();
+          QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+          other->text()->setFocus();
+          QTRY_VERIFY(other->text()->hasFocus());
+          QVERIFY(dialog->isVisible());
+          dialog->activateWindow();
+          QVERIFY(QTest::qWaitForWindowActive(dialog));
+          list->table()->setFocus();
+          QTRY_VERIFY(list->table()->hasFocus());
           chosen = true;
           list->table()->setCurrentIndex(list->model().index(i, 0));
           QTest::keyClick(list->table(), Qt::Key_Return);
@@ -2544,8 +2875,7 @@ private slots:
     chooser.start(5);
     QTimer timeout;
     connect(&timeout, &QTimer::timeout, this, [] {
-      if (auto *dialog =
-              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+      if (auto *dialog = visibleDialog(QStringLiteral("referencesDialog")))
         dialog->reject();
     });
     timeout.setSingleShot(true);
@@ -2596,6 +2926,50 @@ private slots:
     }
   }
 
+  void changedSourceDismissesReferenceBrowsers_data() {
+    QTest::addColumn<QString>("change");
+    QTest::addColumn<bool>("floating");
+    for (const bool floating : {false, true})
+      for (const QString change :
+           {QStringLiteral("reload"), QStringLiteral("function"),
+            QStringLiteral("representation")})
+        QTest::newRow(qPrintable(change + (floating ? "-floating" : "-docked")))
+            << change << floating;
+  }
+
+  void changedSourceDismissesReferenceBrowsers() {
+    QFETCH(QString, change);
+    QFETCH(bool, floating);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "xrefs-code.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    QTRY_VERIFY(view->text()->complete());
+    auto *dock = bench.dockFor(view);
+    QVERIFY(dock);
+    if (floating)
+      dock->setFloating(true);
+    QVERIFY(activateTestWindow(view->window()));
+    view->text()->setFocus();
+    QTRY_VERIFY(view->text()->hasFocus());
+    bench.action(ActionId::JumpXrefsFrom)->trigger();
+    QPointer<QDialog> dialog = visibleDialog("referencesDialog");
+    QVERIFY(dialog);
+    QCOMPARE(dialog->parentWidget(), view);
+    if (change == "representation")
+      view->setRepresentation(QStringLiteral("llvmc"));
+    else
+      view->showFunction(change == "reload" ? Base + 0x140 : Base + 0x160);
+    QTRY_VERIFY(!dialog);
+  }
+
   void staleCodeXrefQueriesDoNotOpenDialogs_data() {
     QTest::addColumn<QString>("change");
     for (const auto *change :
@@ -2637,8 +3011,7 @@ private slots:
     bool dialogOpened = false;
     QTimer guard;
     connect(&guard, &QTimer::timeout, this, [&] {
-      if (auto *dialog =
-              qobject_cast<QDialog *>(QApplication::activeModalWidget())) {
+      if (auto *dialog = visibleDialog(QStringLiteral("referencesDialog"))) {
         dialogOpened = true;
         dialog->reject();
       }
@@ -8406,8 +8779,7 @@ private slots:
     QTimer closer;
     closer.setSingleShot(true);
     connect(&closer, &QTimer::timeout, this, [&] {
-      if (auto *dialog =
-              qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      if (auto *dialog = visibleDialog(QStringLiteral("addTypeLibraryDialog"));
           dialog &&
           dialog->objectName() == QLatin1String("addTypeLibraryDialog")) {
         auto *choices = dialog->findChild<QTreeWidget *>(
@@ -8430,7 +8802,7 @@ private slots:
 
     closer.start(0);
     QTest::mouseClick(add, Qt::LeftButton);
-    QCOMPARE(offered, QStringList{QStringLiteral("uefi-x64")});
+    QTRY_COMPARE(offered, QStringList{QStringLiteral("uefi-x64")});
   }
 
   void typeLibrariesAreAddedAndLeftOutByShiftF11() {
@@ -8483,7 +8855,7 @@ private slots:
     QStringList offered;
     QTimer chooser;
     connect(&chooser, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *dialog = visibleDialog(QStringLiteral("addTypeLibraryDialog"));
       if (!dialog || !dialog->isVisible() || !offered.isEmpty() ||
           dialog->objectName() != QLatin1String("addTypeLibraryDialog"))
         return;
@@ -8504,9 +8876,10 @@ private slots:
             ->isEnabled(),
         OpenTimeoutMs);
     view->addLibrary();
+    QTRY_VERIFY(!offered.isEmpty());
     chooser.stop();
-    QCOMPARE(offered, (QStringList{QStringLiteral("windows-kernel-x64"),
-                                   QStringLiteral("uefi-x64")}));
+    QTRY_COMPARE(offered, (QStringList{QStringLiteral("windows-kernel-x64"),
+                                       QStringLiteral("uefi-x64")}));
     QTRY_COMPARE_WITH_TIMEOUT(names(),
                               (QStringList{QStringLiteral("windows-user-x64"),
                                            QStringLiteral("uefi-x64")}),
@@ -9409,7 +9782,7 @@ private slots:
     bool loaded = false;
     QTimer chooser, timeout;
     connect(&chooser, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QPointer<QDialog> dialog = visibleDialog();
       if (!dialog || dialog->objectName() != QLatin1String("pathfinderChooser"))
         return;
       auto *tabs = dialog->findChild<QTabWidget *>();
@@ -9439,15 +9812,15 @@ private slots:
         dialog->reject();
     });
     connect(&timeout, &QTimer::timeout, this, [] {
-      if (auto *dialog =
-              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+      if (auto *dialog = visibleDialog())
         dialog->reject();
     });
     timeout.setSingleShot(true);
     timeout.start(OpenTimeoutMs);
     chooser.start(10);
     QTest::mouseClick(add, Qt::LeftButton);
-    QVERIFY2(loaded, "The waypoint chooser did not load its unfiltered lists.");
+    QTRY_VERIFY2(loaded,
+                 "The waypoint chooser did not load its unfiltered lists.");
     const QVector<Address> expected{chooseImport ? Base + 0x160 : Base};
     QTRY_COMPARE_WITH_TIMEOUT(exclusion ? view->exclusions()
                                         : view->waypoints(),
@@ -9779,7 +10152,7 @@ private slots:
     QTRY_VERIFY(strings->table()->hasFocus());
     QString title;
     QTimer::singleShot(0, [&title] {
-      if (auto *dialog = QApplication::activeModalWidget()) {
+      if (auto *dialog = visibleDialog(QStringLiteral("referencesDialog"))) {
         title = dialog->windowTitle();
         dialog->close();
       }
