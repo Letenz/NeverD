@@ -11775,3 +11775,13 @@ The entry-object regressions check symbolic copies, spills and copied slots, run
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
 
 Run `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) and `NeverDCSourcePresentationTests` for byte provenance, path agreement, overwritten or escaped storage, immutable image ranges, budgets, encodings and metadata bounds. `NeverDWorkerStackText` compiles public x64/ARM64 PE cases through both C routes, including unknown overwrites. It requires Clang and lld-link; native Windows execution is separate.
+
+`CallRegisterEffects.ExitConstants*` in `NeverDFPParameterMaskTests` checks
+agreement at every return, block ordering, partial and unknown writes, calls,
+intrinsics, address provenance, independent/exceptional roots, exact/short
+work budgets and ordinary ABI result ownership. `CallExitRegisters.*` in
+`NeverDWin64CallContractTests` executes decoded x64 COFF/ELF/Mach-O callers
+through both C routes, with source optimization enabled and disabled, at C
+O0/O2 with UBSan. The oracle observes the non-return register's stored value
+and the ordinary call result. This qualifies bounded scalar constants, not
+dynamic machine-state returns or other architectures.

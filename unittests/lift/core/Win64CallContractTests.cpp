@@ -395,6 +395,74 @@ int main(void) {
     }
 }
 
+TEST(CallExitRegisters, ConstantScratchValueReachesTheCallersStore) {
+  constexpr va_t Producer = Text + 0x80;
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    const bool Windows = Format == BinaryFormat::COFF;
+    const uint8_t Frame = Windows ? 32 : 0;
+    std::vector<uint8_t> Code(0xA0, 0xCC);
+    // Keep the output pointer in RBX while the leaf writes a non-return
+    // volatile register. The caller observes its actual machine value.
+    std::vector<uint8_t> Caller = {
+        0x53, 0x48, 0x89, static_cast<uint8_t>(Windows ? 0xCB : 0xFB),
+        0x48, 0x83, 0xEC, Frame,
+        0xE8};
+    const auto Displacement = rel32(Text + Caller.size() + 4, Producer);
+    Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+    const std::vector<uint8_t> Suffix = {
+        0x48,  0x89, static_cast<uint8_t>(Windows ? 0x0B : 0x3B),
+        0x48,  0x83, 0xC4,
+        Frame, 0x5B, 0xC3};
+    Caller.insert(Caller.end(), Suffix.begin(), Suffix.end());
+    put(Code, Text, Caller);
+    put(Code, Producer,
+        {static_cast<uint8_t>(Windows ? 0xB9 : 0xBF), 27, 0, 0, 0, 0xB8, 1, 0,
+         0, 0, 0xC3});
+    auto Image = makeImage(
+        Code, {{Text, "observe_exit"}, {Producer, "produce_exit"}}, {});
+    Image.Format = Format;
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text, Producer};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        const std::string Oracle = R"(
+int main(void) {
+  uint64_t output = 999;
+  return observe_exit(&output) != 1 || output != 27;
+}
+)";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+  }
+}
+
 /// HighC for the functions at \p Entries of \p Img.
 std::string liftEntries(const BinaryImage &Img, std::set<va_t> Entries) {
   llvm::LLVMContext Ctx;

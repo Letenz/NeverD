@@ -3319,6 +3319,7 @@ private:
     size_t Bytes =
         sizeof(Item) + sizeof(CalleeFacts) + 2 * Node +
         Effect.Blocks.capacity() * sizeof(RegisterBlock) +
+        Effect.ExitConstants.capacity() * sizeof(GPRExitConstants::value_type) +
         (Effect.Callees.size() + Effect.NoReturnCallees.size() +
          Effect.StackTailCallees.size()) *
             (Node + sizeof(va_t)) +
@@ -4354,6 +4355,7 @@ void computeCallRegisterEffects(
                                FixedEntryReads, FixedEntryStackArgs);
   Result.CallDispatchThunks = std::move(DispatchThunks);
   Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
+  Result.CallExitConstants = std::move(Summaries.ExitConstants);
   Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);
   Result.CallEntryStackArgs = std::move(Summaries.EntryStackArgs);
   Result.CallVariadicFrom = std::move(Summaries.VariadicFrom);
