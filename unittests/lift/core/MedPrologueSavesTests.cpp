@@ -142,12 +142,26 @@ TEST_P(MedPrologueSaves, AComputedValueIsNoSave) {
   EXPECT_FALSE(save(Func).PrologueSave);
 }
 
-TEST_P(MedPrologueSaves, AnotherStoreIntoTheSlotKeepsTheSave) {
+TEST_P(MedPrologueSaves, AnOverwritePreventsOnlyTheCalleeSaveProof) {
   MedFunc Func = pushedRbx();
   auto &Ops = Func.Blocks[0].Ops;
   Ops.insert(Ops.begin() + 6, op(NdOp::STORE, none(), {sp(1), rcx(0)}));
   markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+  // It no longer restores rbx's entry value. The combined source pass can
+  // nevertheless discard that value: its bytes are overwritten before use.
+  EXPECT_EQ(save(Func).PrologueSave, GetParam());
+  EXPECT_EQ(Ops.size(), 11u);
+}
+
+TEST_P(MedPrologueSaves, AReadBeforeTheOverwriteKeepsTheSave) {
+  MedFunc Func = pushedRbx();
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.insert(Ops.begin() + 6, op(NdOp::LOAD, temp(20), {sp(1)}));
+  Ops.insert(Ops.begin() + 7, op(NdOp::STORE, none(), {sp(1), rcx(0)}));
+  Ops.back() = op(NdOp::RETURN, none(), {temp(20)});
+  markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
   EXPECT_FALSE(save(Func).PrologueSave);
+  EXPECT_EQ(Ops.size(), 12u);
 }
 
 TEST_P(MedPrologueSaves, AnArgumentSpillIsNoSave) {
