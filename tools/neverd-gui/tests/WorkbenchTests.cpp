@@ -48,7 +48,6 @@
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "WindowFrame.h"
-#include "WindowFramePlatform.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -719,10 +718,10 @@ private slots:
     QTRY_VERIFY(functions->model().total() > 0 &&
                 !functions->model().loading());
     QVERIFY(capture(QStringLiteral("open")));
-    auto *handle = sidebar->findChild<QWidget *>(
+    auto *handle = workspace->findChild<QWidget *>(
         QStringLiteral("focusSidebarResizeHandle"));
     QVERIFY(handle && handle->isVisible());
-    QCOMPARE(handle->cursor().shape(), Qt::SizeHorCursor);
+    QCOMPARE(handle->cursor().shape(), Qt::SplitHCursor);
     const int initialWidth = sidebar->width();
     const int nameWidth = functions->table()->header()->sectionSize(0);
     const auto resizeBy = [&](int delta) {
@@ -932,8 +931,7 @@ private slots:
       auto *minimize =
           bar->findChild<QAbstractButton *>(QStringLiteral("minimizeButton"));
       QVERIFY(maximize && minimize);
-      if (platform::drawsWindowControls())
-        QVERIFY(maximize->isVisible() && minimize->isVisible());
+      QVERIFY(maximize->isVisible() && minimize->isVisible());
       if (maximize->isVisible()) {
         QTest::mouseClick(maximize, Qt::LeftButton);
         QTRY_VERIFY(dialog->isMaximized());

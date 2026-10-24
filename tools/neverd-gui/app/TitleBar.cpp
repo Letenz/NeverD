@@ -2,7 +2,6 @@
 
 #include "../Config.h"
 #include "Theme.h"
-#include "WindowFramePlatform.h"
 
 #include <QAbstractButton>
 #include <QAction>
@@ -44,15 +43,11 @@ Controls controlsFor(Qt::WindowFlags flags) {
           bool(flags & Qt::WindowCloseButtonHint)};
 }
 
-/// The width at the bar's left that the application icon and the system's
-/// own window controls take, which full screen hides.
+/// The application icon's space, hidden in full screen.
 int leftReserve(const QWidget &window, bool withIcon) {
   if (window.isFullScreen())
     return 0;
-  return (withIcon && platform::showsWindowIcon()
-              ? ::neverd::limits::gui_config::kTitleBarIconSlot
-              : 0) +
-         platform::systemControlsWidth();
+  return withIcon ? ::neverd::limits::gui_config::kTitleBarIconSlot : 0;
 }
 
 QColor chrome(const char *name) {
@@ -93,7 +88,7 @@ public:
       : HoverButton(window, parent), kind_(kind) {}
   QSize sizeHint() const override {
     return {::neverd::limits::gui_config::kTitleBarButtonWidth,
-            platform::titleBarHeight()};
+            ::neverd::limits::gui_config::kTitleBarHeight};
   }
 
 protected:
@@ -267,11 +262,8 @@ void TitleBar::setCommandCenterAction(QAction *action) {
 }
 
 QSize TitleBar::sizeHint() const {
-  const int height = platform::titleBarHeight();
-  const int buttons =
-      platform::drawsWindowControls()
-          ? 3 * ::neverd::limits::gui_config::kTitleBarButtonWidth
-          : 0;
+  const int height = ::neverd::limits::gui_config::kTitleBarHeight;
+  const int buttons = 3 * ::neverd::limits::gui_config::kTitleBarButtonWidth;
   if (!menuBar_)
     return {leftReserve(window_, false) +
                 2 * ::neverd::limits::gui_config::kTitleBarTitlePadding +
@@ -285,13 +277,10 @@ QSize TitleBar::sizeHint() const {
 }
 
 QSize TitleBar::minimumSizeHint() const {
-  const int buttons =
-      platform::drawsWindowControls()
-          ? 3 * ::neverd::limits::gui_config::kTitleBarButtonWidth
-          : 0;
+  const int buttons = 3 * ::neverd::limits::gui_config::kTitleBarButtonWidth;
   return {leftReserve(window_, menuBar_ != nullptr) +
               ::neverd::limits::gui_config::kTitleBarTitlePadding + buttons,
-          platform::titleBarHeight()};
+          ::neverd::limits::gui_config::kTitleBarHeight};
 }
 
 bool TitleBar::event(QEvent *event) {
@@ -350,10 +339,6 @@ void TitleBar::mouseDoubleClickEvent(QMouseEvent *event) {
     return;
   }
   pressAt_.reset();
-  // macOS has a setting for what a double click on a title bar does.
-  if (QWindow *handle = window_.windowHandle();
-      handle && platform::doubleClickTitleBar(*handle))
-    return;
   if (maximizable())
     toggleMaximized();
 }
@@ -383,16 +368,15 @@ void TitleBar::paintEvent(QPaintEvent *) {
                      Qt::AlignLeft | Qt::AlignVCenter, title);
     return;
   }
-  if (window_.isFullScreen() || !platform::showsWindowIcon())
+  if (window_.isFullScreen())
     return;
   if (!window_.isActiveWindow())
     painter.setOpacity(InactiveOpacity);
-  const int iconLeft = platform::systemControlsWidth();
   window_.windowIcon().paint(
       &painter,
-      QRect(iconLeft + (::neverd::limits::gui_config::kTitleBarIconSlot -
-                        ::neverd::limits::gui_config::kTitleBarIconSize) /
-                           2,
+      QRect((::neverd::limits::gui_config::kTitleBarIconSlot -
+             ::neverd::limits::gui_config::kTitleBarIconSize) /
+                2,
             (height() - ::neverd::limits::gui_config::kTitleBarIconSize) / 2,
             ::neverd::limits::gui_config::kTitleBarIconSize,
             ::neverd::limits::gui_config::kTitleBarIconSize));
@@ -455,8 +439,8 @@ void TitleBar::toggleMaximized() {
 }
 
 void TitleBar::updateWindowState() {
-  // Full screen hides the buttons, and on macOS the system draws them.
-  const bool shown = !window_.isFullScreen() && platform::drawsWindowControls();
+  // Full screen hides the controls on every desktop.
+  const bool shown = !window_.isFullScreen();
   const Controls controls = controlsFor(window_.windowFlags());
   minimize_->setVisible(controls.minimize && shown);
   maximize_->setVisible(maximizable() && shown);

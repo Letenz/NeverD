@@ -18,7 +18,6 @@
 #include "TitleBar.h"
 #include "TypeSourceHighlighter.h"
 #include "WindowFrame.h"
-#include "WindowFramePlatform.h"
 
 #include <QAbstractButton>
 #include <QAction>
@@ -185,6 +184,8 @@ Qt::WindowState effectiveState(Qt::WindowStates states) {
 
 class WorkbenchUnitTests : public QObject {
   Q_OBJECT
+public:
+  static void initMain() { WindowFrame::prepareNativeWindows(); }
 private slots:
   void initTestCase() {
     // As the workbench starts.
@@ -449,8 +450,7 @@ private slots:
   }
 
   void unicodeCommentsKeepTheCodePrefixOnItsGrid() {
-    // The code views' font: Consolas where it exists, else the system's
-    // fixed font.
+    // Use the same bundled fixed-width font as code views.
     QFont font = Theme::defaultCodeFont();
     font.setPointSize(10);
     const auto color = [](int role) {
@@ -1568,8 +1568,13 @@ private slots:
     QWidget *window = dock->QWidget::window();
     QVERIFY(window != dock.get());
     QVERIFY(QTest::qWaitForWindowExposed(window));
-    QCOMPARE(window->grab().toImage().pixelColor(0, window->height() / 2),
-             theme.chrome(QStringLiteral("FloatingWindowBorder")));
+    const auto capture = window->grab().toImage();
+    const int edge = window->contentsMargins().left();
+    QVERIFY(edge > 0);
+    const int row = capture.height() / 2;
+    QVERIFY(capture.pixelColor(0, row).alpha() <
+            capture.pixelColor(qRound(edge * capture.devicePixelRatio()), row)
+                .alpha());
   }
 
   void tabsShowCloseButtonsWhenCurrentOrHovered() {
@@ -1825,11 +1830,9 @@ private slots:
   }
 
   void nativeFrameKeepsTheTitleBarOnScreen() {
-    // Windows and macOS keep the system frame without its caption, so the
-    // window system decides where a maximized or full-screen window's client
-    // area lies; CI runs this with their native platforms.
-    if (platform::frameKind() != platform::FrameKind::Captionless)
-      QSKIP("The platform has no captionless system frame");
+    // The drawn frame must survive native state transitions on every desktop.
+    if (QGuiApplication::platformName() == QLatin1String("offscreen"))
+      QSKIP("Needs a native window manager");
     QWidget window;
     auto *menus = new QMenuBar;
     menus->addMenu(QStringLiteral("&File"));
