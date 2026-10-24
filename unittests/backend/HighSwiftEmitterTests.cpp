@@ -4,9 +4,9 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/X86FPState.h"
+#include "neverd/ir/X86/X86FPState.h"
 #include "neverd/ir/high/MedToHigh.h"
-#include "neverd/ir/high/X86FPStateShape.h"
+#include "neverd/ir/high/X86/X86FPStateShape.h"
 #include "neverd/ir/med/MedTypePass.h"
 
 #include "llvm/ADT/SmallString.h"

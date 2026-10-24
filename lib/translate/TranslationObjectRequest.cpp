@@ -3,11 +3,11 @@
 #include "neverd/translate/TranslationObjectRequest.h"
 
 #include "TranslationCacheIdentity.h"
-#include "X87TranslationBoundary.h"
+#include "X86/X87TranslationBoundary.h"
 
 #include "neverd/translate/RuntimeABI.h"
 #include "neverd/translate/RuntimeGuestState.h"
-#include "neverd/translate/RuntimeX87GuestState.h"
+#include "neverd/translate/X86/RuntimeX87GuestState.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"

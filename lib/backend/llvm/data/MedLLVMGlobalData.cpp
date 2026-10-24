@@ -24,7 +24,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/med/I386PicAddress.h"
+#include "neverd/ir/med/X86/I386PicAddress.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/Diagnostic.h"

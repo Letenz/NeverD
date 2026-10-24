@@ -9,7 +9,7 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/translate/X87PortableExecution.h"
+#include "neverd/translate/X86/X87PortableExecution.h"
 
 #include <cstdint>
 

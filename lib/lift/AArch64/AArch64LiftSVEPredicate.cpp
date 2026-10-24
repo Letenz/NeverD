@@ -16,9 +16,9 @@
 #include "AArch64LiftDetail.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 #include "neverd/support/BinaryEncoding.h"
 
 namespace neverd {

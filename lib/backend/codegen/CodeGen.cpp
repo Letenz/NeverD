@@ -17,8 +17,8 @@
 
 #define DEBUG_TYPE "neverd-codegen"
 #include "neverd/ArchSupport.h"
-#include "neverd/backend/llvm/LLVMX86StackEffects.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/backend/llvm/X86/LLVMX86StackEffects.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/object/SectionNames.h"
 

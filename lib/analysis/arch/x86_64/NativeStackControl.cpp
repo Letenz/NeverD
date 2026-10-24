@@ -7,7 +7,7 @@
 #include "NativeStackControl.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Errc.h"

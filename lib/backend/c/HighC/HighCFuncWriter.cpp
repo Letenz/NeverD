@@ -12,15 +12,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "../VariadicImportStub.h"
-#include "../X86GetPcThunk.h"
-#include "../render/X86NativeFeatures.h"
+#include "../X86/X86GetPcThunk.h"
+#include "../render/X86/X86NativeFeatures.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
-#include "neverd/backend/c/render/HighC/AArch64SVEVectorState.h"
+#include "neverd/backend/c/render/AArch64/AArch64SVEVectorState.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
@@ -57,7 +57,7 @@ namespace neverd {
 namespace {
 
 #define NEVERD_A64_SVE_VECTOR_C_TYPE(Name, Text) constexpr char Name[] = Text;
-#include "neverd/backend/c/render/AArch64SVEVectorC.def"
+#include "neverd/backend/c/render/AArch64/AArch64SVEVectorC.def"
 
 uint64_t checkedStackAdd(uint64_t Left, uint64_t Right) {
   if (Left > std::numeric_limits<uint64_t>::max() - Right)
@@ -179,7 +179,7 @@ X86CIntrinsicFeatures collectX86CIntrinsicFeatures(const HighFunc &Func) {
   case I::Intrinsic:                                                           \
     Features.Named.insert(Feature);                                            \
     break;
-#include "neverd/backend/c/render/HighC/X86IntrinsicTargetFeatures.def"
+#include "neverd/backend/c/render/X86/X86IntrinsicTargetFeatures.def"
     default:
       break;
     }
@@ -222,7 +222,7 @@ std::string armCIntrinsicTargetFeatures(const HighFunc &Func) {
   case Intrinsic::Name:                                                        \
     Features.insert(Feature);                                                  \
     break;
-#include "neverd/backend/c/render/HighC/ARMIntrinsicTargetFeatures.def"
+#include "neverd/backend/c/render/ARM/ARMIntrinsicTargetFeatures.def"
     default:
       break;
     }

@@ -17,7 +17,7 @@
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
 #include "neverd/loader/MachO/SourceRegisterCopy.h"

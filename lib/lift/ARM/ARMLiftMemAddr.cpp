@@ -12,7 +12,7 @@
 
 #include "ARMLiftDetail.h"
 
-#include "neverd/lift/ARMLifter.h"
+#include "neverd/lift/ARM/ARMLifter.h"
 
 #include "llvm/Support/Debug.h"
 

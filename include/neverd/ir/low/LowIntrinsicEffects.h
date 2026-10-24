@@ -9,11 +9,11 @@
 #ifndef NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 #define NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 
-#include "neverd/ir/intrinsics/AArch64CPA.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
-#include "neverd/ir/intrinsics/AArch64PAuthLoad.h"
-#include "neverd/ir/intrinsics/AArch64SVEPredicate.h"
-#include "neverd/ir/intrinsics/AArch64SVEVector.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEPredicate.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/low/LowIR.h"
 

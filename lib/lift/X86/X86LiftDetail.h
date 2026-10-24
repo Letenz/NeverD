@@ -27,8 +27,8 @@
 #ifndef NEVERD_LIFT_X86_X86LIFTDETAIL_H
 #define NEVERD_LIFT_X86_X86LIFTDETAIL_H
 
-#include "neverd/lift/X86Lifter.h"
-#include "neverd/support/X86Addressing.h"
+#include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/support/X86/X86Addressing.h"
 
 #include <capstone/capstone.h>
 #include <cstddef>

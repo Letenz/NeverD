@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/low/NdOpEmulator.h"
-#include "neverd/ir/low/X87Arithmetic.h"
+#include "neverd/ir/low/X86/X87Arithmetic.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APSInt.h"

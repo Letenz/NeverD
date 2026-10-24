@@ -14,19 +14,19 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/backend/llvm/LLVMX86StackEffects.h"
-#include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86StackEffects.h"
+#include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
-#include "neverd/backend/llvm/X86DescriptorStateNative.h"
-#include "neverd/backend/llvm/X86ScalarSystemNative.h"
-#include "neverd/backend/llvm/X86SystemRegisterAsm.h"
+#include "neverd/backend/llvm/X86/X86DescriptorStateNative.h"
+#include "neverd/backend/llvm/X86/X86ScalarSystemNative.h"
+#include "neverd/backend/llvm/X86/X86SystemRegisterAsm.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-x86-sideeffect"
-#include "neverd/ir/X87Stack.h"
+#include "neverd/ir/X86/X87Stack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X86SegmentRegisters.h"
-#include "neverd/ir/intrinsics/X86Unsupported.h"
+#include "neverd/ir/intrinsics/X86/X86SegmentRegisters.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/ADT/APInt.h"

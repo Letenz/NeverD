@@ -8,12 +8,12 @@ add_neverd_component_library(NeverDIRHigh
   HighSourceInputs.cpp
   lower/CFStructurer.cpp
   lower/CallArgCollection.cpp
-  lower/CallArgCollectionX86.cpp
-  lower/CallArgCollectionARM.cpp
-  lower/CallArgCollectionAArch64.cpp
-  lower/CallArgCollectionWin64.cpp
+  lower/X86/CallArgCollectionX86.cpp
+  lower/ARM/CallArgCollectionARM.cpp
+  lower/AArch64/CallArgCollectionAArch64.cpp
+  lower/X86/CallArgCollectionWin64.cpp
   lower/CompareTreeSwitch.cpp
-  lower/I386PicAddresses.cpp
+  lower/X86/I386PicAddresses.cpp
   lower/MedOpToExpr.cpp
   lower/MedToHighDynamicStack.cpp
   lower/MedToHigh.cpp
@@ -22,9 +22,9 @@ add_neverd_component_library(NeverDIRHigh
   lower/NdOpReturnLowering.cpp
   lower/VaListCalls.cpp
   lower/VariadicStackArguments.cpp
-  lower/X86RegistrationReturn.cpp
-  lower/X86RegistrationFrame.cpp
-  lower/X86RegistrationCall.cpp
+  lower/X86/X86RegistrationReturn.cpp
+  lower/X86/X86RegistrationFrame.cpp
+  lower/X86/X86RegistrationCall.cpp
   lower/NdOpSwitchRecovery.cpp
   pass/HighCleanup.cpp
   pass/HighCopyProp.cpp
@@ -47,10 +47,10 @@ add_neverd_component_library(NeverDIRHigh
   structure/CxxObjectActions.cpp
   structure/HighEHStructurer.cpp
   structure/ItaniumHandlers.cpp
-  structure/X86RegistrationFilter.cpp
-  structure/X86RegistrationTry.cpp
-  structure/X86RegistrationContinuation.cpp
-  structure/X86RegistrationNestedTry.cpp
+  structure/X86/X86RegistrationFilter.cpp
+  structure/X86/X86RegistrationTry.cpp
+  structure/X86/X86RegistrationContinuation.cpp
+  structure/X86/X86RegistrationNestedTry.cpp
   structure/HighIfChainToSwitch.cpp
   structure/HighLoopRecovery.cpp
 

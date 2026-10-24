@@ -8,14 +8,14 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/ir/X86FPState.h"
-#include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/X86/X86FPState.h"
+#include "neverd/ir/intrinsics/X86/X64Syscall.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/libc/StackProbeIndex.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ELF/ELFOperatingSystem.h"
 

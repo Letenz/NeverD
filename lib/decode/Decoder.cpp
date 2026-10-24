@@ -14,9 +14,9 @@
 #include "DecoderDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/AArch64Lifter.h"
-#include "neverd/lift/ARMLifter.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
+#include "neverd/lift/ARM/ARMLifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 #include "neverd/support/Diagnostic.h"
 #include "neverd/support/ProloguePatterns.h"
 

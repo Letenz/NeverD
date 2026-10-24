@@ -15,8 +15,8 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/ir/med/PortableX87Function.h"
-#include "neverd/translate/X87PortableExecution.h"
+#include "neverd/ir/med/X86/PortableX87Function.h"
+#include "neverd/translate/X86/X87PortableExecution.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"

@@ -12,11 +12,11 @@ add_neverd_component_library(NeverDIRLowValidation
   X86/SEHFrameFormat.cpp
   Windows/SEHScalarFormat.cpp
   Windows/SEHImageFormat.cpp
-  X87PartialRemainder.cpp
-  X87Arithmetic.cpp
-  X87PortableContext.cpp
-  X87Capabilities.cpp
-  X87PortableABI.cpp
+  X86/X87PartialRemainder.cpp
+  X86/X87Arithmetic.cpp
+  X86/X87PortableContext.cpp
+  X86/X87Capabilities.cpp
+  X86/X87PortableABI.cpp
 
   LINK_COMPONENTS
   Digest
@@ -93,19 +93,19 @@ add_neverd_component_library(NeverDIRLow
   CFGBuilder.cpp
   X86/RegistrationCxxState.cpp
   CFGBuilderBlocks.cpp
-  CFGBuilderAArch64PAuth.cpp
+  AArch64/CFGBuilderAArch64PAuth.cpp
   CFGBuilderException.cpp
   CFGBuilderInsn.cpp
   CFGBuilderScalarBranch.cpp
-  CFGBuilderX86Fpu.cpp
-  CFGBuilderX86GetPc.cpp
-  CFGBuilderX86PLT.cpp
+  X86/CFGBuilderX86Fpu.cpp
+  X86/CFGBuilderX86GetPc.cpp
+  X86/CFGBuilderX86PLT.cpp
   CallRegisterEffects.cpp
   CircleRange.cpp
   FuncDetector.cpp
-  FuncDetectorX86.cpp
-  FuncDetectorARM.cpp
-  FuncDetectorAArch64.cpp
+  X86/FuncDetectorX86.cpp
+  ARM/FuncDetectorARM.cpp
+  AArch64/FuncDetectorAArch64.cpp
   GuardedZeroSelect.cpp
   IndirectTailFrame.cpp
   X86/RegistrationCalleeABI.cpp
@@ -145,24 +145,24 @@ add_neverd_component_library(NeverDIRLow
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp
   NdOpEmulatorFloatConvert.cpp
-  NdOpEmulatorX86FPArith.cpp
-  NdOpEmulatorX86FPConvert.cpp
-  NdOpEmulatorX86FPRoundTransform.cpp
-  NdOpEmulatorX86FPExtract.cpp
-  NdOpEmulatorX86FPRange.cpp
-  NdOpEmulatorX86FPFixup.cpp
-  NdOpEmulatorX86FPScale.cpp
-  NdOpEmulatorX86FPCompare.cpp
-  NdOpEmulatorX87.cpp
-  NdOpEmulatorX87Context.cpp
-  X87NativeContext.cpp
+  X86/NdOpEmulatorX86FPArith.cpp
+  X86/NdOpEmulatorX86FPConvert.cpp
+  X86/NdOpEmulatorX86FPRoundTransform.cpp
+  X86/NdOpEmulatorX86FPExtract.cpp
+  X86/NdOpEmulatorX86FPRange.cpp
+  X86/NdOpEmulatorX86FPFixup.cpp
+  X86/NdOpEmulatorX86FPScale.cpp
+  X86/NdOpEmulatorX86FPCompare.cpp
+  X86/NdOpEmulatorX87.cpp
+  X86/NdOpEmulatorX87Context.cpp
+  X86/X87NativeContext.cpp
   PlatformEvidence.cpp
-  X86ApproxReference.c
-  X86ApproxReference28.c
+  X86/X86ApproxReference.c
+  X86/X86ApproxReference28.c
   jumptable/JumpTableResolver.cpp
   jumptable/JumpTableProofState.cpp
   jumptable/JumpTableResolverGroup.cpp
-  jumptable/JumpTableResolverARM.cpp
+  jumptable/ARM/JumpTableResolverARM.cpp
   jumptable/JumpTableResolverBounds.cpp
   jumptable/JumpTableResolverEmu.cpp
   jumptable/JumpTableResolverExtract.cpp
@@ -193,11 +193,11 @@ add_neverd_component_library(NeverDIRLow
 # The public approximation reference uses deliberate C pointer type-punning,
 # and its documented intermediate rounding assumes separate operations.
 if(MSVC)
-  set_source_files_properties(X86ApproxReference.c X86ApproxReference28.c
+  set_source_files_properties(X86/X86ApproxReference.c X86/X86ApproxReference28.c
     PROPERTIES
     COMPILE_OPTIONS "/fp:strict")
 else()
-  set_source_files_properties(X86ApproxReference.c X86ApproxReference28.c
+  set_source_files_properties(X86/X86ApproxReference.c X86/X86ApproxReference28.c
     PROPERTIES
     COMPILE_OPTIONS "-fno-strict-aliasing;-ffp-contract=off")
 endif()

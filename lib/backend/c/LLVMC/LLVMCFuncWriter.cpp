@@ -13,8 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "../VariadicImportStub.h"
-#include "../X86GetPcThunk.h"
-#include "../render/X86NativeFeatures.h"
+#include "../X86/X86GetPcThunk.h"
+#include "../render/X86/X86NativeFeatures.h"
 #include "LLVMCStackAllocation.h"
 #include "LLVMCStorage.h"
 #include "LLVMCVariableEdits.h"

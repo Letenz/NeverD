@@ -11,7 +11,7 @@
 #include "neverd/analysis/InterpreterMachineStateProfile.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 

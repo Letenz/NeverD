@@ -10,8 +10,8 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedStackAlignment.h"
-#include "neverd/ir/med/X86RegistrationCallResult.h"
-#include "neverd/ir/med/X86RegistrationSEHBoundCall.h"
+#include "neverd/ir/med/X86/X86RegistrationCallResult.h"
+#include "neverd/ir/med/X86/X86RegistrationSEHBoundCall.h"
 
 namespace neverd {
 

@@ -1,7 +1,7 @@
 #include "NeverDLiftFixture.h"
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/lift/ARMLifter.h"
+#include "neverd/lift/ARM/ARMLifter.h"
 
 class ARM32_Control : public NeverDLiftTest {};
 

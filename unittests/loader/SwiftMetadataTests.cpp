@@ -1,7 +1,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Swift/SwiftABI.h"
 #include "neverd/loader/Swift/SwiftMetadata.h"

@@ -6,7 +6,7 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/translate/X87PortableRuntime.h"
+#include "neverd/translate/X86/X87PortableRuntime.h"
 
 #include "llvm/Support/Error.h"
 

@@ -10,7 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/backend/llvm/X86VirtualizationNative.h"
+#include "neverd/backend/llvm/X86/X86VirtualizationNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/InlineAsm.h"

@@ -14,17 +14,17 @@ add_neverd_component_library(NeverDIR
   SourceVariableFlow.cpp
   SourceParameterPlacement.cpp
   SourceParameterPlacementAAPCS64.cpp
-  SourceParameterPlacementI386.cpp
+  X86/SourceParameterPlacementI386.cpp
   SourceParameterPlacementSysV.cpp
-  SourceParameterPlacementWin64.cpp
+  X86/SourceParameterPlacementWin64.cpp
   low/InternalNoReturn.cpp
   low/SourceFrameAnalysis.cpp
   low/SourceFrameBytes.cpp
   low/ImportCallee.cpp
   TargetRegInfo.cpp
-  TargetRegInfoAArch64.cpp
-  TargetRegInfoARM.cpp
-  TargetRegInfoX86.cpp
+  AArch64/TargetRegInfoAArch64.cpp
+  ARM/TargetRegInfoARM.cpp
+  X86/TargetRegInfoX86.cpp
 
   LINK_COMPONENTS
   IRHigh

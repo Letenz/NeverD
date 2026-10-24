@@ -1,7 +1,7 @@
 #include "NeverDLiftFixture.h"
 
 #include "neverd/ir/TargetRegInfo.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 
 class AArch64_WSP : public NeverDLiftTest {
 protected:

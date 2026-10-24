@@ -6,7 +6,7 @@
 ///
 /// \file
 /// Differential test: the Capstone-free fixed-width classifiers in
-/// neverd/decode/AArch64FastClassify.h must agree, bit-for-bit, with a full
+/// neverd/decode/AArch64/AArch64FastClassify.h must agree, bit-for-bit, with a full
 /// Capstone decode of the same 32-bit word.  Capstone is the oracle.
 ///
 /// This is a *correctness* test, so its result is independent of machine load
@@ -25,7 +25,7 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/decode/AArch64FastClassify.h"
+#include "neverd/decode/AArch64/AArch64FastClassify.h"
 
 #include <capstone/capstone.h>
 #include <cstdint>

@@ -8,7 +8,7 @@
 
 #include "TranslationJITLinkerInternal.h"
 #include "TranslationLinkGraphVerifierInternal.h"
-#include "X87TranslationBoundary.h"
+#include "X86/X87TranslationBoundary.h"
 
 #include "neverd/support/BranchEncoding.h"
 #include "neverd/translate/TranslationArtifactVerifier.h"

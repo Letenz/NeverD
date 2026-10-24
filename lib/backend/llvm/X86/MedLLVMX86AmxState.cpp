@@ -11,8 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
-#include "neverd/backend/llvm/X86AmxAsm.h"
-#include "neverd/backend/llvm/X86AmxNative.h"
+#include "neverd/backend/llvm/X86/X86AmxAsm.h"
+#include "neverd/backend/llvm/X86/X86AmxNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
 #include "llvm/IR/Function.h"

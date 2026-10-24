@@ -11,11 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/X87Constant.h"
-#include "neverd/ir/X87Context.h"
-#include "neverd/ir/X87Stack.h"
+#include "neverd/ir/X86/X87Constant.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/X86/X87Stack.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/lift/X86/X86Lifter.h"
 
 #include "llvm/Support/Debug.h"
 

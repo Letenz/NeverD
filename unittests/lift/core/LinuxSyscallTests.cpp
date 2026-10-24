@@ -12,7 +12,7 @@
 
 #include "NeverDLiftFixture.h"
 
-#include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/intrinsics/X86/X64Syscall.h"
 
 #include <fstream>
 #include <sstream>

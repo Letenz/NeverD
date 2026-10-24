@@ -6,8 +6,8 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/SourceFrameAnalysis.h"
 #include "neverd/ir/low/SourceFrameBytes.h"
-#include "neverd/lift/AArch64Regs.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>

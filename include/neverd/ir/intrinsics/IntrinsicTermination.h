@@ -9,7 +9,7 @@
 #define NEVERD_IR_INTRINSICS_INTRINSICTERMINATION_H
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/ir/intrinsics/X86Interrupts.h"
+#include "neverd/ir/intrinsics/X86/X86Interrupts.h"
 
 #include <optional>
 

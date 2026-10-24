@@ -14,8 +14,8 @@ add_neverd_component_library(NeverDBackendC
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp
-  HighC/HighCX87Context.cpp
-  HighC/HighCPortableX87.cpp
+  HighC/X86/HighCX87Context.cpp
+  HighC/X86/HighCPortableX87.cpp
   HighC/HighCSourceCalls.cpp
   HighC/HighCSourceNames.cpp
   HighC/HighCFuncWriter.cpp
@@ -51,17 +51,17 @@ add_neverd_component_library(NeverDBackendC
   pass/LLVMC/LLVMCVoidAnalysis.cpp
   render/CTypeFormat.cpp
   render/HighC/HighCIntrinsicRender.cpp
-  render/HighC/HighCIntrinsicRenderARM.cpp
-  render/HighC/HighCIntrinsicRenderX86.cpp
+  render/ARM/HighCIntrinsicRenderARM.cpp
+  render/X86/HighCIntrinsicRenderX86.cpp
   render/LLVMC/LLVMCIntrinsicRender.cpp
-  render/LLVMC/LLVMCIntrinsicRenderARM.cpp
-  render/LLVMC/LLVMCIntrinsicRenderX86.cpp
+  render/ARM/LLVMCIntrinsicRenderARM.cpp
+  render/X86/LLVMCIntrinsicRenderX86.cpp
   render/SyscallHelpers.cpp
-  render/X86Virtualization.cpp
-  render/X86SystemState.cpp
-  render/X86Sgx.cpp
-  render/X86AmxState.cpp
-  render/X86NativeFeatures.cpp
+  render/X86/X86Virtualization.cpp
+  render/X86/X86SystemState.cpp
+  render/X86/X86Sgx.cpp
+  render/X86/X86AmxState.cpp
+  render/X86/X86NativeFeatures.cpp
 
   LINK_COMPONENTS
   IR

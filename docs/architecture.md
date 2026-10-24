@@ -4,6 +4,22 @@
 
 # NeverD Architecture
 
+Compiler and IR architecture-specific implementation belongs beneath its owning
+component and phase in an `X86/`, `ARM/`, or `AArch64/` directory. X86 includes i386, x64 and
+x87. Shared dispatchers, IR interfaces and target-independent helpers stay at
+the component level. The C renderer groups its architecture helpers, intrinsic
+spelling tables and HighC/LLVMC adapters together under `render/<architecture>/`;
+its route-independent interfaces retain `render/HighC/` and `render/LLVMC/`.
+LLVM architecture headers mirror the existing backend implementation directories.
+Decoder, lifter, IR state, ABI and translation files follow the same ownership.
+
+Binary-format implementation remains grouped by ELF, COFF and Mach-O, including
+format-owned architecture encodings and unwind records. Platform emulator
+backends and UI features retain their existing service boundaries. The stable C
+SDK and portable-runtime C header paths remain unchanged. Tests retain their existing
+semantic and format groupings. Directory moves do not change component targets,
+intrinsic identities, exported symbols or instruction semantics.
+
 `X86DescriptorState.h` owns descriptor-state operand shapes; LowIR,
 Low-to-Med, Med verification and source output use that contract.
 `X86DescriptorStateNative.h` owns register widths, native API names, memory

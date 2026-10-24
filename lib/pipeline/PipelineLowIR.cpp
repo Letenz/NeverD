@@ -35,7 +35,7 @@
 #include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/libc/LibCVariadicArguments.h"
 #include "neverd/libc/StackProbeIndex.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/RuntimeProviders.h"
 #include "neverd/loader/DataSymbolBinding.h"

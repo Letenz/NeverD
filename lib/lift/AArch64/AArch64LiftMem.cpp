@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 
 #include "llvm/Support/Debug.h"
 

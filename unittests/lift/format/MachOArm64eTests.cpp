@@ -16,7 +16,7 @@
 #include "neverd/backend/codegen/SourcePatch.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/high/MedToHigh.h"
-#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/MachO/DyldSharedCache.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"

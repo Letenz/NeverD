@@ -355,7 +355,7 @@ inline constexpr int
 // lib/backend/c/render/CTypeFormat.cpp
 inline constexpr unsigned kCTypeFormatDeclarationToCRemaining = 4096;
 
-// lib/backend/c/render/LLVMC/LLVMCIntrinsicRenderX86.cpp
+// lib/backend/c/render/X86/LLVMCIntrinsicRenderX86.cpp
 inline constexpr int kLLVMCIntrinsicRenderX86SegmentedLoadDepthLimit = 4;
 
 // lib/backend/codegen/COFF/COFFRegistrationCxx.cpp

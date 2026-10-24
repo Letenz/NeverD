@@ -4,7 +4,7 @@
 
 #include "neverd/translate/GuestMemoryRuntime.h"
 #include "neverd/translate/RuntimeGuestState.h"
-#include "neverd/translate/RuntimeX87Helpers.h"
+#include "neverd/translate/X86/RuntimeX87Helpers.h"
 #include "neverd/translate/TranslationIRVerifier.h"
 
 #include "llvm/ADT/STLExtras.h"

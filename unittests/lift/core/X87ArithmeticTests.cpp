@@ -10,8 +10,8 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/ir/low/X87Arithmetic.h"
-#include "neverd/ir/low/X87PartialRemainder.h"
+#include "neverd/ir/low/X86/X87Arithmetic.h"
+#include "neverd/ir/low/X86/X87PartialRemainder.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"

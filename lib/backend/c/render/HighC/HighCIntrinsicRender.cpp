@@ -13,9 +13,9 @@
 
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 
-#include "neverd/ir/intrinsics/AArch64ExceptionReturn.h"
-#include "neverd/ir/intrinsics/AArch64PAuthLoad.h"
-#include "neverd/ir/intrinsics/AArch64SVEVector.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
 
 #include <stdexcept>
 #include <string>

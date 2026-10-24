@@ -13,7 +13,7 @@
 #ifdef NEVERD_X87_ORIGINAL_REFERENCE
 #error "Build X87OriginalReplay.c with the C compiler for original instructions"
 #endif
-#include "neverd/ir/low/X87Arithmetic.h"
+#include "neverd/ir/low/X86/X87Arithmetic.h"
 
 #include <array>
 #include <cstdint>

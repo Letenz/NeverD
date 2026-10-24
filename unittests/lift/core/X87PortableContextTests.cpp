@@ -10,10 +10,10 @@
 
 #include "gtest/gtest.h"
 
-#include "neverd/ir/X87Capabilities.h"
-#include "neverd/ir/X87Context.h"
-#include "neverd/ir/low/X87Arithmetic.h"
-#include "neverd/ir/low/X87PortableContext.h"
+#include "neverd/ir/X86/X87Capabilities.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/low/X86/X87Arithmetic.h"
+#include "neverd/ir/low/X86/X87PortableContext.h"
 
 #include <algorithm>
 #include <array>

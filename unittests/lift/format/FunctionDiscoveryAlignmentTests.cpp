@@ -8,7 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
-#include "neverd/ir/intrinsics/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/loader/ExceptionInfo.h"
 #include "neverd/loader/FunctionDiscovery.h"

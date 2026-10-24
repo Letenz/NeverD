@@ -347,10 +347,10 @@ enum class Intrinsic : uint16_t {
   /// Its exact LowIR contract is owned by LowRawEnvironment.h.
   RawEnvironmentRequirementV1 = 2,
 
-#include "neverd/ir/intrinsics/intrinsics_aarch64.inc"
-#include "neverd/ir/intrinsics/intrinsics_arm.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86.inc"
-#include "neverd/ir/intrinsics/intrinsics_x86_fp_state.inc"
+#include "neverd/ir/intrinsics/AArch64/intrinsics_aarch64.inc"
+#include "neverd/ir/intrinsics/ARM/intrinsics_arm.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86.inc"
+#include "neverd/ir/intrinsics/X86/intrinsics_x86_fp_state.inc"
 
   // Append after the existing x86 FP family to preserve every published ID.
   // LoadConstant retains its ROM selector and explicit incoming control word.
@@ -381,11 +381,11 @@ enum class Intrinsic : uint16_t {
 
 // Append after every existing family: serialized intrinsic IDs are stable.
 #define NEVERD_X86_VIRTUALIZATION(Id, ...) Id,
-#include "neverd/ir/intrinsics/X86Virtualization.def"
+#include "neverd/ir/intrinsics/X86/X86Virtualization.def"
 #undef NEVERD_X86_VIRTUALIZATION
 
 #define NEVERD_X86_SYSTEM_STATE(Id, ...) Id,
-#include "neverd/ir/intrinsics/X86SystemState.def"
+#include "neverd/ir/intrinsics/X86/X86SystemState.def"
 #undef NEVERD_X86_SYSTEM_STATE
 
   // Append-only: bounded SGX supervisor/VMM completion.
@@ -397,10 +397,10 @@ enum class Intrinsic : uint16_t {
 
 // Append after existing families to preserve serialized intrinsic IDs.
 #define NEVERD_A64_CPA(Id, ...) Id,
-#include "neverd/ir/intrinsics/AArch64CPA.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64CPA.def"
 
 #define NEVERD_A64_PAUTH_LR_OPERATION(Id, ...) Id,
-#include "neverd/ir/intrinsics/AArch64PAuthLR.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLR.def"
 
   // Append-only: typed x87 rotation and free/pop. FFREEP carries the same
   // physical-slot and decoded-relative-index operands as FFREE.
@@ -418,11 +418,11 @@ enum class Intrinsic : uint16_t {
   // CFG consumes the pending prefix before publishing a native operation.
   A64_PACMPending,
 #define NEVERD_A64_PAUTH_M_OPERATION(Id, ...) Id,
-#include "neverd/ir/intrinsics/AArch64PAuthM.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthM.def"
 
 // Compiler-private portable runtime calls. Append to preserve serialized IDs.
 #define NEVERD_X87_PORTABLE_HELPER(Role, ...) PortableX87##Role,
-#include "neverd/ir/X87PortableABI.def"
+#include "neverd/ir/X86/X87PortableABI.def"
 #undef NEVERD_X87_PORTABLE_HELPER
 
   // Append-only: one descriptor query owns the value, ZF and selector access.
@@ -437,7 +437,7 @@ enum class Intrinsic : uint16_t {
 
 // Append-only: combined authentication, memory access and base writeback.
 #define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) Id,
-#include "neverd/ir/intrinsics/AArch64PAuthLoad.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.def"
 
   _Count = 16000
 };
@@ -445,7 +445,7 @@ enum class Intrinsic : uint16_t {
 constexpr bool isPortableX87Intrinsic(Intrinsic Id) {
   switch (Id) {
 #define NEVERD_X87_PORTABLE_HELPER(Role, ...) case Intrinsic::PortableX87##Role:
-#include "neverd/ir/X87PortableABI.def"
+#include "neverd/ir/X86/X87PortableABI.def"
 #undef NEVERD_X87_PORTABLE_HELPER
     return true;
   default:
@@ -490,7 +490,7 @@ constexpr X86SystemStateContract x86SystemStateContract(Intrinsic Id) {
     return {Mnemonic, X86SystemStateKind::Kind, MemoryArgument};
 #define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
-#include "neverd/ir/intrinsics/X86SystemState.def"
+#include "neverd/ir/intrinsics/X86/X86SystemState.def"
 #undef NEVERD_X86_APPENDED_SYSTEM_STATE
 #undef NEVERD_X86_EXISTING_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
@@ -534,7 +534,7 @@ constexpr X86VirtualizationContract x86VirtualizationContract(Intrinsic Id) {
   case Intrinsic::Id:                                                          \
     return {Mnemonic,       R::Result,   Arguments,                            \
             MemoryArgument, MemoryBytes, PhysicalAddress};
-#include "neverd/ir/intrinsics/X86Virtualization.def"
+#include "neverd/ir/intrinsics/X86/X86Virtualization.def"
 #undef NEVERD_X86_VIRTUALIZATION
   default:
     return {};

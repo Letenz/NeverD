@@ -4,11 +4,11 @@
 
 #include "neverd/backend/Limits.h"
 #include "neverd/ir/Limits.h"
-#include "neverd/ir/X87Constant.h"
-#include "neverd/ir/X87Context.h"
-#include "neverd/ir/X87GuardedValue.h"
-#include "neverd/ir/X87Value.h"
-#include "neverd/ir/high/X86FPStateShape.h"
+#include "neverd/ir/X86/X87Constant.h"
+#include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/X86/X87GuardedValue.h"
+#include "neverd/ir/X86/X87Value.h"
+#include "neverd/ir/high/X86/X86FPStateShape.h"
 
 #include <algorithm>
 #include <cctype>

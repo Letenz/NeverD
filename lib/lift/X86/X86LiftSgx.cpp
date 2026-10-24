@@ -10,9 +10,9 @@
 
 #include "X86LiftDetail.h"
 
-#include "neverd/ir/intrinsics/X86Sgx.h"
-#include "neverd/ir/intrinsics/X86SgxLeaves.h"
-#include "neverd/lift/X86Lifter.h"
+#include "neverd/ir/intrinsics/X86/X86Sgx.h"
+#include "neverd/ir/intrinsics/X86/X86SgxLeaves.h"
+#include "neverd/lift/X86/X86Lifter.h"
 #include "neverd/support/ISAEncoding.h"
 
 namespace neverd {

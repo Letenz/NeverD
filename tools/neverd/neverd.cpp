@@ -17,7 +17,7 @@
 #include "NeverDSymbolDownload.h"
 
 #include "neverd/Common.h"
-#include "neverd/loader/ARMModeCLIStrings.h"
+#include "neverd/loader/ARM/ARMModeCLIStrings.h"
 #include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/support/FilePath.h"
 #include "neverd/support/StackSizeMain.h"

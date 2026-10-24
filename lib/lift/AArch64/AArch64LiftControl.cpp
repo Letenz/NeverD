@@ -15,7 +15,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/AArch64Lifter.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -360,7 +360,7 @@ bool AArch64Lifter::liftControl(LiftState &S, const cs_insn *Insn,
 #define NEVERD_A64_EXCEPTION_RETURN_INTRINSIC(Id, InsnID)                      \
   case AARCH64_INS_##InsnID:                                                   \
     throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
-#include "neverd/ir/intrinsics/AArch64ExceptionReturn.def"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.def"
 
   // --- CLREX (clear exclusive monitor) ---
   case AARCH64_INS_CLREX:

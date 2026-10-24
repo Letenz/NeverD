@@ -22,7 +22,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/pipeline/Limits.h"
 

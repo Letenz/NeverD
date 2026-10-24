@@ -9,7 +9,7 @@
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
-#include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 
 #include "llvm/ADT/ArrayRef.h"

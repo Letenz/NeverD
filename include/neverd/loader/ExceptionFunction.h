@@ -22,7 +22,7 @@
 #include "neverd/loader/ExceptionPersonality.h"
 #include "neverd/loader/ExceptionUnwindOp.h"
 #include "neverd/loader/ExceptionWindowsEH.h"
-#include "neverd/loader/LanguageEHARM.h"
+#include "neverd/loader/ARM/LanguageEHARM.h"
 #include "neverd/loader/LanguageEHCompact.h"
 #include "neverd/loader/LanguageEHDelphi.h"
 #include "neverd/loader/LanguageEHDwarf.h"

@@ -8,7 +8,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
-#include "neverd/lift/X86PreservedState.h"
+#include "neverd/lift/X86/X86PreservedState.h"
 
 using namespace neverd;
 
