@@ -462,6 +462,38 @@ TEST(AArch64DecodeOccurrence, MissingDetailNeverDropsAnInstruction) {
     }
 }
 
+TEST(AArch64DecodeOccurrence, OperandQueriesKeepTheOccurrenceArchitecture) {
+  for (Route Path : Routes) {
+    Decoder D;
+    ASSERT_TRUE(D.init(Arch::AArch64));
+    DecodedInsn I;
+    ASSERT_EQ(decode(D, Path, Cases[0].Word, I), kWordBytes);
+    OwnedInsn Owned(I);
+    for (Arch Architecture : {Arch::Unknown, Arch::X64, Arch::X86, Arch::ARM})
+      for (bool Registers : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        const auto Operands =
+            describeNativeOperands(D, I, Architecture, Registers);
+        ASSERT_TRUE(Operands.Immediates.empty());
+        ASSERT_TRUE(Operands.Registers.empty());
+      }
+    const auto Operands = describeNativeOperands(D, I, Arch::AArch64);
+    EXPECT_FALSE(Operands.Immediates.empty());
+    D.reset();
+    ASSERT_TRUE(D.init(Arch::X64));
+    // Reject the mismatched architecture before reading a freed borrowed
+    // instruction or interpreting an owned AArch64 detail as an x64 union.
+    for (const auto &Instruction : {I, Owned.Instruction})
+      for (Arch Architecture :
+           {Arch::Unknown, Arch::X64, Arch::X86, Arch::ARM, Arch::AArch64}) {
+        const auto Missing =
+            describeNativeOperands(D, Instruction, Architecture);
+        EXPECT_TRUE(Missing.Immediates.empty());
+        EXPECT_TRUE(Missing.Registers.empty());
+      }
+  }
+}
+
 TEST(AArch64DecodeOccurrence, RefusalClearsPriorArchitectureEvidence) {
   // Seed real evidence from an earlier x64 lift. A failed AArch64 attempt
   // must not leave that unrelated complete certificate available to callers.

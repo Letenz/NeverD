@@ -175,8 +175,9 @@ can supply complete detail with text disabled, while the Capstone fallback
 cannot. Every decode attempt, reset and successful reinitialization expires
 borrowed records, including copies at the same PC and word. An owned snapshot
 must copy both the instruction and its detail and retain the occurrence fields.
-Lifting and operand queries share that admission contract. Raw classification
-remains available without detail; direct BL targets use the shared encoding
+Lifting and operand queries share that admission contract. Operand queries
+reject a different requested architecture before accessing the record. Raw
+classification remains available without detail; direct BL targets use the shared encoding
 decoder. MOVPRFX follower evidence belongs to the same occurrence.
 
 `AArch64LiftPAuth` owns baseline PAC/AUT/XPAC operands,
@@ -464,8 +465,9 @@ For a selected dyld cache image, debug discovery does not inspect the container
 or automatically attach its adjacent companions. Explicit DWARF and MAP paths
 retain the existing selected-image architecture and identity checks.
 Exception-level
-authentication, PACM state and CPA2 address arithmetic remain unsupported;
-recognizing x1's header does not claim those instruction semantics.
+authentication, implicit-entry PACM state and CPA2 memory address arithmetic
+remain unsupported; recognizing x1's header does not claim those instruction
+semantics.
 
 ## GUI project and search ownership
 

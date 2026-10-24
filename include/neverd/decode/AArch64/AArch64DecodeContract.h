@@ -11,7 +11,8 @@
 #ifndef NEVERD_DECODE_AARCH64_AARCH64DECODECONTRACT_H
 #define NEVERD_DECODE_AARCH64_AARCH64DECODECONTRACT_H
 
-#include <capstone/capstone.h>
+#include "capstone/capstone.h"
+
 #include <cstdint>
 
 namespace neverd {
