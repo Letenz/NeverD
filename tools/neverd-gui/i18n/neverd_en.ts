@@ -1127,6 +1127,14 @@
         <source>Inspect unwind metadata at the selected instruction</source>
         <translation>Inspect unwind metadata at the selected instruction</translation>
     </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copy or save the selected bytes</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Export data...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1807,12 +1815,12 @@ Double-click to go to the declaration.</translation>
         <translation>Saved variable names belong to a different source rendering</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Expand block (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Expand block (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Collapse block (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Collapse block (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2970,6 +2978,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <source>Another link took this one's place.</source>
         <translation>Another link took this one's place.</translation>
     </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>List commands take priority while their list has focus.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filter by action, shortcut or scope</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Scope</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Unassigned</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Analysis views</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Workbench</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Quick filter</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Lists</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Add types…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Edit type…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Delete types…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3767,12 +3819,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <translation>Next</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Previous match (Shift+Enter or Shift+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Previous match (%1 or %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Next match (Enter or F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Next match (%1 or %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4603,12 +4655,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+click to open</translation>
+        <source>%1click to open</source>
+        <translation>%1click to open</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Double-click or Ctrl+click to open %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Double-click or %2click to open %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4653,8 +4705,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <translation>Declare</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Read the declarations (Ctrl+Enter)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Read the declarations (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4794,8 +4846,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <translation>The operand keeps its number.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>The program has no structures or unions. Declare them in Local types (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>The program has no structures or unions. Declare them in Local types (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6250,8 +6302,8 @@ Coverage: %7</translation>
         <translation>Select a function to inspect its counterpart.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Select blocks to follow their counterparts. Ctrl+wheel zooms.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Select blocks to follow their counterparts. %1wheel zooms.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -8127,6 +8179,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>unsupported</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Dock back into main window</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 bytes ready.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C byte array (decimal)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C byte array (hex)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C string literal</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Cannot read the complete range at %1. Nothing was exported.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copy</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Could not save %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>End address (inclusive):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Enter a valid address range.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Export data</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>Export takes at most %1 bytes; select a smaller range.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Format:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Hex string</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Raw bytes (file only)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Reading bytes...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Reading bytes: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Save as...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>Saved %1 bytes to %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Spaced hex string</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Start address:</translation>
     </message>
 </context>
 </TS>

@@ -8,6 +8,7 @@
 
 #include "SessionImpl.h"
 
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/SourceABI.h"
@@ -245,6 +246,9 @@ std::string llvmRecoverySourceLimitation(const llvm::Module &Module) {
   for (const auto &Function : Module)
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
+        if (llvm_source_unknown::isValue(&Instruction) &&
+            !Instruction.use_empty())
+          return "recovered LLVM source contains unrecovered machine state";
         if (!Budget)
           return "recovered LLVM source publication budget exhausted";
         --Budget;

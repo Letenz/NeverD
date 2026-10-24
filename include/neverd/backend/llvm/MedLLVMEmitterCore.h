@@ -81,6 +81,11 @@ class PreparedPortableX87Function;
 class MedLLVMEmitter {
 public:
   void setSourceMap(LLVMSourceMap *Map) { SourceMap = Map; }
+  /// Retain unrecovered machine values through source optimization. The
+  /// opaque markers are for analysis output, not executable reconstruction.
+  void setPreserveUnknownSourceValues(bool Enabled) {
+    PreserveUnknownSourceValues = Enabled;
+  }
   void setAnalystSourceProjection(bool Enabled) {
     AnalystSourceProjection = Enabled;
   }
@@ -151,6 +156,7 @@ private:
   llvm::Value *emitPortableX87Intrinsic(const MedOp &Op,
                                         llvm::IRBuilder<> &Builder);
   bool AnalystSourceProjection = false;
+  bool PreserveUnknownSourceValues = false;
   const SourceTargetSignatures *AnalystTargets = nullptr;
   friend class MedLLVMEmitterTestPeer;
   friend class MedLLVMProvenanceTestPeer;
@@ -338,10 +344,9 @@ private:
                             llvm::IRBuilder<> &Builder);
   void emitX86MemPtrAsm(const char *Mn, const MedOp &Op,
                         llvm::IRBuilder<> &Builder);
-  /// IN acc, port — read an I/O port into the accumulator (value-producing).
-  llvm::Value *emitX86PortIn(const MedOp &Op, llvm::IRBuilder<> &Builder);
-  /// OUT port, acc — write the accumulator to an I/O port (side-effect).
-  void emitX86PortOut(const MedOp &Op, llvm::IRBuilder<> &Builder);
+  /// Ordered RDMSR/WRMSR and scalar port I/O through the shared native plan.
+  llvm::Value *emitX86ScalarSystem(const MedOp &Op, Intrinsic IC,
+                                   llvm::IRBuilder<> &Builder);
   /// SLDT/STR/SMSW with a register destination — store a system register into
   /// a GPR (value-producing).
   llvm::Value *emitX86SysRegStore(const MedOp &Op, Intrinsic IC,

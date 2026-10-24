@@ -13,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -532,7 +533,9 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
       summary_->setText(
           search_->text().trimmed().isEmpty()
               ? tr("The program has no structures or unions. Declare them in "
-                   "Local types (Shift+F1).")
+                   "Local types (%1).")
+                    .arg(QKeySequence(Qt::SHIFT | Qt::Key_F1)
+                             .toString(QKeySequence::NativeText))
               : tr("No type matches."));
   }
   apply_->setEnabled(list_->count() > 0);

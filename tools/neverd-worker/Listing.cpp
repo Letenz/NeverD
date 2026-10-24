@@ -345,6 +345,7 @@ struct AutoData {
 
 struct Line {
   std::uint64_t item = 0, address = 0;
+  std::uint64_t itemSize = 0;
   std::uint32_t sub = 0;
   AddressClass cls = AddressClass::Unexplored;
   const char *kind = "data";
@@ -2809,6 +2810,7 @@ struct Listing::Impl {
                std::optional<std::uint64_t> target = std::nullopt) {
     Line line;
     line.item = item.start;
+    line.itemSize = item.size;
     line.address = address;
     line.sub = 0;
     line.cls = classOf(item);
@@ -3634,6 +3636,7 @@ struct Listing::Impl {
                                                       : regions.back().end - 1);
     const int owner = region >= 0 ? region : regionIndex(line.item);
     Json json = {{"item", hexAddress(line.item)},
+                 {"item_size", hexAddress(line.itemSize)},
                  {"address", hexAddress(line.address)},
                  {"sub", line.sub},
                  {"cls", static_cast<int>(line.cls)},

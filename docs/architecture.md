@@ -4,6 +4,13 @@
 
 # NeverD Architecture
 
+`X86ScalarSystemNative.h` owns the widths and native API names for scalar
+RDMSR/WRMSR and port I/O. LLVM and both C projections share the plan and retain
+ordered, potentially trapping reads even when the result is unused. Constant
+propagation does not turn a 16-bit DX port into an 8-bit port. C output selects
+qualified builtins, real MSVC intrinsics or owned assembly at compile time.
+LLVM-to-C validates types and full memory effects before recognizing a call.
+
 `X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
 LLVM/C API names. LLVM emission and both C projections share that contract.
 The LLVM-to-C adapter validates the complete native call or legacy assembly
@@ -5059,6 +5066,19 @@ contract. Deferred source views, native session recovery and omitted-callee
 memo keys retain the same facts, including their memory accounting. Dynamic
 callee outputs and constants requiring predecessor reasoning remain separate
 machine-state recovery work.
+
+C source emission preserves a wholly unrecovered call-clobber or MedIR
+`Unspecified` value with an analysis-only LLVM call, rather than `freeze undef`
+whose result LLVM may choose as zero. `LLVMSourceUnknownValue.h` owns its
+creation and recognition. Inaccessible read/write effects prevent distinct
+observations from becoming equal while leaving ordinary memory aliasing alone.
+The marker's declaration and unused results are omitted from C; an observed
+value retains an explicit unsupported expression. HighC assignments and stores
+use the same expression rules as other observations, without a zero override.
+The serial pipeline, sharded source pipeline and deferred SDK views enable this
+source policy independently of analyst call-signature overrides. It supplies
+no dynamic callee result, native reconstruction contract or partially preserved
+vector-suffix proof. Ordinary LLVM undef/poison/freeze keep their own semantics.
 
 A call through a function-pointer variable passes the arguments of the routine
 the variable starts at (`collectPointerVariableCallees`): another module's

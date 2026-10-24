@@ -1491,6 +1491,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 }
 
 void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
+  if (llvm_source_unknown::isValue(&Inst))
+    return;
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
   if (RawMemoryUpdateInputs.count(&Inst))
@@ -3841,12 +3843,20 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
 
   if (isX86VirtualizationNativeName(Callee->getName()) ||
       isX86SystemStateNativeName(Callee->getName()) ||
-      isX86SystemRegisterNativeName(Callee->getName())) {
+      isX86SystemRegisterNativeName(Callee->getName()) ||
+      isX86ScalarSystemNativeName(Callee->getName())) {
     std::vector<std::string> Arguments;
     for (const auto &Argument : Call.args())
       Arguments.push_back(valueStr(Argument.get()));
     const bool ResultLive =
         !Call.getType()->isVoidTy() && valueFeedsPrintedUse(&Call);
+    if (const auto Code = renderX86ScalarSystemCall(
+            Opts.TheArch, Opts.Format, Call, ResultLive ? getName(&Call) : "",
+            ResultLive, Arguments)) {
+      emitIndent(Indent);
+      OS << Code->Code;
+      return true;
+    }
     if (const auto Code = renderX86SystemRegisterCall(
             Opts.TheArch, Opts.Format, Call, ResultLive ? getName(&Call) : "",
             ResultLive, Arguments)) {
@@ -4969,6 +4979,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto System = renderX86ScalarSystemCall(Opts.TheArch, Opts.Format, Call,
+                                              Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << System->Code;
+    HasCIntrinsics |= System->SetIntrinsics;
+    return true;
+  }
   if (auto SystemRegister = renderX86SystemRegisterCall(
           Opts.TheArch, Opts.Format, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);

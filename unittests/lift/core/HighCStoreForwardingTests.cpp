@@ -41,33 +41,77 @@ TEST(HighCStoreForwarding, IncompleteFrameRecordsKeepTheirInteriorFields) {
   llvm::raw_string_ostream OS(Text);
   CEmitterOptions Options;
   HighCWriter Writer(OS, Options, &Debug);
+  for (const bool KnownExtent : {false, true})
+    for (const bool CallOverlay : {false, true}) {
+      SCOPED_TRACE(KnownExtent);
+      SCOPED_TRACE(CallOverlay);
+      Writer.FrameSlots.clear();
+      const TypeRef Record =
+          NdType::makeNamedRecord("Pair", KnownExtent ? 8 : 0);
+      HighCWriter::NamedFrameSlot Slot;
+      Slot.Name = "pair";
+      Slot.Type = CallOverlay ? NdType::makeInt(8) : Record;
+      Slot.CallType = CallOverlay ? Record : nullptr;
+      Writer.FrameSlots[-16] = Slot;
+      Writer.FrameSlots[-24].Name = "integer";
+      Writer.FrameSlots[-24].Type = NdType::makeInt(8);
+      EXPECT_EQ(Writer.frameTypedMemberAccess(-12, 4),
+                std::optional<std::string>("pair.second"));
+      const TypeRef Member = Writer.frameTypedMemberType(-12, 4);
+      ASSERT_TRUE(Member);
+      EXPECT_EQ(Member->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Member->Size, 4);
+      EXPECT_FALSE(Writer.frameTypedMemberAccess(-16, 4));
+      EXPECT_FALSE(Writer.frameTypedMemberType(-16, 4));
+      EXPECT_FALSE(Writer.frameTypedMemberAccess(-12, 8));
+      EXPECT_FALSE(Writer.frameTypedMemberType(-12, 8));
+
+      // Two records covering the same bytes cannot choose one member's name.
+      const TypeRef Overlap = NdType::makeNamedRecord("Overlap", 12);
+      Overlap->FieldDisplayNames = {"value"};
+      Overlap->FieldDisplayOffsets = {8};
+      Overlap->FieldDisplayTypes = {NdType::makeInt(4)};
+      Writer.FrameSlots[-20].Name = "overlap";
+      Writer.FrameSlots[-20].Type = Overlap;
+      EXPECT_FALSE(Writer.frameTypedMemberAccess(-12, 4));
+      EXPECT_FALSE(Writer.frameTypedMemberType(-12, 4));
+    }
+}
+
+TEST(HighCStoreForwarding, FrameMemberQueriesFollowNewSlotsAfterProjection) {
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  HighCWriter Writer(OS, Options, nullptr);
+  HighFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "scalar_frame";
+  Func.ReturnType = NdType::makeInt(4);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeConst(7, 4);
+  Func.Body = {Return};
+
   for (const bool CallOverlay : {false, true}) {
     SCOPED_TRACE(CallOverlay);
-    Writer.FrameSlots.clear();
+    // A completed projection cannot constrain subsequent queries about new
+    // frame records or call overlays installed on the same writer.
+    Writer.writeFunctionProjection(Func);
     const TypeRef Record = NdType::makeNamedRecord("Pair", 8);
-    HighCWriter::NamedFrameSlot Slot;
-    Slot.Name = "pair";
+    Record->FieldDisplayNames = {"first", "second"};
+    Record->FieldDisplayOffsets = {0, 4};
+    Record->FieldDisplayTypes = {NdType::makeInt(4), NdType::makeInt(4)};
+    auto &Slot = Writer.FrameSlots[-16];
+    Slot.Name = "next_pair";
     Slot.Type = CallOverlay ? NdType::makeInt(8) : Record;
     Slot.CallType = CallOverlay ? Record : nullptr;
-    Writer.FrameSlots[-16] = Slot;
-    Writer.FrameSlots[-24].Name = "integer";
-    Writer.FrameSlots[-24].Type = NdType::makeInt(8);
     EXPECT_EQ(Writer.frameTypedMemberAccess(-12, 4),
-              std::optional<std::string>("pair.second"));
+              std::optional<std::string>("next_pair.second"));
     const TypeRef Member = Writer.frameTypedMemberType(-12, 4);
     ASSERT_TRUE(Member);
     EXPECT_EQ(Member->Kind, NdTypeKind::Int);
     EXPECT_EQ(Member->Size, 4);
-
-    // Two records covering the same bytes cannot choose one member's name.
-    const TypeRef Overlap = NdType::makeNamedRecord("Overlap", 12);
-    Overlap->FieldDisplayNames = {"value"};
-    Overlap->FieldDisplayOffsets = {8};
-    Overlap->FieldDisplayTypes = {NdType::makeInt(4)};
-    Writer.FrameSlots[-20].Name = "overlap";
-    Writer.FrameSlots[-20].Type = Overlap;
-    EXPECT_FALSE(Writer.frameTypedMemberAccess(-12, 4));
-    EXPECT_FALSE(Writer.frameTypedMemberType(-12, 4));
   }
 }
 

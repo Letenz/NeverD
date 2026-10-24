@@ -241,7 +241,20 @@ void TitleBar::setCommandCenterText(const QString &text,
   commandCenter_->update();
 }
 
-void TitleBar::setCommandCenterAction(QAction *action) { command_ = action; }
+void TitleBar::setCommandCenterAction(QAction *action) {
+  if (command_ && commandCenter_)
+    disconnect(command_, nullptr, commandCenter_, nullptr);
+  command_ = action;
+  if (!commandCenter_)
+    return;
+  const auto updateDescription = [this] {
+    commandCenter_->setAccessibleDescription(command_ ? command_->toolTip()
+                                                      : QString());
+  };
+  if (action)
+    connect(action, &QAction::changed, commandCenter_, updateDescription);
+  updateDescription();
+}
 
 QSize TitleBar::sizeHint() const {
   const int height = platform::titleBarHeight();

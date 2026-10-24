@@ -39,6 +39,7 @@ ActionRegistry::ActionRegistry(QObject *parent) : QObject(parent) {
     auto *action = new QAction(this);
     action->setObjectName(QString::fromLatin1(spec.id));
     action->setIcon(icon(QString::fromLatin1(spec.icon)));
+    action->setShortcutVisibleInContextMenu(true);
     if (*spec.shortcut)
       action->setShortcut(QKeySequence(QString::fromLatin1(spec.shortcut),
                                        QKeySequence::PortableText));
@@ -54,6 +55,12 @@ ActionRegistry::ActionRegistry(QObject *parent) : QObject(parent) {
 
 void ActionRegistry::attachViewShortcuts(QWidget *view) const {
   view->addActions(viewActions_);
+}
+
+void ActionRegistry::attachWindowShortcuts(QWidget *view) const {
+  for (auto *action : all_)
+    if (action->shortcutContext() == Qt::WindowShortcut)
+      view->addAction(action);
 }
 
 void ActionRegistry::buildMenus(QMenuBar *bar, const PlaceholderFiller &fill) {
@@ -115,6 +122,7 @@ QList<QToolBar *> ActionRegistry::buildToolbars(QMainWindow *window) {
     auto *toolbar = new QToolBar(window);
     toolbar->setObjectName(QStringLiteral("toolbar") + QString::fromLatin1(id));
     toolbar->setIconSize(QSize(16, 16));
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     toolbar->setMovable(true);
     window->addToolBar(Qt::TopToolBarArea, toolbar);
     byId.insert(QString::fromLatin1(id), toolbar);

@@ -781,7 +781,8 @@ private:
       bool RecordSources = false,
       llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
       const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {},
-      const std::set<va_t> *PrototypeArgumentCallees = nullptr);
+      const std::set<va_t> *PrototypeArgumentCallees = nullptr,
+      bool PreserveUnknownSourceValues = false);
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

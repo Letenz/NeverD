@@ -1125,7 +1125,15 @@
     </message>
     <message>
         <source>Inspect unwind metadata at the selected instruction</source>
-        <translation>選択した命令のアンワインドメタデータを確認</translation>
+        <translation>選択した命令位置のアンワインドメタデータを調べる</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>選択したバイトをコピーまたは保存</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>データをエクスポート...</translation>
     </message>
 </context>
 <context>
@@ -1802,12 +1810,12 @@ Double-click to go to the declaration.</source>
         <translation>保存された変数名は別のソース表示のものです</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>ブロックを展開 (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>ブロックを展開 (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>ブロックを折りたたむ (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>ブロックを折りたたむ (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2964,6 +2972,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Another link took this one's place.</source>
         <translation>別のリンクがこのリンクに代わりました。</translation>
     </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>リストにフォーカスがある間は、リストのコマンドが優先されます。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>操作、ショートカット、適用範囲で絞り込み</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>適用範囲</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未割り当て</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>解析ビュー</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>ワークベンチ</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>クイックフィルター</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>リスト</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>型を追加…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>型を編集…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>型を削除…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3760,12 +3812,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>次へ</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>前の一致（Shift+Enter または Shift+F3）</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>前の一致（%1 または %2）</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>次の一致（Enter または F3）</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>次の一致（%1 または %2）</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4586,12 +4638,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+クリックで開く</translation>
+        <source>%1click to open</source>
+        <translation>%1クリックで開く</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>ダブルクリックまたは Ctrl+クリックで %1 を開く</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>ダブルクリックまたは %2クリックで %1 を開く</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4635,8 +4687,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>宣言</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>宣言を読み込む（Ctrl+Enter）</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>宣言を読み込む（%1）</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4771,8 +4823,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>オペランドは数値のままです。</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>プログラムには構造体も共用体もありません。ローカル型（Shift+F1）で宣言してください。</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>プログラムには構造体も共用体もありません。ローカル型（%1）で宣言してください。</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6214,8 +6266,8 @@ Coverage: %7</source>
         <translation>関数を選択して対応する関数を調べてください。</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>ブロックを選択して対応先を追跡します。Ctrl+ホイールで拡大縮小できます。</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>ブロックを選択して対応先を追跡します。%1ホイールで拡大縮小できます。</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -8091,6 +8143,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>未対応</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>メインウィンドウに戻してドッキング</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 バイトの準備ができました。</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 バイトの準備ができました。プレビューは先頭 %2 バイトです。コピーと保存には範囲全体を使用します。</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C バイト配列（10進数）</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C バイト配列（16進数）</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C 文字列リテラル</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>%1 の範囲全体を読み取れません。何もエクスポートされませんでした。</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>コピー</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>%1 を保存できませんでした：%2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>終了アドレス（含む）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>有効なアドレス範囲を入力してください。</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>データをエクスポート</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>エクスポートは最大 %1 バイトです。範囲を狭めてください。</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>形式：</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>16進数文字列</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>生バイト（ファイルのみ）</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>バイトを読み取り中...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>バイトを読み取り中：%1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>名前を付けて保存...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 バイトを %2 に保存しました</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>空白区切りの16進数文字列</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>開始アドレス：</translation>
     </message>
 </context>
 </TS>

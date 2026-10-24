@@ -20,6 +20,7 @@
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
+#include "../render/X86ScalarSystem.h"
 #include "../render/X86SystemRegister.h"
 #include "../render/X86SystemState.h"
 #include "../render/X86Virtualization.h"
@@ -1541,6 +1542,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if ((Opts.TheArch == Arch::X64 || Opts.Format == BinaryFormat::COFF) &&
           x86SystemRegisterName(Ex.IntrinsicId, 0))
         NeedsX86SystemRegisterDispatch = true;
+      if ((Opts.TheArch == Arch::X64 || Opts.TheArch == Arch::X86) &&
+          isX86ScalarSystemIntrinsic(Ex.IntrinsicId))
+        NeedsX86ScalarSystemDispatch = true;
       if (Opts.TheArch == Arch::X64 &&
           x86VirtualizationContract(Ex.IntrinsicId).Mnemonic)
         NeedsX86VirtualizationDispatch = true;
@@ -4420,6 +4424,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeX87CHelpers(OS, UsesX87Extended, X87Helpers);
   if (NeedsX86SystemRegisterDispatch)
     OS << X86SystemRegisterCompilerDispatch;
+  if (NeedsX86ScalarSystemDispatch)
+    OS << X86ScalarSystemCompilerDispatch;
   if (NeedsX86VirtualizationDispatch)
     OS << X86VirtualizationCompilerDispatch;
   if (NeedsX86SystemStateDispatch)

@@ -131,6 +131,9 @@ inline constexpr int kMainWindowOutputHeight = 190;
 inline constexpr int kMainWindowOverviewHeight = 170;
 // Input dialogs leave room for a full name, comment or expression.
 inline constexpr int kMainWindowInputDialogWidth = 420;
+inline constexpr QSize kLocationChooserDialogSize{720, 480};
+inline constexpr QSize kShortcutsDialogSize{800, 560};
+inline constexpr QSize kExportDataDialogSize{760, 520};
 
 // tools/neverd-gui/app/NavigationBand.cpp
 inline constexpr int kNavigationBandBandHeight = 16;

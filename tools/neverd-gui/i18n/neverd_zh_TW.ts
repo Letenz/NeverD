@@ -1121,11 +1121,19 @@
     </message>
     <message>
         <source>Unwind information…</source>
-        <translation>展開資訊…</translation>
+        <translation>堆疊展開資訊…</translation>
     </message>
     <message>
         <source>Inspect unwind metadata at the selected instruction</source>
         <translation>檢查所選指令處的堆疊展開中繼資料</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>複製或儲存所選位元組</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>匯出資料...</translation>
     </message>
 </context>
 <context>
@@ -1802,12 +1810,12 @@ Double-click to go to the declaration.</source>
         <translation>已儲存的變數名稱對應的是另一版原始碼</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>展開程式碼區塊（Ctrl+Shift+]）</translation>
+        <source>Expand block (%1)</source>
+        <translation>展開程式碼區塊（%1）</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>摺疊程式碼區塊（Ctrl+Shift+[）</translation>
+        <source>Collapse block (%1)</source>
+        <translation>摺疊程式碼區塊（%1）</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2964,6 +2972,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Another link took this one's place.</source>
         <translation>另一個連結取代了此連結。</translation>
     </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>清單取得焦點時，優先執行清單命令。</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>依操作、快捷鍵或作用範圍篩選</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>作用範圍</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>未指派</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>分析檢視</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>工作區</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>快速篩選</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>清單</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>新增型別…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>編輯型別…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>刪除型別…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3760,12 +3812,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>下一個</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>上一個相符項目（Shift+Enter 或 Shift+F3）</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>上一個相符項目（%1 或 %2）</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>下一個相符項目（Enter 或 F3）</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>下一個相符項目（%1 或 %2）</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4586,12 +4638,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+按一下以開啟</translation>
+        <source>%1click to open</source>
+        <translation>%1按一下以開啟</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>按兩下或 Ctrl+按一下以開啟 %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>按兩下或 %2按一下以開啟 %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4635,8 +4687,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>宣告</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>讀取這些宣告（Ctrl+Enter）</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>讀取這些宣告（%1）</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4771,8 +4823,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>運算元保留原本的數字。</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>程式沒有結構或聯集，可在本機型別（Shift+F1）中宣告。</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>程式沒有結構或聯集，可在本機型別（%1）中宣告。</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6214,8 +6266,8 @@ Coverage: %7</source>
         <translation>選擇函式以檢查其對應函式。</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>選擇基本區塊以跟蹤其對應項。Ctrl+滾輪可縮放。</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>選擇基本區塊以跟蹤其對應項。%1滾輪可縮放。</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -8091,6 +8143,100 @@ Secondary SHA-256: %3
     <message>
         <source>unsupported</source>
         <translation>不支援</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>停駐回主視窗</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 位元組已就緒。</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 位元組已就緒。預覽顯示前 %2 位元組；複製和儲存會使用完整範圍。</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>C 位元組陣列（十進位）</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>C 位元組陣列（十六進位）</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>C 字串常值</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>無法讀取 %1 處的完整範圍。未匯出任何內容。</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>複製</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>無法儲存 %1：%2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>結束位址（含）：</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>請輸入有效的位址範圍。</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>匯出資料</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>最多可匯出 %1 位元組；請選擇較小的範圍。</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>格式：</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>十六進位字串</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>原始位元組（僅儲存至檔案）</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>正在讀取位元組...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>正在讀取位元組：%1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>另存新檔...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>已將 %1 位元組儲存至 %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>含空格的十六進位字串</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>起始位址：</translation>
     </message>
 </context>
 </TS>

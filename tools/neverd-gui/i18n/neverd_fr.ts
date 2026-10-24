@@ -1121,11 +1121,19 @@
     </message>
     <message>
         <source>Unwind information…</source>
-        <translation>Informations de déroulement…</translation>
+        <translation>Informations de déroulement de pile…</translation>
     </message>
     <message>
         <source>Inspect unwind metadata at the selected instruction</source>
-        <translation>Examiner les métadonnées de déroulement à l’instruction sélectionnée</translation>
+        <translation>Examiner les métadonnées de déroulement de pile à l’instruction sélectionnée</translation>
+    </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copier ou enregistrer les octets sélectionnés</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Exporter les données...</translation>
     </message>
 </context>
 <context>
@@ -1807,12 +1815,12 @@ Double-cliquez pour aller à la déclaration.</translation>
         <translation>Les noms de variables enregistrés correspondent à un autre rendu du code source</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Déplier le bloc (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Déplier le bloc (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Replier le bloc (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Replier le bloc (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2970,6 +2978,50 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <source>Another link took this one's place.</source>
         <translation>Un autre lien a pris la place de celui-ci.</translation>
     </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>Les commandes de la liste sont prioritaires lorsqu’elle a le focus.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filtrer par action, raccourci ou portée</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Portée</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Non attribué</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Vues d’analyse</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Espace de travail</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Filtre rapide</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Listes</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Ajouter des types…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Modifier le type…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Supprimer des types…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3767,12 +3819,12 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <translation>Suivant</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Correspondance précédente (Maj+Entrée ou Maj+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Correspondance précédente (%1 ou %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Correspondance suivante (Entrée ou F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Correspondance suivante (%1 ou %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4603,12 +4655,12 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+clic pour ouvrir</translation>
+        <source>%1click to open</source>
+        <translation>%1clic pour ouvrir</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Double-cliquez ou Ctrl+clic pour ouvrir %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Double-cliquez ou %2clic pour ouvrir %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4653,8 +4705,8 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <translation>Déclarer</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Lire les déclarations (Ctrl+Entrée)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Lire les déclarations (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4794,8 +4846,8 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <translation>L&apos;opérande garde son nombre.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>Le programme n&apos;a ni structure ni union. Déclarez-les dans Types locaux (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>Le programme n&apos;a ni structure ni union. Déclarez-les dans Types locaux (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6250,8 +6302,8 @@ Couverture : %7</translation>
         <translation>Sélectionnez une fonction pour examiner sa contrepartie.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Sélectionnez des blocs pour suivre leurs contreparties. Ctrl+molette permet de zoomer.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Sélectionnez des blocs pour suivre leurs contreparties. %1molette permet de zoomer.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -8127,6 +8179,100 @@ SHA-256 secondaire : %3
     <message>
         <source>unsupported</source>
         <translation>non pris en charge</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Rattacher à la fenêtre principale</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 octets prêts.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 octets prêts. L’aperçu montre les %2 premiers ; la copie et l’enregistrement utilisent toute la plage.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Tableau d’octets C (décimal)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Tableau d’octets C (hexadécimal)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Littéral de chaîne C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>Impossible de lire toute la plage à %1. Rien n’a été exporté.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copier</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>Impossible d’enregistrer %1 : %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Adresse de fin (incluse) :</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Saisissez une plage d’adresses valide.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Exporter les données</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>L’exportation est limitée à %1 octets ; sélectionnez une plage plus petite.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Format :</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Chaîne hexadécimale</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Octets bruts (fichier uniquement)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Lecture des octets...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Lecture des octets : %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Enregistrer sous...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>%1 octets enregistrés dans %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Chaîne hexadécimale avec espaces</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Adresse de début :</translation>
     </message>
 </context>
 </TS>

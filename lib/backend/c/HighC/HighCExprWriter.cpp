@@ -5556,13 +5556,22 @@ TypeRef HighCWriter::typedSlotFunction(const HighExpr &Callee) const {
   return Member->Pointee;
 }
 
+std::string HighCWriter::unknownValueText(const HighExpr &E,
+                                          llvm::StringRef Kind) {
+  const std::string Text =
+      "(__builtin_trap(), 0 /* unknown " + Kind.str() + " */)";
+  if (E.Type && E.Type->Kind == NdTypeKind::Ptr)
+    return "(" + typeToC(E.Type) + ")(uintptr_t)" + Text;
+  return Text;
+}
+
 std::string HighCWriter::unknownVarUse(const HighExpr &E,
                                        const std::string &Name,
                                        const std::string &RawName) {
   // Definitions consisting only of unknown values are omitted from C.
   // Their observable uses must still fail, including renamed SSA temps.
   if (UnknownOnlyNames.count(Name))
-    return "(__builtin_trap(), 0 /* unknown value */)";
+    return unknownValueText(E, "value");
   // An unassigned architectural register or flag can be a genuine unknown
   // live-in. Keep the failure at the point of use instead of emitting an
   // undeclared name or inventing zero.
@@ -5577,7 +5586,7 @@ std::string HighCWriter::unknownVarUse(const HighExpr &E,
       return "(uintptr_t)__builtin_return_address(0)";
     if (x87HelperFor(E) == X87CHelper::ControlWord)
       return useX87Helper(X87CHelper::ControlWord) + "()";
-    return "(__builtin_trap(), 0 /* unknown register */)";
+    return unknownValueText(E, "register");
   }
   return {};
 }
@@ -6690,7 +6699,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
   case ExprKind::Undef:
     // An observed unknown value has no recovered semantics. Fail at this
     // use; an unchosen conditional operand must not fail eagerly.
-    return "(__builtin_trap(), 0 /* unknown value */)";
+    return unknownValueText(E, "value");
   case ExprKind::BinOp:
     if (ProjectFrameAliasesIntoStorage)
       if (const auto Disp = certifiedFrameStorageDisplacement(E))

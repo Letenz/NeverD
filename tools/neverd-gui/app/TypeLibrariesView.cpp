@@ -8,6 +8,7 @@
 
 #include "Icons.h"
 #include "Session.h"
+#include "ShortcutHint.h"
 #include "ShrinkableRow.h"
 
 #include <QDialog>
@@ -45,22 +46,23 @@ TypeLibrariesView::TypeLibrariesView(Session &session, QWidget *parent)
   auto *commands = new QWidget(this);
   auto *commandLayout = new QHBoxLayout(commands);
   commandLayout->setContentsMargins(0, 0, 0, 0);
+  const QKeySequence addKey(Qt::Key_Insert);
+  const QKeySequence removeKey(QKeySequence::Delete);
   const auto commandButton = [&](const char *iconName, const QString &text,
                                  const QKeySequence &key) {
     auto *button = new QToolButton(commands);
     button->setIcon(icon(QString::fromLatin1(iconName)));
     button->setToolTip(QStringLiteral("%1 (%2)").arg(
         text, key.toString(QKeySequence::NativeText)));
+    setShortcutHint(*button, key);
     button->setAutoRaise(true);
     commandLayout->addWidget(button);
     return button;
   };
-  add_ = commandButton("local_types_add", tr("Add a type library"),
-                       QKeySequence(Qt::Key_Insert));
+  add_ = commandButton("local_types_add", tr("Add a type library"), addKey);
   add_->setObjectName(QStringLiteral("typeLibrariesAdd"));
-  remove_ =
-      commandButton("local_types_delete", tr("Leave the selected library out"),
-                    QKeySequence(QKeySequence::Delete));
+  remove_ = commandButton("local_types_delete",
+                          tr("Leave the selected library out"), removeKey);
   remove_->setObjectName(QStringLiteral("typeLibrariesRemove"));
   commandLayout->addStretch(1);
   makeRowShrinkable(*commands);
@@ -90,24 +92,27 @@ TypeLibrariesView::TypeLibrariesView(Session &session, QWidget *parent)
           &TypeLibrariesView::removeLibrary);
   // IDA's keys of its list windows: Ins adds, Del removes.
   for (const auto &[key, slot] :
-       {std::pair(QKeySequence(Qt::Key_Insert), &TypeLibrariesView::addLibrary),
-        std::pair(QKeySequence(QKeySequence::Delete),
-                  &TypeLibrariesView::removeLibrary)}) {
+       {std::pair(addKey, &TypeLibrariesView::addLibrary),
+        std::pair(removeKey, &TypeLibrariesView::removeLibrary)}) {
     auto *shortcut = new QShortcut(key, table_);
     shortcut->setContext(Qt::WidgetWithChildrenShortcut);
     connect(shortcut, &QShortcut::activated, this, slot);
   }
   connect(table_, &QTreeWidget::customContextMenuRequested, this,
-          [this](const QPoint &point) {
+          [this, addKey, removeKey](const QPoint &point) {
             QMenu menu(this);
-            menu.addAction(icon(QStringLiteral("local_types_add")),
-                           tr("Add a type library..."), this,
-                           &TypeLibrariesView::addLibrary)
-                ->setEnabled(add_->isEnabled());
-            menu.addAction(icon(QStringLiteral("local_types_delete")),
-                           tr("Leave the library out"), this,
-                           &TypeLibrariesView::removeLibrary)
-                ->setEnabled(remove_->isEnabled());
+            const auto item = [&](QToolButton *button, const QString &text,
+                                  const QKeySequence &key, auto slot) {
+              auto *action = menu.addAction(button->icon(), text, this, slot);
+              action->setShortcut(key);
+              action->setShortcutContext(Qt::WidgetShortcut);
+              action->setShortcutVisibleInContextMenu(true);
+              action->setEnabled(button->isEnabled());
+            };
+            item(add_, tr("Add a type library..."), addKey,
+                 &TypeLibrariesView::addLibrary);
+            item(remove_, tr("Leave the library out"), removeKey,
+                 &TypeLibrariesView::removeLibrary);
             menu.exec(table_->viewport()->mapToGlobal(point));
           });
   connect(table_, &QTreeWidget::currentItemChanged, this,

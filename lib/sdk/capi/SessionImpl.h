@@ -1184,6 +1184,7 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
+    Emitter.setPreserveUnknownSourceValues(true);
     Emitter.setAnalystSourceProjection(UsingAnalystCallContracts);
     if (UsingAnalystCallContracts && CallVariant)
       Emitter.setSourceTargetSignatures(&CallVariant->TargetSignatures);

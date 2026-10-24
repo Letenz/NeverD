@@ -458,7 +458,11 @@ these shared import facts.
 
 `HighCStoreForwarding.IncompleteFrameRecordsKeepTheirInteriorFields` checks
 lazy display-field completion for frame records and call-type overlays among
-scalar slots. Both member names and types retain ambiguous-owner refusal.
+scalar slots with known or unknown extents. Exact slot addresses and mismatched
+access widths cannot name interior fields. Both member names and types retain
+ambiguous-owner refusal.
+`FrameMemberQueriesFollowNewSlotsAfterProjection` checks that a scalar-only
+function cannot suppress later record queries on the same writer.
 Run the store-forwarding, source-dialect and local-types debug-context owners
 after changing frame-member queries.
 
@@ -1787,6 +1791,46 @@ provenance-only changes, changed native bodies, engine/input mismatches and
 missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
+
+`NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
+and shortcut tooltips through action changes, translation and disabled actions.
+`NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
+Ctrl+E/P/L/S keys, filtering, Enter, cancellation and navigation history with
+the fixture worker. `shortcutsCanBeFoundByKeyAndScope` checks the shortcut
+browser's scoped Ctrl+E commands and unassigned actions using native and
+portable key spellings. `commandButtonsExposeTheirKeys` checks local action
+buttons in both themes, including compact Close and Back buttons whose Escape
+binding stays functional without visible key text.
+Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
+repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
+and function-edit controller cases check that their scoped Ctrl+E still wins.
+
+`floatingDocksReturnToWorkbench` checks returning through the client title bar,
+its dock button and the tab context menu in both themes.
+`floatingAnalysisMenusStayWithTheirView` checks popup ownership and native
+transient parenting for floating text, graph, pseudocode and IR views.
+`floatingCommandDialogsStayWithTheirView` checks search, calculator input and
+results, options and other command dialogs against their floating owner.
+`floatingWindowsKeepMouseHistory` checks mouse Back and Forward in a floating
+listing. The Desktop GUI workflow runs these interactions with the native Qt
+platform on Windows and macOS, retaining separate logs beside the offscreen
+results.
+The jump-chooser matrix also runs from floating views.
+`selectedBytesExportWithIdasKey` presses Shift+E in docked and floating listing
+and hex selections, checks every text format and compares saved raw bytes.
+`byteExportsRejectHolesAndRetireStaleReads` covers paged ranges, unreadable
+tails, invalid bounds, input changes and project closure without replacing an
+existing file. The same `NEVERD_SHORTCUT_CAPTURES` directory captures these
+dialogs and windows. Repeat with the native Qt platform for compositor behavior;
+offscreen checks alone do not exercise native dragging or window stacking.
+
+`generatedViewsStayClosedAfterReopening` saves docked and floating pseudocode,
+LLVM C and every IR view, restarts from the saved desktop, reopens the binary
+and a packed database, and switches projects. Generated windows must stay
+closed until explicitly requested again, then display the selected function.
+It also checks closing a project and explicitly restoring a desktop, preserving
+generated content when it is still available. `searchResultsStayClosedAfterReopening`
+applies the same lifecycle checks to temporary search results, docked and floating.
 
 `NeverDFunctionAdmissionTests` checks unnamed non-leaf entries with partial
 unwind coverage, cached and uncached selections, actual split-chunk ownership,
@@ -11798,3 +11842,11 @@ through both C routes, with source optimization enabled and disabled, at C
 O0/O2 with UBSan. The oracle observes the non-return register's stored value
 and the ordinary call result. This qualifies bounded scalar constants, not
 dynamic machine-state returns or other architectures.
+The opaque CPUID-exit counterexample checks that both C routes report an
+observed missing value before modifying the caller's output, after exactly one
+provider call. It covers serial and sharded LLVM source emission, optimized and
+unoptimized source, and C O0/O2 across the three x64 formats. Marker tests also
+check distinct observations after LLVM optimization, unused values and a real
+function whose name collides with the internal marker spelling. These tests
+certify explicit source unavailability, not a reconstructed dynamic call-state
+contract.

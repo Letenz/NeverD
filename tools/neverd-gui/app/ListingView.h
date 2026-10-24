@@ -34,6 +34,7 @@ class ListingView final : public QAbstractScrollArea {
 public:
   struct Line {
     Address item = 0, address = 0;
+    Address itemSize = 0;
     int sub = 0, cls = 0;
     QString kind, prefix, flow, function;
     std::optional<Address> target, functionAddress;
@@ -68,6 +69,9 @@ public:
   QString currentToken() const;
   QString currentLineText() const;
   QString selectedText() const;
+  /// Inclusive byte bounds of selected items, or the current item. Only
+  /// worker-supplied extents from the current listing may define this range.
+  std::optional<std::pair<Address, Address>> byteSelection() const;
   const Line *cursorLine() const;
   void setShowPrefixes(bool show);
   void setOpcodeBytes(int count);

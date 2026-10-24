@@ -68,6 +68,13 @@ std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
                                              const llvm::CallInst &Call);
 
 //--- Arch-specific (LLVMCIntrinsicRenderX86.cpp) ---
+/// Recognize the complete scalar MSR/port call with ordered native effects.
+bool isX86ScalarSystemNativeName(llvm::StringRef Name);
+std::optional<InlineAsmRender>
+renderX86ScalarSystemCall(Arch TheArch, BinaryFormat Format,
+                          const llvm::CallBase &Call,
+                          const std::string &ResultName, bool ResultLive,
+                          const std::vector<std::string> &Args);
 /// Recognize the complete owned CR/DR call, rejecting malformed candidates.
 bool isX86SystemRegisterNativeName(llvm::StringRef Name);
 std::optional<InlineAsmRender>

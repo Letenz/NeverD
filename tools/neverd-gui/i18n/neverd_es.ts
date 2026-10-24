@@ -1127,6 +1127,14 @@
         <source>Inspect unwind metadata at the selected instruction</source>
         <translation>Inspeccionar los metadatos de desenrollado en la instrucción seleccionada</translation>
     </message>
+    <message>
+        <source>Copy or save the selected bytes</source>
+        <translation>Copiar o guardar los bytes seleccionados</translation>
+    </message>
+    <message>
+        <source>Export data...</source>
+        <translation>Exportar datos...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1807,12 +1815,12 @@ Haga doble clic para ir a la declaración.</translation>
         <translation>Los nombres de variables guardados pertenecen a otra representación del código fuente</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>Expandir bloque (Ctrl+Shift+])</translation>
+        <source>Expand block (%1)</source>
+        <translation>Expandir bloque (%1)</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>Contraer bloque (Ctrl+Shift+[)</translation>
+        <source>Collapse block (%1)</source>
+        <translation>Contraer bloque (%1)</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -2970,6 +2978,50 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Another link took this one's place.</source>
         <translation>Otro enlace ocupó el lugar de este.</translation>
     </message>
+    <message>
+        <source>List commands take priority while their list has focus.</source>
+        <translation>Los comandos de la lista tienen prioridad cuando esta tiene el foco.</translation>
+    </message>
+    <message>
+        <source>Filter by action, shortcut or scope</source>
+        <translation>Filtrar por acción, atajo o ámbito</translation>
+    </message>
+    <message>
+        <source>Scope</source>
+        <translation>Ámbito</translation>
+    </message>
+    <message>
+        <source>Unassigned</source>
+        <translation>Sin asignar</translation>
+    </message>
+    <message>
+        <source>Analysis views</source>
+        <translation>Vistas de análisis</translation>
+    </message>
+    <message>
+        <source>Workbench</source>
+        <translation>Área de trabajo</translation>
+    </message>
+    <message>
+        <source>Quick filter</source>
+        <translation>Filtro rápido</translation>
+    </message>
+    <message>
+        <source>Lists</source>
+        <translation>Listas</translation>
+    </message>
+    <message>
+        <source>Add types…</source>
+        <translation>Añadir tipos…</translation>
+    </message>
+    <message>
+        <source>Edit type…</source>
+        <translation>Editar tipo…</translation>
+    </message>
+    <message>
+        <source>Delete types…</source>
+        <translation>Eliminar tipos…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3767,12 +3819,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Siguiente</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>Coincidencia anterior (Mayús+Intro o Mayús+F3)</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>Coincidencia anterior (%1 o %2)</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>Siguiente coincidencia (Intro o F3)</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>Siguiente coincidencia (%1 o %2)</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4603,12 +4655,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+clic para abrir</translation>
+        <source>%1click to open</source>
+        <translation>%1clic para abrir</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>Haga doble clic o Ctrl+clic para abrir %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>Haga doble clic o %2clic para abrir %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4653,8 +4705,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>Declarar</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>Leer las declaraciones (Ctrl+Intro)</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>Leer las declaraciones (%1)</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4794,8 +4846,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>El operando conserva su número.</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>El programa no tiene estructuras ni uniones. Declárelas en Tipos locales (Shift+F1).</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>El programa no tiene estructuras ni uniones. Declárelas en Tipos locales (%1).</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6250,8 +6302,8 @@ Cobertura: %7</translation>
         <translation>Seleccione una función para examinar su contraparte.</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>Seleccione bloques para seguir sus contrapartes. Ctrl+rueda cambia el zoom.</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>Seleccione bloques para seguir sus contrapartes. %1rueda cambia el zoom.</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>
@@ -8127,6 +8179,100 @@ SHA-256 secundario: %3
     <message>
         <source>unsupported</source>
         <translation>no compatible</translation>
+    </message>
+</context>
+<context>
+    <name>Docking</name>
+    <message>
+        <source>Dock back into main window</source>
+        <translation>Volver a acoplar a la ventana principal</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::ExportDataDialog</name>
+    <message>
+        <source>%1 bytes ready.</source>
+        <translation>%1 bytes listos.</translation>
+    </message>
+    <message>
+        <source>%1 bytes ready. Preview shows the first %2; copy and save use the complete range.</source>
+        <translation>%1 bytes listos. La vista previa muestra los primeros %2; copiar y guardar usan todo el intervalo.</translation>
+    </message>
+    <message>
+        <source>C byte array (decimal)</source>
+        <translation>Arreglo de bytes C (decimal)</translation>
+    </message>
+    <message>
+        <source>C byte array (hex)</source>
+        <translation>Arreglo de bytes C (hexadecimal)</translation>
+    </message>
+    <message>
+        <source>C string literal</source>
+        <translation>Literal de cadena C</translation>
+    </message>
+    <message>
+        <source>Cannot read the complete range at %1. Nothing was exported.</source>
+        <translation>No se puede leer todo el intervalo en %1. No se exportó nada.</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copiar</translation>
+    </message>
+    <message>
+        <source>Could not save %1: %2</source>
+        <translation>No se pudo guardar %1: %2</translation>
+    </message>
+    <message>
+        <source>End address (inclusive):</source>
+        <translation>Dirección final (incluida):</translation>
+    </message>
+    <message>
+        <source>Enter a valid address range.</source>
+        <translation>Introduzca un intervalo de direcciones válido.</translation>
+    </message>
+    <message>
+        <source>Export data</source>
+        <translation>Exportar datos</translation>
+    </message>
+    <message>
+        <source>Export takes at most %1 bytes; select a smaller range.</source>
+        <translation>Se pueden exportar como máximo %1 bytes; seleccione un intervalo menor.</translation>
+    </message>
+    <message>
+        <source>Format:</source>
+        <translation>Formato:</translation>
+    </message>
+    <message>
+        <source>Hex string</source>
+        <translation>Cadena hexadecimal</translation>
+    </message>
+    <message>
+        <source>Raw bytes (file only)</source>
+        <translation>Bytes sin procesar (solo archivo)</translation>
+    </message>
+    <message>
+        <source>Reading bytes...</source>
+        <translation>Leyendo bytes...</translation>
+    </message>
+    <message>
+        <source>Reading bytes: %1 / %2</source>
+        <translation>Leyendo bytes: %1 / %2</translation>
+    </message>
+    <message>
+        <source>Save as...</source>
+        <translation>Guardar como...</translation>
+    </message>
+    <message>
+        <source>Saved %1 bytes to %2</source>
+        <translation>Se guardaron %1 bytes en %2</translation>
+    </message>
+    <message>
+        <source>Spaced hex string</source>
+        <translation>Cadena hexadecimal con espacios</translation>
+    </message>
+    <message>
+        <source>Start address:</source>
+        <translation>Dirección inicial:</translation>
     </message>
 </context>
 </TS>
