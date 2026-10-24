@@ -4493,14 +4493,13 @@ are checked even when the final annotation is absent. A contiguous per-slot
 storage inventory must partition the freshly proved runtime envelope exactly.
 Other architectures and complex tables retain their existing conservative rules.
 
-ELF and COFF loaders keep one `dwarf_eh::ItaniumFrameReader` for the load.
-It decodes the immutable frame bytes once, publishes their extents before
-function discovery, and retains the complete CIE/FDE records and diagnostics
-until language recovery. Personality names and LSDAs still resolve after
-symbol/import discovery; architecture, mapped bytes, layout and pointer bases
-stay fixed between these phases. The final phase consumes the records and
-releases the temporary storage. Standalone frame-reader calls read afresh,
-and relocatable objects defer decoding until language recovery.
+ELF and COFF extent discovery reads DWARF frame headers through the same
+bounded decoder as full exception recovery, without constructing the unused
+CFI instruction programs. These private header records supply only code
+extents, never unwind rules or language metadata. Runtime-index extension
+records retain the complete decode their admission requires. Full recovery
+still reads the current bytes after symbol/import discovery and validates all
+CFI programs, personalities and LSDAs before publishing exception metadata.
 
 DWARF frame-section decoding failures remain structural failures on every
 FDE-backed function from that section in Itanium and Darwin. A later language

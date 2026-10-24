@@ -21,39 +21,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 
-#include <memory>
-
 namespace neverd::dwarf_eh {
-
-/// Recover one image's Itanium tables across function discovery. Decode the
-/// frame records once, publish their extents before discovery, then consume
-/// them after imports and symbols can name their personalities. Architecture,
-/// section/segment layout, pointer bases and mapped bytes must stay unchanged
-/// once decoding starts; discovered symbols and other metadata may change.
-class ItaniumFrameReader {
-public:
-  explicit ItaniumFrameReader(BinaryImage &Image);
-  ~ItaniumFrameReader();
-  ItaniumFrameReader(const ItaniumFrameReader &) = delete;
-  ItaniumFrameReader &operator=(const ItaniumFrameReader &) = delete;
-
-  /// Publish frame extents without resolving personalities or language data.
-  /// A relocatable object has no linked extents, so it is not decoded here.
-  void recordFrameExtents();
-
-  /// Decode language data using the image's current symbols and imports.
-  /// The final phase: consumes and releases the retained frame records.
-  /// Also works without an earlier call to recordFrameExtents().
-  void parseItaniumExceptions();
-
-private:
-  struct FrameData;
-  BinaryImage &Img;
-  bool Prepared = false;
-  std::unique_ptr<FrameData> Data;
-
-  void prepareFrames();
-};
 
 /// Record the code extent of every frame in the call frame section, before
 /// heuristic function discovery runs.  Each frame range becomes a known code
@@ -63,8 +31,6 @@ private:
 /// as it already does inside a PE `.pdata` range.  Language data is decoded
 /// later, by parseItaniumExceptions.  A no-op for a relocatable object, whose
 /// frames name their functions through relocations.
-/// This standalone call reads afresh; loaders use ItaniumFrameReader to retain
-/// the decoded records for the later language phase.
 void recordFrameExtents(BinaryImage &Img);
 
 /// Decode `.eh_frame` / `__eh_frame` and every LSDA it names into
