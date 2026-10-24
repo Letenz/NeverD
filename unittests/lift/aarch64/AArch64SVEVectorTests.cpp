@@ -25,6 +25,7 @@
 #include "neverd/ir/med/AArch64/AArch64SVEState.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -1297,4 +1298,503 @@ TEST(AArch64SVECPA, DiscardedHighIRCallsStillExecuteTheCheck) {
     ASSERT_TRUE(HighCEmitter().emit({High}, Out, Options));
     compileSource(Source, Case.EmittedWord);
   }
+}
+
+namespace {
+#define NEVERD_SVE_PREFIX_FIXTURE(Type, Name, Value)                           \
+  constexpr Type Name = Value;
+#include "AArch64SVEPrefixFixtures.def"
+
+struct PrefixCase {
+  uint32_t Word;
+  uint32_t Follower;
+  Intrinsic Id;
+  unsigned Destination;
+  unsigned Source;
+  unsigned Predicate;
+  uint32_t MachineWord;
+};
+
+constexpr PrefixCase PrefixCases[] = {
+#define NEVERD_SVE_PREFIX_PAIR(Word, Follower, Id, Dst, Src, Pred, Machine)    \
+  {Word, Follower, Intrinsic::Id, Dst, Src, Pred, Machine},
+#include "AArch64SVEPrefixFixtures.def"
+};
+
+enum class PrefixDecodeMode { Full, Fast, Light };
+
+int decodePrefix(Decoder &Decode, PrefixDecodeMode Mode, const uint8_t *Bytes,
+                 size_t Length, va_t Address, DecodedInsn &Instruction) {
+  switch (Mode) {
+  case PrefixDecodeMode::Full:
+    return Decode.decodeOne(Bytes, Length, Address, Instruction);
+  case PrefixDecodeMode::Fast:
+    return Decode.decodeOneForLift(Bytes, Length, Address, Instruction);
+  case PrefixDecodeMode::Light:
+    return Decode.decodeOneLight(Bytes, Length, Address, Instruction);
+  }
+  return 0;
+}
+
+MedFunc prefixedVectorFunction(Intrinsic Id, unsigned PredicateElement) {
+  auto F = checkedVectorFunction(CPACases[kPrefixTestPredCPA], false,
+                                 PredicateElement);
+  F.Name = kPrefixTestFunction;
+  auto &Ops = F.Blocks.front().Ops;
+  auto &Consumer = Ops[kCPAInstructionIndex];
+  const auto Result = temporary(kPrefixTestValueId);
+  auto Prefix =
+      intrinsic(Id, Result, {Consumer.Inputs[1], temporary(kCPAInitialId)});
+  if (Id == Intrinsic::A64_SveMovprfxMerge)
+    Prefix.addInput(Consumer.Inputs[kPrefixTestMergeIndex]);
+  Prefix.addInput(constant(kWideElement, kElementBytes));
+  Consumer.Inputs[kPrefixTestMergeIndex] = Result;
+  Ops.insert(Ops.begin() + kCPAInstructionIndex, Prefix);
+  return F;
+}
+
+BinaryImage prefixImage(const PrefixCase &Case, bool BranchIntoConsumer) {
+  std::vector<uint32_t> Words = {
+#define NEVERD_SVE_CPA_SETUP(Word) Word,
+#include "AArch64SVECPAFixtures.def"
+#define NEVERD_SVE_PREFIX_SETUP(Word) Word,
+#include "AArch64SVEPrefixFixtures.def"
+  };
+  if (BranchIntoConsumer)
+    Words.push_back(kPrefixTestDirectBranch);
+  Words.insert(
+      Words.end(),
+      {Case.Word, Case.Follower,
+       Case.Destination == kCPAMaximumRegister ? kCPALastFinal : kCPALastFirst,
+       kCPAReturn});
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::ELF;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = kEntry;
+  Text.Size = Text.FileSz = Words.size() * kInstructionBytes;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.FileSz);
+  for (size_t I = 0; I != Words.size(); ++I)
+    writeLE<uint32_t>(Text.Data.data() + I * kInstructionBytes, Words[I]);
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+} // namespace
+
+TEST(AArch64SVEPrefix, ThreeFormsKeepIndependentCopyAndInactiveOperands) {
+  for (const auto &Case : PrefixCases)
+    for (const auto Mode : {PrefixDecodeMode::Full, PrefixDecodeMode::Fast,
+                            PrefixDecodeMode::Light}) {
+      SCOPED_TRACE(Case.Word);
+      SCOPED_TRACE(Case.Follower);
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Arch::AArch64));
+      std::array<uint8_t, kPrefixTestPairBytes> Bytes;
+      writeLE<uint32_t>(Bytes.data(), Case.Word);
+      writeLE<uint32_t>(Bytes.data() + kInstructionBytes, Case.Follower);
+      DecodedInsn Instruction;
+      ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), kEntry,
+                             Instruction),
+                kInstructionBytes);
+      ASSERT_TRUE(Instruction.AArch64Prefix);
+      EXPECT_EQ(Instruction.AArch64Prefix->Prefix, Case.Word);
+      EXPECT_EQ(Instruction.AArch64Prefix->Follower, Case.Follower);
+      std::vector<LowOp> Ops;
+      ASSERT_NO_THROW(Decode.liftToLow(Instruction, Ops));
+      ASSERT_EQ(Ops.size(), 1u);
+      const auto &Op = Ops.front();
+      const auto Destination =
+          NdVar::reg(a64reg::Z(Case.Destination), kVectorBytes);
+      const auto Source = NdVar::reg(a64reg::Z(Case.Source), kVectorBytes);
+      EXPECT_EQ(Op.Addr, kEntry);
+      EXPECT_EQ(Op.Output, Destination);
+      if (Case.Id == Intrinsic::_Count) {
+        EXPECT_EQ(Op.Opcode, NdOp::COPY);
+        ASSERT_EQ(Op.NumInputs, 1u);
+        EXPECT_EQ(Op.Inputs[0], Source);
+      } else {
+        ASSERT_TRUE(lowAArch64SVEPrefixShapeIsValid(Op));
+        EXPECT_EQ(Op.Inputs[0].Offset, static_cast<uint64_t>(Case.Id));
+        EXPECT_EQ(Op.Inputs[1],
+                  NdVar::reg(a64reg::P(Case.Predicate), kPredicateBytes));
+        EXPECT_EQ(Op.Inputs[2], Source);
+        if (Case.Id == Intrinsic::A64_SveMovprfxMerge)
+          EXPECT_EQ(Op.Inputs[3], Destination);
+        EXPECT_EQ(Op.Inputs[Op.NumInputs - 1],
+                  NdVar::cst(kWideElement, kElementBytes));
+        for (unsigned I = 1; I + 1 < Op.NumInputs; ++I) {
+          auto Bad = Op;
+          Bad.Inputs[I].Size = kCPANeonBytes;
+          EXPECT_FALSE(lowAArch64SVEPrefixShapeIsValid(Bad));
+          Bad = Op;
+          Bad.Inputs[I] = NdVar::cst(0, Bad.Inputs[I].Size);
+          EXPECT_FALSE(lowAArch64SVEPrefixShapeIsValid(Bad));
+        }
+      }
+    }
+}
+
+TEST(AArch64SVEPrefix, InvalidPairsFailBeforePublishingEvenInPermissiveMode) {
+  const std::array<uint32_t, 2> Cases[] = {
+#define NEVERD_SVE_PREFIX_REJECT(Word, Follower) {Word, Follower},
+#include "AArch64SVEPrefixFixtures.def"
+  };
+  for (const auto &Case : Cases)
+    for (const auto Mode : {PrefixDecodeMode::Full, PrefixDecodeMode::Fast,
+                            PrefixDecodeMode::Light})
+      for (bool Strict : {false, true}) {
+        SCOPED_TRACE(Case[0]);
+        SCOPED_TRACE(Case[1]);
+        Decoder Decode;
+        ASSERT_TRUE(Decode.init(Arch::AArch64));
+        Decode.setStrict(Strict);
+        std::array<uint8_t, kPrefixTestPairBytes> Bytes;
+        for (size_t I = 0; I != Case.size(); ++I)
+          writeLE<uint32_t>(Bytes.data() + I * kInstructionBytes, Case[I]);
+        DecodedInsn Instruction;
+        ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), kEntry,
+                               Instruction),
+                  kInstructionBytes);
+        std::vector<LowOp> Ops(1);
+        Ops.front().Opcode = NdOp::RETURN;
+        EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
+        ASSERT_EQ(Ops.size(), 1u);
+        EXPECT_EQ(Ops.front().Opcode, NdOp::RETURN);
+      }
+}
+
+TEST(AArch64SVEPrefix, FollowerEvidenceBelongsOnlyToTheDecodedOccurrence) {
+  const auto &Case = PrefixCases[0];
+  std::array<uint8_t, kPrefixTestPairBytes> Bytes;
+  writeLE<uint32_t>(Bytes.data(), Case.Word);
+  writeLE<uint32_t>(Bytes.data() + kInstructionBytes, Case.Follower);
+  for (const auto Mode : {PrefixDecodeMode::Full, PrefixDecodeMode::Fast,
+                          PrefixDecodeMode::Light}) {
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Arch::AArch64));
+    DecodedInsn Instruction;
+    for (size_t Length = kInstructionBytes; Length < Bytes.size(); ++Length) {
+      ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), kEntry,
+                             Instruction),
+                kInstructionBytes);
+      ASSERT_TRUE(Instruction.AArch64Prefix);
+      ASSERT_EQ(
+          decodePrefix(Decode, Mode, Bytes.data(), Length, kEntry, Instruction),
+          kInstructionBytes);
+      EXPECT_FALSE(Instruction.AArch64Prefix);
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+    }
+    ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), kEntry,
+                           Instruction),
+              kInstructionBytes);
+    ASSERT_TRUE(Instruction.AArch64Prefix);
+    EXPECT_EQ(decodePrefix(Decode, Mode, Bytes.data(), 0, kEntry, Instruction),
+              0);
+    EXPECT_FALSE(Instruction.AArch64Prefix);
+    for (va_t Address : {kEntry + 1, kPrefixTestOverflowPC}) {
+      ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), Address,
+                             Instruction),
+                kInstructionBytes);
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+    }
+  }
+}
+
+TEST(AArch64SVEPrefix, PredicatedDataflowSelectsCanonicalDoublewordLanes) {
+  for (const auto Id :
+       {Intrinsic::A64_SveMovprfxZero, Intrinsic::A64_SveMovprfxMerge})
+    for (const auto Element : Widths) {
+      const auto F = prefixedVectorFunction(Id, Element);
+      const auto &Prefix = F.Blocks.front().Ops[kCPAInstructionIndex];
+      ASSERT_TRUE(aarch64SVEPrefixMedShapeIsValid(Prefix));
+      EXPECT_FALSE(endsCallArgumentSetup(Prefix));
+      ASSERT_EQ(validateAArch64SVEState(F, Arch::AArch64), nullptr);
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({F}, Context, kFunction, Arch::AArch64);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      bool Found = false;
+      for (const auto &Block : *Module->getFunction(F.Name))
+        for (const auto &Inst : Block)
+          if (const auto *Select = llvm::dyn_cast<llvm::SelectInst>(&Inst)) {
+            if (!Select->getName().starts_with(kPrefixTestSelectName))
+              continue;
+            Found = true;
+            const auto *Type =
+                llvm::dyn_cast<llvm::ScalableVectorType>(Select->getType());
+            ASSERT_TRUE(Type);
+            EXPECT_EQ(Type->getElementCount().getKnownMinValue(),
+                      kMinimumBytes / kWideElement);
+            EXPECT_TRUE(Type->getElementType()->isIntegerTy(kWideElement * 8));
+            const auto *Inactive =
+                llvm::dyn_cast<llvm::Constant>(Select->getFalseValue());
+            EXPECT_EQ(Inactive && Inactive->isNullValue(),
+                      Id == Intrinsic::A64_SveMovprfxZero);
+          }
+      EXPECT_TRUE(Found);
+      optimizeCheckedVectors(*Module);
+      const auto Object =
+          Codegen().compile(*Module, Arch::AArch64, BinaryFormat::ELF, kTriple);
+      ASSERT_TRUE(Object.Success);
+      expectInstruction(llvm::StringRef(reinterpret_cast<const char *>(
+                                            Object.ObjectData.data()),
+                                        Object.ObjectData.size()),
+                        CPACases[kPrefixTestPredCPA].EmittedWord);
+      const auto Source = highSource(F);
+      EXPECT_NE(Source.find(kPrefixTestSelectC), std::string::npos);
+      EXPECT_EQ(Source.find(kPrefixTestZeroC) != std::string::npos,
+                Id == Intrinsic::A64_SveMovprfxZero);
+      compileSource(Source, CPACases[kPrefixTestPredCPA].EmittedWord);
+    }
+}
+
+TEST(AArch64SVEPrefix, EveryPredicatedInputRequiresWholeLocalProvenance) {
+  for (const auto Id :
+       {Intrinsic::A64_SveMovprfxZero, Intrinsic::A64_SveMovprfxMerge}) {
+    const auto F = prefixedVectorFunction(Id, kByteElement);
+    const auto &Op = F.Blocks[0].Ops[kCPAInstructionIndex];
+    for (unsigned I = 1; I + 1 < Op.NumInputs; ++I) {
+      auto Missing = F;
+      Missing.Blocks[0].Ops[kCPAInstructionIndex].Inputs[I].Id +=
+          kPrefixTestValueId;
+      expectStateRejected(Missing);
+      auto BadWidth = F;
+      auto &Bad = BadWidth.Blocks[0].Ops[kCPAInstructionIndex];
+      Bad.Inputs[I].Size = kCPANeonBytes;
+      EXPECT_FALSE(aarch64SVEPrefixMedShapeIsValid(Bad));
+      EXPECT_TRUE(endsCallArgumentSetup(Bad));
+      expectStateRejected(BadWidth);
+      auto Literal = F;
+      auto &Input = Literal.Blocks[0].Ops[kCPAInstructionIndex].Inputs[I];
+      Input = constant(0, Input.Size);
+      expectStateRejected(Literal);
+    }
+    auto Element = F;
+    Element.Blocks[0].Ops[kCPAInstructionIndex].Inputs[Op.NumInputs - 1] =
+        constant(kByteElement, kElementBytes);
+    expectStateRejected(Element);
+    auto Arity = F;
+    Arity.Blocks[0].Ops[kCPAInstructionIndex].addInput(constant(0));
+    expectStateRejected(Arity);
+    auto Output = F;
+    Output.Blocks[0].Ops[kCPAInstructionIndex].Output = {};
+    expectStateRejected(Output);
+  }
+}
+
+TEST(AArch64SVEPrefix, RawPairsSurviveCFGAndDirectEntryToTheirConsumer) {
+  for (const auto &Case : PrefixCases)
+    for (bool Branch : {false, true}) {
+      if (Branch && Case.Source == Case.Destination)
+        continue;
+      SCOPED_TRACE(Case.Word);
+      SCOPED_TRACE(Case.Follower);
+      const auto Image = prefixImage(Case, Branch);
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Arch::AArch64));
+      const auto Low =
+          CFGBuilder().build(Image, Decode, kEntry, kPrefixTestFunction);
+      ASSERT_TRUE(Low.UnsupportedInstructionAddresses.empty());
+      LowToMedConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::ELF);
+      ASSERT_EQ(validateAArch64SVEState(Med, Arch::AArch64), nullptr);
+      if (Branch) {
+        bool DistinctInputs = false;
+        for (const auto &Block : Med.Blocks)
+          for (const auto &Phi : Block.Phis)
+            if (Phi.Output.Size == kVectorBytes && Phi.Args.size() == 2)
+              DistinctInputs |= Phi.Args[0].second != Phi.Args[1].second;
+        EXPECT_TRUE(DistinctInputs);
+      }
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({Med}, Context, kFunction, Arch::AArch64);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      optimizeCheckedVectors(*Module);
+      const auto Object =
+          Codegen().compile(*Module, Arch::AArch64, BinaryFormat::ELF, kTriple);
+      ASSERT_TRUE(Object.Success);
+      expectInstruction(llvm::StringRef(reinterpret_cast<const char *>(
+                                            Object.ObjectData.data()),
+                                        Object.ObjectData.size()),
+                        Case.MachineWord);
+      compileSource(highSource(Med), Case.MachineWord);
+    }
+}
+
+TEST(AArch64SVEPrefix, IsolatedLiftersAndTruncatedFunctionsDoNotInventPairs) {
+  for (const auto &Case : PrefixCases) {
+    auto Image = prefixImage(Case, false);
+    auto &Text = Image.Segments.front();
+    const size_t PrefixOffset = Text.Data.size() - 2 * kPrefixTestPairBytes;
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(Arch::AArch64));
+    DecodedInsn Instruction;
+    ASSERT_EQ(Decode.decodeOne(Text.Data.data() + PrefixOffset,
+                               kPrefixTestPairBytes, kEntry + PrefixOffset,
+                               Instruction),
+              kInstructionBytes);
+    std::vector<LowOp> Ops;
+    AArch64Lifter Lifter(Arch::AArch64);
+    EXPECT_THROW(Lifter.lift(Instruction.Raw, Ops), UnliftedInstruction);
+    EXPECT_TRUE(Ops.empty());
+
+    Text.Data.resize(PrefixOffset + kInstructionBytes);
+    Text.Size = Text.FileSz = Text.Data.size();
+    const auto Low =
+        CFGBuilder().build(Image, Decode, kEntry, kPrefixTestFunction);
+    ASSERT_EQ(Low.UnsupportedInstructionAddresses.size(), 1u);
+    EXPECT_EQ(Low.UnsupportedInstructionAddresses.front(),
+              kEntry + PrefixOffset);
+  }
+}
+
+TEST(AArch64SVEPrefix, CRenderersRejectMalformedAndCrossTargetContracts) {
+  for (const auto Id :
+       {Intrinsic::A64_SveMovprfxZero, Intrinsic::A64_SveMovprfxMerge}) {
+    std::vector<std::string> Args{kCPAPredicateArg, kCPAFirstArg};
+    std::vector<uint16_t> Widths{kPredicateBytes, kVectorBytes};
+    if (Id == Intrinsic::A64_SveMovprfxMerge) {
+      Args.emplace_back(kCPASecondArg);
+      Widths.push_back(kVectorBytes);
+    }
+    Args.emplace_back(kWideElementC);
+    Widths.push_back(kElementBytes);
+    bool Intrinsics = false;
+    EXPECT_FALSE(renderIntrinsicCall(Id, Arch::AArch64, Args, kVectorBytes,
+                                     Intrinsics, true, Widths)
+                     .empty());
+    EXPECT_TRUE(Intrinsics);
+    EXPECT_THROW(renderIntrinsicCall(Id, Arch::X64, Args, kVectorBytes,
+                                     Intrinsics, true, Widths),
+                 std::invalid_argument);
+    for (unsigned I = 0; I != Widths.size(); ++I) {
+      auto Invalid = Widths;
+      Invalid[I] = kCPANeonBytes;
+      EXPECT_THROW(renderIntrinsicCall(Id, Arch::AArch64, Args, kVectorBytes,
+                                       Intrinsics, true, Invalid),
+                   std::invalid_argument);
+    }
+    EXPECT_THROW(renderIntrinsicCall(Id, Arch::AArch64, Args, 0, Intrinsics,
+                                     true, Widths),
+                 std::invalid_argument);
+  }
+}
+
+TEST(AArch64SVEPrefix, PredicatedCopiesRetainWholeCopyDiamondAndLoopTransport) {
+  for (const auto Id :
+       {Intrinsic::A64_SveMovprfxZero, Intrinsic::A64_SveMovprfxMerge})
+    for (auto Mode : {Transport::Copy, Transport::Diamond, Transport::Loop}) {
+      auto F = vectorFunction(kWideElement, kWideElement, Mode);
+      auto &Block = F.Blocks[Mode == Transport::Loop ? kLoopBlock : 0];
+      const unsigned Producer = Mode == Transport::Loop ? 0 : kVectorOperation;
+      auto &Seed = Block.Ops[Producer];
+      const auto Output = Seed.Output;
+      Seed.Output = temporary(kPrefixTestValueId);
+      auto Prefix = intrinsic(
+          Id, Output, {temporary(kPredicateId, kPredicateBytes), Seed.Output});
+      if (Id == Intrinsic::A64_SveMovprfxMerge)
+        Prefix.addInput(Mode == Transport::Loop ? temporary(kCopyId)
+                                                : Seed.Output);
+      Prefix.addInput(constant(kWideElement, kElementBytes));
+      Block.Ops.insert(Block.Ops.begin() + Producer + 1, Prefix);
+      ASSERT_EQ(validateAArch64SVEState(F, Arch::AArch64), nullptr);
+      llvm::LLVMContext Context;
+      auto Module =
+          MedLLVMEmitter().emit({F}, Context, kFunction, Arch::AArch64);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      compileSource(highSource(F));
+    }
+}
+
+TEST(AArch64SVEPrefix, CopiedDecodeRecordsCannotBorrowAReusedInstruction) {
+  enum class Replacement { Address, Word, Opcode };
+  for (const auto Mode : {PrefixDecodeMode::Full, PrefixDecodeMode::Fast,
+                          PrefixDecodeMode::Light})
+    for (const auto Change :
+         {Replacement::Address, Replacement::Word, Replacement::Opcode}) {
+      const auto &Case = PrefixCases[0];
+      std::array<uint8_t, kPrefixTestPairBytes> Bytes;
+      writeLE<uint32_t>(Bytes.data(), Case.Word);
+      writeLE<uint32_t>(Bytes.data() + kInstructionBytes, Case.Follower);
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Arch::AArch64));
+      DecodedInsn Original, New;
+      ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), kEntry,
+                             Original),
+                kInstructionBytes);
+      ASSERT_TRUE(Original.AArch64Prefix);
+      va_t Address = kEntry;
+      if (Change == Replacement::Address)
+        Address += kInstructionBytes;
+      else if (Change == Replacement::Word)
+        writeLE<uint32_t>(Bytes.data(),
+                          PrefixCases[std::size(PrefixCases) - 1].Word);
+      else
+        writeLE<uint32_t>(Bytes.data(), Case.Follower);
+      ASSERT_EQ(
+          decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), Address, New),
+          kInstructionBytes);
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(Decode.liftToLow(Original, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+      EXPECT_NO_THROW(Decode.liftToLow(New, Ops));
+      EXPECT_FALSE(Ops.empty());
+    }
+}
+
+TEST(AArch64SVEPrefix, MissingDetailFailsBeforePublishing) {
+  for (const auto &Case : PrefixCases)
+    for (const auto Mode : {PrefixDecodeMode::Full, PrefixDecodeMode::Fast,
+                            PrefixDecodeMode::Light})
+      for (bool Strict : {false, true}) {
+        SCOPED_TRACE(Case.Word);
+        Decoder Decode;
+        ASSERT_TRUE(Decode.init(Arch::AArch64));
+        Decode.setStrict(Strict);
+        std::array<uint8_t, kPrefixTestPairBytes> Bytes;
+        writeLE<uint32_t>(Bytes.data(), Case.Word);
+        writeLE<uint32_t>(Bytes.data() + kInstructionBytes, Case.Follower);
+        DecodedInsn Instruction;
+        ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(), kEntry,
+                               Instruction),
+                  kInstructionBytes);
+        ASSERT_TRUE(Instruction.AArch64Prefix);
+        auto Raw = *Instruction.Raw;
+        Raw.detail = nullptr;
+        auto Missing = Instruction;
+        Missing.Raw = &Raw;
+        std::vector<LowOp> Ops(1);
+        Ops.front().Opcode = NdOp::RETURN;
+        EXPECT_THROW(Decode.liftToLow(Missing, Ops), UnliftedInstruction);
+        ASSERT_EQ(Ops.size(), 1u);
+        EXPECT_EQ(Ops.front().Opcode, NdOp::RETURN);
+        AArch64Lifter Lifter(Arch::AArch64);
+        Lifter.setStrict(Strict);
+        EXPECT_THROW(Lifter.lift(&Raw, Ops, false, Case.Follower),
+                     UnliftedInstruction);
+        ASSERT_EQ(Ops.size(), 1u);
+        EXPECT_EQ(Ops.front().Opcode, NdOp::RETURN);
+        for (bool Detail : {false, true}) {
+          Decode.setDetail(Detail);
+          Decode.setText(!Detail);
+          ASSERT_EQ(decodePrefix(Decode, Mode, Bytes.data(), Bytes.size(),
+                                 kEntry, Instruction),
+                    kInstructionBytes);
+          EXPECT_FALSE(Instruction.AArch64Prefix);
+          EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
+          ASSERT_EQ(Ops.size(), 1u);
+          EXPECT_EQ(Ops.front().Opcode, NdOp::RETURN);
+        }
+      }
 }

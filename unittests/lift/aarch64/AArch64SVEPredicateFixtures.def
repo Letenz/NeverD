@@ -76,7 +76,7 @@ NEVERD_SVE_FIXTURE_BAD_SHAPE(2, 1, 8, 1, 32)
 NEVERD_SVE_FIXTURE_BAD_SHAPE(2, 1, 4, 8, 32)
 NEVERD_SVE_FIXTURE_BAD_SHAPE(2, 1, 4, 1, 16)
 
-// PTRUES writes flags. None of these prefixes has an admitted pair contract.
+// PTRUES writes flags. These isolated prefixes have no follower evidence.
 NEVERD_SVE_FIXTURE_REJECT(0x2519e3e0)
 NEVERD_SVE_FIXTURE_REJECT(0x0420bc20)
 NEVERD_SVE_FIXTURE_REJECT(0x04d02020)

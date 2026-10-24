@@ -239,6 +239,27 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                            aarch64_sve::kCPAValueName);
   }
 
+  if (const auto Prefix = aarch64_sve::prefixOperation(IC)) {
+    using namespace aarch64_sve;
+    auto *VectorTy =
+        llvm::ScalableVectorType::get(Builder.getInt64Ty(), kCPAMinimumLanes);
+    auto *PredicateTy =
+        llvm::ScalableVectorType::get(Builder.getInt1Ty(), kCPAMinimumLanes);
+    auto Input = [&](unsigned Index, llvm::Type *Type) {
+      return stateToScalable(getVar(Op.Inputs[Index + 1], Builder), Type,
+                             kPrefixInputName);
+    };
+    auto *Predicate = fromSVBool(
+        Builder, Input(kPrefixPredicateInput, svboolType(*Ctx)), PredicateTy);
+    auto *Source = Input(kPrefixSourceInput, VectorTy);
+    auto *Inactive = Prefix->Form == PrefixForm::Merging
+                         ? Input(kPrefixMergeInput, VectorTy)
+                         : llvm::Constant::getNullValue(VectorTy);
+    auto *Result =
+        Builder.CreateSelect(Predicate, Source, Inactive, kPrefixResultName);
+    return scalableToState(Result, kVectorStorageBytes, kPrefixResultName);
+  }
+
   if (IC == I::A64_SvePtrue) {
     if (!aarch64PtrueMedShapeIsValid(Op))
       llvm::report_fatal_error(aarch64_sve::kMalformedPtrue);

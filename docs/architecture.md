@@ -313,9 +313,8 @@ widths. `AArch64SVEPredicate.def` owns PTRUE encodings, legal shapes and C
 projection contracts; LowIR, MedIR and both emitters reject malformed forms.
 LLVM converts typed predicates at the producer and consumer boundaries. All
 architectural PTRUE patterns are retained, including reserved empty patterns.
-MOVPRFX and flag-setting PTRUES remain unsupported until their paired-instruction
-and NZCV contracts are modelled. This does not establish V/Z aliasing, an SVE
-call ABI.
+Flag-setting PTRUES remains unsupported until its NZCV contract is modelled.
+This does not establish V/Z aliasing or an SVE call ABI.
 
 `AArch64SVEVector.def` owns typed DUP/INDEX/LASTB/ST1/STNT1 shapes. HighC
 stores local Z values as `svuint8_t` and reinterprets them at typed operation
@@ -327,9 +326,20 @@ instructions over active-width Z values and canonical predicates, preserving
 inactive destination lanes, signed multiply-overflow checks and runtime enable
 controls. The shared vector contract records every vector and predicate input;
 none may acquire a scalar or constant substitute. Dead results still execute
-the checking operation. MOVPRFX pairs remain refused until their adjacent
-consumer contract is modelled. This is local instruction preservation, without
-native SVE/CPA execution qualification or a scalable LLVM-to-C carrier.
+the checking operation. This is local instruction preservation, without native
+SVE/CPA execution qualification or a scalable LLVM-to-C carrier.
+
+`AArch64SVEPrefix.def` owns all three MOVPRFX forms before compatible CPA
+consumers. Detailed decoding captures PC+4 from the same supplied byte buffer;
+the snapshot stays bound to the original prefix address and raw word.
+Missing, classification-only or mismatched occurrences confer no pair evidence.
+Raw admission checks matching destinations, predicates, .D elements and
+forbidden source aliases
+before emitting separate copy/selection dataflow. A branch into the consumer
+bypasses the prefix, and SSA keeps the two incoming destination values. Other
+SVE consumers remain refused until their pair contracts are owned. LLVM and
+HighC select the active .D source lanes, retaining old inactive lanes for /m
+and zeroing them for /z; the real CPA consumer retains runtime checks.
 
 IRMed's `validateAArch64SVEState` owns bounded, complete local Z/P definition
 and COPY/PHI closure for both Med-to-High and LLVM emission. It checks the
