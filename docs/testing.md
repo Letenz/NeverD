@@ -2104,6 +2104,12 @@ list, triangle clicks, unchanged analysis geometry, single-click navigation in
 both analysis panes, filtering, popup ownership, and cleanup. Hovering and moving
 away do not toggle the sidebar. The normal Functions window keeps its own filter;
 reentering focus mode starts folded in both themes.
+The right edge resizes the sidebar and its function-name column, keeps the
+analysis panes in place, clamps to the workspace, and retains the width when
+folded and reopened. Pointer drags and keyboard resizing exercise this in both
+themes. Closing the focus workspace through its caption or a desktop close
+request restores the same layout as the F sequence, including Output and its
+retained text.
 `focusSequenceUsesNativeKeysAndIgnoresTyping` checks deliberate F taps up to
 one second apart, interruption by another key or focus change, timeout,
 auto-repeat, ordinary text input, reopening a closed assembly pane, and

@@ -50,6 +50,9 @@ inline constexpr int kFocusModeSequenceLength = 3;
 
 // tools/neverd-gui/app/FocusSidebar.cpp
 inline constexpr int kFocusSidebarPreferredWidth = 360;
+inline constexpr int kFocusSidebarMinimumWidth = 240;
+inline constexpr int kFocusSidebarResizeHandleWidth = 6;
+inline constexpr int kFocusSidebarKeyboardResizeStep = 16;
 inline constexpr int kFocusSidebarToggleWidth = 20;
 inline constexpr int kFocusSidebarToggleHeight = 36;
 inline constexpr int kFocusSidebarBorderWidth = 1;
