@@ -11,6 +11,7 @@
 #ifndef NEVERD_IR_INTRINSICS_AARCH64_AARCH64SVEVECTOR_H
 #define NEVERD_IR_INTRINSICS_AARCH64_AARCH64SVEVECTOR_H
 
+#include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
@@ -30,15 +31,31 @@ struct VectorOperation {
   unsigned OperandCount;
   unsigned ElementIndex;
   bool ProducesVector;
-  bool ConsumesVector;
+  unsigned VectorInputs;
+  unsigned PredicateInputs;
+
+  bool consumesVector(unsigned Index) const {
+    return Index < OperandCount && (VectorInputs & (1u << Index));
+  }
+  bool consumesPredicate(unsigned Index) const {
+    return Index < OperandCount && (PredicateInputs & (1u << Index));
+  }
+  bool consumesState(unsigned Index) const {
+    return consumesVector(Index) || consumesPredicate(Index);
+  }
 };
 
 inline std::optional<VectorOperation> vectorOperation(Intrinsic Id) {
+  if (const auto CPA = cpaOperation(Id)) {
+    const auto Roles = cpaRoles(CPA->Form);
+    return VectorOperation{Roles.Count + 1, Roles.Count, true, Roles.Vectors,
+                           Roles.Predicates};
+  }
   switch (Id) {
-#define NEVERD_A64_SVE_VECTOR_OPERATION(Id, Count, Element, Produces,          \
-                                        Consumes)                              \
+#define NEVERD_A64_SVE_VECTOR_OPERATION(Id, Count, Element, Produces, Vectors, \
+                                        Predicates)                            \
   case Intrinsic::Id:                                                          \
-    return VectorOperation{Count, Element, Produces, Consumes};
+    return VectorOperation{Count, Element, Produces, Vectors, Predicates};
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.def"
   default:
     return std::nullopt;
@@ -65,6 +82,18 @@ inline bool isValidVectorShape(Intrinsic Id, const VectorShape &Shape) {
   if (Element.Bytes != kElementOperandBytes || !Element.Constant ||
       !isValidElementBytes(*Element.Constant))
     return false;
+  for (unsigned I = 0; I != Shape.NumOperands; ++I) {
+    if (Operation->consumesState(I) && Ops[I].Constant)
+      return false;
+    if (Operation->consumesVector(I) && Ops[I].Bytes != kVectorStorageBytes)
+      return false;
+    if (Operation->consumesPredicate(I) &&
+        Ops[I].Bytes != kPredicateStorageBytes)
+      return false;
+  }
+  if (cpaOperation(Id))
+    return Shape.OutputBytes == kVectorStorageBytes &&
+           *Element.Constant == kCPAElementBytes;
   if (Operation->ProducesVector) {
     if (Shape.OutputBytes != kVectorStorageBytes)
       return false;

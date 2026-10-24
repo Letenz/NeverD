@@ -16,7 +16,8 @@
 #define NEVERD_A64_SVE_VECTOR_TEXT(Name, Text)
 #endif
 #ifndef NEVERD_A64_SVE_VECTOR_OPERATION
-#define NEVERD_A64_SVE_VECTOR_OPERATION(Id, Count, Element, Produces, Consumes)
+#define NEVERD_A64_SVE_VECTOR_OPERATION(Id, Count, Element, Produces, Vectors, \
+                                        Predicates)
 #endif
 
 NEVERD_A64_SVE_VECTOR_VALUE(uint16_t, kVectorStorageBytes, 256)
@@ -28,11 +29,12 @@ NEVERD_A64_SVE_VECTOR_VALUE(unsigned, kVectorMaxOperands, 5)
 NEVERD_A64_SVE_VECTOR_VALUE(unsigned, kVectorPointerBytes, 8)
 NEVERD_A64_SVE_VECTOR_VALUE(unsigned, kVectorInputIndex, 1)
 NEVERD_A64_SVE_VECTOR_VALUE(unsigned, kVectorAddressInputIndex, 2)
-NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveDup, 2, 1, true, false)
-NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveIndex, 3, 2, true, false)
-NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveLastb, 3, 2, false, true)
-NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveSt1, 5, 3, false, true)
-NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveStnt1, 5, 3, false, true)
+// Input masks index semantic operands, excluding the intrinsic identifier.
+NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveDup, 2, 1, true, 0, 0)
+NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveIndex, 3, 2, true, 0, 0)
+NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveLastb, 3, 2, false, 0x2, 0x1)
+NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveSt1, 5, 3, false, 0x2, 0x1)
+NEVERD_A64_SVE_VECTOR_OPERATION(A64_SveStnt1, 5, 3, false, 0x2, 0x1)
 NEVERD_A64_SVE_VECTOR_TEXT(kMalformedVector,
                            "SVE vector has an invalid typed operand contract")
 NEVERD_A64_SVE_VECTOR_TEXT(

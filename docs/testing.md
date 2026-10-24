@@ -78,8 +78,8 @@ including shifts, SP, XZR and overlapping operands. Malformed widths and
 arities cannot grant call-argument proofs. LLVM O2 and both C projections
 retain the actual instruction even with a dead result; generated C compiles
 at O0/O2, with parameter-flow checks for temporary-name collisions. Vector
-CPA forms must reject instead of becoming unchecked arithmetic. These are
-instruction-preservation checks, not native CPA/CPA2 execution qualification.
+CPA coverage lives in `NeverDAArch64SVEPredicateTests`, described below. These
+are instruction-preservation checks, not native CPA/CPA2 execution qualification.
 `ReturnContracts.CheckedAArch64PointersRemainReturnValues` covers all baseline
 PAC/AUT/XPAC/PACGA, authenticated target and scalar CPA results. An effectful
 instruction must not turn a returned pointer into a void function; malformed
@@ -211,6 +211,16 @@ budgets, scalable ABI escape, opaque calls and unmodelled V/Z overlap through
 both Med-to-High and masked/unmasked LLVM emission. Run the existing
 `AArch64_SVEState`, `AArch64_SVEStore`, `AArch64_SVELength` and ordinary NEON/FP
 cases in `NeverDLiftTests` after changing these shared boundaries.
+`AArch64SVECPA` covers all six checked-pointer vector forms with independent
+raw words, high/aliased Z registers, merging P0/P7 operands and distinct
+multiply input roles through both decoders. LLVM verification and O2 retain
+side-effecting scalable assembly, including dead results and cross-element
+predicate producers. HighC compiles at O0/O2; both paths inspect emitted text
+sections for exact machine words. Raw local functions pass CFG/SSA and both
+output routes. Every vector/predicate input requires a local definition;
+malformed shapes cannot preserve call setup. Temporary-name collision tests
+compile the standalone C renderer. These checks do not execute CPA hardware,
+admit MOVPRFX, or add scalable LLVM-to-C/ABI support.
 The local-state suite also checks scalar PAuth, explicit PAuth_LR and resolved
 PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
