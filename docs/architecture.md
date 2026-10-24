@@ -2014,7 +2014,11 @@ are cleared and the x87 state reset before every instruction, including after
 an unsupported lift. Returned references and transfer facts own their values.
 Disassembly pages own a workspace for that call; parallel access-width,
 reference and string-reference scans retire theirs with each worker. No TLS,
-session cache, new semantic shortcut or cross-instruction state is involved.
+session cache or cross-instruction state is involved. Width-only inventories
+omit LowIR for audited scalar x86 register/immediate forms with no memory
+operand. Memory, implicit-stack, string, system and other instruction families
+retain full lifting. Full flow/reference queries remain unchanged; the
+stateless full-lift width collector supplies an independent comparison oracle.
 
 Function selection also retains decoded image data-access widths. Their exact
 ordered function address/size inventory is checked after synchronization;
