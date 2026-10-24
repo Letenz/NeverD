@@ -708,6 +708,10 @@ stack names, chunk headers/footers, bytecode ownership, and reference overlays
 that preserve an intervening independent call. Rename invalidation and paging
 from either direction must retain the cursor's recovered instruction even when
 an independent decode stream overlaps it.
+Saved x64 and ARM64 code items retain this recovery on the first literal jump,
+including after a manually created fragment entry is deleted. Explicit
+independent entries, data and undefined item overrides keep their identities;
+read-only queries must not rewrite either sidecar.
 Direct decompilation of a fragment, before navigation or after visiting its
 owner, must return the owner's C, LLVMC, source and IR pages. Paged source and
 graph snapshots use the same entry, including viewport requests through the
