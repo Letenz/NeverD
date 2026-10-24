@@ -14,6 +14,7 @@
 #ifndef NEVERD_DECODE_DECODER_H
 #define NEVERD_DECODE_DECODER_H
 
+#include "neverd/decode/AArch64/AArch64DecodeContract.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/LowPreservedState.h"
 #include "neverd/ir/low/LowUndefinedEffects.h"
@@ -76,11 +77,17 @@ struct DecodedInsn {
   va_t Addr;
   uint16_t Size;
   uint32_t Id;
+  /// Borrowed until the next decode attempt, reset or successful init of the
+  /// producing Decoder. An owned snapshot must copy both cs_insn and cs_detail
+  /// and retain the occurrence evidence below.
   cs_insn *Raw;
   /// Snapshot of PC+4 from the same decode buffer for an AArch64 MOVPRFX.
   /// Missing bytes never grant prefix semantics; this is not executed state.
   /// Classification-only decoding carries no pair evidence.
   std::optional<AArch64PrefixWords> AArch64Prefix = std::nullopt;
+  /// Raw identity and operand availability captured by the producing decoder.
+  /// Native decoding can supply complete detail without rendered text.
+  std::optional<AArch64DecodeOccurrence> AArch64Occurrence = std::nullopt;
 };
 
 /// One loader-authenticated address occurrence inside an encoded instruction.
@@ -180,10 +187,16 @@ public:
   /// subsequent decodes.  Text is on by default.  With it off, a decode fills
   /// only Addr/Size/Id and the instruction bytes: no text and no operand
   /// detail, and an x86 compare with a predicate keeps capstone's base id.
+  /// decodeOneForLift can still supply complete AArch64 native operand detail;
+  /// its Capstone fallback remains classification-only with text disabled.
   /// About half an x86 decode is printing, so a sweep that reads only sizes
   /// and call ids turns it off.  No-op if the state is unchanged.
   void setText(bool On);
   bool textEnabled() const { return Text; }
+
+  /// Whether this AArch64 occurrence still owns complete operand detail.
+  /// Classification-only and expired borrowed records cannot supply operands.
+  bool hasAArch64OperandDetail(const DecodedInsn &Insn) const;
 
   /// True when \p Insn is a trap execution can continue past, so the bytes
   /// after it may still belong to the same function (x86, ARM32, or the
@@ -280,6 +293,13 @@ public:
   std::optional<I386GetPcOccurrence> getX86GetPcOccurrence() const;
 
 private:
+  /// Clear occurrence evidence and invalidate the previous borrowed result.
+  bool beginDecode(DecodedInsn &Out);
+
+  /// Reserve the maximum generation as permanent exhaustion, never wrap.
+  bool advanceAArch64DecodeGeneration();
+  static uint64_t nextAArch64DecodeIdentity();
+
   /// Apply the active architecture's fallback when Capstone rejects bytes.
   bool decodeArchitectureFallback(const uint8_t *Bytes, size_t Len, va_t Addr);
 
@@ -287,9 +307,13 @@ private:
   int decodeAArch64ForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
                            DecodedInsn &Out);
 
-  /// Capture the available follower of this decoded prefix occurrence.
-  void recordAArch64PrefixWords(const uint8_t *Bytes, size_t Len,
-                                DecodedInsn &Out) const;
+  /// Publish complete operand detail and any available MOVPRFX follower.
+  void recordAArch64Decode(const uint8_t *Bytes, size_t Len, DecodedInsn &Out,
+                           bool HasOperandDetail) const;
+
+  /// Check raw identity without requiring operand detail for classification.
+  bool hasAArch64DecodeOccurrence(const DecodedInsn &Insn) const;
+  bool isCurrentAArch64Decode(const AArch64DecodeOccurrence &Occurrence) const;
 
   /// Select an authenticated initial mode for a mixed ARM/Thumb image.
   bool initARMImageMode(const BinaryImage &Img);
@@ -327,6 +351,8 @@ private:
 
   csh Handle = 0;
   cs_insn *InsnBuf = nullptr;
+  const uint64_t AArch64DecodeIdentity;
+  uint64_t AArch64DecodeGeneration = 0;
   Arch TargetArch = Arch::Unknown;
   InstructionMode CurrentMode = InstructionMode::Default;
   bool Strict = true;

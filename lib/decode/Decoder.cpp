@@ -56,11 +56,12 @@ const char *ndOpName(NdOp Op) {
   return "???";
 }
 
-Decoder::Decoder() = default;
+Decoder::Decoder() : AArch64DecodeIdentity(nextAArch64DecodeIdentity()) {}
 
 Decoder::~Decoder() { reset(); }
 
 void Decoder::reset() {
+  advanceAArch64DecodeGeneration();
   if (InsnBuf)
     cs_free(InsnBuf, 1);
   if (Handle)
@@ -131,6 +132,7 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
     return false;
   }
 
+  advanceAArch64DecodeGeneration();
   if (InsnBuf)
     cs_free(InsnBuf, 1);
   if (Handle)
@@ -197,8 +199,7 @@ bool Decoder::decodeArchitectureFallback(const uint8_t *Bytes, size_t Len,
 
 int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
                        DecodedInsn &Out) {
-  Out.AArch64Prefix.reset();
-  if (!Handle || !InsnBuf)
+  if (!beginDecode(Out) || !Handle || !InsnBuf)
     return 0;
   const uint8_t *Code = Bytes;
   size_t Sz = Len;
@@ -218,7 +219,7 @@ int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
   Out.Id = InsnBuf->id;
   Out.Raw = InsnBuf;
   if (AArch64)
-    recordAArch64PrefixWords(Bytes, Len, Out);
+    recordAArch64Decode(Bytes, Len, Out, Detail && Text);
   // The lift path and CFG classification read the mnemonic (when they need it
   // at all, e.g. x86 push/pop/VCMP width, ARM push/pop, NEON lane) directly
   // from Out.Raw->mnemonic, which capstone already filled.  Copying it into a
@@ -229,7 +230,8 @@ int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
 
 int Decoder::decodeOneForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
                               DecodedInsn &Out) {
-  Out.AArch64Prefix.reset();
+  if (!beginDecode(Out))
+    return 0;
   if (AArch64)
     if (const int Size = decodeAArch64ForLift(Bytes, Len, Addr, Out))
       return Size;
@@ -238,8 +240,7 @@ int Decoder::decodeOneForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
 
 int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
                             DecodedInsn &Out) {
-  Out.AArch64Prefix.reset();
-  if (!Handle || !InsnBuf)
+  if (!beginDecode(Out) || !Handle || !InsnBuf)
     return 0;
   const uint8_t *Code = Bytes;
   size_t Sz = Len;
@@ -256,7 +257,7 @@ int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
   Out.Id = InsnBuf->id;
   Out.Raw = InsnBuf;
   if (AArch64)
-    recordAArch64PrefixWords(Bytes, Len, Out);
+    recordAArch64Decode(Bytes, Len, Out, Detail && Text);
   return Out.Size;
 }
 
@@ -287,6 +288,9 @@ void Decoder::liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
     UndefinedEffects->Diagnostic =
         "architecture has no audited undefined-output contract";
   }
+  if ((AArch64 || Insn.AArch64Occurrence) && !hasAArch64OperandDetail(Insn))
+    throw UnliftedInstruction(Insn.Addr, aarch64_decode::kInvalidOccurrence,
+                              nullptr);
   if (X86) {
     X86->lift(Insn.Raw, Ops, Relocs, ScalarRelocs, UndefinedEffects,
               PreservedState);
@@ -318,7 +322,8 @@ void Decoder::fixupDecodedInsn(cs_insn *I) const {
 }
 
 bool Decoder::isFunctionTerminator(const DecodedInsn &Insn) const {
-  if (!Insn.Raw)
+  if (!Insn.Raw || ((AArch64 || Insn.AArch64Occurrence) &&
+                    !hasAArch64DecodeOccurrence(Insn)))
     return false;
   if (X86)
     return X86Lifter::isFunctionTerminator(Insn.Raw);
@@ -330,7 +335,9 @@ bool Decoder::isFunctionTerminator(const DecodedInsn &Insn) const {
 }
 
 bool Decoder::isAlignmentNop(const DecodedInsn &Insn) const {
-  if (!Insn.Raw || !Insn.Size)
+  if (!Insn.Raw || !Insn.Size ||
+      ((AArch64 || Insn.AArch64Occurrence) &&
+       !hasAArch64DecodeOccurrence(Insn)))
     return false;
   if (X86 && decoder_detail::isX86AlignmentNop(Insn))
     return true;
@@ -339,7 +346,8 @@ bool Decoder::isAlignmentNop(const DecodedInsn &Insn) const {
 }
 
 std::optional<bool> Decoder::returnsToCaller(const DecodedInsn &Insn) const {
-  if (!Insn.Raw)
+  if (!Insn.Raw || ((AArch64 || Insn.AArch64Occurrence) &&
+                    !hasAArch64DecodeOccurrence(Insn)))
     return std::nullopt;
   if (X86)
     return X86Lifter::isReturn(Insn.Raw);
@@ -351,7 +359,8 @@ std::optional<bool> Decoder::returnsToCaller(const DecodedInsn &Insn) const {
 }
 
 bool Decoder::isResumableTrap(const DecodedInsn &Insn) const {
-  if (!Insn.Raw)
+  if (!Insn.Raw || ((AArch64 || Insn.AArch64Occurrence) &&
+                    !hasAArch64DecodeOccurrence(Insn)))
     return false;
   if (X86)
     return X86Lifter::isResumableTrap(Insn.Raw);
@@ -361,7 +370,8 @@ bool Decoder::isResumableTrap(const DecodedInsn &Insn) const {
 }
 
 va_t Decoder::directCallTarget(const DecodedInsn &Insn) const {
-  if (!Insn.Raw)
+  if (!Insn.Raw || ((AArch64 || Insn.AArch64Occurrence) &&
+                    !hasAArch64DecodeOccurrence(Insn)))
     return InvalidVA;
   if (X86)
     return X86Lifter::directCallTarget(Insn.Raw);

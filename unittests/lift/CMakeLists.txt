@@ -1966,6 +1966,7 @@ target_include_directories(NeverDAArch64DivisionSemanticTests PRIVATE
 )
 
 add_neverd_unittest(NeverDAArch64DecodeValidityTests
+  aarch64/AArch64DecodeOccurrenceTests.cpp
   aarch64/AArch64DecodeValidityTests.cpp
   aarch64/AArch64_NativeDecodeParityTests.cpp
   aarch64/AArch64_NativeDecodeParityControlTests.cpp
