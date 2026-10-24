@@ -80,8 +80,19 @@ older-SDK fallback and native API names. The bounded x64 MOVS/STOS analysis
 accepts only unsegmented 64-bit addresses, proves count/direction, validates all
 auxiliary output bindings and charges the complete scalar expansion.
 
+`X86BoundedLeaf.h` owns the returning ENCLU/GETSEC leaf sets and their
+register/flag dependencies. The x86 lifter emits pending full state; CFG owns
+the predecessor proof and rebuilds leaf-specific LowIR through the same state
+builder. Raw decoder records remain pending so graph discovery can revoke a
+proof. Only final unresolved state becomes an unsupported-instruction report.
+LowIR, MedIR, LLVM and both C routes validate the same state shape. The shared
+arithmetic-flag transport definition also supplies REP's packed flag constants.
+MedIR owns the dependency from an old flag input to the returned flags; dead
+flags cannot invent a source parameter. Ordinary completion does not supply a
+complete guest exception or nonlocal continuation ABI.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
-attributes for AMX, SGX and REP comparison flags. Instruction renderers report their required feature
+attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
 use. Separate target attributes would discard one group's requirements in a
 mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP

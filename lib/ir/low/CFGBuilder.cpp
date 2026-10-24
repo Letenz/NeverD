@@ -1123,6 +1123,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   LiftedInstructionAddresses.clear();
   DecodeFailureAddresses.clear();
   UnsupportedInstructionAddresses.clear();
+  RemainingX86BoundedLeafWork = limits::kMaxX86BoundedLeafEvidenceWork;
   TruncatedPathAddresses.clear();
   RelocatedInstructionAddressOccurrences.clear();
   I386GetPcOccurrences.clear();
@@ -1964,6 +1965,20 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
     if (Rec.Size <= InvalidVA - Rec.Addr)
       AddAttempted(Rec.Addr + Rec.Size);
   }
+
+  // Pending leaves belong to the final graph: an intermediate unresolved
+  // selector must not poison a later complete proof, and added edges can
+  // revoke an earlier specialization. Raw decoded instruction records stay
+  // pending across every rebuild.
+  for (const auto &Block : Func.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          isX86BoundedLeafPending(
+              static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
+        UnsupportedInstructionAddresses.insert(Op.Addr);
+        LiftedInstructionAddresses.erase(Op.Addr);
+      }
 
   Func.DecodedInstructionCount = static_cast<uint64_t>(std::count_if(
       DecodedInstructionAddresses.begin(), DecodedInstructionAddresses.end(),

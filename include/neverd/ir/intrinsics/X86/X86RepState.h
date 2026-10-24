@@ -13,6 +13,7 @@
 #define NEVERD_IR_INTRINSICS_X86_X86REPSTATE_H
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86/X86ArithmeticFlags.h"
 
 #include <array>
 #include <cstdint>
@@ -27,12 +28,11 @@ inline constexpr unsigned X86RepAddressShift = 2;
 inline constexpr unsigned X86RepRepeatShift = 6;
 inline constexpr unsigned X86RepSegmentShift = 8;
 inline constexpr unsigned X86RepDirectionShift = 16;
-inline constexpr uint16_t X86RepFlagsMask = 0xd501;
+inline constexpr uint16_t X86RepFlagsMask = X86ArithmeticFlagsMask;
 inline constexpr uint16_t X86RepStatusBytes = 4;
 inline constexpr uint16_t X86RepDescriptorBytes = 4;
-inline constexpr uint16_t X86RepFlagBytes = 2;
-inline constexpr std::array<unsigned, 6> X86RepFlagBits = {8,  10, 12,
-                                                           14, 15, 0};
+inline constexpr uint16_t X86RepFlagBytes = X86ArithmeticFlagsBytes;
+inline constexpr auto X86RepFlagBits = X86ArithmeticFlagBits;
 
 struct X86RepContract {
   const char *Name;

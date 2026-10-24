@@ -124,6 +124,10 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
           if (isX86RepStateIntrinsic(Id) &&
               !x86RepShapeIsValid(Id, x86RepMedShape(Op)))
             Err("invalid x86 REP completion contract", Blk.Id, Op.Addr);
+          if (isX86BoundedLeafPending(Id) ||
+              (isX86BoundedLeafIntrinsic(Id) &&
+               !x86BoundedLeafShapeIsValid(Id, x86BoundedLeafMedShape(Op))))
+            Err(X86BoundedLeafUnproven, Blk.Id, Op.Addr);
           if (isX86SgxIntrinsic(Id) &&
               !x86SgxShapeIsValid(Id, x86SgxMedShape(Op)))
             Err("x86 SGX intrinsic has an invalid completion contract", Blk.Id,
