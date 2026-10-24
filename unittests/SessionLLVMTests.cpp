@@ -21,7 +21,6 @@
 #include "llvm/IR/Verifier.h"
 
 #include <gtest/gtest.h>
-
 #include <optional>
 #include <string>
 #include <utility>
