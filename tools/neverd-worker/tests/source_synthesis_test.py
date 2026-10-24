@@ -272,7 +272,7 @@ def multiple_residual_elf(degree, neighbor=False):
     return elf(code), "x+y+z+" + str(scale) + "U*" + "*".join(factors)
 
 
-def carry_product_elf(degree, product=True, needed=7, high_bits=None):
+def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=False):
     # Retain the requested low bits, including observable residual cross terms.
     high_bits = high_bits or (3 if product else 2)
     mask = (0xffffffff << (high_bits - int(product))) & 0xffffffff
@@ -290,8 +290,9 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None):
         else:
             code += bytes.fromhex("4183e0") + bytes([mask & 0xff])
             high = f"((y+{i}U)&{mask}U)"
-        code += bytes.fromhex("4431c1 0fafc1")
-        factors.append(f"((x+{2*i}U)^{high})")
+        code += bytes.fromhex("4401c1" if additive else "4431c1")
+        code += bytes.fromhex("0fafc1")
+        factors.append(f"((x+{2*i}U){'+' if additive else '^'}{high})")
     code += bytes.fromhex("01f8 01f0 01d0 c3")
     return elf(code), f"x+y+z+{scale}U*" + "*".join(factors)
 
@@ -529,6 +530,7 @@ if __name__ == "__main__":
             ("carry-product-64", *carry_product_elf(64, False)),
             ("carry-cofactor-8", *carry_product_elf(8, True, 5, 2)),
             ("carry-cofactor-projection-24", *carry_product_elf(24, True, 5, 2)),
+            ("carry-cofactor-complement-4", *carry_product_elf(4, product=False, needed=4, high_bits=2, additive=True)),
             ("carry-cofactor-partial-32", *carry_product_elf(32, True, 7, 2)),
             ("carry-product-paired-64", *carry_product_elf(64, True, 7, 2)),
             ("carry-product-paired-128", *carry_product_elf(128, True, 8, 3)),

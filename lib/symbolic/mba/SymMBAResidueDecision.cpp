@@ -1267,8 +1267,10 @@ class LowWordDecisions {
       return {0, 0};
     if (!B[0] && !B[1])
       return A;
+    if (A[0] == B[0])
+      return {0, apply(Xor, A[1], B[1])};
     return {apply(Xor, A[0], B[0]),
-            apply(Xor, apply(Xor, A[1], B[1]), apply(And, A[0] ^ 1, B[0]))};
+            parity(A[1], B[1], apply(And, A[0] ^ 1, B[0]))};
   }
 
   Bits sumCorrection(const Bits &A, const Bits &B) {
@@ -1280,8 +1282,9 @@ class LowWordDecisions {
       return A;
     if (A == B)
       return {0, A[0]};
-    return {apply(Xor, A[0], B[0]),
-            apply(Xor, apply(Xor, A[1], B[1]), apply(And, A[0], B[0]))};
+    if (A[0] == B[0])
+      return {0, parity(A[1], B[1], A[0])};
+    return {apply(Xor, A[0], B[0]), parity(A[1], B[1], apply(And, A[0], B[0]))};
   }
 
   Bits multiplyCorrection(const Bits &A, const Bits &B) {
@@ -1293,6 +1296,10 @@ class LowWordDecisions {
       return B;
     if (B[0] == 1 && !B[1])
       return A;
+    if (!A[0])
+      return {0, apply(And, A[1], B[0])};
+    if (!B[0])
+      return {0, apply(And, A[0], B[1])};
     if (A[0] == 1 && B[0] == 1)
       return {1, apply(Xor, A[1], B[1])};
     return {apply(And, A[0], B[0]),
@@ -1521,8 +1528,12 @@ class LowWordDecisions {
         const auto &D = It->second.second.Delta;
         auto Change = difference(Bits(S.Delta.begin(), S.Delta.end()),
                                  Bits(D.begin(), D.end()));
-        Correction =
-            sumCorrection(Correction, multiplyCorrection(Change, word(A, 2)));
+        // Both factors were proved odd. Their low word is only needed for
+        // the upper cross term when the correction's low bit is nonzero.
+        if (Change[0])
+          Change[1] =
+              apply(Xor, Change[1], apply(And, Change[0], word(A, 2)[1]));
+        Correction = sumCorrection(Correction, Change);
         Pairs.push_back(A);
         Unpaired.erase(It);
       }
@@ -2413,6 +2424,16 @@ public:
                     sizeof(SymNode) + Args.size() * sizeof(SymRef)))
           return {};
         V = Ctx.mkAnd(Args);
+      }
+      // C = 2^(Width-1) is its own modular negation, so C*~V = C+C*V.
+      // Finish this normalization here instead of sending the completed
+      // Boolean reading through another scalar proof search.
+      if (C.countr_zero() == Width - 1 && Ctx.op(V) == SymOp::Not) {
+        if (!charge(3, 3 * (sizeof(SymNode) + 4 * sizeof(SymRef))))
+          return {};
+        auto Other = Ctx.operand(V, 0);
+        auto Coefficient = Ctx.mkConst(C);
+        return Ctx.mkAdd(Coefficient, Ctx.mkMul(Coefficient, Other));
       }
       return Ctx.mkMul(Ctx.mkConst(C), V);
     };

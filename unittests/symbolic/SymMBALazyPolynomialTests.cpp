@@ -113,6 +113,34 @@ struct BitPolynomialFixture {
   }
 };
 
+struct AdditiveResidueFixture {
+  SymRef Input;
+  unsigned Width;
+
+  unsigned inputWidth(unsigned) const { return Width; }
+
+  llvm::APInt oracle(const std::array<llvm::APInt, 4> &V) const {
+    auto Product = llvm::APInt(Width, 3).shl(Width - 4);
+    const auto Mask = ~llvm::APInt(Width, 3);
+    for (unsigned I = 0; I < 4; ++I)
+      Product *= V[0] + 2 * I + ((V[1] + I) & Mask);
+    return Product + V[0] + V[1] + V[2] + V[3];
+  }
+};
+
+AdditiveResidueFixture additiveResidueFixture(SymContext &Ctx, unsigned Width) {
+  llvm::SmallString<96> Scale;
+  llvm::APInt(Width, 3).shl(Width - 4).toString(Scale, 10, false);
+  std::string Expression = "(" + Scale.str().str();
+  for (unsigned I = 0; I < 4; ++I)
+    Expression += "*((x+" + std::to_string(2 * I) + ")+((y+" +
+                  std::to_string(I) + ")&-4))";
+  Expression += ")+(x^y)+2*(x&y)+(z|w)+(z&w)";
+  const auto Parsed = parseSymExpr(Ctx, Expression, Width);
+  EXPECT_TRUE(Parsed.ok()) << Parsed.Error;
+  return {Parsed.Root, Width};
+}
+
 BitPolynomialFixture bitPolynomialFixture(SymContext &Ctx, unsigned Width,
                                           bool Common, bool Complement) {
   // Non-oracle variable order and an unused variable detect accidental use of
@@ -365,6 +393,46 @@ TEST(SymMBALazyPolynomial, BooleanRecipesShareTheFinalBitProjection) {
                 solver::SatResult::Unsat)
           << Verifier.reasonUnknown();
     }
+  }
+}
+
+TEST(SymMBALazyPolynomial, ScaledComplementsFinishWithoutRepeatedProofSearch) {
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = additiveResidueFixture(Ctx, Width);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    // Retain the smaller shared projection without re-proving its complement.
+    // Deferring the highest-bit coefficient's normalization spent 3346 units.
+    EXPECT_LE(Result.SizeAfter, 27u);
+    EXPECT_LT(Result.Work, 2200u);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+    if (solver::Z3Solver::available()) {
+      solver::Z3SolverOptions VerifyOptions;
+      VerifyOptions.TimeoutMs = 30000;
+      solver::Z3Solver Verifier(Ctx, VerifyOptions);
+      EXPECT_EQ(Verifier.checkDistinct(F.Input, Result.Expr),
+                solver::SatResult::Unsat)
+          << Verifier.reasonUnknown();
+    }
+  }
+}
+
+TEST(SymMBALazyPolynomial, OddCorrectionsRetainWorkForCompleteReconstruction) {
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, Width, 2, 16, 6, false, true);
+    MBAOptions Options;
+    Options.MaxWork = 15500;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LE(Result.SizeAfter, 40u);
+    EXPECT_LT(Result.Work, Options.MaxWork);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
   }
 }
 
