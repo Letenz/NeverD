@@ -10268,6 +10268,96 @@ TEST(HighControlFlowSemantics, BlockEndingAnArmMovesToItsOnlyJump) {
     EXPECT_EQ(execute(F, X), std::optional<uint64_t>(Expected(X)));
 }
 
+TEST(HighControlFlowSemantics, NestedRegionSplicesRetainTheirOuterFollow) {
+  // The single-entry tail ends inside an arm. Moving it to the other arm
+  // must still reach the return after all enclosing containers. A wrong
+  // parent can instead select a sibling/default return or lose the follow.
+  for (const auto Kind : {StmtKind::Block, StmtKind::IfElse, StmtKind::Switch})
+    for (unsigned Depth : {0u, 9u, 41u}) {
+      SCOPED_TRACE(static_cast<int>(Kind));
+      SCOPED_TRACE(Depth);
+      HighStmt Inner;
+      Inner.Kind = StmtKind::IfElse;
+      Inner.Addr = 0x1004;
+      Inner.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                       HighExpr::makeConst(1, 8));
+      Inner.Body = {assign(0x1008, 1, 1)};
+      Inner.ElseBody = {jump(0x100c, 0x1020)};
+      HighStmt Outer;
+      Outer.Kind = StmtKind::IfElse;
+      Outer.Addr = 0x1000;
+      Outer.Cond = local(0);
+      Outer.Body = {Inner};
+      Outer.ElseBody = {assign(0x1010, 1, 5), result(0x1014, local(1)),
+                        assign(0x1020, 1, 7)};
+      for (unsigned I = 0; I != Depth; ++I) {
+        HighStmt Wrapper;
+        Wrapper.Kind = Kind;
+        Wrapper.Addr = 0x2000 + 0x10 * I;
+        if (Kind == StmtKind::Switch) {
+          Wrapper.SwitchExpr = HighExpr::makeConst(0, 8);
+          SwitchCase Case;
+          Case.Value = 0;
+          Case.Body.push_back(std::move(Outer));
+          Wrapper.Cases.push_back(std::move(Case));
+          Wrapper.DefaultBody = {
+              result(Wrapper.Addr + 4, HighExpr::makeConst(99, 8))};
+        } else {
+          Wrapper.Body.push_back(std::move(Outer));
+          if (Kind == StmtKind::IfElse) {
+            Wrapper.Cond = HighExpr::makeConst(1, 8);
+            Wrapper.ElseBody = {
+                result(Wrapper.Addr + 4, HighExpr::makeConst(99, 8))};
+          }
+        }
+        Outer = std::move(Wrapper);
+      }
+      HighFunc F;
+      F.Body = {std::move(Outer), result(0x4000, local(1))};
+      for (uint64_t X : {0, 1})
+        ASSERT_EQ(execute(F, X, true), X == 0 ? 5u : 1u);
+      for (unsigned Round = 0; Round != 4; ++Round) {
+        reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+        for (uint64_t X : {0, 1, 2, 7})
+          EXPECT_EQ(execute(F, X, true), X == 0 ? 5u : X == 1 ? 1u : 7u);
+      }
+      EXPECT_EQ(countKind(F, StmtKind::Goto), 0u);
+    }
+}
+
+TEST(HighControlFlowSemantics, ARegionNeverSplicesIntoItsOwnDescendant) {
+  for (unsigned Depth : {0u, 9u, 41u}) {
+    SCOPED_TRACE(Depth);
+    HighStmt Nested;
+    Nested.Kind = StmtKind::Block;
+    Nested.Body = {conditional(0x3010, 0x3000),
+                   result(0x3014, HighExpr::makeConst(7, 8))};
+    for (unsigned I = 0; I != Depth; ++I) {
+      HighStmt Parent;
+      Parent.Kind = StmtKind::Block;
+      Parent.Addr = 0x4000 + 0x10 * I;
+      Parent.Body.push_back(std::move(Nested));
+      Nested = std::move(Parent);
+    }
+    HighStmt Region;
+    Region.Kind = StmtKind::Block;
+    Region.Addr = 0x3000;
+    Region.Body.push_back(std::move(Nested));
+    HighFunc F;
+    F.Body = {result(0x1000, HighExpr::makeConst(3, 8)), std::move(Region),
+              result(0x5000, HighExpr::makeConst(11, 8))};
+    for (unsigned Round = 0; Round != 3; ++Round) {
+      reduceSingleUseGotos(F.Body, /*SpliceRegions=*/true);
+      EXPECT_EQ(execute(F, 0, true), 3u);
+      EXPECT_EQ(countKind(F, StmtKind::Goto), 1u);
+      unsigned Regions = 0;
+      walkStmts(F.Body,
+                [&](const HighStmt &S) { Regions += S.Addr == 0x3000; });
+      EXPECT_EQ(Regions, 1u);
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, CaseRegionHoldingATryMovesIntoItsCase) {
   // switch (x) { case 1: goto L; } return 8;
   // L: __try { v = 3; } __except (...) { v = 4; } return v;
