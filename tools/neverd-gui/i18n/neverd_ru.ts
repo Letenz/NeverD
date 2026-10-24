@@ -6509,8 +6509,8 @@ Select an operation to follow dependencies. Synthetic operations have block prov
         <translation>Изучить исходную функцию</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>Наблюдаемые зависимости SSA. Вызовы, алиасы и неразрешённый поток управления остаются явными пробелами. Семантическая проверка не проводилась.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>Наблюдаемые зависимости SSA. Вызовы, алиасы и неразрешённый поток управления остаются явными пробелами. Эти наблюдения не доказывают эквивалентность всей функции.</translation>
     </message>
     <message>
         <source>Primary input</source>

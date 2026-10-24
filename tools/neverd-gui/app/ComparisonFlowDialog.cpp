@@ -145,8 +145,8 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
   Split->setSizes({270, 960});
   Root->addWidget(
       label(this, tr("Observed SSA dependencies. Calls, aliases and unresolved "
-                     "control flow remain explicit gaps. Semantic validation "
-                     "has not been performed.")));
+                     "control flow remain explicit gaps. These observations do "
+                     "not prove whole-function equivalence.")));
   connect(Side, &QComboBox::currentIndexChanged, this,
           &ComparisonFlowDialog::selectSide);
   connect(&Session, &ComparisonSession::changed, this,

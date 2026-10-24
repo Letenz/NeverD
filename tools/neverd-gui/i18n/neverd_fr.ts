@@ -6473,8 +6473,8 @@ Sélectionnez une opération pour suivre ses dépendances. Les opérations synth
         <translation>Inspecter la fonction d&apos;origine</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>Dépendances SSA observées. Les appels, les alias et le flot de contrôle non résolu restent des lacunes explicites. Aucune validation sémantique n&apos;a été effectuée.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>Dépendances SSA observées. Les appels, les alias et le flot de contrôle non résolu restent des lacunes explicites. Ces observations ne prouvent pas l'équivalence de la fonction entière.</translation>
     </message>
     <message>
         <source>Primary input</source>

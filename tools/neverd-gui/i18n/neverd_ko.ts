@@ -6437,8 +6437,8 @@ Select an operation to follow dependencies. Synthetic operations have block prov
         <translation>원본 함수 살펴보기</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>관찰된 SSA 의존성입니다. 호출, 별칭 및 미해결 제어 흐름은 명시적인 공백으로 남습니다. 의미 검증은 수행되지 않았습니다.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>관찰된 SSA 의존성입니다. 호출, 별칭 및 미해결 제어 흐름은 명시적인 공백으로 남습니다. 이 관찰 결과는 전체 함수의 동등성을 증명하지 않습니다.</translation>
     </message>
     <message>
         <source>Primary input</source>

@@ -355,11 +355,9 @@ supported. The other operand need not be constant. A skipped exit value still
 exhausts the nowrap domain, producing poison consumed by the branch; this
 proves progress without promising a normal return. No iteration simulation,
 potentially overflowing iteration count or fixed choice for `undef` is assumed.
-Removing the
-proved self edges must leave the entire represented CFG acyclic. Wrapping-only
+Removing the proved self edges must leave the entire represented CFG acyclic. Wrapping-only
 recurrences, zero or variable steps, frozen or reset counters, unrelated exit
-conditions, multi-block
-and nested cycles remain **unproven**, with their exact source contracts and
+conditions, multi-block and nested cycles remain **unproven**, with their exact source contracts and
 available graphs. Unproven does not mean nonterminating.
 
 Schema 5 adds `progress:{kind,source_contract,observed_contract,loop_count,loops}`.

@@ -6473,8 +6473,8 @@ Seleziona un&apos;operazione per seguirne le dipendenze. Le operazioni sintetich
         <translation>Esamina funzione originale</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>Dipendenze SSA osservate. Chiamate, alias e flusso di controllo irrisolto restano lacune esplicite. Non è stata eseguita una convalida semantica.</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>Dipendenze SSA osservate. Chiamate, alias e flusso di controllo irrisolto restano lacune esplicite. Queste osservazioni non dimostrano l'equivalenza dell'intera funzione.</translation>
     </message>
     <message>
         <source>Primary input</source>

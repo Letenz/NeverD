@@ -6437,8 +6437,8 @@ Select an operation to follow dependencies. Synthetic operations have block prov
         <translation>檢查原始函式</translation>
     </message>
     <message>
-        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. Semantic validation has not been performed.</source>
-        <translation>已觀察的 SSA 依賴。呼叫、別名和未解析控制流程仍明確列為缺口。未執行語義驗證。</translation>
+        <source>Observed SSA dependencies. Calls, aliases and unresolved control flow remain explicit gaps. These observations do not prove whole-function equivalence.</source>
+        <translation>已觀察的 SSA 依賴。呼叫、別名和未解析控制流程仍明確列為缺口。這些觀察結果不證明整個函式的等價性。</translation>
     </message>
     <message>
         <source>Primary input</source>
