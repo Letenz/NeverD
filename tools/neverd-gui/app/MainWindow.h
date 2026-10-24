@@ -272,7 +272,7 @@ private:
   /// length, applied to the listing and the Strings window.
   void showStringOptions();
   void stringOptionsDialog(const QJsonArray &encodings,
-                           const QJsonObject &current);
+                           const QJsonObject &current, QWidget *owner);
   void chooseFont();
   void chooseTheme();
   void showShortcuts();
@@ -297,11 +297,12 @@ private:
   void loadHeader();
   /// Load the MAP \p facts describe, as map_inspect read it, once the user
   /// confirmed a MAP of another build; nothing when the session changed.
-  void confirmMap(const QJsonObject &facts, quint64 epoch);
+  void confirmMap(const QJsonObject &facts, quint64 epoch, QWidget *owner);
   void runCommand(const QString &command, const QString &argument);
   void saveDesktop();
   void restoreDesktop();
   void resetDesktop();
+  void closeTransientDocks(bool discardContents = true);
   void cycleWindows(bool forward);
   void fillPlaceholder(QMenu *menu, const QString &name);
   void contextMenu(const QPoint &globalPosition);

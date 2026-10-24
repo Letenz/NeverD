@@ -1810,12 +1810,12 @@ Double-click to go to the declaration.</source>
         <translation>已儲存的變數名稱對應的是另一版原始碼</translation>
     </message>
     <message>
-        <source>Expand block (Ctrl+Shift+])</source>
-        <translation>展開程式碼區塊（Ctrl+Shift+]）</translation>
+        <source>Expand block (%1)</source>
+        <translation>展開程式碼區塊（%1）</translation>
     </message>
     <message>
-        <source>Collapse block (Ctrl+Shift+[)</source>
-        <translation>摺疊程式碼區塊（Ctrl+Shift+[）</translation>
+        <source>Collapse block (%1)</source>
+        <translation>摺疊程式碼區塊（%1）</translation>
     </message>
     <message>
         <source>Symbolic simplification</source>
@@ -3812,12 +3812,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>下一個</translation>
     </message>
     <message>
-        <source>Previous match (Shift+Enter or Shift+F3)</source>
-        <translation>上一個相符項目（Shift+Enter 或 Shift+F3）</translation>
+        <source>Previous match (%1 or %2)</source>
+        <translation>上一個相符項目（%1 或 %2）</translation>
     </message>
     <message>
-        <source>Next match (Enter or F3)</source>
-        <translation>下一個相符項目（Enter 或 F3）</translation>
+        <source>Next match (%1 or %2)</source>
+        <translation>下一個相符項目（%1 或 %2）</translation>
     </message>
     <message>
         <source>&amp;Text:</source>
@@ -4638,12 +4638,12 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         </translation>
     </message>
     <message>
-        <source>Ctrl+click to open</source>
-        <translation>Ctrl+按一下以開啟</translation>
+        <source>%1click to open</source>
+        <translation>%1按一下以開啟</translation>
     </message>
     <message>
-        <source>Double-click or Ctrl+click to open %1</source>
-        <translation>按兩下或 Ctrl+按一下以開啟 %1</translation>
+        <source>Double-click or %2click to open %1</source>
+        <translation>按兩下或 %2按一下以開啟 %1</translation>
     </message>
     <message>
         <source>bits %1 of the unit at %2</source>
@@ -4687,8 +4687,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>宣告</translation>
     </message>
     <message>
-        <source>Read the declarations (Ctrl+Enter)</source>
-        <translation>讀取這些宣告（Ctrl+Enter）</translation>
+        <source>Read the declarations (%1)</source>
+        <translation>讀取這些宣告（%1）</translation>
     </message>
     <message>
         <source>Line %1, column %2: %3</source>
@@ -4823,8 +4823,8 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>運算元保留原本的數字。</translation>
     </message>
     <message>
-        <source>The program has no structures or unions. Declare them in Local types (Shift+F1).</source>
-        <translation>程式沒有結構或聯集，可在本機型別（Shift+F1）中宣告。</translation>
+        <source>The program has no structures or unions. Declare them in Local types (%1).</source>
+        <translation>程式沒有結構或聯集，可在本機型別（%1）中宣告。</translation>
     </message>
     <message>
         <source>The register points %1 bytes into %2, at %3: the accesses before it read the record&apos;s earlier members, as CONTAINING_RECORD undoes.</source>
@@ -6266,8 +6266,8 @@ Coverage: %7</source>
         <translation>選擇函式以檢查其對應函式。</translation>
     </message>
     <message>
-        <source>Select blocks to follow their counterparts. Ctrl+wheel zooms.</source>
-        <translation>選擇基本區塊以跟蹤其對應項。Ctrl+滾輪可縮放。</translation>
+        <source>Select blocks to follow their counterparts. %1wheel zooms.</source>
+        <translation>選擇基本區塊以跟蹤其對應項。%1滾輪可縮放。</translation>
     </message>
     <message>
         <source>Select both inputs and their original settings, then reopen a saved comparison. Input hashes and analysis revisions are checked.</source>

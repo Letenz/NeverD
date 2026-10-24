@@ -4,6 +4,13 @@
 
 # NeverD Architecture
 
+`X86ScalarSystemNative.h` owns the widths and native API names for scalar
+RDMSR/WRMSR and port I/O. LLVM and both C projections share the plan and retain
+ordered, potentially trapping reads even when the result is unused. Constant
+propagation does not turn a 16-bit DX port into an 8-bit port. C output selects
+qualified builtins, real MSVC intrinsics or owned assembly at compile time.
+LLVM-to-C validates types and full memory effects before recognizing a call.
+
 `X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
 LLVM/C API names. LLVM emission and both C projections share that contract.
 The LLVM-to-C adapter validates the complete native call or legacy assembly

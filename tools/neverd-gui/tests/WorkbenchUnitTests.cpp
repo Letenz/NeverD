@@ -564,7 +564,8 @@ private slots:
               qobject_cast<QToolButton *>(toolbar->widgetForAction(action)))
         entry = button;
     QVERIFY(entry);
-    QVERIFY(entry->toolTip().contains(QStringLiteral("Ctrl+E")));
+    QVERIFY(entry->toolTip().contains(
+        action->shortcut().toString(QKeySequence::NativeText)));
     // Translation and action updates preserve the compact toolbar.
     action->setShortcut(QKeySequence(Qt::Key_F12));
     registry.retranslate();

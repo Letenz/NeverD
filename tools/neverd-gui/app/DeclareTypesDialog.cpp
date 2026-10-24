@@ -85,8 +85,9 @@ DeclareTypesDialog::DeclareTypesDialog(const QString &language,
   auto *buttons = new QDialogButtonBox(this);
   declare_ = buttons->addButton(tr("Declare"), QDialogButtonBox::AcceptRole);
   declare_->setObjectName(QStringLiteral("declare"));
-  declare_->setToolTip(tr("Read the declarations (Ctrl+Enter)"));
   const QKeySequence declareKey(Qt::CTRL | Qt::Key_Return);
+  declare_->setToolTip(tr("Read the declarations (%1)")
+                           .arg(declareKey.toString(QKeySequence::NativeText)));
   setShortcutHint(*declare_, declareKey);
   buttons->addButton(QDialogButtonBox::Cancel);
   layout->addWidget(buttons);
