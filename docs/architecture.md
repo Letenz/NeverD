@@ -5043,6 +5043,19 @@ memo keys retain the same facts, including their memory accounting. Dynamic
 callee outputs and constants requiring predecessor reasoning remain separate
 machine-state recovery work.
 
+C source emission preserves a wholly unrecovered call-clobber or MedIR
+`Unspecified` value with an analysis-only LLVM call, rather than `freeze undef`
+whose result LLVM may choose as zero. `LLVMSourceUnknownValue.h` owns its
+creation and recognition. Inaccessible read/write effects prevent distinct
+observations from becoming equal while leaving ordinary memory aliasing alone.
+The marker's declaration and unused results are omitted from C; an observed
+value retains an explicit unsupported expression. HighC assignments and stores
+use the same expression rules as other observations, without a zero override.
+The serial pipeline, sharded source pipeline and deferred SDK views enable this
+source policy independently of analyst call-signature overrides. It supplies
+no dynamic callee result, native reconstruction contract or partially preserved
+vector-suffix proof. Ordinary LLVM undef/poison/freeze keep their own semantics.
+
 A call through a function-pointer variable passes the arguments of the routine
 the variable starts at (`collectPointerVariableCallees`): another module's
 routine, by the prototype the variable's absolute relocation names, or a

@@ -18,12 +18,14 @@
 #include "WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -460,6 +462,266 @@ int main(void) {
               Source + Oracle,
               {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
       }
+  }
+}
+
+TEST(CallExitRegisters, UnknownSourceObservationsDoNotBecomeEqual) {
+  for (bool Optimize : {false, true}) {
+    SCOPED_TRACE(Optimize);
+    llvm::LLVMContext Context;
+    llvm::Module Module("unknown-observations", Context);
+    Module.setDataLayout("e-p:64:64");
+    auto *Word = llvm::Type::getInt64Ty(Context);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Word, false),
+        llvm::GlobalValue::ExternalLinkage, "unknown_pair", Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Left = llvm_source_unknown::create(Builder, Word);
+    auto *Right = llvm_source_unknown::create(Builder, Word);
+    Builder.CreateRet(Builder.CreateSub(Left, Right));
+    // An unobserved clobber imposes no source execution failure.
+    auto *Unused = llvm::Function::Create(Function->getFunctionType(),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "unobserved", Module);
+    Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Unused));
+    llvm_source_unknown::create(Builder, Word);
+    Builder.CreateRet(llvm::ConstantInt::get(Word, 7));
+    auto *Guarded = llvm::Function::Create(
+        llvm::FunctionType::get(Word, {Word}, false),
+        llvm::GlobalValue::ExternalLinkage, "guarded_unknown", Module);
+    Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Guarded));
+    auto *ConditionalValue = llvm_source_unknown::create(Builder, Word);
+    auto *Condition = Builder.CreateICmpNE(Guarded->getArg(0),
+                                           llvm::ConstantInt::get(Word, 0));
+    Builder.CreateRet(Builder.CreateSelect(Condition, ConditionalValue,
+                                           llvm::ConstantInt::get(Word, 17)));
+    if (Optimize)
+      Pipeline::optimizeModule(Module);
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    unsigned Observed = 0;
+    for (const auto &Block : *Module.getFunction("unknown_pair"))
+      for (const auto &Instruction : Block)
+        Observed += llvm_source_unknown::isValue(&Instruction) &&
+                    !Instruction.use_empty();
+    ASSERT_EQ(Observed, 2u);
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    ASSERT_TRUE(LLVMCEmitter().emit(Module, Output));
+    EXPECT_EQ(Source.find("__neverd_source_unknown_i"), std::string::npos)
+        << Source;
+    const std::string Guard = R"(
+static unsigned unavailable_count;
+static void observe_unavailable(void) { ++unavailable_count; }
+#define __builtin_trap() observe_unavailable()
+)";
+    const std::string Oracle = R"(
+int main(void) {
+  if (unobserved() != 7 || unavailable_count != 0) return 1;
+  if (guarded_unknown(0) != 17 || unavailable_count != 0) return 2;
+  if (guarded_unknown(1) != 0 || unavailable_count != 1) return 3;
+  unknown_pair();
+  return unavailable_count != 3;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      source_call_execution_test::compileAndRun(Guard + Source + Oracle,
+                                                {Level});
+  }
+}
+
+TEST(CallExitRegisters, SourceUnknownMarkersDoNotClaimNamedFunctions) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("unknown-name-collision", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Type = llvm::FunctionType::get(Word, false);
+  auto *Named = llvm::Function::Create(Type, llvm::GlobalValue::ExternalLinkage,
+                                       "__neverd_source_unknown_i64", Module);
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Named));
+  Builder.CreateRet(llvm::ConstantInt::get(Word, 17));
+  auto *Caller = llvm::Function::Create(
+      Type, llvm::GlobalValue::ExternalLinkage, "legitimate_name", Module);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Caller));
+  auto *Marker = llvm_source_unknown::create(Builder, Word);
+  auto *Ordinary = Builder.CreateCall(Named);
+  Builder.CreateRet(Ordinary);
+  ASSERT_TRUE(llvm_source_unknown::isValue(Marker));
+  ASSERT_FALSE(llvm_source_unknown::isValue(Ordinary));
+  ASSERT_FALSE(llvm_source_unknown::isFunction(*Named));
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Output));
+  EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+  source_call_execution_test::compileAndRun(
+      Source + "\nint main(void) { return legitimate_name() != 17; }\n");
+}
+
+TEST(CallExitRegisters, TypedMemberStoresRetainUnknownExpressions) {
+  for (const TypeRef &Field :
+       {NdType::makeInt(8, false), NdType::makePtr(NdType::makeVoid()),
+        NdType::makeFloat(8)}) {
+    auto Record = NdType::makeNamedRecord("unknown_destination", 8);
+    Record->FieldDisplayNames = {"value"};
+    Record->FieldDisplayOffsets = {0};
+    Record->FieldDisplayTypes = {Field};
+    const auto Pointer = NdType::makePtr(Record);
+    HighFunc Function;
+    Function.Name = "observe_unknown_member";
+    Function.Entry = Text;
+    Function.ReturnType = NdType::makeVoid();
+    Function.Params.push_back({"arg0", Pointer});
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    Parameter.TheArch = Arch::X64;
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeVar(Parameter, Pointer);
+    Store.StoreVal = HighExpr::makeUndef(8);
+    Store.StoreVal->Type = Field;
+    Function.Body.push_back(Store);
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Function}, Output));
+    const std::string FieldSpelling = Field->Kind == NdTypeKind::Ptr ? "void*"
+                                      : Field->Kind == NdTypeKind::Float
+                                          ? "double"
+                                          : "uint64_t";
+    // Pointer-only display records are supplied by the caller's header.
+    const std::string Guard =
+        "#include <stdint.h>\nstruct unknown_destination { " + FieldSpelling +
+        " value; };\n" + R"(
+#include <stdlib.h>
+static void unavailable(void) { exit(0); }
+#define __builtin_trap() unavailable()
+)";
+    const std::string Oracle = R"(
+int main(void) {
+  struct unknown_destination destination = {0};
+  observe_unknown_member(&destination);
+  return 1;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      source_call_execution_test::compileAndRun(
+          Guard + Source + Oracle,
+          {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+  }
+}
+
+TEST(CallExitRegisters, OpaqueExitDoesNotInventAStoredValue) {
+  constexpr va_t Producer = Text + 0x80;
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    const bool Windows = Format == BinaryFormat::COFF;
+    const uint8_t Frame = Windows ? 32 : 0;
+    std::vector<uint8_t> Code(0x110, 0xCC);
+    // CPUID supplies dynamic extra outputs outside the ordinary source ABI.
+    // Until a call-state contract recovers them, an observed store must remain
+    // explicitly unavailable through source optimization and both C routes.
+    std::vector<uint8_t> Caller = {
+        0x53, 0x48, 0x89, static_cast<uint8_t>(Windows ? 0xCB : 0xFB),
+        0x48, 0x83, 0xEC, Frame,
+        0xE8};
+    const auto Displacement = rel32(Text + Caller.size() + 4, Producer);
+    Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+    const std::vector<uint8_t> Suffix = {
+        0x48,  0x89, static_cast<uint8_t>(Windows ? 0x0B : 0x3B),
+        0x48,  0x83, 0xC4,
+        Frame, 0x5B, 0xC3};
+    Caller.insert(Caller.end(), Suffix.begin(), Suffix.end());
+    put(Code, Text, Caller);
+    std::vector<uint8_t> Callee = {0x53, 0x31, 0xC0, 0x31,
+                                   0xC9, 0x0F, 0xA2, 0x5B};
+    if (!Windows)
+      Callee.insert(Callee.end(), {0x89, 0xCF});
+    Callee.insert(Callee.end(), {0xB8, 1, 0, 0, 0, 0xC3});
+    put(Code, Producer, Callee);
+    for (unsigned I = 0; I < 6; ++I)
+      put(Code, Text + 0xA0 + 16 * I,
+          {0xB8, static_cast<uint8_t>(I + 2), 0, 0, 0, 0xC3});
+    auto Image = makeImage(Code,
+                           {{Text, "observe_exit"},
+                            {Producer, "produce_exit"},
+                            {Text + 0xA0, "independent_a"},
+                            {Text + 0xB0, "independent_b"},
+                            {Text + 0xC0, "independent_c"},
+                            {Text + 0xD0, "independent_d"},
+                            {Text + 0xE0, "independent_e"},
+                            {Text + 0xF0, "independent_f"}},
+                           {});
+    Image.Format = Format;
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true})
+        for (bool Shards : {false, true}) {
+          if (Shards && !LLVM)
+            continue;
+          SCOPED_TRACE(Shards);
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(NoOpt);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text, Producer};
+          if (Shards)
+            for (unsigned I = 0; I < 6; ++I)
+              Options.OnlyFunctionEntries.insert(Text + 0xA0 + 16 * I);
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = true;
+          Options.NoOpt = NoOpt;
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          ASSERT_EQ(Result.MedFuncs.size(), Shards ? 8u : 2u);
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+            ASSERT_TRUE(LLVMCEmitter().emit(
+                *Result.LlvmModule, Output, COptions, nullptr, nullptr,
+                Result.LlvmModule->getFunction("observe_exit")));
+          } else {
+            std::erase_if(Result.HighFuncs, [](const HighFunc &Function) {
+              return Function.Entry != Text;
+            });
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          }
+          const auto Name = Source.find(" produce_exit(");
+          ASSERT_NE(Name, std::string::npos) << Source;
+          const auto Start = Source.rfind('\n', Name) + 1;
+          const auto End = Source.find(';', Name);
+          ASSERT_NE(End, std::string::npos) << Source;
+          const std::string Provider = Source.substr(Start, End - Start) +
+                                       " { ++observed_calls; return 1; }\n";
+          const std::string Guard = R"(
+#include <stdint.h>
+#include <stdlib.h>
+static uint64_t observed_output = 999;
+static unsigned observed_calls;
+static void unavailable(void) {
+  exit(observed_output == 999 && observed_calls == 1 ? 0 : 2);
+}
+#define __builtin_trap() unavailable()
+)";
+          const std::string Oracle = R"(
+int main(void) {
+  observe_exit(&observed_output);
+  return 1;
+}
+)";
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Guard + Source + Provider + Oracle,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
   }
 }
 

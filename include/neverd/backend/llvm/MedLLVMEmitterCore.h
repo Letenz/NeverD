@@ -81,6 +81,11 @@ class PreparedPortableX87Function;
 class MedLLVMEmitter {
 public:
   void setSourceMap(LLVMSourceMap *Map) { SourceMap = Map; }
+  /// Retain unrecovered machine values through source optimization. The
+  /// opaque markers are for analysis output, not executable reconstruction.
+  void setPreserveUnknownSourceValues(bool Enabled) {
+    PreserveUnknownSourceValues = Enabled;
+  }
   void setAnalystSourceProjection(bool Enabled) {
     AnalystSourceProjection = Enabled;
   }
@@ -151,6 +156,7 @@ private:
   llvm::Value *emitPortableX87Intrinsic(const MedOp &Op,
                                         llvm::IRBuilder<> &Builder);
   bool AnalystSourceProjection = false;
+  bool PreserveUnknownSourceValues = false;
   const SourceTargetSignatures *AnalystTargets = nullptr;
   friend class MedLLVMEmitterTestPeer;
   friend class MedLLVMProvenanceTestPeer;

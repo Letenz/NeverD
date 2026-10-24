@@ -2223,7 +2223,7 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
             SourceImportPrototypes.count(functionIdentifier(Fn))))
         continue;
     }
-    if (Fn.isIntrinsic())
+    if (Fn.isIntrinsic() || llvm_source_unknown::isFunction(Fn))
       continue;
     if (llvmc::isCStackAllocationFunction(Fn))
       continue;
