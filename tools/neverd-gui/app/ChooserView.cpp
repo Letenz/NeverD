@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFontInfo>
 #include <QFontMetrics>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -46,7 +47,7 @@ bool codeFormat(ChooserModel::Format format) {
 
 QFont codeColumnFont() {
   QFont font = Theme::instance().codeFont();
-  font.setPointSize(QApplication::font().pointSize());
+  font.setPointSizeF(QFontInfo(QApplication::font()).pointSizeF());
   return font;
 }
 

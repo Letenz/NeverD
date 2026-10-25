@@ -603,3 +603,11 @@ retained under [Highway](LICENSES/highway/SOURCE.md),
 [simdutf](LICENSES/simdutf/SOURCE.md), [simdjson](LICENSES/simdjson/SOURCE.md)
 and [oneTBB](LICENSES/oneTBB/SOURCE.md). Enabled dependencies' notices are
 installed under `share/neverd/licenses` and staged with the SDK/CLI.
+
+## Android error string catalog
+
+The error-number/text catalog in `AndroidErrorStrings.def` is transcribed from
+Android NDK 26.2.11394342, ARM64 `libc.a(strerror.o)`, `__sys_error_strings`.
+It was converted into a macro catalog on 2026-10-22. The complete original
+[sysroot notices](LICENSES/android-bionic/NOTICE) are retained.
+The guest memory layout and model implementation are authored for NeverD.

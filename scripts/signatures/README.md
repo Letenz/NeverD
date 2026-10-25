@@ -44,7 +44,10 @@ a Mach-O linker optimization hint names. The name on a line is the
 linkage name the library's symbol table spells, byte for byte:
 `?Close@CFile@@UEAAXXZ`, `_ZNSt6thread4joinEv`, x86 `_memcpy`, Mach-O
 `_deflate`. It is never demangled, sanitized, prefixed, or truncated. One
-public name sits at offset 0 of each line.
+or more public names sit at offset 0 of each line. COFF function symbols at
+the same section and offset retain their source-proven aliases together;
+equal code at different addresses is not alias evidence. References to any
+of a function's own aliases are recursion, not external constraints.
 
 ## Why the exception-runtime databases exist
 
@@ -191,6 +194,33 @@ request shows what would change without changing it.
 
 ## MSVC and Windows SDK signatures
 
+For incremental additions, `supplement_patterns.py` compares candidate patterns
+with **unpruned** sigmaker outputs for every available library/version in the
+same format and architecture, then with the existing packs. Supply the loader's
+library stem for each input; repeat `--evidence` when several assets belong to
+one stem. Keep full archive/file hashes and generation commands with the raw
+inputs. For example:
+
+```sh
+python3 scripts/signatures/supplement_patterns.py \
+  --candidate vs2022=candidates/vs2022.pat \
+  --evidence vs2022=raw/vs2022.pat \
+  --evidence vs2019=raw/vs2019.pat \
+  --evidence winsdk=raw/winsdk.pat \
+  --existing signatures/pe/x86/64 --output supplement/
+```
+
+The example's evidence list must be expanded to the full collected source set.
+Supplying only retained `.pat` packs loses the counterexamples discarded during
+their original build and can reintroduce known ambiguities. The supplement
+retains source-proven aliases and reference distinctions, checks covering
+patterns, skips claims already owned by an existing pack, and writes new
+numbered parts plus input/output hashes. It never replaces an existing part.
+Verify the output with `neverd-sigmaker --verify`, then evaluate ordinary
+`sigs --auto --no-debug` recognition, candidate errors and performance before
+updating the submodule. Source-corpus collision checks do not establish
+universal uniqueness or replace held-out program evaluation.
+
 `build_msvc_signatures.py` builds `pe/<x86|arm>/<32|64>/vs<year>.pat` and
 `winsdk.pat` from the library archives that the signatures repository's
 `msvc-libraries.yml` workflow collects on GitHub-hosted Windows images and
@@ -243,6 +273,16 @@ file's libraries give several names are dropped from every file there, and so
 are bytes that two files name differently. Without this, a debug-CRT wrapper
 that is unique among the SDK's libraries would still name the byte-identical
 template instantiations that `vs2026.pat` had dropped as ambiguous.
+
+On COFF x86/x64, `--references` also retains import-pointer relocations in
+unprefixed `FF 15` calls and `FF 25` jumps. The reference names `__imp_<export>`
+at the four-byte address field (absolute on x86, RIP-relative on x64). The
+consumer confirms an exact export spelling at the addressed, mapped IAT slot;
+missing, ordinal-only, differently spelled or duplicate slot metadata remains
+unknown. It never scans that data slot as code. Prefixed forms are unsupported,
+including a prefix-looking byte immediately before the opcode when no decoded
+boundary proves otherwise. This evidence can resolve candidates; it cannot
+authorize a caller's automatic name or type.
 
 Each line also names, as `^offset name`, the routines its function branches
 to directly (`neverd-sigmaker --references`), in COFF and ELF objects alike:

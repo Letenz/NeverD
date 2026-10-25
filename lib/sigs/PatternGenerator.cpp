@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/PatternGenerator.h"
 
+#include "X86/X86ImportReference.h"
+
 #include "neverd/object/SectionNames.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/ISAEncoding.h"
@@ -318,8 +320,14 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
     const bool Rel32 = Machine == COFF::IMAGE_FILE_MACHINE_I386
                            ? Type == COFF::IMAGE_REL_I386_REL32
                            : Type == COFF::IMAGE_REL_AMD64_REL32;
-    // The opcode before the field is what makes the field a branch target;
-    // a REL32 after anything else is a data reference.
+    const bool ImportField = Machine == COFF::IMAGE_FILE_MACHINE_I386
+                                 ? Type == COFF::IMAGE_REL_I386_DIR32
+                                 : Type == COFF::IMAGE_REL_AMD64_REL32;
+    if (ImportField &&
+        isX86ImportReferenceField(Code.drop_front(FunctionOffset), Offset,
+                                  Machine == COFF::IMAGE_FILE_MACHINE_AMD64))
+      return Offset;
+    // Otherwise the opcode before the field must be a direct branch.
     if (!Rel32 || Offset == 0)
       return std::nullopt;
     const uint8_t Opcode = Code[RelocationOffset - x86::kRel32DispOffset];
@@ -1012,9 +1020,10 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
   struct FunctionSymbol {
     int32_t Section;
     uint32_t Offset;
-    StringRef Name;
+    SmallVector<StringRef, 2> Names;
   };
   std::vector<FunctionSymbol> Functions;
+  DenseMap<std::pair<int32_t, uint32_t>, size_t> ByStart;
   DenseMap<int32_t, COFFCodeSection> Sections;
   for (uint32_t I = 0, N = Obj.getNumberOfSymbols(); I < N; ++I) {
     Expected<COFFSymbolRef> SymOrErr = Obj.getSymbol(I);
@@ -1068,7 +1077,13 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       ++Stats.Synthesized;
       continue;
     }
-    Functions.push_back({SectionNumber, Sym.getValue(), *NameOrErr});
+    auto [At, Fresh] =
+        ByStart.try_emplace({SectionNumber, Sym.getValue()}, Functions.size());
+    if (Fresh)
+      Functions.push_back({SectionNumber, Sym.getValue(), {}});
+    auto &Names = Functions[At->second].Names;
+    if (!llvm::is_contained(Names, *NameOrErr))
+      Names.push_back(*NameOrErr);
   }
   for (auto &Entry : Sections) {
     std::vector<uint32_t> &Starts = Entry.second.FunctionStarts;
@@ -1076,10 +1091,16 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
     Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
   }
 
-  // Pass 2: each function runs to the next function in its section, or to
+  // Pass 2: symbols at the same section and offset are aliases, as with
+  // memcpy/memmove in the x64 runtime. Keep the object's alias evidence in
+  // one line, rather than turning it into competing byte-identical claims.
+  // Each function runs to the next function in its section, or to
   // the section's end. Labels -- MSVC's `$LN` jump and handler targets --
   // are not function symbols, so they do not cut a function short.
-  for (const FunctionSymbol &Fn : Functions) {
+  for (FunctionSymbol &Fn : Functions) {
+    llvm::sort(Fn.Names, [](StringRef A, StringRef B) {
+      return preferredAliasOrder(A, B);
+    });
     const COFFCodeSection &Sec = Sections.find(Fn.Section)->second;
     uint64_t End = Sec.Contents.size();
     auto Next = std::upper_bound(Sec.FunctionStarts.begin(),
@@ -1103,7 +1124,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       if (!Opts.EmitReferences)
         continue;
       const std::optional<uint64_t> At = coffBranchReferenceOffset(
-          Machine, Rel.Type, Sec.Contents, Rel.Offset, Fn.Offset);
+          Machine, Rel.Type, Sec.Contents.take_front(End), Rel.Offset,
+          Fn.Offset);
       if (!At)
         continue;
       Expected<COFFSymbolRef> TargetOrErr = Obj.getSymbol(Rel.Symbol);
@@ -1116,9 +1138,20 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
         consumeError(TargetName.takeError());
         continue;
       }
+      // Only a pointer symbol supplied by a COFF import can name the slot
+      // of a memory-indirect call. A global function pointer is not an
+      // import merely because its instruction has the same encoding.
+      if ((Machine == COFF::IMAGE_FILE_MACHINE_I386 ||
+           Machine == COFF::IMAGE_FILE_MACHINE_AMD64) &&
+          isX86ImportReferenceField(Sec.Contents.slice(Fn.Offset, Size), *At,
+                                    Machine ==
+                                        COFF::IMAGE_FILE_MACHINE_AMD64) &&
+          !TargetName->starts_with(COFFImportPointerPrefix))
+        continue;
       // A branch to the function's own start is recursion, not a reference
       // to anything the image has to confirm.
-      if (!isReferenceName(*TargetName) || *TargetName == Fn.Name)
+      if (!isReferenceName(*TargetName) ||
+          llvm::is_contained(Fn.Names, *TargetName))
         continue;
       References.push_back({static_cast<uint32_t>(*At), TargetName->str()});
       // Where no object defines the symbol, the link resolves it to its
@@ -1126,7 +1159,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       if (const auto It = Opts.AlternateNames.find(*TargetName);
           It != Opts.AlternateNames.end())
         for (const std::string &Alternate : It->second)
-          if (isReferenceName(Alternate) && Alternate != Fn.Name)
+          if (isReferenceName(Alternate) &&
+              !llvm::is_contained(Fn.Names, StringRef(Alternate)))
             References.push_back({static_cast<uint32_t>(*At), Alternate});
     }
     if (!Supported) {
@@ -1144,7 +1178,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
                      References.end());
 
     ArrayRef<uint8_t> Data = Sec.Contents.slice(Fn.Offset, Size);
-    countOrEmit(OS, Fn.Name, Data, Wildcard, Opts, Stats, References);
+    countOrEmit(OS, Fn.Names, Data, Wildcard, Opts, Stats, References);
   }
   return Stats;
 }

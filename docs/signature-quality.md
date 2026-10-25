@@ -26,6 +26,15 @@ Correct suggestions remain available for inspection; deferring a false name
 is an abstention, not an increase in recognition coverage. The separately gated
 library-feature recognizer retains its explicit identity verifier.
 
+COFF source aliases are retained only when function symbols share one section
+and offset. Identical bytes at different locations remain separate claims.
+Canonical x86/x64 indirect import references can distinguish same-byte wrappers
+using the exact export name at a mapped IAT slot. This is positive evidence:
+unresolved aliases, ordinal imports, duplicate slots and different spellings
+remain unknown, and unsupported prefixed instructions are not guessed. The
+slot is data, so reference checking never scans it as a function. Confirmation
+still does not establish the caller's independent source identity.
+
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
 fields. Its additive `auto_name` field reports the address's admitted spelling,
 or an empty string. `name_evidence` is `image_symbol`, `exception_personality`,

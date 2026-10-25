@@ -237,6 +237,121 @@ TEST_P(AndroidFiles, FileCreationCountsShareEveryCallerRoute) {
 TEST_P(AndroidFiles, OpensOwnCursorsAndReuseTheLowestAvailableDescriptor) {
   returned(run("files_sequence"));
 }
+
+TEST_P(AndroidFiles, ReadChkSharesFileCursorsErrnoAndDynamicProviderLifetime) {
+  Options.Android->ThreadLimit = 1;
+  Options.Android->Libraries["libfiles.so"] = {"__read_chk"};
+  for (uint64_t Mode : {0u, 1u})
+    returned(run("files_read_chk_sequence", {Mode}));
+  auto R = run("files_read_chk_sequence", {2});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "__read_chk");
+  EXPECT_EQ(R.NativeCalls.back().Library, "libfiles.so");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+
+TEST_P(AndroidFiles, ReadChkRejectsExtentsBeforeDescriptorMemoryAndErrno) {
+  constexpr uint64_t Buffer = 0x20000000;
+  const uint64_t Limit = INT64_MAX;
+  const std::vector<std::pair<uint64_t, uint64_t>> Cases = {
+      {1, 0},
+      {4096, 4095},
+      {Limit, Limit - 1},
+      {Limit + 1, UINT64_MAX},
+      {UINT64_MAX, UINT64_MAX}};
+  Options.Android->ThreadLimit = 1;
+  Options.Android->Memory.push_back(
+      {Buffer, 4096, std::vector<uint8_t>(4096, 0xa5), false});
+  Options.Android->ReadMemory = {{Buffer, 128},
+                                 {android_model::ErrnoAddress, 4}};
+  Options.Android->ObserveMemoryOnFailure = true;
+  for (auto [Count, Capacity] : Cases) {
+    SCOPED_TRACE(Count);
+    for (uint64_t Address : {Buffer, uint64_t(1)}) {
+      auto R = run("files_read_chk_bounds", {Address, Count, Capacity});
+      EXPECT_EQ(R.Stop, ProcessStopReason::RuntimeFailure);
+      EXPECT_NE(R.Diagnostic.find(Count > Limit ? "signed byte-count"
+                                                : "destination bounds"),
+                std::string::npos);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, "__read_chk");
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+      ASSERT_EQ(R.MemorySnapshots.size(), 2u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(128, 0xa5));
+      EXPECT_EQ(R.MemorySnapshots[1].Bytes,
+                (std::vector<uint8_t>{77, 0, 0, 0}));
+    }
+  }
+
+  // Observe backing memory at the owning libc boundary before the session
+  // consumes the terminal error. An invalid descriptor would change errno
+  // if the call reached the shared kernel read owner.
+  ExecutionConfiguration C;
+  C.Backend = Options.Backend;
+  C.Architecture = GuestArchitecture::AArch64;
+  C.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Backend = llvm::cantFail(createExecutionBackend(C, 4 * 1024 * 1024));
+  auto &CPU = *Backend.CPU;
+  auto &Space = *CPU.addressSpace();
+  constexpr uint64_t Page = android_model::PageSize;
+  llvm::cantFail(Space.map(Buffer, Page, Read | Write | UserAccessible));
+  llvm::cantFail(Space.map(android_model::TLSAddress, Page,
+                           Read | Write | UserAccessible));
+  const std::vector<uint8_t> Bytes(Page, 0xa5);
+  auto TLS = Bytes;
+  llvm::support::endian::write32le(
+      TLS.data() + android_model::ErrnoAddress - android_model::TLSAddress, 77);
+  llvm::cantFail(CPU.write(Buffer, Bytes));
+  llvm::cantFail(CPU.write(android_model::TLSAddress, TLS));
+  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, Page};
+  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       Options.Backend,
+                       {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, Buffer + Page, Options,
+                                    Result);
+  const android_model::LinkedImage Linked{};
+  for (auto [Count, Capacity] : Cases) {
+    SCOPED_TRACE(Count);
+    for (uint64_t Address : {Buffer, uint64_t(1)}) {
+      auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+      android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                  Linked);
+      NativeCallEvent Call{};
+      Call.Name = "__read_chk";
+      Call.Arguments = {99, Address, Count, Capacity};
+      auto Value = Model.invoke(Call);
+      ASSERT_FALSE(bool(Value));
+      EXPECT_NE(
+          llvm::toString(Value.takeError())
+              .find(Count > Limit ? "signed byte-count" : "destination bounds"),
+          std::string::npos);
+      std::vector<uint8_t> After(Page);
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Bytes);
+      llvm::cantFail(Space.snapshotBacking(android_model::TLSAddress, After));
+      EXPECT_EQ(After, TLS);
+    }
+  }
+}
+
+TEST_P(AndroidFiles, ReadChkAdmitsZeroAndTheExactSignedLimitToTheReadOwner) {
+  Options.Android->ThreadLimit = 1;
+  Options.Android->ReadMemory = {{android_model::ErrnoAddress, 4}};
+  for (auto [Count, Capacity] :
+       {std::pair<uint64_t, uint64_t>{0, 0}, {INT64_MAX, UINT64_MAX}}) {
+    auto R = run("files_read_chk_bounds", {1, Count, Capacity});
+    returned(R, UINT64_MAX);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(
+        llvm::support::endian::read32le(R.MemorySnapshots[0].Bytes.data()), 9u);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, "__read_chk");
+    EXPECT_EQ(R.NativeCalls.back().Result, UINT64_MAX);
+  }
+}
 TEST_P(AndroidFiles, ReadlinkCopiesObservedBytesThroughRawAndBionicCalls) {
   // The O0 fixture fills a page before checking the pathname length limit.
   Options.Limits.TimeoutMicroseconds = 30000000;
