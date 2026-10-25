@@ -3407,6 +3407,44 @@ TEST_F(ProcessPublic, AndroidLiveProcAndMaintainedStatMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidPrctlNamesAndThreadRetirementMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  auto Request = llvm::cantFail(llvm::json::parse(R"({
+    "backend":"unicorn",
+    "android":{"initialize":false,"thread_limit":2},
+    "linux_kernel":{"anonymous_vma_names":"android-user-pointer"},
+    "linux_files":{"files":[],"dynamic_proc":{"name":"fixture","parent_pid":1}}})"));
+  for (const char *Fixture : {"proc-O0-none.so", "proc-O2-relr.so"}) {
+    SCOPED_TRACE(Fixture);
+    Path =
+        (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / Fixture).string();
+    for (const char *Entry :
+         {"proc_prctl_names", "proc_prctl_thread_retirement"}) {
+      SCOPED_TRACE(Entry);
+      (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
+      const auto Options = jsonText(*Request.getAsObject());
+      const auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned")
+          << Text;
+      EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                process_cli::Success);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidTokenNamesAndMutationsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

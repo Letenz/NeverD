@@ -13,6 +13,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
+#include "neverd/Limits.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
@@ -3360,7 +3361,10 @@ TEST(LLVMCValues, WideIntegerPointerConstantKeepsItsPointerWidth) {
 }
 
 TEST(LLVMCValues, WideIntegerConstantsPreserveEveryWordAndStoreExtent) {
-  for (unsigned Width : {160U, 256U, 288U, 512U}) {
+  for (unsigned Width :
+       {160U, 256U, 288U, 512U, 1024U,
+        unsigned(neverd::limits::kMaxCSourceIntegerBytes * 8)}) {
+    SCOPED_TRACE(Width);
     llvm::LLVMContext Context;
     llvm::Module Module("wide-constant", Context);
     auto *Signature =
@@ -3396,7 +3400,9 @@ TEST(LLVMCValues, WideIntegerConstantsPreserveEveryWordAndStoreExtent) {
     std::string Driver = R"(
 #include <string.h>
 int main(void) {
-  unsigned char storage[96], expected[96];
+  unsigned char storage[)" +
+                         std::to_string(Width / 8 + 4) + R"(];
+  unsigned char expected[sizeof(storage)];
   memset(storage, 0x59, sizeof(storage));
   memcpy(expected, storage, sizeof(storage));
 )";
@@ -3406,7 +3412,8 @@ int main(void) {
                 "] |= " + std::to_string(1U << (Bit % 8)) + ";\n";
     Driver += "  wide_store(storage + 1);\n"
               "  if (memcmp(storage, expected, sizeof(storage))) return 1;\n"
-              "  unsigned char copy[96], expected_copy[96];\n"
+              "  unsigned char copy[sizeof(storage)], "
+              "expected_copy[sizeof(storage)];\n"
               "  memset(copy, 0xa5, sizeof(copy));\n"
               "  memcpy(expected_copy, copy, sizeof(copy));\n";
     Driver += "  memcpy(expected_copy + 3, expected + 1, " +
@@ -3429,8 +3436,11 @@ TEST(LLVMCValues, ConstantsBeyondTheSupportedCarrierAreRejected) {
       Signature, llvm::GlobalValue::ExternalLinkage, "wide_store", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  Builder.CreateStore(llvm::ConstantInt::get(Context, llvm::APInt(513, 17)),
-                      Function->getArg(0));
+  Builder.CreateStore(
+      llvm::ConstantInt::get(
+          Context,
+          llvm::APInt(neverd::limits::kMaxCSourceIntegerBytes * 8 + 1, 17)),
+      Function->getArg(0));
   Builder.CreateRetVoid();
   std::string Source;
   llvm::raw_string_ostream Out(Source);
@@ -3439,9 +3449,10 @@ TEST(LLVMCValues, ConstantsBeyondTheSupportedCarrierAreRejected) {
 }
 
 TEST(LLVMCValues, WideConstantsPreserveEveryStoredByte) {
+  constexpr unsigned MaxBits = neverd::limits::kMaxCSourceIntegerBytes * 8;
   for (bool LittleEndian : {true, false})
-    for (unsigned Bits :
-         {129u, 136u, 159u, 192u, 224u, 255u, 256u, 257u, 384u, 511u, 512u}) {
+    for (unsigned Bits : {129u, 136u, 159u, 192u, 224u, 255u, 256u, 257u, 384u,
+                          511u, 512u, 513u, MaxBits - 1, MaxBits}) {
       SCOPED_TRACE(Bits);
       SCOPED_TRACE(LittleEndian);
       llvm::LLVMContext Context;
@@ -3480,10 +3491,11 @@ TEST(LLVMCValues, WideConstantsPreserveEveryStoredByte) {
       const std::string Main =
           R"(
 int main(void) {
-  unsigned char bytes[66];
-  for (unsigned i = 0; i < 66; ++i) bytes[i] = 0xA5;
+  unsigned char bytes[)" +
+          std::to_string(Bytes + 2) + R"(];
+  for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = 0xA5;
   wide_store(bytes + 1);
-  for (unsigned i = 0; i < 66; ++i) {
+  for (unsigned i = 0; i < sizeof(bytes); ++i) {
     unsigned byte_index = )" +
           std::to_string(LittleEndian) + R"( ? i - 1 : )" +
           std::to_string(Bytes) + R"( - i;
@@ -3495,11 +3507,11 @@ int main(void) {
           std::to_string(Bits % 8 ? (1u << (Bits % 8)) - 1 : 255) + R"( : 255;
     if ((bytes[i] & mask) != (expected & mask)) return 1;
   }
-  unsigned char copy[66];
-  for (unsigned i = 0; i < 66; ++i) copy[i] = 0xA5;
+  unsigned char copy[sizeof(bytes)];
+  for (unsigned i = 0; i < sizeof(copy); ++i) copy[i] = 0xA5;
   bytes[1] ^= 0xFF;
   wide_copy(bytes + 1, copy + 1);
-  for (unsigned i = 0; i < 66; ++i) {
+  for (unsigned i = 0; i < sizeof(bytes); ++i) {
     unsigned mask = i == )" +
           std::to_string(LittleEndian ? Bytes : 1) + R"( ? )" +
           std::to_string(Bits % 8 ? (1u << (Bits % 8)) - 1 : 255) + R"( : 255;

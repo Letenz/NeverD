@@ -144,6 +144,9 @@ inline constexpr int kMainWindowOverviewHeight = 170;
 // Input dialogs leave room for a full name, comment or expression.
 inline constexpr int kMainWindowInputDialogWidth = 420;
 inline constexpr QSize kLocationChooserDialogSize{720, 480};
+/// The command palette; dropped from the command center, it is at least as
+/// wide as the field.
+inline constexpr QSize kCommandPaletteSize{560, 420};
 inline constexpr QSize kShortcutsDialogSize{800, 560};
 inline constexpr QSize kExportDataDialogSize{760, 520};
 
@@ -227,6 +230,13 @@ inline constexpr int kWindowFrameScreenRestoreTimeoutMs = 1000;
 // tools/neverd-gui/app/WorkbenchStyle.cpp
 /// The size of icons drawn on the 16 pixel grid of IconSet.def.
 inline constexpr int kWorkbenchStyleSmallIconSize = 16;
+/// Qt's own file and font dialogs open at least this large, room to read a
+/// folder's details or a list of fonts.
+inline constexpr QSize kWorkbenchStyleFileDialogSize{860, 540};
+inline constexpr QSize kWorkbenchStyleFontDialogSize{600, 460};
+/// The widest a file dialog's size, type or date column fits its contents,
+/// so that one long type cannot crowd out the names.
+inline constexpr int kWorkbenchStyleFileColumnMaximumWidth = 200;
 
 inline constexpr QSize kQuickStartDialogSize{900, 560};
 inline constexpr QSize kQuickStartMinimumDialogSize{720, 460};

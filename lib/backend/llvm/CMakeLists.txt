@@ -46,6 +46,8 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMX86Virtualization.cpp
   X86/MedLLVMX86SystemState.cpp
   X86/MedLLVMX86CompressExpand.cpp
+  X86/MedLLVMX86FourSource.cpp
+  X86/MedLLVMX86NativeMemory.cpp
   X86/MedLLVMX86APXAtomic.cpp
   X86/MedLLVMX86RepState.cpp
   X86/MedLLVMX86Sgx.cpp

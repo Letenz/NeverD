@@ -79,6 +79,46 @@ TEST_P(AndroidProc, NativeWritesPublishCompleteStatAndLiveFDInfo) {
   run("proc_write_stat");
 }
 
+TEST_P(AndroidProc, PrctlSharesBorrowedNamesAcrossNativeSyscallAndRawPaths) {
+  Options.LinuxKernel.emplace().AnonymousVMANames =
+      LinuxAnonymousVMANames::AndroidUserPointer;
+  auto R = run("proc_prctl_names");
+  bool Raw = false, Native = false, Syscall = false;
+  for (const auto &E : R.Services)
+    Raw |= E.Number == 167;
+  for (const auto &E : R.NativeCalls) {
+    Native |= E.Name == "prctl";
+    Syscall |= E.Name == "syscall";
+  }
+  EXPECT_TRUE(Raw);
+  EXPECT_TRUE(Native);
+  EXPECT_TRUE(Syscall);
+}
+
+TEST_P(AndroidProc, PrctlNamesRetireWithGuestThreadMappings) {
+  Options.LinuxKernel.emplace().AnonymousVMANames =
+      LinuxAnonymousVMANames::AndroidUserPointer;
+  auto R = run("proc_prctl_thread_retirement");
+  ASSERT_EQ(R.NativeThreads.size(), 2u);
+  EXPECT_TRUE(R.NativeThreads[1].Retired);
+}
+
+TEST_P(AndroidProc, PrctlUnspecifiedAndUnknownContractsRemainUnsupported) {
+  for (const char *Entry : {"proc_prctl_missing", "proc_prctl_unknown"}) {
+    Options.Android->EntrySymbol = Entry;
+    auto R = llvm::cantFail(
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options));
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_FALSE(R.NativeCalls.empty());
+    if (!R.NativeCalls.empty()) {
+      EXPECT_EQ(R.NativeCalls.back().Name, "prctl");
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+    }
+    Options.LinuxKernel.emplace().AnonymousVMANames =
+        LinuxAnonymousVMANames::AndroidUserPointer;
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Backends, AndroidProc,
     testing::Combine(testing::Values("proc-O0-none", "proc-O2-none",

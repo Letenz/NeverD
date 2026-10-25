@@ -112,6 +112,30 @@ TEST(LinuxKernelAvailability,
 }
 
 TEST(LinuxKernelAvailability,
+     AnonymousVMANamesRequireExplicitTypedOrJSONInput) {
+  auto O = processOptionsFromJSON(
+      R"({"linux_kernel":{"anonymous_vma_names":"android-user-pointer"}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxKernel);
+  EXPECT_EQ(O->LinuxKernel->AnonymousVMANames,
+            LinuxAnonymousVMANames::AndroidUserPointer);
+  EXPECT_FALSE(O->LinuxKernel->GKI);
+  EXPECT_FALSE(bool(validateKernelOptions(*O->LinuxKernel)));
+  for (const char *Value : {"null", "true", "false", "0", "[]", "{}", "\"\"",
+                            "\"linux\"", "\"ANDROID-USER-POINTER\""}) {
+    auto Bad = processOptionsFromJSON(
+        std::string("{\"linux_kernel\":{\"anonymous_vma_names\":") + Value +
+        "}}");
+    ASSERT_FALSE(bool(Bad)) << Value;
+    llvm::consumeError(Bad.takeError());
+  }
+  O->LinuxKernel->AnonymousVMANames = static_cast<LinuxAnonymousVMANames>(99);
+  auto Bad = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, *O);
+  ASSERT_FALSE(bool(Bad));
+  EXPECT_EQ(llvm::toString(Bad.takeError()), KernelOptions);
+}
+
+TEST(LinuxKernelAvailability,
      XAttrQueryImportPreservesGKIAndRejectsTwoAuthorities) {
   struct Case {
     AndroidGKIKernel Kernel;
