@@ -377,6 +377,9 @@ MedIR, LLVM and both C routes. W indices consume exactly four bytes. A load
 returns its accessed bytes; explicit IR sign/zero extends through the encoded
 W/X result width before publishing the complete X register. Stores consume
 only their accessed data bytes, with no invented return value.
+Byte and halfword stores slice the encoded W value explicitly; the tracer
+requires those source bytes to be known before publishing the slice. Unknown
+unused upper bytes do not prevent a known narrow store.
 The real load retains AddressAdd's access-EL checks and any internal
 AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
 The address is unknown to generic memory proofs, and discarding the result
@@ -405,6 +408,15 @@ word-relative entries. The encoded read never becomes an unchecked effective
 address; existing root, mutation and storage audits still apply. Both source routes consume the
 authenticated load's input occurrence, preserving zero indices and an index
 register overwritten by the load.
+Source emission keeps these original reads even after recovering a switch.
+When a relocatable table read has no observable result, a bounded original-byte
+copy preserves the access without demanding callable identities for unreachable
+physical slots. The shared byte-storage descriptor grants no address or flow
+proof. HighC requires every use of the exact expression in its function to be
+unobserved, together with a complete source-range proof; LLVM requires the
+existing exact-occurrence, storage-role and terminal-use closure. Observable
+reads still use the normal relocation-aware memory owner. Table-relative data
+layout also observes original reads through unique local definitions.
 Private-copy source replay recomputes stack-access annotations from the current
 MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.

@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../../AArch64OriginalMemory.h"
 #include "AArch64SVEPredicate.h"
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -23,12 +24,17 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/Support/ErrorHandling.h"
+
+#include <algorithm>
+#include <vector>
 
 namespace neverd {
 
@@ -48,6 +54,43 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
         Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
     if (Instruction.stackBase())
       llvm::report_fatal_error(kAddressMemorySPUnsupported);
+    // Relocate the base through the existing memory owner. The raw index
+    // remains a separate operand: the original instruction still owns its
+    // extension, scale and checked addition.
+    llvm::Value *Base = nullptr;
+    if (Instruction.isLoad() && OriginalImageStorageForSource && Img)
+      if (const auto *Table = recoveredJumpTableForLoad(Op);
+          Table && Table->HasBaseAddr && Table->HasDispatchSlotMap &&
+          !Table->SlotIndices.empty()) {
+        const auto Storage =
+            aarch64OriginalMemoryStorage(*Img, Table->BaseAddr);
+        const uint32_t Last = *std::max_element(Table->SlotIndices.begin(),
+                                                Table->SlotIndices.end());
+        if (Storage && Storage->Bytes.size() >= Instruction.accessBytes() &&
+            Last <= ((Storage->Bytes.size() - Instruction.accessBytes()) >>
+                     Instruction.indexShift())) {
+          // The result is consumed only by the authenticated switch. Keep
+          // the actual read, using original bytes rather than inventing
+          // callable identities for physical slots the switch cannot reach.
+          const auto Name =
+              kOriginalMemoryLLVMNamePrefix + llvm::utohexstr(Storage->Base);
+          std::vector<uint8_t> Bytes(Storage->Pad, 0);
+          Bytes.insert(Bytes.end(), Storage->Bytes.begin(),
+                       Storage->Bytes.end());
+          auto *Initializer = llvm::ConstantDataArray::get(*Ctx, Bytes);
+          auto *Global = new llvm::GlobalVariable(
+              *Mod, Initializer->getType(), false,
+              llvm::GlobalValue::PrivateLinkage, Initializer, Name);
+          Global->setAlignment(llvm::Align(limits::kMaxEmbeddedDataAlignment));
+          Base = Builder.CreateGEP(Builder.getInt8Ty(), Global,
+                                   Builder.getInt64(Storage->Pad));
+        }
+      }
+    if (!Base)
+      Base = resolveAtomicMemoryPtr(
+          Op.Inputs[kAddressMemoryBaseOperand + 1], Instruction.accessBytes(),
+          sizeToType(Instruction.accessBytes()), Builder);
+    auto *BaseInteger = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
     auto Integer = [&](const MedVar &Input) -> llvm::Value * {
       auto *Value = getVar(Input, Builder);
       if (Value->getType()->isPointerTy())
@@ -64,8 +107,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                   false),
           kAddressStoreAsm, kAddressStoreConstraints, /*hasSideEffects=*/true);
       return Builder.CreateCall(
-          Asm, {Integer(Op.Inputs[kAddressMemoryBaseOperand + 1]),
-                Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
+          Asm, {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
                 Builder.getInt32(Instruction.scratchWord()),
                 Integer(Op.Inputs[kAddressMemoryDataOperand + 1])});
     }
@@ -75,12 +117,11 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
             {Builder.getInt64Ty(), Builder.getInt64Ty(), Builder.getInt32Ty()},
             false),
         kAddressLoadAsm, kAddressLoadConstraints, /*hasSideEffects=*/true);
-    auto *Result =
-        Builder.CreateCall(Asm,
-                           {Integer(Op.Inputs[kAddressMemoryBaseOperand + 1]),
-                            Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
-                            Builder.getInt32(Instruction.scratchWord())},
-                           kAddressLoadResult);
+    auto *Result = Builder.CreateCall(
+        Asm,
+        {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
+         Builder.getInt32(Instruction.scratchWord())},
+        kAddressLoadResult);
     return Builder.CreateZExtOrTrunc(Result, sizeToType(Op.Output.Size));
   }
 

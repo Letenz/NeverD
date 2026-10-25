@@ -1345,6 +1345,13 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
     JumpTableExactConsumerGroup *ExactConsumerGroup, bool *ShapeClaimed,
     size_t *EvidenceBudget, bool *AnalysisComplete, bool ScanExactGroup,
     bool RequireCurrentBranchLoad, bool RequireExactGroupAnchor) const {
+  if (GuardedGroupProofContext && finiteAbsoluteGroupClaimed()) {
+    // The frozen group owns its other members. Replay this member's exact
+    // load and selector; a lexical sibling is not an alternative lifetime of
+    // this branch's index.
+    ScanExactGroup = false;
+    RequireCurrentBranchLoad = true;
+  }
   ResolverQueryScope AddressScope(*this);
   if (AnalysisComplete)
     *AnalysisComplete = false;
@@ -2310,7 +2317,11 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
       const auto Run = boundedRelocationRun(*Base, W, true);
       if (!Run)
         return false;
-      if (*Run < limits::kMinJumpTableEntries)
+      const bool Relocated = *Run >= limits::kMinJumpTableEntries;
+      if (!Relocated && (*Run != 0 || W != Img.getPointerSize() ||
+                         !BranchLocalPointerLoadAddr ||
+                         *BranchLocalPointerLoadAddr != L.Addr ||
+                         !Img.readVA(*Base, W * limits::kMinJumpTableEntries)))
         continue;
       // Discovery proposes a recipe only. The address-role owner replays
       // both exact operands and the CPA2 proof before any stable adoption.
@@ -2336,7 +2347,10 @@ bool CFGBuilder::tryConstBaseAbsoluteTable(
         Info.TableLoadAddr = L.Addr;
         Info.TableLoadSeq = L.Seq;
         Info.PhysicalCapacity = *Run;
-        Info.RelocAbsolute = true;
+        // An inline absolute table need not have code-pointer relocation
+        // slots. Zero capacity grants no storage or selector authority: the
+        // common guard, exact role and target proofs must certify it.
+        Info.RelocAbsolute = Relocated;
       }
       if (!appendOccurrence(*Base, Index, L.Addr, L.Seq, *Base, Index, L.Addr,
                             L.Seq, W, std::nullopt))

@@ -2231,6 +2231,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
+      if (isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+          I == kAddressMemoryBaseOperand)
+        if (const auto It = OriginalMemoryBases.find({CurrentFunc, &E});
+            It != OriginalMemoryBases.end()) {
+          OpStrs.push_back(It->second);
+          continue;
+        }
       if (((LinuxSyscallArgs && !x64SyscallOperandRead(I, *LinuxSyscallArgs)) ||
            I >= FirstUnreadOperand) &&
           CanOmit(CanOmit, Op.get(), 0)) {

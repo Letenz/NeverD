@@ -249,6 +249,21 @@ uint64_t NdOpEmulator::readOperand(const NdVar &Op) const {
   return 0;
 }
 
+bool NdOpEmulator::knownOperandBytes(const NdVar &Operand, uint64_t Offset,
+                                     uint64_t Bytes) const {
+  if (Offset > Operand.Size || Bytes > Operand.Size - Offset)
+    return false;
+  if (Operand.isConst())
+    return true;
+  if ((!Operand.isReg() && !Operand.isTemp()) ||
+      !Registers.contains(Operand.Offset))
+    return false;
+  const auto Wide = WideRegisters.find(Operand.Offset);
+  const uint64_t Available =
+      Wide == WideRegisters.end() ? sizeof(uint64_t) : Wide->second.size();
+  return Offset <= Available && Bytes <= Available - Offset;
+}
+
 std::vector<uint8_t> NdOpEmulator::readOperandBytes(const NdVar &Op) const {
   std::vector<uint8_t> Bytes(Op.Size, 0);
   if (Op.isConst()) {
@@ -502,12 +517,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
       const auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
       const auto &Index = Op.Inputs[kAddressMemoryIndexOperand + 1];
       const auto Known = [&](const NdVar &Input) {
-        if (Input.isConst())
-          return true;
-        if (!Registers.contains(Input.Offset))
-          return false;
-        const auto Wide = WideRegisters.find(Input.Offset);
-        return Wide == WideRegisters.end() || Wide->second.size() >= Input.Size;
+        return knownOperandBytes(Input, 0, Input.Size);
       };
       if (!Known(Base) || !Known(Index))
         return false;

@@ -46,6 +46,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+#include <algorithm>
 #include <array>
 #include <climits>
 #include <functional>
@@ -134,6 +135,13 @@ std::vector<LowOp> liftMemory(uint32_t Word, bool Fast, bool Strict = true) {
   std::vector<LowOp> Ops;
   Dec.liftToLow(Insn, Ops);
   return Ops;
+}
+
+LowOp originalMemoryOperation(const std::vector<LowOp> &Ops) {
+  const auto It =
+      std::find_if(Ops.begin(), Ops.end(), lowAArch64AddressMemoryShapeIsValid);
+  EXPECT_NE(It, Ops.end());
+  return It == Ops.end() ? LowOp{} : *It;
 }
 
 MedFunc memoryFunction(uint32_t Word, bool Discard = false) {
@@ -1098,7 +1106,7 @@ TEST(AArch64AddressMemory, AllScalarRegisterOffsetFamiliesKeepTheirContracts) {
       for (bool Strict : {false, true}) {
         const auto Ops = liftMemory(Case.Word, Fast, Strict);
         ASSERT_FALSE(Ops.empty());
-        const auto &Op = Ops.front();
+        const auto Op = originalMemoryOperation(Ops);
         ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Op));
         EXPECT_EQ(lowAArch64AddressLoadShapeIsValid(Op), Case.Load);
         EXPECT_EQ(Op.Inputs[2].Size, Case.IndexBytes);
@@ -1109,7 +1117,15 @@ TEST(AArch64AddressMemory, AllScalarRegisterOffsetFamiliesKeepTheirContracts) {
         if (!Case.Load) {
           ASSERT_EQ(Op.NumInputs, 5);
           EXPECT_EQ(Op.Inputs[4].Size, Case.Access);
-          EXPECT_EQ(Op.Inputs[4].Offset, a64reg::X0);
+          if (Case.Access < kWordBytes) {
+            EXPECT_TRUE(Op.Inputs[4].isTemp());
+            const auto &Slice = Ops.front();
+            EXPECT_EQ(Slice.Opcode, NdOp::SUBBYTES);
+            EXPECT_EQ(Slice.Inputs[0].Offset, a64reg::X0);
+            EXPECT_EQ(Slice.Inputs[0].Size, kWordBytes);
+            EXPECT_EQ(Slice.Output, Op.Inputs[4]);
+          } else
+            EXPECT_EQ(Op.Inputs[4].Offset, a64reg::X0);
         }
       }
     const auto Function = memoryFunction(Case.Word);
@@ -1226,7 +1242,7 @@ TEST(AArch64AddressMemory,
       Emulator.setRegister(
           a64reg::X2, Case.IndexBytes == kWordBytes ? kNarrowHighGarbage : 0);
       const auto Ops = liftMemory(Case.Word, false);
-      const auto &Op = Ops.front();
+      const auto Op = originalMemoryOperation(Ops);
       for (const auto &Step : Ops)
         ASSERT_TRUE(Emulator.step(Step));
       if (Case.Load) {
@@ -1245,6 +1261,9 @@ TEST(AArch64AddressMemory,
         Refused.setRegister(a64reg::X0, ~kLoadedValue);
         Refused.setRegister(a64reg::X1, kEntry + kScalarBytes);
         Refused.setRegister(a64reg::X2, 0);
+        for (const auto &Step : Ops)
+          if (Step.Opcode != NdOp::INTRINSIC)
+            ASSERT_TRUE(Refused.step(Step));
         EXPECT_FALSE(Refused.step(Op));
         ASSERT_TRUE(Refused.step(Read));
         EXPECT_EQ(Refused.getRegister(a64reg::X0), 0);
@@ -1283,6 +1302,142 @@ TEST(AArch64AddressMemory, NarrowIndicesNeedOnlyTheirLowWordBeforeExtension) {
   }
 }
 
+TEST(AArch64AddressMemory, NarrowStoresRequireExactlyTheirKnownDataSlice) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Segment Data;
+  Data.VA = kEntry;
+  Data.Size = Data.FileSz = 2 * kScalarBytes;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  Image.Segments.push_back(Data);
+  std::array<uint8_t, kScalarBytes> Bytes;
+  writeLE<uint64_t>(Bytes.data(), kLoadedValue);
+  for (const auto &Case : FamilyCases) {
+    if (Case.Load || Case.Access >= kWordBytes)
+      continue;
+    SCOPED_TRACE(Case.Word);
+    const auto Ops = liftMemory(Case.Word, false);
+    ASSERT_GT(Ops.size(), 1);
+    for (bool Strict : {false, true}) {
+      NdOpEmulator Emulator(Image);
+      Emulator.setStrictMode(Strict);
+      Emulator.setRegister(a64reg::X1, kEntry);
+      Emulator.setRegister(a64reg::X2, 0);
+      EXPECT_FALSE(Emulator.step(Ops.front()));
+      ASSERT_TRUE(Emulator.step(liftMemory(kFirst, false).front()));
+      EXPECT_EQ(Emulator.getRegister(a64reg::X0), 0);
+      Emulator.setRegisterBytes(
+          a64reg::X0, llvm::ArrayRef<uint8_t>(Bytes).take_front(Case.Access));
+      for (const auto &Step : Ops)
+        ASSERT_TRUE(Emulator.step(Step));
+      ASSERT_TRUE(Emulator.step(liftMemory(kFirst, false).front()));
+      EXPECT_EQ(Emulator.getRegister(a64reg::X0), Case.Expected);
+    }
+  }
+}
+
+TEST(AArch64AddressMemory, UnobservedStorageCannotCaptureAnObservedRead) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.IsRelocatable = true;
+  Segment Text;
+  Text.Name = kStorageTextName;
+  Text.VA = kEntry;
+  Text.Size = Text.FileSz = kStorageFunctionCount * kScalarBytes;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  for (unsigned I = 0; I < kStorageFunctionCount; ++I) {
+    writeLE<uint32_t>(Text.Data.data() + I * kScalarBytes,
+                      kStorageMoveZeroWord);
+    writeLE<uint32_t>(Text.Data.data() + I * kScalarBytes + kWordBytes,
+                      kReturn);
+  }
+  Image.Segments.push_back(Text);
+  Segment Data;
+  Data.Name = kStorageTableName;
+  Data.VA = kStorageBase;
+  Data.Size = Data.FileSz = 2 * kScalarBytes;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.resize(Data.Size);
+  const va_t Target = kEntry + kScalarBytes;
+  for (unsigned I = 0; I < 2; ++I) {
+    writeLE<uint64_t>(Data.Data.data() + I * kScalarBytes, Target);
+    Image.CodePtrRelocSlots.insert(kStorageBase + I * kScalarBytes);
+  }
+  Image.Segments.push_back(Data);
+  Symbol Table;
+  Table.Name = kStorageTableName;
+  Table.Addr = kStorageBase;
+  Table.Size = Data.Size;
+  Image.Symbols.push_back(Table);
+  for (bool SharedCall : {false, true})
+    for (bool SeparateFunctions : {false, true}) {
+      const auto Base = HighExpr::makeConst(
+          kStorageBase, kScalarBytes, ConstantAddressProvenance::DataAddress);
+      const auto Read = [&] {
+        auto Call = HighExpr::makeCall(
+            intrinsicName(Intrinsic::A64_Load64RegisterOffset), 0,
+            {Base, HighExpr::makeConst(0, kScalarBytes),
+             HighExpr::makeConst(kFirst, kWordBytes)});
+        Call->IntrinsicId = Intrinsic::A64_Load64RegisterOffset;
+        Call->Type = NdType::makeInt(kScalarBytes, false);
+        return Call;
+      };
+      const auto Unobserved = Read();
+      const auto Observed = SharedCall ? Unobserved : Read();
+      HighFunc Reader;
+      Reader.Name = kName;
+      Reader.Entry = kEntry;
+      Reader.ReturnType = NdType::makeInt(kScalarBytes, false);
+      HighStmt Effect;
+      Effect.Kind = StmtKind::Call;
+      Effect.CallExpr = Unobserved;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal =
+          SeparateFunctions ? HighExpr::makeConst(0, kScalarBytes) : Observed;
+      Reader.Body = {Effect, Return};
+      HighFunc Callee;
+      Callee.Name = kStorageTargetName;
+      Callee.Entry = Target;
+      Callee.ReturnType = Reader.ReturnType;
+      Return.RetVal = HighExpr::makeConst(0, kScalarBytes);
+      Callee.Body = {Return};
+      std::vector<HighFunc> Functions{Reader, Callee};
+      if (SeparateFunctions) {
+        HighFunc Other = Reader;
+        Other.Name = kStorageOtherName;
+        Other.Entry = Target + kScalarBytes;
+        Return.RetVal = Observed;
+        Other.Body = {Return};
+        Functions.push_back(Other);
+      }
+      CEmitterOptions Options;
+      Options.TheArch = Image.Arch;
+      Options.Format = Image.Format;
+      Options.Image = &Image;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(HighCEmitter().emit(Functions, Out, Options));
+      EXPECT_EQ(Source.find(kOriginalStoragePrefix) != std::string::npos,
+                !SharedCall || SeparateFunctions)
+          << Source;
+      Source += llvm::formatv(kStorageIdentityHarness,
+                              SeparateFunctions ? kStorageOtherName : kName,
+                              kStorageTargetName,
+                              SeparateFunctions ? kName : kStorageTargetName)
+                    .str();
+#if defined(__APPLE__) && defined(__aarch64__)
+      compileMemoryC(Source, true);
+#else
+      compileMemoryC(Source, false);
+#endif
+    }
+}
+
 TEST(AArch64AddressMemory, StoreShapesCannotInventOutputsOrUnusedHighBits) {
   for (const auto &Case : FamilyCases) {
     if (Case.Load)
@@ -1290,7 +1445,7 @@ TEST(AArch64AddressMemory, StoreShapesCannotInventOutputsOrUnusedHighBits) {
     SCOPED_TRACE(Case.Word);
     auto Function = memoryFunction(Case.Word);
     auto &Med = Function.Blocks.front().Ops.front();
-    auto Low = liftMemory(Case.Word, false).front();
+    auto Low = originalMemoryOperation(liftMemory(Case.Word, false));
     ASSERT_TRUE(aarch64AddressMemoryMedShapeIsValid(Med));
     ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Low));
     Med.Output = Function.Params[0];
@@ -1366,7 +1521,7 @@ TEST(AArch64AddressMemory,
       for (bool Strict : {false, true}) {
         auto Ops = liftMemory(Case.Word, Fast, Strict);
         ASSERT_FALSE(Ops.empty());
-        auto &Memory = Ops.front();
+        const auto Memory = originalMemoryOperation(Ops);
         ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Memory));
         EXPECT_EQ(Memory.Inputs[1].Offset, Case.Base == kZeroRegister
                                                ? a64reg::SP
@@ -1389,6 +1544,13 @@ TEST(AArch64AddressMemory,
             auto Invalid = Memory;
             Invalid.Inputs[4].Offset = 1;
             EXPECT_FALSE(lowAArch64AddressMemoryShapeIsValid(Invalid));
+          } else if (Case.Access < kWordBytes) {
+            EXPECT_TRUE(Memory.Inputs[4].isTemp());
+            EXPECT_EQ(Ops.front().Opcode, NdOp::SUBBYTES);
+            EXPECT_EQ(Ops.front().Inputs[0].Offset,
+                      Case.Destination * kScalarBytes);
+            EXPECT_EQ(Ops.front().Inputs[0].Size, kWordBytes);
+            EXPECT_EQ(Ops.front().Output, Memory.Inputs[4]);
           } else
             EXPECT_EQ(Memory.Inputs[4].Offset, Case.Destination * kScalarBytes);
         }

@@ -1155,7 +1155,14 @@ const JumpTable *
 MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
                                  bool RequireTerminalExclusive,
                                  uint64_t *SharedEvidence) const {
-  if (!CurMedFunc || !Img || Load.Opcode != NdOp::LOAD || Load.NumInputs < 1 ||
+  const auto Original =
+      TargetArch == Arch::AArch64 && aarch64AddressLoadMedShapeIsValid(Load) &&
+              Load.Output.Size == kAddressMemoryPointerBytes
+          ? aarch64AddressMemoryInstruction(
+                Load.Inputs[kAddressMemoryWordOperand + 1].ConstVal)
+          : std::nullopt;
+  if (!CurMedFunc || !Img ||
+      ((Load.Opcode != NdOp::LOAD || Load.NumInputs < 1) && !Original) ||
       Load.Output.isConst() || Load.Output.Size == 0 ||
       Load.MemoryOrdering != NdMemoryOrdering::None ||
       Load.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
@@ -1299,9 +1306,27 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
       uint64_t Base = 0;
       bool HaveBase = false;
       std::vector<MedVar> IndexTerms;
-      bool Decomposed = collectIndexedGlobalBase(Load.Inputs[0], Base, HaveBase,
-                                                 IndexTerms) &&
-                        HaveBase;
+      bool Decomposed = false;
+      if (Original) {
+        if (Original->stackBase() || JT.IsRelative || !JT.HasBaseAddr ||
+            JT.PreScaledIndex || JT.TwoLevelIndex || !JT.HasDispatchSlotMap ||
+            JT.SlotIndices.empty() ||
+            (uint64_t{1} << Original->indexShift()) != JT.EntrySize)
+          continue;
+        const auto Address =
+            traceTableBaseConst(Load.Inputs[kAddressMemoryBaseOperand + 1]);
+        const uint32_t Last =
+            *std::max_element(JT.SlotIndices.begin(), JT.SlotIndices.end());
+        if (!Address || *Address != JT.BaseAddr ||
+            !Original->controlIndependentAddressRange(*Address, Last))
+          continue;
+        Base = *Address;
+        HaveBase = Decomposed = true;
+        IndexTerms.push_back(Load.Inputs[kAddressMemoryIndexOperand + 1]);
+      } else
+        Decomposed = collectIndexedGlobalBase(Load.Inputs[0], Base, HaveBase,
+                                              IndexTerms) &&
+                     HaveBase;
       if (!Decomposed) {
         Base = 0;
         HaveBase = false;

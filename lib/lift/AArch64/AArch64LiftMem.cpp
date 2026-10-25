@@ -41,41 +41,52 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
                                             kAddressMemoryPointerBytes,
                            Instruction->indexBytes());
       if (!Instruction->isLoad()) {
-        const NdVar Data =
+        NdVar Data =
             Instruction->destination() == kAddressMemoryRegisterMask
                 ? NdVar::scalar(0, Instruction->accessBytes())
                 : NdVar::reg(a64reg::X0 + Instruction->destination() *
                                               kAddressMemoryPointerBytes,
-                             Instruction->accessBytes());
+                             Instruction->accessBytes() <
+                                     kAddressMemoryWordBytes
+                                 ? kAddressMemoryWordBytes
+                                 : Instruction->accessBytes());
+        if (Data.Size > Instruction->accessBytes()) {
+          const NdVar Low = S.makeTemp(Instruction->accessBytes());
+          S.emit(NdOp::SUBBYTES, Low,
+                 {Data, NdVar::scalar(0, kAddressMemoryWordBytes)});
+          Data = Low;
+        }
         S.emitIntrinsic(Instruction->operation().Id, NdVar{},
                         {Base, Index,
                          NdVar::cst(Instruction->Word, kAddressMemoryWordBytes),
                          Data});
         return true;
       }
+      const auto Operation = Instruction->operation();
       const NdVar Destination =
           Instruction->destination() == kAddressMemoryRegisterMask
-              ? S.makeTemp(kAddressMemoryPointerBytes)
+              ? S.makeTemp(Operation.ResultBytes)
               : NdVar::reg(a64reg::X0 + Instruction->destination() *
                                             kAddressMemoryPointerBytes,
-                           kAddressMemoryPointerBytes);
-      const auto Operation = Instruction->operation();
-      const NdVar Data =
-          Instruction->accessBytes() == kAddressMemoryPointerBytes
-              ? Destination
-              : S.makeTemp(Instruction->accessBytes());
+                           Operation.ResultBytes);
+      const NdVar Data = Instruction->accessBytes() == Destination.Size
+                             ? Destination
+                             : S.makeTemp(Instruction->accessBytes());
       S.emitIntrinsic(Operation.Id, Data,
                       {Base, Index,
                        NdVar::cst(Instruction->Word, kAddressMemoryWordBytes)});
-      if (Data.Size != Destination.Size) {
-        if (Operation.Signed && Operation.ResultBytes < Destination.Size) {
-          const auto Signed = S.makeTemp(Operation.ResultBytes);
-          S.emit(NdOp::INT_SEXT, Signed, {Data});
-          S.emit(NdOp::INT_ZEXT, Destination, {Signed});
-        } else {
-          S.emit(Operation.Signed ? NdOp::INT_SEXT : NdOp::INT_ZEXT,
-                 Destination, {Data});
-        }
+      if (Data.Size != Destination.Size)
+        S.emit(Operation.Signed ? NdOp::INT_SEXT : NdOp::INT_ZEXT, Destination,
+               {Data});
+      if (Destination.Size < kAddressMemoryPointerBytes) {
+        // Publish the encoded W view before its architectural X result. A
+        // narrow read in a successor must depend on this write, rather than
+        // an older W lifetime that happens to share the same physical slot.
+        const NdVar Wide =
+            Destination.isReg()
+                ? NdVar::reg(Destination.Offset, kAddressMemoryPointerBytes)
+                : S.makeTemp(kAddressMemoryPointerBytes);
+        S.emit(NdOp::INT_ZEXT, Wide, {Destination});
       }
       return true;
     }

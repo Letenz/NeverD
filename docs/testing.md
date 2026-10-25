@@ -298,6 +298,14 @@ Native harnesses also link the LLVM-generated objects and compare their memory
 and return values with independent instruction words. Fifty-two additional MC
 fixtures cover SP provenance, zero indices, discarded loads, zero stores and
 aliased base/index/data registers across every scalar family.
+Narrow-store tests reject unknown data while accepting a known accessed slice
+with unknown unused upper bytes. Native HighC cases share both bases and call
+expressions within and across functions, checking that only unobserved reads
+use original-byte storage and that returned callable pointers keep their native
+identity. The relative-table, finite-selector and shared-absolute execution
+regressions exercise retained reads through both source routes at O0/O2.
+`HighSourceRanges.*` independently enumerates SELECT, OR and XOR outcomes across
+all scalar widths, including their high bits, and rejects unknown selected arms.
 The software tracer reads only accessed bytes and keeps failed stores from
 changing finite memory in either mode. Independent LLVM MC words check source aliases, zero
 indices, discarded destinations and both encoded scales. O0/O2 object checks
