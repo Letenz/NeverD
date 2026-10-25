@@ -11,6 +11,7 @@
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/X86/X86AtomicExchange.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -24,10 +25,12 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/ModRef.h"
 #include "llvm/Support/Program.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -2986,6 +2989,120 @@ int main(void) {
 )";
   for (const char *Level : {"-O0", "-O2"})
     compileAndCheck(Text + Main, false, {}, Level);
+}
+
+TEST(LLVMCIntrinsicSemantics, NativeExchangeKeepsDeadWritesAndUnalignedBytes) {
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
+      llvm::Triple::x86_64)
+    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
+  llvm::LLVMContext Context;
+  llvm::Module Module("native-exchange", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  std::string Driver;
+  for (unsigned Bytes : {1U, 2U, 4U, 8U})
+    for (auto Space :
+         {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+          NdMemoryAddressSpace::X86GS})
+      for (bool Live : {false, true}) {
+        const auto Plan = x86AtomicExchangePlan(Arch::X64, Bytes, Space);
+        ASSERT_TRUE(Plan);
+        const auto Name = "exchange_" + std::to_string(Bytes) + "_" +
+                          std::to_string(static_cast<unsigned>(Space)) + "_" +
+                          std::to_string(Live);
+        auto *Word = B.getIntNTy(Bytes * 8);
+        auto *Pointer = B.getPtrTy(llvmX86MemoryAddressSpace(Space));
+        auto *Type = llvm::FunctionType::get(Word, {Pointer, Word}, false);
+        auto *Fn = llvm::Function::Create(
+            llvm::FunctionType::get(Live ? Word : B.getVoidTy(),
+                                    {Pointer, Word}, false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+        Fn->getArg(0)->setName("neverd_xchg_value");
+        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+        auto *Assembly = llvm::InlineAsm::get(Type, Plan->assembly(),
+                                              Plan->constraints(), true);
+        auto *Old = B.CreateCall(Assembly, {Fn->getArg(0), Fn->getArg(1)});
+        if (Live)
+          B.CreateRet(Old);
+        else
+          B.CreateRetVoid();
+        // Segment-relative functions are compiled but must not touch the
+        // host's TLS. The default-space calls exercise live and dead results.
+        if (Space != NdMemoryAddressSpace::Default)
+          continue;
+        const auto CWord = "uint" + std::to_string(Bytes * 8) + "_t";
+        Driver += "for (unsigned offset=8; offset<24; ++offset) {\n";
+        Driver += CWord + " initial = (" + CWord +
+                  ")UINT64_C(0x8877665544332211), desired = (" + CWord +
+                  ")UINT64_C(0x123456789abcdef0), current;\n";
+        Driver += "memset(storage, 0x5a, sizeof(storage));\n"
+                  "memcpy(storage+offset, &initial, sizeof(initial));\n";
+        Driver += Live ? CWord + " old = " : "";
+        Driver += Name + "((void *)(storage+offset), desired);\n";
+        if (Live)
+          Driver += "if (old != initial) return 1;\n";
+        Driver += "memcpy(&current, storage+offset, sizeof(current));\n"
+                  "if (current != desired) return 2;\n"
+                  "for (unsigned i=0; i<sizeof(storage); ++i)\n"
+                  " if ((i<offset || i>=offset+sizeof(current)) && "
+                  "storage[i]!=0x5a) return 3;\n}\n";
+      }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  EXPECT_EQ(Text.find("__atomic_exchange_n"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("%%fs:"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("%%gs:"), std::string::npos) << Text;
+  for (const char *Level : {"-O0", "-O2"})
+    compileAndCheck(Text +
+                        "\n#include <string.h>\nint main(void) {\n"
+                        "_Alignas(64) unsigned char storage[64];\n" +
+                        Driver + "return 0;\n}\n",
+                    false, {}, Level, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, NativeExchangeRejectsChangedContracts) {
+  for (bool Live : {false, true})
+    for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+      SCOPED_TRACE(Live);
+      SCOPED_TRACE(Mutation);
+      llvm::LLVMContext Context;
+      llvm::Module Module("changed-exchange", Context);
+      Module.setDataLayout("e-p:64:64");
+      llvm::IRBuilder<> B(Context);
+      const auto Plan =
+          x86AtomicExchangePlan(Arch::X64, 8, NdMemoryAddressSpace::Default);
+      auto *Type = llvm::FunctionType::get(
+          B.getInt64Ty(), {B.getPtrTy(Mutation == 8 ? 1 : 0), B.getInt64Ty()},
+          false);
+      auto *Fn = llvm::Function::Create(
+          Type, llvm::GlobalValue::ExternalLinkage, "exchange", Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+      auto *Assembly = llvm::InlineAsm::get(
+          Type, Plan->assembly() + (Mutation == 0 ? "\n\tnop" : ""),
+          Plan->constraints() + (Mutation == 1 ? ",~{cc}" : ""), Mutation != 2,
+          Mutation == 3,
+          Mutation == 4 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
+      auto *Call = B.CreateCall(Assembly, {Fn->getArg(0), Fn->getArg(1)});
+      if (Mutation == 5)
+        Call->addFnAttr(llvm::Attribute::NoSync);
+      if (Mutation == 6)
+        Call->setMemoryEffects(llvm::MemoryEffects::readOnly());
+      if (Mutation == 7)
+        Call->setCallingConv(llvm::CallingConv::Fast);
+      B.CreateRet(Live ? static_cast<llvm::Value *>(Call) : B.getInt64(0));
+      CEmitterOptions Options;
+      Options.TheArch = Mutation == 9 ? Arch::X86 : Arch::X64;
+      Options.PreserveLLVMFunctionTypes = true;
+      std::string Text;
+      llvm::raw_string_ostream OS(Text);
+      EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
+                   std::invalid_argument);
+    }
 }
 
 } // namespace

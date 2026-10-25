@@ -57,6 +57,8 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/Win64EH.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
 #include <cstring>
@@ -43850,38 +43852,68 @@ BinaryImage makeCodeFixture(va_t Entry, std::vector<uint8_t> Bytes) {
 }
 
 TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
+      llvm::Triple::x86_64)
+    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
   constexpr va_t Entry = 0x140001000;
-  for (bool Locked : {false, true}) {
-    std::vector<uint8_t> Code;
-    if (Locked)
-      Code.push_back(0xf0);
-    // xchg [rcx], rdx; mov rax, rdx; ret. The returned value belongs to the
-    // indivisible exchange, so forwarding a later memory read is incorrect.
-    Code.insert(Code.end(), {0x48, 0x87, 0x11, 0x48, 0x89, 0xd0, 0xc3});
-    for (bool LLVMRoute : {false, true}) {
-      SCOPED_TRACE(::testing::Message()
-                   << "lock=" << Locked << " llvm=" << LLVMRoute);
-      const auto Image = makeCodeFixture(Entry, Code);
-      const auto Source = LLVMRoute ? llvmcOnlyFunction(Image, Entry)
-                                    : highcOnlyFunction(Image, Entry);
-      ASSERT_NE(Source.find("__atomic_exchange_n"), std::string::npos)
-          << Source;
-      compileAndRunCallOrdering(
-          "#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n" +
-              Source + R"(
+  for (unsigned Bytes : {1U, 2U, 4U, 8U})
+    for (bool Locked : {false, true}) {
+      std::vector<uint8_t> Code;
+      if (Locked)
+        Code.push_back(0xf0);
+      // xchg [rcx], dl/dx/edx/rdx; zero-extend the old value into the return
+      // register. No alignment promise can be inferred from the address.
+      if (Bytes == 2)
+        Code.push_back(0x66);
+      if (Bytes == 8)
+        Code.push_back(0x48);
+      Code.insert(Code.end(), {uint8_t(Bytes == 1 ? 0x86 : 0x87), 0x11});
+      if (Bytes <= 2)
+        Code.insert(Code.end(),
+                    {0x0f, uint8_t(Bytes == 1 ? 0xb6 : 0xb7), 0xc2});
+      else {
+        if (Bytes == 8)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x89, 0xd0});
+      }
+      Code.push_back(0xc3);
+      for (bool LLVMRoute : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "bytes=" << Bytes << " lock="
+                                          << Locked << " llvm=" << LLVMRoute);
+        const auto Image = makeCodeFixture(Entry, Code);
+        const auto Source = LLVMRoute ? llvmcOnlyFunction(Image, Entry)
+                                      : highcOnlyFunction(Image, Entry);
+        ASSERT_NE(Source.find("__asm__ __volatile__(\"xchg"), std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("__atomic_exchange_n"), std::string::npos)
+            << Source;
+        compileAndRunCallOrdering(
+            "#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n" +
+                Source + "\ntypedef uint" + std::to_string(Bytes * 8) +
+                "_t word;\n" + R"(
 int main(void) {
-  uint64_t cell = UINT64_C(0x8877665544332211);
-  uint64_t old = sub_140001000((void *)&cell, UINT64_C(0x123456789abcdef0));
-  if (old != UINT64_C(0x8877665544332211) ||
-      cell != UINT64_C(0x123456789abcdef0)) return 1;
-  old = sub_140001000((void *)&cell, UINT64_C(0xfedcba9876543210));
-  return old != UINT64_C(0x123456789abcdef0) ||
-         cell != UINT64_C(0xfedcba9876543210);
+  _Alignas(64) unsigned char storage[64];
+  const word values[] = {0, (word)-1, (word)UINT64_C(0x8877665544332211),
+                         (word)UINT64_C(0x123456789abcdef0)};
+  for (unsigned offset = 8; offset < 24; ++offset)
+    for (unsigned i = 0; i < 4; ++i)
+      for (unsigned j = 0; j < 4; ++j) {
+        memset(storage, 0x5a, sizeof(storage));
+        memcpy(storage + offset, &values[i], sizeof(word));
+        word old = sub_140001000((void *)(storage + offset), values[j]);
+        word current;
+        memcpy(&current, storage + offset, sizeof(word));
+        if (old != values[i] || current != values[j]) return 1;
+        for (unsigned k = 0; k < sizeof(storage); ++k)
+          if ((k < offset || k >= offset + sizeof(word)) && storage[k] != 0x5a)
+            return 2;
+      }
+  return 0;
 }
 )",
-          true);
+            true);
+      }
     }
-  }
 }
 
 TEST(HighCPointerAddresses,

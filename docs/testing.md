@@ -569,6 +569,16 @@ standard integer declarations. The trailing-argument fixture uses real dynamic
 CPUID outputs, so scalar constant recovery cannot make its unknown-state
 assertions vacuous. PHI copies retain the explicit unknown marker.
 
+`X86ImplicitAtomic.*` in `NeverDX86APXAtomicSemanticTests` checks memory XCHG
+widths, explicit/implicit locking, segments, register aliases, flags and
+commit-after-write behavior. The pointer projection suite's
+`MemoryExchangeReturnsItsSnapshotThroughBothRoutes` runs both C routes at
+O0/O2 with UBSan, checking old values and every neighboring byte at aligned
+and unaligned offsets for all four x64 widths. `LLVMCIntrinsicSemantics.NativeExchange*`
+also compiles FS/GS forms, executes live/dead results and rejects changed
+owned assembly/type/effect contracts before normalization. These checks
+exercise completion and source projection, not contention or hardware faults.
+
 APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 `NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,
 condition, flag and failure-commit checks, including refusal of unrepresented

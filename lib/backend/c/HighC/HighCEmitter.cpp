@@ -19,6 +19,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86/X86AtomicExchange.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
 #include "../render/X86/X86ScalarSystem.h"
@@ -1138,6 +1139,9 @@ HighCWriter::atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic exchange requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
+  if (const auto Plan =
+          x86AtomicExchangePlan(Opts.TheArch, Ty->Size, AddressSpace))
+    return renderX86AtomicExchange(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +

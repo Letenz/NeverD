@@ -96,6 +96,16 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
+`X86AtomicExchange.h` owns the native memory XCHG widths, segments, assembly
+and operand constraints. The lifter emits one ordered `ATOMIC_XCHG`, with
+the old value committed to the register only after the memory operation.
+LLVM and both C routes retain a native exchange: an arbitrary decoded
+address does not justify LLVM's natural-alignment promise, and lowering an
+unaligned exchange through a library call changes the original transaction.
+The C renderer is shared by both routes; LLVMC validates owned assembly
+before normalization, including dead calls. This does not change generic
+LLVM atomics or non-x86 exchange emission.
+
 `X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
 condition/segment controls and exact assembly fallback. The existing
 `ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C

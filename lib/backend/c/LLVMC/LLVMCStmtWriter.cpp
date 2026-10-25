@@ -16,6 +16,7 @@
 #include "../UnalignedMemory.h"
 #include "../render/X86/X86APXAtomic.h"
 #include "../render/X86/X86AmxState.h"
+#include "../render/X86/X86AtomicExchange.h"
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86FPStateHelpers.h"
@@ -5325,6 +5326,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
                                            ArgStrs)) {
     emitIndent(Indent);
     OS << *Atomic;
+    return true;
+  }
+  if (const auto Plan = x86AtomicExchangeCallPlan(Opts.TheArch, Call)) {
+    emitIndent(Indent);
+    if (ResultLive)
+      OS << Name << " = ";
+    OS << renderX86AtomicExchange(*Plan, ArgStrs.at(0), ArgStrs.at(1)) << ";\n";
     return true;
   }
   if (auto BoundedLeaf = renderX86BoundedLeafCall(Opts.TheArch, Call, Name,
