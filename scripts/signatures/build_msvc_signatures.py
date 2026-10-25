@@ -266,6 +266,7 @@ class PatternLine:
     names: tuple[str, ...]
     refs: tuple[tuple[int, str], ...] = ()
     require_references: bool = False
+    require_caller: bool = False
 
     def with_refs(self, refs: tuple[tuple[int, str], ...],
                   require: bool | None = None) -> "PatternLine":
@@ -275,9 +276,9 @@ class PatternLine:
         head, tail = tokens[:4], tokens[4:]
         stated = [f"^{offset:04X} {name}" for offset, name in refs]
         required = self.require_references if require is None else require
-        constraint = ["!refs"] if required else []
+        constraint = ["!refs"] if required else ["!caller"] if self.require_caller else []
         text = " ".join([*head, *constraint, *self.names, *stated, *tail])
-        return PatternLine(text, self.key, self.names, refs, required)
+        return PatternLine(text, self.key, self.names, refs, required, self.require_caller)
 
 
 def alias_order(name: str) -> tuple:
@@ -315,9 +316,9 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     merged = common_refs(lines)
     tokens = merged.key.split()
     stated = [f"^{offset:04X} {name}" for offset, name in merged.refs]
-    constraint = ["!refs"] if merged.require_references else []
+    constraint = ["!refs"] if merged.require_references else ["!caller"] if merged.require_caller else []
     text = " ".join([*tokens[:4], *constraint, *names, *stated, *tokens[4:]])
-    return PatternLine(text, merged.key, names, merged.refs, merged.require_references)
+    return PatternLine(text, merged.key, names, merged.refs, merged.require_references, merged.require_caller)
 
 
 def ref_table(refs: tuple[tuple[int, str], ...]) -> dict[int, set[str]]:
@@ -449,7 +450,8 @@ def parse_line(text: str) -> PatternLine | None:
     rest = tokens[:4]
     index = 4
     required = tokens[index] == "!refs"
-    if required:
+    caller = tokens[index] == "!caller"
+    if required or caller:
         index += 1
     while index < len(tokens):
         token = tokens[index]
@@ -465,7 +467,12 @@ def parse_line(text: str) -> PatternLine | None:
         index += 1
     if not names:
         raise BuildError(f"pattern line names nothing: {stripped[:120]}")
-    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required)
+    if caller:
+        shape = Shape.of(" ".join(rest))
+        if any(int(n.split()[0][1:], 16) != 0 for n in names) or \
+                len(shape.lead) // 2 + shape.crc_len + len(shape.tail) // 2 < shape.total:
+            raise BuildError("!caller requires a complete body with public names at its start")
+    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller)
 
 
 @dataclass
@@ -508,10 +515,14 @@ def fold(lines: list[str]) -> FoldResult:
     """
 
     copies: dict[str, dict[tuple[str, ...], list[PatternLine]]] = {}
+    callers: dict[str, PatternLine] = {}
     seen = 0
     for raw in lines:
         parsed = parse_line(raw)
         if parsed is None:
+            continue
+        if parsed.require_caller:
+            callers[parsed.text] = parsed
             continue
         seen += 1
         copies.setdefault(parsed.key, {}).setdefault(parsed.names, []).append(parsed)
@@ -543,6 +554,8 @@ def fold(lines: list[str]) -> FoldResult:
             continue
         (line,) = variants.values()
         result.lines.append(line)
+    result.lines.extend(callers.values())
+    result.evidence.extend(callers.values())
     result.lines.sort(key=lambda line: line.text)
     result.duplicates = seen - sum(len(v) for v in copies.values())
     return result
@@ -555,6 +568,22 @@ def another_routine(names: tuple[str, ...], other: tuple[str, ...]) -> bool:
 
 
 def settle_directory(results: dict[Path, FoldResult]) -> None:
+    """Settle byte claims; named caller queries do not assert byte uniqueness."""
+
+    callers = {path: [line for line in result.lines if line.require_caller]
+               for path, result in results.items()}
+    evidence = {path: result.evidence for path, result in results.items()}
+    for result in results.values():
+        result.lines = [line for line in result.lines if not line.require_caller]
+        result.evidence = [line for line in result.evidence if not line.require_caller]
+    _settle_byte_claims(results)
+    for path, result in results.items():
+        result.lines.extend(callers[path])
+        result.lines.sort(key=lambda line: line.text)
+        result.evidence = evidence[path]
+
+
+def _settle_byte_claims(results: dict[Path, FoldResult]) -> None:
     """Drop lines whose bytes another file of the same directory contradicts.
 
     The loader applies every file of a directory together.  A line one file

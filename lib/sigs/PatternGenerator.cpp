@@ -459,10 +459,12 @@ void countOrEmit(raw_ostream &OS, ArrayRef<StringRef> Names,
                  const PatternGeneratorOptions &Opts,
                  PatternGeneratorStats &Stats,
                  ArrayRef<FuncRef> References = {}) {
-  if (Data.empty() || (!Opts.CollisionEvidence && Data.size() < Opts.MinFuncSize))
+  if (Data.empty() || (!Opts.CollisionEvidence && !Opts.RequireCaller &&
+                       Data.size() < Opts.MinFuncSize))
     ++Stats.TooSmall;
   else if (statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes &&
-           !(Opts.RequireReferences && !References.empty()) && !Opts.CollisionEvidence)
+           !(Opts.RequireReferences && !References.empty()) &&
+           !Opts.CollisionEvidence && !Opts.RequireCaller)
     ++Stats.TooWeak;
   else if (emitPatternLine(OS, Names, Data, Wildcard, Opts, References))
     ++Stats.Functions;
@@ -1285,8 +1287,10 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
   const size_t Size = Data.size();
   const bool RequireReferences = Opts.RequireReferences && !References.empty();
   if (Names.empty() || Size == 0 ||
-      (!Opts.CollisionEvidence && Size < Opts.MinFuncSize) || Wildcard.size() != Size ||
-      (!RequireReferences && !Opts.CollisionEvidence &&
+      (!Opts.CollisionEvidence && !Opts.RequireCaller &&
+       Size < Opts.MinFuncSize) ||
+      Wildcard.size() != Size ||
+      (!RequireReferences && !Opts.CollisionEvidence && !Opts.RequireCaller &&
        statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes))
     return false;
 
@@ -1305,6 +1309,8 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
     OS << FieldSeparator << CollisionEvidenceOnly;
   else if (RequireReferences)
     OS << FieldSeparator << RequiredReferences;
+  else if (Opts.RequireCaller)
+    OS << FieldSeparator << RequiredCaller;
   // Every name labels the function's start.
   for (StringRef Name : Names)
     OS << FieldSeparator << PublicNamePrefix << format(OffsetFormat, 0u)
@@ -1320,7 +1326,7 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
   // difference between a name worth displaying and a name worth acting on.
   const size_t TailStart = CRCStart + CRCLen;
   const size_t TailEnd =
-      RequireReferences || Opts.CollisionEvidence
+      RequireReferences || Opts.CollisionEvidence || Opts.RequireCaller
           ? Size
           : std::min(Size, TailStart + static_cast<size_t>(Opts.TailLen));
   if (TailEnd > TailStart) {

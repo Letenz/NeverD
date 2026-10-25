@@ -247,7 +247,10 @@ public:
   /// takes the preferred shared name (preferredAliasOrder). An address the
   /// matches name differently gets no name, unless the matches whose
   /// references were all confirmed agree on one: the bytes alone could not
-  /// tell the routines apart, but what they call could.
+  /// tell the routines apart, but what they call could. Caller-confirmed
+  /// rows state exactly the names frozen callers requested at one target.
+  /// Those candidate aliases take precedence over unresolved byte alternatives;
+  /// they do not bypass the independent identity gate of buildNameMap().
   std::unordered_map<uint64_t, std::string> buildCandidateNameMap() const;
 
 private:
@@ -301,8 +304,14 @@ private:
   /// Drop the matches their references contradict and record the ones they
   /// confirm; see \ref apply.  \p Hits are the modules that matched at each
   /// of \p Entries, the addresses the matches were looked for at.
+  void applyCallerContext(const BinaryImage &Img,
+                          llvm::ArrayRef<uint64_t> Entries);
+  /// A nonzero FrozenMatches validates only later incoming candidates, against
+  /// the frozen prefix. Their outcomes cannot change anchors or feed another
+  /// candidate: the same resolver performs one validation pass.
   void checkReferences(const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
-                       std::vector<SignatureMatcher::Hit> Hits);
+                       std::vector<SignatureMatcher::Hit> Hits,
+                       size_t FrozenMatches = 0);
 
   /// Add \p Mods, the modules of \p Src, in place of those of a source with
   /// the same path or after every other source.

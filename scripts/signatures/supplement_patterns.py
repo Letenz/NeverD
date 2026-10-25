@@ -45,7 +45,9 @@ def select(candidates: dict[str, builder.FoldResult],
     by_crc = defaultdict(list)
     by_prefix = defaultdict(list)
     short_prefixes = defaultdict(list)
-    for key in keys:
+    byte_keys = {line.key for result in candidates.values() for line in result.lines
+                 if not line.require_caller}
+    for key in byte_keys:
         shape = builder.Shape.of(key)
         if shape.crc_len and len(shape.lead) < 2 * shape.total:
             by_crc[shape.crc_len, shape.crc].append(shape)
@@ -113,7 +115,7 @@ def select(candidates: dict[str, builder.FoldResult],
     for name, result in candidates.items():
         wanted = defaultdict(set)
         for line in result.lines:
-            if not line.require_references:
+            if not line.require_references and not line.require_caller:
                 wanted[line.key].update(line.names)
         selected[name] = [
             line for line in results.get(Path(name + ".pat"), builder.FoldResult(lines=[])).lines
@@ -155,6 +157,13 @@ def select(candidates: dict[str, builder.FoldResult],
                     break
             if safe:
                 selected[name].append(line)
+        # Incoming-context records make no claim of byte uniqueness. They
+        # require a caller's unanimous exact linkage name and a complete body;
+        # other names sharing these bytes never become competing byte hits.
+        # Raw source ownership and deduplication still apply to every record.
+        for line in result.lines:
+            if line.require_caller and not set(line.names) & owned[line.key]:
+                selected[name].append(line)
         selected[name].sort(key=lambda line: line.text)
     return selected
 
@@ -191,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             if not lines:
                 continue
             parts = builder.split_parts([line.text for line in lines], builder.MAX_FILE_BYTES)
-            suffix = ".npat" if any(line.require_references for line in lines) else ".pat"
+            suffix = ".npat" if any(line.require_references or line.require_caller for line in lines) else ".pat"
             for index, texts in enumerate(parts, start=max(indices) + 1):
                 path = args.output / f"{name}.part{index}{suffix}"
                 # Never replace an existing pack, even if output == existing.

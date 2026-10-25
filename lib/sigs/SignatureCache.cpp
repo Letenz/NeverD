@@ -62,6 +62,8 @@ struct Header {
 /// A StoredModule, with offsets for its pointers: its bytes and the bits
 /// saying which are stated start at \c BlobOffset of the pattern bytes, its
 /// names at \c FirstName of the name records.
+enum class ContextRequirement : uint8_t { None, References, Caller };
+
 struct ModuleRecord {
   uint64_t BlobOffset;
   uint64_t FirstName;
@@ -72,7 +74,7 @@ struct ModuleRecord {
   uint32_t ReferenceCount;
   uint16_t CRC16;
   uint8_t CRCLen;
-  uint8_t RequireReferences;
+  uint8_t Context;
 };
 
 /// A StoredName, with its text at \c TextOffset of the names' text.
@@ -212,9 +214,17 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     if (R.BlobOffset > BlobBytes ||
         Count + statedBytes(Count) > BlobBytes - R.BlobOffset ||
         R.FirstName > NameCount || Names > NameCount - R.FirstName ||
-        R.RequireReferences > 1 ||
-        (R.RequireReferences &&
-         (R.ReferenceCount == 0 || Count + R.CRCLen < R.TotalLen)))
+        R.Context > uint8_t(ContextRequirement::Caller) ||
+        (R.Context != uint8_t(ContextRequirement::None) &&
+         Count + R.CRCLen < R.TotalLen) ||
+        (R.Context == uint8_t(ContextRequirement::References) &&
+         R.ReferenceCount == 0) ||
+        (R.Context == uint8_t(ContextRequirement::Caller) &&
+         (R.PublicNameCount == 0 ||
+          llvm::any_of(
+              llvm::ArrayRef(Result.Names.Names)
+                  .slice(R.FirstName, R.PublicNameCount),
+              [](const StoredName &Name) { return Name.Offset != 0; }))))
       return false;
     StoredModule &M = Modules[I];
     M.Bytes = Bytes + R.BlobOffset;
@@ -227,7 +237,8 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     M.ReferenceCount = R.ReferenceCount;
     M.CRC16 = R.CRC16;
     M.CRCLen = R.CRCLen;
-    M.RequireReferences = R.RequireReferences != 0;
+    M.RequireReferences = R.Context == uint8_t(ContextRequirement::References);
+    M.RequireCaller = R.Context == uint8_t(ContextRequirement::Caller);
   }
   return true;
 }
@@ -387,9 +398,12 @@ void SignatureCache::store(const std::filesystem::path &Source,
     const StoredModule &M = Modules[I];
     const uint64_t Count = uint64_t(M.LeadingCount) + M.TailCount;
     writeRecord(Written.data() + L->ModuleRecords + I * sizeof(ModuleRecord),
-                ModuleRecord{Blob, Name, M.LeadingCount, M.TailCount,
-                             M.TotalLen, M.PublicNameCount, M.ReferenceCount,
-                             M.CRC16, M.CRCLen, uint8_t(M.RequireReferences)});
+                ModuleRecord{
+                    Blob, Name, M.LeadingCount, M.TailCount, M.TotalLen,
+                    M.PublicNameCount, M.ReferenceCount, M.CRC16, M.CRCLen,
+                    uint8_t(M.RequireReferences ? ContextRequirement::References
+                            : M.RequireCaller   ? ContextRequirement::Caller
+                                                : ContextRequirement::None)});
     if (Count != 0) {
       std::memcpy(Written.data() + L->Blob + Blob, M.Bytes, Count);
       std::memcpy(Written.data() + L->Blob + Blob + Count, M.Stated,

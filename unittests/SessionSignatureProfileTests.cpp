@@ -104,8 +104,8 @@ TEST_F(SessionSignatureProfile, CandidatesNeverReplaceNamesAcrossFormats) {
     ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
     const auto Pattern = write(
         "candidate.npat", std::string(I == 2 ? "40058052C0035FD6 00 0000 0008"
-                                            : "B82A000000C3 00 0000 0006") +
-                             " :0000 fabricated_identity\n");
+                                             : "B82A000000C3 00 0000 0006") +
+                              " :0000 fabricated_identity\n");
     ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);
     const char *Text = neverd_sig_matches_json(Session);
     auto Value = llvm::json::parse(Text ? Text : "[]");
@@ -179,6 +179,44 @@ TEST_F(SessionSignatureProfile, ExportEvidenceCertifiesOnlyItsExactAlias) {
   ASSERT_NE(Nodes, nullptr);
   ASSERT_FALSE(Nodes->empty());
   EXPECT_EQ(Nodes->front().getAsObject()->getBoolean("library"), true);
+}
+
+TEST_F(SessionSignatureProfile, IncomingContextIsVisibleWithoutAutomaticNames) {
+  auto Bytes = neverd::web::test::nativePE();
+  neverd::web::test::nativePut(Bytes, 0x98 + 240 + 8, 512, 4);
+  const unsigned char Caller[] = {0x55, 0x48, 0x89, 0xe5, 0xe8, 0xf7, 0,
+                                  0,    0,    0x90, 0x90, 0x90, 0x90, 0x90,
+                                  0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                                  0x90, 0x90, 0x90, 0x90, 0x5d, 0xc3};
+  Bytes.replace(512, sizeof(Caller), reinterpret_cast<const char *>(Caller),
+                sizeof(Caller));
+  Bytes.replace(768, 3, "\x33\xc0\xc3", 3);
+  const auto Input = write("incoming.exe", Bytes);
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const auto Patterns = write(
+      "incoming.npat", "554889E5E8........909090909090909090909090909090905DC3 "
+                       "00 0000 001B :0000 parent ^0005 zero\n"
+                       "33C0C3 00 0000 0003 !caller :0000 zero\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, Patterns.c_str()), 2);
+  const char *Text = neverd_sig_matches_json(Session);
+  auto Value = llvm::json::parse(Text ? Text : "[]");
+  neverd_free_string(Text);
+  ASSERT_TRUE(bool(Value)) << llvm::toString(Value.takeError());
+  ASSERT_NE(Value->getAsArray(), nullptr);
+  bool Found = false;
+  for (const auto &Entry : *Value->getAsArray()) {
+    const auto *Row = Entry.getAsObject();
+    ASSERT_NE(Row, nullptr);
+    if (Row->getString("name") == "zero") {
+      Found = true;
+      EXPECT_EQ(Row->getBoolean("caller_confirmed"), true);
+      EXPECT_EQ(Row->getBoolean("confirmed"), false);
+      EXPECT_EQ(Row->getString("auto_name"), "");
+      EXPECT_EQ(Row->getString("name_evidence"), "none");
+    }
+  }
+  EXPECT_TRUE(Found);
+  EXPECT_LT(neverd_func_find_by_name(Session, "zero"), 0);
 }
 
 } // namespace

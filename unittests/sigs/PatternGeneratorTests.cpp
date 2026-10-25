@@ -78,7 +78,9 @@ public:
     std::vector<Symbol> All = Symbols;
     All.push_back(
         {TargetName, 0, 0,
-         uint16_t(TargetIsFunction ? COFF::IMAGE_SYM_DTYPE_FUNCTION << COFF::SCT_COMPLEX_TYPE_SHIFT : 0),
+         uint16_t(TargetIsFunction ? COFF::IMAGE_SYM_DTYPE_FUNCTION
+                                         << COFF::SCT_COMPLEX_TYPE_SHIFT
+                                   : 0),
          COFF::IMAGE_SYM_CLASS_EXTERNAL});
     // Two slots for the section symbol and its auxiliary record.
     const uint32_t TargetIndex = 2 + static_cast<uint32_t>(Symbols.size());
@@ -1376,9 +1378,10 @@ TEST(PatternGeneratorELF, AFunctionEndsAtItsSymbolsSize) {
       << Out.Lines[0];
 }
 
-TEST(PatternGeneratorCOFF, ContextualFunctionsRequireTheirWholeBodyAndReferences) {
-  std::vector<uint8_t> Code{0x48, 0x83, 0xec, 0x28, 0xff, 0x15, 0, 0, 0, 0,
-                            0x48, 0x83, 0xc4, 0x28, 0xc3};
+TEST(PatternGeneratorCOFF,
+     ContextualFunctionsRequireTheirWholeBodyAndReferences) {
+  std::vector<uint8_t> Code{0x48, 0x83, 0xec, 0x28, 0xff, 0x15, 0,   0,
+                            0,    0,    0x48, 0x83, 0xc4, 0x28, 0xc3};
   COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
   Builder.addFunction("wrapper", 0);
   Builder.addRelocation(6, COFF::IMAGE_REL_AMD64_REL32);
@@ -1395,7 +1398,8 @@ TEST(PatternGeneratorCOFF, ContextualFunctionsRequireTheirWholeBodyAndReferences
   ASSERT_TRUE(bool(Mod)) << toString(Mod.takeError());
   EXPECT_TRUE(Mod->RequireReferences);
   EXPECT_TRUE(SignatureMatcher::isFullyVerified(*Mod));
-  EXPECT_LT(SignatureMatcher::fixedByteCount(*Mod), SignatureMatcher::MinStatedBytes);
+  EXPECT_LT(SignatureMatcher::fixedByteCount(*Mod),
+            SignatureMatcher::MinStatedBytes);
   Opts.EmitReferences = false;
   EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
 }
@@ -1432,5 +1436,34 @@ TEST(PatternGeneratorCOFF, CollisionEvidenceIncludesWeakUnreferencedFunctions) {
   EXPECT_NE(Out.Lines.front().find(" !evidence "), std::string::npos);
   auto Mod = PatternParser::parseLine(Out.Lines.front());
   ASSERT_FALSE(bool(Mod));
-  EXPECT_NE(toString(Mod.takeError()).find("not a matchable signature"), std::string::npos);
+  EXPECT_NE(toString(Mod.takeError()).find("not a matchable signature"),
+            std::string::npos);
+}
+
+TEST(PatternGeneratorCOFF,
+     CallerContextIncludesCompleteBodiesAndTheirConstraints) {
+  COFFObjectBuilder Leaf(COFF::IMAGE_FILE_MACHINE_AMD64, {0x33, 0xc0, 0xc3});
+  Leaf.addFunction("zero", 0);
+  PatternGeneratorOptions Opts;
+  Opts.EmitReferences = Opts.RequireCaller = true;
+  Opts.LeadingLen = 1;
+  const auto Out = generate(Leaf.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines.front());
+  ASSERT_TRUE(bool(Mod)) << toString(Mod.takeError());
+  EXPECT_TRUE(Mod->RequireCaller);
+  EXPECT_TRUE(SignatureMatcher::isFullyVerified(*Mod));
+  EXPECT_EQ(Mod->TotalLen, 3u);
+  COFFObjectBuilder Caller(COFF::IMAGE_FILE_MACHINE_AMD64,
+                           {0xe8, 0, 0, 0, 0, 0xc3});
+  Caller.addFunction("wrapper", 0);
+  Caller.addRelocation(1, COFF::IMAGE_REL_AMD64_REL32);
+  Caller.setRelocationTarget("zero");
+  const auto Calls = generate(Caller.build(), Opts);
+  ASSERT_EQ(Calls.Lines.size(), 1u);
+  auto Child = PatternParser::parseLine(Calls.Lines.front());
+  ASSERT_TRUE(bool(Child)) << toString(Child.takeError());
+  EXPECT_TRUE(Child->RequireCaller);
+  ASSERT_EQ(Child->References.size(), 1u);
+  EXPECT_EQ(Child->References.front().Name, "zero");
 }

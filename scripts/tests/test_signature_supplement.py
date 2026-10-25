@@ -26,6 +26,32 @@ class SupplementTests(unittest.TestCase):
         return supplement.select({"runtime": builder.fold(candidates.splitlines())},
                                  paths, self.existing)["runtime"]
 
+    def test_caller_records_keep_distinct_names_without_byte_uniqueness(self):
+        a = "33C0C3 00 0000 0003 !caller :0000 a\n"
+        b = a.replace(":0000 a", ":0000 b")
+        raw = (a + b).replace("!caller", "!evidence")
+        result = self.select(a + b, [("runtime", raw)])
+        self.assertEqual({line.text for line in result}, {a.strip(), b.strip()})
+        self.assertTrue(all(line.require_caller for line in result))
+        self.assertEqual([line.text for line in self.select(a + b, [("runtime", raw)], a)],
+                         [b.strip()])
+        with self.assertRaisesRegex(builder.BuildError, "lacks raw source"):
+            self.select(a, [("runtime", b.replace("!caller", "!evidence"))])
+
+    def test_caller_records_never_remove_ordinary_byte_claims(self):
+        a = "33C0C3 00 0000 0003 !caller :0000 a\n"
+        b = "33C0C3 00 0000 0003 :0000 b\n"
+        results = {Path("caller.npat"): builder.fold([a]), Path("ordinary.pat"): builder.fold([b])}
+        builder.settle_directory(results)
+        self.assertEqual([line.text for line in results[Path("caller.npat")].lines], [a.strip()])
+        self.assertEqual([line.text for line in results[Path("ordinary.pat")].lines], [b.strip()])
+
+    def test_caller_records_reject_incomplete_bodies_and_nonzero_names(self):
+        for text in ["33C0C3 00 0000 0004 !caller :0000 a",
+                     "33C0C3 00 0000 0003 !caller :0001 a"]:
+            with self.assertRaisesRegex(builder.BuildError, "complete body"):
+                builder.parse_line(text)
+
     def test_discarded_source_collision_is_still_evidence(self):
         claim = "AABBCCDD 00 0000 0004 :0000 wanted\n"
         conflict = "AABBCCDD 00 0000 0004 :0000 other\n"

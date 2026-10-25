@@ -349,6 +349,9 @@ public:
             }
           }
         });
+    std::erase_if(Order, [&](size_t I) { return Modules[I].RequireCaller; });
+    Spare.resize(Order.size());
+    CandidateOrder.resize(Order.size());
   }
 
   /// Build the index.  The subtrees of the first decision are built on the
@@ -710,15 +713,50 @@ void SignatureMatcher::scanRegion(const uint8_t *Data, size_t Size,
 
 void SignatureMatcher::HashIndex::build(
     const std::vector<PatternModule> &Modules) {
-  auto Storage = std::make_shared<std::vector<size_t>>(Modules.size());
+  auto Storage = std::make_shared<std::vector<size_t>>();
   IndexBuilder(*this, Modules, *Storage).build();
   CandidateStorage = std::move(Storage);
+  CallerStorage.reset();
 }
 
 void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
-  auto Storage = std::make_shared<std::vector<size_t>>(Modules.size());
+  auto Storage = std::make_shared<std::vector<size_t>>();
   IndexBuilder(*this, Modules, *Storage).build();
   CandidateStorage = std::move(Storage);
+  CallerStorage.reset();
+  auto Callers = std::make_shared<std::vector<CallerEntry>>();
+  for (size_t I = 0; I < Modules.size(); ++I)
+    if (Modules[I].RequireCaller)
+      for (size_t N = 0; N < Modules[I].PublicNameCount; ++N)
+        Callers->push_back({I, N});
+  if (Callers->empty())
+    return;
+  const auto NameOf = [&](const CallerEntry &Entry) {
+    return Modules[Entry.Module].publicNames()[Entry.PublicName].Name;
+  };
+  llvm::stable_sort(*Callers, [&](const CallerEntry &A, const CallerEntry &B) {
+    return NameOf(A) < NameOf(B);
+  });
+  CallerStorage = std::move(Callers);
+}
+
+llvm::ArrayRef<SignatureMatcher::HashIndex::CallerEntry>
+SignatureMatcher::HashIndex::callerModules(llvm::ArrayRef<StoredModule> Modules,
+                                           std::string_view Name) const {
+  if (!hasCallerModules())
+    return {};
+  const auto Begin = llvm::lower_bound(
+      *CallerStorage, Name,
+      [&](const CallerEntry &Entry, std::string_view Wanted) {
+        return Modules[Entry.Module].publicNames()[Entry.PublicName].Name <
+               Wanted;
+      });
+  auto End = Begin;
+  while (End != CallerStorage->end() &&
+         Modules[End->Module].publicNames()[End->PublicName].Name == Name)
+    ++End;
+  return llvm::ArrayRef(*CallerStorage)
+      .slice(Begin - CallerStorage->begin(), End - Begin);
 }
 
 uint16_t SignatureMatcher::HashIndex::keyOf(const PatternModule &Mod) const {

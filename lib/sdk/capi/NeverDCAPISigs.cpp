@@ -228,6 +228,7 @@ const char *neverd_sig_matches_json(neverd_session_t Sess) {
     // Whether the image confirmed every routine the match's signature
     // branches to: such a match settles an address other matches dispute.
     Obj["confirmed"] = M.Confirmed;
+    Obj["caller_confirmed"] = M.CallerConfirmed;
     // Candidate spelling and reference confirmation are not identity. Report
     // the exact address-level decision used by every semantic consumer.
     const auto *Decision = S->SigDB.nameDecision(M.Address);

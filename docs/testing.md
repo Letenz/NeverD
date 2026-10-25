@@ -5860,6 +5860,13 @@ withdraws their dependent candidates. Parser and cache tests preserve the
 constraint; producer tests keep the ordinary byte floor and require complete
 bodies for contextual patterns. The Python supplement tests retain short and
 discarded counterclaims across independently selected packs.
+`SignatureDBCallerContext.*` checks incoming support, full-body disagreement,
+entry scope, variant consensus, and refusal of weak, partial, ambiguous,
+required or contradicted anchors. `SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
+adds 4096 short records while retaining exactly one scheduled ordinary byte
+check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
+cache and generator tests preserve the caller constraint. The SDK profile
+fixture loads `.npat` explicitly and through automatic selection.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,

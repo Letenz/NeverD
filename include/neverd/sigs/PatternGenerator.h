@@ -65,6 +65,11 @@ struct PatternGeneratorOptions {
   /// byte coverage, including functions below the ordinary fixed-byte floor.
   /// Unreferenced functions retain the ordinary floor and output format.
   bool RequireReferences = false;
+  /// Emit complete bodies with !caller. Their names may be requested by
+  /// verified callers, never by a standalone byte scan. Outgoing references
+  /// can reject a body but cannot change its caller or support a new query.
+  /// Unlike ordinary patterns, this includes functions below the size floor.
+  bool RequireCaller = false;
   /// Emit complete collision evidence without the size/fixed-byte floors.
   /// Every line is marked !evidence and rejected by the matching parser.
   /// It is input to offline supplement validation, never a signature pack.

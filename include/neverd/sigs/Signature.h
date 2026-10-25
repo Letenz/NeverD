@@ -66,7 +66,11 @@ struct PatternModule {
   /// `!refs`: every reference must be confirmed before this byte hit can
   /// become a candidate or support another candidate. This is a NeverD
   /// extension; older readers must reject it, not ignore the requirement.
-  bool RequireReferences = false;
+  bool RequireReferences : 1 = false;
+  /// `!caller`: indexed by expected linkage name only. A complete, strong,
+  /// settled caller must unanimously name this target at a reference site.
+  /// Such candidates never support further reference propagation.
+  bool RequireCaller : 1 = false;
 
   uint32_t TotalLen = 0;
 
@@ -126,7 +130,11 @@ struct StoredModule {
   uint32_t ReferenceCount = 0;
   uint16_t CRC16 = 0;
   uint8_t CRCLen = 0;
-  bool RequireReferences = false;
+  bool RequireReferences : 1 = false;
+  /// `!caller`: indexed by expected linkage name only. A complete, strong,
+  /// settled caller must unanimously name this target at a reference site.
+  /// Such candidates never support further reference propagation.
+  bool RequireCaller : 1 = false;
 
   bool isStated(size_t Byte) const {
     return (Stated[Byte / CHAR_BIT] >> (Byte % CHAR_BIT)) & 1;
@@ -182,6 +190,11 @@ struct SigMatch {
   /// see SignatureDB::apply. This can settle a candidate disputed by other
   /// patterns, but does not prove its original name or nominal source types.
   bool Confirmed = false;
+  /// A frozen, complete caller unanimously references this exact name at
+  /// this address. Its outgoing constraints have no known contradiction.
+  /// Multiple such incoming names are candidate aliases at the same target;
+  /// they cannot prove source identity or propagate to further candidates.
+  bool CallerConfirmed = false;
 };
 
 } // namespace sigs

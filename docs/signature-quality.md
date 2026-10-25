@@ -48,7 +48,7 @@ must be confirmed before the hit becomes a candidate or supports another
 candidate. Required hits cannot bootstrap each other from raw bytes; a cycle
 without independent evidence stays unresolved. The existing bounded withdrawal
 algorithm removes dependent claims when their evidence changes. Older parsers
-reject this extension, and cache format 2 preserves its requirement. Published
+reject this extension, and cache format 3 preserves both context requirements. Published
 constraint packs use `.npat`, which older directory readers ignore while
 retaining the ordinary `.pat` packs. New readers apply the same profile and
 toolset selection to both extensions.
@@ -56,6 +56,26 @@ toolset selection to both extensions.
 including those below the ordinary fixed-byte floor, and covers their entire
 body. Unreferenced functions retain the ordinary floor. This changes candidate
 eligibility, not the independent identity gate.
+
+The separate `!caller` form describes a complete body whose public names all
+label the start. These records are indexed by
+linkage name and excluded from the global byte index. After ordinary reference
+settlement, a caller can request a matching body at its actual direct branch
+or supported function-address target. The caller must have a settled candidate,
+whole-function coverage and the ordinary fixed-byte floor. Every surviving
+variant of that name must state the same single callee at the same site.
+Ambiguous, partial or context-dependent callers cannot anchor a request.
+Only requested executable entries without a settled candidate are eligible.
+An incoming candidate cannot support another round of inference. Its own
+outgoing references are checked by the same resolver against the frozen prior
+result: contradictions reject it, and missing evidence remains unknown. Multiple
+validated incoming names at one target are retained as candidate aliases. Only
+names actually requested by those callers participate; matching bytes do not
+import additional nominal names from the source pattern. This adds suggestions, never
+independent identity evidence or automatic names.
+`neverd-sigmaker --caller-context` emits these records, including short bodies.
+The supplement builder requires exact raw source ownership and keeps distinct
+same-byte names separate; they are queries, not claims of byte uniqueness.
 
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,
@@ -69,7 +89,8 @@ rejects them, so an unfiltered audit cannot accidentally become a pack.
 Architecture filtering and unsupported-relocation diagnostics still apply.
 
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
-fields. Its additive `auto_name` field reports the address's admitted spelling,
+fields. Its `caller_confirmed` field identifies incoming reference support;
+those names take precedence over unresolved byte-only alternatives. Its additive `auto_name` field reports the address's admitted spelling,
 or an empty string. `name_evidence` is `image_symbol`, `exception_personality`,
 or `none`; a candidate without an admitted name reports
 `candidate_reason=independent_identity_missing`. Every row at one address

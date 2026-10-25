@@ -1907,6 +1907,13 @@ or exception-personality context (`SignatureDB::buildNameMap`). Byte/reference
 agreement alone remains a candidate (`buildCandidateNameMap`) and cannot
 authorize type lookup, safety sinks, automatic renaming or library folding.
 The signature database owns this decision; SDK, CLI and worker consume it.
+Native `!refs` candidates require all outgoing context before settlement;
+`!caller` records are separate name-indexed bodies requested only after that
+settlement by a complete, strong and unambiguous ordinary caller. Incoming
+requests never change their anchors or feed another inference round. Both
+remain candidate evidence under the same identity boundary. The matcher owns
+byte/index behavior, the database owns reference settlement, and the COFF
+loader owns validation of primary MSVC RTTI metadata.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,

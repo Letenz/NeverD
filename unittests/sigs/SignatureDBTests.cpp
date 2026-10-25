@@ -1669,3 +1669,211 @@ TEST_F(SignatureDirectoryTest,
   ASSERT_FALSE(Database.loadDirectory(Directory));
   EXPECT_EQ(Database.fileCount(), 2u);
 }
+
+namespace {
+std::string incomingCallerLine(llvm::StringRef Name,
+                               llvm::StringRef References) {
+  return ("554889E5E8........909090909090909090909090909090905DC3 00 0000 001B "
+          ":0000 " +
+          Name + References + "\n")
+      .str();
+}
+neverd::BinaryImage incomingCallerImage() {
+  auto Image = makeCallingImage(0x1100);
+  auto &Code = Image.Segments.front().Data;
+  std::fill(Code.begin() + 9, Code.begin() + 25, 0x90);
+  Code[25] = 0x5d;
+  Code[26] = 0xc3;
+  return Image;
+}
+constexpr const char *IncomingLeaf =
+    "AABBCCDDC3 00 0000 0005 !caller :0000 callee\n";
+} // namespace
+
+TEST(SignatureDBCallerContext, OnlyAnEstablishedCallerCanRequestTheLeaf) {
+  for (bool Reverse : {false, true}) {
+    SignatureDB Database;
+    const std::string Parent = incomingCallerLine("parent", " ^0005 callee");
+    ASSERT_FALSE(Database.loadPatternText(
+        Reverse ? IncomingLeaf + Parent : Parent + IncomingLeaf, "incoming"));
+    auto Image = incomingCallerImage();
+    Database.apply(Image, {0x1100, 0x1000});
+    ASSERT_EQ(Database.buildCandidateNameMap().size(), 2u);
+    EXPECT_EQ(Database.buildCandidateNameMap().at(0x1100), "callee");
+    EXPECT_TRUE(Database.buildNameMap().empty());
+    for (const SigMatch &Match : Database.matches())
+      EXPECT_FALSE(Match.Confirmed); // No circular outgoing confirmation.
+    Database.apply(Image, {0x1000});
+    EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
+    Database.apply(Image, {0x1100});
+    EXPECT_TRUE(Database.matches().empty());
+    Image.Segments.front().Data[0x104] ^= 1;
+    Database.apply(Image, {0x1000, 0x1100});
+    EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
+  }
+}
+
+TEST(SignatureDBCallerContext,
+     WeakPartialRequiredAndAmbiguousParentsCannotAnchor) {
+  const std::string Strong = incomingCallerLine("parent", " ^0005 callee");
+  std::string Partial = Strong;
+  Partial.replace(Partial.find("001B"), 4, "001C");
+  for (const auto &Parent :
+       {callerLine("parent", " ^0005 callee"), Partial,
+        requireReferences(Strong),
+        Strong + incomingCallerLine("rival", " ^0005 callee")}) {
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(Parent + IncomingLeaf, "incoming"));
+    auto Image = Parent == callerLine("parent", " ^0005 callee")
+                     ? makeCallingImage(0x1100)
+                     : incomingCallerImage();
+    Database.apply(Image, {0x1000, 0x1100});
+    EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
+  }
+}
+
+TEST(SignatureDBCallerContext, EveryParentVariantMustNameTheSameTarget) {
+  for (const std::string &Parent :
+       {incomingCallerLine("parent", " ^0005 callee ^0005 rival"),
+        incomingCallerLine("parent", " ^0005 callee") +
+            incomingCallerLine("parent", " ^0005 rival"),
+        incomingCallerLine("parent", " ^0005 callee") +
+            incomingCallerLine("parent", "")}) {
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(Parent + IncomingLeaf, "incoming"));
+    Database.apply(incomingCallerImage(), {0x1000, 0x1100});
+    EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
+  }
+}
+
+TEST(SignatureDBCallerContext, AContradictedParentCannotNameItsTarget) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      incomingCallerLine("parent", " ^0005 callee") + IncomingLeaf +
+          "AABBCCDDC3 00 0000 0005 :0000 other\n",
+      "incoming"));
+  Database.apply(incomingCallerImage(), {0x1000, 0x1100});
+  const auto Names = Database.buildCandidateNameMap();
+  EXPECT_EQ(Names.count(0x1000), 0u);
+  EXPECT_EQ(Names.at(0x1100), "other");
+}
+
+TEST(SignatureDBCallerContext, OutgoingConstraintsCannotChangeTheirAnchor) {
+  for (const std::string &Known : {"support", "different", ""}) {
+    SignatureDB Database;
+    const std::string Callee =
+        "53E8........5BC3 00 0000 0008 !caller :0000 callee ^0002 support\n";
+    const std::string Support =
+        Known.empty() ? "" : "AABBCCDDC3 00 0000 0005 :0000 " + Known + "\n";
+    ASSERT_FALSE(Database.loadPatternText(
+        incomingCallerLine("parent", " ^0005 callee") + Callee + Support,
+        "incoming"));
+    auto Image = incomingCallerImage();
+    auto &Code = Image.Segments.front().Data;
+    const uint8_t Child[] = {0x53, 0xe8, 0, 0, 0, 0, 0x5b, 0xc3};
+    std::copy(std::begin(Child), std::end(Child), Code.begin() + 0x100);
+    neverd::writeLE<uint32_t>(Code.data() + 0x102, 0x1200 - 0x1106);
+    const uint8_t Leaf[] = {0xaa, 0xbb, 0xcc, 0xdd, 0xc3};
+    std::copy(std::begin(Leaf), std::end(Leaf), Code.begin() + 0x200);
+    Database.apply(Image, {0x1000, 0x1100, 0x1200});
+    const auto Names = Database.buildCandidateNameMap();
+    EXPECT_EQ(Names.at(0x1000), "parent");
+    EXPECT_EQ(Names.count(0x1100), Known == "different" ? 0u : 1u);
+    for (const SigMatch &Match : Database.matches()) {
+      if (Match.Address == 0x1000)
+        EXPECT_FALSE(Match.Confirmed);
+      if (Match.Address == 0x1100)
+        EXPECT_EQ(Match.Confirmed, Known == "support");
+    }
+    EXPECT_TRUE(Database.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDBCallerContext, IncomingCandidatesCannotConfirmEachOther) {
+  SignatureDB Database;
+  std::string Second = incomingCallerLine("second_parent", " ^0005 support");
+  Second.replace(0, 2, "53");
+  ASSERT_FALSE(Database.loadPatternText(
+      incomingCallerLine("parent", " ^0005 callee") + Second +
+          "53E8........5BC3 00 0000 0008 !caller :0000 callee ^0002 support\n"
+          "AABBCCDDC3 00 0000 0005 !caller :0000 support\n",
+      "incoming"));
+  auto Image = incomingCallerImage();
+  auto &Segment = Image.Segments.front();
+  Segment.Data.resize(0x400, 0xcc);
+  Segment.Size = Segment.FileSz = 0x400;
+  auto &Code = Segment.Data;
+  std::copy_n(Code.begin(), 27, Code.begin() + 0x300);
+  Code[0x300] = 0x53;
+  neverd::writeLE<uint32_t>(Code.data() + 0x305, uint32_t(0x1200 - 0x1309));
+  const uint8_t Child[] = {0x53, 0xe8, 0, 0, 0, 0, 0x5b, 0xc3};
+  std::copy(std::begin(Child), std::end(Child), Code.begin() + 0x100);
+  neverd::writeLE<uint32_t>(Code.data() + 0x102, 0x1200 - 0x1106);
+  const uint8_t Leaf[] = {0xaa, 0xbb, 0xcc, 0xdd, 0xc3};
+  std::copy(std::begin(Leaf), std::end(Leaf), Code.begin() + 0x200);
+  Database.apply(Image, {0x1000, 0x1100, 0x1200, 0x1300});
+  EXPECT_EQ(Database.buildCandidateNameMap().size(), 4u);
+  for (const SigMatch &Match : Database.matches())
+    EXPECT_FALSE(Match.Confirmed);
+}
+
+TEST(SignatureDBCallerContext,
+     IncomingEvidenceResolvesUnsettledByteAlternatives) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      incomingCallerLine("parent", " ^0005 callee") + IncomingLeaf +
+          "AABBCCDDC3 00 0000 0005 :0000 rival_a\n"
+          "AABBCCDDC3 00 0000 0005 :0000 rival_b\n",
+      "incoming"));
+  Database.apply(incomingCallerImage(), {0x1000, 0x1100});
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1100), "callee");
+  EXPECT_TRUE(Database.buildNameMap().empty());
+  size_t Supported = 0;
+  for (const SigMatch &Match : Database.matches())
+    if (Match.CallerConfirmed) {
+      ++Supported;
+      EXPECT_EQ(Match.Name, "callee");
+      EXPECT_FALSE(Match.Confirmed);
+    }
+  EXPECT_EQ(Supported, 1u);
+}
+
+TEST(SignatureDBCallerContext,
+     OnlyRequestedIncomingNamesBecomeCandidateAliases) {
+  for (bool SameModule : {false, true}) {
+    SignatureDB Database;
+    std::string Second =
+        incomingCallerLine("second_parent", " ^0005 alternate");
+    Second.replace(0, 2, "53");
+    const std::string Leaves =
+        SameModule
+            ? "AABBCCDDC3 00 0000 0005 !caller :0000 aa_unused :0000 callee "
+              ":0000 alternate\n"
+            : "AABBCCDDC3 00 0000 0005 !caller :0000 aa_unused :0000 callee\n"
+              "AABBCCDDC3 00 0000 0005 !caller :0000 alternate\n";
+    ASSERT_FALSE(Database.loadPatternText(
+        incomingCallerLine("parent", " ^0005 callee") + Second + Leaves,
+        "incoming"));
+    auto Image = incomingCallerImage();
+    auto &Segment = Image.Segments.front();
+    Segment.Data.resize(0x400, 0xcc);
+    Segment.Size = Segment.FileSz = 0x400;
+    auto &Code = Segment.Data;
+    std::copy_n(Code.begin(), 27, Code.begin() + 0x300);
+    Code[0x300] = 0x53;
+    neverd::writeLE<uint32_t>(Code.data() + 0x305, uint32_t(0x1100 - 0x1309));
+    Database.apply(Image, {0x1000, 0x1100, 0x1300});
+    EXPECT_EQ(Database.buildCandidateNameMap().at(0x1100), "callee");
+    bool CalledAlias = false;
+    for (const SigMatch &Match : Database.matches())
+      if (Match.Address == 0x1100) {
+        EXPECT_TRUE(Match.CallerConfirmed);
+        EXPECT_NE(Match.Name, "aa_unused");
+        EXPECT_FALSE(llvm::is_contained(Match.Aliases, "aa_unused"));
+        CalledAlias |= Match.Name == "alternate" ||
+                       llvm::is_contained(Match.Aliases, "alternate");
+      }
+    EXPECT_TRUE(CalledAlias);
+    EXPECT_TRUE(Database.buildNameMap().empty());
+  }
+}
