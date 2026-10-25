@@ -2562,9 +2562,12 @@ and Output's dynamically created context menu after theme application. The
 menu-column case measures the painted icon-to-label gap, checks that plain,
 checkable and submenu labels align, and that a checked icon's border does not
 move its glyph. Optional captures include File, Edit and Options menus in both
-themes. Screenshot color checks convert logical points using the captured
-image's device-pixel ratio. Cocoa native-pointer docking cases skip when
-`CGPreflightPostEventAccess()` denies event posting; report that missing coverage
+themes. The long-menu case exceeds the current screen's full height and
+checks a single column bounded by the screen, wheel movement in both directions,
+arrow interaction without triggering a command, and Home/End access to the
+first and last commands. Screenshot color checks convert logical points using
+the captured image's device-pixel ratio. Cocoa native-pointer docking cases skip
+when `CGPreflightPostEventAccess()` denies event posting; report that missing coverage
 separately from passing offscreen behavior.
 
 `nativeFrameKeepsTheTitleBarOnScreen` checks native maximize/full-screen/restore

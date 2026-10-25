@@ -82,6 +82,9 @@ the code font (Command on macOS); precision events accumulate until a font
 point is reached, and empty gesture begin/end events do not change the size.
 Menus and context menus show their action icons on every platform, including
 macOS, where Qt otherwise hides them by default.
+Menus taller than the screen's available area stay in a single column on all
+desktop platforms. Use the arrows at the top and bottom or the mouse wheel to
+scroll; keyboard navigation also brings offscreen commands into view.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
