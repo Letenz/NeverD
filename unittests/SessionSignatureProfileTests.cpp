@@ -219,4 +219,30 @@ TEST_F(SessionSignatureProfile, IncomingContextIsVisibleWithoutAutomaticNames) {
   EXPECT_LT(neverd_func_find_by_name(Session, "zero"), 0);
 }
 
+TEST_F(SessionSignatureProfile, CandidateJSONPreservesAliasesAndInvalidText) {
+  const auto Input = write("json.exe", neverd::web::test::nativePE());
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  const std::string Name = "body\"\xff";
+  const std::string Alias = "long_alias\\with_\"quotes";
+  const auto Patterns = write("json.npat", "B82A000000C3 00 0000 0006 :0000 " +
+                                               Name + " :0000 " + Alias + "\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, Patterns.c_str()), 1);
+  const char *Text = neverd_sig_matches_json(Session);
+  ASSERT_NE(Text, nullptr);
+  auto Value = llvm::json::parse(Text);
+  neverd_free_string(Text);
+  ASSERT_TRUE(bool(Value)) << llvm::toString(Value.takeError());
+  ASSERT_NE(Value->getAsArray(), nullptr);
+  ASSERT_EQ(Value->getAsArray()->size(), 1u);
+  const auto *Row = Value->getAsArray()->front().getAsObject();
+  ASSERT_NE(Row, nullptr);
+  EXPECT_EQ(Row->getString("name"), llvm::json::fixUTF8(Name));
+  ASSERT_NE(Row->getArray("aliases"), nullptr);
+  ASSERT_EQ(Row->getArray("aliases")->size(), 1u);
+  EXPECT_EQ(Row->getArray("aliases")->front().getAsString(), Alias);
+  EXPECT_EQ(Row->getBoolean("caller_confirmed"), false);
+  EXPECT_EQ(Row->getString("auto_name"), "");
+  EXPECT_EQ(Row->getString("candidate_reason"), "independent_identity_missing");
+}
+
 } // namespace

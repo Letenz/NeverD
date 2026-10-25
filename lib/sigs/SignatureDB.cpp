@@ -1205,6 +1205,22 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
         ++End;
       const auto Alternatives = llvm::ArrayRef(References).slice(R, End - R);
       R = End;
+      // Query the name index before decoding any image reference. Most calls
+      // in a selected image have no incoming-context record at all.
+      using CallerEntry = SignatureMatcher::HashIndex::CallerEntry;
+      llvm::SmallVector<
+          std::pair<std::string_view, llvm::ArrayRef<CallerEntry>>, 2>
+          Queries;
+      for (const auto &[UnusedOffset, Expected] : Alternatives) {
+        const auto Candidates = Idx.callerModules(Modules, Expected);
+        if (Candidates.empty()) {
+          Queries.clear();
+          break;
+        }
+        Queries.emplace_back(Expected, Candidates);
+      }
+      if (Queries.empty())
+        continue;
       const uint64_t Start =
           Img.Arch == Arch::ARM ? Address & ~uint64_t(ThumbStateBit) : Address;
       std::optional<Branch> To = branchTarget(Img, Start, Offset);
@@ -1218,18 +1234,6 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
       // their work or modify the evidence used as a frozen anchor.
       if (Names.contains(To->Target))
         continue;
-      using CallerEntry = SignatureMatcher::HashIndex::CallerEntry;
-      llvm::SmallVector<
-          std::pair<std::string_view, llvm::ArrayRef<CallerEntry>>, 2>
-          Queries;
-      for (const auto &[UnusedOffset, Expected] : Alternatives) {
-        const auto Candidates = Idx.callerModules(Modules, Expected);
-        if (Candidates.empty()) {
-          Queries.clear();
-          break;
-        }
-        Queries.emplace_back(Expected, Candidates);
-      }
       for (const auto &[Expected, Candidates] : Queries) {
         for (const auto &Candidate : Candidates) {
           const StoredModule &Mod = Modules[Candidate.Module];
