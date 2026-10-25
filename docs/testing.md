@@ -54,6 +54,15 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`*LookupFailures*` and `ProcessReport.AndroidLoaderFailures*` cover strict
+binary names and literal `exact_query` strings, whitespace preservation,
+loader scope, fresh throwable identities, nullable messages, duplicate and
+visible-declaration refusal, typed/JSON bounds and terminal resource limits.
+Rebuild the Android JNI fixtures for detach/reattach and `FindClass` isolation
+checks. `ProcessPublic.AndroidExactClassQueriesMatchSDKAndCLI` compares full
+reports through both public interfaces. Run Dalvik, AndroidNative, LinuxProcess
+and ExecutionSession owner suites after this shared snapshot layout changes.
+
 `*HandlerPost*` checks initial-state validation, nullable Runnable transport,
 retained Message fields, stable ordering, zero deadlines, thread detach,
 actual Linux clock advancement, final-method admission, override refusal,

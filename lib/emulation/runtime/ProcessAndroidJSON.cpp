@@ -567,8 +567,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           for (const auto &Entry : *Failures) {
             const auto *Failure = Entry.getAsObject();
             if (!Failure || Failure->size() != 3 ||
-                !Failure->getString("loader") ||
-                !Failure->getString("binary_name") || !Failure->get("message"))
+                !Failure->getString("loader") || !Failure->get("message"))
+              return invalid(Key);
+            auto BinaryName = Failure->getString("binary_name");
+            auto ExactQuery = Failure->getString("exact_query");
+            if (bool(BinaryName) == bool(ExactQuery))
               return invalid(Key);
             using Outcome =
                 mobile::dalvik::AndroidApplicationSnapshot::ClassLookupFailure;
@@ -582,7 +585,10 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
               Result.loader = Outcome::Loader::Application;
             else
               return invalid(Key);
-            Result.binary_name = Failure->getString("binary_name")->str();
+            if (ExactQuery)
+              Result.exact_query = ExactQuery->str();
+            else
+              Result.binary_name = BinaryName->str();
             const auto &Message = *Failure->get("message");
             if (auto Text = Message.getAsString())
               Result.message = Text->str();
