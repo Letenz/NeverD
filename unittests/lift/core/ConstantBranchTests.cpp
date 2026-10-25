@@ -8,9 +8,11 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/Error.h"
 
@@ -21,9 +23,8 @@ using namespace neverd;
 
 namespace {
 
-LowFunc build(std::vector<uint8_t> Bytes, Arch Architecture = Arch::X64,
-              BinaryFormat Format = BinaryFormat::ELF, va_t Entry = 0x1000,
-              const std::set<va_t> &Entries = {}) {
+BinaryImage image(std::vector<uint8_t> Bytes, Arch Architecture,
+                  BinaryFormat Format) {
   BinaryImage Image;
   Image.Arch = Architecture;
   Image.Bits = Architecture == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
@@ -31,10 +32,15 @@ LowFunc build(std::vector<uint8_t> Bytes, Arch Architecture = Arch::X64,
   Image.Base = 0x1000;
   Segment Text;
   Text.VA = Image.Base;
-  Text.Size = Bytes.size();
+  Text.Size = Text.FileSz = Bytes.size();
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   Text.Data = std::move(Bytes);
   Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
+LowFunc build(const BinaryImage &Image, va_t Entry = 0x1000,
+              const std::set<va_t> &Entries = {}) {
   Decoder Dec;
   if (!Dec.init(Image)) {
     ADD_FAILURE() << "decoder initialization failed";
@@ -47,6 +53,51 @@ LowFunc build(std::vector<uint8_t> Bytes, Arch Architecture = Arch::X64,
       Function, LowInstructionBoundaryRequirement::Required);
   EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
   return Function;
+}
+
+LowFunc build(std::vector<uint8_t> Bytes, Arch Architecture = Arch::X64,
+              BinaryFormat Format = BinaryFormat::ELF, va_t Entry = 0x1000,
+              const std::set<va_t> &Entries = {}) {
+  return build(image(std::move(Bytes), Architecture, Format), Entry, Entries);
+}
+
+BinaryImage scalarLoadImage(Arch Architecture, BinaryFormat Format) {
+  // A full readonly scalar supplies the delta; an unreachable opcode before
+  // the destination must not hide the actual continuation's first byte.
+  auto Image = image(
+      Architecture == Arch::AArch64
+          ? std::vector<uint8_t>{0x00, 0x00, 0x82, 0xd2, // mov x0,0x1000
+                                 0xe1, 0x7f, 0x00, 0x18, // ldr w1,0x2000
+                                 0x00, 0x00, 0x01, 0x8b, // add x0,x0,x1
+                                 0x00, 0x00, 0x1f, 0xd6, // br x0
+                                 0x00, 0x00, 0x20, 0xd4, // unreachable brk
+                                 0xc0, 0x03, 0x5f, 0xd6} // ret
+          : std::vector<uint8_t>{0xb8, 0x00, 0x10, 0x00, 0x00, // mov eax,0x1000
+                                 0x8b, 0x0c, 0x25, 0x00, 0x20, 0x00, 0x00, 0x01,
+                                 0xc8,       // add eax,ecx
+                                 0xff, 0xe0, // jmp eax/rax
+                                 0xe9, 0xc3},
+      Architecture, Format);
+  Section Text;
+  Text.VA = Image.Base;
+  Text.Size = Text.FileSz = Image.Segments.front().Size;
+  Text.Flags = Image.Segments.front().Flags;
+  if (Format == BinaryFormat::MachO)
+    Text.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+  Image.Sections.push_back(Text);
+  Segment Data;
+  Data.VA = 0x2000;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.resize(8);
+  writeLE<uint32_t>(Data.Data.data(), Architecture == Arch::AArch64 ? 20 : 17);
+  Data.Size = Data.FileSz = Data.Data.size();
+  Section ReadOnly;
+  ReadOnly.VA = Data.VA;
+  ReadOnly.Size = ReadOnly.FileSz = Data.Size;
+  ReadOnly.Flags = Data.Flags;
+  Image.Segments.push_back(std::move(Data));
+  Image.Sections.push_back(ReadOnly);
+  return Image;
 }
 
 std::set<va_t> addresses(const LowFunc &Function) {
@@ -70,6 +121,148 @@ TEST(ConstantBranch, ArithmeticTargetSkipsUnreachableOpcode) {
       ASSERT_EQ(Function.Blocks.size(), 2u);
       EXPECT_EQ(Function.Blocks.front().Succs.size(), 1u);
     }
+}
+
+TEST(ConstantBranch, UnaryArithmeticReachesTheActualInstructionBoundary) {
+  for (auto Architecture : {Arch::X86, Arch::X64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Negate : {false, true}) {
+        // mov eax, encoded target; not/neg eax; jmp eax/rax; db E9; ret.
+        const auto Function =
+            build({0xb8, uint8_t(Negate ? 0xf6 : 0xf5), 0xef, 0xff, 0xff, 0xf7,
+                   uint8_t(Negate ? 0xd8 : 0xd0), 0xff, 0xe0, 0xe9, 0xc3},
+                  Architecture, Format);
+        EXPECT_TRUE(addresses(Function).count(0x100a));
+        EXPECT_FALSE(addresses(Function).count(0x1009));
+      }
+  const auto Signed =
+      build({0xb8, 0x14, 0x10, 0,    0,    0xb9, 0xff, 0xff, 0xff, 0xff,
+             0x48, 0x63, 0xc9, 0x48, 0x01, 0xc8, 0xff, 0xe0, 0xe9, 0xc3});
+  EXPECT_TRUE(addresses(Signed).count(0x1013));
+  EXPECT_FALSE(addresses(Signed).count(0x1012));
+}
+
+TEST(ConstantBranch,
+     ImmutableScalarsRecoverTargetsAcrossArchitecturesAndFormats) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(::testing::Message()
+                   << unsigned(Architecture) << ':' << unsigned(Format));
+      const auto Function = build(scalarLoadImage(Architecture, Format));
+      EXPECT_TRUE(addresses(Function).count(
+          Architecture == Arch::AArch64 ? 0x1014 : 0x1011));
+      EXPECT_FALSE(addresses(Function).count(0x1010));
+      ASSERT_EQ(Function.Blocks.size(), 2u);
+    }
+}
+
+TEST(ConstantBranch, UnprovedLoadsDoNotRecoverATarget) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+        SCOPED_TRACE(::testing::Message()
+                     << unsigned(Architecture) << ':' << unsigned(Format) << ':'
+                     << Mutation);
+        auto Image = scalarLoadImage(Architecture, Format);
+        switch (Mutation) {
+        case 0:
+          Image.Segments.back().Flags =
+              SegmentFlags::Readable | SegmentFlags::Writable;
+          break;
+        case 1:
+          Image.Sections.back().Flags =
+              SegmentFlags::Readable | SegmentFlags::Writable;
+          break;
+        case 2:
+          Image.BaseRelocations.push_back({0x2000, 3});
+          break;
+        case 3:
+          Image.Segments.back().FileSz = 3;
+          break;
+        case 4:
+          Image.Segments.push_back(Image.Segments.back());
+          break;
+        case 5:
+          Image.Sections.push_back(Image.Sections.back());
+          break;
+        case 6:
+          Image.IsRelocatable = true;
+          break;
+        case 7:
+          Image.Sections.back().FileOff = 1;
+          break;
+        }
+        EXPECT_FALSE(
+            addresses(build(Image))
+                .count(Architecture == Arch::AArch64 ? 0x1014 : 0x1011));
+      }
+}
+
+TEST(ConstantBranch, ImmutableLoadStillRequiresAnExactIndexAndFunctionOwner) {
+  auto Image = scalarLoadImage(Arch::X64, BinaryFormat::COFF);
+  // mov ecx,[rdi*4+0x2000] cannot assume that the unknown index is zero.
+  Image.Segments.front().Data[7] = 0xbd;
+  EXPECT_FALSE(addresses(build(Image)).count(0x1011));
+  Image.Segments.front().Data[7] = 0x25;
+  const auto Function = build(Image, 0x1000, {0x1011});
+  EXPECT_FALSE(addresses(Function).count(0x1011));
+  bool Call = false;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      Call |= Op.Opcode == NdOp::CALL && Op.NumInputs &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].Offset == 0x1011;
+  EXPECT_TRUE(Call);
+}
+
+TEST(ConstantBranch, UnaffordableImageReadsKeepIndependentArithmeticProofs) {
+  auto Image = scalarLoadImage(Arch::X64, BinaryFormat::COFF);
+  Image.BaseRelocations.resize(limits::kMaxScalarBranchEvidenceWork + 1);
+  EXPECT_FALSE(addresses(build(Image)).count(0x1011));
+  auto &Text = Image.Segments.front();
+  // Overwrite the unproved load result before the transfer. A cold image
+  // query must not consume the remaining budget of this independent proof.
+  Text.Data.insert(Text.Data.begin() + 12, {0xb9, 0x16, 0, 0, 0});
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = Text.Size;
+  EXPECT_TRUE(addresses(build(Image)).count(0x1016));
+}
+
+TEST(ConstantBranch, ImageReadCacheSurvivesTheCompletedGraphRevalidation) {
+  auto Image = scalarLoadImage(Arch::X64, BinaryFormat::COFF);
+  Image.BaseRelocations.resize(limits::kMaxScalarBranchEvidenceWork / 2,
+                               {0x3000, 3});
+  // The budget admits one cold lookup, but not a second. Final revalidation
+  // must reuse the exact immutable bytes instead of withdrawing the proof.
+  EXPECT_TRUE(addresses(build(Image)).count(0x1011));
+}
+
+TEST(ConstantBranch, OrderedAndSegmentRelativeReadsRemainRuntimeInputs) {
+  auto Image = scalarLoadImage(Arch::AArch64, BinaryFormat::COFF);
+  auto &Text = Image.Segments.front();
+  Text.Data = {0x00, 0x00, 0x82, 0xd2,  // mov x0,0x1000
+               0x02, 0x00, 0x84, 0xd2,  // mov x2,0x2000
+               0x41, 0xfc, 0xdf, 0x88,  // ldar w1,[x2]
+               0x00, 0x00, 0x01, 0x8b,  // add x0,x0,x1
+               0x00, 0x00, 0x1f, 0xd6,  // br x0
+               0x00, 0x00, 0x20, 0xd4,  // unreachable brk
+               0xc0, 0x03, 0x5f, 0xd6}; // ret
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = Text.Size;
+  writeLE<uint32_t>(Image.Segments.back().Data.data(), 24);
+  EXPECT_FALSE(addresses(build(Image)).count(0x1018));
+
+  Image = scalarLoadImage(Arch::X64, BinaryFormat::COFF);
+  auto &X86Text = Image.Segments.front();
+  // A GS override cannot read the image's identically numbered default-space
+  // address without an independently proved segment base.
+  X86Text.Data.insert(X86Text.Data.begin() + 5, 0x65);
+  X86Text.Size = X86Text.FileSz = X86Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = X86Text.Size;
+  writeLE<uint32_t>(Image.Segments.back().Data.data(), 18);
+  EXPECT_FALSE(addresses(build(Image)).count(0x1012));
 }
 
 TEST(ConstantBranch, UnknownLiveInAndPartialRegisterStayUnknown) {
@@ -185,6 +378,25 @@ TEST(ConstantBranch, ANewIncomingEdgeWithdrawsAnEarlierConstantProof) {
       }
   EXPECT_TRUE(Found);
   EXPECT_TRUE(Function.UnsafeIndirectBranchAddresses.count(0x100c));
+}
+
+TEST(ConstantBranch, CachedBytesDoNotSurviveALostAddressProof) {
+  auto Image = scalarLoadImage(Arch::X64, BinaryFormat::COFF);
+  auto &Text = Image.Segments.front();
+  Text.Data = {0x85, 0xff, 0x74, 0x0c,    // test edi,edi; jz 0x1010
+               0xb8, 0x00, 0x20, 0,    0, // mov eax,0x2000
+               0x8b, 0x00,                // mov eax,[rax]
+               0xff, 0xe0,                // jmp rax
+               0xe9, 0xc3, 0x90, 0xb9, 0x09, 0x10, 0, 0, // mov ecx,0x1009
+               0xff, 0xe1,                               // jmp rcx
+               0xe9, 0x90, 0xc3};
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = Text.Size;
+  writeLE<uint32_t>(Image.Segments.back().Data.data(), 0x1019);
+  const auto Function = build(Image);
+  EXPECT_TRUE(addresses(Function).count(0x1009));
+  EXPECT_FALSE(addresses(Function).count(0x1019));
+  EXPECT_TRUE(Function.UnsafeIndirectBranchAddresses.count(0x100b));
 }
 
 TEST(ConstantBranch, AnOpcodeReachedByAnotherPathRemainsCode) {
