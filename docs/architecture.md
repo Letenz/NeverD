@@ -311,8 +311,15 @@ The software tracer admits a finite image/RAM read only when the authoritative
 address owner proves identical address bits for CPTA on/off and every internal
 CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
 in both modes, including a poisoned or tagged base whose unchecked sum appears
-mapped. This proves no translation, tagging or no-fault behavior. This instruction
-preservation observes the execution host's controls; it does not model foreign
+mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
+Swift receiver proofs consume a validated read with an explicit result, without
+granting purity or removing the access. Jump-table recovery
+requires the same control-independent address proof for every admitted physical
+slot, an exact table base and a full-width bound on the raw index. Its existing
+root, mutation and storage audits still apply. Both source routes consume the
+authenticated load's input occurrence, preserving zero indices and an index
+register overwritten by the load.
+This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Other ordinary-memory families remain unqualified for CPA2, as does
 controlled native execution with CPTA enabled. The owner follows the pinned

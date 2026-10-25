@@ -26,7 +26,9 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/loader/BinaryImageModel.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/support/BinaryEncoding.h"
 
@@ -880,5 +882,60 @@ TEST(AArch64AddressMemory, ImageReadsRequireControlIndependentAddresses) {
       EXPECT_EQ(Emulator.getRegister(a64reg::X0), kEntry);
       EXPECT_EQ(Emulator.getLoadRecords().size(), Reads);
     }
+  }
+}
+
+TEST(AArch64AddressMemory, DispatchUsesTheAuthenticatedLoadInputLifetime) {
+  for (const uint32_t Word : {kAliasedIndex, kScaledZeroIndex}) {
+    SCOPED_TRACE(Word);
+    auto Function = memoryFunction(Word);
+    auto &Block = Function.Blocks.front();
+    auto &Load = Block.Ops.front();
+    Load.Addr = kEntry;
+    Load.OriginSeq = 0;
+    MedOp &Branch = Block.Ops.back();
+    Branch.Opcode = NdOp::INDIR_BR;
+    Branch.Addr = kEntry + kWordBytes;
+    Branch.addInput(Load.Output);
+    JumpTable Table;
+    Table.InsnAddr = Branch.Addr;
+    Table.EntrySize = Table.EntryStride = kScalarBytes;
+    Table.HasDispatchSlotMap = true;
+    Table.AuthenticatedTableLoads = {
+        {Load.Addr, Load.OriginSeq, Load.Output.Size}};
+    Function.JumpTables.push_back(Table);
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    MedDispatchContext Context;
+    Context.Func = &Function;
+    Context.Img = &Image;
+    const auto Find = [&] {
+      return findTableSwitchIndex(Context, Block, Branch.Inputs[0]);
+    };
+    const auto Index = Find();
+    ASSERT_TRUE(Index);
+    const auto &Expected = Load.Inputs[kAddressMemoryIndexOperand + 1];
+    EXPECT_EQ(Index->Kind, Expected.Kind);
+    EXPECT_EQ(Index->Id, Expected.Id);
+    EXPECT_EQ(Index->SSAVer, Expected.SSAVer);
+    EXPECT_EQ(Index->ConstVal, Expected.ConstVal);
+    EXPECT_EQ(Index->Size, Expected.Size);
+
+    // Neither a stale occurrence nor two matching tables can identify one
+    // selector. A valid shape alone is not a resolver certificate.
+    ++Function.JumpTables.front().AuthenticatedTableLoads.front().Seq;
+    EXPECT_FALSE(Find());
+    Function.JumpTables.front() = Table;
+    Function.JumpTables.push_back(Table);
+    EXPECT_FALSE(Find());
+    Function.JumpTables.clear();
+    EXPECT_FALSE(Find());
+    Function.JumpTables.push_back(Table);
+    Image.Arch = Arch::X64;
+    EXPECT_FALSE(Find());
+    Image.Arch = Arch::AArch64;
+    Block.Ops.insert(Block.Ops.begin(), Load);
+    EXPECT_FALSE(
+        findTableSwitchIndex(Context, Block, Block.Ops.back().Inputs[0]));
   }
 }

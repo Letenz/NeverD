@@ -187,7 +187,7 @@ public:
 };
 
 bool intrinsicMayClobberFrameMemory(const LowOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC)
+  if (Op.Opcode != NdOp::INTRINSIC || lowAArch64AddressMemoryShapeIsValid(Op))
     return false;
   if (Op.NumInputs < 1 || !Op.Inputs[0].isConst())
     return true;
@@ -10600,7 +10600,8 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
         if (!consumeWork())
           return false;
         if (Op.Addr == Occurrence.Addr && Op.Seq == Occurrence.Seq &&
-            Op.Opcode == NdOp::LOAD && sameVar(Op.Output, Occurrence.Value)) {
+            (Op.Opcode == NdOp::LOAD || originalAArch64TableLoad(Op)) &&
+            sameVar(Op.Output, Occurrence.Value)) {
           TargetLoad = &Op;
           break;
         }
@@ -11624,6 +11625,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     const LowOp *NegativeMask = nullptr;
     std::vector<size_t> SelectQueries;
     std::vector<JumpTableValueOccurrence> DynamicAlternatives;
+    bool OriginalCheckedAddress = false;
   };
   std::vector<RoleState> Roles;
   if (!consumeWork(2) || !consumeProduct(WorkingLoadRoles.size(), 2))
@@ -11649,8 +11651,9 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     for (const auto &[Addr, Insn] : Insns) {
       (void)Addr;
       for (const LowOp &Op : Insn.Ops) {
-        if (Op.Opcode == NdOp::LOAD && Op.Addr == Role.Load.Addr &&
-            Op.Seq == Role.Load.Seq && sameVar(Op.Output, Role.Load.Value))
+        if ((Op.Opcode == NdOp::LOAD || originalAArch64TableLoad(Op)) &&
+            Op.Addr == Role.Load.Addr && Op.Seq == Role.Load.Seq &&
+            sameVar(Op.Output, Role.Load.Value))
           Load = &Op;
         if (Role.HasBaseSelect && Op.Opcode == NdOp::SELECT &&
             Op.Addr == Role.SelectedBase.Addr &&
@@ -11790,6 +11793,28 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
                      NegativeMask,
                      {},
                      {}});
+    if (originalAArch64TableLoad(*Load)) {
+      if (Role.IsLiteralCoordinate || Role.AllowedBases.size() != 1 ||
+          Role.Indices.size() != 1 || Role.HasBaseSelect ||
+          Role.HasBaseMaskBlend || HasFrameStorage || HasDisplacedAddress ||
+          Role.AddressIndex.Value.Size ||
+          Role.AddressScale != kAddressMemoryPointerBytes)
+        return false;
+      const auto &Index = Role.Indices.front();
+      if (Index.DefinedAtPoint || Index.Addr != Load->Addr ||
+          Index.Seq != Load->Seq ||
+          !sameVar(Index.Value, Load->Inputs[kAddressMemoryIndexOperand + 1]))
+        return false;
+      bool AddressComplete = false;
+      if (!aarch64OriginalTableLoadMatches(
+              *Load, Role.AllowedBases.front(), Info.PhysicalCapacity,
+              AggregateEvidenceBudget, AddressComplete, &QueryScope,
+              CertifiedEdgeOverrides, UseGroupContext)) {
+        Complete &= AddressComplete;
+        return false;
+      }
+      Roles.back().OriginalCheckedAddress = true;
+    }
   }
 
   auto baseAlternatives = [&](const std::vector<va_t> &Bases, uint16_t Size)
@@ -11872,6 +11897,8 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
       return false;
     RoleState &State = Roles[RoleIndex];
     const JumpTableLoadRole &Role = *State.Role;
+    if (State.OriginalCheckedAddress)
+      continue;
     if (Role.AddressScale == 1) {
       if (!consumeProduct(Role.Indices.size(), 3))
         return false;
@@ -12025,7 +12052,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     if (!consumeWork())
       return false;
     const RoleState &State = Roles[RoleIndex];
-    if (State.DynamicAlternatives.empty()) {
+    if (!State.OriginalCheckedAddress && State.DynamicAlternatives.empty()) {
       return false;
     }
   }
@@ -12597,6 +12624,8 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
       return false;
     RoleState &State = Roles[RoleIndex];
     const JumpTableLoadRole &Role = *State.Role;
+    if (State.OriginalCheckedAddress)
+      continue;
     const JumpTableFrameStorageRole &FrameStorage = Role.FrameStorage;
     const JumpTableDisplacedAddressRole &Displaced = Role.DisplacedAddress;
     if (Displaced.RuntimeBaseUse.Value.Size != 0) {
@@ -13418,7 +13447,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
   for (size_t I = 0; I < AddressAlternatives.size(); ++I) {
     if (!consumeWork())
       return false;
-    if (AddressAlternatives[I].empty()) {
+    if (!Roles[I].OriginalCheckedAddress && AddressAlternatives[I].empty()) {
       return false;
     }
   }
@@ -13480,6 +13509,10 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     if (!consumeWork())
       return false;
     const RoleState &State = Roles[RoleIndex];
+    if (State.OriginalCheckedAddress) {
+      LoadMatches[RoleIndex] = true;
+      continue;
+    }
     const NdVar &LoadAddress =
         State.Load->Inputs[State.Load->NumInputs >= 2 ? 1 : 0];
     if (!consumeWork(AddressAlternatives[RoleIndex].size()))

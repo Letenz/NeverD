@@ -251,6 +251,11 @@ Control-independent addresses retain finite image reads without guessing CPTA.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives only a validated scalar memory operation. Run this group with the
 decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
+Include `NativeBooleanResultProof.*` and the jump-table/computed-goto tests:
+identical-address reads preserve the differential result proof, while either
+tainted address input must refuse it. Computed-goto execution covers both a
+zero-register index and a load overwriting its index register. Selector tests
+reject stale or duplicated authentication records and duplicate load occurrences.
 These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
 instruction families.
 Pointer-valued results retain their bits through both C routes; independent
