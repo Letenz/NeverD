@@ -3486,7 +3486,12 @@ unit compiles on that system, which declares them.
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
 `SessionCAPIKernelInputs.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
-and checks that the headers join its PDB without conflicts.
+and checks that headers join its PDB without replacing the program's records.
+Version-dependent layout conflicts retain opaque declarations or omit dependent
+aliases. `HeaderLibrary.ExecutivePointerAliasesUseTheProgramsPDBRecords` checks
+the official `ntifs.h` opaque process/thread aliases against complete PDB
+executive records for x86, x64 and ARM64. Missing records, wrong prefixes,
+nonzero prefix offsets, user aliases and unrelated providers remain controls.
 `SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
 `IofCompleteRequest` and checks the signatures the headers give them; also

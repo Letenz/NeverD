@@ -88,6 +88,12 @@ An export inventory is only a coverage audit; undocumented and ordinal-only
 exports still require authenticated declarations. The retained Microsoft
 SDK/WDK input supplies x86/x64/ARM64 declarations; the older MinGW DDK input
 alone has no ARM64 kernel headers. Input availability is not full ABI coverage.
+Runtime Windows kernel type joins now associate official opaque executive
+pointer aliases with complete program PDB records when their kernel prefix
+matches at offset zero. Both C routes recover the executive members through
+the same local types. Existing aliases and incomplete or mismatched records
+remain unchanged. WDK/kernel version conflicts stay visible as opaque records;
+they do not authorize importing an incompatible layout.
 
 The shared call-read summary excludes register copies proved overwritten before
 observation, including CPUID scratch exchanges. Calls, exits, partial writes

@@ -1418,6 +1418,14 @@ dependency closure; absent selected names and provider parse errors prevent
 an import. This owner
 is separate from the runtime priority merge of system and program types; the
 flattened generated headers add no provider merge during decompilation.
+When the runtime merge knows its Windows kernel provider, the `ntifs.h`
+opaque `PEPROCESS`/`PETHREAD` aliases can use a complete PDB executive record
+whose first member is the corresponding kernel prefix at offset zero. This
+preserves the [documented opaque pointer identity](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle)
+while recovering the program's actual members. Existing program typedefs,
+`PKPROCESS`/`PKTHREAD`, unrelated providers and incomplete or mismatched records
+keep their original identity. The shared type library owns this association;
+both source emitters and the local-type views consume it.
 Callback types retain their source calling convention when local declarations
 become `NdType` values. The lightweight `CallingConvention.h` and existing
 `CallingConventions.def` own that identity; CodeView imports share one mapping.
