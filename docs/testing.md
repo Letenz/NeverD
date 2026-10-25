@@ -7890,6 +7890,11 @@ and independently materialized SELECT arms. Both suites retain ambiguous
 relocatable comparisons and distinguish adjacent objects' one-past addresses.
 `MedConstantPropagation` also checks full SSA identities at maximum integer
 IDs/versions and atomic budget refusal on reverse-ordered width chains.
+`DefaultWordAbsorptionRequiresTheSameSSAValueAndWidth` checks default MedIR
+absorption on x86, x64, ARM and AArch64 in PE/COFF, ELF and Mach-O. Both operand
+orders simplify `x | (x & y)` and `x & (x | y)`, while a changed SSA version or
+an intervening narrowing conversion prevents the fold. The shared operation
+rewrite supplies both source routes without expanding an expression tree.
 `HighCSourceCalls.ReusedConverterRebuildsClobberIdentityAndOrder` checks first
 record precedence and clearing/restoring clobbers between conversions of the
 same function, against a fresh converter. The worker code-edit checks cover

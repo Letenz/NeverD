@@ -135,6 +135,13 @@ Same-width signed/unsigned views no longer hide word absorption. Consecutive
 scalar offsets combine modulo their declared width; negative-literal spelling
 retains scalar provenance and leaves explicit high kernel addresses intact.
 This source cleanup does not resolve a VM target that depends on runtime data.
+Default MedIR propagation now folds same-width word absorption using SSA
+identity before either source route expands expression trees. Changed SSA
+versions and narrowing conversions remain distinct; named producers retain
+their effects under the existing DCE rules. Public x86/x64/ARM/ARM64 MedIR
+contracts cover all three formats, with independent host execution of x64 and
+ARM64 PE/ELF C outputs. This reduces repeated dispatcher arithmetic but does
+not recover its runtime inputs or prove a unique callable target.
 
 Mapped LLVM C now keeps array and record allocations out of scalar variable
 typing, including frames larger than the supported integer width. HighC and
