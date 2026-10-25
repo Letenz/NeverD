@@ -11,6 +11,7 @@
 #include "LineageGraph.h"
 
 #include "../ResourceLimits.h"
+#include "SingleLineText.h"
 #include "Theme.h"
 
 #include <QFontMetricsF>
@@ -128,9 +129,9 @@ void LineageGraph::rebuild() {
     auto *Text = new QGraphicsTextItem(Node);
     Text->setFont(font());
     Text->setDefaultTextColor(Theme.chrome("Text"));
-    const auto Label =
-        Metrics.elidedText(Names.value(It.key(), It.key()), Qt::ElideMiddle,
-                           Width - Metrics.height());
+    const auto Label = Metrics.elidedText(
+        singleLineDisplayText(Names.value(It.key(), It.key())), Qt::ElideMiddle,
+        Width - Metrics.height());
     Text->setPlainText(Label + '\n' + It.key().left(16));
     Text->setPos(-Width / 2 + Metrics.height() / 3, -Height / 2);
   }
