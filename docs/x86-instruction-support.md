@@ -111,6 +111,8 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 
 | Instructions or family | Missing contract |
 | --- | --- |
+| LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
+| 3DNow! arithmetic, comparison, conversion and rearrangement operations | Packed-lane results, instruction-specific floating-point rules and MMX/x87 state. The 24 former COPY/scalar-FLOAT approximations now fail explicitly; decoder recognition remains available. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
@@ -176,6 +178,34 @@ complete checkpoint are absent; the previous status-only lowering could
 lose both the abort branch and the successful path's EAX value. These
 instruction contracts follow the
 [Intel XBEGIN/XTEST reference](https://cdrdv2-public.intel.com/874247/334569-090-sdm-vol-2d.pdf).
+
+XABORT now retains its exact constant byte through the shared system-state
+contract, using native `llvm.x86.xabort` on both the pinned SDK and current
+fork. Missing, variable, mistyped or contradictory operands fail before
+effects. LLVM-to-C also rejects narrowed memory effects and speculative or
+nonreturning annotations; its legacy assembly input retains the required
+`rtm` function attribute. Store/abort/reload fixtures preserve ordinary memory
+order. The decoder qualification covers all 256 bytes in 14,592 combinations;
+48 source fixtures cover x86/x64, ELF/COFF/Mach-O and both pipeline settings,
+including 24 x64 fixtures compiled with NeverC. Native and C outputs are
+compiled at O0/O2. NeverC's bare Microsoft `_xabort` also now rejects a
+nonconstant argument before publishing an object. The independent compiler
+oracle checks all 256 codes over 40 profiles (10,240 functions), including
+NeverC, the full LLVM backend and the NeverC-to-LLVM bridge. This is byte,
+operand and ordering qualification, not physical transactional rollback.
+
+An additional audit reproduced two previously hidden false positives:
+`48 0f b4 07` (LFS) became an ordinary eight-byte load, and `0f 0f c1 94`
+(PFMIN) became a COPY of MM1 to MM0. The former loses the segment selector and
+descriptor transition; the latter loses both minimum comparisons. The
+related far-pointer loads and all 24 affected 3DNow! operations now refuse
+before appending LowIR effects. `NeverDX86LegacyAdmissionTests` covers 76
+far-pointer forms and 384 3DNow! forms, each through three decoder routes in
+strict and permissive mode (2,760 admission checks), plus ordinary-load/MMX
+positive controls. These are explicit remaining implementation gaps. 3DNow!
+completion must follow the packed-operation and state rules in
+[AMD APM volume 5](https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/26569.pdf),
+including its defined and undefined input domains.
 
 MPX memory forms retain their decoded identity in both full and lightweight
 decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.

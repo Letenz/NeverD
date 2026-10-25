@@ -507,8 +507,18 @@ and speculative execution. Store/abort/reload fixtures retain the surrounding
 ordinary-memory order. The source suite compiles 0/127/128/255 through native
 LLVM, HighC and LLVM-to-C across both code modes and all three formats, with
 NeverC for x64; compilation does not qualify hardware rollback.
+The source checks also require the `rtm` attribute when a legacy LLVM inline
+assembly call becomes `_xabort`. A dword memory result fixes the return width
+in the immediate-byte fixtures; constant-return inference is not their oracle.
 The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
 whose original abort target and checkpoint are absent.
+`NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
+segment loads and 24 3DNow! operations. Its 76 and 384 valid instruction forms
+run through full, lightweight and lift decoding in strict/permissive modes.
+Each rejection must preserve the existing LowIR prefix without adding loads,
+register writes or placeholder effects. Ordinary loads and MMX arithmetic
+remain positive controls. This is admission qualification, not completed
+segment or 3DNow! semantics.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
 check that a complete narrow displacement is normalized as a full address,
