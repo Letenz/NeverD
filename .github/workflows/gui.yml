@@ -102,6 +102,11 @@ jobs:
             build-gui/bin/neverd-gui-appearance-tests \
             -o build-gui/ci-diagnostics/native-appearance.txt,txt
           appearance_status=$?
+          QT_SCALE_FACTOR=1.5 \
+            NEVERD_APPEARANCE_CAPTURES=build-gui/ci-diagnostics/appearance-150 \
+            build-gui/bin/neverd-gui-appearance-tests \
+            -o build-gui/ci-diagnostics/native-appearance-150.txt,txt
+          scaled_appearance_status=$?
           build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
             toolbarButtonsKeepKeysInTooltips \
             -o build-gui/ci-diagnostics/native-frame.txt,txt
@@ -112,8 +117,10 @@ jobs:
               -o build-gui/ci-diagnostics/native-frame-trace.txt,txt
           fi
           cat build-gui/ci-diagnostics/native-appearance.txt
+          cat build-gui/ci-diagnostics/native-appearance-150.txt
           cat build-gui/ci-diagnostics/native-frame.txt
           if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
+          if [ "$scaled_appearance_status" -ne 0 ]; then exit "$scaled_appearance_status"; fi
           exit "$appearance_status"
       - name: Retain native appearance diagnostics
         if: ${{ always() && runner.os != 'Linux' }}
@@ -122,9 +129,11 @@ jobs:
           name: desktop-gui-${{ runner.os }}-appearance-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build-gui/ci-diagnostics/native-appearance.txt
+            build-gui/ci-diagnostics/native-appearance-150.txt
             build-gui/ci-diagnostics/native-frame.txt
             build-gui/ci-diagnostics/native-frame-trace.txt
             build-gui/ci-diagnostics/appearance/
+            build-gui/ci-diagnostics/appearance-150/
           if-no-files-found: warn
           retention-days: 7
       - name: Verify GUI, IPC, MCP and translation contracts
@@ -240,6 +249,7 @@ jobs:
               "ctest-exit-code.txt": "ci-diagnostics/ctest-exit-code.txt",
               "native-frame.txt": "ci-diagnostics/native-frame.txt",
               "native-appearance.txt": "ci-diagnostics/native-appearance.txt",
+              "native-appearance-150.txt": "ci-diagnostics/native-appearance-150.txt",
               "native-docking.txt": "ci-diagnostics/native-docking.txt",
               "native-interactions.txt": "ci-diagnostics/native-interactions.txt",
               "native-interactions.xml": "ci-diagnostics/native-interactions.xml",
