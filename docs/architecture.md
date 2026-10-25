@@ -12,6 +12,8 @@ the component level. The C renderer groups its architecture helpers, intrinsic
 spelling tables and HighC/LLVMC adapters together under `render/<architecture>/`;
 its route-independent interfaces retain `render/HighC/` and `render/LLVMC/`.
 LLVM architecture headers mirror the existing backend implementation directories.
+The shared LLVM-to-C intrinsic spelling table includes the x86 entries from
+`ir/intrinsics/X86/`; generic names remain in the common table.
 Decoder, lifter, IR state, ABI and translation files follow the same ownership.
 Execution models and unpacking adapters extend their existing `arch/<target>/`
 layout, including the public execution models.
@@ -94,17 +96,26 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
-`X86APXAtomic.h` owns the APX atomic native API names, operand widths,
+`X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
 condition/segment controls and exact assembly fallback. The existing
 `ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
-routes preserve a native EVEX RAO-INT or CMPccXADD transaction, including dead
-results and false-condition write-back; no ordinary load/store expansion is
+routes preserve the original legacy/VEX/EVEX RAO-INT or CMPccXADD transaction,
+including dead results and false-condition write-back; no ordinary load/store expansion is
 permitted. Normalized offsets retain DS/FS/GS selection, with address-size
 wrapping performed by the existing effective-address owner. Default-stack
 RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
 the segment: the normalized offset cannot yet retain their distinct #SS fault
 class. `Codegen` treats LLVM error diagnostics as compilation failures and
 does not publish the parseable but incomplete objects LLVM can leave behind.
+Legacy RAO also supports i386; normalized addresses remain eight bytes while
+the native i386 carrier is four bytes. A complete narrow absolute displacement
+is wrapped and published as a full address at the lifter boundary. LLVM's
+shared atomic address-role map defers only the address to memory resolution;
+stored/comparator values remain ordinary address-fragment escape sinks.
+Native memory emission uses the same writable-data, pointer-table and
+immutable-data address owners as ordinary memory operations. Selected or
+recurrent immutable bases must retain relocation; segment-relative offsets
+and live-image storage bypass this process-image rebasing.
 
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
@@ -116,6 +127,11 @@ assembly routes, and its `sahf` attribute survives every capability combination.
 SHA-256 vector projections participate in the same feature set, including the
 SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
 shape before selecting a compiler intrinsic.
+
+`X86SystemStateNative` also owns the RTM and CLZERO target requirements for
+native system calls. LLVM emission adds those requirements to the completed
+function without replacing its other family features, so standalone LLVM IR
+retains the instruction-selection contract used by the C routes.
 
 Source LLVM may retain loaded-image data in one external byte array, preserving
 overlapping scalar fields, pointer cells and original address differences.
@@ -211,6 +227,10 @@ MedIR before LLVM emission. Automatically included exception callbacks cannot
 substitute for a rejected parent. Failures retain the entry's audit disposition
 and first decode or unsupported-instruction address; source views can still
 return their partial analysis.
+Whole-module lift/patch also fails when every attempted body was rejected;
+an empty LLVM module cannot stand in for unsupported instructions. Deliberate
+runtime/import exclusions and read-only machine analysis keep their separate
+outcomes.
 
 LLVM function-symbol lookup builds its eligible entry/end indexes lazily for
 each emission. It retains the last eligible symbol in image order and prefers
@@ -8055,6 +8075,13 @@ descriptor state and suspended reads stay in the shared Linux read owner.
 Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
 `fstatat` service rather than duplicating pathname resolution or status layouts.
 All these entries retain the common dynamic-provider lifetime boundary.
+
+`AndroidQueries` owns Bionic error text: one pinned process catalog and a
+separate reusable buffer in each guest thread's TLS allocation. Image setup
+creates the catalog for static imports and declared dynamic providers. Known
+lookups return a borrowed pointer; only unknown formatting performs a guest
+write. Placement policy lives with the emulation limits, and no host locale or
+libc owns guest-visible text or lifetime.
 
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.

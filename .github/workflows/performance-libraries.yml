@@ -21,8 +21,11 @@ on:
       - 'scripts/fork_dependencies.py'
       - 'scripts/tests/test_fork_dependencies.py'
       - 'include/neverd/support/ByteScan.h'
+      - 'include/neverd/support/SortedSearch.h'
+      - 'include/neverd/support/Limits.h'
       - 'include/neverd/support/Parallel.h'
       - 'lib/support/ByteScan.cpp'
+      - 'lib/support/SortedSearch.cpp'
       - 'lib/support/Unicode.cpp'
       - 'lib/support/Parallel.cpp'
       - 'tools/common/transport/**'
@@ -45,8 +48,11 @@ on:
       - 'scripts/fork_dependencies.py'
       - 'scripts/tests/test_fork_dependencies.py'
       - 'include/neverd/support/ByteScan.h'
+      - 'include/neverd/support/SortedSearch.h'
+      - 'include/neverd/support/Limits.h'
       - 'include/neverd/support/Parallel.h'
       - 'lib/support/ByteScan.cpp'
+      - 'lib/support/SortedSearch.cpp'
       - 'lib/support/Unicode.cpp'
       - 'lib/support/Parallel.cpp'
       - 'tools/common/transport/**'
@@ -69,7 +75,10 @@ jobs:
       matrix:
         include:
           - {name: Linux x64, runner: ubuntu-24.04, cc: clang, cxx: clang++, arch: x64}
+          - {name: Linux x64 GCC, runner: ubuntu-24.04, cc: gcc, cxx: g++, arch: x64}
+          - {name: Linux ARM64, runner: ubuntu-24.04-arm, cc: clang, cxx: clang++, arch: arm64}
           - {name: macOS arm64, runner: macos-15, cc: clang, cxx: clang++, arch: arm64}
+          - {name: macOS x64, runner: macos-15-intel, cc: clang, cxx: clang++, arch: x64}
           - {name: Windows x64 MSVC, runner: windows-2025-vs2026, cc: cl, cxx: cl, arch: x64}
           - {name: Windows x64 clang-cl, runner: windows-2025-vs2026, cc: clang-cl, cxx: clang-cl, arch: x64}
           - {name: Windows ARM64, runner: windows-11-arm, cc: cl, cxx: cl, arch: arm64}
@@ -116,7 +125,7 @@ jobs:
               cmake -S unittests/acceleration -B "$build" -G Ninja \
                 -DCMAKE_BUILD_TYPE="$profile" -DNEVERD_TEST_EXPECT_MIMALLOC=ON \
                 "${options[@]}"
-              python scripts/build.py "$build" --parallel 3
+              python scripts/build.py "$build" --target all neverd-sorted-search-bench --parallel 3
               python unittests/acceleration/verify.py "$build/bin/NeverDAccelerationTests$suffix" "$build/evidence"
               runtimes=0
               if [ "$mode" = ON ]; then runtimes=1; fi

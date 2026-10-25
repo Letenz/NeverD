@@ -1388,3 +1388,21 @@ options, connect and scalar
 stream I/O. See [offline network contracts](linux-network-contracts.md) for the
 API 28 layout, ownership checks, errno, descriptor aliases and unsupported
 boundaries. No host DNS or sockets are used.
+
+### Error text storage
+
+`strerror` interprets the low 32 argument bits as a signed error number and
+preserves errno. Known errors borrow process-owned, initially read-only strings;
+unknown values use `Unknown error N` in reusable per-thread storage. Another
+unknown call on that thread replaces its buffer; known calls and other threads
+leave it unchanged. The buffer is separate from `dlerror` and ABI TLS slots.
+Known calls return a pointer without reading the pointed-to bytes, so a guest
+unmapping the text faults only if it later dereferences that pointer.
+
+The text catalog is pinned to Android NDK 26.2.11394342's ARM64 `strerror.o`,
+including codes 0 through 133 except 41 and 58. This is an explicit catalog
+choice within the bounded native profile; its exact equivalence to every API 28
+device has not been established. The original sysroot notices are retained in
+[third-party notices](../THIRD_PARTY_NOTICES.md). Model addresses are placement
+policy. Reentrant and locale variants remain unsupported. No host libc, locale,
+errno or network supplies the result.

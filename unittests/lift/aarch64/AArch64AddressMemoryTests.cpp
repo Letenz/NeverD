@@ -430,10 +430,21 @@ TEST(AArch64AddressMemory, RawWordsPreserveIndexScaleAndAliases) {
         EXPECT_FALSE(lowIntrinsicMemoryOperands(Load).Complete);
         EXPECT_TRUE(isSideeffectIntrinsic(Intrinsic::A64_Load64RegisterOffset));
       }
-  for (uint64_t Word :
-       {uint64_t(kInvalidIndex), uint64_t(kImmediate), kOversized,
-        uint64_t(kPrefetch), uint64_t(kReservedLoad)})
+  for (uint64_t Word : {uint64_t(kInvalidIndex), kOversized,
+                        uint64_t(kPrefetch), uint64_t(kReservedLoad)})
     EXPECT_FALSE(aarch64AddressMemoryInstruction(Word));
+  const auto Immediate = aarch64AddressMemoryInstruction(kImmediate);
+  ASSERT_TRUE(Immediate);
+  EXPECT_FALSE(Immediate->hasRegisterIndex());
+  for (bool Fast : {false, true})
+    for (bool Strict : {false, true}) {
+      const auto Ops = liftMemory(kImmediate, Fast, Strict);
+      EXPECT_TRUE(std::none_of(Ops.begin(), Ops.end(),
+                               lowAArch64AddressMemoryShapeIsValid));
+      EXPECT_TRUE(std::any_of(Ops.begin(), Ops.end(), [](const auto &Op) {
+        return Op.Opcode == NdOp::LOAD;
+      }));
+    }
 }
 
 TEST(AArch64AddressMemory,
@@ -2450,9 +2461,9 @@ MedFunc immediateMemoryFunction(const ImmediateMemoryCase &Case, size_t Index) {
 TEST(AArch64ImmediateMemory,
      ImmediateFieldsAndUnprivilegedVariantsStayEncoded) {
   ASSERT_EQ(std::size(ImmediateMemoryCases), kImmediateCaseCount);
-  EXPECT_EQ(static_cast<unsigned>(Intrinsic::A64_LoadImmediate),
-            static_cast<unsigned>(Intrinsic::A64_VectorStoreRegisterOffset) +
-                1);
+#define IMMEDIATE_MEMORY_ID(Id, Expected)                                      \
+  EXPECT_EQ(static_cast<uint16_t>(Intrinsic::Id), Expected);
+#include "AArch64ImmediateMemoryFixtures.def"
   for (size_t I = 0; I != std::size(ImmediateMemoryCases); ++I) {
     const auto &Case = ImmediateMemoryCases[I];
     SCOPED_TRACE(Case.Word);

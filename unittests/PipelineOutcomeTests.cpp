@@ -862,6 +862,67 @@ TEST(PipelineOutcome, PatchDiscoversStandaloneELFEntryButPreservesCRTEntry) {
   EXPECT_TRUE(CRT.LowFuncs.empty());
 }
 
+TEST(PipelineOutcome, UnsupportedBodiesCannotPublishSuccessfulEmptyModules) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Patch : {false, true})
+        for (bool Selected : {false, true}) {
+          SCOPED_TRACE(getArchName(Architecture));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(Patch);
+          SCOPED_TRACE(Selected);
+          BinaryImage Image;
+          Image.Arch = Architecture;
+          Image.Bits =
+              Architecture == Arch::X64 ? Bitness::Bits64 : Bitness::Bits32;
+          Image.Format = Format;
+          Image.Entry = 0x1000;
+          Segment Text;
+          Text.Name = ".text";
+          Text.VA = Image.Entry;
+          Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+          // MOV EAX, ESI; XACQUIRE LOCK XADD [RDI/EDI], EAX; RET.
+          Text.Data = {0x89, 0xf0, 0xf2, 0xf0, 0x0f, 0xc1, 0x07, 0xc3};
+          Text.Size = Text.FileSz = Text.Data.size();
+          Image.Symbols.push_back(
+              {"unsupported_hle", Image.Entry, Text.Size, true});
+          Image.Segments.push_back(std::move(Text));
+          PipelineOptions Options;
+          Options.LiftMode = !Patch;
+          Options.PatchMode = Patch;
+          Options.NoOpt = true;
+          if (Selected)
+            Options.OnlyFunctionEntries.insert(Image.Entry);
+          llvm::LLVMContext Context;
+          auto Result = Pipeline().run(Image, Context, Options);
+          EXPECT_FALSE(Result.Success);
+          EXPECT_EQ(Result.LlvmModule, nullptr);
+          EXPECT_TRUE(Result.MedFuncs.empty());
+          EXPECT_NE(Result.Error.find("function 0x1000 was not admitted"),
+                    std::string::npos)
+              << Result.Error;
+          EXPECT_NE(Result.Error.find("unsupported instruction at 0x1002"),
+                    std::string::npos)
+              << Result.Error;
+          ASSERT_EQ(Result.FunctionAudits.size(), 1u);
+          EXPECT_EQ(Result.FunctionAudits.front().UnsupportedInstructions,
+                    std::vector<va_t>{0x1002});
+
+          if (!Selected) {
+            Options.LiftMode = Options.PatchMode = false;
+            Options.MedAnalysisOnly = true;
+            auto Analysis = Pipeline().run(Image, Context, Options);
+            EXPECT_TRUE(Analysis.Success) << Analysis.Error;
+            EXPECT_EQ(Analysis.LlvmModule, nullptr);
+            EXPECT_TRUE(Analysis.MedFuncs.empty());
+            ASSERT_EQ(Analysis.FunctionAudits.size(), 1u);
+            EXPECT_EQ(Analysis.FunctionAudits.front().UnsupportedInstructions,
+                      std::vector<va_t>{0x1002});
+          }
+        }
+}
+
 TEST(PipelineOutcome, RejectedLLVMEmissionRetainsStageDiagnostic) {
   BinaryImage Image;
   Image.Arch = Arch::X64;

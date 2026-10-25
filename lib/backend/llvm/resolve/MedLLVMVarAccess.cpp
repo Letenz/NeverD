@@ -559,7 +559,11 @@ bool MedLLVMEmitter::addressFragmentCanStayInLocalFrameSlot(
         continue;
       }
       uint16_t AccessSize = Op.Output.Size;
-      if (*AddressInput == 3)
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 2 &&
+          Op.Inputs[0].isConst() &&
+          isX86AtomicIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
+        AccessSize = Op.Inputs[2].Size;
+      else if (*AddressInput == 3)
         AccessSize = 16;
       else if (*AddressInput == 2 && Op.NumInputs > 3 && Op.Inputs[3].isConst())
         AccessSize = static_cast<uint16_t>(Op.Inputs[3].ConstVal);

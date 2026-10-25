@@ -632,6 +632,11 @@ bool NdOpEmulator::step(const LowOp &Op) {
       case Intrinsic::X86VP4DPWSSD:
       case Intrinsic::X86VP4DPWSSDS:
       case Intrinsic::RequireAligned:
+      case Intrinsic::X86LegacyRaoAdd:
+      case Intrinsic::X86LegacyRaoAnd:
+      case Intrinsic::X86LegacyRaoOr:
+      case Intrinsic::X86LegacyRaoXor:
+      case Intrinsic::X86LegacyCmpccXadd:
       case Intrinsic::ApxRaoAdd:
       case Intrinsic::ApxRaoAnd:
       case Intrinsic::ApxRaoOr:
@@ -740,9 +745,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
           Id == Intrinsic::EVEXExpandLoad || Id == Intrinsic::AesEnc ||
           Id == Intrinsic::AesEncLast || Id == Intrinsic::AesDec ||
           Id == Intrinsic::AesDecLast || Id == Intrinsic::Pclmulqdq ||
-          Id == Intrinsic::ApxRaoAdd || Id == Intrinsic::ApxRaoAnd ||
-          Id == Intrinsic::ApxRaoOr || Id == Intrinsic::ApxRaoXor ||
-          Id == Intrinsic::ApxCmpccXadd)
+          isX86AtomicIntrinsic(Id))
         return executeIntrinsic(Op);
     }
     // Opaque intrinsic (SSE/NEON vector op, etc.): it cannot alter control

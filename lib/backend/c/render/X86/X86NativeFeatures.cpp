@@ -130,7 +130,7 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
   std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
     if (!E)
       return;
-    Atomic |= isApxAtomicIntrinsic(E->IntrinsicId);
+    Atomic |= isX86AtomicIntrinsic(E->IntrinsicId);
     if (isX86CompactMemory(E->IntrinsicId)) {
       Compact = true;
       // Target-independent source scanning validates its shape; the writer
