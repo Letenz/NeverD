@@ -1156,6 +1156,19 @@ invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
 ownership and an AArch64 scalar transfer. Discontiguous and backward targets
 retain the original frame across another entry's search bound; independently
 known targets remain tail calls with their original instruction address.
+Immutable scalar reads extend this matrix to all three architectures and
+formats, retaining mutable, ambiguous, relocated, ordered, segment-relative
+and unaffordable loads as runtime inputs. Revalidation shares a read cache
+throughout one CFG build. `NeverDReadOnlyBytesTests` checks scalar width,
+relocation identity and cold-read budget boundaries. `LowScalarConstant.*`
+in `NeverDSEHRuntimeMemoryTests` compares unary arithmetic and sign extension
+with concrete LowIR execution.
+
+`NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
+both C routes for readonly loads, NOT, NEG and sign-extended target offsets.
+Independent native ELF x64 fixtures return a known result past an overlapping
+unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
+the native test is skipped on other hosts.
 
 `NeverDWorkerConstantBranch` also checks cold expression resolution and literal
 GUI listing jumps into forward and backward fragments, both C routes, retained
