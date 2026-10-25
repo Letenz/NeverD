@@ -436,8 +436,8 @@ This instruction preservation observes the execution host's controls; it does no
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Immediate, pre/post-index, pair and other ordinary-memory families
 remain unqualified for CPA2, as does controlled native execution with CPTA
-enabled. Whole-vector C entry/return ABI and DWARF vector declarations remain
-separate, unqualified interfaces; integer bridges do not certify those native
+enabled. Native half and whole-vector C entry/return ABI and DWARF vector
+declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
 profile, and does not qualify native Apple SVE or LLVMC scalable carriers.
 The owner follows the pinned

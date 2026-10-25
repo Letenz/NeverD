@@ -1895,6 +1895,34 @@ TEST(AArch64VectorAddressMemory,
   }
 }
 
+TEST(AArch64VectorAddressMemory,
+     RangeCertificatesIncludeTheCompleteVectorAccess) {
+  for (const auto &Case : VectorMemoryCases) {
+    SCOPED_TRACE(Case.Word);
+    const auto Instruction = aarch64AddressMemoryInstruction(Case.Word);
+    ASSERT_TRUE(Instruction);
+    const bool SignedWord =
+        Case.IndexBytes == kVectorLowWordBytes && Case.SignedIndex;
+    EXPECT_EQ(Instruction->controlIndependentAddressRange(kEntry,
+                                                          kRangeNarrowMaximum),
+              !SignedWord);
+    EXPECT_TRUE(Instruction->controlIndependentAddressRange(
+        kEntry, kRangePositiveMaximum));
+    ASSERT_TRUE(Instruction->controlIndependentAddressRange(
+        kEntry, kRangeExhaustiveMaximum));
+    for (uint64_t Index = 0; Index <= kRangeExhaustiveMaximum; ++Index)
+      EXPECT_EQ(Instruction->controlIndependentAddress(kEntry, Index),
+                kEntry + (Index << Case.Shift));
+    // The whole final access fits, but the next indexed element's extent
+    // crosses the checked-pointer region. Q accesses need all sixteen bytes.
+    const uint64_t Tail = kVectorRangeRegionEnd - Case.Access;
+    EXPECT_TRUE(Instruction->controlIndependentAddressRange(Tail, 0));
+    EXPECT_FALSE(Instruction->controlIndependentAddressRange(Tail, 1));
+    EXPECT_FALSE(
+        Instruction->controlIndependentAddressRange(kEntry, kRangeFullMaximum));
+  }
+}
+
 TEST(AArch64VectorAddressMemory, Vector31IsDataRatherThanAZeroRegister) {
   for (const auto &Case : VectorMemoryCases) {
     const uint32_t Word = Case.Word | kZeroRegister;

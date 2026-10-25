@@ -326,8 +326,8 @@ LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
 and the software tracer refuses state-dependent addresses in both modes, even
 when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
 Control-independent addresses retain finite image reads without guessing CPTA.
-Whole-W interval certificates cover all 104 encodings, exhaustively check small
-positive ranges and reject signed-W domain discontinuities, address-region
+Whole-W interval certificates cover all 104 GPR and 80 SIMD encodings,
+exhaustively check small positive ranges and reject signed-W domain discontinuities, address-region
 crossings, wrap, SP and malformed words. Exact-use zero-extension proofs keep
 unknown X high bits from borrowing this domain. `NeverDJumpTableTests` runs
 `JTE_AArch64.*`, guarded-range/cache/predicate-demand cases and the shared table
@@ -344,8 +344,9 @@ requires the encoded load's newer scalar view at its consumer.
 The scalar floating ABI test decodes all 32 S/D encodings as genuine float/double
 parameters or returns. Both C routes and native LLVM objects preserve NaN
 payloads, signaling bit patterns, negative zero and unchanged neighboring bytes
-at O0/O2. Full-vector C entry/return ABI and DWARF vector declarations remain
-unqualified; the integer bridges do not certify those interfaces.
+at O0/O2. Native half and whole-vector C entry/return ABI and DWARF vector
+declarations remain unqualified; the integer bridges do not certify those
+interfaces.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the
