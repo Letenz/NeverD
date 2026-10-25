@@ -36,7 +36,6 @@ namespace neverd::gui {
 namespace {
 constexpr int JumpContextBefore = 48;
 constexpr int ScrollResolution = 1 << 20;
-constexpr int WheelLines = 3;
 constexpr int HintLines = 12;
 // A line's body runs to about this many characters after its prefix.
 constexpr int BodyChars = 120;
@@ -1229,18 +1228,12 @@ void ListingView::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void ListingView::wheelEvent(QWheelEvent *event) {
-  if (event->modifiers() & Qt::ControlModifier) {
-    Theme::instance().zoomCodeFont(event->angleDelta().y() > 0 ? 1 : -1);
+  if (wheel_.zoomCodeFont(*event, lineHeight_))
     return;
-  }
-  const int steps = event->angleDelta().y() / 120;
-  if (steps)
-    scrollLines(-steps * WheelLines);
-  else if (const int pixels = event->pixelDelta().y())
-    scrollLines(-pixels / std::max(1, lineHeight_));
-  if (event->angleDelta().x())
-    horizontalScrollBar()->setValue(horizontalScrollBar()->value() -
-                                    event->angleDelta().x());
+  const QPoint delta = wheel_.scroll(*event, lineHeight_);
+  if (delta.y())
+    scrollLines(-delta.y());
+  horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
 }
 
 void ListingView::contextMenuEvent(QContextMenuEvent *event) {

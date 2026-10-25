@@ -32,6 +32,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
@@ -43,6 +44,11 @@
 #include <vector>
 
 namespace {
+#define AAPCS64_CALL_VALUE(Type, Name, Value)                                  \
+  inline constexpr Type Name = Value;
+#define AAPCS64_CALL_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AAPCS64CallContractFixtures.def"
+
 using namespace neverd;
 
 constexpr va_t Text = 0x10000;
@@ -603,7 +609,7 @@ TEST(AAPCS64CallContract, MixedHeaderScalarsKeepIndependentRegisterBanks) {
       makeImage({{Text,
                   {0x528000E0u, 0x52800121u, 0x52800162u, 0xD2824683u,
                    adrp(16, Text + 16, Got), ldrX(17, 16, Got), br(17)}}},
-                {{Text, "mixed_wrapper"}}, {"fixture_mixed"});
+                {{Text, kMixedWrapperName}}, {"fixture_mixed"});
   Image.Format = BinaryFormat::COFF;
   Image.Imports.front().Module = "fixture.dll";
   for (bool LLVM : {false, true}) {
@@ -616,6 +622,15 @@ TEST(AAPCS64CallContract, MixedHeaderScalarsKeepIndependentRegisterBanks) {
     Options.SourceProjection = LLVM;
     auto Result = Pipeline().run(Image, Context, Options, &Debug);
     ASSERT_TRUE(Result.Success) << Result.Error;
+    if (LLVM) {
+      ASSERT_TRUE(Result.LlvmModule);
+      const auto *Wrapper = Result.LlvmModule->getFunction(kMixedWrapperName);
+      ASSERT_NE(Wrapper, nullptr);
+      EXPECT_TRUE(Wrapper->getReturnType()->isDoubleTy());
+      ASSERT_EQ(Wrapper->arg_size(), kMixedHeaderFPParameters);
+      for (const auto &Parameter : Wrapper->args())
+        EXPECT_TRUE(Parameter.getType()->isDoubleTy());
+    }
     CEmitterOptions COptions;
     COptions.TheArch = Image.Arch;
     COptions.Format = Image.Format;
@@ -626,21 +641,8 @@ TEST(AAPCS64CallContract, MixedHeaderScalarsKeepIndependentRegisterBanks) {
         LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions, &Debug,
                                    &Image)
              : HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
-    const std::string Arguments = LLVM ? "x, y" : "2.5, -6.5";
     source_call_execution_test::compileAndRun(
-        Source + windows_mixed_scalar_test::Provider + R"(
-int main(void) {
-  typedef uint64_t carrier __attribute__((vector_size(16)));
-  carrier x = {0, 0}, y = {0, 0};
-  double left = 2.5, right = -6.5, result;
-  __builtin_memcpy(&x, &left, sizeof(left));
-  __builtin_memcpy(&y, &right, sizeof(right));
-  __auto_type output = mixed_wrapper()" +
-        Arguments + R"();
-  __builtin_memcpy(&result, &output, sizeof(result));
-  return result != 42.25;
-}
-)");
+        Source + windows_mixed_scalar_test::Provider + kMixedHeaderOracle);
   }
 }
 
@@ -759,6 +761,17 @@ TEST(AAPCS64CallContract, WindowsHeaderFloatsSurviveSelectionAndBothEmitters) {
               return Size == 4 ? llvm::Type::getFloatTy(Context)
                                : llvm::Type::getDoubleTy(Context);
             };
+            for (const auto &Selected : Result.MedFuncs) {
+              const auto *Declaration =
+                  Result.LlvmModule->getFunction(Selected.Name);
+              ASSERT_NE(Declaration, nullptr) << Selected.Name;
+              EXPECT_EQ(Declaration->getReturnType(), Float(Bytes)) << IR;
+              ASSERT_EQ(Declaration->arg_size(), Widths.size() - 1);
+              for (size_t I = 0; I < Declaration->arg_size(); ++I)
+                EXPECT_EQ(Declaration->getArg(I)->getType(),
+                          Float(Widths[I + 1]))
+                    << IR;
+            }
             EXPECT_EQ(Callee->getReturnType(), Float(Bytes)) << IR;
             EXPECT_EQ(Callee->getFunctionType()->getParamType(0),
                       Float(Widths[1]))
@@ -796,33 +809,15 @@ TEST(AAPCS64CallContract, WindowsHeaderFloatsSurviveSelectionAndBothEmitters) {
         const std::string Provider = Entries.count(Text)     ? "fixture_fp"
                                      : Entries.count(Caller) ? "forward_fp"
                                                              : "middle_fp";
-        const std::string Type = Bytes == 4 ? "float" : "double";
-        const std::string First = Widths[1] == 4 ? "float" : "double";
-        const std::string Second = Widths[2] == 4 ? "float" : "double";
-        std::string Oracle = "\n" + Type + " " + Provider + "(" + First +
-                             " x, " + Second +
-                             " y) {\n"
-                             "  if (x != 1.25 || y != -2.5) __builtin_trap();\n"
-                             "  return 7.75;\n}\n";
-        if (LLVM) {
-          Oracle +=
-              "typedef uint64_t carrier __attribute__((vector_size(16)));\n"
-              "int main(void) {\n"
-              "  carrier x = {0, 0}, y = {0, 0};\n  " +
-              First + " a = 1.25;\n  " + Second + " b = -2.5;\n  " + Type +
-              " result;\n"
-              "  __builtin_memcpy(&x, &a, sizeof(a));\n"
-              "  __builtin_memcpy(&y, &b, sizeof(b));\n"
-              "  carrier out = " +
-              Entry +
-              "(x, y);\n"
-              "  __builtin_memcpy(&result, &out, sizeof(result));\n"
-              "  return result != 7.75;\n}\n";
-        } else {
-          Oracle +=
-              "int main(void) { return " + Entry + "(1.25, -2.5) != 7.75; }\n";
-        }
-        source_call_execution_test::compileAndRun(Source + Oracle);
+        const std::string Type = Bytes == 4 ? kFloatSpelling : kDoubleSpelling;
+        const std::string First =
+            Widths[1] == 4 ? kFloatSpelling : kDoubleSpelling;
+        const std::string Second =
+            Widths[2] == 4 ? kFloatSpelling : kDoubleSpelling;
+        source_call_execution_test::compileAndRun(
+            Source + llvm::formatv(kHeaderFloatOracle, Type, Provider, First,
+                                   Second, Entry)
+                         .str());
       }
     }
   }

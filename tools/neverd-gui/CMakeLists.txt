@@ -223,6 +223,12 @@ if(BUILD_TESTING)
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
   qt_add_executable(neverd-gui-unit-tests tests/WorkbenchUnitTests.cpp)
+  qt_add_executable(neverd-gui-wheel-tests tests/WheelInputTests.cpp)
+  target_link_libraries(neverd-gui-wheel-tests PRIVATE neverd_gui_app Qt6::Test)
+  set_target_properties(neverd-gui-wheel-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME NeverDGuiWheelInput COMMAND neverd-gui-wheel-tests)
+  set_tests_properties(NeverDGuiWheelInput PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
   qt_add_executable(neverd-gui-appearance-tests tests/AppearanceTests.cpp)
   target_link_libraries(neverd-gui-appearance-tests PRIVATE neverd_gui_app Qt6::Test)
   set_target_properties(neverd-gui-appearance-tests PROPERTIES WIN32_EXECUTABLE FALSE)

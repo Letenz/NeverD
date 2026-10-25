@@ -66,6 +66,14 @@ bool onWayland() {
   return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
 }
 
+bool canPostPointerEvents() {
+#ifdef Q_OS_MACOS
+  if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+    return CGPreflightPostEventAccess();
+#endif
+  return true;
+}
+
 QString quoted(const QString &text) {
   const QByteArray json =
       QJsonDocument(QJsonArray{text}).toJson(QJsonDocument::Compact);
@@ -498,6 +506,8 @@ private slots:
   }
 
   void explicitDockIgnoresLock() {
+    if (!canPostPointerEvents())
+      QSKIP("Cocoa native mouse input requires event-posting permission.");
     Desktop desktop;
     auto *floating = desktop.Source.QWidget::window();
     QVERIFY(QTest::qWaitForWindowExposed(floating));
@@ -525,6 +535,8 @@ private slots:
   }
 
   void lockedDragsStayFloating() {
+    if (!canPostPointerEvents())
+      QSKIP("Cocoa native mouse input requires event-posting permission.");
     if (QGuiApplication::platformName() == QLatin1String("offscreen"))
       QSKIP("Dragging needs a native window manager.");
     if (onWayland() && !qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER"))
@@ -607,6 +619,8 @@ private slots:
   }
 
   void floatingEdgesResizeWithoutDocking() {
+    if (!canPostPointerEvents())
+      QSKIP("Cocoa native mouse input requires event-posting permission.");
     if (QGuiApplication::platformName() == QLatin1String("offscreen"))
       QSKIP("Resizing needs native windows.");
     if (onWayland() && !qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER"))
@@ -699,6 +713,8 @@ private slots:
   }
 
   void floatingWindowStates() {
+    if (!canPostPointerEvents())
+      QSKIP("Cocoa native mouse input requires event-posting permission.");
     if (QGuiApplication::platformName() == QLatin1String("offscreen"))
       QSKIP("Requires a native window manager.");
     Desktop desktop;
@@ -806,6 +822,8 @@ private slots:
   }
 
   void dragIntoWorkbench() {
+    if (!canPostPointerEvents())
+      QSKIP("Cocoa native mouse input requires event-posting permission.");
     if (QGuiApplication::platformName() == QLatin1String("offscreen"))
       QSKIP("Dragging needs native windows; run under X11, Wayland, Windows or "
             "macOS.");

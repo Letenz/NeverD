@@ -338,14 +338,34 @@ LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
 and the software tracer refuses state-dependent addresses in both modes, even
 when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
 Control-independent addresses retain finite image reads without guessing CPTA.
-Whole-W interval certificates cover all 104 encodings, exhaustively check small
-positive ranges and reject signed-W domain discontinuities, address-region
+Whole-W interval certificates cover all 104 GPR and 80 SIMD encodings,
+exhaustively check small positive ranges and reject signed-W domain discontinuities, address-region
 crossings, wrap, SP and malformed words. Exact-use zero-extension proofs keep
 unknown X high bits from borrowing this domain. `NeverDJumpTableTests` runs
 `JTE_AArch64.*`, guarded-range/cache/predicate-demand cases and the shared table
 owners; selecting `*JumpTable*` alone does not include the `JTE_AArch64` suite.
+`AArch64VectorAddressMemory` adds 80 independent B/H/S/D/Q register-offset
+words covering loads/stores, all extensions and both encoded scales. Both
+decoder routes, strict/permissive lifting and malformed IR checks preserve the
+natural access width, complete V definitions and V31 data. Tracer tests require
+only the selected store bytes, clear loaded upper bytes and retain memory after
+refused writes. Both C routes and LLVM objects execute the decoded register
+transport through integer bridges at O0/O2, including upper-lane and neighboring
+byte checks. A separate cross-block test seeds an older S/D definition and
+requires the encoded load's newer scalar view at its consumer.
+The scalar floating ABI test decodes all 32 S/D encodings as genuine float/double
+parameters or returns. Both C routes and native LLVM objects preserve NaN
+payloads, signaling bit patterns, negative zero and unchanged neighboring bytes
+at O0/O2. Native half and whole-vector C entry/return ABI and DWARF vector
+declarations remain unqualified; the integer bridges do not certify those
+interfaces.
+The shared identity regression pins the published scalar and concurrent x86
+identities before admitting the appended vector operations.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
-survives only a validated scalar memory operation. Run this group with the
+survives a validated memory operation only when physical V/Z aliases are absent.
+The interleaving test checks original words in LLVM ELF objects and retains the
+existing LLVMC scalable-carrier refusal. It does not qualify Apple SVE execution
+or Mach-O SVE relocation loading. Run this group with the
 decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
 Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
 jump-table/computed-goto tests:
@@ -2421,6 +2441,13 @@ missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
 
+`NeverDGuiWheelInput` replays precision wheel and trackpad events through the
+production disassembly, source and hex views. It compares small-event batches
+with their combined movement, checks pixel-only and horizontal source scrolling,
+and verifies that empty gesture boundaries and horizontal movement do not zoom
+the code font. Precision font zoom accumulates a notch before changing a point.
+Run this target offscreen and with `QT_QPA_PLATFORM=cocoa` on macOS.
+
 `NeverDGuiAppearance` checks application-painted dialogs in both themes,
 including file, font, color, message, input and Quick Start windows with the
 retired native-caption preference enabled. It injects a conflicting desktop
@@ -2433,8 +2460,18 @@ the bundled fallback families for CoreText shaping; unchanged script lists
 must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
 The shared frame tests separately exercise native edge gestures.
+
+The menu case injects macOS's hidden-icon default and checks registry actions
+and Output's dynamically created context menu after theme application. Screenshot
+color checks convert logical points using the captured image's device-pixel
+ratio. Cocoa native-pointer docking cases skip when
+`CGPreflightPostEventAccess()` denies event posting; report that missing coverage
+separately from passing offscreen behavior.
+
 `nativeFrameKeepsTheTitleBarOnScreen` checks native maximize/full-screen/restore
 transitions for the shared frameless chrome on Linux, Windows and macOS.
+On Cocoa it first requires an active foreground test window and skips when
+macOS refuses activation for the background test process.
 All desktop windows use the application frame and shadow; native APIs still
 provide movement and window states. Cocoa resizing uses the same drawn edges
 with a mouse grab when Qt cannot start a native resize.

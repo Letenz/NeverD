@@ -99,6 +99,45 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
         llvm::report_fatal_error(kAddressMemoryMalformed);
       return Builder.CreateZExtOrTrunc(Value, Builder.getInt64Ty());
     };
+    if (Instruction.isVector()) {
+      auto *VectorType = llvm::FixedVectorType::get(
+          Builder.getInt64Ty(),
+          kAddressMemoryVectorBytes / kAddressMemoryPointerBytes);
+      if (!Instruction.isLoad()) {
+        llvm::Value *Data =
+            getVar(Op.Inputs[kAddressMemoryDataOperand + 1], Builder);
+        if (!Data->getType()->isIntegerTy())
+          llvm::report_fatal_error(kAddressMemoryMalformed);
+        Data = Builder.CreateZExtOrTrunc(
+            Data, Builder.getIntNTy(kAddressMemoryVectorBits));
+        Data = Builder.CreateBitCast(Data, VectorType);
+        auto *Asm = llvm::InlineAsm::get(
+            llvm::FunctionType::get(Builder.getVoidTy(),
+                                    {Builder.getInt64Ty(), Builder.getInt64Ty(),
+                                     Builder.getInt32Ty(), VectorType},
+                                    false),
+            kAddressVectorStoreAsm, kAddressVectorStoreConstraints, true);
+        return Builder.CreateCall(
+            Asm,
+            {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
+             Builder.getInt32(Instruction.scratchWord()), Data});
+      }
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(VectorType,
+                                  {Builder.getInt64Ty(), Builder.getInt64Ty(),
+                                   Builder.getInt32Ty()},
+                                  false),
+          kAddressVectorLoadAsm, kAddressVectorLoadConstraints, true);
+      auto *Result = Builder.CreateCall(
+          Asm,
+          {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
+           Builder.getInt32(Instruction.scratchWord())},
+          kAddressLoadResult);
+      return Builder.CreateZExtOrTrunc(
+          Builder.CreateBitCast(Result,
+                                Builder.getIntNTy(kAddressMemoryVectorBits)),
+          sizeToType(Op.Output.Size));
+    }
     if (!Instruction.isLoad()) {
       auto *Asm = llvm::InlineAsm::get(
           llvm::FunctionType::get(Builder.getVoidTy(),
