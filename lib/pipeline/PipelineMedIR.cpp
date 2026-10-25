@@ -109,9 +109,10 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   if (Result.InterpreterMachineSourceABI && Result.LowFuncs.size() == 1)
     SourceHints.emplace(Result.LowFuncs.front().Entry,
                         &*Result.InterpreterMachineSourceABI);
-  if (!Opts.usesMachineMedIR()) {
+  if (Opts.usesSourceDeclarations())
     for (const auto &[Entry, Hint] : Opts.SourceTypeHints)
       SourceHints.emplace(Entry, &Hint);
+  if (!Opts.usesMachineMedIR()) {
     for (const auto &Method : Img.ObjCMethods)
       if (objcMethodHasSourceBody(Method))
         SourceHints.emplace(Method.Implementation, &*Method.TypeHint);
@@ -126,7 +127,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   std::map<va_t, const LowFunc *> SourceCalleeFunctions;
   for (const auto &F : Result.LowFuncs)
     SourceCalleeFunctions.emplace(F.Entry, &F);
-  if (!Opts.usesMachineMedIR())
+  if (Opts.usesSourceDeclarations())
     for (const auto &[Entry, Hint] : Opts.SourceCalleeTypeHints)
       SourceCalleeHints.insert_or_assign(Entry, Hint);
 
@@ -183,7 +184,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     LowToMedConverter Local;
     Local.setBinaryImage(&Img);
     Local.setRuntimeRoutineCalls(RuntimeRoutines);
-    Local.setSourceCallHintsEnabled(!Opts.usesMachineMedIR());
+    Local.setSourceCallHintsEnabled(Opts.usesSourceDeclarations());
+    Local.setSourceCallRuntimeHintsEnabled(!Opts.usesMachineMedIR());
     Local.setSourceEntryTypeHints(&SourceEntryHints);
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);
     Local.setSourceCalleeFunctions(&SourceCalleeFunctions);
@@ -214,10 +216,11 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
       try {
         const auto Sites =
             Opts.SourceCallSiteHints.find(Result.LowFuncs[I].Entry);
-        Local.setSourceCallSiteHints(
-            !Opts.usesMachineMedIR() && Sites != Opts.SourceCallSiteHints.end()
-                ? &Sites->second
-                : nullptr);
+        Local.setSourceCallSiteHints(Opts.usesSourceDeclarations() &&
+                                             Sites !=
+                                                 Opts.SourceCallSiteHints.end()
+                                         ? &Sites->second
+                                         : nullptr);
         const auto Frame =
             Opts.SourceStackFrames.find(Result.LowFuncs[I].Entry);
         std::optional<LowFunc> Projected;
