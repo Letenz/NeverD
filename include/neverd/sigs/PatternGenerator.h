@@ -58,6 +58,7 @@ struct PatternGeneratorOptions {
   /// State the routines each COFF or ELF function branches to directly as
   /// `^offset name` references (see PatternModule::References). Off by
   /// default: a loader older than the references rejects a line with one.
+  /// COFF x86/x64 also states canonical indirect import-pointer references.
   bool EmitReferences = false;
   /// The names a COFF link resolves a symbol to when no object defines it,
   /// as `/alternatename:symbol=alternate` directives give them (see
@@ -211,6 +212,8 @@ inline bool emitPatternLine(llvm::raw_ostream &OS, llvm::StringRef Name,
 /// after an E8 or E9 opcode on x86 and x64, and a BRANCH26 (ARM64) or
 /// BRANCH24T/BLX23T (Thumb-2) instruction.  \p Code holds the section's
 /// bytes, \p RelocationOffset and \p FunctionOffset are section offsets.
+/// Also accepts unprefixed FF 15/FF 25 import fields: DIR32 on x86, REL32
+/// on x64. The caller must separately require an import-pointer symbol.
 std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
                                                   uint16_t Type,
                                                   llvm::ArrayRef<uint8_t> Code,

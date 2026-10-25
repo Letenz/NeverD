@@ -5556,6 +5556,12 @@ framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
 
+`PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
+different addresses, recursion through aliases, canonical indirect import
+relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
+checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
+or absent metadata, evidence withdrawal, and the separate identity gate.
+
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
 Android/glibc/musl and unknown System V ELF, conflicting ABI notes, bounded

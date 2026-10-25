@@ -67,7 +67,7 @@ struct PatternModule {
 
   std::vector<FuncRef> PublicNames;
 
-  /// The routines the function branches to directly, as `^offset name`
+  /// The routines or COFF import pointers referenced by `^offset name`
   /// states them.  Offset is where the relocated branch field starts: the
   /// rel32 of an x86 or x64 `call`/`jmp` (E8/E9), and the branch instruction
   /// itself on ARM64 (B/BL) and Thumb-2 (B.W/BL/BLX).  An ARM-state (A32)
@@ -78,7 +78,10 @@ struct PatternModule {
   /// alternate name a link resolves it to where no object defines it, or
   /// the routines two builds of the same bytes call there -- and any of them
   /// confirms it.  The bytes there are wildcards, so matching checks the
-  /// target separately; see SignatureDB::apply.
+  /// target separately; see SignatureDB::apply. COFF x86/x64 also supports
+  /// the four-byte field of unprefixed FF 15/FF 25 import calls/jumps, named
+  /// `__imp_<export>`. Only an exact name at the addressed, mapped IAT slot
+  /// confirms that reference; absent or different spellings are unknown.
   std::vector<FuncRef> References;
 
   std::vector<PatternByte> TailBytes;
