@@ -254,6 +254,9 @@ void Theme::apply() {
     emit changed();
     return;
   }
+  // Qt's macOS default hides action icons even in application-painted menus.
+  // Apply after QApplication initializes the platform's defaults.
+  QCoreApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
   // Under the application style sheet, the workbench style is the base of the
   // style sheet's style.
   if (QStyle *style = application->style();

@@ -118,6 +118,10 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Getcwd:
   case ServiceKind::Open:
   case ServiceKind::OpenAt:
+  case ServiceKind::Unlink:
+  case ServiceKind::UnlinkAt:
+  case ServiceKind::Rename:
+  case ServiceKind::RenameAt:
   case ServiceKind::Access:
   case ServiceKind::FaccessAt:
   case ServiceKind::Mkdir:

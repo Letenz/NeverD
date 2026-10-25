@@ -120,8 +120,10 @@ struct DockPair {
   }
   /// Column \p x of the window's middle row.
   QColor pixel(int x) {
-    return window.grab().toImage().pixelColor(x,
-                                              contentRect(left).center().y());
+    const auto image = window.grab().toImage();
+    const qreal scale = image.devicePixelRatio();
+    return image.pixelColor(qRound(x * scale),
+                            qRound(contentRect(left).center().y() * scale));
   }
 };
 
@@ -171,6 +173,7 @@ private slots:
   void initTestCase() {
     // As the workbench starts.
     WindowFrame::prepareNativeWindows();
+    Theme::instance().apply();
     // Docking chrome is fixed before the first dock exists.
     configureDocking();
   }
@@ -1867,6 +1870,14 @@ private slots:
                 QPoint(40, 40));
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
+    if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
+      // AppKit cannot complete a native full-screen transition for this
+      // background test process when the desktop refuses activation.
+      window.raise();
+      window.activateWindow();
+      if (!QTest::qWaitForWindowActive(&window))
+        QSKIP("Cocoa full-screen validation requires a foreground window.");
+    }
     test::NativeWindowStates applied(*window.windowHandle());
     QScreen *screen = window.screen();
     const auto barRect = [&] {
@@ -2131,7 +2142,9 @@ private slots:
       QVERIFY(QTest::qWaitForWindowExposed(&dialog));
       const QImage image = dialog.grab().toImage();
       const auto pixel = [&](QWidget *widget, QPoint point) {
-        return image.pixelColor(widget->mapTo(&dialog, point));
+        const QPoint at = widget->mapTo(&dialog, point);
+        const qreal scale = image.devicePixelRatio();
+        return image.pixelColor(qRound(at.x() * scale), qRound(at.y() * scale));
       };
 
       // An unchecked box stands out from the dialog behind it.

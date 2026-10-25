@@ -40,7 +40,6 @@
 
 namespace neverd::gui {
 namespace {
-constexpr int WheelLines = 3;
 
 /// The goto label \p line defines and the block address it names: HighC
 /// labels a goto's block `L_` and the address in hexadecimal (blockLabel in
@@ -2758,13 +2757,11 @@ bool CodeText::goToDeclaration(const QString &name) {
 }
 
 void CodeText::wheelEvent(QWheelEvent *event) {
-  if (event->modifiers() & Qt::ControlModifier) {
-    Theme::instance().zoomCodeFont(event->angleDelta().y() > 0 ? 1 : -1);
+  if (wheel_.zoomCodeFont(*event, lineHeight_))
     return;
-  }
-  const int steps = event->angleDelta().y() / 120;
-  verticalScrollBar()->setValue(verticalScrollBar()->value() -
-                                steps * WheelLines);
+  const QPoint delta = wheel_.scroll(*event, lineHeight_);
+  verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+  horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
   // The selection a drag makes follows the text the wheel scrolls.
   if (selecting_ && (event->buttons() & Qt::LeftButton))
     dragTo(dragPoint_);
