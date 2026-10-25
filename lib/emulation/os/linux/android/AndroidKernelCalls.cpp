@@ -57,6 +57,17 @@ Bionic::kernelResult(std::optional<uint64_t> Returned,
   return value(*Returned);
 }
 
+BionicResult Bionic::checkedRead(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  if (A[2] > linux_model::MaxSignedIOSize)
+    return failure(diagnostic::FortifiedReadCount);
+  if (A[2] > A[3])
+    return failure(diagnostic::FortifiedReadBounds);
+  // The supplied object bound is checked before descriptor lookup or user
+  // access. The ordinary read owner retains cursors, waits and libc errno.
+  return kernelCall(linux_model::ServiceKind::Read, Call);
+}
+
 BionicResult Bionic::usleep(const NativeCallEvent &Call) {
   // Bionic's useconds_t is unsigned 32-bit, including values >= one second.
   const uint64_t Nanoseconds = uint64_t(uint32_t(Call.Arguments[0])) * 1000;

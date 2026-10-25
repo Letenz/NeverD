@@ -118,6 +118,12 @@ int WorkbenchStyle::styleHint(StyleHint hint, const QStyleOption *option,
     return false;
   case SH_ToolButtonStyle:
     return Qt::ToolButtonIconOnly;
+  case SH_Widget_Animation_Duration:
+    // KDDockWidgets disables tab animations: Qt can otherwise paint a tab
+    // after it was removed during a drag. Dock tabs inherit this style.
+    if (qobject_cast<const QTabBar *>(widget))
+      return 0;
+    return QProxyStyle::styleHint(hint, option, widget, returnData);
   default:
     return QProxyStyle::styleHint(hint, option, widget, returnData);
   }

@@ -16,6 +16,33 @@ namespace neverd::emulation::android_model {
 BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   const uint64_t Count = A[2];
+  if (Call.Name == symbol::Strlcpy) {
+    // strlcpy returns the complete source length even when no bytes fit.
+    // Stage the terminated source before publishing a truncated destination.
+    auto Text = string(A[1]);
+    if (!Text)
+      return Text.takeError();
+    const uint64_t Length = Text->size();
+    if (!Count)
+      return value(Length);
+    const uint64_t Copied = std::min(Length, Count - 1);
+    const uint64_t Written = Copied + 1;
+    // Only the actual write extent is required; capacity does not imply
+    // padding or reads beyond the source terminator. All source bytes read,
+    // including that terminator, participate in undefined-overlap rejection.
+    if (A[0] <= A[1] ? A[1] - A[0] < Written : A[0] - A[1] < Length + 1)
+      return failure(diagnostic::SizedStringCopyOverlap);
+    Text->resize(Copied);
+    Text->push_back('\0');
+    if (auto E = access(A[0], Written, Write))
+      return std::move(E);
+    if (auto E = CPU.write(
+            A[0],
+            llvm::ArrayRef(reinterpret_cast<const uint8_t *>(Text->data()),
+                           Text->size())))
+      return std::move(E);
+    return value(Length);
+  }
   llvm::StringRef Name(Call.Name);
   if ((Name == symbol::StrncpyChk || Name == symbol::StrncpyChk2) &&
       Count > A[3])

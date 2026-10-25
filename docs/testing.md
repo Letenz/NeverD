@@ -18,6 +18,11 @@ The latter does not execute privileged or tile-state instructions.
 transport and original-image byte-storage identity. The image test preserves
 mutable pointer slots and overlapping fields across COFF/ELF/Mach-O; native
 and relocatable output retain their stricter address rules.
+`Win64CallContract.RelocatedCallbacksBindTheFinalExternalIdentifier` executes
+direct calls, relocated callback loads and address-taking through both C
+routes at O0/O2 with UBSan. An omitted provider and colliding data/function
+spellings require the generated source to link to the actual function label;
+syntax-only compilation cannot validate this contract.
 `Win64CallContract.MissingInteriorStackSlotCannotDiscardLaterArguments`
 checks whole-module and selected-function recovery through both C routes.
 Missing fixed stack positions remain unavailable while later arguments survive;
@@ -864,12 +869,25 @@ Run the complete Linux process suite, Android file/status/proc/stdio suites and
 public Android cases when changing this shared owner. Platform skips do not
 establish native or physical-device filesystem equivalence.
 
+`AndroidFiles.ReadChk*` checks fortify ordering, signed and zero counts, unchanged
+memory/errno on refusal and shared file cursors. `AndroidReceive.ReadChk*`
+checks suspension and resumption across descriptor and memory changes.
+`AndroidFileStatusAt.PathnameAliases*` checks all four status aliases against
+complete independent 128-byte layouts, pathname/output error ordering, dynamic
+provider closure, explicit unsupported state and available native transports.
+`ProcessPublic.AndroidLibcCompatibilityMatchesSDKAndCLI` compares complete
+reports for these adapters and `strlcpy` through both public routes.
+
 `AndroidStringCopy.*` checks `strncpy` using independent AArch64 callers at
 O0/O2 across three relocation formats and available CPU backends: exact padding,
 truncation, high bytes, errno, full-width and zero counts, page ends, read-only
 source/destination, overlap and dynamic provider lifetime.
 `AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
 against complete guarded guest bytes. No host libc copy is used as the oracle.
+The `SizedCopy*` cases cover `strlcpy` full-source scanning, truncated and empty
+outputs, NUL termination without padding, full-width and zero capacities,
+read-only and page-tail memory, overlap and closed dynamic providers. Direct
+memory tests cover scan limits and expired deadlines without partial writes.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -2480,6 +2498,17 @@ the bundled fallback families for CoreText shaping; unchanged script lists
 must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
 The shared frame tests separately exercise native edge gestures.
+
+Appearance tests use a custom entry point because `QTEST_MAIN` forces
+`AA_Use96Dpi`, hiding Cocoa's 72-DPI point-size conversion. The tests and their
+captures use the product's native DPI. Font checks compare interface, code and
+input-field sizes with the platform's GeneralFont reading size, preserve
+explicit choices across theme changes, and exercise fractional/pixel-sized
+zoom and resetting to the platform default. These cases run in the existing
+Windows/macOS native 100% and 150% appearance jobs as well as offscreen.
+The tab-close check measures the visible glyph in logical pixels on both plain
+and actual docking tabs, in both themes. This catches a docking-local native
+style shrinking only the close button, which a plain-widget screenshot misses.
 
 The menu case injects macOS's hidden-icon default and checks registry actions
 and Output's dynamically created context menu after theme application. Screenshot
@@ -5545,6 +5574,12 @@ enabled, `NeverDWorkerWeb` in `build-release/tools/neverd-worker` checks the rea
 framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
+
+`PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
+different addresses, recursion through aliases, canonical indirect import
+relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
+checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
+or absent metadata, evidence withdrawal, and the separate identity gate.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -13179,3 +13214,13 @@ checks exact zero-extended x86/ARM32 frame addresses across all three formats.
 Signed extensions, mixed-width copies and duplicate definitions are rejected;
 `WiderSeedsAndTruncatedPointersAreNotNativeAddresses` protects the entry-SP
 and native pointer-width boundaries.
+
+`AndroidErrors.*` checks signed argument narrowing, catalog holes, complete
+text and guarded bytes, process/thread borrow lifetimes, errno and `dlerror`
+isolation, read-only storage, provider-only imports and provider closure.
+Known pointers remain returnable after unmapping their text; guest reads own
+the resulting memory faults. `AndroidErrorMemory.*` checks unknown-format
+refusals and exact writes against complete TLS backing, and known pointer
+returns under a small copy budget. `ProcessPublic.AndroidErrorTextMatchesSDKAndCLI`
+compares complete reports through both public entrypoints. Run these alongside
+thread, environment, calendar, dynamic-loader and string regressions.

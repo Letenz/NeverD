@@ -6779,12 +6779,14 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
       if (const auto Function =
               FunctionAddressNames.find(functionAddressKey(E));
           Function != FunctionAddressNames.end()) {
+        const std::string Identifier =
+            functionAddressIdentifier(Function->second);
         if (PointerArgumentOperands.count(&E))
-          return Function->second;
+          return Identifier;
         if (E.Type && E.Type->Kind == NdTypeKind::Int)
-          return "(" + typeToC(E.Type) + ")(uintptr_t)" + Function->second;
-        return IntegerViewOperands.count(&E) ? "(uintptr_t)" + Function->second
-                                             : Function->second;
+          return "(" + typeToC(E.Type) + ")(uintptr_t)" + Identifier;
+        return IntegerViewOperands.count(&E) ? "(uintptr_t)" + Identifier
+                                             : Identifier;
       }
     return constStr(E.ConstVal, E.Type);
   }
@@ -7826,8 +7828,14 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
     Obj.MemoryWidths.insert(Ty->Size);
   if (Obj.Name.empty()) {
     const ImageSymbolName Named = imageSymbolName(Addr);
-    if (!Named.Raw.empty())
+    if (!Named.Raw.empty()) {
+      // A C alias can step around a function, but its linker label still
+      // owns the original spelling. Do not define reconstructed data there.
+      if (imageFunctionOwnsLinkIdentifier(Named.Raw) &&
+          !GlobalIdentifierAllocator.holds(Named.Raw))
+        GlobalIdentifierAllocator.allocateVerbatim(Named.Raw);
       Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
+    }
     // The image's copy of an object a C library header declares is the
     // header's, by its name: the copy relocation gives the program one.
     if (!Named.Raw.empty() && Obj.Name == Named.Raw)

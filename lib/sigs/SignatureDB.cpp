@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/SignatureDB.h"
 
+#include "X86/X86ImportReference.h"
+
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/DirectBranch.h"
@@ -21,6 +23,7 @@
 #include "neverd/support/InstructionFields.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/iterator_range.h"
@@ -964,6 +967,26 @@ std::optional<Branch> branchTarget(const BinaryImage &Img, uint64_t Start,
   }
 }
 
+/// The COFF IAT slot addressed by a canonical memory-indirect call/jump.
+/// It is data-slot evidence, never an executable target to scan as code.
+std::optional<uint64_t> importReferenceSlot(const BinaryImage &Img,
+                                            uint64_t Start, uint32_t Offset) {
+  if (!Img.isCOFF() || (Img.Arch != Arch::X86 && Img.Arch != Arch::X64))
+    return std::nullopt;
+  const uint64_t Size = uint64_t(Offset) + sizeof(uint32_t);
+  if (Size > std::numeric_limits<size_t>::max() ||
+      Start > std::numeric_limits<uint64_t>::max() - Size)
+    return std::nullopt;
+  const uint8_t *Bytes = Img.readVA(Start, static_cast<size_t>(Size));
+  if (!Bytes || !isX86ImportReferenceField({Bytes, static_cast<size_t>(Size)},
+                                           Offset, Img.Arch == Arch::X64))
+    return std::nullopt;
+  const uint32_t Field = readLE<uint32_t>(Bytes + Offset);
+  if (Img.Arch == Arch::X86)
+    return Field;
+  return Start + Size + static_cast<int64_t>(static_cast<int32_t>(Field));
+}
+
 /// Where the thunk the branch \p To enters jumps to, when all the thunk does
 /// is jump on: an incremental-linking thunk, a branch island, or a linker's
 /// long-branch or interworking thunk.  On 32-bit ARM the thunk runs in the
@@ -1010,9 +1033,32 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     uint64_t Target = 0;
     std::optional<uint64_t> Onward;
   };
+  // Index only when a matched reference actually uses an import slot.
+  // Repeated checks then avoid a linear search of the import table. An
+  // ambiguous or unmapped slot is insufficient evidence for either name.
+  llvm::DenseMap<uint64_t, const Import *> ImportsBySlot;
+  bool ImportsIndexed = false;
+  auto ImportAtSlot = [&](uint64_t Slot) -> const Import * {
+    if (!ImportsIndexed) {
+      ImportsBySlot.reserve(Img.Imports.size());
+      for (const Import &Imp : Img.Imports) {
+        if (!Imp.IATAddr || !Img.readVA(Imp.IATAddr, Img.getPointerSize()))
+          continue;
+        auto [It, Fresh] = ImportsBySlot.try_emplace(Imp.IATAddr, &Imp);
+        if (!Fresh)
+          It->second = nullptr;
+      }
+      ImportsIndexed = true;
+    }
+    return ImportsBySlot.lookup(Slot);
+  };
   std::vector<Site> Sites;
   std::vector<size_t> FirstSite(Matches.size() + 1, 0);
   std::vector<uint32_t> Branches(Matches.size(), 0);
+  // Import identity is immutable within one application, unlike provisional
+  // function candidates. Confirm it once without adding data slots to the
+  // branch graph or growing its hot Site records. Old packs pay no allocation.
+  std::vector<uint32_t> ConfirmedImports;
   for (size_t I = 0; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
     llvm::SmallVector<StoredName, 8> References(ReferencesOf(I).begin(),
@@ -1033,8 +1079,9 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
              References[End].Offset == References[R].Offset)
         ++End;
       ++Branches[I];
-      if (const std::optional<Branch> To =
-              branchTarget(Img, Start, References[R].Offset)) {
+      const std::optional<Branch> To =
+          branchTarget(Img, Start, References[R].Offset);
+      if (To) {
         Site Where;
         for (size_t Alternative = R; Alternative < End; ++Alternative)
           Where.Names.push_back(References[Alternative].Name);
@@ -1042,6 +1089,29 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         if (const std::optional<Branch> Next = thunkTarget(Img, *To))
           Where.Onward = Next->Target;
         Sites.push_back(std::move(Where));
+      } else if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
+                              [](const StoredName &Name) {
+                                return llvm::StringRef(Name.Name).starts_with(
+                                    COFFImportPointerPrefix);
+                              })) {
+        if (const auto Slot =
+                importReferenceSlot(Img, Start, References[R].Offset)) {
+          const Import *Imp = ImportAtSlot(*Slot);
+          // Export and linker spellings can differ. Exact agreement confirms
+          // this pointer; missing or different spellings remain unknown.
+          if (Imp && !Imp->Name.empty() &&
+              llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
+                           [&](const StoredName &Reference) {
+                             llvm::StringRef Name(Reference.Name);
+                             return Name.consume_front(
+                                        COFFImportPointerPrefix) &&
+                                    Name == Imp->Name;
+                           })) {
+            if (ConfirmedImports.empty())
+              ConfirmedImports.resize(Matches.size(), 0);
+            ++ConfirmedImports[I];
+          }
+        }
       }
       R = End;
     }
@@ -1169,7 +1239,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // branches is confirmed.
   enum class Outcome : uint8_t { Unconfirmed, Confirmed, Contradicted };
   auto Check = [&](size_t I) {
-    size_t Confirmed = 0;
+    size_t Confirmed = ConfirmedImports.empty() ? 0 : ConfirmedImports[I];
     for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
       const Site &Where = Sites[S];
       // Any routine the branch may reach confirms it; it contradicts the

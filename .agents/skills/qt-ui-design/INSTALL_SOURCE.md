@@ -13,5 +13,6 @@ audit checklist are also NeverD additions, drawn from an audit of NeverD's
 icons. The upstream copyright, license, and general guidance are retained. This
 file records installation provenance and those local additions. The local
 `references/macos-qt.md` guide records Cocoa menu defaults, precision input,
-Retina capture sampling and native validation constraints reproduced in NeverD;
-`SKILL.md` routes macOS work to it.
+platform font sizes, docking style inheritance, Retina capture sampling and
+native validation constraints reproduced in NeverD; `SKILL.md` routes macOS
+work to it.
