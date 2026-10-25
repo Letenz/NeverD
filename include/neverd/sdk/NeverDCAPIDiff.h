@@ -72,8 +72,21 @@ NEVERD_API const char *
 neverd_comparison_export_json(neverd_comparison_t Comparison);
 /// Bind a saved comparison to these exact snapshots. Reject stale inputs,
 /// settings, revisions and identities, leaving the current result intact.
+/// Cooperative cancellation also leaves edits, undo/redo and cached pages
+/// intact. Returns 0 on stop/failure and 1 only after complete authentication.
+/// Each admitted restore starts a new cancellation request lifetime. Status
+/// restore_state describes this operation; state in the saved result retains
+/// its historical meaning. The JSON parser and individual allocations/copies
+/// are indivisible checkpoints, so cancellation is not a hard latency bound.
 NEVERD_API int neverd_comparison_restore_json(neverd_comparison_t Comparison,
                                               const char *Saved);
+/// Same transaction, with coordinator-thread progress. The callback may cancel
+/// or read status, but must not destroy the handle or invoke other operations.
+/// No user callback runs after the new result is committed. A saved timeout
+/// does not impose a deadline on this restore.
+NEVERD_API int neverd_comparison_restore_json_with_progress(
+    neverd_comparison_t Comparison, const char *Saved,
+    neverd_comparison_progress_t Progress, void *Context);
 /// Page a side's inventory. Query: side (primary/secondary), kind
 /// (all/matched/changed/ambiguous/unmatched), search, offset, limit, sort and
 /// descending. Optional ambiguous_with is a function entry on the opposite

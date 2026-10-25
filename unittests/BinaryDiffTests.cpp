@@ -21,6 +21,7 @@
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -28,6 +29,7 @@
 #include <gtest/gtest.h>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace neverd::diff;
@@ -1128,4 +1130,144 @@ TEST(BinaryDiff, RegionClaimsRequireUniqueSeedsAndConnectedMembership) {
   Forged = R;
   Forged.Hypotheses.pop_back();
   EXPECT_TRUE(validateRegions(Forged, Settings, P, P));
+}
+
+TEST(BinaryDiff, SavedRestoreStopsTransactionallyAndKeepsHistoricalStates) {
+  const Program P = build(sample(), 0x400000, {}, std::string(64, 'b'));
+  const Program S = build(sample(), 0x800000, {}, std::string(64, 'c'));
+  const auto Original = compare(P, S, {});
+  const auto Text = saved(Original, P, S);
+  std::string Error;
+  const auto Read = readComparison(Text, Error);
+  ASSERT_TRUE(Read) << Error;
+  auto Retained = Original;
+  ASSERT_FALSE(applyOverride(Retained, P, S,
+                             {OverrideKind::Confirm, named(P, "leaf0").Address,
+                              named(S, "leaf0").Address}));
+  const auto Before = saved(Retained, P, S);
+  std::atomic<bool> Cancel = true;
+  ComparisonControl Control;
+  Control.Cancel = &Cancel;
+  EXPECT_THROW(readComparison(Text, Error, Control), ComparisonInterrupted);
+  EXPECT_THROW(bindComparison(*Read, P, S, Retained, nullptr, Control),
+               ComparisonInterrupted);
+  EXPECT_EQ(saved(Retained, P, S), Before);
+  Cancel = false;
+  Control.Deadline = std::chrono::steady_clock::now();
+  try {
+    (void)bindComparison(*Read, P, S, Retained, nullptr, Control);
+    FAIL() << "Expired restore deadline was ignored";
+  } catch (const ComparisonInterrupted &Stopped) {
+    EXPECT_EQ(Stopped.State, ComparisonState::TimedOut);
+  }
+  EXPECT_EQ(saved(Retained, P, S), Before);
+  Control.Deadline.reset();
+  const auto Caller = std::this_thread::get_id();
+  for (const auto *Stage :
+       {"parse", "records", "identity", "dataflow", "reviews", "regions",
+        "flow_regions", "measure", "publish"}) {
+    SCOPED_TRACE(Stage);
+    Cancel = false;
+    bool Seen = false;
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
+      EXPECT_EQ(std::this_thread::get_id(), Caller);
+      if (Phase == Stage) {
+        Seen = true;
+        Cancel = true;
+      }
+    };
+    EXPECT_THROW(
+        {
+          const auto Next = readComparison(Text, Error, Control);
+          ASSERT_TRUE(Next) << Error;
+          (void)bindComparison(*Next, P, S, Retained, nullptr, Control);
+        },
+        ComparisonInterrupted);
+    EXPECT_TRUE(Seen);
+    EXPECT_EQ(saved(Retained, P, S), Before);
+  }
+  Cancel = false;
+  Control.Progress = [&](llvm::StringRef, uint64_t, uint64_t) {
+    EXPECT_EQ(std::this_thread::get_id(), Caller);
+  };
+  // Exercise measurement workers without invoking a user callback there.
+  neverd::setWorkerThreadCount(4);
+  const auto ResetThreads =
+      llvm::scope_exit([] { neverd::setWorkerThreadCount(0); });
+  for (const auto State :
+       {ComparisonState::Complete, ComparisonState::Cancelled,
+        ComparisonState::TimedOut, ComparisonState::ResourceLimited}) {
+    auto Historical = *Read;
+    Historical.State = State;
+    ASSERT_FALSE(bindComparison(Historical, P, S, Retained, nullptr, Control));
+    EXPECT_EQ(Retained.State, State);
+    EXPECT_EQ(Retained.Matches.size(), Original.Matches.size());
+  }
+}
+
+TEST(BinaryDiff, RestoreStopAfterParsingConsumesSuccessAndFailure) {
+  const Program P = build(sample(), 0x400000, {}, std::string(64, 'b'));
+  const auto Text = saved(compare(P, P, {}), P, P);
+  for (const std::string Input : {Text, std::string("{invalid")}) {
+    std::atomic<bool> Cancel = false;
+    bool Parsed = false;
+    ComparisonControl Control;
+    Control.Cancel = &Cancel;
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t Done,
+                           uint64_t Total) {
+      if (Phase == "parse" && Done == Total && Done) {
+        Parsed = true;
+        Cancel = true;
+      }
+    };
+    std::string Error;
+    EXPECT_THROW(readComparison(Input, Error, Control), ComparisonInterrupted);
+    EXPECT_TRUE(Parsed);
+  }
+}
+
+TEST(BinaryDiff, RestoreDeadlineDuringParallelMeasurementKeepsThePriorResult) {
+  std::vector<Fn> Functions;
+  for (unsigned I = 0; I < 8; ++I)
+    Functions.push_back(leaf("wide" + std::to_string(I), I * 3, 60000));
+  const auto P = build(Functions, 0x400000, {}, std::string(64, 'b'));
+  neverd::setWorkerThreadCount(4);
+  const auto ResetThreads =
+      llvm::scope_exit([] { neverd::setWorkerThreadCount(0); });
+  const auto Original = compare(P, P, {});
+  ASSERT_EQ(Original.State, ComparisonState::Complete);
+  const auto Text = saved(Original, P, P);
+  std::string Error;
+  const auto Saved = readComparison(Text, Error);
+  ASSERT_TRUE(Saved) << Error;
+  auto Retained = Original;
+  bool Started = false, Finished = false;
+  const auto Caller = std::this_thread::get_id();
+  ComparisonControl Control;
+  Control.Progress = [&](llvm::StringRef Phase, uint64_t Done, uint64_t Total) {
+    EXPECT_EQ(std::this_thread::get_id(), Caller);
+    if (Phase != "measure")
+      return;
+    if (Done == 0) {
+      Started = true;
+      // Expire after the coordinator enters measurement; a returned stopped
+      // delta must propagate as a typed stop, never as forged saved evidence.
+      Control.Deadline =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
+    } else if (Done == Total) {
+      Finished = true;
+    }
+  };
+  try {
+    const auto Invalid =
+        bindComparison(*Saved, P, P, Retained, nullptr, Control);
+    FAIL() << "Expected a typed measurement stop, got "
+           << Invalid.value_or("success");
+  } catch (const ComparisonInterrupted &Stopped) {
+    EXPECT_EQ(Stopped.State, ComparisonState::TimedOut);
+  }
+  EXPECT_TRUE(Started);
+  EXPECT_FALSE(Finished);
+  EXPECT_EQ(saved(Retained, P, P), Text);
+  EXPECT_EQ(compareFunctions(P, 0, P, 0, {}).State, ComparisonState::Complete);
 }

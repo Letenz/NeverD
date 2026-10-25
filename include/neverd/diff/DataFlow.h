@@ -221,7 +221,9 @@ struct DataFlowGraph {
            (Progress ? 1 + Progress->Loops.size() : 0);
   }
   bool operator==(const DataFlowGraph &) const = default;
-  std::optional<std::string> validate(const DataFlowOptions &Options) const;
+  std::optional<std::string>
+  validate(const DataFlowOptions &Options,
+           const ComparisonControl &Control = {}) const;
 };
 
 struct FlowFingerprints {

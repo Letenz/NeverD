@@ -1765,6 +1765,22 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Saved-restore regressions cover typed pre-cancellation/deadline, coordinator-only
+progress, cancellation at read/parse/validation/measurement/publication stages,
+retained output and undo/redo, retry, tampered-report rejection and restoration
+of all four historical result states. CLI checks SIGINT during file reading and
+SDK parsing and output preparation, exit code 3, empty stdout and an unchanged
+existing save target. A large retained warning exercises the saved-output path;
+its signal can race the checkpoint before the temporary-file write.
+The real worker checks both standalone and replacement restoration, stable
+revisions/rows on cancellation, restored history and `restore_completed` for
+historical stops. The Qt comparison test retains the selected row and edit
+controls, processes timer events, displays translated stage/stop messages and
+retries on the same session. These checks do not establish a worst-case cancel
+latency inside an indivisible parser, allocation or value equality operation.
+The parallel deadline may expire before worker measurement starts; the exact
+binding-charge test deterministically requests cancellation inside that owner.
+
 The region suite includes owned x86 assembly with exact split boundaries, native
 SDK span paging, persistence/tamper rejection, worker parity and a real paged Qt
 review window. Synthetic cases separately exercise overlapping clones, internal

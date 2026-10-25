@@ -72,10 +72,13 @@ Array indices(const std::vector<uint32_t> &Values) {
     Out.push_back(V);
   return Out;
 }
-std::vector<uint32_t> indices(const Value &V, uint64_t Max) {
+std::vector<uint32_t> indices(const Value &V, uint64_t Max,
+                              const ComparisonControl &Control) {
   std::vector<uint32_t> Out;
-  for (const auto &I : array(V, Max))
+  for (const auto &I : array(V, Max)) {
+    Control.check();
     Out.push_back(count(I));
+  }
   return Out;
 }
 Array span(const RegionSpan &S) {
@@ -221,7 +224,9 @@ void writeRegionAnalysisFields(llvm::json::OStream &J, const RegionAnalysis &R,
   });
 }
 RegionAnalysis readRegionAnalysis(const Value &V,
-                                  const RegionSettings &Settings) {
+                                  const RegionSettings &Settings,
+                                  const ComparisonControl &Control) {
+  Control.check();
   const auto &O = object(V);
   require(text(field(O, "profile")) == "native-runs-v1",
           "unsupported region profile");
@@ -247,24 +252,28 @@ RegionAnalysis readRegionAnalysis(const Value &V,
   require(text(field(O, "semantic_validation")) == "not_performed",
           "region sharing does not establish semantic validation");
   for (const auto &Value : array(field(O, "anchors"), Settings.MaxAnchors)) {
+    Control.check();
     const auto &A = object(Value);
     R.Anchors.push_back({span(field(A, "primary")), span(field(A, "secondary")),
                          boolean(field(A, "unique_seed"))});
   }
   for (const auto &Value :
        array(field(O, "hypotheses"), Settings.MaxHypotheses)) {
+    Control.check();
     const auto &A = object(Value);
     RegionHypothesis H;
     H.Id = text(field(A, "id"));
     require(H.Id.size() <= limits::kMaxRegionIdBytes,
             "region identifier too long");
-    H.Anchors = indices(field(A, "anchors"), limits::kMaxRegionGroupAnchors);
-    H.PrimaryFunctions =
-        indices(field(A, "primary_functions"), limits::kMaxRegionGroupAnchors);
+    H.Anchors =
+        indices(field(A, "anchors"), limits::kMaxRegionGroupAnchors, Control);
+    H.PrimaryFunctions = indices(field(A, "primary_functions"),
+                                 limits::kMaxRegionGroupAnchors, Control);
     H.SecondaryFunctions = indices(field(A, "secondary_functions"),
-                                   limits::kMaxRegionGroupAnchors);
+                                   limits::kMaxRegionGroupAnchors, Control);
     for (const auto &Kind : array(field(A, "explanations"),
                                   unsigned(RegionKind::Redistribution) + 1)) {
+      Control.check();
       auto K = regionKindNamed(text(Kind));
       require(K.has_value(), "unknown explanation");
       H.Explanations.push_back(*K);

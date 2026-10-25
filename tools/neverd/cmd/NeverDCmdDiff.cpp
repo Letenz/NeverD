@@ -19,10 +19,13 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/WithColor.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <filesystem>
+#include <fstream>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -98,7 +101,8 @@ uint64_t primaryFunction(neverd_comparison_t C, llvm::StringRef Name) {
     throw std::runtime_error("primary function not found");
   return *Found;
 }
-void save(llvm::StringRef Path, llvm::StringRef Text) {
+void save(llvm::StringRef Path, llvm::StringRef Text,
+          const std::function<void()> &BeforePublish) {
   llvm::SmallString<256> Temporary;
   int FD = -1;
   if (auto E =
@@ -111,17 +115,21 @@ void save(llvm::StringRef Path, llvm::StringRef Text) {
   OS.close();
   if (OS.has_error())
     throw std::runtime_error("cannot write comparison output");
+  BeforePublish();
   if (auto E = llvm::sys::fs::rename(Temporary, Path))
     throw std::runtime_error("cannot publish comparison output: " +
                              E.message());
 }
 struct ProgressState {
+  neverd_comparison_t Handle = nullptr;
   std::string Phase;
   std::chrono::steady_clock::time_point Last;
 };
 void progress(void *Context, const char *Phase, neverd_va_t Done,
               neverd_va_t Total) {
   auto &S = *static_cast<ProgressState *>(Context);
+  if (S.Handle && Interrupted.load(std::memory_order_relaxed))
+    neverd_comparison_cancel(S.Handle);
   const auto Now = std::chrono::steady_clock::now();
   if (S.Phase != Phase || Done == Total ||
       Now - S.Last >= std::chrono::milliseconds(
@@ -130,6 +138,41 @@ void progress(void *Context, const char *Phase, neverd_va_t Done,
     S.Phase = Phase;
     S.Last = Now;
   }
+}
+struct RestoreCancelled : std::runtime_error {
+  RestoreCancelled()
+      : std::runtime_error("saved comparison restore cancelled") {}
+};
+void checkRestoreCancelled() {
+  if (Interrupted.load(std::memory_order_relaxed))
+    throw RestoreCancelled();
+}
+std::string readSaved(llvm::StringRef Path, ProgressState &Progress) {
+  checkRestoreCancelled();
+  uint64_t Size = 0;
+  if (llvm::sys::fs::file_size(Path, Size) ||
+      Size > limits::diff::kMaxSavedComparisonBytes)
+    throw std::runtime_error("cannot read bounded comparison file: " +
+                             Path.str());
+  std::ifstream Input(Path.str(), std::ios::binary);
+  if (!Input)
+    throw std::runtime_error("cannot read comparison file: " + Path.str());
+  std::string Text;
+  std::array<char, limits::diff::kSavedComparisonChunkBytes> Buffer;
+  progress(&Progress, "restore:read", 0, Size);
+  while (Text.size() < Size) {
+    checkRestoreCancelled();
+    const auto Count = std::min<uint64_t>(Buffer.size(), Size - Text.size());
+    if (!Input.read(Buffer.data(), static_cast<std::streamsize>(Count)))
+      throw std::runtime_error("cannot read comparison file: " + Path.str());
+    checkRestoreCancelled();
+    Text.append(Buffer.data(), Count);
+    progress(&Progress, "restore:read", Text.size(), Size);
+  }
+  checkRestoreCancelled();
+  if (Input.peek() != std::char_traits<char>::eof())
+    throw std::runtime_error("comparison file changed while reading");
+  return Text;
 }
 struct InputProgress {
   const char *Side;
@@ -166,11 +209,22 @@ int runStructuralDiff() {
     return 1;
   }
   try {
+    Interrupted.store(false, std::memory_order_relaxed);
+    const auto Previous = std::signal(SIGINT, interrupt);
+    if (Previous == SIG_ERR)
+      throw std::runtime_error("cannot install comparison interrupt handler");
+    const auto RestoreSignal =
+        llvm::scope_exit([&] { std::signal(SIGINT, Previous); });
+    ProgressState Progress;
+    Progress.Handle = C;
     std::string Reopen;
     llvm::json::Object RestoredOptions;
     if (!DiffReopen.empty()) {
-      Reopen = read(DiffReopen, limits::diff::kMaxSavedComparisonBytes);
+      Reopen = readSaved(DiffReopen, Progress);
+      checkRestoreCancelled();
+      progress(&Progress, "restore:settings", 0, 0);
       auto Document = parse(Reopen);
+      checkRestoreCancelled();
       const auto *Root = Document.getAsObject();
       if (!Root || !Root->getObject("settings"))
         throw std::runtime_error("saved comparison has no settings object");
@@ -318,12 +372,6 @@ int runStructuralDiff() {
         !DiffFlowRegionAnchor.getNumOccurrences())
       throw std::runtime_error(
           "--flow-region-coordinates requires --flow-region-anchor");
-    Interrupted.store(false, std::memory_order_relaxed);
-    const auto Previous = std::signal(SIGINT, interrupt);
-    if (Previous == SIG_ERR)
-      throw std::runtime_error("cannot install comparison interrupt handler");
-    const auto RestoreSignal =
-        llvm::scope_exit([&] { std::signal(SIGINT, Previous); });
     for (const auto &[S, Path] :
          {std::pair{A, &DiffFileA}, std::pair{B, &DiffFileB}}) {
       llvm::errs() << "diff: loading " << Path->getValue() << '\n';
@@ -357,16 +405,22 @@ int runStructuralDiff() {
       StopMonitor.store(true, std::memory_order_relaxed);
       Monitor.join();
     });
-    ProgressState Progress;
     const auto OptionsText = render(std::move(Value));
     if (!neverd_comparison_run_owned(C, &A, &B, OptionsText.c_str(), progress,
                                      &Progress))
       throw std::runtime_error("comparison failed: " +
                                take(neverd_comparison_last_error(C)));
     if (!DiffReopen.empty()) {
-      if (!neverd_comparison_restore_json(C, Reopen.c_str()))
+      checkRestoreCancelled();
+      if (!neverd_comparison_restore_json_with_progress(C, Reopen.c_str(),
+                                                        progress, &Progress)) {
+        const auto Status = parse(take(neverd_comparison_status_json(C)));
+        if (Status.getAsObject()->getString("restore_state") == "cancelled")
+          throw RestoreCancelled();
         throw std::runtime_error("reopen failed: " +
                                  take(neverd_comparison_last_error(C)));
+      }
+      checkRestoreCancelled();
     }
     if (!DiffOverrides.empty()) {
       auto Overrides =
@@ -407,8 +461,6 @@ int runStructuralDiff() {
       Saved = take(neverd_comparison_export_json(C));
       if (Saved.empty())
         throw std::runtime_error(take(neverd_comparison_last_error(C)));
-      if (!DiffSave.empty())
-        save(DiffSave, Saved);
     }
     uint64_t Unresolved = 0;
     const auto *Coverage = Root.getObject("coverage");
@@ -600,44 +652,68 @@ int runStructuralDiff() {
     }
     if (Output.empty())
       throw std::runtime_error(take(neverd_comparison_last_error(C)));
-    if (DiffJson || !DiffList.empty() || !DiffFunc.empty() ||
+    const bool JSONOutput =
+        DiffJson || !DiffList.empty() || !DiffFunc.empty() ||
         !DiffRegion.empty() || DiffRegionAnchor.getNumOccurrences() ||
         !DiffFlowFunction.empty() || FlowRegionsView || ImpactView ||
-        ChangesView || ValidationView || SourceView) {
-      llvm::outs() << Output << '\n';
-    } else {
-      llvm::outs() << "A: " << DiffFileA.getValue()
-                   << "\nB: " << DiffFileB.getValue()
-                   << "\nState: " << Root.getString("state").value_or("unknown")
-                   << "\nMatched: " << PairCount << "  Changed: " << Changed
-                   << "  Unmatched/ambiguous: " << Unresolved
-                   << "\nSimilarity: "
-                   << Root.getNumber("similarity").value_or(0)
-                   << " (structural heuristic)\n";
+        ChangesView || ValidationView || SourceView;
+    std::string Human;
+    llvm::raw_string_ostream HumanOutput(Human);
+    if (!JSONOutput) {
+      HumanOutput << "A: " << DiffFileA.getValue()
+                  << "\nB: " << DiffFileB.getValue()
+                  << "\nState: " << Root.getString("state").value_or("unknown")
+                  << "\nMatched: " << PairCount << "  Changed: " << Changed
+                  << "  Unmatched/ambiguous: " << Unresolved << "\nSimilarity: "
+                  << Root.getNumber("similarity").value_or(0)
+                  << " (structural heuristic)\n";
       for (const auto &W : *Root.getArray("warnings"))
-        llvm::outs() << "Warning: " << W.getAsString().value_or("") << '\n';
+        HumanOutput << "Warning: " << W.getAsString().value_or("") << '\n';
       if (const auto *Regions = Root.getObject("regions");
           Regions && Regions->getString("state"))
-        llvm::outs() << "Region hypotheses: "
-                     << Regions->getInteger("hypothesis_count").value_or(0)
-                     << "  Anchors: "
-                     << Regions->getInteger("anchor_count").value_or(0)
-                     << "  State: " << *Regions->getString("state")
-                     << "\nNative run evidence; behavior and patch presence "
-                        "are not validated.\n";
+        HumanOutput << "Region hypotheses: "
+                    << Regions->getInteger("hypothesis_count").value_or(0)
+                    << "  Anchors: "
+                    << Regions->getInteger("anchor_count").value_or(0)
+                    << "  State: " << *Regions->getString("state")
+                    << "\nNative run evidence; behavior and patch presence "
+                       "are not validated.\n";
       if (const auto *Regions = Root.getObject("flow_regions");
           Regions && Regions->getString("state"))
-        llvm::outs() << "SSA region hypotheses: "
-                     << Regions->getInteger("hypothesis_count").value_or(0)
-                     << "  Anchors: "
-                     << Regions->getInteger("anchor_count").value_or(0)
-                     << "  State: " << *Regions->getString("state")
-                     << "\nFinite dependency correspondences; open effects and "
-                        "control require review.\n";
+        HumanOutput << "SSA region hypotheses: "
+                    << Regions->getInteger("hypothesis_count").value_or(0)
+                    << "  Anchors: "
+                    << Regions->getInteger("anchor_count").value_or(0)
+                    << "  State: " << *Regions->getString("state")
+                    << "\nFinite dependency correspondences; open effects and "
+                       "control require review.\n";
       if (Partial)
-        llvm::outs() << "Coverage is incomplete; inspect the reported gaps.\n";
+        HumanOutput << "Coverage is incomplete; inspect the reported gaps.\n";
     }
+    const auto BeforePublish = [&] {
+      if (!DiffReopen.empty()) {
+        progress(&Progress, "restore:publish-output", 0, 1);
+        checkRestoreCancelled();
+      }
+    };
+    if (!DiffSave.empty()) {
+      if (!DiffReopen.empty()) {
+        progress(&Progress, "restore:write", 0, Saved.size());
+        checkRestoreCancelled();
+      }
+      save(DiffSave, Saved, BeforePublish);
+    } else {
+      BeforePublish();
+    }
+    // From the first rename/stdout publication onward, a late signal does not
+    // turn a completed external commit into a claim of unpublished output.
+    llvm::outs() << (JSONOutput ? Output : Human);
+    if (JSONOutput)
+      llvm::outs() << '\n';
     return Partial ? 3 : (Changed || Unresolved) ? 2 : 0;
+  } catch (const RestoreCancelled &E) {
+    llvm::errs() << "diff: " << E.what() << "; no output was published\n";
+    return 3;
   } catch (const std::exception &E) {
     llvm::WithColor::error() << E.what() << '\n';
     return 1;

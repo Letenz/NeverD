@@ -122,40 +122,55 @@ void ComparisonSession::command(const QString &Operation,
   OperationMessage.clear();
   CancelRequested = false;
   emit changed();
-  request(Operation, Payload, this, [this, Operation](const auto &Message) {
-    Busy = false;
-    if (Message["status"] != QJsonValue("ok")) {
-      const auto Error = Message["error"].toObject();
-      if (Operation == "comparison_start" &&
-          Error["code"] == QJsonValue("cancelled")) {
-        OperationMessage =
-            Summary.isEmpty()
-                ? tr("Loading stopped. Ready to try again.")
-                : tr("Loading stopped. Your previous comparison is "
-                     "still available.");
+  const bool Restore =
+      Operation == "comparison_restore" ||
+      (Operation == "comparison_start" && Payload.contains("restore_path"));
+  request(
+      Operation, Payload, this,
+      [this, Operation, Restore](const auto &Message) {
+        Busy = false;
+        if (Message["status"] != QJsonValue("ok")) {
+          const auto Error = Message["error"].toObject();
+          if ((Operation == "comparison_start" || Restore) &&
+              Error["code"] == QJsonValue("cancelled")) {
+            if (Restore)
+              OperationMessage =
+                  Summary.isEmpty() ? tr("Restore stopped. Ready to try again.")
+                                    : tr("Restore stopped. Your previous "
+                                         "comparison is still available.");
+            else
+              OperationMessage =
+                  Summary.isEmpty() ? tr("Loading stopped. Ready to try again.")
+                                    : tr("Loading stopped. Your previous "
+                                         "comparison is still available.");
+            emit changed();
+            return;
+          }
+          OperationMessage = Error["message"].toString();
+          if (Restore && !Summary.isEmpty())
+            OperationMessage = tr("Could not restore the comparison. Your "
+                                  "previous comparison is still available. %1")
+                                   .arg(OperationMessage);
+          else if (Operation == "comparison_start" && !Summary.isEmpty())
+            OperationMessage =
+                tr("Could not replace the comparison. Your previous "
+                   "comparison is still available. %1")
+                    .arg(OperationMessage);
+          emit changed();
+          emit failed(OperationMessage);
+          return;
+        }
+        const auto Result = Message["payload"].toObject();
+        if (Result["schema"] == QJsonValue("neverd.bindiff.summary")) {
+          const auto Previous = revision();
+          Summary = Result;
+          if (Previous != revision())
+            emit mappingChanged();
+        }
         emit changed();
-        return;
-      }
-      OperationMessage = Error["message"].toString();
-      if (Operation == "comparison_start" && !Summary.isEmpty())
-        OperationMessage = tr("Could not replace the comparison. Your previous "
-                              "comparison is still available. %1")
-                               .arg(OperationMessage);
-      emit changed();
-      emit failed(OperationMessage);
-      return;
-    }
-    const auto Result = Message["payload"].toObject();
-    if (Result["schema"] == QJsonValue("neverd.bindiff.summary")) {
-      const auto Previous = revision();
-      Summary = Result;
-      if (Previous != revision())
-        emit mappingChanged();
-    }
-    emit changed();
-    if (Operation == "comparison_save")
-      emit saved(Result["path"].toString());
-  });
+        if (Operation == "comparison_save")
+          emit saved(Result["path"].toString());
+      });
 }
 void ComparisonSession::cancel() {
   if (Cancellable.isEmpty() || CancelRequested)

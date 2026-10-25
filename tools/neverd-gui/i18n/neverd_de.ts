@@ -5622,6 +5622,26 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
         <source>Applying saved analysis</source>
         <translation>Gespeicherte Analyse wird angewendet</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Gespeicherte Belege werden geprüft</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Gespeicherter Vergleich wird gelesen</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Gespeicherter Vergleich wird geprüft</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Gespeicherte Messwerte werden neu berechnet</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Vergleich wird wiederhergestellt</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7771,6 +7791,18 @@ Ersetzt: %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Dieser Prozess unterstützt keinen Binärvergleich.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Wiederherstellung angehalten. Ein erneuter Versuch ist möglich.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Wiederherstellung angehalten. Ihr vorheriger Vergleich ist weiterhin verfügbar.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Der Vergleich konnte nicht wiederhergestellt werden. Ihr vorheriger Vergleich ist weiterhin verfügbar. %1</translation>
     </message>
 </context>
 <context>

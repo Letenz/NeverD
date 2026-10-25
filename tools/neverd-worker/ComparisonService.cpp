@@ -19,6 +19,7 @@
 #include "neverd/sdk/NeverDCAPISession.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <exception>
@@ -48,6 +49,7 @@ struct API {
   ENTRY(summary_json);
   ENTRY(export_json);
   ENTRY(restore_json);
+  ENTRY(restore_json_with_progress);
   ENTRY(functions_json);
   ENTRY(function_json);
   ENTRY(function_page_json);
@@ -264,19 +266,81 @@ struct Stamp {
            Changed(JournalPath, Journal);
   }
 };
-std::string readSaved(const Json &Payload) {
+void checkCancelled(const ComparisonService::Cancellation &Cancelled) {
+  if (Cancelled && Cancelled())
+    throw Error("cancelled", "Saved comparison restore cancelled");
+}
+struct ComparisonProgress {
+  neverd_comparison_t Handle;
+  const ComparisonService::Progress &Notify;
+  const ComparisonService::Cancellation &Cancelled;
+  static void report(void *Context, const char *Phase, unsigned long long Done,
+                     unsigned long long Total) {
+    const auto &S = *static_cast<const ComparisonProgress *>(Context);
+    if (S.Notify)
+      S.Notify(Phase, Done, Total, "");
+    // The SDK resets cancellation when admitting a new operation. Forward
+    // an already requested stop again at its first callback, without a race
+    // against the polling monitor or a fast empty report.
+    if (S.Cancelled && S.Cancelled())
+      api().cancel(S.Handle);
+  }
+};
+std::string readSaved(const Json &Payload,
+                      const ComparisonService::Progress &Notify,
+                      const ComparisonService::Cancellation &Cancelled) {
+  checkCancelled(Cancelled);
   const auto Path = path(pathField(Payload));
   std::error_code E;
   const auto Size = fs::file_size(Path, E);
   if (E || Size > limits::kMaxSavedComparisonBytes)
     throw Error("comparison_read_failed",
                 "Cannot read bounded comparison file");
-  std::string Text(Size, '\0');
+  std::string Text;
   std::ifstream Input(Path, std::ios::binary);
-  if (!Input.read(Text.data(), static_cast<std::streamsize>(Size)))
+  if (!Input)
     throw Error("comparison_read_failed", "Cannot read comparison file");
+  std::array<char, limits::kSavedComparisonChunkBytes> Buffer;
+  const auto Progress = [&] {
+    if (Notify)
+      Notify("restore:read", Text.size(), Size, "");
+    checkCancelled(Cancelled);
+  };
+  Progress();
+  while (Text.size() < Size) {
+    const auto Count = std::min<uint64_t>(Buffer.size(), Size - Text.size());
+    if (!Input.read(Buffer.data(), static_cast<std::streamsize>(Count)))
+      throw Error("comparison_read_failed", "Cannot read comparison file");
+    checkCancelled(Cancelled);
+    Text.append(Buffer.data(), Count);
+    Progress();
+  }
+  if (Input.peek() != std::char_traits<char>::eof())
+    throw Error("comparison_read_failed",
+                "Comparison file changed while reading");
   return Text;
 }
+void restoreSaved(neverd_comparison_t Handle, const std::string &Saved,
+                  const ComparisonService::Progress &Notify,
+                  const ComparisonService::Cancellation &Cancelled) {
+  checkCancelled(Cancelled);
+  ComparisonProgress Forward{Handle, Notify, Cancelled};
+  const int OK =
+      api().restore_json_with_progress
+          ? api().restore_json_with_progress(
+                Handle, Saved.c_str(), ComparisonProgress::report, &Forward)
+          : api().restore_json(Handle, Saved.c_str());
+  if (!OK) {
+    const auto Status = parseJson(take(api().status_json(Handle)));
+    throw Error(Status.value("restore_state", std::string()) == "cancelled"
+                    ? "cancelled"
+                    : "stale_comparison",
+                take(api().last_error(Handle)));
+  }
+  // Success means the handle committed. A late request cannot turn that
+  // commit into an error without advancing the standalone worker revision.
+}
+
 } // namespace
 
 struct ComparisonService::Impl {
@@ -335,6 +399,13 @@ bool ComparisonService::sourceDifferenceSupported() {
 bool ComparisonService::supported() { return bool(api()); }
 
 bool ComparisonService::cancellable(std::string_view Operation) {
+  if (!supported() ||
+      (Operation == "comparison_restore" &&
+       !api().restore_json_with_progress) ||
+      (Operation == "comparison_source_page" && !sourceSupported()) ||
+      (Operation == "comparison_source_difference" &&
+       !sourceDifferenceSupported()))
+    return false;
   for (const auto Candidate : CancellableOperations)
     if (Candidate == Operation)
       return true;
@@ -366,8 +437,13 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
     auto Settings = Payload.value("options", Json::object());
     std::string Saved;
     if (Payload.contains("restore_path")) {
-      Saved = readSaved({{"path", Payload.at("restore_path")}});
+      Saved =
+          readSaved({{"path", Payload.at("restore_path")}}, Notify, Cancelled);
+      if (Notify)
+        Notify("restore:settings", 0, 0, "");
+      checkCancelled(Cancelled);
       const auto Document = parseJson(Saved, MaxBackendBytes);
+      checkCancelled(Cancelled);
       if (!Document.contains("settings") ||
           !Document.at("settings").is_object() || !Settings.is_object())
         throw Error("invalid_request",
@@ -380,33 +456,27 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
                                                         api().destroy);
     if (!Next)
       throw Error("comparison_failed", "Cannot create comparison handle");
-    const auto Forward = [](void *Context, const char *Phase,
-                            unsigned long long Done, unsigned long long Total) {
-      const auto &Sink = *static_cast<const Progress *>(Context);
-      if (Sink)
-        Sink(Phase, Done, Total, "");
-    };
+    ComparisonProgress Forward{Next.get(), Notify, Cancelled};
     if (Cancelled && Cancelled())
       api().cancel(Next.get());
-    CancellationMonitor Monitor(Next.get(), Cancelled,
-                                /*StopAfterCancel=*/true);
+    CancellationMonitor Monitor(Next.get(), Cancelled);
     auto AHandle = Primary.get(), BHandle = Secondary.get();
     const int OK =
         api().run_owned(Next.get(), &AHandle, &BHandle, Options.c_str(),
-                        Forward, const_cast<Progress *>(&Notify));
+                        ComparisonProgress::report, &Forward);
     if (!AHandle)
       Primary.release();
     if (!BHandle)
       Secondary.release();
-    Monitor.stop();
     if (!OK)
       throw Error("comparison_failed", take(api().last_error(Next.get())));
     if (AS->changed() || BS->changed())
       throw Error("stale_input",
                   "A comparison input changed while it was read");
     if (Payload.contains("restore_path")) {
-      if (!api().restore_json(Next.get(), Saved.c_str()))
-        throw Error("stale_comparison", take(api().last_error(Next.get())));
+      restoreSaved(Next.get(), Saved, Notify, Cancelled);
+      // The replacement is still disposable until the session swap.
+      checkCancelled(Cancelled);
     }
     if (S.Handle)
       api().destroy(S.Handle);
@@ -417,7 +487,10 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
     S.SecondaryStamp = std::move(BS);
     ++S.Revision;
     S.clearGraphs();
-    return S.summary();
+    auto Out = S.summary();
+    if (Payload.contains("restore_path"))
+      Out["restore_completed"] = true;
+    return Out;
   }
   if (!S.Handle)
     throw Error("comparison_not_loaded", "Start a comparison first");
@@ -550,8 +623,8 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
   }
   if (Operation == "comparison_restore") {
     fields(Payload, {"path"});
-    const auto Saved = readSaved(Payload);
-    S.check(api().restore_json(S.Handle, Saved.c_str()), "stale_comparison");
+    const auto Saved = readSaved(Payload, Notify, Cancelled);
+    restoreSaved(S.Handle, Saved, Notify, Cancelled);
   } else if (Operation == "comparison_review_record") {
     S.check(api().review_record_json(S.Handle, Payload.dump().c_str()));
   } else if (Operation == "comparison_override") {
@@ -572,6 +645,9 @@ Json ComparisonService::execute(const std::string &Operation, const Json &P,
   }
   ++S.Revision;
   S.clearGraphs();
-  return S.summary();
+  auto Out = S.summary();
+  if (Operation == "comparison_restore")
+    Out["restore_completed"] = true;
+  return Out;
 }
 } // namespace neverd::worker

@@ -12,6 +12,7 @@
 #ifndef NEVERD_DIFF_REGIONS_H
 #define NEVERD_DIFF_REGIONS_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/Limits.h"
 #include "neverd/diff/Program.h"
 
@@ -21,7 +22,6 @@
 
 namespace neverd::diff {
 enum class ComparisonState : uint8_t;
-struct ComparisonControl;
 
 struct RegionSettings {
   bool Enabled = false;
@@ -119,10 +119,10 @@ RegionAnalysis findRegions(const Program &Primary, const Program &Secondary,
 
 /// Validate persisted coordinates and normalized-run evidence against the
 /// exact bound snapshots, including membership and arithmetic invariants.
-std::optional<std::string> validateRegions(const RegionAnalysis &Regions,
-                                           const RegionSettings &Settings,
-                                           const Program &Primary,
-                                           const Program &Secondary);
+std::optional<std::string>
+validateRegions(const RegionAnalysis &Regions, const RegionSettings &Settings,
+                const Program &Primary, const Program &Secondary,
+                const ComparisonControl &Control = {});
 } // namespace neverd::diff
 
 #endif // NEVERD_DIFF_REGIONS_H
