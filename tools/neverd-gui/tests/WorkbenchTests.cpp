@@ -61,6 +61,7 @@
 #include <QContextMenuEvent>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -696,13 +697,25 @@ private slots:
     }
     auto *code = workspace->findChild<CodeView *>();
     QVERIFY(code);
+    const auto focusState = [&] {
+      QString state;
+      QDebug(&state) << "focused" << QApplication::focusWidget() << "active"
+                     << QApplication::activeWindow() << "native focus"
+                     << QGuiApplication::focusWindow() << "workspace"
+                     << workspace << "native workspace"
+                     << workspace->windowHandle() << "code" << code->text()
+                     << "visible" << code->text()->isVisible() << "enabled"
+                     << code->text()->isEnabled() << "loading"
+                     << code->text()->loading();
+      return state;
+    };
     QTRY_COMPARE(code->text()->function(),
                  std::optional<Address>(Base + 0x140));
     QTRY_VERIFY(!code->text()->loading());
     assembly->navigate(Base + 0x1e0);
     QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
     code->text()->setFocus();
-    QTRY_VERIFY(code->text()->hasFocus());
+    QTRY_VERIFY2(code->text()->hasFocus(), qPrintable(focusState()));
     const auto click = [&](ActionId id) {
       auto *button = toolbar->widgetForAction(bench.action(id));
       if (!button || !button->isVisible() || !button->isEnabled())
@@ -715,7 +728,7 @@ private slots:
     QVERIFY(click(ActionId::JumpBack));
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x140));
-    QTRY_VERIFY(code->text()->hasFocus());
+    QTRY_VERIFY2(code->text()->hasFocus(), qPrintable(focusState()));
     QVERIFY(click(ActionId::JumpForward));
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x1e0));
