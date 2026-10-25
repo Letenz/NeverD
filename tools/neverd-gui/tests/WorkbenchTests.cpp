@@ -7,6 +7,7 @@
 /// Exercise the production session, window and views with a fixture worker.
 //===----------------------------------------------------------------------===//
 
+#include "../Config.h"
 #include "AddressSpace.h"
 #include "ChooserView.h"
 #include "CodeView.h"
@@ -723,31 +724,42 @@ private slots:
     QCOMPARE(handle->cursor().shape(), Qt::SplitHCursor);
     const int initialWidth = sidebar->width();
     const int nameWidth = functions->table()->header()->sectionSize(0);
+    const int keyboardStep =
+        ::neverd::limits::gui_config::kFocusSidebarKeyboardResizeStep;
+    // The sidebar stays inside the disassembly pane, which is only half of a
+    // small native CI screen. Leave room for the later keyboard expansion.
+    const int grownWidth =
+        std::min(initialWidth + 180,
+                 assemblyGeometry.right() - sidebar->x() + 1 - keyboardStep);
+    QVERIFY(grownWidth > initialWidth);
     const auto resizeBy = [&](int delta) {
       const QPoint start = handle->mapTo(workspace, handle->rect().center());
-      const QPoint end = start + QPoint(delta, 0);
+      const QPoint end(std::clamp(start.x() + delta, 0, workspace->width() - 1),
+                       start.y());
       QTest::mousePress(workspace->windowHandle(), Qt::LeftButton,
                         Qt::NoModifier, start);
       QTest::mouseMove(workspace->windowHandle(), end);
       QTest::mouseRelease(workspace->windowHandle(), Qt::LeftButton,
                           Qt::NoModifier, end);
     };
-    resizeBy(180);
-    QTRY_COMPARE(sidebar->width(), initialWidth + 180);
-    QTRY_COMPARE(functions->table()->header()->sectionSize(0), nameWidth + 180);
+    resizeBy(grownWidth - initialWidth);
+    QTRY_COMPARE(sidebar->width(), grownWidth);
+    QTRY_COMPARE(functions->table()->header()->sectionSize(0),
+                 nameWidth + grownWidth - initialWidth);
     resizeBy(-80);
-    QTRY_COMPARE(sidebar->width(), initialWidth + 100);
+    QTRY_COMPARE(sidebar->width(), grownWidth - 80);
     resizeBy(-workspace->width());
-    QTRY_COMPARE(sidebar->width(), 240);
+    QTRY_COMPARE(sidebar->width(),
+                 ::neverd::limits::gui_config::kFocusSidebarMinimumWidth);
     resizeBy(workspace->width() * 2);
     QVERIFY(sidebar->geometry().right() <= workspace->rect().right());
-    resizeBy(initialWidth + 180 - sidebar->width());
-    QTRY_COMPARE(sidebar->width(), initialWidth + 180);
+    resizeBy(grownWidth - sidebar->width());
+    QTRY_COMPARE(sidebar->width(), grownWidth);
     handle->setFocus(Qt::TabFocusReason);
     QTest::keyClick(handle, Qt::Key_Right);
-    QVERIFY(sidebar->width() > initialWidth + 180);
+    QTRY_COMPARE(sidebar->width(), grownWidth + keyboardStep);
     QTest::keyClick(handle, Qt::Key_Left);
-    QCOMPARE(sidebar->width(), initialWidth + 180);
+    QCOMPARE(sidebar->width(), grownWidth);
     QCOMPARE(toggle->mapTo(workspace, toggle->rect().center()), triangle);
     QCOMPARE(QRect(assembly->mapTo(workspace, QPoint()), assembly->size()),
              assemblyGeometry);
@@ -797,7 +809,7 @@ private slots:
     QCOMPARE(toggle->arrowType(), Qt::RightArrow);
     bench.action(ActionId::ViewFunctions)->trigger();
     QVERIFY(sidebar->isVisible());
-    QCOMPARE(sidebar->width(), initialWidth + 180);
+    QCOMPARE(sidebar->width(), grownWidth);
     QCOMPARE(filter->text(), QStringLiteral("function_30"));
     filter->clear();
     filter->setFocus();
