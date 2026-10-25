@@ -146,7 +146,9 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   RowsPerPage = new QSpinBox(this);
   RowsPerPage->setObjectName("lineagePageRows");
   RowsPerPage->setAccessibleName(tr("Rows per page"));
-  RowsPerPage->setToolTip(tr("Rows per page"));
+  RowsPerPage->setToolTip(
+      tr("Rows per page. Reduce this value if a page exceeds its byte "
+         "allowance."));
   RowsPerPage->setPrefix(tr("Rows: "));
   RowsPerPage->setRange(1, ::neverd::limits::diff::kMaxPageSize);
   RowsPerPage->setValue(::neverd::limits::gui::kComparisonPageSize);
@@ -257,7 +259,10 @@ void LineagePageView::page(qint64 First) {
           return;
         }
         if (Reply["status"] != QJsonValue("ok")) {
-          const auto Error = Reply["error"].toObject()["message"].toString();
+          const auto Failure = Reply["error"].toObject();
+          auto Error = Failure["message"].toString();
+          if (Failure["code"] == QJsonValue("resource_limited"))
+            Error += tr(" Try fewer rows or adjust Resource settings.");
           Status->setText(Rows.isEmpty()
                               ? Error
                               : tr("%1 — previous page retained").arg(Error));
