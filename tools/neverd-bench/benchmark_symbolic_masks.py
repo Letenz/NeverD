@@ -945,6 +945,35 @@ def permuted_carry_product_corpus(width, count):
     return rows
 
 
+def sparse_linear_mixed_degree_corpus(width, count):
+    """Degree-4–18 products with disjoint constant, linear and perturbed tails.
+
+    The 135-case cycle varies degree, mixed/partitioned products, tail support,
+    and factor order. Product-only variables must not enlarge the linear table.
+    """
+    rows = []
+    for index in range(count):
+        degree = (4, 8, 12, 16, 18)[(index // 27) % 5]
+        kind, tail, order = (index // 9) % 3, (index // 3) % 3, index % 3
+        variables = [f"v{i}" for i in range(2, degree + 2)]
+        if order == 1:
+            variables.reverse()
+        elif order == 2:
+            variables = variables[::2] + variables[1::2]
+        body = f"3*{'*'.join(variables)}"
+        if kind == 1:
+            body += f"+5*{'*'.join(variables[:degree//2])}"
+        elif kind == 2:
+            left, right = variables[:2]
+            common = '*'.join(variables[2:])
+            body = (f"3*({left}&{right})*({left}|{right})*{common}"
+                    f"+3*({left}&~{right})*(~{left}&{right})*{common}")
+        linear = ("13", "13+7*(v0^v1)+14*(v0&v1)",
+                  f"13+7*(v0^v1)+14*(v0&v1)+(v0&{1 << (width-1)})")[tail]
+        rows.append(f"({body})+({linear})")
+    return rows
+
+
 def check_semantics(expressions, results, width):
     """Independent modular evaluator; never execute parsed source as Python."""
     mask = (1 << width) - 1
@@ -1088,7 +1117,7 @@ def main():
                  "row-residual", "mixed-frontier", "extreme-frontier",
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
                  "distributed-prefix", "multiple-residual", "carry-product",
-                 "permuted-carry-product"),
+                 "permuted-carry-product", "sparse-linear-mixed-degree"),
         default="complement",
     )
     args = parser.parse_args()
@@ -1127,6 +1156,7 @@ def main():
                 "multiple-residual": multiple_residual_corpus,
                 "carry-product": carry_product_corpus,
                 "permuted-carry-product": permuted_carry_product_corpus,
+                "sparse-linear-mixed-degree": sparse_linear_mixed_degree_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")

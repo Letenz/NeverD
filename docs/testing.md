@@ -941,6 +941,13 @@ must retain a simpler linear tail under the same bounded allowance; independent
 word oracles cover the entire Boolean cube and arbitrary word values. Affine
 selector cost bounds require complete weights, with a changed nonsingleton
 corner and opaque inputs preventing an unjustified affine assumption.
+`SparseLinearTailKeepsItsOwnSynthesisAllowance` checks constant and two-input
+tails beside a ten-input product at 8/16/32/64/65/128/257 bits. Unused and
+reversed caller coordinates must preserve the complete polynomial proof and
+the fixed 512-work allowance. The `sparse-linear-mixed-degree` benchmark family
+(`--count 135`) reproduces 540 native-width cases with degree-4–18 products,
+mixed degrees, partitioned factors, changed factor order and high-bit controls.
+Its independent oracle tests reject dropping the perturbed tail.
 Common-power tests require a separately proved low-degree quotient; repeated
 normalized monomials retain their modular coefficients and multiplicities.
 The worker source-synthesis test also executes missing-corner degree-48/96
