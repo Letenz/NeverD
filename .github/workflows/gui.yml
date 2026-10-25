@@ -92,7 +92,7 @@ jobs:
             -DNEVERD_WORKER_REAL_ENGINE_TESTS=OFF
           python scripts/build.py build-gui --parallel 3
           cp "build-fixture/bin/${{ matrix.library }}" build-gui/bin/
-      - name: Verify native appearance and frames before controller regressions
+      - name: Verify native appearance and window gestures before controller regressions
         if: runner.os != 'Linux'
         shell: bash
         run: |
@@ -116,10 +116,20 @@ jobs:
               build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
               -o build-gui/ci-diagnostics/native-frame-trace.txt,txt
           fi
+          # Check representative drops before the full state/drag sequence too,
+          # so a failed native transition cannot hide an independent drag bug.
+          NEVERD_SHORTCUT_CAPTURES=build-gui/ci-diagnostics/docking-samples \
+            build-gui/bin/neverd-gui-docking-tests \
+            dragIntoWorkbench:light-caption-4-separate \
+            dragIntoWorkbench:dark-tab-8-overlap \
+            -o build-gui/ci-diagnostics/native-docking-samples.txt,txt
+          drag_sample_status=$?
           cat build-gui/ci-diagnostics/native-appearance.txt
           cat build-gui/ci-diagnostics/native-appearance-150.txt
           cat build-gui/ci-diagnostics/native-frame.txt
+          cat build-gui/ci-diagnostics/native-docking-samples.txt
           if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
+          if [ "$drag_sample_status" -ne 0 ]; then exit "$drag_sample_status"; fi
           if [ "$scaled_appearance_status" -ne 0 ]; then exit "$scaled_appearance_status"; fi
           exit "$appearance_status"
       - name: Retain native appearance diagnostics
@@ -132,8 +142,10 @@ jobs:
             build-gui/ci-diagnostics/native-appearance-150.txt
             build-gui/ci-diagnostics/native-frame.txt
             build-gui/ci-diagnostics/native-frame-trace.txt
+            build-gui/ci-diagnostics/native-docking-samples.txt
             build-gui/ci-diagnostics/appearance/
             build-gui/ci-diagnostics/appearance-150/
+            build-gui/ci-diagnostics/docking-samples/
           if-no-files-found: warn
           retention-days: 7
       - name: Verify GUI, IPC, MCP and translation contracts
@@ -172,12 +184,23 @@ jobs:
                 -o build-gui/ci-diagnostics/native-docking.txt,txt
             '
           else
-            build-gui/bin/neverd-gui-docking-tests \
+            NEVERD_SHORTCUT_CAPTURES=build-gui/ci-diagnostics/docking \
+              build-gui/bin/neverd-gui-docking-tests \
               -o build-gui/ci-diagnostics/native-docking.txt,txt
           fi
           docking_status=$?
           cat build-gui/ci-diagnostics/native-docking.txt
           exit "$docking_status"
+      - name: Retain native docking captures
+        if: ${{ always() && runner.os != 'Linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-gui-${{ runner.os }}-docking-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build-gui/ci-diagnostics/native-docking.txt
+            build-gui/ci-diagnostics/docking/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify native windows, floating panes and shortcuts
         timeout-minutes: 10
         # Exercise native ownership and focus as well as the offscreen
