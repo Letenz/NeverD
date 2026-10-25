@@ -20,6 +20,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
+#include "neverd/ir/low/X86/X86CompactShape.h"
 #include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -1633,34 +1634,41 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
 
   if (Id == Intrinsic::EVEXCompressStore || Id == Intrinsic::EVEXExpandLoad) {
     const bool Expand = Id == Intrinsic::EVEXExpandLoad;
-    if (Op.NumInputs != 5 || !Op.Inputs[4].isConst() ||
-        Op.Inputs[1].Size != 8 || Op.Inputs[2].Size == 0 ||
-        Op.Inputs[2].Size > 8 ||
-        (Expand ? Op.Inputs[3].Size != Op.Output.Size : Op.Output.Size != 0))
+    if (!x86CompactShapeIsValid(Id, x86CompactLowShape(Op, Img.Arch)))
       return false;
-    const uint8_t Control = static_cast<uint8_t>(Op.Inputs[4].Offset);
-    const unsigned ElementBytes = Control & 0x0f;
-    if ((ElementBytes != 1 && ElementBytes != 2 && ElementBytes != 4 &&
-         ElementBytes != 8) ||
-        (!Expand && (Control & 0x80) != 0))
+    const auto Control = *x86CompactControl(Id, Op.Inputs[4].Offset);
+    const unsigned ElementBytes = Control.ElementBytes;
+    const uint16_t VectorBytes = Op.Inputs[3].Size;
+    const auto Known = [&](const NdVar &V) {
+      if (V.isConst())
+        return true;
+      if (V.Size <= sizeof(uint64_t))
+        return Registers.count(V.Offset) != 0;
+      const auto It = WideRegisters.find(V.Offset);
+      return It != WideRegisters.end() && It->second.size() >= V.Size;
+    };
+    if (!Known(Op.Inputs[2]))
       return false;
-    const uint16_t VectorBytes = Expand ? Op.Output.Size : Op.Inputs[3].Size;
-    if ((VectorBytes != 16 && VectorBytes != 32 && VectorBytes != 64) ||
-        VectorBytes % ElementBytes != 0)
+    const unsigned LaneCount = VectorBytes / ElementBytes;
+    const auto Use = x86CompactOperandUse(LaneCount, Expand, Control.Zero,
+                                          readOperand(Op.Inputs[2]));
+    const uint64_t Mask = readOperand(Op.Inputs[2]) & Use.LaneMask;
+    if (Use.Address && !Known(Op.Inputs[1]))
       return false;
-    const auto Base = resolveMemoryAddress(Op, readOperand(Op.Inputs[1]));
+    const auto Base = Use.Address
+                          ? resolveMemoryAddress(Op, readOperand(Op.Inputs[1]))
+                          : std::optional<uint64_t>(0);
     if (!Base)
       return false;
-    const uint64_t Mask = readOperand(Op.Inputs[2]);
-    const unsigned LaneCount = VectorBytes / ElementBytes;
     uint64_t Cursor = *Base;
 
     if (Expand) {
-      std::vector<uint8_t> Result = readOperandBytes(Op.Inputs[3]);
-      if (Result.size() != VectorBytes)
-        return false;
-      if ((Control & 0x80) != 0)
-        std::fill(Result.begin(), Result.end(), 0);
+      std::vector<uint8_t> Result(VectorBytes, 0);
+      if (Use.Data) {
+        if (!Known(Op.Inputs[3]))
+          return false;
+        Result = readOperandBytes(Op.Inputs[3]);
+      }
       std::vector<LoadRecord> Records;
       for (unsigned Lane = 0; Lane < LaneCount; ++Lane) {
         if (((Mask >> Lane) & 1U) == 0)
@@ -1680,6 +1688,10 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
       return true;
     }
 
+    if (!Use.Data)
+      return true;
+    if (!Known(Op.Inputs[3]))
+      return false;
     const std::vector<uint8_t> Source = readOperandBytes(Op.Inputs[3]);
     if (Source.size() != VectorBytes)
       return false;

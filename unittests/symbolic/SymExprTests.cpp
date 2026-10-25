@@ -84,6 +84,38 @@ TEST(SymExpr, InterningRetainsFullIdentityAcrossGrowthCopyAndMove) {
   EXPECT_FALSE(Assigned.hasVarName("after-copy"));
 }
 
+TEST(SymExpr, CollisionChainsSurviveIndependentCopiesAndOwnerDestruction) {
+  // These different literal identities all have hash 0xfb58cd469c6a459e.
+  constexpr std::array<std::pair<unsigned, uint64_t>, 5> Values{
+      {{16, 0x3c5c}, {24, 0x3e66}, {32, 0x17e8}, {48, 0x13d4}, {64, 0x1000}}};
+  SymContext Original;
+  std::array<SymRef, Values.size()> Refs;
+  for (size_t I = 0; I + 1 < Values.size(); ++I)
+    Refs[I] = Original.mkConst(Values[I].first, Values[I].second);
+  auto Copy = Original;
+  Refs.back() = Copy.mkConst(Values.back().first, Values.back().second);
+  EXPECT_EQ(Original.numNodes(), Values.size() - 1);
+  EXPECT_EQ(Copy.numNodes(), Values.size());
+  Original = SymContext();
+
+  auto Moved = std::move(Copy);
+  const auto X = Moved.mkVar("x", 64);
+  for (uint64_t I = 0; I < 8192; ++I)
+    Moved.mkAdd(X, Moved.mkConst(64, I));
+  SymContext Assigned;
+  Assigned = Moved;
+  Moved = SymContext();
+  const auto Before = Assigned.numNodes();
+  for (size_t I = 0; I < Values.size(); ++I) {
+    const auto [Width, Value] = Values[I];
+    EXPECT_EQ(Assigned.mkConst(Width, Value), Refs[I]);
+    EXPECT_EQ(Assigned.constValue(Refs[I]), llvm::APInt(Width, Value));
+    for (size_t J = 0; J < I; ++J)
+      EXPECT_NE(Refs[I], Refs[J]);
+  }
+  EXPECT_EQ(Assigned.numNodes(), Before);
+}
+
 TEST(SymExpr, CommutativeOperandsAreSorted) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);

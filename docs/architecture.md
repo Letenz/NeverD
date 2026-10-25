@@ -6255,11 +6255,24 @@ preserves the native cache-line effect and arithmetic flags. The CPU owns line
 size, alignment, store checks and weak ordering; an ordinary fixed-size clear
 cannot substitute for it. Native LLVM and C select the CLZERO target feature.
 
+Compact-memory shape and operand observation belong to
+`ir/intrinsics/X86/X86CompressExpand.h`; the LowIR/MedIR adapters and native
+LLVM/C renderers remain in their respective component's `X86/` directory.
+Native calls preserve original integer/FP kind, lane width, merging/zeroing
+and segment-relative addresses. Unknown observed inputs are retained during
+emission and rejected before executable publication. Suppressed inputs use
+the same shared observation rule in concrete execution and source projection.
+Their unknown-size volatile memory effects keep even zero-mask instructions.
+Stack-default fault provenance remains an explicit unsupported boundary.
+
 Both source routes retain a complete constant carried by an integer RETURN
 after copy propagation. A later synthetic low-register read is not another
 machine write and cannot truncate that reaching value. The shared
 `MedReturnValue` decision still requires the operand to cover the return width;
 narrow operands retain the existing ABI reconstruction checks.
+Med-to-High also retains a narrowing machine `COPY` as an explicit byte slice
+before substituting its expression. Removing the original assignment must not
+remove its truncation or widen a later zero extension.
 Unrepresented segment identities and malformed decode details are refused.
 The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
 INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI

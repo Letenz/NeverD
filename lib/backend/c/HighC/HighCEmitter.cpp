@@ -38,6 +38,7 @@
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
+#include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
@@ -698,6 +699,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
            x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
            isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
            isApxAtomicIntrinsic(E.IntrinsicId) ||
+           isX86CompactMemory(E.IntrinsicId) ||
            E.IntrinsicId == Intrinsic::X86AMXState);
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
       if (!MsvcSegmentedScalar && !InstructionMemory)

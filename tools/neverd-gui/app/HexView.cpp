@@ -38,6 +38,12 @@ constexpr char HiddenByte = '.';
 Address chunkBase(Address address) {
   return address & ~Address(::neverd::limits::gui::kHexViewChunkBytes - 1);
 }
+
+/// Where a row's bytes start: after the margin, the address and two spaces.
+qreal bytesLeft(int bitness, qreal charWidth) {
+  return ::neverd::limits::gui_config::kHexViewMargin +
+         ((bitness == 64 ? 16 : 8) + 2) * charWidth;
+}
 } // namespace
 
 HexView::HexView(Session &session, const AddressSpace &space, QWidget *parent)
@@ -196,6 +202,15 @@ void HexView::updateRange() {
                                      std::numeric_limits<int>::max())));
   bar->setPageStep(visibleRows());
   bar->setSingleStep(1);
+  // A pane narrower than a row scrolls sideways to the text column.
+  const qreal rowWidth = bytesLeft(session_.bitness(), charWidth_) +
+                         (BytesPerRow * 3 + 2 + BytesPerRow) * charWidth_ +
+                         ::neverd::limits::gui_config::kHexViewMargin;
+  auto *horizontal = horizontalScrollBar();
+  horizontal->setRange(
+      0, std::max(0, int(std::ceil(rowWidth)) - viewport()->width()));
+  horizontal->setPageStep(viewport()->width());
+  horizontal->setSingleStep(int(std::ceil(charWidth_)));
 }
 
 void HexView::resizeEvent(QResizeEvent *event) {
@@ -322,6 +337,7 @@ void HexView::paintEvent(QPaintEvent *) {
   painter.fillRect(viewport()->rect(), theme.color(ColorRole::HexBackground));
   if (space_.empty())
     return;
+  painter.translate(-horizontalScrollBar()->value(), 0);
   painter.setFont(theme.codeFont());
   const int digits = session_.bitness() == 64 ? 16 : 8;
   const qreal hexLeft =
@@ -443,6 +459,22 @@ void HexView::keyPressEvent(QKeyEvent *event) {
   if (!space_.regionOf(next))
     return;
   moveCurrent(next, event->modifiers() & Qt::ShiftModifier);
+  // A pane scrolled sideways keeps the byte in view in one of its columns.
+  auto *horizontal = horizontalScrollBar();
+  const int byte = int(next % BytesPerRow);
+  const qreal hex = bytesLeft(session_.bitness(), charWidth_) +
+                    (byte * 3 + (byte >= HexGroup ? 1 : 0)) * charWidth_;
+  const qreal text = bytesLeft(session_.bitness(), charWidth_) +
+                     (BytesPerRow * 3 + 2 + byte) * charWidth_;
+  const auto shown = [&](qreal left, qreal width) {
+    return left >= horizontal->value() &&
+           left + width <= horizontal->value() + viewport()->width();
+  };
+  if (!shown(hex, 2 * charWidth_) && !shown(text, charWidth_))
+    horizontal->setValue(hex < horizontal->value()
+                             ? int(std::floor(hex))
+                             : int(std::ceil(hex + 2 * charWidth_)) -
+                                   viewport()->width());
   emit locationChanged(next);
 }
 
@@ -455,7 +487,7 @@ std::optional<Address> HexView::addressAt(const QPointF &position) const {
   const auto rowAddress = addressOfRow(verticalScrollBar()->value() + rowIndex);
   if (!rowAddress)
     return std::nullopt;
-  const qreal x = position.x();
+  const qreal x = position.x() + horizontalScrollBar()->value();
   int byte = -1;
   if (x >= asciiLeft)
     byte = int((x - asciiLeft) / charWidth_);

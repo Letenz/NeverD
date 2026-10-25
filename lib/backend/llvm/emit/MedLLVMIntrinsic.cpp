@@ -19,6 +19,7 @@
 #include "neverd/ir/X86/X86FPState.h"
 #include "neverd/ir/X86/X87BCD.h"
 #include "neverd/ir/X86/X87Constant.h"
+#include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86Sgx.h"
 
@@ -181,12 +182,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     llvm::report_fatal_error(
         "PDEP/PEXT intrinsic has an invalid operand/output contract");
 
-  // LLVM has no stable target-independent representation for the contiguous
-  // packed-address fault contract used by EVEX compress/expand in the LLVM
-  // version supported by this tree.  Never turn a memory effect into zero.
-  if (IC == I::EVEXCompressStore || IC == I::EVEXExpandLoad)
-    llvm::report_fatal_error(
-        "EVEX compress/expand memory lowering is not available");
+  if (isX86CompactMemory(IC))
+    return emitX86CompressExpand(Op, IC, Builder);
 
   if (IC == I::Vdbpsadbw) {
     if (TargetArch != Arch::X86 && TargetArch != Arch::X64)

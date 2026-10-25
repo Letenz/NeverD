@@ -13,6 +13,7 @@
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
+#include "neverd/ir/low/X86/X86CompactShape.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
@@ -107,6 +108,11 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   if (x87ValueInfo(Id) &&
       !x87ValueShapeIsValid(x87ValueLowShape(Op, Arch::Unknown)))
     return invalid("x87 scalar intrinsic has an invalid value/status contract");
+  if (isX86CompactMemory(Id)) {
+    if (!x86CompactShapeIsValid(Id, x86CompactLowShape(Op)))
+      return invalid(X86CompactMalformed);
+    return llvm::Error::success();
+  }
   if (isApxAtomicIntrinsic(Id)) {
     if (!intrinsicApxAtomicShapeIsValid(Id,
                                         apxAtomicLowShape(Op, Arch::Unknown)))

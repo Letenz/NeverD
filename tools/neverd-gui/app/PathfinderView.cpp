@@ -171,6 +171,7 @@ PathfinderView::PathfinderView(Session &session, const AddressSpace &space,
     toggle->setObjectName(QString::fromLatin1(name));
     toggle->setText(text);
     toggle->setCheckable(true);
+    toggle->setProperty("disclosure", true);
     toggle->setAutoRaise(true);
     toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toggle->setArrowType(Qt::RightArrow);

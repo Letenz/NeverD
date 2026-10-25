@@ -9,20 +9,77 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QFileSystemModel>
+#include <QFontDialog>
 #include <QGroupBox>
+#include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScreen>
 #include <QStyleFactory>
 #include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QTimer>
+#include <QTreeView>
+#include <algorithm>
 
 namespace neverd::gui {
 namespace {
 /// The object name of Qt's file dialog places pane.
 constexpr char FileDialogPlaces[] = "sidebar";
+/// The object name of Qt's file dialog detail view.
+constexpr char FileDialogDetails[] = "treeView";
+/// Marks a detail view whose columns already follow its folders.
+constexpr char FittedColumns[] = "neverdFittedColumns";
+
+/// Lets a file dialog's names take the width its size, type and date leave.
+/// Qt sizes those three from samples narrower than what it shows ("128.88
+/// GB", "mp3Folder"), so sizes, types and dates lose their middles.
+void fitFileColumns(QFileDialog &dialog, QTreeView &details) {
+  auto *header = details.header();
+  if (header->count() == 0)
+    return;
+  header->setStretchLastSection(false);
+  header->setSectionResizeMode(0, QHeaderView::Stretch);
+  auto *files = dialog.findChild<QFileSystemModel *>();
+  if (!files || details.property(FittedColumns).toBool())
+    return;
+  details.setProperty(FittedColumns, true);
+  // The columns follow the folder shown, once its entries have arrived.
+  auto *fit = new QTimer(&details);
+  fit->setSingleShot(true);
+  QObject::connect(fit, &QTimer::timeout, &details, [&details] {
+    for (int column = 1; column < details.header()->count(); ++column) {
+      if (details.header()->isSectionHidden(column))
+        continue;
+      details.resizeColumnToContents(column);
+      details.setColumnWidth(
+          column, std::min(details.columnWidth(column),
+                           ::neverd::limits::gui_config::
+                               kWorkbenchStyleFileColumnMaximumWidth));
+    }
+  });
+  const auto refit = [fit] { fit->start(0); };
+  QObject::connect(files, &QFileSystemModel::rootPathChanged, fit, refit);
+  QObject::connect(files, &QFileSystemModel::directoryLoaded, fit, refit);
+  QObject::connect(files, &QAbstractItemModel::rowsInserted, fit, refit);
+  refit();
+}
+
+/// Opens Qt's file and font dialogs with room for their lists; their
+/// layouts' least sizes show only a few rows.
+void openWithRoom(QDialog &dialog) {
+  const QSize room =
+      qobject_cast<QFileDialog *>(&dialog)
+          ? ::neverd::limits::gui_config::kWorkbenchStyleFileDialogSize
+          : ::neverd::limits::gui_config::kWorkbenchStyleFontDialogSize;
+  QSize size = dialog.size().expandedTo(room.grownBy(dialog.contentsMargins()));
+  if (const QScreen *screen = dialog.screen())
+    size = size.boundedTo(screen->availableSize());
+  dialog.resize(size);
+}
 
 bool drawsMnemonics(const QWidget *widget) {
   return qobject_cast<const QMenuBar *>(widget) ||
@@ -253,6 +310,21 @@ bool WorkbenchStyle::eventFilter(QObject *watched, QEvent *event) {
     // The popup list changes after the menu hides.
     if (heldByMenu_ && qobject_cast<QMenu *>(watched))
       QTimer::singleShot(0, this, &WorkbenchStyle::releaseAfterMenu);
+    break;
+  case QEvent::Show:
+    // Before the dialog centers itself on its parent at its new size.  A
+    // file dialog's detail view has its columns only once it shows.
+    if (auto *dialog = qobject_cast<QDialog *>(watched);
+        dialog && !event->spontaneous() &&
+        (qobject_cast<QFileDialog *>(dialog) ||
+         qobject_cast<QFontDialog *>(dialog))) {
+      openWithRoom(*dialog);
+      auto *files = qobject_cast<QFileDialog *>(dialog);
+      if (auto *details = files ? files->findChild<QTreeView *>(
+                                      QLatin1String(FileDialogDetails))
+                                : nullptr)
+        fitFileColumns(*files, *details);
+    }
     break;
   case QEvent::ApplicationStateChange:
     if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
