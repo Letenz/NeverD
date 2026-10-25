@@ -21,6 +21,7 @@
 #include "neverd/support/InstructionFields.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/MathExtras.h"
@@ -518,14 +519,10 @@ void SignatureDB::apply(const BinaryImage &Img,
       const StoredModule &Mod = Modules[ModIdx];
       // The names a module gives one offset are one routine's aliases, so
       // each offset makes one match.
-      std::map<uint32_t, std::vector<std::string_view>> ByOffset;
-      for (const StoredName &Ref : Mod.publicNames())
-        ByOffset[Ref.Offset].push_back(Ref.Name);
-      for (auto &[Offset, Names] : ByOffset) {
+      auto AddMatch = [&](uint32_t Offset,
+                          llvm::ArrayRef<std::string_view> Names) {
         if (Offset > std::numeric_limits<uint64_t>::max() - Addr)
-          continue;
-        std::sort(Names.begin(), Names.end(), preferredAliasOrder);
-        Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+          return;
         SigMatch M;
         M.Address = Addr + Offset;
         M.Name = std::string(Names.front());
@@ -535,6 +532,20 @@ void SignatureDB::apply(const BinaryImage &Img,
         M.FuncLen = Mod.TotalLen;
         Matches.push_back(std::move(M));
         MatchModules.push_back(ModIdx);
+      };
+      const auto Publics = Mod.publicNames();
+      // A single name needs neither a grouping tree nor an alias buffer.
+      if (Publics.size() == 1) {
+        AddMatch(Publics.front().Offset, Publics.front().Name);
+        continue;
+      }
+      std::map<uint32_t, std::vector<std::string_view>> ByOffset;
+      for (const StoredName &Ref : Publics)
+        ByOffset[Ref.Offset].push_back(Ref.Name);
+      for (auto &[Offset, Names] : ByOffset) {
+        std::sort(Names.begin(), Names.end(), preferredAliasOrder);
+        Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+        AddMatch(Offset, Names);
       }
     }
   }
@@ -914,6 +925,13 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     return MatchModules[I] == NoModule ? llvm::ArrayRef<StoredName>()
                                        : Modules[MatchModules[I]].references();
   };
+  auto ModuleStartOf = [&](size_t I) {
+    const uint64_t Address = Matches[I].Address;
+    for (const StoredName &Name : Modules[MatchModules[I]].publicNames())
+      if (Name.Name == Matches[I].Name)
+        return Address - Name.Offset;
+    return Address;
+  };
 
   // Where each reference of each match branches: the branch's target and,
   // when that is a routine that only jumps on, the routine it reaches.  The
@@ -941,12 +959,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     });
     // Every public name of a module shares its references; the module's
     // start is the match address less the name's offset.
-    uint64_t Start = Matches[I].Address;
-    for (const StoredName &Name : Modules[MatchModules[I]].publicNames())
-      if (Name.Name == Matches[I].Name) {
-        Start = Matches[I].Address - Name.Offset;
-        break;
-      }
+    uint64_t Start = ModuleStartOf(I);
     if (Img.Arch == Arch::ARM)
       Start &= ~uint64_t(ThumbStateBit);
     for (size_t R = 0; R < References.size();) {
@@ -973,6 +986,9 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // The matches whose references branch to each address, and the matches at
   // each address, as sorted (address, match) pairs.
   using Entry = std::pair<uint64_t, size_t>;
+  // A raw byte hit cannot confirm another candidate while its own references
+  // contradict it. The set changes only between parallel check rounds.
+  llvm::DenseSet<Entry> DisprovedPatterns;
   std::vector<Entry> Calling, At;
   for (size_t I = 0; I < Matches.size(); ++I) {
     At.emplace_back(Matches[I].Address, I);
@@ -1020,7 +1036,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   auto PatternAt = [&](std::string_view Name, uint64_t Address) {
     for (const Entry &Hit : Range(PatternsAt, Address))
       for (const StoredName &Public : Modules[Hit.second].publicNames())
-        if (Public.Offset == 0 && Public.Name == Name)
+        if (Public.Offset == 0 && Public.Name == Name &&
+            !DisprovedPatterns.contains(Hit))
           return true;
     return false;
   };
@@ -1032,7 +1049,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   std::unordered_map<uint64_t, SettledRoutine> Settled;
   std::vector<bool> Dropped(Matches.size(), false);
   auto SettleAt = [&](uint64_t Address) {
-    std::vector<const SigMatch *> Proposals;
+    llvm::SmallVector<const SigMatch *, 4> Proposals;
     for (const Entry &Match : Range(At, Address))
       if (!Dropped[Match.second])
         Proposals.push_back(&Matches[Match.second]);
@@ -1124,16 +1141,23 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // checked against: a leaf that calls an import tells two same-byte
   // instantiations apart, and then so does every routine that calls one of
   // them.  So the check repeats, each round against what the last one
-  // settled, until a round settles nothing new.  A match's verdict changes
-  // only with what its references' targets settle, so a round checks only
-  // the matches that call an address the last one settled differently.
-  // Matches are only ever dropped, and the rounds are bounded all the same.
+  // settled, until a round changes no evidence. A round checks only callers
+  // of changed targets. Both settlement and raw-pattern availability matter:
+  // a rejected pattern may have confirmed a caller even at an unnamed target.
+  // Contradictions derived from provisional names can also be withdrawn, so
+  // rejected callers must be reconsidered when that evidence changes.
   // The first round checks every match with references; a round with many
   // to check checks them in parallel, against what the last one settled.
   std::vector<size_t> Work;
   for (size_t I = 0; I < Matches.size(); ++I)
     if (!ReferencesOf(I).empty())
       Work.push_back(I);
+  std::vector<size_t> Next;
+  std::vector<uint8_t> Queued(Matches.size(), 0);
+  auto SortUnique = [](auto &Values) {
+    llvm::sort(Values);
+    Values.erase(std::unique(Values.begin(), Values.end()), Values.end());
+  };
   for (size_t Round = 0; Round < MaxReferenceRounds && !Work.empty(); ++Round) {
     std::vector<Outcome> Outcomes(Work.size());
     if (Work.size() >= ParallelReferenceMatches) {
@@ -1152,19 +1176,33 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         Outcomes[W] = Check(Work[W]);
     }
 
-    std::set<uint64_t> Touched;
+    std::vector<uint64_t> Touched;
+    std::vector<uint64_t> ChangedPatterns;
     for (size_t W = 0; W < Work.size(); ++W) {
       const size_t I = Work[W];
-      if (Outcomes[W] == Outcome::Contradicted)
-        Dropped[I] = true;
-      else if ((Outcomes[W] == Outcome::Confirmed) != Matches[I].Confirmed)
-        Matches[I].Confirmed = Outcomes[W] == Outcome::Confirmed;
-      else
+      const bool Contradicted = Outcomes[W] == Outcome::Contradicted;
+      const bool Confirmed = Outcomes[W] == Outcome::Confirmed;
+      if (Contradicted == Dropped[I] && Confirmed == Matches[I].Confirmed)
         continue;
-      Touched.insert(Matches[I].Address);
+      if (Contradicted != Dropped[I]) {
+        Dropped[I] = Contradicted;
+        const uint64_t Start = ModuleStartOf(I);
+        const Entry Pattern{Start, MatchModules[I]};
+        const bool Changed = Contradicted
+                                 ? DisprovedPatterns.insert(Pattern).second
+                                 : DisprovedPatterns.erase(Pattern);
+        if (Changed) {
+          ChangedPatterns.push_back(Start);
+          Touched.push_back(Start);
+        }
+      }
+      Matches[I].Confirmed = Confirmed;
+      Touched.push_back(Matches[I].Address);
     }
 
-    std::set<size_t> Next;
+    SortUnique(Touched);
+    SortUnique(ChangedPatterns);
+    Next.clear();
     for (uint64_t Address : Touched) {
       // SettledAt reads a Thumb routine's settlement for the address without
       // its interworking bit too; an address no reference reads is not kept.
@@ -1174,19 +1212,60 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         continue;
       std::optional<SettledRoutine> Routine = SettleAt(Address);
       const auto Old = Settled.find(Address);
-      if (Routine ? Old != Settled.end() && Old->second == *Routine
-                  : Old == Settled.end())
+      const bool Same = Routine
+                            ? Old != Settled.end() && Old->second == *Routine
+                            : Old == Settled.end();
+      // Judge consults raw patterns only when the target has no settled name.
+      // With an unchanged name, withdrawing an unused pattern changes nothing
+      // for its callers and must not enqueue them again.
+      if (Same &&
+          (Routine || !std::binary_search(ChangedPatterns.begin(),
+                                          ChangedPatterns.end(), Address)))
         continue;
-      if (Routine)
-        Settled.insert_or_assign(Address, std::move(*Routine));
-      else
-        Settled.erase(Old);
+      if (!Same) {
+        if (Routine)
+          Settled.insert_or_assign(Address, std::move(*Routine));
+        else
+          Settled.erase(Old);
+      }
       for (uint64_t Callee : {Address, Even})
         for (const Entry &Caller : Range(Calling, Callee))
-          if (!Dropped[Caller.second])
-            Next.insert(Caller.second);
+          if (!Queued[Caller.second]) {
+            Queued[Caller.second] = 1;
+            Next.push_back(Caller.second);
+          }
     }
-    Work.assign(Next.begin(), Next.end());
+    llvm::sort(Next);
+    for (size_t I : Next)
+      Queued[I] = 0;
+    Work.swap(Next);
+  }
+
+  // Cyclic evidence can oscillate, and a call chain can exceed the round
+  // budget. No partially checked name at those addresses, or at a dependent
+  // caller, may escape. Suppress every proposal at an affected address so a
+  // remaining twin does not acquire a name just because its rival was removed.
+  if (!Work.empty()) {
+    std::unordered_set<uint64_t> Unsettled;
+    std::vector<uint64_t> Pending;
+    auto MarkUnsettled = [&](size_t I) {
+      for (uint64_t Address : {Matches[I].Address, ModuleStartOf(I)})
+        if (Unsettled.insert(Address).second)
+          Pending.push_back(Address);
+    };
+    for (size_t I : Work)
+      MarkUnsettled(I);
+    for (size_t P = 0; P < Pending.size(); ++P) {
+      const uint64_t Address = Pending[P];
+      const uint64_t Even =
+          Img.Arch == Arch::ARM ? Address & ~uint64_t(ThumbStateBit) : Address;
+      for (uint64_t Callee : {Address, Even})
+        for (const Entry &Caller : Range(Calling, Callee))
+          MarkUnsettled(Caller.second);
+    }
+    for (size_t I = 0; I < Matches.size(); ++I)
+      if (Unsettled.contains(Matches[I].Address))
+        Dropped[I] = true;
   }
 
   std::vector<SigMatch> Kept;

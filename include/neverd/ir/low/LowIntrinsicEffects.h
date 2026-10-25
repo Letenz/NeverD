@@ -9,6 +9,7 @@
 #ifndef NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 #define NEVERD_IR_LOW_LOWINTRINSICEFFECTS_H
 
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
@@ -55,6 +56,34 @@ inline bool lowAArch64SVECPAShapeIsValid(const LowOp &Op) {
   return lowAArch64VectorShapeIsValid(Op) &&
          aarch64_sve::cpaOperation(static_cast<Intrinsic>(Op.Inputs[0].Offset))
              .has_value();
+}
+
+inline bool lowAArch64AddressMemoryShapeIsValid(const LowOp &Op) {
+  if (Op.Opcode != NdOp::INTRINSIC ||
+      Op.NumInputs != kAddressLoadOperandCount + 1 || !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != kAddressMemoryIdentifierBytes ||
+      Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  for (unsigned I = 1; I != kAddressLoadOperandCount; ++I)
+    if (!Op.Inputs[I].isConst() && !Op.Inputs[I].isReg() &&
+        !Op.Inputs[I].isTemp())
+      return false;
+  return aarch64AddressMemoryShapeIsValid(
+      static_cast<Intrinsic>(Op.Inputs[0].Offset), Op.NumInputs, Op.Output.Size,
+      Op.Inputs[kAddressMemoryBaseOperand + 1].Size,
+      Op.Inputs[kAddressMemoryIndexOperand + 1].Size,
+      Op.Inputs[kAddressMemoryWordOperand + 1].Size,
+      Op.Inputs[kAddressMemoryWordOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryWordOperand + 1].Offset)
+          : std::nullopt,
+      Op.Inputs[kAddressMemoryIndexOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryIndexOperand + 1].Offset)
+          : std::nullopt);
 }
 
 inline bool lowAArch64PAuthLoadShapeIsValid(const LowOp &Op) {

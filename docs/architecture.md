@@ -94,6 +94,18 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
+`X86APXAtomic.h` owns the APX atomic native API names, operand widths,
+condition/segment controls and exact assembly fallback. The existing
+`ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
+routes preserve a native EVEX RAO-INT or CMPccXADD transaction, including dead
+results and false-condition write-back; no ordinary load/store expansion is
+permitted. Normalized offsets retain DS/FS/GS selection, with address-size
+wrapping performed by the existing effective-address owner. Default-stack
+RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
+the segment: the normalized offset cannot yet retain their distinct #SS fault
+class. `Codegen` treats LLVM error diagnostics as compilation failures and
+does not publish the parseable but incomplete objects LLVM can leave behind.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
@@ -356,6 +368,38 @@ explicit operand and clobber constraints. Compilation does not establish CPU
 feature availability. These operations preserve call argument setup and frame taint,
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
+
+`AArch64AddressMemory.def` owns original ordinary-memory operations. The first
+owned family is 64-bit `LDR Xt, [Xn, Xm, LSL #0/#3]`: its raw index and original
+word remain one effectful operation through LowIR, MedIR, LLVM and both C routes.
+The real load retains AddressAdd's access-EL checks and any internal
+AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
+The address is unknown to generic memory proofs, and discarding the result
+cannot discard the access or its possible fault. The scalar operation preserves
+local Z/P values and earlier call arguments other than its explicit output.
+Both native compiler routes use fixed separate input/output registers, preserving
+source aliases and the encoded scale. SP provenance is retained in IR, but
+execution projection refuses it without its alignment and tagging environment.
+The software tracer admits a finite image/RAM read only when the authoritative
+address owner proves identical address bits for CPTA on/off and every internal
+CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
+in both modes, including a poisoned or tagged base whose unchecked sum appears
+mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
+Swift receiver proofs consume a validated read with an explicit result, without
+granting purity or removing the access. Jump-table recovery
+requires the same control-independent address proof for every admitted physical
+slot, an exact table base and a full-width bound on the raw index. Its existing
+root, mutation and storage audits still apply. Both source routes consume the
+authenticated load's input occurrence, preserving zero indices and an index
+register overwritten by the load.
+Private-copy source replay recomputes stack-access annotations from the current
+MedIR body; a stale prologue-save flag cannot hide an edited store from that
+independent machine replay.
+This instruction preservation observes the execution host's controls; it does not model foreign
+EL/SCTLR2/translation state or preserve exception-PC and syndrome register
+identity. Other ordinary-memory families remain unqualified for CPA2, as does
+controlled native execution with CPTA enabled. The owner follows the pinned
+[Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
 their strides, multi-start pages, 16/24-bit import ordinals and signed addends.

@@ -2516,6 +2516,15 @@ private:
       const BinaryImage &Img, const JumpTableValueOccurrence &Use,
       size_t *CandidateEvidenceBudget, bool &AnalysisComplete,
       ResolverQueryScope *ReadOnlyScope = nullptr) const;
+  /// Certify one original indexed load without guessing access-EL controls.
+  /// Both operands are proved at its exact occurrence, and every possible
+  /// accessed byte must have the same address for every CPA2 control choice.
+  bool aarch64OriginalTableLoadMatches(
+      const LowOp &Load, va_t Base, uint32_t Capacity,
+      size_t *AggregateEvidenceBudget, bool &AnalysisComplete,
+      ResolverQueryScope *ReadOnlyScope = nullptr,
+      const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
+      bool UseGroupContext = true) const;
   /// UseGroupContext=false only for final joint-domain replay on one frozen
   /// owner graph with every member's exact certified edge set.
   std::vector<bool> tableValuesMatchAtUses(

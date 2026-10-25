@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
@@ -811,6 +812,24 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   using I = Intrinsic;
   if (isAArch64ExceptionReturnIntrinsic(Id))
     throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
+  if (isAArch64AddressMemoryIntrinsic(Id)) {
+    const auto Word = Ops.size() == kAddressLoadOperandCount
+                          ? constantOperand(Ops[kAddressMemoryWordOperand])
+                          : std::nullopt;
+    if (OperandBytes.size() != kAddressLoadOperandCount ||
+        !aarch64AddressMemoryShapeIsValid(
+            Id, Ops.size() + 1, ResultBytes,
+            OperandBytes[kAddressMemoryBaseOperand],
+            OperandBytes[kAddressMemoryIndexOperand],
+            OperandBytes[kAddressMemoryWordOperand], Word,
+            Ops.size() == kAddressLoadOperandCount
+                ? constantOperand(Ops[kAddressMemoryIndexOperand])
+                : std::nullopt))
+      throw std::invalid_argument(kAddressMemoryMalformed);
+    return aarch64AddressMemoryC(*aarch64AddressMemoryInstruction(*Word),
+                                 Ops[kAddressMemoryBaseOperand],
+                                 Ops[kAddressMemoryIndexOperand]);
+  }
   if (isAArch64PAuthLoadIntrinsic(Id)) {
     const auto Word = Ops.size() == kPAuthLoadOperandCount
                           ? constantOperand(Ops[1])

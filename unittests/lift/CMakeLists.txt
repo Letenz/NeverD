@@ -700,6 +700,10 @@ add_neverd_unittest(NeverDX86PortSourceTests
   x86/X86PortSourceTests.cpp
   LINK_COMPONENTS BackendC)
 
+add_neverd_unittest(NeverDX86APXAtomicSourceTests
+  x86/X86APXAtomicSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
 add_neverd_unittest(NeverDX86RepStateTests
   x86_64/X86RepStateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -1965,6 +1969,7 @@ add_neverd_unittest(NeverDDyldSharedCacheTests
 )
 
 add_neverd_unittest(NeverDArm64eAnalysisTests
+  aarch64/AArch64AddressMemoryTests.cpp
   aarch64/AArch64PAuthSemanticTests.cpp
   aarch64/AArch64_FastClassifyParityTests.cpp
   format/MachOArm64eTests.cpp

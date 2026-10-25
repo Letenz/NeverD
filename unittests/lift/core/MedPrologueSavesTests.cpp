@@ -116,6 +116,16 @@ TEST_P(MedPrologueSaves, APushedEntryValueIsAPrologueSave) {
   EXPECT_EQ(Func.Blocks[0].Ops.size(), 10u);
 }
 
+TEST(MedSourceStackAccesses, ChangedStoresLoseTheirOldPrologueProof) {
+  MedFunc Func = pushedRbx();
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+  ASSERT_TRUE(save(Func).PrologueSave);
+  Func.Blocks[0].Ops[4].Inputs[1] =
+      MedVar::makeConst(0, Func.Blocks[0].Ops[4].Inputs[1].Size);
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+  EXPECT_FALSE(save(Func).PrologueSave);
+}
+
 TEST_P(MedPrologueSaves, SaveAndReturnAddressAnnotationsShareTheFrame) {
   for (StackEntryKind Entry :
        {StackEntryKind::Call, StackEntryKind::ProcessEntry}) {

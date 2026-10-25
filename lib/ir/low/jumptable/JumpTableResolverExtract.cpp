@@ -686,6 +686,10 @@ void CFGBuilder::extractJumpTables(LowFunc &Func) {
 
   auto selectorUseRef = [&](const JumpTableValueOccurrence &Occurrence)
       -> std::optional<JumpTableSelectorUseRef> {
+    // A constant has no SSA lifetime to bind. The shared dispatch owner uses
+    // the exact authenticated load's coordinate for these constant arms.
+    if (Occurrence.Value.isConst())
+      return std::nullopt;
     if (Occurrence.Addr == InvalidVA || Occurrence.Seq < 0 ||
         Occurrence.Value.Size == 0 || !ReachableInsns.count(Occurrence.Addr))
       return std::nullopt;

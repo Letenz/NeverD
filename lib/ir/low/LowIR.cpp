@@ -80,6 +80,9 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
       return invalid(kAArch64PAuthMalformedOperation);
     return llvm::Error::success();
   }
+  if (isAArch64AddressMemoryIntrinsic(Id) &&
+      !lowAArch64AddressMemoryShapeIsValid(Op))
+    return invalid(kAddressMemoryMalformed);
   if (isAArch64PAuthLoadIntrinsic(Id) && !lowAArch64PAuthLoadShapeIsValid(Op))
     return invalid(kPAuthLoadMalformed);
   if (isAArch64PAuthIntrinsic(Id) && !lowAArch64PAuthShapeIsValid(Op))

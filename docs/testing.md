@@ -287,6 +287,32 @@ PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
 state must return a normal error for both one-function serial and eight-function
 sharded LLVM emission, with and without optimization.
+`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks original 64-bit
+LSL register-offset loads through both raw decoders, strict/permissive lifting,
+SSA and both C routes. Independent LLVM MC words check source aliases, zero
+indices, discarded destinations and both encoded scales. O0/O2 object checks
+retain one load even with an unused result; native AArch64 C execution covers
+positive/negative offsets and stores on both sides of the load. Malformed
+LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
+and the software tracer refuses state-dependent addresses in both modes, even
+when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
+Control-independent addresses retain finite image reads without guessing CPTA.
+SP-origin source execution remains explicitly unsupported. Local Z/P state
+survives only a validated scalar memory operation. Run this group with the
+decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
+Include `NativeBooleanResultProof.*` and the jump-table/computed-goto tests:
+identical-address reads preserve the differential result proof, while either
+tainted address input must refuse it. Computed-goto execution covers both a
+zero-register index and a load overwriting its index register. Selector tests
+reject stale or duplicated authentication records and duplicate load occurrences.
+`MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
+an edited store must lose its previous prologue-save annotation before the
+ObjC private-copy machine replay compares both saved representations.
+These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
+instruction families.
+Pointer-valued results retain their bits through both C routes; independent
+LLVM return tests cover the 32/64-bit x86 and Arm register ABIs.
+
 `AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
 writeback and dead-result retention through a single combined authenticated
 load, with independent emitted-word checks at O0/O2 through LLVM and both C
@@ -345,6 +371,23 @@ unit is syntax-checked for the Windows x64 target with externally supplied
 standard integer declarations. The trailing-argument fixture uses real dynamic
 CPUID outputs, so scalar constant recovery cannot make its unknown-state
 assertions vacuous. PHI copies retain the explicit unknown marker.
+
+APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
+`NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,
+condition, flag and failure-commit checks, including refusal of unrepresented
+64-bit default-stack fault semantics. The latter validates MedIR, native LLVM,
+owned assembly and both C routes; it exports 360 live/dead/repeated wrappers
+and 504 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
+`scripts/verify_x86_apx_atomic.py` takes those exports, the full fork's `llc`,
+NeverC and its independent `tests/verify-apx-atomic-completion.py` oracle.
+It checks production objects and LLVM/Clang/NeverC/GCC wrappers across supported
+formats and O0/O2. `--pipeline` additionally compiles both recovered C routes
+with Clang and NeverC, checking effective offsets, source operands, flags,
+return values and nonvolatile registers against the original instruction
+sequence. `--pipeline-only` reruns that stage without repeating the wrappers.
+These controlled completions do not qualify physical atomicity or hardware
+faults. `NeverDCodegenDiagnosticTests` requires an allocation error to reject
+an otherwise parseable object, retaining the caller's diagnostic handler.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent

@@ -9,6 +9,7 @@
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 
 #include <algorithm>
@@ -394,6 +395,13 @@ struct Transfer {
             }
           }
         }
+      } else if (lowAArch64AddressMemoryShapeIsValid(Op)) {
+        // Equal explicit operands, memory and control state execute the same
+        // original read in both runs. No address or no-fault fact is inferred.
+        // A differing Boolean bit must never influence either address input.
+        if (InputDiffers)
+          return false;
+        std::fill(Value.begin(), Value.end(), 0);
       } else if (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) {
         const auto Memory = lowMemoryOperands(Op);
         if (!Memory.Complete || !Memory.Address || Memory.Address->Size != 8 ||
