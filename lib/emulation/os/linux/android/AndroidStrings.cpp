@@ -289,8 +289,13 @@ BionicResult Bionic::stringLength(const NativeCallEvent &Call) {
     auto V = byte(A[0] + I);
     if (!V)
       return V.takeError();
-    if (!*V)
+    if (!*V) {
+      // API 28 checks the object extent only after strlen has reached NUL.
+      // The terminator must fit too; scan faults and budgets take precedence.
+      if (Name == symbol::StrlenChk && I >= A[1])
+        return failure(diagnostic::FortifyReadPrefix + Name);
       return value(I);
+    }
   }
   if (Name == symbol::Strnlen && Bound == A[1])
     return value(Bound);
