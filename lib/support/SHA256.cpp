@@ -20,6 +20,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SHA256.h"
@@ -143,6 +144,7 @@ bool hasTargetFeatures() {
   __attribute__((target(Target)))
 #endif
 #include "SHA256.def"
+LLVM_ATTRIBUTE_NOINLINE
 void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
   uint32x4_t ABCD = vld1q_u32(State);
   uint32x4_t EFGH = vld1q_u32(State + WordsPerRegister);
@@ -190,6 +192,7 @@ void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
   __attribute__((target(Features)))
 #endif
 #include "SHA256.def"
+LLVM_ATTRIBUTE_NOINLINE
 void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
   const __m128i ByteSwap =
       _mm_loadu_si128(reinterpret_cast<const __m128i *>(WordByteSwap.data()));
