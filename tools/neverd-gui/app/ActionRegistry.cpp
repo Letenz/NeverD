@@ -2,6 +2,7 @@
 
 #include "../Config.h"
 #include "Icons.h"
+#include "ShortcutHint.h"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -42,8 +43,8 @@ ActionRegistry::ActionRegistry(QObject *parent) : QObject(parent) {
     action->setIcon(icon(QString::fromLatin1(spec.icon)));
     action->setShortcutVisibleInContextMenu(true);
     if (*spec.shortcut)
-      action->setShortcut(QKeySequence(QString::fromLatin1(spec.shortcut),
-                                       QKeySequence::PortableText));
+      action->setShortcuts(QKeySequence::listFromString(
+          QString::fromLatin1(spec.shortcut), QKeySequence::PortableText));
     if (spec.viewScoped) {
       action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
       viewActions_.append(action);
@@ -186,7 +187,7 @@ void ActionRegistry::retranslate() {
     plain.remove(QLatin1Char('&'));
     if (plain.endsWith(QStringLiteral("...")))
       plain.chop(3);
-    const QString keys = action->shortcut().toString(QKeySequence::NativeText);
+    const QString keys = shortcutHint(action->shortcuts());
     action->setToolTip(
         keys.isEmpty() ? plain : QStringLiteral("%1 (%2)").arg(plain, keys));
   }

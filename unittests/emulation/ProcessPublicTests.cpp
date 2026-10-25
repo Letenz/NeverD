@@ -4019,6 +4019,66 @@ TEST_F(ProcessPublic, AndroidApplicationValuesMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidExactClassQueriesMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Variant : {"jni-O0-none", "jni-O2-relr"}) {
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string(Variant) + ".so"))
+               .string();
+    for (unsigned Case = 0; Case != 5; ++Case) {
+      SCOPED_TRACE(Variant);
+      SCOPED_TRACE(Case);
+      auto Request = llvm::cantFail(llvm::json::parse(R"({
+        "backend":"unicorn","instruction_quantum":83,
+        "instruction_limit":200000,"event_limit":5000,
+        "android":{"entry_symbol":"jni_loader_exact_query","initialize":false,
+          "jni":true,"thread_limit":2,"observe_java_state":true,
+          "application_snapshot":{"phase":"attached","class_lookup_failures":[
+            {"loader":"boot","exact_query":"fixture.Optional ",
+             "message":"declared missing"}]}}})"));
+      auto &Android = *Request.getAsObject()->getObject(field::Android);
+      Android[field::Arguments] = llvm::json::Array{Case == 4 ? 0 : Case};
+      if (Case == 4)
+        Android.getObject(field::ApplicationSnapshot)
+            ->erase(field::ApplicationClassLookupFailures);
+      const auto Options = jsonText(*Request.getAsObject());
+      const auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      auto *Object = Report.getAsObject();
+      ASSERT_NE(Object, nullptr);
+      ASSERT_EQ(Object->getString(field::Stop), Case == 0 ? "returned"
+                                                : Case == 2
+                                                    ? "runtime_failure"
+                                                    : "unsupported_service")
+          << Text;
+      if (Case) {
+        EXPECT_EQ(*Object->get(field::ReturnValue), llvm::json::Value(nullptr));
+        ASSERT_TRUE(Object->getString(field::Diagnostic));
+        EXPECT_NE(Object->getString(field::Diagnostic)
+                      ->find(Case == 2
+                                 ? "unmodeled class: fixture/Optional "
+                                 : "no supplied declaration in this loader"),
+                  llvm::StringRef::npos);
+      } else {
+        EXPECT_EQ(Object->getString(field::ReturnValue), "0");
+      }
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                Case ? process_cli::Incomplete : process_cli::Success);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidMessageQueuesMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android fixtures unavailable";
