@@ -1972,6 +1972,10 @@ metadata and byte-preserving repair remain authoritative. Transport parsing
 copies validated simdjson values into the owned nlohmann DOM and checks decoded
 keys during object insertion. Floating-point tokens and negative zero retain
 the original numeric parser; refused SIMD input uses the original admission path.
+The CLI export-table adapter reuses this parser and owned DOM for the SDK's
+shallow export array. It validates every record before formatting and admits
+the full SDK response size, without applying the transport frame-size budget.
+The SDK remains responsible for export order, ordinal width and UTF-8 repair.
 The default task helper uses oneTBB with checked 8 MiB worker stacks. A caller
 with enough unused stack can coordinate directly; small callers get a native
 coordinator. Small batches and explicitly serial weighted batches also use
@@ -4083,6 +4087,11 @@ and its [schema](web-artifact-schema.md) for the current capability boundary.
 
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
+`loader/ImageProfile` separately owns metadata-based system, execution-domain
+and runtime evidence. Automatic pattern selection consumes that evidence and
+the reviewed bundled pack scopes before file/cache I/O. Unknown or conflicting
+dimensions retain coverage; mixed SDK and compiler helpers keep their broad
+scope. See [signature selection](signature-selection.md).
 MedIR analyses prove typed expressions and bounded COM ownership sequences.
 `PipelineLibraryRecognition` combines this evidence without changing names,
 operands, bodies or ABI contracts. The session publishes one display identity

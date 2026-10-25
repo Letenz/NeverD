@@ -1563,6 +1563,14 @@ order and retain paired measurements and CPU time alongside output hashes.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
 
+`SessionCAPITest.Exports*` checks complete export JSON spelling, row order and
+duplicates, zero and high addresses, the full ordinal width, escaped and invalid
+UTF-8 names, and later edits to the image's export table.
+`NeverDExportTableTests` checks complete CLI text, duplicate rows, embedded NUL,
+Unicode, full-width ordinals and tables above the transport frame budget. It
+also rejects malformed SDK responses before printing a partial table. Run it
+with SIMD JSON enabled and disabled when changing this adapter.
+
 The [radare2 CLI read comparison](../tools/neverd-bench/radare2-cli.md) checks
 complete mapped ranges against file bytes before accepting timing observations.
 `scripts/tests/test_radare2_cli_compare.py` covers incomplete/wrong results,
@@ -5073,6 +5081,16 @@ enabled, `NeverDWorkerWeb` in `build-release/tools/neverd-worker` checks the rea
 framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
+
+`NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
+regressions: PE native user processes versus drivers, restricted PE loads,
+Android/glibc/musl and unknown System V ELF, conflicting ABI notes, bounded
+Linux module metadata, iOS/macOS/kext headers, mixed WDK packs and custom
+names. Explicit directory loading still attempts every file; a failed
+automatic load retains the previous successful database and statistics.
+`NeverDSessionSignatureProfileTests` verifies the same selection through the
+public C SDK, including header JSON counts and their manual-load reset.
+See [signature selection](signature-selection.md) for the evidence boundaries.
 
 The feature repository retains the original compiler objects, truth, source
 profiles and digests. `NeverDLibraryRecognitionTests` consumes those archives
