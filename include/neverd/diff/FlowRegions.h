@@ -44,13 +44,18 @@ inline constexpr llvm::StringLiteral LLVMBranchProgressFlowRegionProfile =
     "llvm-progress-neighborhoods-v4";
 inline constexpr llvm::StringLiteral LLVMBranchProgressFlowFragmentProfile =
     "llvm-progress-fragments-v4";
+inline constexpr llvm::StringLiteral LLVMModularProgressFlowRegionProfile =
+    "llvm-progress-neighborhoods-v5";
+inline constexpr llvm::StringLiteral LLVMModularProgressFlowFragmentProfile =
+    "llvm-progress-fragments-v5";
 inline bool isFlowFragmentProfile(llvm::StringRef Profile) {
   return Profile == FlowFragmentProfile || Profile == LLVMFlowFragmentProfile ||
          Profile == LLVMParameterFlowFragmentProfile ||
          Profile == LLVMProgressFlowFragmentProfile ||
          Profile == LLVMMultiBlockProgressFlowFragmentProfile ||
          Profile == LLVMNestedProgressFlowFragmentProfile ||
-         Profile == LLVMBranchProgressFlowFragmentProfile;
+         Profile == LLVMBranchProgressFlowFragmentProfile ||
+         Profile == LLVMModularProgressFlowFragmentProfile;
 }
 inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
   return Profile == LLVMFlowRegionProfile ||
@@ -60,11 +65,13 @@ inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
          Profile == LLVMMultiBlockProgressFlowRegionProfile ||
          Profile == LLVMNestedProgressFlowRegionProfile ||
          Profile == LLVMBranchProgressFlowRegionProfile ||
+         Profile == LLVMModularProgressFlowRegionProfile ||
          Profile == LLVMParameterFlowFragmentProfile ||
          Profile == LLVMProgressFlowFragmentProfile ||
          Profile == LLVMMultiBlockProgressFlowFragmentProfile ||
          Profile == LLVMNestedProgressFlowFragmentProfile ||
-         Profile == LLVMBranchProgressFlowFragmentProfile;
+         Profile == LLVMBranchProgressFlowFragmentProfile ||
+         Profile == LLVMModularProgressFlowFragmentProfile;
 }
 llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
                                   bool Fragments = false);

@@ -189,6 +189,10 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
         const auto Mnemonic =
             llvm::StringRef(Asm->getAsmString()).split('\n').first;
         Sgx |= Mnemonic == "encls" || Mnemonic == "enclv";
+        // An older SDK's owned assembly can select a native C builtin later.
+        // Its feature requirement must survive that assembly representation.
+        if (isX86RtmNativeName("llvm.x86." + Mnemonic.str()))
+          Required.insert("rtm");
       }
     }
   return (Atomic ? X86APXAtomicCompilerDispatch : "") +

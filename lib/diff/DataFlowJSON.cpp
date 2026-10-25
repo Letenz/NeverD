@@ -152,6 +152,8 @@ Object loopProgress(const FlowLoopProgress &L) {
     Out["header"] = L.Header;
   if (L.Latch != NoIndex)
     Out["latch"] = L.Latch;
+  if (L.Proof != FlowCounterProof::None)
+    Out["proof"] = flowCounterProofName(L.Proof);
   return Out;
 }
 Object progress(const FlowProgress &P, llvm::StringRef Profile) {
@@ -159,7 +161,8 @@ Object progress(const FlowProgress &P, llvm::StringRef Profile) {
              {"source_contract", P.SourceContract},
              {"observed_contract", P.ObservedContract},
              {"loop_count", P.LoopCount}};
-  if (Profile == LLVMBranchProgressDataFlowProfile) {
+  if (Profile == LLVMBranchProgressDataFlowProfile ||
+      Profile == LLVMModularProgressDataFlowProfile) {
     Out["backedge_count"] = P.BackedgeCount;
     Out["guard_count"] = P.Loops.size();
   }
@@ -446,7 +449,9 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   uint64_t Edges = 0, ProgressRows = 0;
   if (Progress) {
     const auto &P = object(field(O, "progress"));
-    const bool Branched = G.Profile == LLVMBranchProgressDataFlowProfile;
+    const bool Modular = G.Profile == LLVMModularProgressDataFlowProfile;
+    const bool Branched =
+        G.Profile == LLVMBranchProgressDataFlowProfile || Modular;
     if (Branched)
       fields(P, {"kind", "source_contract", "observed_contract", "loop_count",
                  "backedge_count", "guard_count", "loops"});
@@ -475,7 +480,10 @@ DataFlowGraph readDataFlowGraph(const Value &V,
       const bool MultiBlock =
           G.Profile == LLVMMultiBlockProgressDataFlowProfile ||
           G.Profile == LLVMNestedProgressDataFlowProfile || Branched;
-      if (Branched)
+      if (Modular)
+        fields(L, {"block", "counter", "update", "compare", "header", "latch",
+                   "proof"});
+      else if (Branched)
         fields(L, {"block", "counter", "update", "compare", "header", "latch"});
       else if (MultiBlock)
         fields(L, {"block", "counter", "update", "compare", "header"});
@@ -488,6 +496,15 @@ DataFlowGraph readDataFlowGraph(const Value &V,
            uint32_t(count(field(L, "compare"))),
            MultiBlock ? uint32_t(count(field(L, "header"))) : NoIndex,
            Branched ? uint32_t(count(field(L, "latch"))) : NoIndex});
+      if (Modular) {
+        const auto Proof =
+            text(field(L, "proof"), limits::kMaxFlowIdentityBytes);
+        require(Proof == "nowrap" || Proof == "modular",
+                "unknown counter proof basis");
+        Record.Loops.back().Proof = Proof == "nowrap"
+                                        ? FlowCounterProof::NoWrap
+                                        : FlowCounterProof::Modular;
+      }
     }
     Record.LoopCount = count(field(P, "loop_count"));
     Record.BackedgeCount =

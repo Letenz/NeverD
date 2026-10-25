@@ -2535,6 +2535,10 @@ TEST(X86SystemStateSource,
         for (const auto &Source : {High, LLVM}) {
           // Stock Clang owns these builtins too. Select the native branch,
           // without claiming support for the fork's other system builtins.
+          ASSERT_NE(
+              Source.find(Zero ? "target(\"clzero\")" : "target(\"rtm\")"),
+              std::string::npos)
+              << Source;
           const auto Native =
               "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n" + Source;
           compileNativeC(Compiler, Directory, Format, Native,

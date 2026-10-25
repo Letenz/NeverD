@@ -1643,6 +1643,38 @@ order and retain paired measurements and CPU time alongside output hashes.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
 
+`NeverDDigestTests` owns the former Lift `InputDigest.*` vector checks and adds
+multi-block vectors, every byte alignment and padding boundary, read-only input
+next to an inaccessible page, bounded progress, cancellation and retry.
+`NeverDPortableDigestTests` runs the same cases with the actual SHA owner compiled
+with its private `NEVERD_SHA256_PORTABLE` test definition. No product build disables
+runtime dispatch. `NEVERD_TEST_SHA256_HARDWARE=1` requires the hardware path to be
+selected; `=0` requires fallback, and an unset variable only records selection.
+
+The digest tests can build independently with the recorded LLVM fork's Support
+and TargetParser targets, or an explicit matching `LLVM_DIR`:
+
+```bash
+cmake -S unittests/digest -B build-digest -G Ninja -DCMAKE_BUILD_TYPE=Release
+python scripts/build.py build-digest --target NeverDDigestTests NeverDPortableDigestTests --parallel 4
+ctest --test-dir build-digest --output-on-failure --no-tests=error
+```
+
+`digest.yml` requires native ARM64 compilation and hardware selection on Linux
+(Clang/GCC), macOS and Windows (MSVC/clang-cl). Both backends must pass every case.
+The optional `NeverDDigestTestsBench` and `NeverDPortableDigestTestsBench` targets
+feed `unittests/digest/benchmark.py`; it alternates process order, excludes an
+initial pair, compares complete digest/consumption results, and retains seven
+paired wall/process CPU observations plus binary hashes. Run after builds and
+tests finish. These are primitive measurements, not CLI/worker/GUI latency or
+cross-host rankings. Native runner contention and unavailable hosts remain
+qualification limits.
+
+The ARM64 compression follows the [Arm ACLE SHA256 intrinsics](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#sha256).
+Linux detection uses the [kernel HWCAP contract](https://docs.kernel.org/arch/arm64/elf_hwcaps.html).
+Darwin detection uses Apple's [instruction-set capability query](https://developer.apple.com/documentation/kernel/1387446-sysctlbyname/determining_instruction_set_characteristics);
+Windows detection uses LLVM's mapping of [processor feature availability](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent).
+
 `SessionCAPITest.Exports*` checks complete export JSON spelling, row order and
 duplicates, zero and high addresses, the full ordinal width, escaped and invalid
 UTF-8 names, and later edits to the image's export table.
@@ -2021,6 +2053,43 @@ loop/backedge/guard totals plus each selected guard's physical latch in both
 themes and at fractional DPI. Frozen v3 complete/limited/cancelled reports join
 the previous compatibility corpus. These fixtures establish supported behavior,
 not general behavioral equivalence or held-out accuracy.
+
+`BinaryDiffModularProgress` checks v5 modular orbit coverage against independent
+concrete-state oracles: every integer comparison, operand order and branch
+polarity for widths 1–4 with both literal bounds and two same-counter affine
+observations, plus every pair of translated unsigned ranges at width 3. These
+oracles enumerate defined integer states; they do not substitute for
+the undef/poison argument. Dedicated cases cover unfrozen and externally frozen
+seeds, empty/full continuation sets, disconnected exits, split residue
+projections, i64 endpoints, common/selected/direct backedges, mixed nested proof
+kinds, exact storage/work limits and cancellation at every charged work point.
+Freezes, resets, incompatible steps, missing residues and remaining cycles
+must refuse progress. Schema 9 replays and authenticates each canonical proof
+kind; legacy encodings omit that field.
+
+Owned `modular_progress_fixture.c` adds unknown initial counters with odd/even
+steps across x64/AArch64 ELF/COFF/Mach-O at O0/O2. Reachable exit ranges and
+single-exit infinite controls retain the ordinary optimizer and native argument
+attributes. Tests record unsupported compiler shapes and require qualified
+cross-level anchors, changed constants/body/steps/bounds, and saved replay.
+The former AArch64 family5/family6 gaps now exercise modular/affine admission;
+their v4 refusals remain tested. SDK, Python, worker and Qt inspect actual
+owned bytes, proof kinds, page-size-one witnesses, slices and source-bound
+restore. Qt also checks both proof explanations in light/dark themes and at
+fractional DPI. Frozen v4 complete/limited/cancelled reports supplement the
+older byte-exact corpus. This remains functional coverage, not a held-out
+accuracy benchmark or proof of whole-function equivalence.
+
+`BinaryDiffFlowBinding` qualifies exact LLVM report binding across same-block
+PHI permutations, including anchored cycles and remapped progress IDs. It
+rejects changed constants, origins, contracts, proof kinds, conflicting aliases,
+ordinary instruction reordering, unanchored PHI cycles and malformed fresh
+references. Exact binding-work exhaustion and every injected cancellation point
+leave both snapshots unchanged. The C SDK regression
+`RestoresPhiNumberingWhileAuthenticatingEverySourceFact` checks v4/v5 reports,
+preserves saved IDs through repeated export/restore, and rejects altered source
+observations. The frozen report corpus exercises actual old native projections;
+no compatibility fixture is regenerated to make a new engine pass.
 
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
@@ -6389,7 +6458,7 @@ Packed-flags tests cover all scalar entry-flag combinations, privilege masks, bo
 
 `NeverDX86DecodeDetailTests` covers all three decode routes, both x64 address widths, signed displacement boundaries, mandatory prefixes, genuine i386 disp16, moffs, truncation and detail-free reuse. Exact relocation occurrences bind; wrong widths, offsets and values do not. Native independence and refinement tests additionally retain full frame writes, reject observed arbitrary flags and reject an altered shift candidate.
 
-`NeverDLowUndefinedDigestTests` checks independent SHA-256 vectors, every stored field, signed sequence bits, order, padding exclusion and unchanged inputs. Cases cover inline-buffer growth, the 199/200-operation boundary and larger streaming spans. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` checks real stale-evidence rejection and rebinding across both paths. Keep existing `InputDigest.*` coverage in `NeverDLiftTests`, and rebuild affected callers when changing the outlined owner. Report actual sanitizer, portable-path and host coverage; digest microbenchmarks alone do not certify native equivalence.
+`NeverDLowUndefinedDigestTests` checks independent SHA-256 vectors, every stored field, signed sequence bits, order, padding exclusion and unchanged inputs. Cases cover inline-buffer growth, the 199/200-operation boundary and larger streaming spans. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` checks real stale-evidence rejection and rebinding across both paths. Keep `InputDigest.*` coverage in `NeverDDigestTests` and controlled loader cases in `NeverDNativeBufferTests`, and rebuild affected callers when changing the outlined owner. Report actual sanitizer, portable-path and host coverage; digest microbenchmarks alone do not certify native equivalence.
 
 ```bash
 cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
@@ -6951,6 +7020,18 @@ multi-second durations, full unsigned 32-bit range, high register-bit narrowing,
 clock rollover, errno preservation, idle wake completion and a runnable peer.
 Disabled time policy, clock overflow and closed providers retain incomplete
 calls and unchanged output memory.
+The same callers check `sleep` through direct imports, dynamic lookup and full
+ABI registers: zero, ordinary seconds, both sides of `INT_MAX`, `UINT_MAX` and
+ignored upper bits. They compare complete output bytes, errno, unsigned return
+values and pending native events across single-thread and cooperative execution.
+`AndroidSignals.SecondSleep*` checks fractional and exact-second remainders,
+SA_RESTART, blocked/ignored signals, termination, deadline ordering, nested
+handlers, raw-result edits (including 32-bit return narrowing), and wrapper
+bypass. Run the complete Android signal/sleep and Linux process suites after
+changing the shared sleep owner or signal completion path.
+`ProcessPublic.AndroidSecondSleepReportsMatchSDKAndCLI` compares full C API and
+CLI reports for dynamic success, a large unsigned remainder, disabled clock
+policy and a closed provider. All callers are independent synthetic fixtures.
 `LinuxClockTests.cpp` checks shared elapsed
 time and atomic refusal on clock/deadline overflow. The x64/ARM64 Linux process
 fixtures verify raw sleep errors, unchanged input and both updated clock layouts.

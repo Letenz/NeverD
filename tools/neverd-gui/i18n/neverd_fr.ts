@@ -6445,6 +6445,10 @@ Couverture : %7</translation>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>SSA optimisée avec analyse des boucles à branches</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à rebouclage numérique</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6603,18 @@ La terminaison ne prouve pas l’égalité des nombres d’itérations ou des r�
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Boucle prouvée : bloc d’en-tête %1 → bloc de retour %2 · compteur #%3 → mise à jour #%4 · garde #%5 dans le bloc %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à rebouclage numérique</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Preuve : un compteur monotone avec un contrat sans débordement.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Preuve : chaque cycle du compteur atteint une sortie commune, même après rebouclage numérique.</translation>
     </message>
 </context>
 <context>
