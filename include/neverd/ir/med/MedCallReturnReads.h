@@ -21,7 +21,7 @@ namespace neverd {
 struct BinaryImage;
 struct MedFunc;
 
-/// Check exact entry-relative loads against reaching physical x64 CALL
+/// Check exact entry-relative loads against reaching physical x86 CALL
 /// return slots before source cleanup. An ordinary C call does not write the
 /// reconstructed frame. A later explicit store kills only its own bytes;
 /// reading any remaining call-written byte requires a machine-state source

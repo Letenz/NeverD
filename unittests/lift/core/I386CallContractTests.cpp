@@ -97,6 +97,65 @@ BinaryImage makeImage(std::vector<uint8_t> Code,
   return Img;
 }
 
+TEST(I386CallContract, PhysicalCallReturnSlotsDoNotKeepOldSourceConstants) {
+  for (bool Rewrite : {false, true})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      // PUSH 19 releases exactly the four bytes overwritten by the next CALL.
+      std::vector<uint8_t> Code = {0x83, 0xec, 16, 0x6a, 19, 0x83, 0xc4, 4};
+      const auto Call = callThroughSlot(Iat);
+      Code.insert(Code.end(), Call.begin(), Call.end());
+      if (Rewrite)
+        Code.insert(Code.end(), {0xc7, 0x44, 0x24, 0xfc, 19, 0, 0, 0});
+      Code.insert(Code.end(), {0x8b, 0x44, 0x24, 0xfc, 0x83, 0xc4, 16, 0xc3});
+      auto Image = makeImage(Code, {"rand"});
+      Image.Format = Format;
+      for (bool LLVM : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(testing::Message() << Rewrite << ':' << unsigned(Format)
+                                          << ':' << LLVM << ':' << NoOpt);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text};
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = true;
+          Options.NoOpt = NoOpt;
+          const auto Result = Pipeline().run(Image, Context, Options);
+          if (!Rewrite) {
+            EXPECT_FALSE(Result.Success);
+            EXPECT_NE(Result.Error.find("physical CALL return slot"),
+                      std::string::npos)
+                << Result.Error;
+            continue;
+          }
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Format;
+          COptions.Image = &Image;
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+            ASSERT_TRUE(
+                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+          } else
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source +
+                    "\nstatic unsigned calls;\n"
+                    "int rand(void) { ++calls; return 13; }\n"
+                    "int main(void) { return wrap() != 19 || calls != 1; }\n",
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+    }
+}
+
 TEST(I386CallContract, HeaderFloatingImportsDefineTheNormalizedX87Result) {
   class Header : public NullDebugContext {
   public:

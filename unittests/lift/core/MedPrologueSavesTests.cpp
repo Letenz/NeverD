@@ -753,13 +753,28 @@ MedFunc observedCallSlot() {
 }
 
 TEST(SourceCallReturnReads, ConstantOldContentsCannotHideTheImplicitWrite) {
-  auto Func = observedCallSlot();
-  std::string Error;
-  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
-  EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos);
-  EXPECT_NE(Error.find("100D"), std::string::npos);
-  EXPECT_EQ(Func.Blocks[0].Ops[3].Inputs[1].ConstVal, 19u);
-  EXPECT_FALSE(Func.Blocks[0].Ops[3].PrologueSave);
+  for (Arch Architecture : {Arch::X64, Arch::X86}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    auto Func = observedCallSlot();
+    auto Image = callSlotImage();
+    Image.Arch = Architecture;
+    const auto Width = getTargetRegInfo(Architecture).PointerSize;
+    for (auto &Op : Func.Blocks[0].Ops) {
+      Op.Output.TheArch = Architecture;
+      Op.Output.Size = Width;
+      for (unsigned I = 0; I < Op.NumInputs; ++I) {
+        Op.Inputs[I].TheArch = Architecture;
+        Op.Inputs[I].Size = Width;
+      }
+    }
+    Func.Blocks[0].Ops[2].Inputs[1].ConstVal = Width;
+    std::string Error;
+    EXPECT_FALSE(validateSourceCallReturnReads(Func, Image, Error));
+    EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos);
+    EXPECT_NE(Error.find("100D"), std::string::npos);
+    EXPECT_EQ(Func.Blocks[0].Ops[3].Inputs[1].ConstVal, 19u);
+    EXPECT_FALSE(Func.Blocks[0].Ops[3].PrologueSave);
+  }
 }
 
 TEST(SourceCallReturnReads, OnlyLaterWritesOfEachObservedByteEndTheHazard) {

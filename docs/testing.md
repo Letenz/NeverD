@@ -12922,3 +12922,9 @@ return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
 optimization on and off. Variant 8 supplies a complete later store and executes
 both generated C routes at O0/O2 with an independent provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
+
+`I386CallContract.PhysicalCallReturnSlotsDoNotKeepOldSourceConstants` checks
+four-byte CALL slots across the same three formats, both source routes and
+source optimization settings. A complete later DWORD store permits host C
+execution at O0/O2; a reaching physical CALL write requires a diagnostic.
+This is source projection coverage, not native execution on each OS.

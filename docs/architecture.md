@@ -11592,7 +11592,7 @@ provenance and negative narrow constants cannot certify a frame offset. The
 same proof supplies stack annotations and saved-register recovery.
 
 Shared source stack preparation rejects exact entry-relative loads reached by
-an x64 CALL return-slot write that the reconstructed C frame does not contain.
+an x86 CALL return-slot write that the reconstructed C frame does not contain.
 It reuses the ABI owner's current-SP walk and original call/jump encoding
 policy; a synthetic tail call supplies no push. Explicit later stores kill only
 the bytes they write on each incoming path. Unknown call positions, incomplete
