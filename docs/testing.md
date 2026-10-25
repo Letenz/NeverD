@@ -377,9 +377,9 @@ LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes
 extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
 These are explicit-IR tests; they do not
 qualify automatic decoding/lifting, relocated-image projection or native
-half/whole-vector ABI. Stack and image requirements fail before body filtering.
+half/whole-vector ABI. Synthetic-stack and image requirements fail before body filtering.
 Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
-both generated C files, the independent native harness and an LLVM ELF object
+both generated C files, the independent native harness and LLVM ELF/Mach-O objects
 in a fresh directory recorded in the test's properties. These artifacts allow
 a controlled guest to consume the actual generated output; exporting them is
 not CPTA-on qualification.
@@ -395,7 +395,40 @@ model. It does not qualify automatic lifting, image relocation, original SP,
 writeback/pairs, EL0 instruction execution, native half/whole-vector ABI,
 Apple hardware, other translation/tagging contexts or overflowing memory and
 every CPACHECK choice. Remote GitHub CI results require separate observation.
-SP-origin source execution remains explicitly unsupported. Local Z/P state
+`AArch64StackAddressMemory` separately checks no-image, explicit raw-SP
+parameters with all 177 immediate samples and 184 GPR/SIMD register-offset
+samples. Both C routes and linked LLVM objects execute at O0/O2, retaining
+literal SP, signed/extended indices and both halves of Q results. The same
+361 samples check nominal entry-SP coordinates and LowToMed frame bounds.
+Unknown or expired inputs, joins/independent roots, hidden invalid source
+bases and malformed assembly/clobber contracts retain their refusal.
+`NEVERD_ARM64E_CPTA_STACK_ARTIFACT_DIR` exports the immediate SP matrix under
+the `cpta_stack_memory_artifacts` property. The native exception verifier
+consumes successful complete seven-test SP and seven-test immediate reports:
+
+```sh
+python3 scripts/verify_arm64e_sp_memory.py \
+  --stack-artifacts /path/to/stack-export \
+  --control-artifacts /path/to/immediate-export \
+  --stack-report /path/to/stack-tests.json \
+  --control-report /path/to/immediate-tests.json \
+  --neverd-revision FULL_40_CHARACTER_COMMIT \
+  --sdk /path/to/MacOSX.sdk --compiler /path/to/clang \
+  --output /path/to/new-evidence-directory
+```
+
+The verifier compiles each C route at O0/O2 and also links the actual Mach-O
+object. Every one of the 177 SP accesses must raise a native SP-alignment
+exception, report exactly the supplied raw SP and leave all 66,064 guarded
+bytes unchanged. Five independent GPR routes execute at the same eight-byte
+misalignment and check their complete byte results. Inputs, commands, compiler
+version, verifier hashes and failed observations are retained. This is a native
+single-access exception check, not Apple CPA2 or stack-ABI qualification.
+The controlled FVP driver's `--profile stack` additionally requires all four
+SA=1 readbacks and 83 guest checks per route. Reconstructed source stacks,
+image-backed SP values, tagging and asynchronous unwind remain unqualified.
+
+Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the
 existing LLVMC scalable-carrier refusal. It does not qualify Apple SVE execution
