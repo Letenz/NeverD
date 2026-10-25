@@ -378,6 +378,11 @@ extension and unchanged neighbors; Q reads compare both 64-bit halves separately
 These are explicit-IR tests; they do not
 qualify automatic decoding/lifting, relocated-image projection or native
 half/whole-vector ABI. Stack and image requirements fail before body filtering.
+Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
+both generated C files, the independent native harness and an LLVM ELF object
+in a fresh directory recorded in the test's properties. These artifacts allow
+a controlled guest to consume the actual generated output; exporting them is
+not CPTA-on qualification.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the

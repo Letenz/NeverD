@@ -50,12 +50,14 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 
 #include <algorithm>
 #include <array>
 #include <climits>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -2577,6 +2579,27 @@ TEST(AArch64ImmediateMemory,
 
 TEST(AArch64ImmediateMemory,
      BothCProjectionsAndLLVMExecuteEveryImmediateFamily) {
+  llvm::SmallString<kVectorPathStorage> ArtifactDirectory;
+  if (const auto *Root = std::getenv(kImmediateArtifactEnvironment)) {
+    ASSERT_FALSE(llvm::sys::fs::create_directories(Root));
+    llvm::SmallString<kVectorPathStorage> Prefix(Root);
+    llvm::sys::path::append(Prefix, kImmediateArtifactPrefix);
+    ASSERT_FALSE(
+        llvm::sys::fs::createUniqueDirectory(Prefix, ArtifactDirectory));
+    RecordProperty(kImmediateArtifactProperty, ArtifactDirectory.str().str());
+  }
+  auto SaveArtifact = [&](llvm::StringRef Name, llvm::StringRef Bytes) {
+    if (ArtifactDirectory.empty())
+      return;
+    llvm::SmallString<kVectorPathStorage> Path(ArtifactDirectory);
+    llvm::sys::path::append(Path, Name);
+    std::error_code Error;
+    llvm::raw_fd_ostream Output(Path, Error);
+    ASSERT_FALSE(Error) << Error.message();
+    Output << Bytes;
+    Output.close();
+    EXPECT_FALSE(Output.has_error());
+  };
   std::vector<MedFunc> Functions;
   std::string Wrappers, Entries;
   std::string Declarations = kVectorNativeIncludes;
@@ -2616,6 +2639,7 @@ TEST(AArch64ImmediateMemory,
   ASSERT_FALSE(llvm::verifyModule(*Module));
   const auto Harness =
       llvm::formatv(kImmediateNativeHarness, Wrappers, Entries).str();
+  SaveArtifact(kImmediateHarnessArtifact, Declarations + Harness);
   for (bool LLVMRoute : {false, true}) {
     CEmitterOptions Options;
     Options.TheArch = Arch::AArch64;
@@ -2630,6 +2654,8 @@ TEST(AArch64ImmediateMemory,
         High.push_back(MedToHighConverter().convert(Function, Arch::AArch64));
       ASSERT_TRUE(HighCEmitter().emit(High, Out, Options));
     }
+    SaveArtifact(LLVMRoute ? kImmediateLLVMCArtifact : kImmediateHighCArtifact,
+                 Source);
 #if defined(__APPLE__) && defined(__aarch64__)
     compileMemoryC(Source + Harness, true);
 #else
@@ -2658,6 +2684,15 @@ TEST(AArch64ImmediateMemory,
   Output.close();
   compileMemoryC(Declarations + Harness, true, {}, ObjectPath);
 #endif
+  if (!ArtifactDirectory.empty()) {
+    const auto ELF =
+        Codegen().compile(*Module, Arch::AArch64, BinaryFormat::ELF);
+    ASSERT_TRUE(ELF.Success);
+    SaveArtifact(
+        kImmediateELFArtifact,
+        llvm::StringRef(reinterpret_cast<const char *>(ELF.ObjectData.data()),
+                        ELF.ObjectData.size()));
+  }
 }
 
 TEST(AArch64ImmediateMemory, TracingUsesTheEncodedOffsetAndExactDataSlice) {
