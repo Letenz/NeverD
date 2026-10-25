@@ -1395,7 +1395,7 @@ INSTANTIATE_TEST_SUITE_P(SourceStackSpills, OverwrittenCallClobberSpills,
 TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
   const unsigned Variant = GetParam();
 #if !defined(__x86_64__) && !defined(_M_X64)
-  if (Variant)
+  if (Variant == 1 || Variant == 2)
     GTEST_SKIP() << "Native x64 flags-transfer execution requires an x64 host";
 #endif
   for (BinaryFormat Format :

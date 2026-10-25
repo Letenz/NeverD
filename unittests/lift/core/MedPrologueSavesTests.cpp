@@ -630,7 +630,7 @@ TEST(SourceStackSpills, PhysicalCallsOverwriteOnlyTheirReturnAddressBytes) {
   for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
     for (BinaryFormat Format :
          {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
-      for (unsigned Mode = 0; Mode < 11; ++Mode) {
+      for (unsigned Mode = 0; Mode < 12; ++Mode) {
         SCOPED_TRACE(testing::Message()
                      << unsigned(A) << ':' << unsigned(Format) << ':' << Mode);
         const auto &TRI = getTargetRegInfo(A);
@@ -681,18 +681,22 @@ TEST(SourceStackSpills, PhysicalCallsOverwriteOnlyTheirReturnAddressBytes) {
                            op(NdOp::COPY, Narrow, {MedVar::makeConst(0, 2)}));
         }
         if (Mode == 7)
-          Block.Ops[0] = op(NdOp::NOP, none(), {});
+          Block.Ops[0] = op(NdOp::COPY, SP0, {Read});
         if (Mode == 9)
           Block.Ops[3].MemoryOrdering =
               NdMemoryOrdering::SequentiallyConsistent;
         if (Mode == 10)
           Block.ExceptionalSuccs.emplace_back(1, 0x3000);
+        if (Mode == 11)
+          // Read-only offset queries also admit an otherwise undefined SP.0
+          // as the entry value; a conflicting definition above does not.
+          Block.Ops[0] = op(NdOp::NOP, none(), {});
         Func.Blocks.push_back(std::move(Block));
         const auto Count = Func.Blocks[0].Ops.size();
         markSourceStackAccesses(Func, A, Format);
         EXPECT_EQ(Func.Blocks[0].Ops[3].PrologueSave,
                   (A == Arch::X86 || A == Arch::X64) &&
-                      (Mode == 0 || Mode == 8));
+                      (Mode == 0 || Mode == 8 || Mode == 11));
         EXPECT_EQ(Func.Blocks[0].Ops.size(), Count);
       }
 }
@@ -761,7 +765,7 @@ TEST(SourceStackSpills, OnlyCheckedNearCallOccurrencesPublishStackWrites) {
       BinaryImage Image;
       Image.Arch = A;
       Image.Format = BinaryFormat::ELF;
-      Section Text;
+      Segment Text;
       Text.VA = 0x1000;
       Text.Data = {0xe8, 0xfb, 0x0f, 0x00, 0x00};
       if (Mode == 1)
@@ -776,7 +780,8 @@ TEST(SourceStackSpills, OnlyCheckedNearCallOccurrencesPublishStackWrites) {
         Text.Data = {0x48, 0xff, 0xd0};
       Text.Size = Text.Data.size();
       Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
-      Image.Sections.push_back(Text);
+      Image.Segments.push_back(Text);
+      ASSERT_NE(Image.readVA(Text.VA, Text.Size), nullptr);
       LowFunc Low;
       Low.Entry = Text.VA;
       LowBlock Block;

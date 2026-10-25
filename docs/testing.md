@@ -306,6 +306,11 @@ tainted address input must refuse it. Computed-goto execution covers both a
 zero-register index and a load overwriting its index register. Selector tests
 reject stale or duplicated authentication records and duplicate load occurrences.
 `MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
+an edited store must lose its previous prologue-save annotation before the
+ObjC private-copy machine replay compares both saved representations.
+These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
+instruction families.
+
 `SourceStackSpills` checks physical near-call return-slot overwrites across
 x86/x64/ARM/ARM64 and COFF/ELF/Mach-O, including partial overlap, observed
 bytes, missing call provenance, malformed normal edges, stack PHIs and incoming
@@ -314,10 +319,6 @@ stack call; link-register architectures remain negative. The
 `OverwrittenCallClobberSpills` pipeline fixture executes the released-push-slot
 case through both C routes, with optimization enabled and disabled, for all
 three formats at host O0/O2 under UBSan.
-an edited store must lose its previous prologue-save annotation before the
-ObjC private-copy machine replay compares both saved representations.
-These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
-instruction families.
 Pointer-valued results retain their bits through both C routes; independent
 LLVM return tests cover the 32/64-bit x86 and Arm register ABIs.
 
