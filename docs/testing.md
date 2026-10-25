@@ -13270,6 +13270,11 @@ certify explicit source unavailability, not a reconstructed dynamic call-state
 contract.
 
 `CallExitRegisters.UnknownOnlyJoinCopiesAreNotReads` checks HighC join copies.
+`CallExitRegisters.DiscardedReturnsDoNotKeepUnknownDefinitionsAlive` compares
+inferred void, declared void and value returns through HighC and LLVMC. It
+executes both branch outcomes at `-O0` and `-O2` with UBSan, keeps observable
+unknown stores/returns guarded, and checks that dead return-only PHI inputs
+cannot introduce traps at a defined use of the same local.
 `ConditionalHomeSavesAreNotValueReads` and the `Absorbing*` cases execute both
 C routes at O0/O2, including the nonabsorbing inputs that must still diagnose
 unavailable values. `SummarizedCallArguments.UnreadRegisterTailsDoNotBecomeArguments`

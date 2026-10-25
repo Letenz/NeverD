@@ -3872,6 +3872,132 @@ int main(void) { observe_result(); return observed != 42; }
 )");
 }
 
+TEST(CallExitRegisters, DiscardedReturnsDoNotKeepUnknownDefinitionsAlive) {
+  for (unsigned ReturnKind = 0; ReturnKind != 3; ++ReturnKind)
+    for (bool ObserveUnknown : {false, true})
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(ReturnKind);
+        SCOPED_TRACE(ObserveUnknown);
+        SCOPED_TRACE(LLVM);
+        const bool Void = ReturnKind != 2;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        if (LLVM) {
+          llvm::LLVMContext Context;
+          llvm::Module Module("discarded-phi-return", Context);
+          Module.setDataLayout("e-p:64:64");
+          llvm::IRBuilder<> B(Context);
+          auto *Result = ReturnKind == 1 ? B.getVoidTy() : B.getInt32Ty();
+          auto *F = llvm::Function::Create(
+              llvm::FunctionType::get(Result, {B.getInt32Ty(), B.getPtrTy()},
+                                      false),
+              llvm::GlobalValue::ExternalLinkage, "discarded_phi", Module);
+          if (ReturnKind == 0)
+            llvm_value_provenance::markReturnsNoValue(*F);
+          auto *Entry = llvm::BasicBlock::Create(Context, "entry", F);
+          auto *Known = llvm::BasicBlock::Create(Context, "known", F);
+          auto *Missing = llvm::BasicBlock::Create(Context, "missing", F);
+          auto *Join = llvm::BasicBlock::Create(Context, "join", F);
+          B.SetInsertPoint(Entry);
+          B.CreateCondBr(B.CreateICmpNE(F->getArg(0), B.getInt32(0)), Known,
+                         Missing);
+          B.SetInsertPoint(Known);
+          B.CreateStore(B.getInt32(37), F->getArg(1));
+          B.CreateBr(Join);
+          B.SetInsertPoint(Missing);
+          auto *Unknown = llvm_source_unknown::create(B, B.getInt32Ty());
+          B.CreateBr(Join);
+          B.SetInsertPoint(Join);
+          auto *Value = B.CreatePHI(B.getInt32Ty(), 2, "value");
+          Value->addIncoming(B.getInt32(37), Known);
+          Value->addIncoming(Unknown, Missing);
+          if (ObserveUnknown)
+            B.CreateStore(Value, F->getArg(1));
+          if (ReturnKind == 1)
+            B.CreateRetVoid();
+          else
+            B.CreateRet(Value);
+          ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+          ASSERT_TRUE(LLVMCEmitter().emit(Module, Output));
+        } else {
+          const auto Integer = NdType::makeInt(4, false);
+          const auto Pointer = NdType::makePtr(Integer);
+          HighFunc F;
+          F.Name = "discarded_phi";
+          F.Entry = Text;
+          F.ReturnType = ReturnKind == 1 ? NdType::makeVoid() : Integer;
+          F.ReturnsNoValue = ReturnKind == 0;
+          F.Params = {{"arg0", Integer}, {"arg1", Pointer}};
+          MedVar Value;
+          Value.Kind = MedVar::Temp;
+          Value.Id = 1;
+          Value.Size = 4;
+          Value.TheArch = Arch::X64;
+          MedVar Mode = Value;
+          Mode.Kind = MedVar::Param;
+          Mode.Id = 0;
+          MedVar Address = Mode;
+          Address.Id = 1;
+          Address.Size = 8;
+          auto Assign = [&](ExprPtr Expression) {
+            HighStmt S;
+            S.Kind = StmtKind::Assign;
+            S.Dst = HighExpr::makeVar(Value, Integer);
+            S.Val = std::move(Expression);
+            S.IsPhiCopy = true;
+            return S;
+          };
+          HighStmt Store;
+          Store.Kind = StmtKind::Store;
+          Store.StoreAddr = HighExpr::makeVar(Address, Pointer);
+          Store.StoreVal = HighExpr::makeVar(Value, Integer);
+          HighStmt Go;
+          Go.Kind = StmtKind::Goto;
+          Go.GotoTarget = Text + 0x40;
+          HighStmt Branch;
+          Branch.Kind = StmtKind::IfElse;
+          Branch.Cond = HighExpr::makeVar(Mode, Integer);
+          Branch.Body = {Assign(HighExpr::makeConst(37, 4)), Store, Go};
+          Branch.ElseBody = {Assign(HighExpr::makeUndef(4)), Go};
+          F.Body.push_back(Branch);
+          if (ObserveUnknown) {
+            Store.Addr = Go.GotoTarget;
+            F.Body.push_back(Store);
+          }
+          HighStmt Return;
+          Return.Kind = StmtKind::Return;
+          Return.Addr = ObserveUnknown ? Go.GotoTarget + 1 : Go.GotoTarget;
+          Return.RetVal = HighExpr::makeVar(Value, Integer);
+          F.Body.push_back(Return);
+          ASSERT_TRUE(HighCEmitter().emit({F}, Output));
+        }
+        EXPECT_EQ(Source.find("unknown value") == std::string::npos,
+                  Void && !ObserveUnknown)
+            << Source;
+        const std::string Guard = R"(
+static unsigned unavailable_count;
+static void observe_unavailable(void) { ++unavailable_count; }
+#define __builtin_trap() observe_unavailable()
+)";
+        const std::string Oracle =
+            "int main(void) {\n"
+            "  uint32_t output = 99;\n"
+            "  discarded_phi(1, &output);\n"
+            "  if (output != 37 || unavailable_count) return 1;\n"
+            "  output = 99;\n"
+            "  discarded_phi(0, &output);\n"
+            "  return output != " +
+            std::to_string(ObserveUnknown ? 0 : 99) +
+            " || unavailable_count != " +
+            std::to_string(unsigned(ObserveUnknown) + unsigned(!Void)) +
+            ";\n}\n";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Guard + Source + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+}
+
 TEST(Win64CallContract, UnobservedVoidCallResultsDoNotKeepLoopCopiesAlive) {
   constexpr va_t Release = Text + 0x80;
   std::vector<uint8_t> Code(0xA0, 0xCC);

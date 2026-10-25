@@ -147,6 +147,12 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+HighC prepares both declared and inferred void returns before analyzing local
+uses, retaining any effectful return evaluation. The shared source-flow graph
+then removes dead PHI definitions, including unknown inputs of a local that is
+defined again before its observable uses. A store, value return or unresolved
+control-flow path retains the corresponding observation and availability check.
+
 `CallRegisterUnread` proves absent GPR input observations independently of
 argument inference. Opaque calls read every candidate family, and a nested
 call's may-write mask never kills a later input observation. Partial writes,
