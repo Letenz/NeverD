@@ -91,12 +91,12 @@ judge each change in the real window.
   the buttons their window flags ask for (`WindowFrame::frameDialogs`). Draw
   the bar's glyphs and the Wayland shadow from `ChromeColors.def` roles
   instead of borrowing the platform's.
-- Keep each system's own frame where it does more than draw: Linux windows
-  are frameless and draw their edges, but Windows keeps its frame for snapping,
-  shadows and resizing and loses only the caption, and macOS keeps its frame
-  and traffic lights under a transparent 28-point title bar, with the menus in
-  the menu bar. Each platform's part lives in one file under `app/platform`
-  (`WindowFramePlatform.h`).
+- Use the application's frame, menus, controls and shadow on all desktops;
+  native APIs still provide movement, resizing and window-state transitions.
+  Cocoa hosts a frameless window, and the platform hook disables its native
+  shadow. Each platform's part lives under `app/platform`
+  (`WindowFramePlatform.h`). For macOS input and validation details, read
+  [macOS Qt rendering and input](macos-qt.md).
 - Keep the signature elements. The toolbar's colored duotone icons stay: the
   user kept them over a single-accent recolor and an outline variant, and had
   earlier rejected all-gray icons as lifeless. Refine spacing, weight, and
@@ -169,7 +169,9 @@ be read. Inspect the whole window before adjusting individual colors.
 - Keep branding subordinate to starting work. Inspect the combined weight of
   the logo, title, tagline, and version; several individually modest elements
   can still dominate as a group. Startup preferences are secondary controls.
-- Reuse the desktop's system font and established density. In the verified
+- Use the platform's GeneralFont reading size for both interface and code,
+  retaining NeverD's bundled faces. Keep user overrides and avoid a
+  shared hard-coded point size or a second Retina multiplier. In the verified
   Quick Start, 14 logical pixels for row titles and 12 for supporting text fit
   the task; 16 pixels is not a mandatory minimum for every dense desktop row.
   Evaluate actual readability, contrast, DPI scaling, and larger system fonts.

@@ -28,6 +28,7 @@ add_neverd_component_library(NeverDEmulationLinuxKernel
   LinuxGPUCommands.cpp
   LinuxGPUObjects.cpp
   LinuxFilePaths.cpp
+  LinuxFileMutation.cpp
   LinuxFileLinks.cpp
   LinuxFileIO.cpp
   LinuxDirectoryCreation.cpp

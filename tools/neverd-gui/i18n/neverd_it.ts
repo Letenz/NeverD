@@ -6473,6 +6473,10 @@ Copertura: %7</translation>
         <source>Optimized SSA with parameter-bound loop analysis</source>
         <translation>SSA ottimizzata con analisi dei cicli a limite parametrico</translation>
     </message>
+    <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli delimitati da espressioni</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6645,8 +6649,16 @@ La terminazione non dimostra che il numero di iterazioni o i risultati delle fun
         <translation>SSA ottimizzata con analisi dei cicli a limite parametrico</translation>
     </message>
     <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli delimitati da espressioni</translation>
+    </message>
+    <message>
         <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
         <translation>Dimostrazione: ogni ciclo del contatore raggiunge un’uscita comune relativa a un parametro di ingresso. Prima dell’uscita può verificarsi un comportamento indefinito.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input-derived expression. Undefined behavior may occur before exit.</source>
+        <translation>Dimostrazione: ogni ciclo del contatore raggiunge un’uscita comune relativa a un’espressione derivata dagli input. Può verificarsi un comportamento indefinito prima dell’uscita.</translation>
     </message>
 </context>
 <context>

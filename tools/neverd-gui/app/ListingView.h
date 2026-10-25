@@ -13,6 +13,7 @@
 #include "Address.h"
 #include "StyledText.h"
 #include "ViewSearch.h"
+#include "WheelInput.h"
 
 #include <QAbstractScrollArea>
 #include <QPointer>
@@ -155,6 +156,7 @@ private:
   void showHint(const QPoint &position);
   void emitLocation();
 
+  WheelInput wheel_;
   Session &session_;
   const AddressSpace &space_;
   std::deque<Line> lines_;

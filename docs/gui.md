@@ -64,11 +64,24 @@ loading binaries, companion PDB/MAP files, signatures and project sidecars.
 Chinese names, spaces and other Unicode characters are supported without
 changing the Windows system code page.
 
-Code views, the output window and text fields use the code font: Consolas at
-10 points when that family is installed, otherwise the system fixed-width font.
-Menus, tabs, lists, buttons and labels keep the system font, as in the classic
-disassembler's default font settings. A saved code-font choice overrides the
-default for code views and text fields.
+Menus, tabs, lists, buttons and labels use bundled Noto families at the
+platform's default interface size (`QFontDatabase::GeneralFont`). Code views
+and Output use bundled JetBrains Mono NL at that same reading size. These
+sizes come from macOS, Windows or the Linux desktop; they are not a shared
+hard-coded point size.
+Qt applies the screen's normal high-DPI scaling. A saved code-font choice
+overrides the code-view default. Text fields take that font's family at the
+platform's default reading size, independently of code-view zoom.
+Reset font size restores the current platform default and keeps the chosen
+family and style. Zoom preserves fractional point sizes and accepts fonts
+specified in logical pixels.
+
+Disassembly and source views preserve small wheel and trackpad movements,
+including horizontal scrolling in source views. Control plus the wheel changes
+the code font (Command on macOS); precision events accumulate until a font
+point is reached, and empty gesture begin/end events do not change the size.
+Menus and context menus show their action icons on every platform, including
+macOS, where Qt otherwise hides them by default.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
@@ -127,8 +140,7 @@ workbench. The workbench opens with the default desktop:
 - the title bar the window draws itself, as Visual Studio Code does: the
   application icon, the menus, a command center that names the open file and
   opens the command palette (**Ctrl+Shift+P**), and the minimize, maximize and
-  close buttons (on macOS the menus stay in the menu bar and the system's
-  traffic lights take the buttons' place);
+  close buttons; the workbench owns this chrome on macOS too;
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
   and external symbols, with the current position; click or drag to navigate;
@@ -144,7 +156,9 @@ workbench. The workbench opens with the default desktop:
   windows' surface below a hairline, as in Visual Studio Code's Modern themes.
 
 Every window is a dock: drag tabs to split, stack or float them. A tab shows
-its close button while it is current or under the pointer. Floating windows
+its close button while it is current or under the pointer. Docking tabs use
+the same workbench style and close-button dimensions on every desktop.
+Floating windows
 keep an inner title bar: drag it onto a docking target, double-click it or
 click its dock button to return. A floating tab also offers **Dock back into
 main window** in its context menu. On Wayland the outer system title bar moves

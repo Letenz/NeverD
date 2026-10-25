@@ -18,6 +18,11 @@ The latter does not execute privileged or tile-state instructions.
 transport and original-image byte-storage identity. The image test preserves
 mutable pointer slots and overlapping fields across COFF/ELF/Mach-O; native
 and relocatable output retain their stricter address rules.
+`Win64CallContract.RelocatedCallbacksBindTheFinalExternalIdentifier` executes
+direct calls, relocated callback loads and address-taking through both C
+routes at O0/O2 with UBSan. An omitted provider and colliding data/function
+spellings require the generated source to link to the actual function label;
+syntax-only compilation cannot validate this contract.
 `Win64CallContract.MissingInteriorStackSlotCannotDiscardLaterArguments`
 checks whole-module and selected-function recovery through both C routes.
 Missing fixed stack positions remain unavailable while later arguments survive;
@@ -338,14 +343,34 @@ LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
 and the software tracer refuses state-dependent addresses in both modes, even
 when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
 Control-independent addresses retain finite image reads without guessing CPTA.
-Whole-W interval certificates cover all 104 encodings, exhaustively check small
-positive ranges and reject signed-W domain discontinuities, address-region
+Whole-W interval certificates cover all 104 GPR and 80 SIMD encodings,
+exhaustively check small positive ranges and reject signed-W domain discontinuities, address-region
 crossings, wrap, SP and malformed words. Exact-use zero-extension proofs keep
 unknown X high bits from borrowing this domain. `NeverDJumpTableTests` runs
 `JTE_AArch64.*`, guarded-range/cache/predicate-demand cases and the shared table
 owners; selecting `*JumpTable*` alone does not include the `JTE_AArch64` suite.
+`AArch64VectorAddressMemory` adds 80 independent B/H/S/D/Q register-offset
+words covering loads/stores, all extensions and both encoded scales. Both
+decoder routes, strict/permissive lifting and malformed IR checks preserve the
+natural access width, complete V definitions and V31 data. Tracer tests require
+only the selected store bytes, clear loaded upper bytes and retain memory after
+refused writes. Both C routes and LLVM objects execute the decoded register
+transport through integer bridges at O0/O2, including upper-lane and neighboring
+byte checks. A separate cross-block test seeds an older S/D definition and
+requires the encoded load's newer scalar view at its consumer.
+The scalar floating ABI test decodes all 32 S/D encodings as genuine float/double
+parameters or returns. Both C routes and native LLVM objects preserve NaN
+payloads, signaling bit patterns, negative zero and unchanged neighboring bytes
+at O0/O2. Native half and whole-vector C entry/return ABI and DWARF vector
+declarations remain unqualified; the integer bridges do not certify those
+interfaces.
+The shared identity regression pins the published scalar and concurrent x86
+identities before admitting the appended vector operations.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
-survives only a validated scalar memory operation. Run this group with the
+survives a validated memory operation only when physical V/Z aliases are absent.
+The interleaving test checks original words in LLVM ELF objects and retains the
+existing LLVMC scalable-carrier refusal. It does not qualify Apple SVE execution
+or Mach-O SVE relocation loading. Run this group with the
 decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
 Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
 jump-table/computed-goto tests:
@@ -828,12 +853,41 @@ match, empty/overlapping inputs, high bytes, page ends, errno and dynamic librar
 closure; `AndroidSearchMemory.*` checks memory/time bounds. The strict directory
 JSON check is `ProcessReport.DirectoryCreationRequiresCompleteBoundedMetadata`.
 
+`LinuxFileNamespace.Rename*`, `Unlink*` and `FileCreation*` check stable objects
+across name changes, duplicate/open cursors, complete stat bytes, fresh inodes,
+retained reservations, count/byte limits and atomic refusal on both LP64 ABIs.
+The `ParentWalk*`, `RelativeCreation*` and `InteriorDot*` cases preserve visited
+errors, search permissions and exact grants. Relative creation must not revisit
+ancestors above an already-open directory FD. `LinuxProc` checks fdinfo identity
+after rename and pathname reuse. Raw x64/AArch64 O0/O2 fixtures and
+`AndroidFiles` exercise named, variadic and dynamic Bionic calls, provider
+closure, errno and stdio creation. `AndroidFileStatusAt` compares complete
+reports on available native transports. `ProcessReport.FileRenames*`,
+`FileUnlinks*` and `FileCreation*` cover strict JSON and typed input admission;
+`ProcessPublic.AndroidFileLifecycleMatchesSDKAndCLI` compares public reports.
+Run the complete Linux process suite, Android file/status/proc/stdio suites and
+public Android cases when changing this shared owner. Platform skips do not
+establish native or physical-device filesystem equivalence.
+
+`AndroidFiles.ReadChk*` checks fortify ordering, signed and zero counts, unchanged
+memory/errno on refusal and shared file cursors. `AndroidReceive.ReadChk*`
+checks suspension and resumption across descriptor and memory changes.
+`AndroidFileStatusAt.PathnameAliases*` checks all four status aliases against
+complete independent 128-byte layouts, pathname/output error ordering, dynamic
+provider closure, explicit unsupported state and available native transports.
+`ProcessPublic.AndroidLibcCompatibilityMatchesSDKAndCLI` compares complete
+reports for these adapters and `strlcpy` through both public routes.
+
 `AndroidStringCopy.*` checks `strncpy` using independent AArch64 callers at
 O0/O2 across three relocation formats and available CPU backends: exact padding,
 truncation, high bytes, errno, full-width and zero counts, page ends, read-only
 source/destination, overlap and dynamic provider lifetime.
 `AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
 against complete guarded guest bytes. No host libc copy is used as the oracle.
+The `SizedCopy*` cases cover `strlcpy` full-source scanning, truncated and empty
+outputs, NUL termination without padding, full-width and zero capacities,
+read-only and page-tail memory, overlap and closed dynamic providers. Direct
+memory tests cover scan limits and expired deadlines without partial writes.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -1927,6 +1981,27 @@ saved restore. Earlier profiles and frozen historical reports remain separate
 compatibility checks. These fixtures qualify the stated shapes, not arbitrary
 parameter relationships or semantic equivalence.
 
+`BinaryDiffInvariantBoundProgress` checks opt-in v7 input-derived expressions
+at widths 1 through 64, supported integer operations/intrinsics, affine chains,
+select poison masking and undef leaves. Hidden PHI/freeze dependencies, cycles,
+unrelated bases, incompatible exits and residual infinite loops refuse. The
+independent concrete oracle evaluates the original expression and every seed's
+orbit; it does not reuse basis normalization. Poison-only cases are not used as
+an exact completeness oracle. Shared/deep DAGs check linear work and memoized
+rejection. Two-candidate tests require identical v6/v7 charge sequences and
+allowances for preferred old proofs. Exact storage/work limits, cancellation,
+deadlines, retry and schema/marker isolation remain covered.
+
+`invariant_bound_progress_fixture.c` supplies x64/AArch64 ELF/COFF/Mach-O
+O0/O2 compile-and-inspect cases, never native execution of possibly infinite
+loops. O0 demonstrates v6-unproven to v7-invariant progress; O2 retains its
+preferred modular proof. Output, body, mask, recurrence-step and exit-offset
+changes remain visible; even-step negative controls retain the source contract.
+SDK, worker, Python and Qt inspect bounded pages, slices, proof text and saved
+restore. Altering the mask can leave a valid mathematical proof but must still
+fail fresh native binding. Frozen v1-v6 reports provide a separate byte-exact
+compatibility check; these cases do not establish arbitrary invariant analysis.
+
 The region suite includes owned x86 assembly with exact split boundaries, native
 SDK span paging, persistence/tamper rejection, worker parity and a real paged Qt
 review window. Synthetic cases separately exercise overlapping clones, internal
@@ -2396,6 +2471,13 @@ missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
 
+`NeverDGuiWheelInput` replays precision wheel and trackpad events through the
+production disassembly, source and hex views. It compares small-event batches
+with their combined movement, checks pixel-only and horizontal source scrolling,
+and verifies that empty gesture boundaries and horizontal movement do not zoom
+the code font. Precision font zoom accumulates a notch before changing a point.
+Run this target offscreen and with `QT_QPA_PLATFORM=cocoa` on macOS.
+
 `NeverDGuiAppearance` checks application-painted dialogs in both themes,
 including file, font, color, message, input and Quick Start windows with the
 retired native-caption preference enabled. It injects a conflicting desktop
@@ -2408,8 +2490,29 @@ the bundled fallback families for CoreText shaping; unchanged script lists
 must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
 The shared frame tests separately exercise native edge gestures.
+
+Appearance tests use a custom entry point because `QTEST_MAIN` forces
+`AA_Use96Dpi`, hiding Cocoa's 72-DPI point-size conversion. The tests and their
+captures use the product's native DPI. Font checks compare interface, code and
+input-field sizes with the platform's GeneralFont reading size, preserve
+explicit choices across theme changes, and exercise fractional/pixel-sized
+zoom and resetting to the platform default. These cases run in the existing
+Windows/macOS native 100% and 150% appearance jobs as well as offscreen.
+The tab-close check measures the visible glyph in logical pixels on both plain
+and actual docking tabs, in both themes. This catches a docking-local native
+style shrinking only the close button, which a plain-widget screenshot misses.
+
+The menu case injects macOS's hidden-icon default and checks registry actions
+and Output's dynamically created context menu after theme application. Screenshot
+color checks convert logical points using the captured image's device-pixel
+ratio. Cocoa native-pointer docking cases skip when
+`CGPreflightPostEventAccess()` denies event posting; report that missing coverage
+separately from passing offscreen behavior.
+
 `nativeFrameKeepsTheTitleBarOnScreen` checks native maximize/full-screen/restore
 transitions for the shared frameless chrome on Linux, Windows and macOS.
+On Cocoa it first requires an active foreground test window and skips when
+macOS refuses activation for the background test process.
 All desktop windows use the application frame and shadow; native APIs still
 provide movement and window states. Cocoa resizing uses the same drawn edges
 with a mouse grab when Qt cannot start a native resize.
@@ -5463,6 +5566,12 @@ enabled, `NeverDWorkerWeb` in `build-release/tools/neverd-worker` checks the rea
 framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
+
+`PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
+different addresses, recursion through aliases, canonical indirect import
+relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
+checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
+or absent metadata, evidence withdrawal, and the separate identity gate.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -13112,3 +13221,13 @@ checks exact zero-extended x86/ARM32 frame addresses across all three formats.
 Signed extensions, mixed-width copies and duplicate definitions are rejected;
 `WiderSeedsAndTruncatedPointersAreNotNativeAddresses` protects the entry-SP
 and native pointer-width boundaries.
+
+`AndroidErrors.*` checks signed argument narrowing, catalog holes, complete
+text and guarded bytes, process/thread borrow lifetimes, errno and `dlerror`
+isolation, read-only storage, provider-only imports and provider closure.
+Known pointers remain returnable after unmapping their text; guest reads own
+the resulting memory faults. `AndroidErrorMemory.*` checks unknown-format
+refusals and exact writes against complete TLS backing, and known pointer
+returns under a small copy budget. `ProcessPublic.AndroidErrorTextMatchesSDKAndCLI`
+compares complete reports through both public entrypoints. Run these alongside
+thread, environment, calendar, dynamic-loader and string regressions.

@@ -420,6 +420,56 @@ TEST_P(LinuxProc, FDInfoUsesSharedOffsetsAndDescriptorLocalCloseOnExec) {
   EXPECT_NE(read(Info).find("pos:\t0\n"), std::string::npos);
 }
 
+TEST_P(LinuxProc, RenameKeepsFDInfoInodeAcrossAReusedOriginalPath) {
+  auto &F = *Options.LinuxFiles;
+  LinuxFileMetadata Parent;
+  Parent.Device = 0x801;
+  Parent.Inode = 91;
+  Parent.Mode = 0040755;
+  Parent.UID = Parent.GID = 1000;
+  Parent.LinkCount = 2;
+  Parent.Size = 60;
+  Parent.BlockSize = 4096;
+  F.Directories = {"/data"};
+  F.DirectoryCreation.emplace().Parents["/data"] = Parent;
+  F.FileRenames.emplace().Parents.insert("/data");
+  reset();
+  ASSERT_EQ(open("/data/value", 2), 3u);
+  ASSERT_EQ(call(ServiceKind::Dup, 3), 4u);
+  ASSERT_EQ(open("/proc/self/fdinfo/3"), 5u);
+  ASSERT_EQ(open("/proc/self/fdinfo/4"), 6u);
+  EXPECT_EQ(read(3, 1), "a");
+  const std::string Flags =
+      GetParam() == GuestArchitecture::X64 ? "0100002" : "0400002";
+  const auto Expected =
+      "pos:\t1\nflags:\t" + Flags + "\nmnt_id:\t1\nino:\t42\n";
+  for (unsigned phase = 0; phase != 3; ++phase) {
+    SCOPED_TRACE(phase);
+    if (phase == 1) {
+      path("/data/value");
+      llvm::cantFail(cpu().write(Base + 128, {'/', 'd', 'a', 't', 'a', '/', 'm',
+                                              'o', 'v', 'e', 'd', 0}));
+      ASSERT_EQ(call(ServiceKind::Rename, Base, Base + 128), 0u);
+    }
+    if (phase == 2) {
+      path("/data/value");
+      ASSERT_EQ(call(ServiceKind::MkdirAt, uint64_t(-100), Base, 0755), 0u);
+    }
+    for (auto info : {5u, 6u}) {
+      ASSERT_EQ(call(ServiceKind::Lseek, info, 0), 0u);
+      EXPECT_EQ(read(info), Expected);
+    }
+  }
+  EXPECT_EQ(read(4, 1), "b");
+  ASSERT_EQ(call(ServiceKind::Fstat, 3, Base + 256), 0u);
+  EXPECT_EQ(llvm::support::endian::read64le(bytes(Base + 256, 16).data() + 8),
+            42u);
+  path("/data/value");
+  ASSERT_EQ(call(ServiceKind::FstatAt, uint64_t(-100), Base, Base + 256), 0u);
+  EXPECT_NE(llvm::support::endian::read64le(bytes(Base + 256, 16).data() + 8),
+            42u);
+}
+
 TEST_P(LinuxProc, MapsFollowProtectionUnmapAndRetireBackingIdentity) {
   Options.LinuxFiles->DynamicProc->Mappings.push_back(
       {Base, 8192, 16384, 91, 0x801, false, "/guest/module.so"});

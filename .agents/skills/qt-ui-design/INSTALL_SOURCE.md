@@ -11,4 +11,8 @@ now adds a desktop design profile in `references/neverd-desktop.md` and routes t
 it from `SKILL.md`. Section 1.6 of `SKILL.md` and the crispness item in its
 audit checklist are also NeverD additions, drawn from an audit of NeverD's
 icons. The upstream copyright, license, and general guidance are retained. This
-file records installation provenance and those local additions.
+file records installation provenance and those local additions. The local
+`references/macos-qt.md` guide records Cocoa menu defaults, precision input,
+platform font sizes, docking style inheritance, Retina capture sampling and
+native validation constraints reproduced in NeverD; `SKILL.md` routes macOS
+work to it.

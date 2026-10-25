@@ -6617,6 +6617,10 @@ Coverage: %7</source>
         <source>Optimized SSA with parameter-bound loop analysis</source>
         <translation>SSA محسّنة مع تحليل الحلقات ذات الحدود المحددة بالمعاملات</translation>
     </message>
+    <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات تحدّها تعبيرات</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6789,8 +6793,16 @@ Progress does not establish equal loop counts or function results.</source>
         <translation>SSA محسّنة مع تحليل الحلقات ذات الحدود المحددة بالمعاملات</translation>
     </message>
     <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات تحدّها تعبيرات</translation>
+    </message>
+    <message>
         <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
         <translation>البرهان: تصل كل دورة للعدّاد إلى مخرج مشترك بالنسبة إلى معامل إدخال. قد يحدث سلوك غير معرّف قبل الخروج.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input-derived expression. Undefined behavior may occur before exit.</source>
+        <translation>البرهان: تصل كل دورة للعدّاد إلى مخرج مشترك نسبةً إلى تعبير مشتق من المدخلات. قد يحدث سلوك غير معرّف قبل الخروج.</translation>
     </message>
 </context>
 <context>

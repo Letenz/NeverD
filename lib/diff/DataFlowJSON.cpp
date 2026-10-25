@@ -163,7 +163,8 @@ Object progress(const FlowProgress &P, llvm::StringRef Profile) {
              {"loop_count", P.LoopCount}};
   if (Profile == LLVMBranchProgressDataFlowProfile ||
       Profile == LLVMModularProgressDataFlowProfile ||
-      Profile == LLVMParameterBoundProgressDataFlowProfile) {
+      Profile == LLVMParameterBoundProgressDataFlowProfile ||
+      Profile == LLVMInvariantBoundProgressDataFlowProfile) {
     Out["backedge_count"] = P.BackedgeCount;
     Out["guard_count"] = P.Loops.size();
   }
@@ -454,8 +455,11 @@ DataFlowGraph readDataFlowGraph(const Value &V, const DataFlowOptions &Options,
   uint64_t Edges = 0, ProgressRows = 0;
   if (Progress) {
     const auto &P = object(field(O, "progress"));
+    const bool InvariantBound =
+        G.Profile == LLVMInvariantBoundProgressDataFlowProfile;
     const bool ParameterBound =
-        G.Profile == LLVMParameterBoundProgressDataFlowProfile;
+        G.Profile == LLVMParameterBoundProgressDataFlowProfile ||
+        InvariantBound;
     const bool Modular =
         G.Profile == LLVMModularProgressDataFlowProfile || ParameterBound;
     const bool Branched =
@@ -509,12 +513,14 @@ DataFlowGraph readDataFlowGraph(const Value &V, const DataFlowOptions &Options,
         const auto Proof =
             text(field(L, "proof"), limits::kMaxFlowIdentityBytes);
         require(Proof == "nowrap" || Proof == "modular" ||
-                    (ParameterBound && Proof == "parameter_modular"),
+                    (ParameterBound && Proof == "parameter_modular") ||
+                    (InvariantBound && Proof == "invariant_modular"),
                 "unknown counter proof basis");
-        Record.Loops.back().Proof = Proof == "nowrap" ? FlowCounterProof::NoWrap
-                                    : Proof == "modular"
-                                        ? FlowCounterProof::Modular
-                                        : FlowCounterProof::ParameterModular;
+        Record.Loops.back().Proof =
+            Proof == "nowrap"              ? FlowCounterProof::NoWrap
+            : Proof == "modular"           ? FlowCounterProof::Modular
+            : Proof == "parameter_modular" ? FlowCounterProof::ParameterModular
+                                           : FlowCounterProof::InvariantModular;
       }
     }
     Record.LoopCount = count(field(P, "loop_count"));

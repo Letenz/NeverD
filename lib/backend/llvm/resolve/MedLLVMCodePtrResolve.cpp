@@ -1308,9 +1308,9 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
       std::vector<MedVar> IndexTerms;
       bool Decomposed = false;
       if (Original) {
-        if (Original->stackBase() || JT.IsRelative || !JT.HasBaseAddr ||
-            JT.PreScaledIndex || JT.TwoLevelIndex || !JT.HasDispatchSlotMap ||
-            JT.SlotIndices.empty() ||
+        if (Original->stackBase() || Original->isVector() || JT.IsRelative ||
+            !JT.HasBaseAddr || JT.PreScaledIndex || JT.TwoLevelIndex ||
+            !JT.HasDispatchSlotMap || JT.SlotIndices.empty() ||
             (uint64_t{1} << Original->indexShift()) != JT.EntrySize)
           continue;
         const auto Address =

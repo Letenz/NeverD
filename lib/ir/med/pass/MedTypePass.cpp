@@ -17,6 +17,7 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
@@ -200,7 +201,10 @@ scalarFPLoadElemSize(const std::map<std::pair<int, int>, const MedOp *> &Defs,
   if (It == Defs.end())
     return 0;
   const MedOp *Def = It->second;
-  if (Def->Opcode == NdOp::LOAD)
+  if (Def->Opcode == NdOp::LOAD ||
+      (aarch64AddressLoadMedShapeIsValid(*Def) &&
+       isAArch64AddressVectorIntrinsic(
+           static_cast<Intrinsic>(Def->Inputs[0].ConstVal))))
     return Def->Output.Size == 4 ? 4 : (Def->Output.Size == 8 ? 8 : 0);
   // A bare sub-register view (offset 0) / widen / copy of a scalar load; a
   // non-zero SUBBYTES offset or a CONCAT is vector-lane assembly — stop.
