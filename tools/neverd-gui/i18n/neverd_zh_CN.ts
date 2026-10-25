@@ -6433,6 +6433,10 @@ Coverage: %7</source>
         <source>Optimized SSA with wrapping loop analysis</source>
         <translation>优化 SSA（含回绕循环分析）</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>优化 SSA（含参数边界循环分析）</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6603,14 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
         <translation>证明依据：每个计数周期都会到达共同出口，包括发生回绕的周期。</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>优化 SSA（含参数边界循环分析）</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
+        <translation>证明依据：每个计数周期都会到达相对于输入参数的共同出口。退出前仍可能发生未定义行为。</translation>
     </message>
 </context>
 <context>

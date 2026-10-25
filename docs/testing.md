@@ -1878,6 +1878,24 @@ latency inside an indivisible parser, allocation or value equality operation.
 The parallel deadline may expire before worker measurement starts; the exact
 binding-charge test deterministically requests cancellation inside that owner.
 
+`BinaryDiffParameterBoundProgress` checks the opt-in v6 parameter-relative
+exit contract at every integer width from 1 to 64, direct/funnel/selected
+backedges, affine bounds, raw/undefined/poison seeds, ordinary arguments without
+invented attributes, nested proofs and residual cycles. Independent concrete
+counter/parameter arithmetic checks small-domain guard, offset and step
+combinations against complete orbit traversal. Negative controls cover even
+steps missing an exit, different parameters, incompatible shared exits, mixed
+literal/relative domains in both orders, resets and freeze barriers. Exact
+storage/work limits, cancellation, deadlines, retry, schema isolation and forged
+proof records are checked. A real SDK test changes a guard to another parameter:
+the altered graph still proves progress, but fresh native binding must reject it.
+The authored `parameter_bound_progress_fixture.c` is compiled and inspected,
+never executed. CLI/compiler, SDK, worker, Python and Qt tests inspect its v6
+proof, retained parameter provenance, pages/slices, translated explanation and
+saved restore. Earlier profiles and frozen historical reports remain separate
+compatibility checks. These fixtures qualify the stated shapes, not arbitrary
+parameter relationships or semantic equivalence.
+
 The region suite includes owned x86 assembly with exact split boundaries, native
 SDK span paging, persistence/tamper rejection, worker parity and a real paged Qt
 review window. Synthetic cases separately exercise overlapping clones, internal

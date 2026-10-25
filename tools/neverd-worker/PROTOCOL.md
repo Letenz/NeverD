@@ -238,6 +238,20 @@ adding `proof:"nowrap"` or `proof:"modular"`. Each guard-block node page exposes
 its own witness; replay recomputes the canonical proof kind before fresh source
 authentication. Recipes are `llvm-progress-neighborhoods-v5` and
 `llvm-progress-fragments-v5`. All v1-v4 contracts and encodings remain exact.
+
+`profile:"llvm-progress-ssa-v6"` also admits shared parameter-relative EQ/NE
+exit guards. Every recurrence arm uses the same nonzero modular delta; every
+guard compares an affine counter observation with the same parameter, directly
+or as P+K, K+P or P-K. The core reuses common-exit residue coverage in coordinates
+relative to that parameter. Mixed absolute/relative domains, different parameter
+identities and freeze/reset barriers refuse. Schema 10 accepts the additional
+canonical `proof:"parameter_modular"`, with unchanged witness fields and counts.
+The preferred nowrap and v5 modular bases remain distinct. This establishes
+finite execution or undefined behavior, not an iteration count or normal return.
+Recipes are `llvm-progress-neighborhoods-v6` and `llvm-progress-fragments-v6`.
+Earlier schemas never accept the new marker. Replay independently rederives
+the proof and binds the original parameter identities to fresh native evidence.
+
 Fresh binding can authenticate a complete same-block PHI renumbering while
 retaining saved node IDs. Ordinary instruction order, source observations,
 ordered inputs and all proof metadata must still agree exactly; this does not

@@ -162,7 +162,8 @@ Object progress(const FlowProgress &P, llvm::StringRef Profile) {
              {"observed_contract", P.ObservedContract},
              {"loop_count", P.LoopCount}};
   if (Profile == LLVMBranchProgressDataFlowProfile ||
-      Profile == LLVMModularProgressDataFlowProfile) {
+      Profile == LLVMModularProgressDataFlowProfile ||
+      Profile == LLVMParameterBoundProgressDataFlowProfile) {
     Out["backedge_count"] = P.BackedgeCount;
     Out["guard_count"] = P.Loops.size();
   }
@@ -453,7 +454,10 @@ DataFlowGraph readDataFlowGraph(const Value &V, const DataFlowOptions &Options,
   uint64_t Edges = 0, ProgressRows = 0;
   if (Progress) {
     const auto &P = object(field(O, "progress"));
-    const bool Modular = G.Profile == LLVMModularProgressDataFlowProfile;
+    const bool ParameterBound =
+        G.Profile == LLVMParameterBoundProgressDataFlowProfile;
+    const bool Modular =
+        G.Profile == LLVMModularProgressDataFlowProfile || ParameterBound;
     const bool Branched =
         G.Profile == LLVMBranchProgressDataFlowProfile || Modular;
     if (Branched)
@@ -504,11 +508,13 @@ DataFlowGraph readDataFlowGraph(const Value &V, const DataFlowOptions &Options,
       if (Modular) {
         const auto Proof =
             text(field(L, "proof"), limits::kMaxFlowIdentityBytes);
-        require(Proof == "nowrap" || Proof == "modular",
+        require(Proof == "nowrap" || Proof == "modular" ||
+                    (ParameterBound && Proof == "parameter_modular"),
                 "unknown counter proof basis");
-        Record.Loops.back().Proof = Proof == "nowrap"
-                                        ? FlowCounterProof::NoWrap
-                                        : FlowCounterProof::Modular;
+        Record.Loops.back().Proof = Proof == "nowrap" ? FlowCounterProof::NoWrap
+                                    : Proof == "modular"
+                                        ? FlowCounterProof::Modular
+                                        : FlowCounterProof::ParameterModular;
       }
     }
     Record.LoopCount = count(field(P, "loop_count"));
