@@ -4415,7 +4415,9 @@ TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
         llvm::raw_string_ostream Output(Source);
         CEmitterOptions COptions;
         COptions.TheArch = Image.Arch;
-        COptions.Format = Format;
+        // Recover the original format's ABI, then emit GNU intrinsics for
+        // this host execution oracle. The image and recovered IR stay intact.
+        COptions.Format = BinaryFormat::ELF;
         COptions.Image = &Image;
         if (LLVM) {
           ASSERT_TRUE(Result.LlvmModule);
@@ -4465,7 +4467,8 @@ TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
     auto Result = Pipeline().run(Image, Context, Options);
     if (Mutation == 7) {
       EXPECT_FALSE(Result.Success);
-      EXPECT_NE(Result.Error.find("return-address"), std::string::npos)
+      EXPECT_NE(Result.Error.find("physical CALL return slot"),
+                std::string::npos)
           << Result.Error;
       continue;
     }
