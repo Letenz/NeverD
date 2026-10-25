@@ -299,9 +299,10 @@ public:
 
 FlowMatchInput::FlowMatchInput(const DataFlowGraph &G,
                                const FlowFingerprints &K,
-                               const DataFlowOptions &Options)
+                               const DataFlowOptions &Options,
+                               const ComparisonControl &Control)
     : Graph(G), Keys(K), Rounds(Options.Rounds) {
-  if (auto Error = G.validate(Options))
+  if (auto Error = G.validate(Options, Control))
     throw std::invalid_argument(*Error);
   if (K.State != ComparisonState::Complete || K.CompletedRounds != Rounds ||
       K.Keys.size() != G.Nodes.size() ||

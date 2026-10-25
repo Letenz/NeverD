@@ -699,6 +699,21 @@ does not run another matcher or promote a candidate. Mapping edits and restore
 invalidate that inventory cache. CLI and the Qt counterpart picker consume this
 projection; the picker keeps bounded pages and invalidates its selection when
 the worker's comparison revision changes.
+`ComparisonJSON` owns strict saved-report validation and transactional binding.
+Its optional `ComparisonControl` carries cooperative cancellation/deadlines
+through record readers, graph/native/region validators and measurement workers.
+`ComparisonInterrupted` distinguishes a stopped restore from invalid evidence;
+worker exceptions are joined and rethrown by the shared parallel owner. Progress
+callbacks remain on the coordinator, including the last checkpoint before
+publication. The C ABI admits one operation, parses one DOM and commits only a
+fully validated replacement; failure/stop leaves the prior result, histories and
+caches intact. Restore operation status is separate from the saved result state.
+The worker resolves the additive progress export at runtime and uses that same
+capability for advertisement and cancellation admission. Neither adapter owns a
+second evidence validator or a separate persistence format. JSON DOM parsing,
+individual allocations/copies and whole-value equality are explicit indivisible
+checkpoints, so this remains cooperative cancellation rather than a deadline
+for every host operation.
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,

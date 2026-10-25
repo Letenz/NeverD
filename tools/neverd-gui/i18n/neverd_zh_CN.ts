@@ -5586,6 +5586,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>正在应用保存的分析</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>正在检查已保存的证据</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>正在读取已保存的比较</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>正在检查已保存的比较</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>正在重新计算已保存的度量</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>正在恢复比较</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7735,6 +7755,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>此工作进程不支持二进制对比。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>恢复已停止，可以重试。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>恢复已停止，原来的比较结果仍可使用。</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>无法恢复比较。原来的比较结果仍可使用。%1</translation>
     </message>
 </context>
 <context>

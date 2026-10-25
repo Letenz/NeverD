@@ -25,6 +25,7 @@
 #include "llvm/Support/SourceMgr.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <numeric>
@@ -246,5 +247,32 @@ TEST(BinaryDiffFlowBinding, ChargesExactWorkAndEveryCancellationPoint) {
                          throw DataFlowInterrupted(ComparisonState::Cancelled);
                      }),
                  DataFlowInterrupted);
+  }
+}
+
+TEST(BinaryDiffFlowBinding, RestoreControlStopsInsideExactBindingCharges) {
+  const auto A = graph(false), B = reorder(A);
+  const auto OriginalA = A, OriginalB = B;
+  uint64_t Total = 0;
+  ASSERT_TRUE(sameLLVMGraphAfterPhiRenumbering(
+      A, B, {}, [&](uint64_t N) { Total += N; }));
+  ASSERT_GT(Total, 2u);
+  for (const uint64_t Boundary : {uint64_t(1), Total / 2, Total - 1}) {
+    std::atomic<bool> Cancel = false;
+    ComparisonControl Control;
+    Control.Cancel = &Cancel;
+    uint64_t Charged = 0;
+    EXPECT_THROW(sameLLVMGraphAfterPhiRenumbering(
+                     A, B, {},
+                     [&](uint64_t N) {
+                       Charged += N;
+                       if (Charged > Boundary)
+                         Cancel = true;
+                     },
+                     Control),
+                 ComparisonInterrupted);
+    EXPECT_GT(Charged, Boundary);
+    EXPECT_EQ(A, OriginalA);
+    EXPECT_EQ(B, OriginalB);
   }
 }

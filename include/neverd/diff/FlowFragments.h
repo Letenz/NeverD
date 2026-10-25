@@ -11,6 +11,7 @@
 #ifndef NEVERD_DIFF_FLOWFRAGMENTS_H
 #define NEVERD_DIFF_FLOWFRAGMENTS_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/FlowMatch.h"
 
 #include <cstdint>
@@ -45,9 +46,11 @@ class FlowFragmentInput {
                                                  const ComparisonControl &);
 
 public:
+  /// Validation throws ComparisonInterrupted when the supplied control stops.
   FlowFragmentInput(const DataFlowGraph &Graph,
                     const FlowFragmentFingerprints &Keys,
-                    const DataFlowOptions &Options = {});
+                    const DataFlowOptions &Options = {},
+                    const ComparisonControl &Control = {});
 };
 /// Depth is the number of included operation levels, from one through the
 /// prepared rounds. PHIs, branches, switches, effects and unknown operands are

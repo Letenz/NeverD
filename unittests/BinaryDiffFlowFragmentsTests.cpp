@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/diff/FlowFragments.h"
+#include "neverd/diff/FlowMatch.h"
 
 #include <algorithm>
 #include <atomic>
@@ -258,4 +259,29 @@ TEST(BinaryDiffFlowFragments, IndexAndCandidateStopsPublishNoPartialEvidence) {
   EXPECT_TRUE(Stopped.Nodes.empty());
   EXPECT_TRUE(Stopped.Frontier.empty());
   EXPECT_THROW(match(A, 4, A, 4, 0), std::invalid_argument);
+}
+
+TEST(BinaryDiffFlowFragments,
+     PreparedInputsAndFingerprintValidationObserveRestoreControl) {
+  const auto G = chain();
+  const auto Keys = fingerprintDataFlow(G);
+  const auto Fragments = fingerprintFlowFragments(G);
+  std::atomic<bool> Cancel = true;
+  ComparisonControl Control;
+  Control.Cancel = &Cancel;
+  EXPECT_THROW(FlowMatchInput(G, Keys, {}, Control), ComparisonInterrupted);
+  EXPECT_THROW(FlowFragmentInput(G, Fragments, {}, Control),
+               ComparisonInterrupted);
+  const auto StoppedKeys = fingerprintDataFlow(G, {}, Control);
+  EXPECT_EQ(StoppedKeys.State, ComparisonState::Cancelled);
+  EXPECT_EQ(StoppedKeys.CompletedRounds, 0u);
+  const auto StoppedFragments = fingerprintFlowFragments(G, {}, Control);
+  EXPECT_EQ(StoppedFragments.State, ComparisonState::Cancelled);
+  EXPECT_TRUE(StoppedFragments.Layers.empty());
+  Cancel = false;
+  Control.Deadline = std::chrono::steady_clock::now();
+  EXPECT_EQ(fingerprintDataFlow(G, {}, Control).State,
+            ComparisonState::TimedOut);
+  EXPECT_EQ(fingerprintFlowFragments(G, {}, Control).State,
+            ComparisonState::TimedOut);
 }

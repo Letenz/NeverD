@@ -3145,3 +3145,110 @@ TEST_F(BinaryDiffSDK, RestoresPhiNumberingWhileAuthenticatingEverySourceFact) {
     EXPECT_EQ(take(neverd_comparison_export_json(C)), Canonical);
   }
 }
+
+TEST_F(BinaryDiffSDK, RestoreCancellationRetainsEditsHistoryAndInspection) {
+  auto A = input(body()), B = input(body(9), 0x8000);
+  const auto C = compare(
+      A, B,
+      R"({"discover":false,"dataflow":true,"regions":true,"flow_regions":true})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"confirm","primary":"0x1000","secondary":"0x8000"})"),
+      1);
+  const auto Edited = take(neverd_comparison_export_json(C));
+  ASSERT_NE(Edited, Saved);
+  const auto Summary = take(neverd_comparison_summary_json(C));
+  const auto Detail = take(neverd_comparison_function_json(C, 0, 0x1000));
+  ASSERT_FALSE(Detail.empty());
+  struct Probe {
+    neverd_comparison_t Handle;
+    const char *Stage;
+    std::thread::id Caller = std::this_thread::get_id();
+    bool Seen = false;
+    static void report(void *User, const char *Phase, neverd_va_t,
+                       neverd_va_t) {
+      auto &P = *static_cast<Probe *>(User);
+      EXPECT_EQ(std::this_thread::get_id(), P.Caller);
+      const auto Status = parsed(neverd_comparison_status_json(P.Handle));
+      EXPECT_EQ(Status.getAsObject()->getBoolean("running"), true);
+      EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "running");
+      EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+                true);
+      if (llvm::StringRef(Phase) == P.Stage) {
+        P.Seen = true;
+        neverd_comparison_cancel(P.Handle);
+      }
+    }
+  };
+  for (const auto *Stage :
+       {"restore:scan", "restore:parse", "restore:records", "restore:identity",
+        "restore:dataflow", "restore:reviews", "restore:regions",
+        "restore:flow_regions", "restore:measure", "restore:publish"}) {
+    SCOPED_TRACE(Stage);
+    Probe P{C, Stage};
+    EXPECT_EQ(neverd_comparison_restore_json_with_progress(C, Saved.c_str(),
+                                                           Probe::report, &P),
+              0);
+    EXPECT_TRUE(P.Seen);
+    const auto Status = parsed(neverd_comparison_status_json(C));
+    EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "cancelled");
+    EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+              true);
+    EXPECT_EQ(Status.getAsObject()->getBoolean("partial_result_retained"),
+              false);
+    EXPECT_EQ(Status.getAsObject()->getBoolean("running"), false);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+    EXPECT_EQ(take(neverd_comparison_summary_json(C)), Summary);
+    EXPECT_EQ(take(neverd_comparison_function_json(C, 0, 0x1000)), Detail);
+  }
+  // A malformed document follows the same retention contract and does not
+  // consume an existing edit or redo record.
+  EXPECT_EQ(neverd_comparison_restore_json(C, "{}"), 0);
+  auto Status = parsed(neverd_comparison_status_json(C));
+  EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "failed");
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  ASSERT_EQ(neverd_comparison_redo(C), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+  neverd_comparison_cancel(C);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  Status = parsed(neverd_comparison_status_json(C));
+  EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "complete");
+  EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+            false);
+  EXPECT_EQ(parsed(neverd_comparison_summary_json(C))
+                .getAsObject()
+                ->getBoolean("can_undo"),
+            false);
+}
+
+TEST_F(BinaryDiffSDK, RestoreCompletionIsIndependentOfTheSavedStopState) {
+  auto A = input(body()), B = input(body(), 0x8000);
+  const auto C = compare(A, B);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  for (const auto *State :
+       {"complete", "cancelled", "timed_out", "resource_limited"}) {
+    SCOPED_TRACE(State);
+    auto Document = llvm::json::parse(Saved);
+    ASSERT_TRUE(bool(Document));
+    (*Document->getAsObject())["state"] = State;
+    (*Document->getAsObject())["stopped_phase"] =
+        llvm::StringRef(State) == "complete" ? "" : "measure";
+    // This historical setting is not a deadline for the restore operation.
+    (*Document->getAsObject()->getObject("settings"))["timeout_ms"] = 1;
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Document).c_str()), 1)
+        << take(neverd_comparison_last_error(C));
+    auto Status = parsed(neverd_comparison_status_json(C));
+    EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "complete");
+    EXPECT_EQ(Status.getAsObject()->getString("state"), State);
+    EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+              false);
+    EXPECT_EQ(parsed(neverd_comparison_export_json(C))
+                  .getAsObject()
+                  ->getString("state"),
+              State);
+  }
+}

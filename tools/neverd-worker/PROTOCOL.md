@@ -241,7 +241,7 @@ authentication. Recipes are `llvm-progress-neighborhoods-v5` and
 Fresh binding can authenticate a complete same-block PHI renumbering while
 retaining saved node IDs. Ordinary instruction order, source observations,
 ordered inputs and all proof metadata must still agree exactly; this does not
-weaken edited-report rejection or add public restore cancellation.
+weaken edited-report rejection.
 
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
@@ -259,6 +259,24 @@ unavailable with reasons. Med-only change associations report
 profile on fresh reopen, including early-cancelled reports.
 Unavailable records, graph origins, effect gaps and actual slice stop states are
 retained. Neither operation validates behavior or vulnerability elimination.
+`comparison_restore` is included in `comparison_cancellable_operations` only
+when the linked SDK exports `neverd_comparison_restore_json_with_progress`.
+Its `restore:*` progress covers chunked file reads, JSON parsing, validation and
+measurement. A stop/failure retains the previous result and edit history without
+advancing `comparison_revision`. Older engines keep synchronous restoration and
+do not advertise cooperative cancellation for that operation. Reading settings
+and the JSON DOM parser are indivisible checkpoints, not hard deadlines.
+
+Successful standalone restoration and `comparison_start` with `restore_path`
+return `restore_completed:true`. The payload's `state` still describes the saved
+computation; a historical `cancelled` state is not a stop of the new restore.
+`job.restore_state` describes the latter, and SDK status exposes
+`previous_result_retained` for an admitted restore. A successful standalone
+commit advances the revision even if cancellation arrives afterward; the
+terminal reply then reports `completed_before_cancellation:true`. A replacement
+handle remains disposable until the old session is swapped. Saved timeout
+settings do not become a deadline for restore validation.
+
 Restart with `restore_path` reuses the saved comparison settings before fresh
 projection. Input load/discovery/filter settings must still match the snapshot.
 
