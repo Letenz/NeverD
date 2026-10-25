@@ -1,5 +1,4 @@
-//===- PEBrowseCompatibilityTests.cpp - Bounded PE browsing metadata
-//--------===//
+//===- PEBrowseCompatibilityTests.cpp - Bounded PE browsing metadata ------===//
 //
 // NeverD Decompiler
 //
@@ -196,6 +195,8 @@ TEST(PEBrowseCompatibility, NoncanonicalIATRetainsOnlyDescriptorIdentities) {
   for (const bool Wide : {false, true})
     for (const uint32_t RVA : {0x2181u, 0x1080u}) {
       Fixture F(Wide);
+      SCOPED_TRACE(::testing::Message()
+                   << "width=" << F.Width << " IAT RVA=" << RVA);
       F.put32(F.IData + 16, RVA);
       const size_t Offset = RVA == 0x1080 ? 0x280 : F.IData + 0x181;
       F.word(Offset, F.ordinal(1));
@@ -211,7 +212,14 @@ TEST(PEBrowseCompatibility, NoncanonicalIATRetainsOnlyDescriptorIdentities) {
       EXPECT_TRUE(Image->ImportStorageSlots.empty());
       EXPECT_TRUE(Image->ImportPtrSlots.empty());
       EXPECT_TRUE(Image->collectImportStorageSlots().Slots.empty());
-      EXPECT_TRUE(Image->LoadDiagnostics.empty());
+      if (RVA % F.Width) {
+        // Browsing can retain the descriptor identity without proving the
+        // aligned loader writes needed to initialize a mapped header page.
+        ASSERT_EQ(Image->LoadDiagnostics.size(), 1u);
+        EXPECT_EQ(Image->LoadDiagnostics[0].Code, "pe.headers_unmapped");
+      } else {
+        EXPECT_TRUE(Image->LoadDiagnostics.empty());
+      }
     }
 }
 
