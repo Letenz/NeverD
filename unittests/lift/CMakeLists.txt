@@ -1992,6 +1992,7 @@ add_neverd_unittest(NeverDArm64eAnalysisTests
   format/MachOArm64eTests.cpp
   format/MachOBindingIdentityTests.cpp
   format/MachOThreadedBindTests.cpp
+  NO_PRETTY_VALUES
   LINK_COMPONENTS BackendC BackendLLVM CodeGen Decode Lift Loader
 )
 target_compile_definitions(NeverDArm64eAnalysisTests PRIVATE

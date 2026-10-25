@@ -1135,72 +1135,61 @@ TEST(AArch64AddressMemory, AllScalarRegisterOffsetFamiliesKeepTheirContracts) {
   }
 }
 
-TEST(AArch64AddressMemory,
-     ScalarFamiliesExecuteBothCProjectionsAgainstNativeWords) {
-  for (const auto &Case : FamilyCases) {
-    SCOPED_TRACE(Case.Word);
-    const auto Function = memoryFunction(Case.Word);
-    llvm::LLVMContext Context;
-    auto Module =
-        MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
-    ASSERT_TRUE(Module);
-    optimizeMemory(*Module);
-    ASSERT_FALSE(llvm::verifyModule(*Module));
-    unsigned Calls = 0;
-    for (const auto &Block : *Module->getFunction(kName))
-      for (const auto &Insn : Block)
-        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Insn)) {
-          ASSERT_TRUE(validateAArch64AddressMemoryCall(Arch::AArch64, *Call));
-          EXPECT_EQ(Call->getType()->isVoidTy(), !Case.Load);
-          ++Calls;
-        }
-    EXPECT_EQ(Calls, 1);
-    const auto Object =
-        Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
-    ASSERT_TRUE(Object.Success);
-    inspectMemoryObject(
-        llvm::MemoryBufferRef(llvm::StringRef(reinterpret_cast<const char *>(
-                                                  Object.ObjectData.data()),
-                                              Object.ObjectData.size()),
-                              kObject),
-        Case.Scratch);
+// Each original encoding keeps the ordinary per-test timeout. Separate cases
+// also let CTest schedule the native compiler executions independently.
+class AArch64ScalarMemorySource
+    : public ::testing::TestWithParam<MemoryFamilyCase> {};
+
+TEST_P(AArch64ScalarMemorySource, BothCProjectionsMatchNativeWords) {
+  const auto &Case = GetParam();
+  SCOPED_TRACE(Case.Word);
+  const auto Function = memoryFunction(Case.Word);
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
+  ASSERT_TRUE(Module);
+  optimizeMemory(*Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module));
+  unsigned Calls = 0;
+  for (const auto &Block : *Module->getFunction(kName))
+    for (const auto &Insn : Block)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Insn)) {
+        ASSERT_TRUE(validateAArch64AddressMemoryCall(Arch::AArch64, *Call));
+        EXPECT_EQ(Call->getType()->isVoidTy(), !Case.Load);
+        ++Calls;
+      }
+  EXPECT_EQ(Calls, 1);
+  const auto Object =
+      Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
+  ASSERT_TRUE(Object.Success);
+  inspectMemoryObject(
+      llvm::MemoryBufferRef(llvm::StringRef(reinterpret_cast<const char *>(
+                                                Object.ObjectData.data()),
+                                            Object.ObjectData.size()),
+                            kObject),
+      Case.Scratch);
 #if defined(__APPLE__) && defined(__aarch64__)
-    llvm::SmallString<128> ObjectPath;
-    ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(
-        kTempPrefix, kObjectExtension, ObjectPath));
-    llvm::FileRemover RemoveObject(ObjectPath);
-    std::error_code ObjectError;
-    {
-      llvm::raw_fd_ostream Out(ObjectPath, ObjectError);
-      ASSERT_FALSE(ObjectError);
-      Out.write(reinterpret_cast<const char *>(Object.ObjectData.data()),
-                Object.ObjectData.size());
-    }
-    const auto IndexType =
-        llvm::formatv(kNativeUnsignedType, Case.IndexBytes * CHAR_BIT).str();
-    const auto DataType = llvm::formatv(kNativeObjectDataParameter,
-                                        llvm::formatv(kNativeUnsignedType,
-                                                      Case.Access * CHAR_BIT))
-                              .str();
-    compileMemoryC(
-        llvm::formatv(kNativeObjectDeclaration, kName, IndexType,
-                      Case.Load ? kEmptyNativeArgument : DataType)
-                .str() +
-            llvm::formatv(kFamilyNativeHarness, kName, Case.Scratch,
-                          Case.Shift ? 1 : Case.Access,
-                          unsigned(Case.IndexBytes == kScalarBytes ||
-                                   (Case.Word & kFixtureSignedIndexBit)),
-                          unsigned(Case.IndexBytes == kWordBytes),
-                          Case.Load ? kEmptyNativeArgument
-                                    : kStoreNativeArgument,
-                          unsigned(Case.Load))
-                .str(),
-        true, {}, ObjectPath);
-#endif
-    for (bool LLVMRoute : {false, true}) {
-      std::string Source = memorySource(Function, *Module, LLVMRoute);
-#if defined(__APPLE__) && defined(__aarch64__)
-      Source +=
+  llvm::SmallString<128> ObjectPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(kTempPrefix, kObjectExtension,
+                                                  ObjectPath));
+  llvm::FileRemover RemoveObject(ObjectPath);
+  std::error_code ObjectError;
+  {
+    llvm::raw_fd_ostream Out(ObjectPath, ObjectError);
+    ASSERT_FALSE(ObjectError);
+    Out.write(reinterpret_cast<const char *>(Object.ObjectData.data()),
+              Object.ObjectData.size());
+  }
+  const auto IndexType =
+      llvm::formatv(kNativeUnsignedType, Case.IndexBytes * CHAR_BIT).str();
+  const auto DataType =
+      llvm::formatv(kNativeObjectDataParameter,
+                    llvm::formatv(kNativeUnsignedType, Case.Access * CHAR_BIT))
+          .str();
+  compileMemoryC(
+      llvm::formatv(kNativeObjectDeclaration, kName, IndexType,
+                    Case.Load ? kEmptyNativeArgument : DataType)
+              .str() +
           llvm::formatv(kFamilyNativeHarness, kName, Case.Scratch,
                         Case.Shift ? 1 : Case.Access,
                         unsigned(Case.IndexBytes == kScalarBytes ||
@@ -1208,16 +1197,35 @@ TEST(AArch64AddressMemory,
                         unsigned(Case.IndexBytes == kWordBytes),
                         Case.Load ? kEmptyNativeArgument : kStoreNativeArgument,
                         unsigned(Case.Load))
-              .str();
-      compileMemoryC(Source, true);
-#else
-      compileMemoryC(Source, false, [&](llvm::MemoryBufferRef Buffer) {
-        inspectMemoryObject(Buffer, Case.Scratch);
-      });
+              .str(),
+      true, {}, ObjectPath);
 #endif
-    }
+  for (bool LLVMRoute : {false, true}) {
+    std::string Source = memorySource(Function, *Module, LLVMRoute);
+#if defined(__APPLE__) && defined(__aarch64__)
+    Source +=
+        llvm::formatv(kFamilyNativeHarness, kName, Case.Scratch,
+                      Case.Shift ? 1 : Case.Access,
+                      unsigned(Case.IndexBytes == kScalarBytes ||
+                               (Case.Word & kFixtureSignedIndexBit)),
+                      unsigned(Case.IndexBytes == kWordBytes),
+                      Case.Load ? kEmptyNativeArgument : kStoreNativeArgument,
+                      unsigned(Case.Load))
+            .str();
+    compileMemoryC(Source, true);
+#else
+    compileMemoryC(Source, false, [&](llvm::MemoryBufferRef Buffer) {
+      inspectMemoryObject(Buffer, Case.Scratch);
+    });
+#endif
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    ScalarFamilies, AArch64ScalarMemorySource, ::testing::ValuesIn(FamilyCases),
+    [](const ::testing::TestParamInfo<MemoryFamilyCase> &Info) {
+      return "Word" + std::to_string(Info.param.Word);
+    });
 
 TEST(AArch64AddressMemory,
      ScalarTracerReadsExactWidthsAndPublishesWholeXRegisters) {
