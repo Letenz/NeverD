@@ -139,6 +139,10 @@ overlapping scalar fields, pointer cells and original address differences.
 an original-image source view, not a relocated reconstruction: native emission,
 relocatable objects and escaped address fragments retain their separate guards.
 The SDK includes this choice in its per-function LLVM cache key.
+Analyst global types follow the loaded address through LLVMC's image-address
+resolver, independently of whether C declares that address as a separate object.
+Only the loaded scalar acquires the checked display type; the backing array,
+overlapping accesses and native LLVM remain unchanged.
 
 Source unknown entry values use distinct opaque SSA seeds. A copy or PHI may
 transport an unavailable value without observing it; a real observation still
