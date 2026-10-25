@@ -491,7 +491,7 @@ public:
       }
       const bool OriginalLoad =
           Architecture == Arch::AArch64 &&
-          lowAArch64AddressMemoryShapeIsValid(Op) &&
+          lowAArch64AddressLoadShapeIsValid(Op) &&
           !aarch64AddressMemoryInstruction(
                Op.Inputs[kAddressMemoryWordOperand + 1].Offset)
                ->stackBase();

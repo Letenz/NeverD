@@ -17,7 +17,8 @@ namespace neverd {
 
 inline bool aarch64AddressMemoryHighShapeIsValid(const HighExpr &Expression) {
   if (Expression.Kind != ExprKind::Call ||
-      Expression.Operands.size() != kAddressLoadOperandCount ||
+      Expression.Operands.size() !=
+          aarch64AddressMemoryOperandCount(Expression.IntrinsicId) ||
       !Expression.IntrinsicOutputs.empty() || Expression.IsIndirectCall ||
       Expression.IndirectTarget ||
       Expression.MemoryOrdering != NdMemoryOrdering::None ||
@@ -27,8 +28,11 @@ inline bool aarch64AddressMemoryHighShapeIsValid(const HighExpr &Expression) {
     return Type &&
            (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Unknown);
   };
-  if (!Integer(Expression.Type) &&
-      (!Expression.Type || Expression.Type->Kind != NdTypeKind::Ptr))
+  const bool Store =
+      Expression.IntrinsicId == Intrinsic::A64_StoreRegisterOffset;
+  if (Store ? (!Expression.Type || Expression.Type->Size)
+            : (!Integer(Expression.Type) &&
+               (!Expression.Type || Expression.Type->Kind != NdTypeKind::Ptr)))
     return false;
   for (const auto &Operand : Expression.Operands)
     if (!Operand || !Operand->Type ||
@@ -46,6 +50,12 @@ inline bool aarch64AddressMemoryHighShapeIsValid(const HighExpr &Expression) {
       Expression.Operands[kAddressMemoryIndexOperand]->Kind == ExprKind::Const
           ? std::optional<uint64_t>(
                 Expression.Operands[kAddressMemoryIndexOperand]->ConstVal)
+          : std::nullopt,
+      Store ? Expression.Operands[kAddressMemoryDataOperand]->Type->Size : 0,
+      Store && Expression.Operands[kAddressMemoryDataOperand]->Kind ==
+                   ExprKind::Const
+          ? std::optional<uint64_t>(
+                Expression.Operands[kAddressMemoryDataOperand]->ConstVal)
           : std::nullopt);
 }
 

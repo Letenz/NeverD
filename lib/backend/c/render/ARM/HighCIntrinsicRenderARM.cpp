@@ -31,6 +31,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <climits>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -813,22 +814,32 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   if (isAArch64ExceptionReturnIntrinsic(Id))
     throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
   if (isAArch64AddressMemoryIntrinsic(Id)) {
-    const auto Word = Ops.size() == kAddressLoadOperandCount
+    const unsigned Count = aarch64AddressMemoryOperandCount(Id);
+    const bool Store = Id == Intrinsic::A64_StoreRegisterOffset;
+    const auto Word = Ops.size() == Count
                           ? constantOperand(Ops[kAddressMemoryWordOperand])
                           : std::nullopt;
-    if (OperandBytes.size() != kAddressLoadOperandCount ||
+    if (OperandBytes.size() != Count || Ops.size() != Count ||
         !aarch64AddressMemoryShapeIsValid(
             Id, Ops.size() + 1, ResultBytes,
             OperandBytes[kAddressMemoryBaseOperand],
             OperandBytes[kAddressMemoryIndexOperand],
             OperandBytes[kAddressMemoryWordOperand], Word,
-            Ops.size() == kAddressLoadOperandCount
-                ? constantOperand(Ops[kAddressMemoryIndexOperand])
-                : std::nullopt))
+            constantOperand(Ops[kAddressMemoryIndexOperand]),
+            Store ? OperandBytes[kAddressMemoryDataOperand] : 0,
+            Store ? constantOperand(Ops[kAddressMemoryDataOperand])
+                  : std::nullopt))
       throw std::invalid_argument(kAddressMemoryMalformed);
-    return aarch64AddressMemoryC(*aarch64AddressMemoryInstruction(*Word),
-                                 Ops[kAddressMemoryBaseOperand],
-                                 Ops[kAddressMemoryIndexOperand]);
+    const auto Instruction = *aarch64AddressMemoryInstruction(*Word);
+    const auto Value = aarch64AddressMemoryC(
+        Instruction, Ops[kAddressMemoryBaseOperand],
+        Ops[kAddressMemoryIndexOperand],
+        Store ? Ops[kAddressMemoryDataOperand] : llvm::StringRef{});
+    return !Store && ResultBytes < kAddressMemoryPointerBytes
+               ? llvm::formatv(kAddressLoadCDataCast, ResultBytes * CHAR_BIT,
+                               Value)
+                     .str()
+               : Value;
   }
   if (isAArch64PAuthLoadIntrinsic(Id)) {
     const auto Word = Ops.size() == kPAuthLoadOperandCount

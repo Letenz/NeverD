@@ -33,6 +33,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86/X86FPStateShape.h"
@@ -2501,6 +2502,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
+  OriginalMemoryBases.clear();
+  OriginalMemoryObjects.clear();
   DataSymbolBindings = Opts.Image ? collectDataSymbolBindings(*Opts.Image)
                                   : std::map<va_t, DataSymbolBinding>{};
   UsedDataBindings.clear();
@@ -3089,40 +3092,183 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           return It->second;
     return std::nullopt;
   };
-  VarKeyMap<std::pair<va_t, uint16_t>> TableEntryVars;
-  // An entry added back to its table in an assignment proves the table
-  // relative however the sum is used (`p = table + e; *p`).
+  // Retaining the original instruction does not erase its table dependence.
+  // This observation sizes the mirror; it neither folds the read nor replaces
+  // the instruction's checked address with an integer effective address.
+  auto TableRead = [&](const HighExpr &Expression, const VarKeyMap<va_t> &Bases)
+      -> std::optional<std::pair<va_t, uint16_t>> {
+    const HighExpr *Load = peelIntegerViewOps(&Expression);
+    if (!Load)
+      return std::nullopt;
+    if (Load->Kind == ExprKind::Load && Load->Type &&
+        Load->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !Load->Operands.empty() && Load->Operands[0]) {
+      if (const auto Table = IndexedTable(*Load->Operands[0], Bases))
+        return std::make_pair(*Table, Load->Type->Size);
+      return std::nullopt;
+    }
+    if (Opts.TheArch != Arch::AArch64 ||
+        !isAArch64AddressMemoryIntrinsic(Load->IntrinsicId) ||
+        !aarch64AddressMemoryHighShapeIsValid(*Load))
+      return std::nullopt;
+    const auto Instruction = *aarch64AddressMemoryInstruction(
+        Load->Operands[kAddressMemoryWordOperand]->ConstVal);
+    if (!Instruction.isLoad() || Instruction.stackBase())
+      return std::nullopt;
+    const auto Table =
+        AddressOf(*Load->Operands[kAddressMemoryBaseOperand], Bases);
+    if (!Table || !isImageDataAddress(*Table))
+      return std::nullopt;
+    return std::make_pair(*Table,
+                          static_cast<uint16_t>(Instruction.accessBytes()));
+  };
+  // An entry added back to its table proves the table relative, including a
+  // sum folded into a later original memory operation's base operand.
   std::set<std::pair<va_t, uint16_t>> AddedBackTables;
   for (const HighFunc &Func : Funcs) {
     const VarKeyMap<va_t> Bases = ConstAddressVars(Func);
-    walkStmts(Func.Body, [&](const HighStmt &S) {
-      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
-          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
-        return;
-      const HighExpr *Load = peelIntegerViewOps(S.Val.get());
-      if (!Load || Load->Kind != ExprKind::Load || !Load->Type ||
-          Load->Operands.empty() || !Load->Operands[0])
-        return;
-      if (const auto Table = IndexedTable(*Load->Operands[0], Bases))
-        TableEntryVars[varKey(S.Dst->Var)] = {*Table, Load->Type->Size};
-    });
-    walkStmts(Func.Body, [&](const HighStmt &S) {
-      if (S.Kind != StmtKind::Assign || !S.Val)
-        return;
-      const HighExpr *Sum = peelIntegerViewOps(S.Val.get());
-      if (!Sum || Sum->Kind != ExprKind::BinOp || Sum->Op != NdOp::INT_ADD ||
-          Sum->Operands.size() != 2 || !Sum->Operands[0] || !Sum->Operands[1])
-        return;
-      for (unsigned I = 0; I < 2; ++I) {
-        const auto Table = AddressOf(*Sum->Operands[I], Bases);
-        const HighExpr *Entry = peelIntegerViewOps(Sum->Operands[1 - I].get());
-        if (!Table || !Entry ||
-            (Entry->Kind != ExprKind::Var && Entry->Kind != ExprKind::Phi))
+    Reading = &Func;
+    ReadDefinitions();
+    if (Opts.TheArch == Arch::AArch64 && !Func.ExceptionMetadata) {
+      std::set<HighSourceLocalIdentity> Used;
+      std::map<const HighExpr *, size_t> ReadUses;
+      HighExprSet Seen;
+      std::function<void(const HighExpr &)> NoteUses =
+          [&](const HighExpr &Expression) {
+            if (!Seen.insert(&Expression).second)
+              return;
+            if (Expression.Kind == ExprKind::Call &&
+                isAArch64AddressMemoryIntrinsic(Expression.IntrinsicId))
+              ++ReadUses[&Expression];
+            if (Expression.Kind == ExprKind::Var ||
+                Expression.Kind == ExprKind::Phi)
+              Used.insert(highSourceLocalIdentity(Expression.Var));
+            Expression.forEachChildExpr(
+                [&](const ExprPtr &Child) { NoteUses(*Child); });
+          };
+      walkStmts(Func.Body, [&](const HighStmt &Statement) {
+        Seen.clear();
+        forEachRhsExpr(Statement, [&](const ExprPtr &Expression) {
+          NoteUses(*Expression);
+        });
+      });
+      std::vector<const HighExpr *> Reads;
+      std::vector<HighSourceUnsignedRangeQuery> Queries;
+      walkStmts(Func.Body, [&](const HighStmt &Statement) {
+        const HighExpr *Value = nullptr;
+        if (Statement.Kind == StmtKind::Call && Statement.CallExpr)
+          Value = Statement.CallExpr.get();
+        else if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+                 Statement.Val &&
+                 (Statement.Dst->Kind == ExprKind::Var ||
+                  Statement.Dst->Kind == ExprKind::Phi) &&
+                 !Used.count(highSourceLocalIdentity(Statement.Dst->Var)))
+          Value = Statement.Val.get();
+        const HighExpr *Read = peelIntegerViewOps(Value);
+        if (!Read || !isAArch64AddressMemoryIntrinsic(Read->IntrinsicId) ||
+            !aarch64AddressMemoryHighShapeIsValid(*Read))
+          return;
+        const auto Instruction = *aarch64AddressMemoryInstruction(
+            Read->Operands[kAddressMemoryWordOperand]->ConstVal);
+        if (!Instruction.isLoad() || Instruction.stackBase())
+          return;
+        Reads.push_back(Read);
+        Queries.push_back(
+            {&Statement, Read->Operands[kAddressMemoryIndexOperand]});
+      });
+      const auto Bounds = Queries.empty()
+                              ? std::vector<std::optional<uint64_t>>{}
+                              : highSourceUnsignedUpperBounds(Func, Queries);
+      std::map<const HighExpr *,
+               std::pair<AArch64OriginalMemoryStorage, size_t>>
+          Unobserved;
+      if (Bounds.size() == Reads.size())
+        for (size_t I = 0; I < Reads.size(); ++I) {
+          if (!Bounds[I])
+            continue;
+          const auto &Read = *Reads[I];
+          const auto Instruction = *aarch64AddressMemoryInstruction(
+              Read.Operands[kAddressMemoryWordOperand]->ConstVal);
+          const auto Base =
+              AddressOf(*Read.Operands[kAddressMemoryBaseOperand], Bases);
+          const auto Storage =
+              Base ? aarch64OriginalMemoryStorage(*Opts.Image, *Base)
+                   : std::nullopt;
+          if (!Storage || Storage->Bytes.size() < Instruction.accessBytes() ||
+              *Bounds[I] >
+                  ((Storage->Bytes.size() - Instruction.accessBytes()) >>
+                   Instruction.indexShift()) ||
+              !Instruction.controlIndependentAddressRange(*Base, *Bounds[I]))
+            continue;
+          const auto It =
+              Unobserved.emplace(&Read, std::make_pair(*Storage, 0)).first;
+          ++It->second.second;
+        }
+      for (const auto &[Read, Observation] : Unobserved) {
+        if (Observation.second != ReadUses[Read])
           continue;
-        if (const auto It = TableEntryVars.find(varKey(Entry->Var));
-            It != TableEntryVars.end() && It->second.first == *Table)
-          AddedBackTables.insert(It->second);
+        const auto &Storage = Observation.first;
+        auto It = OriginalMemoryObjects.find(Storage.Base);
+        if (It == OriginalMemoryObjects.end()) {
+          const auto Name = GlobalIdentifierAllocator.allocate(
+              kOriginalMemorySourcePrefix + llvm::utohexstr(Storage.Base));
+          It = OriginalMemoryObjects
+                   .emplace(Storage.Base, std::make_pair(Storage, Name))
+                   .first;
+        }
+        OriginalMemoryBases.emplace(
+            std::make_pair(&Func, Read),
+            llvm::formatv(kOriginalMemoryCBase, It->second.second, Storage.Pad)
+                .str());
       }
+    }
+    std::function<std::optional<std::pair<va_t, uint16_t>>(const HighExpr &,
+                                                           unsigned)>
+        ReadEntry =
+            [&](const HighExpr &Expression,
+                unsigned Depth) -> std::optional<std::pair<va_t, uint16_t>> {
+      if (Depth >= limits::kMaxIntegerViewUnwrapDepth)
+        return std::nullopt;
+      const HighExpr *Entry = peelIntegerViewOps(&Expression);
+      if (!Entry)
+        return std::nullopt;
+      auto Read = TableRead(*Entry, Bases);
+      if (!Read &&
+          (Entry->Kind == ExprKind::Var || Entry->Kind == ExprKind::Phi))
+        if (const auto It = SingleDefinitions.find(varKey(Entry->Var));
+            It != SingleDefinitions.end())
+          Read = ReadEntry(*It->second->Val, Depth + 1);
+      if (Read && Expression.Type && Expression.Type->Size < Read->second)
+        return std::nullopt;
+      return Read;
+    };
+    std::function<void(const HighExpr &)> NoteAddedBack =
+        [&](const HighExpr &Expression) {
+          if (Expression.Kind == ExprKind::BinOp &&
+              Expression.Op == NdOp::INT_ADD &&
+              Expression.Operands.size() == 2 && Expression.Operands[0] &&
+              Expression.Operands[1]) {
+            for (unsigned I = 0; I < 2; ++I) {
+              const auto Table = AddressOf(*Expression.Operands[I], Bases);
+              const HighExpr *Entry =
+                  peelIntegerViewOps(Expression.Operands[1 - I].get());
+              if (!Table || !Entry)
+                continue;
+              const auto Read = ReadEntry(*Entry, 0);
+              if (Read && Read->first == *Table)
+                AddedBackTables.insert(*Read);
+            }
+          }
+          Expression.forEachChildExpr([&](const ExprPtr &Child) {
+            if (Child)
+              NoteAddedBack(*Child);
+          });
+        };
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &Expression) {
+        if (Expression)
+          NoteAddedBack(*Expression);
+      });
     });
   }
   // The constant addresses the code reads or writes at, as opposed to those
@@ -3161,6 +3307,12 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                                                   static_cast<uint16_t>(Bytes));
   };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (OriginalMemoryBases.count({Reading, &E})) {
+      for (size_t I = 0; I < E.Operands.size(); ++I)
+        if (I != kAddressMemoryBaseOperand && E.Operands[I])
+          Visit(*E.Operands[I]);
+      return;
+    }
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(functionAddressKey(E), Funcs);
     // An address anchored before its owner's section reaches the section's
@@ -3279,39 +3431,6 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                                                           : nullptr);
         NoteWhole(Base->ConstVal, Access, E.Kind == ExprKind::Store,
                   E.Operands[0].get());
-        // `*(T *)(table + table[i])`: the offset the code adds to the table
-        // is an entry of the same table.
-        std::function<void(const HighExpr &, unsigned)> Terms =
-            [&](const HighExpr &Term, unsigned Depth) {
-              const HighExpr *Inner = peelIntegerViewOps(&Term);
-              if (!Inner || Depth > limits::kMaxIntegerViewUnwrapDepth)
-                return;
-              if (Inner->Kind == ExprKind::BinOp &&
-                  Inner->Op == NdOp::INT_ADD && Inner->Operands.size() == 2) {
-                for (const ExprPtr &Operand : Inner->Operands)
-                  if (Operand)
-                    Terms(*Operand, Depth + 1);
-                return;
-              }
-              if (Inner->Kind == ExprKind::Var ||
-                  Inner->Kind == ExprKind::Phi) {
-                if (const auto Entry = TableEntryVars.find(varKey(Inner->Var));
-                    Entry != TableEntryVars.end() &&
-                    Entry->second.first == Base->ConstVal)
-                  NoteRelativeTargets(Base->ConstVal, Entry->second.second,
-                                      /*AddedBack=*/true);
-                return;
-              }
-              if (Inner->Kind != ExprKind::Load || !Inner->Type ||
-                  Inner->Operands.empty() || !Inner->Operands[0])
-                return;
-              if (const HighExpr *Entries =
-                      indexedImageBase(*Inner->Operands[0]);
-                  Entries && Entries->ConstVal == Base->ConstVal)
-                NoteRelativeTargets(Base->ConstVal, Inner->Type->Size,
-                                    /*AddedBack=*/true);
-            };
-        Terms(*E.Operands[0], 0);
       }
     if (E.Kind == ExprKind::Store &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
@@ -3811,6 +3930,24 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
 }
 
 void HighCWriter::writeImageObjects() {
+  for (const auto &[Base, Object] : OriginalMemoryObjects) {
+    (void)Base;
+    const auto &[Storage, Name] = Object;
+    std::string Initializer;
+    uint64_t Count = 0;
+    const auto Append = [&](uint8_t Byte) {
+      if (Count++ % ImageWordsPerLine == 0)
+        Initializer += kOriginalMemoryCIndent;
+      Initializer += llvm::formatv(kOriginalMemoryCByte, unsigned(Byte)).str();
+    };
+    for (uint64_t I = 0; I < Storage.Pad; ++I)
+      Append(0);
+    for (uint8_t Byte : Storage.Bytes)
+      Append(Byte);
+    OS << llvm::formatv(kOriginalMemoryCStorage,
+                        limits::kMaxEmbeddedDataAlignment, Name,
+                        Storage.Pad + Storage.Bytes.size(), Initializer);
+  }
   for (va_t Slot : UsedDataBindings) {
     const auto &Binding = DataSymbolBindings.at(Slot);
     if (Binding.Definition || ExternalDataNames.count(Binding.Name))

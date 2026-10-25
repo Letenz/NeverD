@@ -1401,7 +1401,7 @@ bool collectLowAddressUses(
         if (IsMemoryEffect && !Memory.Complete)
           return false;
         if (Img.Arch == Arch::AArch64 &&
-            lowAArch64AddressMemoryShapeIsValid(Op)) {
+            lowAArch64AddressLoadShapeIsValid(Op)) {
           // The original checked load observes its address without publishing
           // it or clobbering ABI argument registers. Keep both operand roots
           // as a conservative read footprint; neither the effective address

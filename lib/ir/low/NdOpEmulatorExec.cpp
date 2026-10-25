@@ -2790,6 +2790,13 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
 bool NdOpEmulator::executeCopy(const LowOp &Op) {
   if (Op.NumInputs < 1)
     return false;
+  if (Op.Opcode == NdOp::SUBBYTES) {
+    if (Op.NumInputs != 2 ||
+        !knownOperandBytes(Op.Inputs[1], 0, Op.Inputs[1].Size) ||
+        !knownOperandBytes(Op.Inputs[0], readOperand(Op.Inputs[1]),
+                           Op.Output.Size))
+      return false;
+  }
 
   if (Op.Output.Size > 8 || Op.Inputs[0].Size > 8 ||
       (Op.Opcode == NdOp::CONCAT && Op.NumInputs >= 2 &&

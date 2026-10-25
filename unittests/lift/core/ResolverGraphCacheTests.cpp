@@ -1552,6 +1552,9 @@ struct ResolverGraphCacheTestAccess {
 } // namespace neverd::detail
 
 namespace {
+#define RESOLVER_GUARDED_BOUND_VALUE(Type, Name, Value)                        \
+  inline constexpr Type Name = Value;
+#include "ResolverGuardedBoundFixtures.def"
 using Access = detail::ResolverGraphCacheTestAccess;
 
 BinaryImage image() {
@@ -3944,6 +3947,75 @@ TEST(ResolverPredicateDemand, PolicyChangesAndBudgetsAgreeColdAndWarm) {
         EXPECT_EQ(Access::batch(Warm, {Q}, Limit, Depth, 0, true, true, true),
                   Access::batch(Cold, {Q}, Limit, Depth, 0, true, true, true));
       }
+  }
+}
+
+TEST(ResolverGuardPredicates, GuardedBoundsDoNotClaimFiniteJoinOwnership) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Target));
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    CFGBuilder B;
+    auto Guarded = Access::seedJoinedGuard(B, Image, kGuardedBoundStraightLine);
+    Guarded.Relation = Access::Relation::GuardedUnsignedLessThan;
+    Guarded.UnsignedUpperBound = kGuardedBoundEnvelope;
+    auto Cheap = Guarded;
+    Cheap.Relation = Access::Relation::UnsignedLessThan;
+    auto Join = Guarded;
+    Join.Relation = Access::Relation::JoinedUnsignedFeasibleSet;
+    const std::vector<Access::Query> Queries{Cheap, Guarded, Join, Guarded,
+                                             Cheap};
+    const auto Answer =
+        Access::batch(B, Queries, kGuardedBoundBudget, 0, 0, true, true, true);
+    ASSERT_TRUE(Answer.Complete);
+    EXPECT_EQ(Answer.Values,
+              (std::vector<bool>{false, true, false, true, false}));
+    EXPECT_EQ(Answer.Masks, std::vector<uint64_t>(Queries.size(), 0));
+    EXPECT_EQ(
+        Access::batch(B, Queries, kGuardedBoundBudget, 0, 0, true, true, true),
+        Answer);
+    Access::clear(B);
+    EXPECT_EQ(
+        Access::batch(B, Queries, kGuardedBoundBudget, 0, 0, true, true, true),
+        Answer);
+    Guarded.UnsignedUpperBound = kGuardedBoundLargeEnvelope;
+    const auto Large = Access::batch(B, {Guarded}, kGuardedBoundBudget, 0, 0,
+                                     true, true, true);
+    ASSERT_TRUE(Large.Complete);
+    EXPECT_EQ(Large.Values, (std::vector<bool>{true}));
+    EXPECT_EQ(Large.Masks, (std::vector<uint64_t>{0}));
+  }
+}
+
+TEST(ResolverGuardPredicates,
+     GuardedBoundsRejectChangedUnboundedAndUnguardedLanes) {
+  for (Arch Target : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    auto Image = image();
+    Image.Arch = Target;
+    Image.Bits = Target == Arch::X64 || Target == Arch::AArch64
+                     ? Bitness::Bits64
+                     : Bitness::Bits32;
+    for (unsigned Variant : {1u, 2u, 3u, 4u, 5u, kGuardedBoundNarrowGuard}) {
+      if (Variant == kGuardedBoundNarrowGuard &&
+          Image.getPointerSize() == kGuardedBoundWordBytes)
+        continue;
+      SCOPED_TRACE(static_cast<unsigned>(Target));
+      SCOPED_TRACE(Variant);
+      CFGBuilder B;
+      auto Query = Access::seedJoinedGuard(B, Image, Variant);
+      Query.Relation = Access::Relation::GuardedUnsignedLessThan;
+      Query.UnsignedUpperBound = kGuardedBoundEnvelope;
+      const auto Answer = Access::batch(B, {Query}, kGuardedBoundBudget, 0, 0,
+                                        true, true, true);
+      EXPECT_EQ(Answer.Values, (std::vector<bool>{false}));
+      EXPECT_EQ(Answer.Masks, (std::vector<uint64_t>{0}));
+      EXPECT_EQ(Access::batch(B, {Query}, kGuardedBoundBudget, 0, 0, true, true,
+                              true),
+                Answer);
+    }
   }
 }
 

@@ -46,7 +46,9 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+#include <algorithm>
 #include <array>
+#include <climits>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -67,10 +69,55 @@ struct MemoryCase {
   unsigned Base;
   unsigned Index;
   uint32_t Scratch;
+  unsigned IndexBytes;
 };
 constexpr MemoryCase Cases[] = {
-#define MEMORY_CASE(Word, Dst, Base, Index, Scratch)                           \
-  {Word, Dst, Base, Index, Scratch},
+#define MEMORY_CASE(Word, Dst, Base, Index, Scratch, IndexBytes)               \
+  {Word, Dst, Base, Index, Scratch, IndexBytes},
+#include "AArch64AddressMemoryFixtures.def"
+};
+
+struct MemoryFamilyCase {
+  uint32_t Word;
+  uint32_t Scratch;
+  bool Load;
+  unsigned Access;
+  unsigned Result;
+  bool Signed;
+  unsigned IndexBytes;
+  unsigned Shift;
+  uint64_t Expected;
+};
+constexpr MemoryFamilyCase FamilyCases[] = {
+#define MEMORY_FAMILY_CASE(Word, Scratch, Load, Access, Result, Signed,        \
+                           IndexBytes, Shift, Expected)                        \
+  {Word, Scratch, Load, Access, Result, Signed, IndexBytes, Shift, Expected},
+#include "AArch64AddressMemoryFixtures.def"
+};
+
+struct MemoryABICase {
+  uint32_t Word;
+  uint32_t Scratch;
+  unsigned Access;
+  bool SignedIndex;
+};
+constexpr MemoryABICase ABICases[] = {
+#define MEMORY_ABI_CASE(Word, Scratch, Access, SignedIndex)                    \
+  {Word, Scratch, Access, SignedIndex},
+#include "AArch64AddressMemoryFixtures.def"
+};
+
+struct MemorySpecialCase {
+  uint32_t Word;
+  bool Load;
+  unsigned Access;
+  unsigned Destination;
+  unsigned Base;
+  unsigned Index;
+};
+constexpr MemorySpecialCase SpecialCases[] = {
+#define MEMORY_SPECIAL_CASE(Word, Load, Access, Destination, Base, Index)      \
+  {Word, Load, Access, Destination, Base, Index},
 #include "AArch64AddressMemoryFixtures.def"
 };
 
@@ -90,19 +137,29 @@ std::vector<LowOp> liftMemory(uint32_t Word, bool Fast, bool Strict = true) {
   return Ops;
 }
 
+LowOp originalMemoryOperation(const std::vector<LowOp> &Ops) {
+  const auto It =
+      std::find_if(Ops.begin(), Ops.end(), lowAArch64AddressMemoryShapeIsValid);
+  EXPECT_NE(It, Ops.end());
+  return It == Ops.end() ? LowOp{} : *It;
+}
+
 MedFunc memoryFunction(uint32_t Word, bool Discard = false) {
+  const auto Instruction = *aarch64AddressMemoryInstruction(Word);
   MedFunc Function;
   Function.Name = kName;
   Function.Entry = kEntry;
   Function.ReturnType = NdType::makeInt(kScalarBytes, false);
   Function.ReturnValueEvidence = MedReturnValueEvidence::ReturnsInteger;
-  for (unsigned I = 0; I != 2; ++I) {
+  for (unsigned I = 0; I != (Instruction.isLoad() ? 2U : 3U); ++I) {
     MedVar Parameter;
     Parameter.Kind = MedVar::Param;
     Parameter.TheArch = Arch::AArch64;
     Parameter.Id = I;
     Parameter.RegOff = a64reg::X0 + I * kScalarBytes;
-    Parameter.Size = kScalarBytes;
+    Parameter.Size = I == 0   ? kScalarBytes
+                     : I == 1 ? Instruction.indexBytes()
+                              : Instruction.accessBytes();
     Function.Params.push_back(Parameter);
   }
   MedOp Load;
@@ -111,26 +168,62 @@ MedFunc memoryFunction(uint32_t Word, bool Discard = false) {
   Load.Output.TheArch = Arch::AArch64;
   Load.Output.Id = 2;
   Load.Output.SSAVer = 1;
-  Load.Output.Size = kScalarBytes;
+  Load.Output.Size = Instruction.accessBytes();
   Load.Output.RegOff = a64reg::X0;
   Load.addInput(MedVar::makeConst(
-      static_cast<uint64_t>(Intrinsic::A64_Load64RegisterOffset), kIdBytes));
+      static_cast<uint64_t>(Instruction.operation().Id), kIdBytes));
   Load.addInput(Function.Params[0]);
   Load.addInput(aarch64AddressMemoryInstruction(Word)->index() == kZeroRegister
-                    ? MedVar::makeConst(0, kScalarBytes)
+                    ? MedVar::makeConst(0, Instruction.indexBytes())
                     : Function.Params[1]);
   Load.addInput(MedVar::makeConst(Word, kWordBytes));
+  if (!Instruction.isLoad()) {
+    Load.addInput(Instruction.destination() == kZeroRegister
+                      ? MedVar::makeConst(0, Instruction.accessBytes())
+                      : Function.Params[2]);
+    Load.Output = MedVar{};
+    Load.Output.Size = 0;
+    Load.Output.Id = -1;
+  }
   MedOp Return;
   Return.Opcode = NdOp::RETURN;
   Function.Blocks.emplace_back();
   Function.Blocks.front().Id = 0;
   Function.Blocks.front().StartAddr = kEntry;
   Function.Blocks.front().Ops = {Load};
-  if (Discard) {
+  if (Instruction.isLoad() && Instruction.accessBytes() != kScalarBytes &&
+      !Discard) {
+    Function.Blocks.front().Ops.front().Output.Kind = MedVar::Temp;
+    MedOp Extend;
+    Extend.Output = Load.Output;
+    Extend.Output.Kind = MedVar::Reg;
+    Extend.Output.Id = 3;
+    Extend.Output.Size = kScalarBytes;
+    Extend.addInput(Function.Blocks.front().Ops.front().Output);
+    if (Instruction.operation().Signed &&
+        Instruction.operation().ResultBytes < kScalarBytes) {
+      auto Signed = Extend;
+      Signed.Opcode = NdOp::INT_SEXT;
+      Signed.Output.Kind = MedVar::Temp;
+      Signed.Output.Id = 4;
+      Signed.Output.Size = Instruction.operation().ResultBytes;
+      Function.Blocks.front().Ops.push_back(Signed);
+      Extend.Opcode = NdOp::INT_ZEXT;
+      Extend.Inputs[0] = Signed.Output;
+    } else {
+      Extend.Opcode =
+          Instruction.operation().Signed ? NdOp::INT_SEXT : NdOp::INT_ZEXT;
+    }
+    Function.Blocks.front().Ops.push_back(Extend);
+  }
+  if (Discard || !Instruction.isLoad()) {
     MedOp Zero;
     Zero.Opcode = NdOp::COPY;
     Zero.Output = Load.Output;
     Zero.Output.Kind = MedVar::Reg;
+    Zero.Output.TheArch = Arch::AArch64;
+    Zero.Output.Size = kScalarBytes;
+    Zero.Output.RegOff = a64reg::X0;
     Zero.Output.Id = 3;
     Zero.Output.SSAVer = 2;
     Zero.addInput(MedVar::makeConst(0, kScalarBytes));
@@ -186,7 +279,8 @@ void inspectMemoryObject(llvm::MemoryBufferRef Buffer, uint32_t Word) {
 
 void compileMemoryC(
     const std::string &Source, bool Execute,
-    const std::function<void(llvm::MemoryBufferRef)> &Inspect = {}) {
+    const std::function<void(llvm::MemoryBufferRef)> &Inspect = {},
+    llvm::StringRef ObjectPath = {}) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -227,6 +321,8 @@ void compileMemoryC(
                                                OutputPath};
     if (!Execute)
       Args.push_back(kCompileOnly);
+    if (!ObjectPath.empty())
+      Args.push_back(ObjectPath);
     std::string Diagnostic;
     const auto Status =
         llvm::sys::ExecuteAndWait(Compiler, Args, std::nullopt, Redirects,
@@ -280,6 +376,7 @@ TEST(AArch64AddressMemory, RawWordsPreserveIndexScaleAndAliases) {
         EXPECT_EQ(Instruction->base(), Case.Base);
         EXPECT_EQ(Instruction->index(), Case.Index);
         EXPECT_EQ(Instruction->scratchWord(), Case.Scratch);
+        EXPECT_EQ(Instruction->indexBytes(), Case.IndexBytes);
         const auto Ops = liftMemory(Case.Word, Fast, Strict);
         ASSERT_EQ(Ops.size(), 1);
         const auto &Load = Ops.front();
@@ -303,14 +400,15 @@ TEST(AArch64AddressMemory, RawWordsPreserveIndexScaleAndAliases) {
           EXPECT_TRUE(Load.Inputs[2].isReg());
           EXPECT_EQ(Load.Inputs[2].Offset, Case.Index * kScalarBytes);
         }
+        EXPECT_EQ(Load.Inputs[2].Size, Case.IndexBytes);
         EXPECT_EQ(Load.Inputs[3].Offset, Case.Word);
         EXPECT_FALSE(lowIntrinsicHasOnlyValueEffects(Load));
         EXPECT_FALSE(lowIntrinsicMemoryOperands(Load).Complete);
         EXPECT_TRUE(isSideeffectIntrinsic(Intrinsic::A64_Load64RegisterOffset));
       }
   for (uint64_t Word :
-       {uint64_t(kNotLoad), uint64_t(kWordLoad), uint64_t(kSignedIndex),
-        uint64_t(kImmediate), kOversized})
+       {uint64_t(kInvalidIndex), uint64_t(kImmediate), kOversized,
+        uint64_t(kPrefetch), uint64_t(kReservedLoad), uint64_t(kVectorLoad)})
     EXPECT_FALSE(aarch64AddressMemoryInstruction(Word));
 }
 
@@ -824,6 +922,48 @@ TEST(AArch64AddressMemory,
   }
 }
 
+TEST(AArch64AddressMemory, CompleteNarrowRangesNeedNoBranchOrMappingEvidence) {
+  for (const auto &Case : FamilyCases) {
+    SCOPED_TRACE(Case.Word);
+    const auto Instruction = aarch64AddressMemoryInstruction(Case.Word);
+    ASSERT_TRUE(Instruction);
+    const bool SignedWord =
+        Case.IndexBytes == kWordBytes && (Case.Word & kFixtureSignedIndexBit);
+    EXPECT_EQ(Instruction->controlIndependentAddressRange(kEntry,
+                                                          kRangeNarrowMaximum),
+              !SignedWord);
+    EXPECT_TRUE(Instruction->controlIndependentAddressRange(
+        kEntry, kRangePositiveMaximum));
+    ASSERT_TRUE(Instruction->controlIndependentAddressRange(
+        kEntry, kRangeExhaustiveMaximum));
+    for (uint64_t Index = 0; Index <= kRangeExhaustiveMaximum; ++Index) {
+      EXPECT_EQ(Instruction->controlIndependentAddress(kEntry, Index),
+                kEntry + (Index << Case.Shift));
+    }
+    EXPECT_FALSE(Instruction->controlIndependentAddressRange(
+        kAccessBoundary, kRangeNarrowMaximum));
+    EXPECT_FALSE(
+        Instruction->controlIndependentAddressRange(kEntry, kRangeFullMaximum));
+  }
+}
+
+TEST(AArch64AddressMemory, AddressRangesRejectWrapStackAndMalformedEncodings) {
+  const auto Scaled = *aarch64AddressMemoryInstruction(kScaled);
+  EXPECT_TRUE(Scaled.controlIndependentAddressRange(kRangeTailBase, 1));
+  EXPECT_FALSE(Scaled.controlIndependentAddressRange(kRangeTailBase, 2));
+  EXPECT_TRUE(Scaled.controlIndependentAddressRange(kRangeWrapBase, 0));
+  EXPECT_FALSE(Scaled.controlIndependentAddressRange(kRangeWrapBase, 1));
+  const auto Zero = *aarch64AddressMemoryInstruction(kZeroIndex);
+  EXPECT_TRUE(Zero.controlIndependentAddressRange(kEntry, 0));
+  EXPECT_FALSE(Zero.controlIndependentAddressRange(kEntry, 1));
+  EXPECT_FALSE(aarch64AddressMemoryInstruction(kStackBase)
+                   ->controlIndependentAddressRange(kEntry, 0));
+  for (uint32_t Invalid : {kInvalidIndex, kPrefetch, kReservedLoad})
+    EXPECT_FALSE(
+        AArch64AddressMemoryInstruction{Invalid}.controlIndependentAddressRange(
+            kEntry, 0));
+}
+
 TEST(AArch64AddressMemory, ImageReadsRequireControlIndependentAddresses) {
   BinaryImage Image;
   Image.Arch = Arch::AArch64;
@@ -944,5 +1084,491 @@ TEST(AArch64AddressMemory, DispatchUsesTheAuthenticatedLoadInputLifetime) {
     Block.Ops.insert(Block.Ops.begin(), Load);
     EXPECT_FALSE(
         findTableSwitchIndex(Context, Block, Block.Ops.back().Inputs[0]));
+  }
+}
+
+TEST(AArch64AddressMemory, AllScalarRegisterOffsetFamiliesKeepTheirContracts) {
+  EXPECT_EQ(std::size(FamilyCases), kScalarFamilyCombinations);
+  for (const auto &Case : FamilyCases) {
+    SCOPED_TRACE(Case.Word);
+    const auto Instruction = aarch64AddressMemoryInstruction(Case.Word);
+    ASSERT_TRUE(Instruction);
+    EXPECT_EQ(Instruction->isLoad(), Case.Load);
+    EXPECT_EQ(Instruction->accessBytes(), Case.Access);
+    EXPECT_EQ(Instruction->operation().ResultBytes, Case.Result);
+    EXPECT_EQ(Instruction->operation().Signed, Case.Signed);
+    EXPECT_EQ(Instruction->indexBytes(), Case.IndexBytes);
+    EXPECT_EQ(Instruction->indexShift(), Case.Shift);
+    EXPECT_EQ(Instruction->scratchWord(), Case.Scratch);
+    EXPECT_EQ(bool(Instruction->controlIndependentAddress(kAccessBoundary, 0)),
+              Case.Access <= kWordBytes);
+    for (bool Fast : {false, true})
+      for (bool Strict : {false, true}) {
+        const auto Ops = liftMemory(Case.Word, Fast, Strict);
+        ASSERT_FALSE(Ops.empty());
+        const auto Op = originalMemoryOperation(Ops);
+        ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Op));
+        EXPECT_EQ(lowAArch64AddressLoadShapeIsValid(Op), Case.Load);
+        EXPECT_EQ(Op.Inputs[2].Size, Case.IndexBytes);
+        EXPECT_EQ(Op.Output.Size, Case.Load ? Case.Access : 0);
+        EXPECT_EQ(Ops.back().Output.Size, Case.Load ? kScalarBytes : 0);
+        EXPECT_FALSE(lowIntrinsicHasOnlyValueEffects(Op));
+        EXPECT_FALSE(lowIntrinsicMemoryOperands(Op).Complete);
+        if (!Case.Load) {
+          ASSERT_EQ(Op.NumInputs, 5);
+          EXPECT_EQ(Op.Inputs[4].Size, Case.Access);
+          if (Case.Access < kWordBytes) {
+            EXPECT_TRUE(Op.Inputs[4].isTemp());
+            const auto &Slice = Ops.front();
+            EXPECT_EQ(Slice.Opcode, NdOp::SUBBYTES);
+            EXPECT_EQ(Slice.Inputs[0].Offset, a64reg::X0);
+            EXPECT_EQ(Slice.Inputs[0].Size, kWordBytes);
+            EXPECT_EQ(Slice.Output, Op.Inputs[4]);
+          } else
+            EXPECT_EQ(Op.Inputs[4].Offset, a64reg::X0);
+        }
+      }
+    const auto Function = memoryFunction(Case.Word);
+    EXPECT_EQ(endsCallArgumentSetup(Function.Blocks.front().Ops.front()),
+              !Case.Load);
+    EXPECT_TRUE(verifyMedFunc(Function, kName));
+  }
+}
+
+TEST(AArch64AddressMemory,
+     ScalarFamiliesExecuteBothCProjectionsAgainstNativeWords) {
+  for (const auto &Case : FamilyCases) {
+    SCOPED_TRACE(Case.Word);
+    const auto Function = memoryFunction(Case.Word);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    optimizeMemory(*Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    unsigned Calls = 0;
+    for (const auto &Block : *Module->getFunction(kName))
+      for (const auto &Insn : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Insn)) {
+          ASSERT_TRUE(validateAArch64AddressMemoryCall(Arch::AArch64, *Call));
+          EXPECT_EQ(Call->getType()->isVoidTy(), !Case.Load);
+          ++Calls;
+        }
+    EXPECT_EQ(Calls, 1);
+    const auto Object =
+        Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
+    ASSERT_TRUE(Object.Success);
+    inspectMemoryObject(
+        llvm::MemoryBufferRef(llvm::StringRef(reinterpret_cast<const char *>(
+                                                  Object.ObjectData.data()),
+                                              Object.ObjectData.size()),
+                              kObject),
+        Case.Scratch);
+#if defined(__APPLE__) && defined(__aarch64__)
+    llvm::SmallString<128> ObjectPath;
+    ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(
+        kTempPrefix, kObjectExtension, ObjectPath));
+    llvm::FileRemover RemoveObject(ObjectPath);
+    std::error_code ObjectError;
+    {
+      llvm::raw_fd_ostream Out(ObjectPath, ObjectError);
+      ASSERT_FALSE(ObjectError);
+      Out.write(reinterpret_cast<const char *>(Object.ObjectData.data()),
+                Object.ObjectData.size());
+    }
+    const auto IndexType =
+        llvm::formatv(kNativeUnsignedType, Case.IndexBytes * CHAR_BIT).str();
+    const auto DataType = llvm::formatv(kNativeObjectDataParameter,
+                                        llvm::formatv(kNativeUnsignedType,
+                                                      Case.Access * CHAR_BIT))
+                              .str();
+    compileMemoryC(
+        llvm::formatv(kNativeObjectDeclaration, kName, IndexType,
+                      Case.Load ? kEmptyNativeArgument : DataType)
+                .str() +
+            llvm::formatv(kFamilyNativeHarness, kName, Case.Scratch,
+                          Case.Shift ? 1 : Case.Access,
+                          unsigned(Case.IndexBytes == kScalarBytes ||
+                                   (Case.Word & kFixtureSignedIndexBit)),
+                          unsigned(Case.IndexBytes == kWordBytes),
+                          Case.Load ? kEmptyNativeArgument
+                                    : kStoreNativeArgument,
+                          unsigned(Case.Load))
+                .str(),
+        true, {}, ObjectPath);
+#endif
+    for (bool LLVMRoute : {false, true}) {
+      std::string Source = memorySource(Function, *Module, LLVMRoute);
+#if defined(__APPLE__) && defined(__aarch64__)
+      Source +=
+          llvm::formatv(kFamilyNativeHarness, kName, Case.Scratch,
+                        Case.Shift ? 1 : Case.Access,
+                        unsigned(Case.IndexBytes == kScalarBytes ||
+                                 (Case.Word & kFixtureSignedIndexBit)),
+                        unsigned(Case.IndexBytes == kWordBytes),
+                        Case.Load ? kEmptyNativeArgument : kStoreNativeArgument,
+                        unsigned(Case.Load))
+              .str();
+      compileMemoryC(Source, true);
+#else
+      compileMemoryC(Source, false, [&](llvm::MemoryBufferRef Buffer) {
+        inspectMemoryObject(Buffer, Case.Scratch);
+      });
+#endif
+    }
+  }
+}
+
+TEST(AArch64AddressMemory,
+     ScalarTracerReadsExactWidthsAndPublishesWholeXRegisters) {
+  for (const auto &Case : FamilyCases) {
+    SCOPED_TRACE(Case.Word);
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Segment Data;
+    Data.VA = kEntry;
+    Data.Size = Data.FileSz = 3 * kScalarBytes;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.Data.resize(Data.Size);
+    writeLE<uint64_t>(Data.Data.data() + kScalarBytes,
+                      Case.Load ? kLoadedValue : 0);
+    Image.Segments.push_back(Data);
+    for (bool Strict : {false, true}) {
+      NdOpEmulator Emulator(Image);
+      Emulator.setStrictMode(Strict);
+      Emulator.setLoadCollect(true);
+      Emulator.setRegister(a64reg::X0, kLoadedValue);
+      Emulator.setRegister(a64reg::X1, kEntry + kScalarBytes);
+      Emulator.setRegister(
+          a64reg::X2, Case.IndexBytes == kWordBytes ? kNarrowHighGarbage : 0);
+      const auto Ops = liftMemory(Case.Word, false);
+      const auto Op = originalMemoryOperation(Ops);
+      for (const auto &Step : Ops)
+        ASSERT_TRUE(Emulator.step(Step));
+      if (Case.Load) {
+        EXPECT_EQ(Emulator.getRegister(a64reg::X0), Case.Expected);
+        ASSERT_EQ(Emulator.getLoadRecords().size(), 1);
+        EXPECT_EQ(Emulator.getLoadRecords().front().Size, Case.Access);
+      } else {
+        EXPECT_EQ(Emulator.getRegister(a64reg::X0), kLoadedValue);
+        auto Read = liftMemory(kFirst, false).front();
+        Emulator.setRegister(a64reg::X2, 0);
+        ASSERT_TRUE(Emulator.step(Read));
+        EXPECT_EQ(Emulator.getRegister(a64reg::X0), Case.Expected);
+        Image.Segments.front().Flags = SegmentFlags::Readable;
+        NdOpEmulator Refused(Image);
+        Refused.setStrictMode(Strict);
+        Refused.setRegister(a64reg::X0, ~kLoadedValue);
+        Refused.setRegister(a64reg::X1, kEntry + kScalarBytes);
+        Refused.setRegister(a64reg::X2, 0);
+        for (const auto &Step : Ops)
+          if (Step.Opcode != NdOp::INTRINSIC)
+            ASSERT_TRUE(Refused.step(Step));
+        EXPECT_FALSE(Refused.step(Op));
+        ASSERT_TRUE(Refused.step(Read));
+        EXPECT_EQ(Refused.getRegister(a64reg::X0), 0);
+        Image.Segments.front().Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+      }
+    }
+  }
+}
+
+TEST(AArch64AddressMemory, NarrowIndicesNeedOnlyTheirLowWordBeforeExtension) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Segment Data;
+  Data.VA = kEntry;
+  Data.Size = Data.FileSz = 2 * kScalarBytes;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.resize(Data.Size);
+  writeLE<uint64_t>(Data.Data.data(), kLoadedValue);
+  writeLE<uint64_t>(Data.Data.data() + kScalarBytes, ~kLoadedValue);
+  Image.Segments.push_back(Data);
+  for (bool Strict : {false, true}) {
+    NdOpEmulator Emulator(Image);
+    Emulator.setStrictMode(Strict);
+    Emulator.setRegister(a64reg::X1, kEntry);
+    std::array<uint8_t, kWordBytes> Narrow{};
+    writeLE<uint32_t>(Narrow.data(), kScalarBytes);
+    Emulator.setRegisterBytes(a64reg::X2, Narrow);
+    ASSERT_TRUE(Emulator.step(liftMemory(kNarrowUnsigned, false).front()));
+    EXPECT_EQ(Emulator.getRegister(a64reg::X0), ~kLoadedValue);
+    EXPECT_FALSE(Emulator.step(liftMemory(kFirst, false).front()));
+    Emulator.setRegister(a64reg::X1, kEntry + kScalarBytes);
+    Emulator.setRegister(a64reg::X2, kNarrowNegative);
+    ASSERT_TRUE(Emulator.step(liftMemory(kNarrowSigned, false).front()));
+    EXPECT_EQ(Emulator.getRegister(a64reg::X0), kLoadedValue);
+  }
+}
+
+TEST(AArch64AddressMemory, NarrowStoresRequireExactlyTheirKnownDataSlice) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Segment Data;
+  Data.VA = kEntry;
+  Data.Size = Data.FileSz = 2 * kScalarBytes;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  Image.Segments.push_back(Data);
+  std::array<uint8_t, kScalarBytes> Bytes;
+  writeLE<uint64_t>(Bytes.data(), kLoadedValue);
+  for (const auto &Case : FamilyCases) {
+    if (Case.Load || Case.Access >= kWordBytes)
+      continue;
+    SCOPED_TRACE(Case.Word);
+    const auto Ops = liftMemory(Case.Word, false);
+    ASSERT_GT(Ops.size(), 1);
+    for (bool Strict : {false, true}) {
+      NdOpEmulator Emulator(Image);
+      Emulator.setStrictMode(Strict);
+      Emulator.setRegister(a64reg::X1, kEntry);
+      Emulator.setRegister(a64reg::X2, 0);
+      EXPECT_FALSE(Emulator.step(Ops.front()));
+      ASSERT_TRUE(Emulator.step(liftMemory(kFirst, false).front()));
+      EXPECT_EQ(Emulator.getRegister(a64reg::X0), 0);
+      Emulator.setRegisterBytes(
+          a64reg::X0, llvm::ArrayRef<uint8_t>(Bytes).take_front(Case.Access));
+      for (const auto &Step : Ops)
+        ASSERT_TRUE(Emulator.step(Step));
+      ASSERT_TRUE(Emulator.step(liftMemory(kFirst, false).front()));
+      EXPECT_EQ(Emulator.getRegister(a64reg::X0), Case.Expected);
+    }
+  }
+}
+
+TEST(AArch64AddressMemory, UnobservedStorageCannotCaptureAnObservedRead) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.IsRelocatable = true;
+  Segment Text;
+  Text.Name = kStorageTextName;
+  Text.VA = kEntry;
+  Text.Size = Text.FileSz = kStorageFunctionCount * kScalarBytes;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(Text.Size);
+  for (unsigned I = 0; I < kStorageFunctionCount; ++I) {
+    writeLE<uint32_t>(Text.Data.data() + I * kScalarBytes,
+                      kStorageMoveZeroWord);
+    writeLE<uint32_t>(Text.Data.data() + I * kScalarBytes + kWordBytes,
+                      kReturn);
+  }
+  Image.Segments.push_back(Text);
+  Segment Data;
+  Data.Name = kStorageTableName;
+  Data.VA = kStorageBase;
+  Data.Size = Data.FileSz = 2 * kScalarBytes;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.resize(Data.Size);
+  const va_t Target = kEntry + kScalarBytes;
+  for (unsigned I = 0; I < 2; ++I) {
+    writeLE<uint64_t>(Data.Data.data() + I * kScalarBytes, Target);
+    Image.CodePtrRelocSlots.insert(kStorageBase + I * kScalarBytes);
+  }
+  Image.Segments.push_back(Data);
+  Symbol Table;
+  Table.Name = kStorageTableName;
+  Table.Addr = kStorageBase;
+  Table.Size = Data.Size;
+  Image.Symbols.push_back(Table);
+  for (bool SharedCall : {false, true})
+    for (bool SeparateFunctions : {false, true}) {
+      const auto Base = HighExpr::makeConst(
+          kStorageBase, kScalarBytes, ConstantAddressProvenance::DataAddress);
+      const auto Read = [&] {
+        auto Call = HighExpr::makeCall(
+            intrinsicName(Intrinsic::A64_Load64RegisterOffset), 0,
+            {Base, HighExpr::makeConst(0, kScalarBytes),
+             HighExpr::makeConst(kFirst, kWordBytes)});
+        Call->IntrinsicId = Intrinsic::A64_Load64RegisterOffset;
+        Call->Type = NdType::makeInt(kScalarBytes, false);
+        return Call;
+      };
+      const auto Unobserved = Read();
+      const auto Observed = SharedCall ? Unobserved : Read();
+      HighFunc Reader;
+      Reader.Name = kName;
+      Reader.Entry = kEntry;
+      Reader.ReturnType = NdType::makeInt(kScalarBytes, false);
+      HighStmt Effect;
+      Effect.Kind = StmtKind::Call;
+      Effect.CallExpr = Unobserved;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal =
+          SeparateFunctions ? HighExpr::makeConst(0, kScalarBytes) : Observed;
+      Reader.Body = {Effect, Return};
+      HighFunc Callee;
+      Callee.Name = kStorageTargetName;
+      Callee.Entry = Target;
+      Callee.ReturnType = Reader.ReturnType;
+      Return.RetVal = HighExpr::makeConst(0, kScalarBytes);
+      Callee.Body = {Return};
+      std::vector<HighFunc> Functions{Reader, Callee};
+      if (SeparateFunctions) {
+        HighFunc Other = Reader;
+        Other.Name = kStorageOtherName;
+        Other.Entry = Target + kScalarBytes;
+        Return.RetVal = Observed;
+        Other.Body = {Return};
+        Functions.push_back(Other);
+      }
+      CEmitterOptions Options;
+      Options.TheArch = Image.Arch;
+      Options.Format = Image.Format;
+      Options.Image = &Image;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(HighCEmitter().emit(Functions, Out, Options));
+      EXPECT_EQ(Source.find(kOriginalStoragePrefix) != std::string::npos,
+                !SharedCall || SeparateFunctions)
+          << Source;
+      Source += llvm::formatv(kStorageIdentityHarness,
+                              SeparateFunctions ? kStorageOtherName : kName,
+                              kStorageTargetName,
+                              SeparateFunctions ? kName : kStorageTargetName)
+                    .str();
+#if defined(__APPLE__) && defined(__aarch64__)
+      compileMemoryC(Source, true);
+#else
+      compileMemoryC(Source, false);
+#endif
+    }
+}
+
+TEST(AArch64AddressMemory, StoreShapesCannotInventOutputsOrUnusedHighBits) {
+  for (const auto &Case : FamilyCases) {
+    if (Case.Load)
+      continue;
+    SCOPED_TRACE(Case.Word);
+    auto Function = memoryFunction(Case.Word);
+    auto &Med = Function.Blocks.front().Ops.front();
+    auto Low = originalMemoryOperation(liftMemory(Case.Word, false));
+    ASSERT_TRUE(aarch64AddressMemoryMedShapeIsValid(Med));
+    ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Low));
+    Med.Output = Function.Params[0];
+    Low.Output = Low.Inputs[1];
+    EXPECT_FALSE(aarch64AddressMemoryMedShapeIsValid(Med));
+    EXPECT_FALSE(lowAArch64AddressMemoryShapeIsValid(Low));
+    Med.Output.Size = Low.Output.Size = 0;
+    Med.Inputs[4].Size = Low.Inputs[4].Size = Case.Access + 1;
+    EXPECT_FALSE(aarch64AddressMemoryMedShapeIsValid(Med));
+    EXPECT_FALSE(lowAArch64AddressMemoryShapeIsValid(Low));
+  }
+}
+
+TEST(AArch64AddressMemory,
+     NarrowAliasedIndicesSurviveDecodedSSAAndBothSourceABIs) {
+  for (const auto &Case : ABICases) {
+    SCOPED_TRACE(Case.Word);
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Image.Format = BinaryFormat::MachO;
+    Image.Bits = Bitness::Bits64;
+    Segment Text;
+    Text.VA = kEntry;
+    Text.Size = Text.FileSz = 3 * kWordBytes;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size);
+    writeLE<uint32_t>(Text.Data.data(), Case.Word);
+    writeLE<uint32_t>(Text.Data.data() + kWordBytes, kMoveAliasToReturn);
+    writeLE<uint32_t>(Text.Data.data() + 2 * kWordBytes, kReturn);
+    Image.Segments.push_back(Text);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    Dec.setStrict(true);
+    const auto Low = CFGBuilder().build(Image, Dec, kEntry, kName);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto Function =
+        Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+    ASSERT_TRUE(verifyMedFunc(Function, kName));
+    ASSERT_EQ(Function.Params.size(), 2);
+    EXPECT_EQ(Function.Params[1].Size, kWordBytes);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    optimizeMemory(*Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    for (bool LLVMRoute : {false, true}) {
+      std::string Source = memorySource(Function, *Module, LLVMRoute);
+#if defined(__APPLE__) && defined(__aarch64__)
+      Source +=
+          llvm::formatv(kFamilyNativeHarness, kName, Case.Scratch, 1,
+                        unsigned(Case.SignedIndex), 1, kEmptyNativeArgument, 1)
+              .str();
+      compileMemoryC(Source, true);
+#else
+      compileMemoryC(Source, false);
+#endif
+    }
+  }
+}
+
+TEST(AArch64AddressMemory,
+     ScalarFamiliesPreserveZeroStackAndAliasedRegisterFields) {
+  for (const auto &Case : SpecialCases) {
+    SCOPED_TRACE(Case.Word);
+    const auto Instruction = aarch64AddressMemoryInstruction(Case.Word);
+    ASSERT_TRUE(Instruction);
+    EXPECT_EQ(Instruction->destination(), Case.Destination);
+    EXPECT_EQ(Instruction->base(), Case.Base);
+    EXPECT_EQ(Instruction->index(), Case.Index);
+    for (bool Fast : {false, true})
+      for (bool Strict : {false, true}) {
+        auto Ops = liftMemory(Case.Word, Fast, Strict);
+        ASSERT_FALSE(Ops.empty());
+        const auto Memory = originalMemoryOperation(Ops);
+        ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Memory));
+        EXPECT_EQ(Memory.Inputs[1].Offset, Case.Base == kZeroRegister
+                                               ? a64reg::SP
+                                               : Case.Base * kScalarBytes);
+        EXPECT_EQ(Memory.Inputs[2].Size, kWordBytes);
+        EXPECT_EQ(Memory.Inputs[3].Offset, Case.Word);
+        if (Case.Load) {
+          EXPECT_EQ(Ops.back().Output.Size, kScalarBytes);
+          if (Case.Destination == kZeroRegister)
+            EXPECT_TRUE(Ops.back().Output.isTemp());
+          else
+            EXPECT_EQ(Ops.back().Output.Offset,
+                      Case.Destination * kScalarBytes);
+        } else {
+          EXPECT_EQ(Memory.Output.Size, 0);
+          EXPECT_EQ(Memory.Inputs[4].Size, Case.Access);
+          if (Case.Destination == kZeroRegister) {
+            EXPECT_TRUE(Memory.Inputs[4].isConst());
+            EXPECT_EQ(Memory.Inputs[4].Offset, 0);
+            auto Invalid = Memory;
+            Invalid.Inputs[4].Offset = 1;
+            EXPECT_FALSE(lowAArch64AddressMemoryShapeIsValid(Invalid));
+          } else if (Case.Access < kWordBytes) {
+            EXPECT_TRUE(Memory.Inputs[4].isTemp());
+            EXPECT_EQ(Ops.front().Opcode, NdOp::SUBBYTES);
+            EXPECT_EQ(Ops.front().Inputs[0].Offset,
+                      Case.Destination * kScalarBytes);
+            EXPECT_EQ(Ops.front().Inputs[0].Size, kWordBytes);
+            EXPECT_EQ(Ops.front().Output, Memory.Inputs[4]);
+          } else
+            EXPECT_EQ(Memory.Inputs[4].Offset, Case.Destination * kScalarBytes);
+        }
+        if (Case.Index == kZeroRegister) {
+          EXPECT_TRUE(Memory.Inputs[2].isConst());
+          EXPECT_EQ(Memory.Inputs[2].Offset, 0);
+          auto Invalid = Memory;
+          Invalid.Inputs[2].Offset = 1;
+          EXPECT_FALSE(lowAArch64AddressMemoryShapeIsValid(Invalid));
+        } else
+          EXPECT_EQ(Memory.Inputs[2].Offset, Case.Index * kScalarBytes);
+      }
+    if (Case.Base == kZeroRegister) {
+      const auto Function = memoryFunction(Case.Word);
+      llvm::LLVMContext Context;
+      EXPECT_THROW(
+          MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64),
+          std::runtime_error);
+    }
   }
 }
