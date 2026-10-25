@@ -80,11 +80,11 @@ def cancel_input_loading(args, root, small):
 
 
 def cancel_saved_restore(args, root, base, saved):
-    report = root / "restore-interrupted.nddiff"
+    report = root / "恢复-取消.nddiff"
     document = json.loads(saved.read_text())
     document["warnings"].append("retained diagnostic " + "x" * (64 * 1024 * 1024))
     report.write_text(json.dumps(document))
-    target = root / "restore-existing.nddiff"
+    target = root / "已有-比较.nddiff"
     for stage in ("restore:read", "restore:parse", "restore:write"):
         target.write_text("existing review must survive\n")
         process = subprocess.Popen(base + ["--json", "--reopen", str(report), "--save", str(target)],
