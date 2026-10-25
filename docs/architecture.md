@@ -140,6 +140,25 @@ omitted-callee memoization includes it. Source scratch-restore liveness can cros
 only a still-matching call. Private-byte overwrite and escape checks stay in
 `MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
 
+After shared call-signature recovery, `MedPrologueSaves` also checks complete
+Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
+use the resulting byte-read intervals to suppress private stores that cannot
+be observed. Negative offsets count; pointer capture, lossy transforms,
+exceptional edges, nested calls and incoming stack parameters refuse the proof.
+Implicit register inputs are checked independently of inferred source arity.
+An SSA version of zero is not itself an entry input: a first load or arithmetic
+definition can also have that version. Call home areas and released frame bytes
+remain observable without explicit pointer arguments. This proof annotates only
+the source projection; it neither changes native memory effects nor supplies a
+general pointer-escape or kernel continuation contract.
+The omitted-callee reader also visits scalar direct calls carrying a proven
+private-frame address. Existing operation and extra-lift budgets still bound
+those bodies; an arity-only summary cannot stand in for their pointer effects.
+HighIR consumes a direct call's recovered argument list as a whole, including
+empty lists and unavailable interior slots. Its local setup scan cannot append
+adjacent frame variables or replace those unknown operands with stale stores.
+Module call recovery finalizes this boundary for both C routes.
+
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.
 This keeps SSA promotion from recomputing whole-function dominance frontiers

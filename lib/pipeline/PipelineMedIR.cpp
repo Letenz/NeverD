@@ -64,6 +64,26 @@ void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
 }
 
+void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
+                                         PipelineResult &Result) {
+  std::map<va_t, const MedFunc *> Callees;
+  std::set<va_t> Complete;
+  for (const LowFunc &Func : Result.LowFuncs)
+    if (Func.hasCompleteLiftCoverage() &&
+        Func.UnsafeIndirectBranchAddresses.empty())
+      Complete.insert(Func.Entry);
+  for (const MedFunc &Func : Result.MedFuncs)
+    if (Complete.count(Func.Entry))
+      Callees.emplace(Func.Entry, &Func);
+  if (Result.OmittedCallees)
+    for (const auto &Func : Result.OmittedCallees->Bodies)
+      Callees.try_emplace(Func->Entry, Func.get());
+  for (MedFunc &Func : Result.MedFuncs)
+    if (Complete.count(Func.Entry))
+      markUnobservedBorrowedFrameStores(Func, Image.Arch, Image.abiFormat(),
+                                        Callees);
+}
+
 //===----------------------------------------------------------------------===//
 // buildMedIR — Phase 2
 //===----------------------------------------------------------------------===//

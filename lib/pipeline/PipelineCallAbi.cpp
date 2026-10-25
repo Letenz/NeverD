@@ -7,9 +7,8 @@
 /// \file
 /// Recovery of every call's arguments and every forwarder's passed-through
 /// parameters from the setup each caller writes, bounded by its callee's
-/// recovered signature (recoverCallAbi).  The LLVM route uses it for every
-/// convention, and the HighIR route for each convention that has no callee
-/// summaries (CallArgumentConvention::ArgumentsFromCallSetup).
+/// recovered signature (recoverCallAbi). Both source routes use it for
+/// conventions that recover call setup or stack argument summaries.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -26,6 +25,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedReturnArguments.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -357,6 +357,30 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
                                 const PipelineResult &Result) {
   std::vector<va_t> Callees;
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
+  // A scalar-register summary bounds arity but says nothing about pointed-to
+  // bytes. Borrowed private-frame arguments need the same bounded body reader
+  // even when that summary already proves that there are no stack arguments.
+  std::set<const MedOp *> FrameBorrows;
+  if (Img.Arch == Arch::X64 && Img.abiFormat() == BinaryFormat::COFF &&
+      F.CC == CallingConv::Win64 && F.EntryKind == StackEntryKind::Call &&
+      F.FrameSize > 0) {
+    std::vector<MedVar> Arguments;
+    std::vector<const MedOp *> Calls;
+    for (const MedBlock &Block : F.Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
+            !Op.SourceCallHint && Op.CalleeStackArgs == 0 &&
+            Op.CalleeVectorArgs <= 0 && !Op.CalleeVectorSlots)
+          for (unsigned I = 1; I < Op.NumInputs; ++I) {
+            Arguments.push_back(Op.Inputs[I]);
+            Calls.push_back(&Op);
+          }
+    const auto Offsets =
+        entryStackOffsets(F, Arguments, Img.Arch, Img.abiFormat(), F.EntryKind);
+    for (size_t I = 0; I < Offsets.size(); ++I)
+      if (Offsets[I] && *Offsets[I] >= -F.FrameSize && *Offsets[I] < 0)
+        FrameBorrows.insert(Calls[I]);
+  }
   // A call through a function-pointer variable passes the arguments of the
   // routine of this image the variable starts at (CallArgumentSources).
   MedDefinitionIndex Definitions(F);
@@ -368,8 +392,10 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
       // Summary-driven conventions need a body only when the stack bound is
       // missing. A complete read summary already includes zero stack demand;
       // traversing all of its descendants cannot strengthen that contract.
+      // A frame borrow has a separate pointer-use proof to establish.
       if (Convention && !Convention->ArgumentsFromCallSetup &&
-          Convention->StackArgumentSummary && Op.CalleeStackArgs >= 0)
+          Convention->StackArgumentSummary && Op.CalleeStackArgs >= 0 &&
+          !FrameBorrows.count(&Op))
         continue;
       if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
         Callees.push_back(importOwnRoutine(Img, &Result.CallArgumentSources,
@@ -1722,6 +1748,10 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       if (It != SignatureBounds.end())
         boundRecoveredArguments(CI, It->second);
     }
+  // Selected and omitted callees obey the same final argument boundary.
+  // Leaving selected calls open until an emitter runs makes local frame
+  // spills look like observing operands to source preparation.
+  matchCallsToCalleeSignatures(Img, Result);
 }
 
 void matchCallsToCalleeSignatures(const BinaryImage &Img,

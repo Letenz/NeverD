@@ -904,4 +904,137 @@ TEST(SourceCallReturnReads,
   EXPECT_TRUE(Error.empty());
 }
 
+TEST(SourceFrameBorrows, ReadExtentsAndEscapesBoundPrivateStoreRemoval) {
+  for (unsigned Case = 0; Case != 22; ++Case) {
+    SCOPED_TRACE(Case);
+    MedFunc Caller;
+    Caller.Entry = 0x1000;
+    Caller.CC = CallingConv::Win64;
+    Caller.FrameSize = 0x38;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Caller.Entry;
+    auto Word = temp(20);
+    Word.Size = 4;
+    Block.Ops = {
+        op(NdOp::COPY, sp(0), {sp(0)}),
+        op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(0x38, 8)}),
+        op(NdOp::INT_ADD, temp(10), {sp(1), MedVar::makeConst(0x20, 8)}),
+        op(NdOp::INT_ADD, temp(11), {sp(1), MedVar::makeConst(0x24, 8)}),
+        op(NdOp::STORE, none(),
+           {temp(10), MedVar::makeUnspecified(4, Arch::X64)}),
+        op(NdOp::STORE, none(), {temp(11), MedVar::makeConst(37, 4)}),
+        op(NdOp::CALL, Word, {MedVar::makeConst(0x2000, 8), temp(11)}),
+        op(NdOp::INT_ADD, sp(2), {sp(1), MedVar::makeConst(0x38, 8)}),
+        op(NdOp::RETURN, none(), {Word})};
+    Block.Ops[6].CalleeRegisterArgs = 1;
+    Block.Ops[6].CalleeStackArgs = 0;
+    Block.Ops[6].CalleeVectorArgs = 0;
+    Caller.Blocks.push_back(std::move(Block));
+    MedCallInfo Call;
+    Call.BlockId = 0;
+    Call.OpIdx = 6;
+    Call.TargetAddr = 0x2000;
+    Call.Args = {temp(11)};
+    Caller.CallInfos.push_back(Call);
+
+    MedFunc Callee;
+    Callee.Entry = Call.TargetAddr;
+    Callee.CC = CallingConv::Win64;
+    Callee.Params = {rcx(0)};
+    MedBlock Body;
+    Body.Id = 0;
+    Body.StartAddr = Callee.Entry;
+    Body.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}),
+                op(NdOp::LOAD, Word, {rcx(0)}),
+                op(NdOp::RETURN, none(), {Word})};
+    if (Case == 1 || Case == 2) {
+      Body.Ops.insert(
+          Body.Ops.begin() + 1,
+          op(NdOp::INT_SUB, temp(30), {rcx(0), MedVar::makeConst(4, 8)}));
+      Body.Ops[2].Inputs[0] = temp(30);
+      if (Case == 2)
+        Body.Ops[2].Output.Size = 8;
+    } else if (Case == 3) {
+      Body.Ops.back().Inputs[0] = rcx(0);
+    } else if (Case == 4) {
+      Body.Ops.insert(
+          Body.Ops.begin() + 1,
+          op(NdOp::STORE, none(), {MedVar::makeConst(0x3000, 8), rcx(0)}));
+    } else if (Case == 5) {
+      auto Narrow = temp(30);
+      Narrow.Size = 4;
+      Body.Ops.insert(
+          Body.Ops.begin() + 1,
+          op(NdOp::SUBBYTES, Narrow, {rcx(0), MedVar::makeConst(0, 4)}));
+      Body.Ops.insert(
+          Body.Ops.begin() + 2,
+          op(NdOp::STORE, none(), {MedVar::makeConst(0x3000, 8), Narrow}));
+    } else if (Case == 6) {
+      Body.ExceptionalSuccs.emplace_back();
+    } else if (Case == 7) {
+      Callee.SkippedSSA = true;
+    } else if (Case == 8) {
+      Caller.CallInfos[0].IsIndirect = true;
+    } else if (Case == 10) {
+      Body.Ops[1].Inputs[0] = reg(8, x86reg::RDX, 0);
+    } else if (Case == 9) {
+      Body.Ops.insert(Body.Ops.begin() + 1,
+                      op(NdOp::INDIR_CALL, temp(30), {rcx(0)}));
+    }
+    if (Case == 13) {
+      Body.Ops[1].Output = reg(9, x86reg::RAX, 0);
+      Body.Ops[1].Output.Size = 4;
+      Body.Ops.back().Inputs[0] = Body.Ops[1].Output;
+    }
+    if (Case == 14 || Case == 15) {
+      // A narrow non-argument carrier can still disclose pointer bits.
+      // AH is not the low slice of its family; a scalar XMM lane is not a GPR.
+      auto Input = reg(40, Case == 14 ? x86reg::RAX + 1 : x86reg::XMM0, 0);
+      Input.Size = Case == 14 ? 1 : 4;
+      Body.Ops.insert(
+          Body.Ops.begin() + 1,
+          op(NdOp::STORE, none(), {MedVar::makeConst(0x3000, 8), Input}));
+    }
+    if (Case == 16)
+      Callee.EntryKind = StackEntryKind::ProcessEntry;
+    if (Case == 17)
+      Body.Ops.back().Inputs[0] = sp(0);
+    if (Case == 18)
+      Body.Ops.insert(
+          Body.Ops.begin() + 1,
+          op(NdOp::STORE, none(), {MedVar::makeConst(0x3000, 8), sp(0)}));
+    if (Case == 19) {
+      Body.Ops.insert(
+          Body.Ops.begin() + 1,
+          op(NdOp::INT_ADD, temp(30), {sp(0), MedVar::makeConst(0x28, 8)}));
+      Body.Ops[2].Inputs[0] = temp(30);
+    }
+    if (Case == 20 || Case == 21) {
+      Caller.CallInfos[0].IsIndirect = true;
+      Caller.CallInfos[0].Args.clear();
+      auto &Invoke = Caller.Blocks[0].Ops[6];
+      Invoke.Opcode = NdOp::INDIR_CALL;
+      Invoke.CalleeRegisterArgs = 0;
+      Invoke.NumInputs = 1;
+      if (Case == 21) {
+        Invoke.Output = none();
+        Caller.Blocks[0].Ops.back().Inputs[0] = MedVar::makeConst(37, 4);
+      }
+    }
+    if (Case == 11)
+      Caller.Blocks[0].Ops[2].Inputs[1] = MedVar::makeConst(0x18, 8);
+    if (Case == 12)
+      Callee.SourceParametersBound = true;
+    Callee.Blocks.push_back(std::move(Body));
+    const std::map<va_t, const MedFunc *> Callees{{Callee.Entry, &Callee}};
+    markUnobservedBorrowedFrameStores(Caller, Arch::X64, BinaryFormat::COFF,
+                                      Callees);
+    EXPECT_EQ(Caller.Blocks[0].Ops[4].PrologueSave, Case == 0 || Case == 13);
+    EXPECT_FALSE(Caller.Blocks[0].Ops[5].PrologueSave);
+    EXPECT_EQ(Caller.Blocks[0].Ops[6].Opcode,
+              Case >= 20 ? NdOp::INDIR_CALL : NdOp::CALL);
+  }
+}
+
 } // namespace

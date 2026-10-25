@@ -7029,6 +7029,19 @@ body consumes. The Mach-O ARM/Thumb five-input MBA source tests execute both
 C routes at O0/O2 after wide-return recovery reconverts the caller; its saved
 R8 must not become an unknown-register trap.
 
+`SourceFrameBorrows.ReadExtentsAndEscapesBoundPrivateStoreRemoval` checks the
+post-recovery Win64 leaf-borrow proof, including negative and wide reads,
+implicit incoming registers, pointer capture, home-area storage and refusal
+boundaries. High-byte GPR inputs, scalar vector lanes and callee-SP aliases are
+negative controls too. `Win64CallContract.BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes`
+executes both source routes at O0/O2 with UBSan, with optimization enabled or
+disabled and with the callee selected or omitted. Its observing negative control
+must retain the unknown-value guard. These checks do not qualify nested borrows,
+incoming pointer stack arguments or undocumented external pointer effects.
+`MissingInteriorStackSlotCannotDiscardLaterArguments` also places known local
+words beyond the seven recovered arguments. Both routes must retain the missing
+interior operand and seventh argument without appending those neighboring words.
+
 `MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
 checks four architectures and three formats in both query orders. Accepted and
 moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and

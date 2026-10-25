@@ -14,6 +14,7 @@
 #include "PipelineHighIRDetail.h"
 #include "PipelineLowIRDetail.h"
 #include "PipelineReturnModelingDetail.h"
+#include "PipelineSourceStackAccesses.h"
 
 #include "neverd/Common.h"
 #include "neverd/debug/DebugContext.h"
@@ -200,14 +201,12 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   for (const auto &[Address, Name] :
        pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
     Names.assign(Address, Name);
-  // Without callee summaries, a convention's call arguments, and the
-  // parameters a forwarder passes straight through, are the setup each caller
-  // writes, as the LLVM route recovers them.
+  // Both source routes apply the same callee signature bounds, including
+  // stack arguments that a register summary alone cannot bound.
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
-  if (Convention && Convention->ArgumentsFromCallSetup) {
+  if (needsCallSignatureRecovery(Convention)) {
     recoverModuleCallAbi(Img, Result, AllFuncNames);
-    matchCallsToCalleeSignatures(Img, Result);
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
     // A variadic callee takes its call sites' overflow arguments as trailing
     // stack parameters, which MedToHigh seeds where its va_arg walk reads
@@ -245,6 +244,7 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
           return Callee;
         });
   }
+  prepareRecoveredSourceStackAccesses(Img, Result);
   // Both C projections consume these original-machine observations after
   // source ABI remodeling. They never participate in type or call recovery.
   std::map<va_t, const LowFunc *> OriginalFunctions;

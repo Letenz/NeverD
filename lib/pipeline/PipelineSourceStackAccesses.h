@@ -18,6 +18,7 @@ namespace neverd {
 struct BinaryImage;
 struct MedFunc;
 struct PipelineOptions;
+struct PipelineResult;
 
 enum class MedStackProjection { Machine, Source };
 
@@ -30,6 +31,10 @@ MedStackProjection medStackProjection(const PipelineOptions &Options);
 /// conversion. Never copy annotation flags from another operation sequence.
 void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
                              MedStackProjection Projection);
+
+/// Shared source-only frame observation proof after call ABI recovery.
+void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
+                                         PipelineResult &Result);
 
 } // namespace neverd
 
