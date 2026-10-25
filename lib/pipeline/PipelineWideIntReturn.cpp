@@ -598,6 +598,8 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
         // proofs as the initial conversion before either source emitter reads
         // it.
         prepareMedStackAccesses(NewMF, Img, StackProjection);
+        if (StackProjection == MedStackProjection::Source)
+          expandSourceRegisterCalls(NewMF, Img, Result.CallRegisterLeaves);
         Result.MedFuncs[I] = std::move(NewMF);
         inferMedTypes(Result.MedFuncs[I], Img.Arch);
         if (SelfWide)
