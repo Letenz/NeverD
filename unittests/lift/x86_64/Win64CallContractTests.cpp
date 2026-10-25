@@ -4349,4 +4349,73 @@ TEST(FixedIntegerStackCalls, SysVAndTailOperandsUseTheirDeclaredLocations) {
           }
       }
 }
+
+TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
+  constexpr va_t Producer = Text + 0x80;
+  std::vector<uint8_t> Code(0xC0, 0xCC);
+  std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x28, 0xE8};
+  const auto Displacement = rel32(Text + 9, Producer);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  Caller.insert(Caller.end(), {0x4C, 0x31, 0xC0, // xor rax,r8
+                               0x48, 0x31, 0xC8, // xor rax,rcx
+                               0x48, 0x83, 0xC4, 0x28, 0xC3});
+  put(Code, Text, Caller);
+  put(Code, Producer,
+      {0x31, 0xC0,                               // xor eax,eax
+       0x31, 0xC9,                               // xor ecx,ecx
+       0x49, 0x87, 0xD8,                         // xchg rbx,r8
+       0x0F, 0xA2,                               // cpuid
+       0x49, 0x87, 0xD8,                         // xchg rbx,r8
+       0x41, 0x81, 0xF0, 0x67, 0x45, 0x23, 0x01, // xor r8d,1234567h
+       0x81, 0xF1, 0x98, 0xBA, 0xDC, 0xFE,       // xor ecx,0FEDCBA98h
+       0xB8, 1,    0,    0,    0,    0xC3});     // mov eax,1; ret
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        auto Image = makeImage(
+            Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}}, {});
+        Image.Format = Format;
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        ASSERT_EQ(Source.find("cpu_words("), std::string::npos) << Source;
+        const std::string Oracle = R"(
+int main(void) {
+  unsigned a = 0, b, c = 0, d;
+  __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+  const uint64_t expected = UINT64_C(1) ^ (b ^ UINT32_C(0x01234567)) ^
+                            (c ^ UINT32_C(0xFEDCBA98));
+  return (uint64_t)observe_cpu_words() != expected;
+}
+)";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+}
 } // namespace
