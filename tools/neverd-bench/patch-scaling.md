@@ -32,8 +32,9 @@ The three operations have distinct boundaries:
   Timing includes IPC; returned address and size must be exact. It does not time
   Qt painting or analysis.
 - `worker_single_byte_commit`: commit one byte through the writer, including
-  history and sidecar persistence. Undo restores the fixture outside timing;
-  export checks the restored overlay after the sequence.
+  history and sidecar persistence. Read back the changed byte, then undo to
+  restore the fixture outside timing; export checks the restored overlay after
+  the sequence.
 
 An established overlay excludes the first immutable input snapshot. These
 fixtures do not measure instruction assembly, source compilation, reanalysis,
@@ -43,6 +44,8 @@ history/sidecar snapshots still scale with total overlay state.
 ## 2026-10-25 review
 
 Mode: **PR Review**, sampled patch edit, persistence and color-refresh paths.
+Generated timing samples account for most of the diff; the production changes
+remain within the existing overlay, SDK, worker and session owners.
 
 | Symptom | Source | Consequence | Remedy |
 |---|---|---|---|
@@ -54,7 +57,8 @@ Mode: **PR Review**, sampled patch edit, persistence and color-refresh paths.
 The load shortcut compares complete parsed rows, not just a saved digest: an
 unsaved live edit must still be replaced by the saved overlay. The regression
 explicitly saves one value, changes it in memory, then reloads the unchanged
-sidecar. Core tests independently check byte values, kind boundaries, overlapping
+sidecar. A row with the same address/size but a foreign original byte still fails
+admission and preserves the current overlay. Core tests independently check byte values, kind boundaries, overlapping
 edits, partial restoration and the 65,536-row limit. Worker tests cover real and
 mock SDKs, replicas, stale previews, undo/redo, reopen and exclusive export. GUI
 tests keep colors through rename and clear them across project switches; both

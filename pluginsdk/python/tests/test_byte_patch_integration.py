@@ -157,6 +157,15 @@ class BytePatchIntegrationTests(unittest.TestCase):
         self.assertEqual(sidecar.read_bytes(), b"[]\n")
         sidecar.write_bytes(saved)
         session.load_byte_patches()
+        # Equal row count/address/size is insufficient for the reload shortcut.
+        # A foreign original must still fail admission without touching bytes.
+        foreign = json.loads(saved)
+        foreign[0]["original"] = "ff"
+        sidecar.write_text(json.dumps(foreign))
+        with self.assertRaisesRegex(NeverDError, "original"):
+            session.load_byte_patches()
+        self.assertEqual(session.byte_patches[0]["current"], "2a")
+        sidecar.write_bytes(saved)
         # The file digest remains the saved one after an in-memory edit.
         # Reload must still restore the saved overlay, not mistake it for a
         # clean session based only on that unchanged digest.

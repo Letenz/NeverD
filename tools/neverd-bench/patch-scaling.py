@@ -35,8 +35,11 @@ BASE = 0x1000
 
 
 def digest(path):
+    result = hashlib.sha256()
     with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            result.update(block)
+    return result.hexdigest()
 
 
 def summary(samples):
@@ -158,6 +161,8 @@ def worker_edit_case(host, worker, library, count, samples):
                                                     "kind": "bytes", "bytes": "91", "expected": "90"})
                 wall.append((time.perf_counter_ns() - start) / 1e6)
                 assert reply["status"] == "ok" and reply["payload"]["saved"], reply
+                changed = client.call("bytes", {"address": hex(BASE + at), "size": 1})
+                assert changed["status"] == "ok" and changed["payload"]["data"] == "91", changed
                 assert client.call("undo")["status"] == "ok"
             output = root / "export.bin"
             assert client.call("patch_export", {"path": str(output)})["status"] == "ok"
