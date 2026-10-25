@@ -50,6 +50,16 @@ struct SignatureSelectionStats {
   size_t SelectedFiles = 0;
 };
 
+/// Independent evidence for a name admitted to semantic consumers. Byte
+/// agreement, reference confirmation and database uniqueness are candidates,
+/// not identity evidence: unrelated source functions can compile identically.
+enum class SignatureNameEvidence { ImageSymbol, ExceptionPersonality };
+
+struct SignatureNameDecision {
+  std::string Name;
+  SignatureNameEvidence Evidence = SignatureNameEvidence::ImageSymbol;
+};
+
 class SignatureDB {
 public:
   /// Present after a successful automatic load; manual changes clear it.
@@ -198,7 +208,7 @@ public:
   /// \returns how many routines were named.
   size_t identifyPersonalityRoutines(BinaryImage &Img);
 
-  /// Get all signature matches found so far.
+  /// Get all surviving byte candidates, including those not admitted as names.
   const std::vector<SigMatch> &matches() const { return Matches; }
 
   /// Clear all loaded signatures and matches.
@@ -210,10 +220,23 @@ public:
   /// Get the number of loaded signature files.
   size_t fileCount() const { return LoadedFiles.size(); }
 
-  /// Lookup a match by address. Returns nullptr if not found.
+  /// Lookup a byte candidate by address. This does not establish its identity.
+  /// Returns nullptr if not found.
   const SigMatch *findMatch(uint64_t Addr) const;
 
-  /// Build a map from address to function name for quick lookup.
+  /// Independently admitted identity, or nullptr when only candidates exist.
+  /// Valid until matches are cleared, reapplied or personalities are
+  /// identified.
+  const SignatureNameDecision *nameDecision(uint64_t Addr) const;
+
+  /// Names permitted for automatic renaming, type lookup and semantic analysis.
+  /// Ordinary byte candidates require the same exact linkage spelling in the
+  /// image's stated function symbols/exports. An alias is not certified by a
+  /// different alias's evidence. The dedicated exception-personality pass may
+  /// admit a name through its existing metadata and whole-function checks.
+  std::unordered_map<uint64_t, std::string> buildNameMap() const;
+
+  /// Preferred candidate names for inspection, never for semantic identity.
   ///
   /// Each match gives the routine at its address a set of names: its name
   /// and its aliases. Matches whose sets share a name agree, and the address
@@ -221,7 +244,7 @@ public:
   /// matches name differently gets no name, unless the matches whose
   /// references were all confirmed agree on one: the bytes alone could not
   /// tell the routines apart, but what they call could.
-  std::unordered_map<uint64_t, std::string> buildNameMap() const;
+  std::unordered_map<uint64_t, std::string> buildCandidateNameMap() const;
 
 private:
   struct SigSource {
@@ -239,6 +262,7 @@ private:
   std::vector<StoredModule> Modules;
   std::vector<SigSource> LoadedFiles;
   std::vector<SigMatch> Matches;
+  std::unordered_map<uint64_t, SignatureNameDecision> NameDecisions;
   std::map<std::string, LibraryFeaturePack> FeaturePacks;
   uint64_t FeatureGeneration = 0;
   std::optional<SignatureCache> Cache;
@@ -253,6 +277,7 @@ private:
   std::vector<size_t> MatchModules;
 
   void clearMatches();
+  void admitStatedNames(const BinaryImage &Img);
 
   /// What the matches settle for one address: the name shown, and every name
   /// the agreeing matches give the routine, sorted.  Both view the matches'
@@ -265,7 +290,7 @@ private:
     }
     bool operator==(const SettledRoutine &) const = default;
   };
-  /// The routines the matches settle; see \ref buildNameMap.
+  /// The candidate routines the matches settle; see buildCandidateNameMap.
   std::unordered_map<uint64_t, SettledRoutine> settleRoutines() const;
   /// What \p Proposals, the matches at one address, settle there.
   static std::optional<SettledRoutine>

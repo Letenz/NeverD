@@ -228,6 +228,16 @@ const char *neverd_sig_matches_json(neverd_session_t Sess) {
     // Whether the image confirmed every routine the match's signature
     // branches to: such a match settles an address other matches dispute.
     Obj["confirmed"] = M.Confirmed;
+    // Candidate spelling and reference confirmation are not identity. Report
+    // the exact address-level decision used by every semantic consumer.
+    const auto *Decision = S->SigDB.nameDecision(M.Address);
+    Obj["auto_name"] = Decision ? jsonSafeText(Decision->Name) : "";
+    Obj["name_evidence"] =
+        !Decision ? "none"
+        : Decision->Evidence == sigs::SignatureNameEvidence::ImageSymbol
+            ? "image_symbol"
+            : "exception_personality";
+    Obj["candidate_reason"] = Decision ? "" : "independent_identity_missing";
     Arr.push_back(std::move(Obj));
   }
   return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));

@@ -241,23 +241,30 @@ int runSigs(neverd_session_t Sess, const char *Argv0) {
     } else {
       consumeError(HeaderValue.takeError());
     }
-    outs() << format("Found %d signature matches:\n\n", *MatchCount);
+    outs() << format("Found %d signature candidates:\n\n", *MatchCount);
     auto Parsed = json::parse(Json ? Json : "[]");
     if (Parsed) {
       if (auto *Arr = Parsed->getAsArray()) {
-        outs() << format("  %-18s %-40s %s\n", "Address", "Name", "Library");
-        outs() << format("  %-18s %-40s %s\n", "-------", "----", "-------");
+        outs() << format("  %-18s %-12s %-40s %s\n", "Address", "Status",
+                         "Name", "Library");
+        outs() << format("  %-18s %-12s %-40s %s\n", "-------", "------",
+                         "----", "-------");
         for (const auto &Item : *Arr) {
           if (auto *Obj = Item.getAsObject()) {
             auto Addr = Obj->getString("addr").value_or("");
             auto Name = Obj->getString("name").value_or("");
+            auto AutoName = Obj->getString("auto_name").value_or("");
             auto Lib = Obj->getString("library").value_or("");
-            outs() << format("  %-18s %-40s %s\n", Addr.str().c_str(),
-                             Name.str().c_str(), Lib.str().c_str());
+            outs() << format("  %-18s %-12s %-40s %s\n", Addr.str().c_str(),
+                             AutoName.empty() ? "candidate" : "identified",
+                             (AutoName.empty() ? Name : AutoName).str().c_str(),
+                             Lib.str().c_str());
           }
         }
       }
     }
+    outs() << "\nCandidates without independent identity evidence are not "
+              "automatically named.\n";
   }
   if (Json)
     neverd_free_string(Json);
