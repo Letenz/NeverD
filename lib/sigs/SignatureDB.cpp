@@ -1591,6 +1591,11 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // names nothing.  At first that is what the bytes alone settle.  A Thumb
   // routine may be entered with the interworking bit set.
   std::unordered_map<uint64_t, SettledRoutine> Settled;
+  // Import veneers are immutable during this application. Resolve each
+  // referenced address once before parallel rounds rather than decoding it
+  // again for every candidate name and every round. Only actual imports need
+  // retained entries; absence has the same meaning as an uncached null result.
+  llvm::DenseMap<uint64_t, const Import *> ImportStubs;
   std::vector<bool> Dropped(Matches.size(), false);
   for (size_t I = 0; I < Matches.size(); ++I)
     Dropped[I] = I >= FrozenMatches && RequiresReferences(I);
@@ -1606,6 +1611,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     if (C != 0 && Calling[C].first == Calling[C - 1].first)
       continue;
     const uint64_t Target = Calling[C].first;
+    if (const Import *Imp = Img.findImportStubAt(Target))
+      ImportStubs.try_emplace(Target, Imp);
     for (uint64_t Address :
          {Target, Img.Arch == Arch::ARM ? Target | ThumbStateBit : Target})
       if (!Settled.count(Address))
@@ -1620,7 +1627,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   };
 
   auto Judge = [&](std::string_view Name, uint64_t Target) {
-    if (const Import *Imp = Img.findImportStubAt(Target)) {
+    if (const Import *Imp = ImportStubs.lookup(Target)) {
       // An ELF import is the very symbol the library called, named without
       // the version a `name@VERSION` reference states, and a Mach-O stub is
       // named after the undefined symbol it binds, so either stub settles the
