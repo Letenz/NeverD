@@ -1,3 +1,12 @@
+//===- WindowFrame.cpp - Owned window frame and resize gestures -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Keep the application frame consistent with native window transitions.
+//===----------------------------------------------------------------------===//
+
 #include "WindowFrame.h"
 
 #include "../Config.h"
@@ -12,7 +21,9 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScreen>
 #include <QSurfaceFormat>
+#include <QTimer>
 #include <QWidget>
 #include <QWindow>
 #include <algorithm>
@@ -143,9 +154,25 @@ WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar)
   if (QGuiApplication::platformName() == QLatin1String("windows"))
     connect(&handle, &QWindow::windowStateChanged, this,
             &WindowFrame::syncWindowState);
-  connect(&handle, &QWindow::screenChanged, this, [this] {
+  restoreTimer_ = new QTimer(this);
+  restoreTimer_->setSingleShot(true);
+  connect(restoreTimer_, &QTimer::timeout, this, [this] {
+    restoreScreenTimedOut_ = true;
+    restoreAfterFullScreen();
+  });
+  const auto watchScreen = [this](QScreen *screen) {
+    disconnect(screenGeometryConnection_);
+    if (screen)
+      screenGeometryConnection_ =
+          connect(screen, &QScreen::availableGeometryChanged, this,
+                  &WindowFrame::restoreAfterFullScreen);
+  };
+  watchScreen(handle.screen());
+  connect(&handle, &QWindow::screenChanged, this, [this, watchScreen] {
+    watchScreen(handle_.screen());
     platform::configureFrame(handle_);
     updateMargins();
+    restoreAfterFullScreen();
   });
   updateMargins();
 }
@@ -153,6 +180,68 @@ WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar)
 WindowFrame::~WindowFrame() {
   finishResize();
   showEdges({});
+}
+
+void WindowFrame::setWindowState(Qt::WindowStates states) {
+  restoreTimer_->stop();
+  restoreMaximized_ = false;
+  restoreScreenTimedOut_ = false;
+  if (states.testFlag(Qt::WindowFullScreen) && !window_.isFullScreen()) {
+    beforeFullScreen_ = window_.windowState() & Qt::WindowMaximized;
+    normalBeforeFullScreen_ = window_.normalGeometry();
+    fullScreenScreen_ = handle_.screen();
+    if (fullScreenScreen_) {
+      fullScreenAvailable_ = fullScreenScreen_->availableGeometry();
+      fullScreenScreenGeometry_ = fullScreenScreen_->geometry();
+    }
+    if (QGuiApplication::platformName() == QLatin1String("windows") &&
+        beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
+      // Qt shares one saved rectangle between frameless maximization and
+      // full screen. Enter through normal size to retain the restore frame.
+      window_.showNormal();
+      window_.showFullScreen();
+      return;
+    }
+  } else if (window_.isFullScreen() && states == Qt::WindowMaximized &&
+             (QGuiApplication::platformName() == QLatin1String("cocoa") ||
+              QGuiApplication::platformName() == QLatin1String("windows"))) {
+    // Cocoa restores the window before the Dock's work area. Requesting
+    // maximization in the same transition makes Qt zoom against that temporary
+    // area and overwrite the normal geometry with the old maximized frame.
+    // Windows shares the saved geometry for frameless maximization and full
+    // screen, then clears it on full-screen exit. Passing through normal size
+    // also lets its next maximization retain the right restore geometry.
+    restoreMaximized_ = true;
+    window_.setWindowState(Qt::WindowNoState);
+    restoreTimer_->start(
+        ::neverd::limits::gui_config::kWindowFrameScreenRestoreTimeoutMs);
+    return;
+  }
+  window_.setWindowState(states);
+}
+
+void WindowFrame::toggleFullScreen() {
+  if (restoreMaximized_)
+    return;
+  setWindowState(window_.isFullScreen()
+                     ? beforeFullScreen_
+                     : window_.windowState() | Qt::WindowFullScreen);
+}
+
+void WindowFrame::restoreAfterFullScreen() {
+  if (!restoreMaximized_ || states_.testFlag(Qt::WindowFullScreen))
+    return;
+  QScreen *screen = handle_.screen();
+  if (!restoreScreenTimedOut_ && screen && screen == fullScreenScreen_ &&
+      screen->geometry() == fullScreenScreenGeometry_ &&
+      screen->availableGeometry() != fullScreenAvailable_)
+    return;
+  restoreMaximized_ = false;
+  restoreTimer_->stop();
+  if (!states_.testFlag(Qt::WindowMaximized) &&
+      normalBeforeFullScreen_.isValid())
+    window_.setGeometry(normalBeforeFullScreen_);
+  window_.setWindowState(Qt::WindowMaximized);
 }
 
 Qt::Edges WindowFrame::edgesAt(QPoint at, QSize size, QMargins shadow) {
@@ -187,60 +276,30 @@ Qt::Edges WindowFrame::edgesAt(QPoint at, QSize size, QMargins shadow) {
 }
 
 bool WindowFrame::resizable() const {
-  if (states_ &
-      (Qt::WindowMaximized | Qt::WindowFullScreen | Qt::WindowMinimized))
+  if (states_ & (Qt::WindowFullScreen | Qt::WindowMinimized))
+    return false;
+  // AppKit also reports a manually sized window as zoomed when it reaches
+  // its size ceiling. Cocoa's zoomed windows can still be resized by an edge.
+  if ((states_ & Qt::WindowMaximized) &&
+      QGuiApplication::platformName() != QLatin1String("cocoa"))
     return false;
   return window_.minimumSize() != window_.maximumSize();
 }
 
-void WindowFrame::toggleFullScreen() {
-  if (restoreAfterFullScreen_)
-    return;
-  const bool windows =
-      QGuiApplication::platformName() == QLatin1String("windows");
-  if (!window_.isFullScreen()) {
-    beforeFullScreen_ = window_.windowState() & Qt::WindowMaximized;
-    if (windows && beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
-      // Qt uses one saved rectangle for frameless maximization and full
-      // screen. A direct transition overwrites the normal restore geometry.
-      window_.showNormal();
-      window_.showFullScreen();
-      return;
-    }
-    window_.setWindowState(beforeFullScreen_ | Qt::WindowFullScreen);
-    return;
-  }
-  if (QGuiApplication::platformName() == QLatin1String("cocoa") &&
-      beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
-    // Cocoa's full-screen exit restores the frame before the Dock occupies
-    // its desktop space again. Asking Qt to maximize at that point zooms to
-    // the wrong work area and loses both maximization and normal geometry.
-    restoreAfterFullScreen_ = true;
-    window_.showNormal();
-  } else {
-    // Leaving full screen directly maximized uses Win32's native maximize,
-    // then clears the rectangle Qt's frameless Restore still needs. Reenter
-    // maximization through Qt's normal frameless path instead.
-    if (windows && beforeFullScreen_.testFlag(Qt::WindowMaximized))
-      window_.showNormal();
-    window_.setWindowState(beforeFullScreen_);
-  }
-}
-
 void WindowFrame::syncWindowState() {
   const auto states = handle_.windowStates();
-  if (restoreAfterFullScreen_ && states.testFlag(Qt::WindowMaximized) &&
-      !states.testFlag(Qt::WindowFullScreen))
-    restoreAfterFullScreen_ = false;
   if (states == states_)
     return;
-  // Cocoa can infer a maximized state when a drag reaches the window's size
-  // limit. The held gesture must still be able to shrink back from that limit.
-  // Only entering a state with no resize interaction cancels the grab.
+  // Cocoa can infer a maximized state when a drag reaches its size limit,
+  // including a notification delivered after setGeometry returns. Keep the
+  // held gesture so it can shrink back; full screen and minimization end it.
   if (states & (Qt::WindowFullScreen | Qt::WindowMinimized))
     finishResize();
   states_ = states;
   updateMargins();
+  // Finish outside Cocoa's native state notification, after Qt has consumed it.
+  if (restoreMaximized_)
+    QTimer::singleShot(0, this, &WindowFrame::restoreAfterFullScreen);
 }
 
 bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
@@ -258,13 +317,6 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   }
   if (object != &handle_)
     return false;
-  if (event->type() == QEvent::Expose && restoreAfterFullScreen_ &&
-      handle_.isExposed() && !states_.testFlag(Qt::WindowFullScreen)) {
-    // The desktop's screen/work-area notifications precede its exposure.
-    // Wait for that native boundary instead of a guessed animation delay.
-    restoreAfterFullScreen_ = false;
-    window_.setWindowState(beforeFullScreen_);
-  }
   // QWidget reports a requested state at once, before the window system
   // applies it; the native window receives this event only when the window
   // system has applied a state, such as with a Wayland configure.

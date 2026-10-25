@@ -88,7 +88,13 @@ void FocusSidebar::place() {
                             : std::max(available.left(),
                                        host_.contentsMargins().left() +
                                            config::kWindowFrameResizeInset);
-  const int maximumWidth = std::max(0, available.right() - left + 1);
+  // The handle must stay clear of the frame's resize band, even at the maximum
+  // width. Cocoa lets a zoomed window resize from an edge; putting the sidebar
+  // handle there would resize the window instead of shrinking the sidebar.
+  const int right = std::min(available.right() + 1,
+                             host_.width() - host_.contentsMargins().right() -
+                                 config::kWindowFrameResizeInset);
+  const int maximumWidth = std::max(0, right - left);
   const int minimumWidth =
       std::min(config::kFocusSidebarMinimumWidth, maximumWidth);
   const int previousWidth = width();

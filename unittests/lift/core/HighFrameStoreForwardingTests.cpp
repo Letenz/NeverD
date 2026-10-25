@@ -1,11 +1,13 @@
-//===- HighFrameStoreForwardingTests.cpp - Frame value semantics
-//-----------===//
+//===- HighFrameStoreForwardingTests.cpp - Frame value semantics ---------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-
-#include "gtest/gtest.h"
+///
+/// \file
+/// Check frame load forwarding across widths, effects and source boundaries.
+///
+//===----------------------------------------------------------------------===//
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/ir/SourceABI.h"
@@ -18,6 +20,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+#include <gtest/gtest.h>
 #include <limits>
 #include <unordered_set>
 
@@ -516,21 +519,55 @@ TEST(HighFrameStoreForwarding, StackHomesCannotBecomeImmutableAddressAliases) {
   }
 }
 
-TEST(HighFrameStoreForwarding,
-     DoesNotReplaceLoadSignednessWithStoreSignedness) {
+TEST(HighFrameStoreForwarding, PreservesStoredBitsAcrossSignedIntegerViews) {
+  std::vector<HighFunc> Functions;
+  std::string Main = R"(
+int main(void) {
+  const uint64_t boundaries[] = {
+    0, 1, 0x7f, 0x80, 0xff, 0x7fff, 0x8000, 0xffff,
+    0x7fffffff, 0x80000000, 0xffffffff,
+    UINT64_C(0x7fffffffffffffff), UINT64_C(0x8000000000000000), UINT64_MAX
+  };
+)";
   for (Arch Architecture : Architectures)
     for (uint16_t Bytes : {1, 2, 4, 8})
       for (bool Signed : {false, true}) {
         SCOPED_TRACE(static_cast<int>(Architecture));
         SCOPED_TRACE(Bytes);
         SCOPED_TRACE(Signed);
-        auto Function = roundTrip(Architecture, NdType::makeInt(Bytes, Signed));
-        Function.Body.back().RetVal->Type = NdType::makeInt(Bytes, !Signed);
+        const auto Stored = NdType::makeInt(Bytes, Signed);
+        const auto Read = NdType::makeInt(Bytes, !Signed);
+        auto Function = roundTrip(Architecture, Stored);
+        Function.ReturnType = Read;
+        Function.Body.back().RetVal->Type = Read;
         forwardPrivateFrameLoads(Function, Architecture);
-        // Keeping the read is safe until a byte-accurate reinterpretation is
-        // proven; simply reusing the stored signed value is not.
-        EXPECT_TRUE(hasLoad(Function.Body.back().RetVal));
+        ASSERT_FALSE(hasLoad(Function.Body.back().RetVal));
+        ASSERT_EQ(Function.Body.back().RetVal->Kind, ExprKind::Cast);
+        EXPECT_EQ(Function.Body.back().RetVal->Type, Read);
+        if (Architecture != Arch::X64)
+          continue;
+        Function.Name = "stored_view" + std::to_string(Functions.size());
+        const std::string Bits = std::to_string(Bytes * 8) + "_t";
+        const std::string WriteType = (Signed ? "int" : "uint") + Bits;
+        const std::string ReadType = (Signed ? "uint" : "int") + Bits;
+        Main += "{ uint64_t x = 1; for (unsigned i = 0; i < 65536; ++i) {\n";
+        Main += "x = x * UINT64_C(6364136223846793005) + 1;\n";
+        Main += "uint64_t bits = i < sizeof(boundaries) / sizeof(*boundaries)"
+                " ? boundaries[i] : x;\n";
+        Main += WriteType + " stored = (" + WriteType + ")bits;\n";
+        Main += ReadType + " expected; memcpy(&expected, &stored, "
+                           "sizeof(expected));\n";
+        Main += "if (" + Function.Name + "(stored) != expected) return " +
+                std::to_string(Functions.size() + 1) + "; }}\n";
+        Functions.push_back(std::move(Function));
       }
+  Main += "return 0; }\n";
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit(Functions, Out, Options));
+  compileAndRun("#include <string.h>\n" + Source + Main);
 }
 
 TEST(HighFrameStoreForwarding, InvalidatesUnknownAndOverlappingWrites) {
@@ -669,6 +706,70 @@ TEST(HighFrameStoreForwarding, DoesNotEraseMalformedMemoryExpressions) {
       if (Variant != 3)
         Observed = Observed->Operands[0];
       EXPECT_EQ(Observed->Kind, ExprKind::Load);
+    }
+}
+
+TEST(HighFrameStoreForwarding, ForwardsCallInputsAndClearsFactsAfterTheCall) {
+  for (Arch Architecture : Architectures)
+    for (StmtKind Kind : {StmtKind::Assign, StmtKind::ExprStmt, StmtKind::Call,
+                          StmtKind::Return}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(static_cast<int>(Kind));
+      const auto Type = NdType::makeInt(4, false);
+      auto Function = roundTrip(Architecture, Type);
+      auto Input = HighExpr::makeLoad(frameSlot(Architecture), Type);
+      auto Call = HighExpr::makeCall("consume", 0x2000, {Input});
+      Call->Type = Type;
+      HighStmt Barrier;
+      Barrier.Kind = Kind;
+      if (Kind == StmtKind::Call)
+        Barrier.CallExpr = Call;
+      else if (Kind == StmtKind::Return)
+        Barrier.RetVal = Call;
+      else {
+        Barrier.Val = Call;
+        if (Kind == StmtKind::Assign)
+          Barrier.Dst = temporary(1, Type, Architecture);
+      }
+      Function.Body.insert(Function.Body.begin() + 1, std::move(Barrier));
+      if (Kind == StmtKind::Return)
+        Function.Body.pop_back();
+      forwardPrivateFrameLoads(Function, Architecture);
+      const auto &Observed = Function.Body[1];
+      const auto Rebuilt = Kind == StmtKind::Call     ? Observed.CallExpr
+                           : Kind == StmtKind::Return ? Observed.RetVal
+                                                      : Observed.Val;
+      ASSERT_EQ(Rebuilt->Kind, ExprKind::Call);
+      ASSERT_EQ(Rebuilt->Operands.size(), 1u);
+      EXPECT_FALSE(hasLoad(Rebuilt->Operands[0]));
+      EXPECT_EQ(Function.Body.front().Kind, StmtKind::Store);
+      if (Kind != StmtKind::Return)
+        EXPECT_TRUE(hasLoad(Function.Body.back().RetVal));
+    }
+}
+
+TEST(HighFrameStoreForwarding, KeepsReadsAroundNestedCallsAndIndirectTargets) {
+  for (Arch Architecture : Architectures)
+    for (unsigned Variant = 0; Variant != 3; ++Variant) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Variant);
+      auto Function = roundTrip(Architecture, NdType::makeInt(4, false));
+      const auto Read = Function.Body.back().RetVal;
+      auto Effect = HighExpr::makeCall("effect", 0x2000, {});
+      Effect->Type = Function.ReturnType;
+      if (Variant == 0)
+        Function.Body.back().RetVal =
+            HighExpr::makeBinop(NdOp::INT_ADD, Read, Effect);
+      else {
+        auto Call = HighExpr::makeCall("consume", 0x3000, {Read});
+        if (Variant == 1)
+          Call->Operands.push_back(Effect);
+        else
+          Call->IndirectTarget = Effect;
+        Function.Body.back().RetVal = Call;
+      }
+      forwardPrivateFrameLoads(Function, Architecture);
+      EXPECT_TRUE(hasLoad(Function.Body.back().RetVal));
     }
 }
 

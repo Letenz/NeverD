@@ -82,7 +82,8 @@ class LowWordDecisions {
   // The low edge bit denotes complement. Negation never duplicates a graph;
   // zero and one are the two edges of the single terminal node.
   std::vector<Decision> Nodes{{UINT64_MAX, 0, 0}};
-  llvm::DenseMap<Decision, uint32_t, DecisionInfo> Unique, Applied;
+  llvm::DenseMap<Decision, uint32_t, DecisionInfo> Unique;
+  llvm::DenseMap<uint64_t, uint32_t> Applied;
   struct CarryKey {
     uint32_t A, B, C;
     bool operator==(const CarryKey &) const = default;
@@ -226,7 +227,10 @@ class LowWordDecisions {
       Failed = true;
       return 0;
     }
-    const Decision Key{Op, A, B};
+    // Edges use twice the bounded node index. The unused top bit distinguishes
+    // AND from XOR, so application keys need no full decision-node tuple.
+    static_assert(limits::kMaxResidueDecisionNodes <= UINT32_MAX / 4);
+    const uint64_t Key = (uint64_t(Op == Xor) << 63) | (uint64_t(A) << 32) | B;
     if (auto It = Applied.find(Key); It != Applied.end())
       return It->second ^ Complement;
     // Recursive insertion may reallocate Nodes; copy both decisions first.
@@ -239,7 +243,7 @@ class LowWordDecisions {
         apply(Op, Left.Variable == Variable ? Left.High : A,
               Right.Variable == Variable ? Right.High : B, Depth + 1);
     const auto Result = node(Variable, Low, High);
-    if (!charge(1, sizeof(Decision) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
+    if (!charge(1, sizeof(Key) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
         !reserveEntry(Applied))
       return 0;
     Applied.try_emplace(Key, Result);
@@ -1052,6 +1056,8 @@ class LowWordDecisions {
   struct WideSignature {
     uint32_t Identity = 0;
     std::array<uint32_t, 2> Delta{};
+    // Identity probes cannot supply a correction until the entry is complete.
+    bool Complete = true;
   };
   struct WidePairingState {
     std::unordered_map<SignatureKey, uint32_t, SignatureHash> Ids;
@@ -1312,6 +1318,9 @@ class LowWordDecisions {
   // Equal identities share a full-width representative. Delta is its exact
   // additive correction in the two highest observed bits. Highest input bits
   // cancel when deriving an XOR correction; only the next bit is needed.
+  // Full-block admission needs only identities; defer Boolean corrections
+  // until pairing consumes them. Partial blocks keep their complete probes.
+  template <bool IdentityOnly = false>
   WideSignature wideSignature(WidePairingState &State, SymRef R, unsigned Count,
                               unsigned Depth = 0) {
     if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
@@ -1319,7 +1328,8 @@ class LowWordDecisions {
       return {};
     }
     const uint64_t Key = (uint64_t(R.index()) << 8) | Count;
-    if (auto It = State.Words.find(Key); It != State.Words.end())
+    if (auto It = State.Words.find(Key);
+        It != State.Words.end() && (IdentityOnly || It->second.Complete))
       return It->second;
     const uint64_t Unit = uint64_t(1) << (Count - 2);
     const auto Op = Ctx.op(R);
@@ -1357,7 +1367,8 @@ class LowWordDecisions {
           Literal = Op == SymOp::Add ? Literal + Low : Literal ^ Low;
           Values.push_back({});
         } else {
-          auto Value = wideSignature(State, Child, Count, Depth + 1);
+          auto Value =
+              wideSignature<IdentityOnly>(State, Child, Count, Depth + 1);
           if (Failed)
             return {};
           Children.push_back(Value.Identity);
@@ -1367,10 +1378,11 @@ class LowWordDecisions {
       Bits D{uint32_t(bool(Literal & Unit)),
              uint32_t(bool(Literal & (2 * Unit)))};
       if (Op == SymOp::Add) {
-        for (const auto &Value : Values)
-          if (Value.Delta[0] || Value.Delta[1])
-            D = sumCorrection(D, Delta(Value));
-      } else {
+        if (!IdentityOnly)
+          for (const auto &Value : Values)
+            if (Value.Delta[0] || Value.Delta[1])
+              D = sumCorrection(D, Delta(Value));
+      } else if (!IdentityOnly) {
         // For XOR, the additive correction's upper bit contains only cross
         // terms d_i * a_j (i != j). A word's own low correction cancels its
         // own bit, so do not build that word merely to subtract it again.
@@ -1425,13 +1437,13 @@ class LowWordDecisions {
         Result = {internSignature(State, {0, Count, 0}), {0, 0}};
       else {
         const auto Child = Ctx.operand(R, 1);
-        auto S = wideSignature(State, Child, Count, Depth + 1);
+        auto S = wideSignature<IdentityOnly>(State, Child, Count, Depth + 1);
         if (Mask == 4 * Unit - 1)
           Result = S;
         else {
           const bool LowMask = Mask & Unit, HighMask = Mask & (2 * Unit);
           Bits D{LowMask ? S.Delta[0] : 0, HighMask ? S.Delta[1] : 0};
-          if (LowMask != HighMask && S.Delta[0])
+          if (!IdentityOnly && LowMask != HighMask && S.Delta[0])
             D[1] =
                 apply(Xor, D[1],
                       apply(And, highestBit(Child, Count - 1) ^ 1, S.Delta[0]));
@@ -1461,14 +1473,15 @@ class LowWordDecisions {
         llvm::SmallVector<Bits, 16> Deltas, Low, Prefix;
         bool Changed = false;
         for (size_t I = 0; I < OperandCount; ++I) {
-          auto S = wideSignature(State, Ctx.operand(R, I),
-                                 Count - TotalZeros + Zeros[I], Depth + 1);
+          auto S = wideSignature<IdentityOnly>(State, Ctx.operand(R, I),
+                                               Count - TotalZeros + Zeros[I],
+                                               Depth + 1);
           Children.push_back(S.Identity);
           Deltas.push_back(Delta(S));
           Changed |= S.Delta[0] || S.Delta[1];
         }
         Bits D(2, 0);
-        if (Changed) {
+        if (!IdentityOnly && Changed) {
           Prefix.push_back({1, 0});
           for (size_t I = 0; I < OperandCount; ++I) {
             const auto &V = word(Ctx.operand(R, I), Zeros[I] + 2);
@@ -1491,10 +1504,17 @@ class LowWordDecisions {
                   {0, 0}};
     } else
       Result = {internSignature(State, {UINT64_MAX, Count, R.index()}), {0, 0}};
-    if (!charge(1,
-                sizeof(uint64_t) + sizeof(WideSignature) + 4 * sizeof(void *)))
-      return {};
-    State.Words.emplace(Key, Result);
+    Result.Complete = !IdentityOnly;
+    if (auto It = State.Words.find(Key); It != State.Words.end()) {
+      if (!charge())
+        return {};
+      It->second = Result;
+    } else {
+      if (!charge(1, sizeof(uint64_t) + sizeof(WideSignature) +
+                         4 * sizeof(void *)))
+        return {};
+      State.Words.emplace(Key, Result);
+    }
     return Result;
   }
 
@@ -1740,12 +1760,28 @@ public:
           charge(1, sizeof(WidePairingState))) {
         State.Wide = std::make_unique<WidePairingState>();
         const auto A =
-            wideSignature(*State.Wide, Nonconstants.front(), Observed);
+            FullBlock
+                ? wideSignature<true>(*State.Wide, Nonconstants.front(),
+                                      Observed)
+                : wideSignature(*State.Wide, Nonconstants.front(), Observed);
         const auto Probe =
             Nonconstants.size() > WideBlock ? WideBlock : WideProbeBlock;
         const auto B =
-            wideSignature(*State.Wide, Nonconstants[Probe], Observed);
+            FullBlock
+                ? wideSignature<true>(*State.Wide, Nonconstants[Probe],
+                                      Observed)
+                : wideSignature(*State.Wide, Nonconstants[Probe], Observed);
         Wide = A.Identity == B.Identity;
+        for (size_t I = 1;
+             !Wide && FullBlock && !Failed && I < Nonconstants.size(); ++I) {
+          if (I == Probe)
+            continue;
+          if (!charge())
+            break;
+          const auto Other =
+              wideSignature<true>(*State.Wide, Nonconstants[I], Observed);
+          Wide = A.Identity == Other.Identity;
+        }
       }
       Product = Wide        ? widePairedProduct(State, Nonconstants, Observed)
                 : FullBlock ? pairedProduct(State, Nonconstants, Observed)

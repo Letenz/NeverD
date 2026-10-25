@@ -341,9 +341,15 @@ if(TARGET neverd_shared)
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
     TypeConversionCAPITests.cpp
-    LINK_COMPONENTS Types
     LINK_LIBS neverd_shared
   )
+  # As for shared-backed tools, macOS must resolve LLVM from the SDK alone.
+  # The Types archive brings a second LLVM transitively; dyld can then coalesce
+  # pass-manager methods without their AnalysisKeys and crash SDK optimization.
+  # Other platforms retain the archive for their different export boundaries.
+  if(NOT APPLE)
+    target_link_libraries(NeverDSessionCAPITests PRIVATE NeverDTypes)
+  endif()
   add_neverd_unittest(NeverDSessionSignatureProfileTests
     SessionSignatureProfileTests.cpp
     LINK_LIBS neverd_shared LLVMSupport

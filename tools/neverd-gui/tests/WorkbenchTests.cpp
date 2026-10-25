@@ -7,6 +7,7 @@
 /// Exercise the production session, window and views with a fixture worker.
 //===----------------------------------------------------------------------===//
 
+#include "../Config.h"
 #include "AddressSpace.h"
 #include "ChooserView.h"
 #include "CodeView.h"
@@ -60,6 +61,7 @@
 #include <QContextMenuEvent>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -700,13 +702,25 @@ private slots:
     }
     auto *code = workspace->findChild<CodeView *>();
     QVERIFY(code);
+    const auto focusState = [&] {
+      QString state;
+      QDebug(&state) << "focused" << QApplication::focusWidget() << "active"
+                     << QApplication::activeWindow() << "native focus"
+                     << QGuiApplication::focusWindow() << "workspace"
+                     << workspace << "native workspace"
+                     << workspace->windowHandle() << "code" << code->text()
+                     << "visible" << code->text()->isVisible() << "enabled"
+                     << code->text()->isEnabled() << "loading"
+                     << code->text()->loading();
+      return state;
+    };
     QTRY_COMPARE(code->text()->function(),
                  std::optional<Address>(Base + 0x140));
     QTRY_VERIFY(!code->text()->loading());
     assembly->navigate(Base + 0x1e0);
     QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
     code->text()->setFocus();
-    QTRY_VERIFY(code->text()->hasFocus());
+    QTRY_VERIFY2(code->text()->hasFocus(), qPrintable(focusState()));
     const auto click = [&](ActionId id) {
       auto *button = toolbar->widgetForAction(bench.action(id));
       if (!button || !button->isVisible() || !button->isEnabled())
@@ -719,7 +733,7 @@ private slots:
     QVERIFY(click(ActionId::JumpBack));
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x140));
-    QTRY_VERIFY(code->text()->hasFocus());
+    QTRY_VERIFY2(code->text()->hasFocus(), qPrintable(focusState()));
     QVERIFY(click(ActionId::JumpForward));
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x1e0));
@@ -824,31 +838,46 @@ private slots:
     QCOMPARE(handle->cursor().shape(), Qt::SplitHCursor);
     const int initialWidth = sidebar->width();
     const int nameWidth = functions->table()->header()->sectionSize(0);
+    const int keyboardStep =
+        ::neverd::limits::gui_config::kFocusSidebarKeyboardResizeStep;
+    // Keep the initial growth within the disassembly pane on small CI screens,
+    // leaving room for the later keyboard expansion.
+    const int grownWidth =
+        std::min(initialWidth + 180,
+                 assemblyGeometry.right() - sidebar->x() + 1 - keyboardStep);
+    QVERIFY(grownWidth > initialWidth);
     const auto resizeBy = [&](int delta) {
       const QPoint start = handle->mapTo(workspace, handle->rect().center());
-      const QPoint end = start + QPoint(delta, 0);
+      const QPoint end(std::clamp(start.x() + delta, 0, workspace->width() - 1),
+                       start.y());
       QTest::mousePress(workspace->windowHandle(), Qt::LeftButton,
                         Qt::NoModifier, start);
       QTest::mouseMove(workspace->windowHandle(), end);
       QTest::mouseRelease(workspace->windowHandle(), Qt::LeftButton,
                           Qt::NoModifier, end);
     };
-    resizeBy(180);
-    QTRY_COMPARE(sidebar->width(), initialWidth + 180);
-    QTRY_COMPARE(functions->table()->header()->sectionSize(0), nameWidth + 180);
+    resizeBy(grownWidth - initialWidth);
+    QTRY_COMPARE(sidebar->width(), grownWidth);
+    QTRY_COMPARE(functions->table()->header()->sectionSize(0),
+                 nameWidth + grownWidth - initialWidth);
     resizeBy(-80);
-    QTRY_COMPARE(sidebar->width(), initialWidth + 100);
+    QTRY_COMPARE(sidebar->width(), grownWidth - 80);
     resizeBy(-workspace->width());
-    QTRY_COMPARE(sidebar->width(), 240);
+    QTRY_COMPARE(sidebar->width(),
+                 ::neverd::limits::gui_config::kFocusSidebarMinimumWidth);
     resizeBy(workspace->width() * 2);
     QVERIFY(sidebar->geometry().right() <= workspace->rect().right());
-    resizeBy(initialWidth + 180 - sidebar->width());
-    QTRY_COMPARE(sidebar->width(), initialWidth + 180);
+    QVERIFY(
+        !WindowFrame::edgesAt(handle->mapTo(workspace, handle->rect().center()),
+                              workspace->size(), {})
+             .testFlag(Qt::RightEdge));
+    resizeBy(grownWidth - sidebar->width());
+    QTRY_COMPARE(sidebar->width(), grownWidth);
     handle->setFocus(Qt::TabFocusReason);
     QTest::keyClick(handle, Qt::Key_Right);
-    QVERIFY(sidebar->width() > initialWidth + 180);
+    QTRY_COMPARE(sidebar->width(), grownWidth + keyboardStep);
     QTest::keyClick(handle, Qt::Key_Left);
-    QCOMPARE(sidebar->width(), initialWidth + 180);
+    QCOMPARE(sidebar->width(), grownWidth);
     QCOMPARE(toggle->mapTo(workspace, toggle->rect().center()), triangle);
     QCOMPARE(QRect(assembly->mapTo(workspace, QPoint()), assembly->size()),
              assemblyGeometry);
@@ -898,7 +927,7 @@ private slots:
     QCOMPARE(toggle->arrowType(), Qt::RightArrow);
     bench.action(ActionId::ViewFunctions)->trigger();
     QVERIFY(sidebar->isVisible());
-    QCOMPARE(sidebar->width(), initialWidth + 180);
+    QCOMPARE(sidebar->width(), grownWidth);
     QCOMPARE(filter->text(), QStringLiteral("function_30"));
     filter->clear();
     filter->setFocus();
@@ -1657,7 +1686,11 @@ private slots:
       dialog = visibleDialog(QStringLiteral("addTypeLibraryDialog"));
       QVERIFY(dialog);
     }
+    // A revision arrives before the rename's write completion. Closing while
+    // that write is still pending opens the unsaved-edits confirmation.
+    QTRY_VERIFY(!bench.session.dirty());
     bench.session.closeFile();
+    QTRY_VERIFY(!bench.session.loaded());
     QTRY_VERIFY(!dialog);
   }
 
@@ -1730,15 +1763,24 @@ private slots:
       QVERIFY(palette);
       QCOMPARE(QApplication::activePopupWidget(), palette.data());
       QVERIFY(!QApplication::activeModalWidget());
+      if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
+        // Cocoa popup panels retain their owner's native key window. Qt
+        // routes that window's keys to the active popup's focused widget.
+        QTRY_COMPARE(QGuiApplication::focusWindow(),
+                     assembly->window()->windowHandle());
+      } else {
+        QVERIFY(activateTestWindow(palette));
+        QTRY_COMPARE(QGuiApplication::focusWindow(), palette->windowHandle());
+      }
       auto *input = palette->findChild<QLineEdit *>();
       QVERIFY(input);
       QTRY_VERIFY(input->hasFocus());
+      QVERIFY(QGuiApplication::focusWindow());
+      QTest::keyClick(QGuiApplication::focusWindow(), 'a');
+      QTRY_COMPARE(input->text(), QStringLiteral("a"));
       input->setText(bench.action(ActionId::JumpAnywhere)->text().remove('&'));
       QSignalSpy operand(bench.action(ActionId::JumpOperand),
                          &QAction::triggered);
-      // Cocoa popups can receive keys through their owner's native key
-      // window. Exercise that routing instead of requiring a separate one.
-      QVERIFY(QGuiApplication::focusWindow());
       QTest::keyClick(QGuiApplication::focusWindow(),
                       accept ? Qt::Key_Return : Qt::Key_Escape);
       QVERIFY(operand.isEmpty());
@@ -2560,6 +2602,11 @@ private slots:
     LoadDialogAcceptor loads;
     bench.window->openFile(writeFixture(directory, "code-folding.bin"));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    // Fix the document generation for the navigation checks below. A separate
+    // refresh phase then exercises invalidation at an exact request boundary.
+    QTRY_COMPARE_WITH_TIMEOUT(
+        bench.session.background().value("state").toString(),
+        QStringLiteral("ready"), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     assembly->navigate(Base + 0x140);
     QTRY_COMPARE(assembly->currentFunction(),
@@ -2601,6 +2648,15 @@ private slots:
     QVERIFY(listing->searchSelection() != first || text.count(address) == 1);
     QCOMPARE(code->searchSelection(), sourceSelection);
     QCOMPARE(code->documentVersion(), version);
+    listing->refresh();
+    QVERIFY(!listing->searchReady());
+    QCOMPARE(status->text(), QStringLiteral("No searchable text available"));
+    QVERIFY(!dialog->findChild<QPushButton *>("findInViewNext")->isEnabled());
+    QTRY_VERIFY(listing->searchReady());
+    QTRY_VERIFY(
+        dialog->findChild<QPushButton *>("findInViewNext")->isEnabled());
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(listing->selectedText(), address);
     QPointer<FindInViewDialog> retired = dialog;
     bench.action(ActionId::FileClose)->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
