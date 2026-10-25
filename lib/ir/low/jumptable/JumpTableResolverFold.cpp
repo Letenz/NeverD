@@ -203,7 +203,7 @@ std::optional<uint64_t> CFGBuilder::foldRegConstant(
           break;
         case NdOp::INTRINSIC:
           if (Img.Arch == Arch::AArch64 &&
-              lowAArch64AddressMemoryShapeIsValid(Op) && !addCount(MemoryReads))
+              lowAArch64AddressLoadShapeIsValid(Op) && !addCount(MemoryReads))
             return false;
           break;
         case NdOp::STORE:
@@ -582,8 +582,8 @@ std::optional<uint64_t> CFGBuilder::foldRegConstant(
         IsTerm = true;
         break;
       case NdOp::INTRINSIC:
-        IsTerm |= Img.Arch != Arch::AArch64 ||
-                  !lowAArch64AddressMemoryShapeIsValid(Op);
+        IsTerm |=
+            Img.Arch != Arch::AArch64 || !lowAArch64AddressLoadShapeIsValid(Op);
         break;
       default:
         break;

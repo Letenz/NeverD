@@ -1574,8 +1574,8 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
             ++It;
         PreviousAddress = Op.Addr;
       }
-      const bool OriginalLoad = Image.Arch == Arch::AArch64 &&
-                                lowAArch64AddressMemoryShapeIsValid(Op);
+      const bool OriginalLoad =
+          Image.Arch == Arch::AArch64 && lowAArch64AddressLoadShapeIsValid(Op);
       if (Op.Opcode == NdOp::INTRINSIC && !OriginalLoad) {
         Clobber(nullptr);
         continue;
@@ -2601,6 +2601,8 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
         // retain the original checked load and all of its possible faults.
         const auto Receiver = Base ? receiver(*Base) : std::nullopt;
         if (Receiver && Index && !Instruction->stackBase() &&
+            Instruction->usesFullWidthIndex() &&
+            Instruction->accessBytes() == kAddressMemoryPointerBytes &&
             !Instruction->indexShift()) {
           const auto Field =
               Index->TheKind == Value::Kind::Number

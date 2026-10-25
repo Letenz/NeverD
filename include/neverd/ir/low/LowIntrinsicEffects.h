@@ -59,15 +59,18 @@ inline bool lowAArch64SVECPAShapeIsValid(const LowOp &Op) {
 }
 
 inline bool lowAArch64AddressMemoryShapeIsValid(const LowOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC ||
-      Op.NumInputs != kAddressLoadOperandCount + 1 || !Op.Inputs[0].isConst() ||
+  if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+      !Op.Inputs[0].isConst() ||
+      Op.NumInputs != aarch64AddressMemoryOperandCount(
+                          static_cast<Intrinsic>(Op.Inputs[0].Offset)) +
+                          1 ||
       Op.Inputs[0].Size != kAddressMemoryIdentifierBytes ||
       Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
-      (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+      (Op.Output.Size && !Op.Output.isReg() && !Op.Output.isTemp()) ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
-  for (unsigned I = 1; I != kAddressLoadOperandCount; ++I)
+  for (unsigned I = 1; I != Op.NumInputs; ++I)
     if (!Op.Inputs[I].isConst() && !Op.Inputs[I].isReg() &&
         !Op.Inputs[I].isTemp())
       return false;
@@ -83,7 +86,19 @@ inline bool lowAArch64AddressMemoryShapeIsValid(const LowOp &Op) {
       Op.Inputs[kAddressMemoryIndexOperand + 1].isConst()
           ? std::optional<uint64_t>(
                 Op.Inputs[kAddressMemoryIndexOperand + 1].Offset)
+          : std::nullopt,
+      Op.NumInputs == kAddressStoreOperandCount + 1
+          ? Op.Inputs[kAddressMemoryDataOperand + 1].Size
+          : 0,
+      Op.NumInputs == kAddressStoreOperandCount + 1 &&
+              Op.Inputs[kAddressMemoryDataOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryDataOperand + 1].Offset)
           : std::nullopt);
+}
+
+inline bool lowAArch64AddressLoadShapeIsValid(const LowOp &Op) {
+  return Op.Output.Size && lowAArch64AddressMemoryShapeIsValid(Op);
 }
 
 inline bool lowAArch64PAuthLoadShapeIsValid(const LowOp &Op) {

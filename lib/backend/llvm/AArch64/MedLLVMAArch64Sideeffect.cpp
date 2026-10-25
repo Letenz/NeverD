@@ -153,6 +153,12 @@ bool MedLLVMEmitter::emitAArch64Exception(const MedOp &Op, Intrinsic IC,
 
 bool MedLLVMEmitter::emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,
                                            llvm::IRBuilder<> &Builder) {
+  if (IC == Intrinsic::A64_StoreRegisterOffset) {
+    // Original memory shares one validated machine contract. A void store
+    // must reach it before the generic dispatcher refuses unknown effects.
+    (void)emitAArch64IntrinsicValue(Op, IC, Builder);
+    return true;
+  }
   // An MSR, or a SYS operation (DC, IC, AT, TLBI), the lift kept the field
   // of runs as itself, with its register operand; it writes no register.
   if (Op.Output.Size == 0 && (Op.NumInputs == 2 || Op.NumInputs == 3) &&

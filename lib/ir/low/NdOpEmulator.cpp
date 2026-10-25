@@ -250,6 +250,21 @@ uint64_t NdOpEmulator::readOperand(const NdVar &Op) const {
   return 0;
 }
 
+bool NdOpEmulator::knownOperandBytes(const NdVar &Operand, uint64_t Offset,
+                                     uint64_t Bytes) const {
+  if (Offset > Operand.Size || Bytes > Operand.Size - Offset)
+    return false;
+  if (Operand.isConst())
+    return true;
+  if ((!Operand.isReg() && !Operand.isTemp()) ||
+      !Registers.contains(Operand.Offset))
+    return false;
+  const auto Wide = WideRegisters.find(Operand.Offset);
+  const uint64_t Available =
+      Wide == WideRegisters.end() ? sizeof(uint64_t) : Wide->second.size();
+  return Offset <= Available && Bytes <= Available - Offset;
+}
+
 std::vector<uint8_t> NdOpEmulator::readOperandBytes(const NdVar &Op) const {
   std::vector<uint8_t> Bytes(Op.Size, 0);
   if (Op.isConst()) {
@@ -502,8 +517,10 @@ bool NdOpEmulator::step(const LowOp &Op) {
         return false;
       const auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
       const auto &Index = Op.Inputs[kAddressMemoryIndexOperand + 1];
-      if ((!Base.isConst() && !Registers.contains(Base.Offset)) ||
-          (!Index.isConst() && !Registers.contains(Index.Offset)))
+      const auto Known = [&](const NdVar &Input) {
+        return knownOperandBytes(Input, 0, Input.Size);
+      };
+      if (!Known(Base) || !Known(Index))
         return false;
       const auto Instruction = aarch64AddressMemoryInstruction(
           Op.Inputs[kAddressMemoryWordOperand + 1].Offset);
@@ -511,13 +528,29 @@ bool NdOpEmulator::step(const LowOp &Op) {
           readOperand(Base), readOperand(Index));
       if (!Address)
         return false;
-      // The finite image/RAM model already owns byte availability. This
-      // private execution view does not rewrite or remove the original IR.
-      LowOp Load = Op;
-      Load.Opcode = NdOp::LOAD;
-      Load.NumInputs = 1;
-      Load.Inputs[0] = NdVar::cst(*Address, kAddressMemoryPointerBytes);
-      return executeLoad(Load);
+      if (!Instruction->isLoad()) {
+        const auto &Data = Op.Inputs[kAddressMemoryDataOperand + 1];
+        if (!Known(Data))
+          return false;
+        // Use the finite memory owner directly: lenient mode cannot turn a
+        // refused original store into a successful no-op.
+        for (unsigned I = 0; I != Instruction->accessBytes(); ++I) {
+          const auto *Mapped = Img.getSegmentFor(*Address + I);
+          if (!Mapped || !Mapped->isWritable() || *Address + I < Mapped->VA ||
+              *Address + I - Mapped->VA >= Mapped->Size)
+            return false;
+        }
+        return storeMemoryBytes(*Address, readOperandBytes(Data));
+      }
+      const auto Value = loadMemory(*Address, Instruction->accessBytes());
+      if (!Value)
+        return false;
+      if (CollectLoads &&
+          static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
+        LoadLog.push_back(
+            {*Address, static_cast<uint16_t>(Instruction->accessBytes())});
+      writeOutput(Op.Output, *Value);
+      return true;
     }
     if (isX86SystemStateIntrinsic(Id)) {
       switch (x86SystemStateContract(Id).Kind) {

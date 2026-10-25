@@ -24,6 +24,17 @@ Missing fixed stack positions remain unavailable while later arguments survive;
 the defined-input variant executes against an independent sum at O0/O2 with
 UBSan. Run the System V and other call-contract owners after changing the
 shared omitted-callee signature policy.
+`Win64CallContract.AnOutgoingArgumentMayReuseAnAddressTakenLocal` checks a
+fifth argument stored into a slot whose address an earlier call received.
+The callee's stack summary must override the local-slot heuristic. Both C
+routes compile and execute the independently checked argument values at O0/O2
+with UBSan, with pipeline optimization enabled and disabled.
+`Win64CallContract.UnobservedVoidCallResultsDoNotKeepLoopCopiesAlive`
+executes conditional void calls whose unused result registers join around a
+loop. Both C routes preserve the call count and memory effects for every null
+pointer combination. `HighCStoreForwarding.CopyCyclesNeedAnObservableReader`
+keeps the same copy cycle when a return, call argument or indirect target reads
+it; a void return alone does not keep it alive.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
@@ -287,9 +298,27 @@ PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
 state must return a normal error for both one-function serial and eight-function
 sharded LLVM emission, with and without optimization.
-`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks original 64-bit
-LSL register-offset loads through both raw decoders, strict/permissive lifting,
-SSA and both C routes. Independent LLVM MC words check source aliases, zero
+`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks all 13 GPR
+register-offset operations across 104 extension/scale encodings through both
+raw decoders, strict/permissive lifting, SSA and both C routes. Independent
+native-word comparisons exercise each family through HighC and LLVMC at O0/O2,
+including signed data, W-result zero extension, narrow-index high garbage,
+negative offsets, exact store widths and unchanged neighbouring bytes.
+Eighteen decoded narrow-index aliases also exercise source ABI recovery.
+Native harnesses also link the LLVM-generated objects and compare their memory
+and return values with independent instruction words. Fifty-two additional MC
+fixtures cover SP provenance, zero indices, discarded loads, zero stores and
+aliased base/index/data registers across every scalar family.
+Narrow-store tests reject unknown data while accepting a known accessed slice
+with unknown unused upper bytes. Native HighC cases share both bases and call
+expressions within and across functions, checking that only unobserved reads
+use original-byte storage and that returned callable pointers keep their native
+identity. The relative-table, finite-selector and shared-absolute execution
+regressions exercise retained reads through both source routes at O0/O2.
+`HighSourceRanges.*` independently enumerates SELECT, OR and XOR outcomes across
+all scalar widths, including their high bits, and rejects unknown selected arms.
+The software tracer reads only accessed bytes and keeps failed stores from
+changing finite memory in either mode. Independent LLVM MC words check source aliases, zero
 indices, discarded destinations and both encoded scales. O0/O2 object checks
 retain one load even with an unused result; native AArch64 C execution covers
 positive/negative offsets and stores on both sides of the load. Malformed
@@ -297,14 +326,26 @@ LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
 and the software tracer refuses state-dependent addresses in both modes, even
 when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
 Control-independent addresses retain finite image reads without guessing CPTA.
+Whole-W interval certificates cover all 104 encodings, exhaustively check small
+positive ranges and reject signed-W domain discontinuities, address-region
+crossings, wrap, SP and malformed words. Exact-use zero-extension proofs keep
+unknown X high bits from borrowing this domain. `NeverDJumpTableTests` runs
+`JTE_AArch64.*`, guarded-range/cache/predicate-demand cases and the shared table
+owners; selecting `*JumpTable*` alone does not include the `JTE_AArch64` suite.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives only a validated scalar memory operation. Run this group with the
 decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
-Include `NativeBooleanResultProof.*` and the jump-table/computed-goto tests:
+Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
+jump-table/computed-goto tests:
 identical-address reads preserve the differential result proof, while either
 tainted address input must refuse it. Computed-goto execution covers both a
 zero-register index and a load overwriting its index register. Selector tests
 reject stale or duplicated authentication records and duplicate load occurrences.
+Run `ResolverGuardPredicates.*` and `ResolverPredicateDemand.*` as well:
+explicit guarded upper-bound queries retain compound unsigned path predicates
+without claiming a finite mask or predecessor join, while ordinary equality and
+cheap-bound queries keep their existing demand policy. Bounds above 64 and
+cold/warm query mixtures exercise the distinct cache modes.
 `MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
 an edited store must lose its previous prologue-save annotation before the
 ObjC private-copy machine replay compares both saved representations.
@@ -5365,6 +5406,16 @@ names. Explicit directory loading still attempts every file; a failed
 automatic load retains the previous successful database and statistics.
 `NeverDSessionSignatureProfileTests` verifies the same selection through the
 public C SDK, including header JSON counts and their manual-load reset.
+Its naming cases exercise PE exports and stripped PE, ELF x64/ARM64 and Mach-O:
+candidates stay visible without replacing function names, and evidence for one
+alias does not certify the others. `SignatureDBIdentity.*` covers confirmed
+references without source identity, stated names, data/analysis/user symbols,
+failed reloads and evidence withdrawal. `PersonalitySignatures.*` keeps the
+dedicated exception-context path. `SafetyCAPI.SignatureCandidateCannotInventSafetySinkIdentity`
+checks that a candidate cannot manufacture a safety sink. `NeverDWorkerTransport`
+checks library classification for admitted, candidate-only and legacy responses.
+`SessionCAPITest.CallPathsFollowTheDirectReferencesBetweenFunctions` checks that
+same-byte candidates cannot truncate the default call tree as library functions.
 See [signature selection](signature-selection.md) for the evidence boundaries.
 
 `SignatureMatcherCRCReuse.*` additionally bounds repeated-checksum work while

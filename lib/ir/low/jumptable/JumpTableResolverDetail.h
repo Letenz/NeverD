@@ -53,7 +53,7 @@ namespace neverd {
 /// selector bound and CPA2 control independence.
 inline std::optional<AArch64AddressMemoryInstruction>
 originalAArch64TableLoad(const LowOp &Operation) {
-  if (!lowAArch64AddressMemoryShapeIsValid(Operation))
+  if (!lowAArch64AddressLoadShapeIsValid(Operation))
     return std::nullopt;
   const auto Instruction = aarch64AddressMemoryInstruction(
       Operation.Inputs[kAddressMemoryWordOperand + 1].Offset);

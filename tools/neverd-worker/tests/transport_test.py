@@ -176,6 +176,10 @@ def run(executable):
         functions = client.call("functions", {"limit": 3})["payload"]
         assert len(functions["items"]) == 3 and functions["next_offset"] == 3 and not functions["complete"]
         assert functions["items"][0]["address"] == BASE
+        assert functions["items"][1]["library"], functions
+        assert not functions["items"][2]["library"], functions
+        legacy = client.call("functions", {"offset": 3, "limit": 1})["payload"]["items"][0]
+        assert not legacy["library"], legacy
         assert client.call("functions", {"offset": 598, "limit": 3})["payload"]["complete"]
         assert client.call("functions", {"filter": "function_599"})["payload"]["total"] == 1
         assert client.call("functions", {"filter": "absent"})["payload"]["items"] == []

@@ -369,14 +369,22 @@ feature availability. These operations preserve call argument setup and frame ta
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
-`AArch64AddressMemory.def` owns original ordinary-memory operations. The first
-owned family is 64-bit `LDR Xt, [Xn, Xm, LSL #0/#3]`: its raw index and original
-word remain one effectful operation through LowIR, MedIR, LLVM and both C routes.
+`AArch64AddressMemory.def` owns original ordinary-memory operations. Its GPR
+register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
+STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
+The raw index and original word remain one effectful operation through LowIR,
+MedIR, LLVM and both C routes. W indices consume exactly four bytes. A load
+returns its accessed bytes; explicit IR sign/zero extends through the encoded
+W/X result width before publishing the complete X register. Stores consume
+only their accessed data bytes, with no invented return value.
+Byte and halfword stores slice the encoded W value explicitly; the tracer
+requires those source bytes to be known before publishing the slice. Unknown
+unused upper bytes do not prevent a known narrow store.
 The real load retains AddressAdd's access-EL checks and any internal
 AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
 The address is unknown to generic memory proofs, and discarding the result
-cannot discard the access or its possible fault. The scalar operation preserves
-local Z/P values and earlier call arguments other than its explicit output.
+cannot discard the access or its possible fault. The scalar operations preserve local Z/P values. Validated loads also preserve
+earlier call arguments other than their explicit outputs.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
 execution projection refuses it without its alignment and tagging environment.
@@ -388,17 +396,35 @@ mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
 Swift receiver proofs consume a validated read with an explicit result, without
 granting purity or removing the access. Jump-table recovery
 requires the same control-independent address proof for every admitted physical
-slot, an exact table base and a full-width bound on the raw index. Its existing
-root, mutation and storage audits still apply. Both source routes consume the
+slot and an exact table base/index identity. A monotonic address interval may
+certify the entire zero-extended W input domain without a branch proof; a full
+X input first needs an explicit zero-extension proof at the exact load use.
+Otherwise a complete native-width bound retains its compound unsigned path
+predicates. None of these address proofs grants runtime coordinates, mapping,
+storage ownership or finite-join authority. The common selector/storage fixed
+point remains mandatory. Compact byte/halfword and word-relative tables retain
+their entry width and signed target transforms, including a data anchor for
+word-relative entries. The encoded read never becomes an unchecked effective
+address; existing root, mutation and storage audits still apply. Both source routes consume the
 authenticated load's input occurrence, preserving zero indices and an index
 register overwritten by the load.
+Source emission keeps these original reads even after recovering a switch.
+When a relocatable table read has no observable result, a bounded original-byte
+copy preserves the access without demanding callable identities for unreachable
+physical slots. The shared byte-storage descriptor grants no address or flow
+proof. HighC requires every use of the exact expression in its function to be
+unobserved, together with a complete source-range proof; LLVM requires the
+existing exact-occurrence, storage-role and terminal-use closure. Observable
+reads still use the normal relocation-aware memory owner. Table-relative data
+layout also observes original reads through unique local definitions.
 Private-copy source replay recomputes stack-access annotations from the current
 MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Other ordinary-memory families remain unqualified for CPA2, as does
-controlled native execution with CPTA enabled. The owner follows the pinned
+identity. Immediate, pre/post-index, pair and SIMD/FP ordinary-memory families remain
+unqualified for CPA2, as does controlled native execution with CPTA enabled.
+The owner follows the pinned
 [Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
@@ -1709,8 +1735,13 @@ of the name each is shown under, as the kernel's exports are typed from
 the image states (`BinaryImage::statedFunctionNameAt`, as
 `getFunctionNameAt` chooses it): the export at the entry, else a symbol a
 producer stated, a PDB's function names among them; else the debug
-information's; else the name signatures recognized the function's bytes by
-(`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
+information's; else a signature identity admitted by independent image-symbol
+or exception-personality context (`SignatureDB::buildNameMap`). Byte/reference
+agreement alone remains a candidate (`buildCandidateNameMap`) and cannot
+authorize type lookup, safety sinks, automatic renaming or library folding.
+The signature database owns this decision; SDK, CLI and worker consume it.
+The separately gated library-feature path retains its independent identity
+verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
 which GNU ld keeps at each object's first function or variable
 (`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
