@@ -7,6 +7,7 @@
 #include "neverd/sigs/SignatureCache.h"
 
 #include "neverd/Common.h"
+#include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -215,17 +216,18 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
         Count + statedBytes(Count) > BlobBytes - R.BlobOffset ||
         R.FirstName > NameCount || Names > NameCount - R.FirstName ||
         R.Context > uint8_t(ContextRequirement::Caller) ||
-        (R.Context != uint8_t(ContextRequirement::None) &&
-         Count + R.CRCLen < R.TotalLen) ||
         (R.Context == uint8_t(ContextRequirement::References) &&
          R.ReferenceCount == 0) ||
         (R.Context == uint8_t(ContextRequirement::Caller) &&
-         (R.PublicNameCount == 0 ||
-          llvm::any_of(
-              llvm::ArrayRef(Result.Names.Names)
-                  .slice(R.FirstName, R.PublicNameCount),
-              [](const StoredName &Name) { return Name.Offset != 0; }))))
+         R.PublicNameCount == 0))
       return false;
+    if (R.Context == uint8_t(ContextRequirement::Caller))
+      // Name and module pieces can run in either order, or concurrently.
+      // Read immutable records rather than another piece's output buffer.
+      for (uint64_t N = R.FirstName; N < R.FirstName + R.PublicNameCount; ++N)
+        if (readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord))
+                .Offset != 0)
+          return false;
     StoredModule &M = Modules[I];
     M.Bytes = Bytes + R.BlobOffset;
     M.Stated = M.Bytes + Count;
@@ -239,6 +241,9 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     M.CRCLen = R.CRCLen;
     M.RequireReferences = R.Context == uint8_t(ContextRequirement::References);
     M.RequireCaller = R.Context == uint8_t(ContextRequirement::Caller);
+    if (R.Context != uint8_t(ContextRequirement::None) &&
+        !SignatureMatcher::isFullyVerified(M))
+      return false;
   }
   return true;
 }

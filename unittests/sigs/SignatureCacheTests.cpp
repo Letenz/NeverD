@@ -352,3 +352,56 @@ TEST_F(SignatureCacheTest, CallerContextSurvivesCachedLoading) {
   ASSERT_TRUE(Loaded);
   expectSameModules(Parsed.Modules, Loaded->Modules);
 }
+
+TEST_F(SignatureCacheTest, ContextValidationIsIndependentOfPieceOrder) {
+  write(Source, "E8........C3 00 0000 0006 !caller :0000 forward ^0001 zero\n");
+  auto Parsed = parse();
+  const auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  const auto Cache = cache();
+  for (uint32_t Offset : {0u, 1u}) {
+    // The cache is checksummed, but the module's context contract must still
+    // be validated independently of the order its pieces are materialized.
+    std::vector<StoredName> Names(Parsed.Modules.front().Names,
+                                  Parsed.Modules.front().Names + 2);
+    Names.front().Offset = Offset;
+    Parsed.Modules.front().Names = Names.data();
+    Cache.store(Source, *Identity, Parsed.Modules);
+    for (bool Reverse : {false, true}) {
+      auto Pending = Cache.open(Source, *Identity);
+      ASSERT_TRUE(Pending);
+      bool Accepted = true;
+      for (size_t P = 0; P < Pending->pieces(); ++P)
+        Accepted &= Pending->run(Reverse ? Pending->pieces() - P - 1 : P);
+      EXPECT_EQ(Accepted, Offset == 0) << "reverse=" << Reverse;
+    }
+    Parsed.Modules.front().Names = Parsed.Chunks.front().Modules.front().Names;
+  }
+}
+
+TEST_F(SignatureCacheTest, ContextBodiesRetainParserCoverageRequirements) {
+  write(Source, "E8........C3 00 0000 0006 !caller :0000 forward ^0001 zero\n");
+  auto Parsed = parse();
+  const auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  const auto Cache = cache();
+  const StoredModule Original = Parsed.Modules.front();
+  for (bool Caller : {false, true})
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      StoredModule &M = Parsed.Modules.front();
+      M = Original;
+      M.RequireCaller = Caller;
+      M.RequireReferences = !Caller;
+      if (Mutation == 0)
+        M.TotalLen = 0;
+      else if (Mutation == 1)
+        M.CRCLen = 1; // A CRC after a body already covered by leading bytes.
+      else {
+        --M.LeadingCount;
+        M.CRCLen = 2; // A CRC crossing the declared function end.
+      }
+      Cache.store(Source, *Identity, Parsed.Modules);
+      EXPECT_FALSE(Cache.load(Source, *Identity))
+          << "caller=" << Caller << " mutation=" << Mutation;
+    }
+}
