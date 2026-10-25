@@ -688,6 +688,24 @@ validation derives all rounds from an empty cut set. Deep nesting can require
 quadratic work, charged to existing limits with graph-sized live storage and no
 recursion or separate depth limit. Published v1/v2 paths retain their exact
 single-pass accounting and encodings.
+`llvm-progress-ssa-v4` extends the same owner to groups of paths sharing one
+header counter. Precomputed original predecessors and per-candidate PHI maps
+require complete, unique incoming coverage. At most two counter candidates
+come from the first direct comparison; each header PHI and selected latch PHI
+is scanned once per candidate. The intersection of signed-increasing,
+signed-decreasing, unsigned-increasing and unsigned-decreasing domains must be
+nonempty across every exact update. All header backedges are cut atomically.
+An unconditional latch may carry one common update or one PHI of guarded
+updates; every predecessor must directly consume that counter or its own exact
+update and have its other successor outside the component. Current-counter
+guards permit one poison-carrying backedge before the next guard consumes it.
+Other residual cycles still invalidate all tentative witnesses and counts.
+Schema 8 observes each guard block and names its physical latch separately.
+`FlowProgress` owns distinct header/backedge counts; the witness-vector size is
+the guard count. Production and replay derive them independently. Metadata
+paging uses these totals in constant time; guard-sorted witnesses retain the
+existing logarithmic node lookup. Legacy scanners, charge order and wire
+fields remain exact, and frontend adapters introduce no new proof rules.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
@@ -7515,6 +7533,25 @@ backend.
 
 ## CPU execution
 
+`ExecutionBackend::readRegisters` observes the stopped CPU through the shared
+`Registers.def` inventory, including vector lanes and extended x64 FP values.
+It publishes a complete packet or an error and never saves/restores a context,
+executes an instruction, or reads guest memory. Width validation rejects invalid
+backend values; architecture transports retain ownership of normalization.
+Android's opt-in `observe_cpu_state` reserves its raw register-byte budget before
+execution and reports the current thread under `android.cpu_state`, even after a
+terminal CPU fault. Registers are named pairs of hexadecimal low/high 64-bit
+words. Capture failure has `registers: null` and a separate diagnostic, preserving
+the original workload stop. This is an observation of modeled architectural
+registers, not suspended-thread state or a resumable VM checkpoint.
+
+Android's separate `observe_memory_on_failure` option uses the existing
+`ExecutionBackend::snapshotBacking` owner for requested terminal RAM ranges.
+It never retries guest/model reads after a fault or accesses device callbacks.
+Each failed range retains its own bounded diagnostic and publishes no partial
+bytes, without changing the execution failure or preventing later captures.
+The default report and resumable-stop memory contract remain unchanged.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage: partial failures, cancellation and deadline expiry cannot publish a
@@ -7586,12 +7623,16 @@ provider identity to aliases.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
-`LinuxCPUClock` decodes process CPU identities and validates their released GKI
-task observations. It resolves current-task aliases to the process group and
+`LinuxCPUClock` decodes process CPU identities under a released GKI contract or
+an explicit closed task catalogue. `LinuxKernelAvailability` validates that
+catalogue independently of GKI, including task limits and thread-ID conflicts.
+It does not select pidfd or other version-specific rules. The CPU-clock owner
+validates the corresponding task observations. It resolves current-task aliases to the process group and
 checks foreign group leaders before output access. `LinuxClock` canonicalizes
 observations and rejects duplicate aliases. Process CPU samples stay fixed
-while the idle policy advances declared wall clocks; no execution accounting
-or host clock supplies an observation.
+while the idle policy advances declared wall clocks, including monotonic raw
+from its own epoch. No execution accounting or host clock supplies a CPU
+observation; missing raw-clock input never borrows monotonic time.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
@@ -7968,6 +8009,13 @@ C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
 
+`AndroidDlfcn` owns explicit positive `dladdr` observations. Typed and JSON
+inputs share one validator and the limits in `emulation/Limits.h`. An exact
+address selects an authored LP64 `Dl_info`; absent or unmatched observations
+stop explicitly. Names are interned in read-only guest memory, shared across
+threads and revalidated before output publication. Static imports and dynamic
+provider traps share this owner without inferring ELF membership or host state.
+
 `AndroidStrings` owns Bionic's mutating token scan over guest memory. Imported
 and dynamically named `strtok_r` calls use the same bounded byte reads and
 caller-owned continuation pointer. It validates the complete cursor and
@@ -8211,6 +8259,23 @@ never rolls back committed RAM or device effects. Other devices without read
 preparation reject memory-to-memory reads rather than consuming them early.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+
+The same admission owner accepts FP32/FP64 `FCCMP`/`FCCMPE`, baseline scalar
+and vector `FCMLE #0`, and equal-width scalar SIMD `SCVTF`/`UCVTF`. FCMLE
+accepts only its exact typed zero immediate; scalar conversions retain width
+and operand-class checks. Conditions, exception status, rounding and results
+come from the existing checked execution semantics. FP16, fixed-point, packed
+conversions and scalable forms remain unsupported.
+
+The shared checked ARM64 catalogue admits integer `CMLT #0` for scalar D and
+fixed 8B/16B/4H/8H/2S/4S/2D vectors. The existing vector-effect owner retains
+register and immediate-form validation. This admission adds no FP comparison
+semantics, scalable registers or reserved scalar/narrow forms.
+
+The same catalogue admits baseline `EXT` byte windows and `REV64` element
+reversal within each 64-bit block. Both 64-bit and 128-bit vectors use the
+existing vector-effect owner; narrow results clear the upper half. Reserved
+offsets, reserved element sizes and scalable encodings remain unsupported.
 
 Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
 The original instructions execute on the selected checked CPU transport; OS
@@ -10340,6 +10405,17 @@ blocking waits, temporary masks or other descriptor readiness.
 See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
+
+`LinuxKernelAvailability.cpp` owns the import order through `xattrQueryImport` for
+`getxattr`, `lgetxattr` and `fgetxattr`. An explicit
+`LinuxKernelOptions::XAttrQueryImport` selects target-before-name or
+name-before-target independently of a released GKI contract. Supplying both
+authorities is invalid even when they select the same order. The existing GKI
+table remains authoritative when only GKI is supplied. `LinuxFiles` consumes
+this shared decision for raw syscalls and Bionic imports; JSON only parses the
+explicit declaration. This option supplies no attribute values, symbolic-link
+traversal, namespace policy or other kernel capabilities. Unknown attributes
+retain their unsupported boundary without reading or writing the value buffer.
 
 Frame-offset proof keys normalize a top-level 64-bit address sum by removing its constant bias and subtracting the same entry root. Cold proofs retain the complete predicate and the existing remainder expression. Completed domains subtract the bias before insertion and restore the requested bias on lookup, preserving modular wrap, empty domains and nonuniqueness. Keys follow the original address so a change in the bounded remainder rewrite from a binary to an n-ary sum cannot change proof identity. All new nodes count against the existing node limit.
 

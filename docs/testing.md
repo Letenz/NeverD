@@ -1907,6 +1907,33 @@ DPI checks. Frozen v2 self, branched and unproved nested reports supplement the
 older byte-exact compatibility fixtures. These are owned functional fixtures,
 not held-out accuracy or general behavioral-equivalence qualification.
 
+`BinaryDiffBranchProgress` exercises multiple guarded backedges, common-update
+and selected-update compiler latches, unequal steps in one common nowrap
+domain, compatible mixed flags, i1/i64 extremes, two counter candidates and
+scratch reuse after a failed candidate. Defined alternating signed and mixed
+signed/unsigned cycles are negative controls. Missing/duplicate PHI arms,
+foreign updates, resets, freezes, bypasses and unproved inner cycles retain the
+original contract. Multiple funnels and direct paths share one atomic group;
+proofs, all three counts, latch identity and versioning are revalidated on
+restore. Wide groups verify that outside seeds are not rescanned per guard,
+and exact retained/work limits and cooperative cancellation remain bounded.
+
+Owned `branch_progress_fixture.c` families 5 and 6 qualify selected updates at
+O0 and a common update at O2 through x64/AArch64 ELF/COFF/Mach-O. The opposite
+optimization level remains unproven when nowrap or unique-entry evidence is
+absent; cross-level checks require the resulting contract mismatch to abstain
+from anchors. Within each qualified level, changed final constants, bounds and
+body arithmetic retain partial anchors and keep the changed nodes visible.
+Tests preserve those limitations and do not alter the optimizer. SDK tests
+`SelectedUpdatesPagesEveryGuardAndRechecksFreshSource` and
+`CommonUpdatePagesEveryGuardAndRechecksFreshSource` cover page size one,
+every guard, slices, count/latch/header tampering and fresh source binding.
+Worker, Python and Qt cover the same schema, and Qt checks truthful
+loop/backedge/guard totals plus each selected guard's physical latch in both
+themes and at fractional DPI. Frozen v3 complete/limited/cancelled reports join
+the previous compatibility corpus. These fixtures establish supported behavior,
+not general behavioral equivalence or held-out accuracy.
+
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
 missing/stack/overlapping sites, detached and foreign users, raw and retained
@@ -6506,6 +6533,19 @@ writer copies, moves and resets. Both C emitters share this allocator.
 
 ## CPU execution checks
 
+`NeverDRegisterSnapshotTests` checks the complete architecture inventories,
+lossless scalar/vector/80-bit values, refusal of every injected register-read
+failure, and repeated observations through available checked backends.
+`AndroidObservation.TerminalRegister*` executes authored ARM64 register loads,
+compares complete reports with observation disabled, preserves normal/error and
+budget stops, checks stopped-child ownership across quanta, and enforces exact
+output-budget admission. `ProcessReport.CPUStateObservation*` checks strict
+opt-in JSON, high-bit preservation, and separate capture failures. Run these with
+`ProcessPublic.AndroidTerminalCPUStateMatchesSDKAndCLI` for normal and unknown
+service stops through both public surfaces, then run
+the Android native, Linux process and execution-session suites after changes to
+terminal register observation. Unavailable transports are skips.
+
 `UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
 distinct scalar and SIMD values across repeated checked user/supervisor steps
 and context restoration. Linux's `NeverDUnicornStateTransferTests` injects each
@@ -9978,6 +10018,56 @@ cmake -S . -B build-native -G Ninja \
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves, scalar conversions and fixed-width SIMD operations at EL0/EL1. Scalar conversion tests check signed/unsigned W/X inputs, truncation and saturation, FP32/FP64 resizing, rounding, upper-lane clearing and cumulative status. Fixed-point, packed and FP16 conversion forms remain rejected. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
 
+`AndroidObservation.FailureMemory*` compares complete fault reports with and
+without RAM capture, including all observed registers, original diagnostics,
+and execution counts. Unmapped ranges publish separate errors while later
+ranges remain available. Diagnostic budgets are checked before CPU entry.
+The public SDK/CLI regression compares complete CPU/runtime-failure reports
+and the new memory records. The flag is strictly boolean and defaults to false.
+
+`AndroidDladdrTests.cpp` runs independent LP64 callers at O0/O2 with ordinary,
+APS2 and RELR relocation packing on every available checked ARM64 transport.
+It checks the complete output buffer, image-only and named-symbol records,
+static/dynamic calls, provider closure and residency, errno/dlerror retention,
+thread-shared string identities, unknown queries and atomic output validation.
+Read-only, modified and unmapped metadata remain visible to guest accesses.
+Typed/JSON validation shares count, string and aggregate limits. Run the
+Android and process-public owners after changes to this model.
+
+`AArch64SIMD.FloatingConditionalComparison*` checks every condition and
+NZCV pattern for FCCMP/FCCMPE, exception suppression on false conditions,
+signed zero, NaNs, denormals and unused lanes. `FloatingZeroLEComparison*`
+checks five baseline FCMLE forms against integer IEEE-bit oracles.
+`ScalarSIMDInteger*` checks signed/unsigned FP32/FP64 conversion, all rounding
+modes, source aliases and context restoration. All scalar/vector state and
+guarded RAM are checked; optional and reserved forms get fresh rejected CPUs.
+
+`LinuxClock.RawMonotonic*` checks independent epochs, idle/instruction time,
+atomic overflow and missing input. Linux raw fixtures run on both LP64 ISAs;
+Android time fixtures cover O0/O2, all relocation forms and available checked
+ARM64 transports. Independent task-catalogue tests retain foreign absence,
+group-leader, sample, low-32-bit clock-ID and copy-error rules, without enabling
+pidfd. Typed/JSON validation keeps limits and thread/priority consistency.
+Public SDK/CLI tests compare complete reports for positive and missing clock
+inputs. Run Linux, Android and process-public owners after clock policy changes.
+
+`AArch64SIMD.SignedZeroComparison*` checks all eight baseline `CMLT #0`
+forms against an integer sign-bit oracle, including source/destination aliasing,
+zero, signed extrema and unused upper lanes. Every accepted execution compares
+all scalar/vector registers and guarded RAM at both checked privilege levels.
+Each reserved or scalable encoding gets a fresh fixture and must leave state
+unchanged. Run the complete AArch64 FP/SIMD, state and register-snapshot owners
+across available transports when changing this catalogue entry.
+
+`AArch64SIMD.ExtractBytes*` covers every legal `EXT` offset in both vector
+widths using `AArch64ExtractCases.def` and an independent byte-window oracle.
+`AArch64SIMD.Reverse64*` checks all six baseline byte, halfword and word forms
+against independently specified results. Both families compare all registers
+and guard memory, including aliased operands and narrow upper-lane clearing,
+at both privilege levels. Reserved and scalable encodings fail in fresh
+fixtures without changing register state. Run the complete FP/SIMD, state,
+register-snapshot and execution-session owners after admission changes.
+
 `AArch64WidenCases.def` records 36 independently assembled SSHLL/USHLL and
 SSHLL2/USHLL2 forms, including zero-shift SXTL/UXTL aliases. Independent integer
 oracles check signed extension, unsigned high bits, both source halves, all
@@ -10516,6 +10606,14 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 
 `LLVMCInternalExitRegions` adds five independent tests covering both exit polarities, zero iterations, parallel exit/backedge swaps, all four combinations of nested header/internal exits and ordered header/body/latch observations. Shared-destination exits and early continuations verify executable fallback; a valid earlier loop followed by an unsupported region must publish no partial structure. Whole-module and selected-function output must agree without changing LLVM. Original LLVM and emitted C run against independent unsigned oracles at O0/O2 over 294,912 calls, with undefined-behavior traps on C.
 
+The same suite checks that a loop-body exit cannot execute the header exit's
+PHI copies afterward. Distinct, uncoalesced exit values cover both branch
+polarities, zero iterations and headers with or without observer calls. A
+separate memory fixture updates a polled value during the final iteration and
+checks the reloaded value, selected output pointer, complete memory and call
+count. Both LLVM and generated C execute against independent O0/O2 oracles;
+the C runs also enable undefined-behavior traps.
+
 `NeverDLLVMCPhiTests` also checks common loop exits with distinct successor PHI pairs, ordered observer calls, output memory and unchanged caller IR. Whole-module and selected-function C execute against independent O0/O2 oracles. Different exit comparisons and extra arm predecessors exercise conservative handling.
 
 `NeverDLLVMCPhiTests` covers multi-backedge loop-expression factoring with independent O0/O2 oracles, ordered observers, memory snapshots before modifying calls, narrow wrap and signed extension. It checks whole-module and selected-function output without changing caller IR, conflicting edges, shared roots, poison annotations, undefined operands, variable shifts, constrained intrinsics, exception functions and complete budget refusal. Rotate calls must collapse only when every incoming operation agrees.
@@ -10829,6 +10927,16 @@ page-edge imports, descriptor narrowing, unchanged cursors and value canaries.
 Android’s `ReleasedGKIXAttrsShareRawAndBionicErrorOrder` repeats raw/named calls
 and independent errno checks across packing profiles. Corresponding boundary
 cases retain missing GKI and existing-object attribute uncertainty.
+`XAttrQueryImport*` covers both explicit import orders independently of GKI,
+strict typed/JSON admission, contradictory authorities, and unchanged GKI
+selection. The original O0/O2 Linux fixtures check literal errno precedence,
+page edges, low descriptor carriers, cursor preservation and untouched value
+canaries on each available x64/AArch64 backend. Android repeats raw/Bionic
+calls and missing-input, object and symbolic-link boundaries across its
+packing profiles. The pidfd control proves that selecting xattr import order
+does not provide another service's implementation or absence observation.
+`ProcessPublic.XAttrQueryImportMatchesSDKAndCLI` compares full C SDK/CLI reports
+for both orders, architectures and optimization levels.
 Run these first,
 then the complete Linux process, Android native and
 public process suites when changing shared kernel or descriptor semantics.

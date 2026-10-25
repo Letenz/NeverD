@@ -177,6 +177,106 @@ TEST_P(AndroidFiles, XAttrsKeepUnknownKernelAndExistingObjectBoundaries) {
     }
   }
 }
+struct XAttrImportCase {
+  LinuxXAttrQueryImport Import;
+  uint64_t NameFirst;
+};
+constexpr XAttrImportCase XAttrImports[] = {
+    {LinuxXAttrQueryImport::TargetBeforeName, 0},
+    {LinuxXAttrQueryImport::NameBeforeTarget, 1}};
+
+TEST_P(AndroidFiles, XAttrQueryImportSharesRawAndBionicErrorOrders) {
+  Options.Android->ThreadLimit = 1;
+  auto &Kernel = Options.LinuxKernel.emplace();
+  Kernel.UnavailableSyscalls.insert(LinuxUnavailableSyscall::PidFDOpen);
+  for (const auto &C : XAttrImports) {
+    SCOPED_TRACE(C.NameFirst);
+    Kernel.XAttrQueryImport = C.Import;
+    returned(run("files_xattr_errors", {C.NameFirst}));
+    returned(run("files_xattr_errors_bionic", {C.NameFirst}));
+    Kernel.XAttrQueryImport.reset();
+    // Both error fixtures reach a raw getxattr before any named xattr call.
+    for (const char *Entry :
+         {"files_xattr_errors", "files_xattr_errors_bionic"}) {
+      SCOPED_TRACE(Entry);
+      auto R = run(Entry, {C.NameFirst});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_NE(R.Diagnostic.find("xattr_query_import"), std::string::npos);
+      EXPECT_FALSE(R.ReturnValue);
+      ASSERT_FALSE(R.Services.empty());
+      EXPECT_EQ(R.Services.back().Number, 8u);
+      EXPECT_FALSE(R.Services.back().Result);
+    }
+    auto B = run("files_xattr_unobserved_bionic", {0});
+    EXPECT_EQ(B.Stop, ProcessStopReason::UnsupportedService) << B.Diagnostic;
+    EXPECT_NE(B.Diagnostic.find("xattr_query_import"), std::string::npos);
+    EXPECT_FALSE(B.ReturnValue);
+    EXPECT_TRUE(B.Services.empty());
+    ASSERT_FALSE(B.NativeCalls.empty());
+    EXPECT_EQ(B.NativeCalls.back().Name, "getxattr");
+    EXPECT_FALSE(B.NativeCalls.back().Result);
+  }
+}
+
+TEST_P(AndroidFiles, XAttrQueryImportKeepsObjectAndSymbolicLinkBoundaries) {
+  for (const auto &C : XAttrImports) {
+    SCOPED_TRACE(C.NameFirst);
+    Options.LinuxKernel.emplace().XAttrQueryImport = C.Import;
+    Options.LinuxFiles.emplace().Files["/fixture/data"] = {0};
+    for (uint64_t Mode = 0; Mode != 4; ++Mode) {
+      SCOPED_TRACE(Mode);
+      auto R = run("files_xattr_unobserved", {Mode});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_NE(R.Diagnostic.find("extended attributes"), std::string::npos);
+      EXPECT_FALSE(R.ReturnValue);
+      ASSERT_FALSE(R.Services.empty());
+      EXPECT_EQ(R.Services.back().Number, Mode == 0   ? 8u
+                                          : Mode == 1 ? 9u
+                                                      : 10u);
+      EXPECT_FALSE(R.Services.back().Result);
+      if (Mode < 3) {
+        auto B = run("files_xattr_unobserved_bionic", {Mode});
+        EXPECT_EQ(B.Stop, ProcessStopReason::UnsupportedService)
+            << B.Diagnostic;
+        EXPECT_NE(B.Diagnostic.find("extended attributes"), std::string::npos);
+        EXPECT_FALSE(B.ReturnValue);
+        EXPECT_TRUE(B.Services.empty());
+        ASSERT_FALSE(B.NativeCalls.empty());
+        EXPECT_EQ(B.NativeCalls.back().Name, Mode == 0   ? "getxattr"
+                                             : Mode == 1 ? "lgetxattr"
+                                                         : "fgetxattr");
+        EXPECT_FALSE(B.NativeCalls.back().Result);
+      }
+    }
+    Options.LinuxFiles->Files.clear();
+    for (uint64_t Mode : {0, 1}) {
+      SCOPED_TRACE(Mode);
+      Options.LinuxFiles->SymbolicLinks.clear();
+      const char *Link = Mode ? "/fixture" : "/fixture/data";
+      Options.LinuxFiles->SymbolicLinks[Link] = {'/', 't'};
+      for (bool Bionic : {false, true}) {
+        const char *Entry =
+            Bionic ? "files_xattr_unobserved_bionic" : "files_xattr_unobserved";
+        SCOPED_TRACE(Entry);
+        auto R = run(Entry, {Mode});
+        EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService)
+            << R.Diagnostic;
+        EXPECT_NE(R.Diagnostic.find("symbolic-link"), std::string::npos);
+        EXPECT_FALSE(R.ReturnValue);
+        if (Bionic) {
+          EXPECT_TRUE(R.Services.empty());
+          ASSERT_FALSE(R.NativeCalls.empty());
+          EXPECT_EQ(R.NativeCalls.back().Name, Mode ? "lgetxattr" : "getxattr");
+          EXPECT_FALSE(R.NativeCalls.back().Result);
+        } else {
+          ASSERT_FALSE(R.Services.empty());
+          EXPECT_EQ(R.Services.back().Number, Mode ? 9u : 8u);
+          EXPECT_FALSE(R.Services.back().Result);
+        }
+      }
+    }
+  }
+}
 TEST_P(AndroidFiles, PageFaultsPreserveCopiedBytesAndAdvanceOnlyTheirCursor) {
   returned(run("files_faults"));
 }

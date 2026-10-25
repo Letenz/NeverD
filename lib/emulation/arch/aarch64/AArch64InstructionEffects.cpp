@@ -259,25 +259,29 @@ getAArch64InstructionEffects(const cs_insn &I,
   const auto &A = I.detail->aarch64;
   if (Kind == ScalarConversion) {
     const bool Resize = I.id == AARCH64_INS_FCVT;
-    const unsigned FloatIndex =
-        I.id == AARCH64_INS_SCVTF || I.id == AARCH64_INS_UCVTF ? 0 : 1;
-    // Only scalar GPR <-> binary32/binary64 forms are admitted. Fixed-point
-    // immediates, packed vectors and optional half precision remain outside
-    // this contract even though Capstone uses the same instruction IDs.
+    const bool FromInteger =
+        I.id == AARCH64_INS_SCVTF || I.id == AARCH64_INS_UCVTF;
+    const unsigned FloatIndex = FromInteger ? 0 : 1;
+    // GPR conversions and equal-width scalar SIMD integer-to-float forms use
+    // binary32/binary64. Fixed-point immediates, packed vectors and optional
+    // half precision remain outside this contract despite their shared IDs.
     if (A.op_count != 2 || A.operands[0].type != AARCH64_OP_REG ||
         A.operands[1].type != AARCH64_OP_REG ||
-        (!Resize && !scalarRegister(A.operands[1 - FloatIndex].reg)) ||
         A.operands[FloatIndex].vas != AARCH64LAYOUT_INVALID)
       return llvm::make_error<UnsupportedExecutionError>();
     const unsigned Width = vectorRegisterWidth(A.operands[FloatIndex].reg);
     if (Width != 32 && Width != 64)
       return llvm::make_error<UnsupportedExecutionError>();
+    const auto &Other = A.operands[1 - FloatIndex];
     if (Resize) {
-      const auto &Other = A.operands[1 - FloatIndex];
       const unsigned OtherWidth = vectorRegisterWidth(Other.reg);
       if ((OtherWidth != 32 && OtherWidth != 64) || OtherWidth == Width ||
           Other.vas != AARCH64LAYOUT_INVALID)
         return llvm::make_error<UnsupportedExecutionError>();
+    } else if (!scalarRegister(Other.reg) &&
+               !(FromInteger && vectorRegisterWidth(Other.reg) == Width &&
+                 Other.vas == AARCH64LAYOUT_INVALID)) {
+      return llvm::make_error<UnsupportedExecutionError>();
     }
   }
   bool HasVector = UsesFloatingState || Kind == Vector;
@@ -294,9 +298,16 @@ getAArch64InstructionEffects(const cs_insn &I,
             (unsigned(O.vas) & LayoutElementMask) < FP32Bits)))
         return llvm::make_error<UnsupportedExecutionError>();
     }
+    // FCMLE's encoded zero is a typed system immediate in Capstone, not
+    // an ordinary FP operand. Admit only this instruction's exact third zero.
+    const bool ExactFloatingZero =
+        I.id == AARCH64_INS_FCMLE && A.op_count == 3 && N == 2 &&
+        O.type == AARCH64_OP_SYSIMM &&
+        O.sysop.sub_type == AARCH64_OP_EXACTFPIMM &&
+        O.sysop.imm.exactfpimm == AARCH64_EXACTFPIMM_ZERO;
     if ((Kind == Integer || Kind == Vector || UsesFloatingState) &&
         O.type != AARCH64_OP_REG && O.type != AARCH64_OP_IMM &&
-        !(Kind == Floating && O.type == AARCH64_OP_FP))
+        !(Kind == Floating && O.type == AARCH64_OP_FP) && !ExactFloatingZero)
       return llvm::make_error<UnsupportedExecutionError>();
   }
   if (HasVector && !baselineFeatures(I))
