@@ -77,6 +77,50 @@ TEST(X86SystemState, InstructionsHaveValidatedEffectsAndNoInventedResult) {
     }
 }
 
+TEST(X86SystemState, TransactionQueryDefinesAllArithmeticFlags) {
+  const std::vector<uint64_t> Flags = {x86reg::CF, x86reg::PF, x86reg::AF,
+                                       x86reg::ZF, x86reg::SF, x86reg::OF};
+  for (Arch A : {Arch::X86, Arch::X64}) {
+    const auto Ops = lift(A, {0x0f, 0x01, 0xd6});
+    ASSERT_FALSE(Ops.empty());
+    ASSERT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
+    EXPECT_EQ(Ops.front().Inputs[0].Offset,
+              static_cast<uint64_t>(Intrinsic::Xtest));
+    EXPECT_EQ(Ops.front().NumInputs, 1u);
+    for (unsigned Initial = 0; Initial != 64; ++Initial)
+      for (unsigned Active : {0u, 1u}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(Initial);
+        SCOPED_TRACE(Active);
+        BinaryImage Image;
+        Image.Arch = A;
+        NdOpEmulator Emu(Image);
+        Emu.setStrictMode(true);
+        for (unsigned I = 0; I != Flags.size(); ++I)
+          Emu.setRegister(Flags[I], (Initial >> I) & 1);
+        Emu.setRegister(x86reg::DF, 1);
+        Emu.setRegister(x86reg::RAX, 0x1122334455667788);
+        // The concrete executor cannot invent ambient transaction state.
+        EXPECT_FALSE(Emu.step(Ops.front()));
+        for (unsigned I = 0; I != Flags.size(); ++I)
+          EXPECT_EQ(Emu.getRegister(Flags[I]), (Initial >> I) & 1);
+        // Supply each architectural query completion, then execute the real
+        // lifted flag updates. No RTM/HLE host capability is assumed.
+        LowOp Completion;
+        Completion.Opcode = NdOp::COPY;
+        Completion.Output = Ops.front().Output;
+        Completion.addInput(NdVar::cst(Active, Completion.Output.Size));
+        ASSERT_TRUE(Emu.step(Completion));
+        for (size_t I = 1; I < Ops.size(); ++I)
+          ASSERT_TRUE(Emu.step(Ops[I]));
+        for (uint64_t Flag : Flags)
+          EXPECT_EQ(Emu.getRegister(Flag), Flag == x86reg::ZF ? !Active : 0u);
+        EXPECT_EQ(Emu.getRegister(x86reg::DF), 1u);
+        EXPECT_EQ(Emu.getRegister(x86reg::RAX), 0x1122334455667788u);
+      }
+  }
+}
+
 TEST(X86SystemState, CacheZeroReadsTheAddressWithoutLoadingOrChangingFlags) {
   for (const auto A : {Arch::X86, Arch::X64})
     for (const auto &E : test::cacheZeroEncodings()) {

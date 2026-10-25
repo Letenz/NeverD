@@ -24,8 +24,11 @@ namespace neverd {
 bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
                             const cs_aarch64 &ARM64) {
   if (Insn->size == kAddressMemoryWordBytes) {
+    // Immediate raw contracts also exist, but automatic adoption still needs
+    // exact image-address occurrences and the original SP environment.
     if (const auto Instruction =
-            aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes))) {
+            aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes));
+        Instruction && Instruction->hasRegisterIndex()) {
       // Preserve the raw index: the machine instruction owns its scale and
       // AddressAdd's access-EL check. Reading inputs before publishing
       // the result also retains source/destination aliases.

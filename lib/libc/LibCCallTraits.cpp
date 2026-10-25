@@ -365,6 +365,8 @@ std::optional<StackProbeEffect> stackProbeNamed(const BinaryImage &Img,
 
 std::optional<StackProbeEffect> stackProbeEffect(const BinaryImage &Img,
                                                  va_t Target) {
+  if (Img.functionHasBytePatch(Target))
+    return std::nullopt;
   if (!hasStackProbeRoutines(Img))
     return std::nullopt;
   // Only a name the binary or its debug information states proves the
@@ -499,6 +501,8 @@ bool isNoReturnTarget(const BinaryImage &Img, va_t Target) {
   // The user's statement decides over every name.
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;
+  if (Img.functionHasBytePatch(Target))
+    return false;
   const Import *Imp = Img.findImportAt(Target);
   if (Imp)
     if (isNoReturnFunction(Imp->Name))
@@ -583,6 +587,8 @@ bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
     return false;
   if (const auto Stated = Img.userNoReturnAt(Target))
     return *Stated;
+  if (Img.functionHasBytePatch(Target))
+    return false;
   if (Targets.count(Target))
     return true;
   // A restricted x86 load may not have registered this decoded veneer, and

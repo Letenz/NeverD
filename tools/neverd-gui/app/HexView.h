@@ -12,11 +12,13 @@
 #include <optional>
 
 class QAction;
+class QMenu;
 
 namespace neverd::gui {
 
 class AddressSpace;
 class Session;
+class PatchEditor;
 
 /// The hex dump: rows of sixteen bytes at addresses that are multiples of
 /// sixteen, over every mapped region, fetched from the worker in cached
@@ -41,7 +43,9 @@ public:
   /// (`48 89 5C 24 08`) once every one of them has loaded.
   void copySelection();
   void setExportAction(QAction *action);
+  void editByte();
   std::optional<Address> currentAddress() const { return current_; }
+  QRect cursorViewportRect() const;
   /// Map rows again after the regions of the address space changed.
   void addressSpaceChanged();
   /// The byte at \p address once it is loaded and mapped.
@@ -56,6 +60,7 @@ public:
   void setTextEncoding(const QString &name);
 
 signals:
+  void populateContextMenu(QMenu *menu);
   void locationChanged(neverd::gui::Address address);
 
 protected:

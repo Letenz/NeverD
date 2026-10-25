@@ -12,13 +12,36 @@
 #include "neverd/backend/llvm/X86/X86SystemStateNative.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 
+#include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 
+#include <set>
+#include <string>
 #include <vector>
 
 namespace neverd {
+
+void applyX86SystemNativeTargetFeatures(llvm::Function &Function) {
+  std::set<std::string> Required;
+  for (const auto &Block : Function)
+    for (const auto &Instruction : Block)
+      if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
+        if (const auto *Callee = Call->getCalledFunction())
+          if (const char *Feature =
+                  x86SystemNativeTargetFeature(Callee->getName().str()))
+            Required.insert(Feature);
+  if (Required.empty())
+    return;
+  llvm::SubtargetFeatures Features(
+      Function.getFnAttribute("target-features").getValueAsString());
+  for (const auto &Feature : Required)
+    Features.AddFeature(Feature);
+  Function.addFnAttr("target-features", Features.getString());
+}
 
 llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
                                                 llvm::IRBuilder<> &Builder) {

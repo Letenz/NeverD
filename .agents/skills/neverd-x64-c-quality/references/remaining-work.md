@@ -191,8 +191,15 @@ Bounded call-free x64 callees now publish scalar constants agreed at every
 return, before SSA, through the shared register-effect summary. Ordinary ABI
 result registers, addresses, exceptional roots and unknown paths remain outside
 that proof. Public caller stores execute through both C routes and real PE/ELF
-consumers, including cached query order; dynamic outputs such as CPUID and VM
-state still require a real call-state contract. An explicit unsupported
+consumers, including cached query order. Complete register-only CPUID leaves
+now have a bounded source expansion: the shared converter retains their extra
+exit words, proves the written ABI-preserved GPRs unchanged, and emits every
+query once with all outputs sharing that query. The original CALL-slot guard
+runs first; both C routes use the same projected SSA. Cached order, repeated
+calls, high-byte reads and independent native-query oracles cover x64 inputs
+across COFF/ELF/Mach-O. Runtime entry dependencies, memory/stack-using leaves,
+other hardware effects and general VM state still require a real call-state
+contract. Native lifting keeps its original calls. An explicit unsupported
 expression does not certify those dynamic values or executable reconstruction.
 Complete header and explicit local FP/HFA declarations share the same checked
 carrier adapter. ARM64 cached imports retain the original loaded callable

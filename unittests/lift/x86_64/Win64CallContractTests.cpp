@@ -4529,4 +4529,223 @@ TEST(FixedIntegerStackCalls, SysVAndTailOperandsUseTheirDeclaredLocations) {
           }
       }
 }
+
+BinaryImage registerQueryImage(unsigned Mutation = 0) {
+  constexpr va_t Producer = Text + 0x80;
+  std::vector<uint8_t> Code(0xC0, 0xCC);
+  std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x28, 0xE8};
+  const auto Displacement = rel32(Text + 9, Producer);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  Caller.insert(Caller.end(), {0x4C, 0x31, 0xC0, // xor rax,r8
+                               0x48, 0x31, 0xC8, // xor rax,rcx
+                               0x48, 0x83, 0xC4, 0x28, 0xC3});
+  if (Mutation == 9) {
+    Caller.erase(Caller.begin() + 12, Caller.begin() + 15);
+    Caller.insert(Caller.begin() + 12, {0x0F, 0xB6, 0xD5,   // movzx edx,ch
+                                        0x48, 0x31, 0xD0}); // xor rax,rdx
+  } else if (Mutation == 10) {
+    std::vector<uint8_t> Again{0xE8};
+    const auto Next = rel32(Text + 14, Producer);
+    Again.insert(Again.end(), Next.begin(), Next.end());
+    Caller.insert(Caller.begin() + 9, Again.begin(), Again.end());
+  }
+  if (Mutation == 7)
+    Caller.insert(Caller.end() - 5, {0x48, 0x8B, 0x44, 0x24, 0xF8});
+  put(Code, Text, Caller);
+  std::vector<uint8_t> Leaf = {
+      0x31, 0xC0,                               // xor eax,eax
+      0x45, 0x31, 0xC0,                         // xor r8d,r8d
+      0x31, 0xC9,                               // xor ecx,ecx
+      0x49, 0x87, 0xD8,                         // xchg rbx,r8
+      0x0F, 0xA2,                               // cpuid
+      0x49, 0x87, 0xD8,                         // xchg rbx,r8
+      0x41, 0x81, 0xF0, 0x67, 0x45, 0x23, 0x01, // xor r8d,1234567h
+      0x81, 0xF1, 0x98, 0xBA, 0xDC, 0xFE,       // xor ecx,0FEDCBA98h
+      0xB8, 1,    0,    0,    0,    0xC3};      // mov eax,1; ret
+  if (Mutation == 1)
+    Leaf.insert(Leaf.begin(), {0x48, 0x8B, 0x04, 0x24}); // original return PC
+  else if (Mutation == 2)
+    Leaf.erase(Leaf.begin() + 5, Leaf.begin() + 7); // runtime CPUID subleaf
+  else if (Mutation == 3)
+    Leaf.insert(Leaf.end() - 1, {0x0F, 0x31}); // ordered RDTSC also matters
+  else if (Mutation == 4) {
+    Leaf.back() = 0xC2;
+    Leaf.insert(Leaf.end(), {0, 0});
+  } else if (Mutation == 5)
+    Leaf.insert(Leaf.begin(), {0x85, 0xC9, 0x74, 2, 0x31, 0xC0});
+  else if (Mutation == 6)
+    Leaf.insert(Leaf.end() - 1, {0x49, 0xB8, 0, 0x10, 0, 0x40, 1, 0, 0, 0});
+  else if (Mutation == 8)
+    Leaf.erase(Leaf.begin() + 12, Leaf.begin() + 15); // RBX is not restored
+  else if (Mutation == 14 || Mutation == 15)
+    Leaf.insert(Leaf.begin(), Mutation == 14 ? 0xFD : 0xFC); // std / cld
+  put(Code, Producer, Leaf);
+  auto Image = makeImage(
+      Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}}, {});
+  if (Mutation == 12 || Mutation == 13) {
+    ExceptionFunction Exception;
+    Exception.CodeRange = {Producer, Producer + Leaf.size()};
+    Exception.Personality = Mutation == 12 ? ExceptionPersonality::Unknown
+                                           : ExceptionPersonality::None;
+    Exception.ParseStatus = ExceptionParseStatus::Partial;
+    Image.ExceptionMetadata.Functions.push_back(std::move(Exception));
+    Image.ExceptionMetadata.rebuildIndex();
+  }
+  return Image;
+}
+
+TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Mutation : {0u, 9u, 10u}) {
+      auto Image = registerQueryImage(Mutation);
+      Image.Format = Format;
+      PipelineAnalysisCache Cache;
+      for (bool LLVM : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(Mutation);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text};
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = true;
+          Options.AnalysisCache = &Cache;
+          Options.NoOpt = NoOpt;
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          // Recover the original format's ABI, then emit GNU intrinsics for
+          // this host execution oracle. The image and recovered IR stay intact.
+          COptions.Format = BinaryFormat::ELF;
+          COptions.Image = &Image;
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+            ASSERT_TRUE(
+                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+          } else
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+          unsigned Queries = 0, Calls = 0;
+          for (const auto &Function : Result.MedFuncs)
+            for (const auto &Block : Function.Blocks)
+              for (const auto &Op : Block.Ops) {
+                Calls += Op.Opcode == NdOp::CALL;
+                Queries += Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                           Op.Inputs[0].isConst() &&
+                           Op.Inputs[0].ConstVal == unsigned(Intrinsic::Cpuid);
+              }
+          EXPECT_EQ(Calls, 0u);
+          EXPECT_EQ(Queries, Mutation == 10 ? 2u : 1u);
+          std::string Oracle = R"(
+int main(void) {
+  unsigned a = 0, b, c = 0, d;
+  __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+  const uint64_t expected = UINT64_C(1) ^ (b ^ UINT32_C(0x01234567)) ^
+                            (c ^ UINT32_C(0xFEDCBA98));
+  return (uint64_t)observe_cpu_words() != expected;
+}
+)";
+          if (Mutation == 9) {
+            const std::string Whole = "(c ^ UINT32_C(0xFEDCBA98))";
+            Oracle.replace(Oracle.find(Whole), Whole.size(),
+                           "(((c ^ UINT32_C(0xFEDCBA98)) >> 8) & 255)");
+          }
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Oracle,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+    }
+}
+
+TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
+  constexpr va_t Producer = Text + 0x80;
+  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 12u, 13u, 14u, 15u})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(Mutation);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        auto Image = registerQueryImage(Mutation);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.SourceProjection = true;
+        Options.LiftMode = LLVM;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        if (Mutation == 7) {
+          EXPECT_FALSE(Result.Success);
+          EXPECT_NE(Result.Error.find("physical CALL return slot"),
+                    std::string::npos)
+              << Result.Error;
+          continue;
+        }
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        bool CallsOriginal = false;
+        for (const auto &Function : Result.MedFuncs)
+          for (const auto &Block : Function.Blocks)
+            for (const auto &Op : Block.Ops)
+              CallsOriginal |= Op.Opcode == NdOp::CALL && Op.NumInputs &&
+                               Op.Inputs[0].isConst() &&
+                               Op.Inputs[0].ConstVal == Producer;
+        EXPECT_TRUE(CallsOriginal);
+      }
+}
+
+TEST(CallExitRegisters, RegisterQueryDoesNotRewriteMachineCalls) {
+  auto Image = registerQueryImage();
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {Text};
+  Options.LiftMode = true;
+  Options.NoOpt = true;
+  auto Result = Pipeline().run(Image, Context, Options);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  unsigned Calls = 0;
+  for (const auto &Function : Result.MedFuncs)
+    for (const auto &Block : Function.Blocks)
+      for (const auto &Op : Block.Ops)
+        Calls += Op.Opcode == NdOp::CALL;
+  EXPECT_EQ(Calls, 1u);
+}
+
+TEST(Win64CallContract, RegisterQueryWindowsSourceCompilesWithItsHeaders) {
+  auto Image = registerQueryImage();
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Text};
+    Options.LiftMode = LLVM;
+    Options.SourceProjection = true;
+    auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    CEmitterOptions COptions;
+    COptions.TheArch = Image.Arch;
+    COptions.Format = Image.Format;
+    COptions.Image = &Image;
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    if (LLVM) {
+      ASSERT_TRUE(Result.LlvmModule);
+      ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+    } else
+      ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+    source_call_execution_test::checkSyntax(
+        Source, {"--target=x86_64-pc-windows-msvc", "-ffreestanding"});
+  }
+}
 } // namespace

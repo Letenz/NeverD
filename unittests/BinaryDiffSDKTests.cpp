@@ -3337,8 +3337,9 @@ TEST_F(BinaryDiffSDK, RestoreCancellationRetainsEditsHistoryAndInspection) {
   };
   for (const auto *Stage :
        {"restore:scan", "restore:parse", "restore:records", "restore:identity",
-        "restore:dataflow", "restore:reviews", "restore:regions",
-        "restore:flow_regions", "restore:measure", "restore:publish"}) {
+        "restore:decisions", "restore:dataflow", "restore:reviews",
+        "restore:regions", "restore:flow_regions", "restore:measure",
+        "restore:publish"}) {
     SCOPED_TRACE(Stage);
     Probe P{C, Stage};
     EXPECT_EQ(neverd_comparison_restore_json_with_progress(C, Saved.c_str(),
@@ -3362,6 +3363,19 @@ TEST_F(BinaryDiffSDK, RestoreCancellationRetainsEditsHistoryAndInspection) {
   auto Status = parsed(neverd_comparison_status_json(C));
   EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "failed");
   EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+  auto Contradictory = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(Contradictory));
+  Contradictory->getAsObject()
+      ->getArray("overrides")
+      ->push_back(llvm::json::Object{
+          {"kind", "unmatch"}, {"primary", "0x1000"}, {"secondary", "0x8000"}});
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*Contradictory).c_str()),
+            0);
+  EXPECT_NE(take(neverd_comparison_last_error(C)).find("effective unmatch"),
+            std::string::npos);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+  EXPECT_EQ(take(neverd_comparison_summary_json(C)), Summary);
+  EXPECT_EQ(take(neverd_comparison_function_json(C, 0, 0x1000)), Detail);
   ASSERT_EQ(neverd_comparison_undo(C), 1);
   EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
   ASSERT_EQ(neverd_comparison_redo(C), 1);

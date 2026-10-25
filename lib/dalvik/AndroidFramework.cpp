@@ -12,13 +12,52 @@
 #include "neverd/dalvik/Limits.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <optional>
 #include <set>
+#include <string>
+#include <utility>
 
 namespace neverd::mobile::dalvik {
 namespace {
 bool platformType(std::string_view type) {
   return type.starts_with("Ljava/") || type.starts_with("Ljavax/") ||
          type.starts_with("Landroid/") || type.starts_with("Ldalvik/");
+}
+void validateSettingsCacheValue(const AndroidApplicationSnapshot &input,
+                                const std::optional<std::string> &value,
+                                const char *scope) {
+  const std::string prefix = std::string("Android ") + scope;
+  if (input.phase != AndroidApplicationSnapshot::Phase::Application)
+    throw Error(prefix + " settings cache requires an attached Application");
+  if (value) {
+    if (value->size() > ::neverd::limits::dalvik::kMaxAndroidSettingsValueBytes)
+      throw Error(prefix + " setting value exceeds its budget");
+    (void)javaStringBytes(*value);
+  }
+}
+void validatePackageName(const std::string &name) {
+  if (name.empty() ||
+      name.size() > ::neverd::limits::dalvik::kMaxAndroidClassNameBytes ||
+      name.find('\0') != std::string::npos)
+    throw Error("invalid Android application package snapshot");
+  (void)javaStringBytes(name);
+}
+void validateApplicationInfoFields(
+    const AndroidApplicationSnapshot::ApplicationInfo &info) {
+  auto check = [](const std::optional<std::string> &value, const char *name) {
+    if (!value)
+      return;
+    if (value->size() >
+        ::neverd::limits::dalvik::kMaxAndroidApplicationInfoFieldBytes)
+      throw Error(std::string("Android ApplicationInfo ") + name +
+                  " exceeds its budget");
+    (void)javaStringBytes(*value);
+  };
+  check(info.source_dir, "sourceDir");
+  if (info.native_library_dir)
+    check(*info.native_library_dir, "nativeLibraryDir");
 }
 } // namespace
 
@@ -77,6 +116,47 @@ void validateAndroidClassLookupFailures(
   }
 }
 
+void validateAndroidSecureSettingsCache(
+    const AndroidApplicationSnapshot &input) {
+  if (!input.secure_settings_cache)
+    return;
+  validateSettingsCacheValue(input, input.secure_settings_cache->android_id,
+                             "secure");
+}
+void validateAndroidGlobalSettingsCache(
+    const AndroidApplicationSnapshot &input) {
+  if (input.global_settings_cache)
+    validateSettingsCacheValue(input, input.global_settings_cache->adb_enabled,
+                               "global");
+}
+void validateAndroidApplicationInfo(const AndroidApplicationSnapshot &input) {
+  if (!input.application_info)
+    return;
+  if (input.phase != AndroidApplicationSnapshot::Phase::Application)
+    throw Error("Android ApplicationInfo requires an attached Application");
+  validateApplicationInfoFields(*input.application_info);
+}
+
+void validateAndroidApplicationInfoQueries(
+    const AndroidApplicationSnapshot &input) {
+  if (input.application_info_queries.empty())
+    return;
+  if (input.phase != AndroidApplicationSnapshot::Phase::Application ||
+      input.package_manager_available != true)
+    throw Error("Android application info queries require an available package "
+                "service and attached Application");
+  if (input.application_info_queries.size() >
+      ::neverd::limits::dalvik::kMaxAndroidApplicationInfoQueries)
+    throw Error("Android application info query inventory exceeds its budget");
+  std::set<std::pair<std::string, int32_t>> keys;
+  for (const auto &query : input.application_info_queries) {
+    validatePackageName(query.package_name);
+    if (!keys.emplace(query.package_name, query.flags).second)
+      throw Error("duplicate Android application info query");
+    validateApplicationInfoFields(query.info);
+  }
+}
+
 void Program::addAndroidFramework() {
   // Only the hierarchy needed by this projection. Unmodeled members are not
   // supplied as empty executable declarations.
@@ -90,38 +170,77 @@ void Program::addAndroidFramework() {
         {"android/content/ContextWrapper", "android/content/Context"},
         {"android/app/Application", "android/content/ContextWrapper"},
         {"android/app/ContextImpl", "android/content/Context"},
+        {"android/content/pm/PackageItemInfo", "java/lang/Object"},
+        {"android/content/pm/ApplicationInfo",
+         "android/content/pm/PackageItemInfo"},
+        {"android/os/Parcelable", "java/lang/Object"},
+        {"android/content/ContentResolver", "java/lang/Object"},
+        {"android/app/ContextImpl$ApplicationContentResolver",
+         "android/content/ContentResolver"},
+        {"android/provider/BaseColumns", "java/lang/Object"},
+        {"android/provider/Settings$NameValueTable", "java/lang/Object"},
+        {"android/provider/Settings$Secure",
+         "android/provider/Settings$NameValueTable"},
         {"java/io/File", "java/lang/Object"},
         {"java/io/Serializable", "java/lang/Object"},
         {"java/lang/Comparable", "java/lang/Object"},
+        {"java/lang/CharSequence", "java/lang/Object"},
+        {"java/lang/Appendable", "java/lang/Object"},
+        {"java/lang/AbstractStringBuilder", "java/lang/Object"},
+        {"java/lang/StringBuilder", "java/lang/AbstractStringBuilder"},
         {"java/lang/ClassLoader", "java/lang/Object"},
         {"java/lang/BootClassLoader", "java/lang/ClassLoader"},
         {"dalvik/system/BaseDexClassLoader", "java/lang/ClassLoader"},
-        {"dalvik/system/PathClassLoader",
-         "dalvik/system/BaseDexClassLoader"}}) {
+        {"dalvik/system/PathClassLoader", "dalvik/system/BaseDexClassLoader"},
+        {"android/content/pm/PackageManager", "java/lang/Object"},
+        {"android/app/ApplicationPackageManager",
+         "android/content/pm/PackageManager"}}) {
     Class type;
     type.name = "L" + std::string(name) + ";";
     type.superclass = "L" + std::string(base) + ";";
     type.access = {"public"};
     if (std::string_view(name) == "android/content/Context" ||
+        std::string_view(name) == "android/content/ContentResolver" ||
+        std::string_view(name) == "android/content/pm/PackageManager" ||
+        std::string_view(name) == "java/lang/AbstractStringBuilder" ||
         std::string_view(name) == "java/lang/ClassLoader" ||
         std::string_view(name) == "android/app/ClientTransactionHandler")
       type.access.insert("abstract");
-    if (std::string_view(name) == "android/app/ActivityThread")
+    if (std::string_view(name) == "android/app/ActivityThread" ||
+        std::string_view(name) == "android/provider/Settings$Secure" ||
+        std::string_view(name) == "java/lang/StringBuilder" ||
+        std::string_view(name) ==
+            "android/app/ContextImpl$ApplicationContentResolver")
       type.access.insert("final");
     if (std::string_view(name) == "android/app/ContextImpl" ||
+        std::string_view(name) == "java/lang/AbstractStringBuilder" ||
+        std::string_view(name) ==
+            "android/app/ContextImpl$ApplicationContentResolver" ||
         std::string_view(name) == "java/lang/BootClassLoader")
       type.access.erase("public");
     if (std::string_view(name) == "android/content/ComponentCallbacks" ||
+        std::string_view(name) == "android/os/Parcelable" ||
+        std::string_view(name) == "android/provider/BaseColumns" ||
         std::string_view(name) == "android/content/ComponentCallbacks2" ||
         std::string_view(name) == "java/io/Serializable" ||
+        std::string_view(name) == "java/lang/CharSequence" ||
+        std::string_view(name) == "java/lang/Appendable" ||
         std::string_view(name) == "java/lang/Comparable")
       type.access.insert({"abstract", "interface"});
     if (std::string_view(name) == "android/content/ComponentCallbacks2")
       type.interfaces.push_back("Landroid/content/ComponentCallbacks;");
     if (std::string_view(name) == "android/app/Application")
       type.interfaces.push_back("Landroid/content/ComponentCallbacks2;");
+    if (std::string_view(name) == "android/content/pm/ApplicationInfo")
+      type.interfaces.push_back("Landroid/os/Parcelable;");
     if (std::string_view(name) == "java/io/File")
       type.interfaces = {"Ljava/io/Serializable;", "Ljava/lang/Comparable;"};
+    if (std::string_view(name) == "java/lang/AbstractStringBuilder")
+      type.interfaces = {"Ljava/lang/Appendable;", "Ljava/lang/CharSequence;"};
+    if (std::string_view(name) == "java/lang/StringBuilder")
+      type.interfaces = {"Ljava/io/Serializable;", "Ljava/lang/CharSequence;"};
+    if (std::string_view(name) == "android/provider/Settings$NameValueTable")
+      type.interfaces = {"Landroid/provider/BaseColumns;"};
     type.source_id = "android-api28-framework";
     if (std::string_view(name) == "android/app/ActivityThread") {
       Field field;
@@ -129,8 +248,30 @@ void Program::addAndroidFramework() {
                          "Landroid/app/Instrumentation;"};
       type.fields.push_back(std::move(field));
     }
+    if (std::string_view(name) == "android/provider/Settings$Secure") {
+      // API 28 compile-time keys, independent of settings-provider state.
+      // Runtime owns their ordinary static storage and literal identities.
+      for (auto [key, value] : {std::pair{"ADB_ENABLED", "adb_enabled"},
+                                {"ANDROID_ID", "android_id"}}) {
+        Field field;
+        field.reference = {type.name, key, "Ljava/lang/String;"};
+        field.access = {"public", "static", "final"};
+        field.value = std::string(value);
+        type.fields.push_back(std::move(field));
+      }
+    }
+    if (std::string_view(name) == "android/content/pm/ApplicationInfo") {
+      for (const char *field_name : {"sourceDir", "nativeLibraryDir"}) {
+        Field field;
+        field.reference = {type.name, field_name, "Ljava/lang/String;"};
+        field.access = {"public"};
+        type.fields.push_back(std::move(field));
+      }
+    }
     auto [entry, inserted] = classes.emplace(type.name, std::move(type));
-    if (inserted)
+    if (inserted &&
+        (std::string_view(name) == "android/app/ActivityThread" ||
+         std::string_view(name) == "android/content/pm/ApplicationInfo"))
       for (const auto &field : entry->second.fields)
         android_framework_fields.insert(&field);
   }
@@ -145,6 +286,10 @@ AndroidFramework::AndroidFramework(
   if (!snapshot)
     return;
   validateAndroidClassLookupFailures(*snapshot);
+  validateAndroidSecureSettingsCache(*snapshot);
+  validateAndroidGlobalSettingsCache(*snapshot);
+  validateAndroidApplicationInfo(*snapshot);
+  validateAndroidApplicationInfoQueries(*snapshot);
   for (const auto &failure : snapshot->class_lookup_failures) {
     std::string type = "L" + failure.binary_name + ";";
     std::replace(type.begin(), type.end(), '.', '/');
@@ -167,12 +312,9 @@ AndroidFramework::AndroidFramework(
             AndroidApplicationSnapshot::Instrumentation::Platform)))
     throw Error("invalid Android instrumentation snapshot");
   if (snapshot->package_name) {
-    const auto &name = *snapshot->package_name;
-    if (snapshot->phase != Phase::Application || name.empty() ||
-        name.size() > ::neverd::limits::dalvik::kMaxAndroidClassNameBytes ||
-        name.find('\0') != std::string::npos)
+    if (snapshot->phase != Phase::Application)
       throw Error("invalid Android application package snapshot");
-    (void)javaStringBytes(name);
+    validatePackageName(*snapshot->package_name);
   }
   if (snapshot->files_directory) {
     auto &path = *snapshot->files_directory;
@@ -193,6 +335,73 @@ AndroidFramework::AndroidFramework(
       normalized.pop_back();
     path = std::move(normalized);
   }
+}
+
+ExecutionResult AndroidFramework::stringValue(Heap &heap, std::string_view text,
+                                              const AdmitInstruction &admit) {
+  auto bytes = javaStringBytes(text);
+  for (size_t i = 0; i < bytes.size(); i += 2) {
+    auto budget = admit();
+    if (budget != ExecutionStop::Returned)
+      return {budget, 0, {}, "Android framework work budget exhausted"};
+  }
+  auto object = heap.allocate(Object::String, "java/lang/String", bytes.size());
+  if (!object)
+    return {ExecutionStop::HeapLimit,
+            0,
+            {},
+            "Android framework storage budget exhausted"};
+  object->Bytes = std::move(bytes);
+  object->Length = object->Bytes.size() / 2;
+  return {ExecutionStop::Returned, object->Identity, {}, {}};
+}
+
+ExecutionResult AndroidFramework::applicationInfoStringValue(
+    Heap &heap, uint64_t receiver, bool native_directory,
+    std::optional<uint64_t> write, const AdmitInstruction &admit) {
+  const auto found = application_info_states.find(receiver);
+  if (!snapshot || found == application_info_states.end())
+    return {ExecutionStop::Unsupported,
+            0,
+            {},
+            "unmodeled Android ApplicationInfo instance"};
+  auto budget = admit();
+  if (budget != ExecutionStop::Returned)
+    return {budget, 0, {}, "Android framework work budget exhausted"};
+  auto &state = found->second;
+  auto &retained = native_directory ? state.native_library_directory
+                                    : state.source_directory;
+  if (write)
+    retained = *write;
+  if (!retained) {
+    const std::optional<std::string> *text = nullptr;
+    const auto *info =
+        state.query ? &snapshot->application_info_queries[*state.query].info
+        : snapshot->application_info ? &*snapshot->application_info
+                                     : nullptr;
+    if (info) {
+      if (!native_directory)
+        text = &info->source_dir;
+      else if (info->native_library_dir)
+        text = &*info->native_library_dir;
+    }
+    if (!text)
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              native_directory
+                  ? "Android ApplicationInfo nativeLibraryDir is not supplied"
+                  : "Android ApplicationInfo sourceDir is not supplied"};
+    if (!*text) {
+      retained = 0;
+    } else {
+      auto value = stringValue(heap, **text, admit);
+      if (value.stop != ExecutionStop::Returned)
+        return value;
+      retained = value.value;
+    }
+  }
+  return {ExecutionStop::Returned, *retained, {}, {}};
 }
 
 ExecutionResult
@@ -242,6 +451,11 @@ ExecutionResult AndroidFramework::field(Heap &heap, const Field &field,
       ref.type == "Landroid/app/Instrumentation;" &&
       !has(field.access, "static"))
     return instrumentationValue(heap, receiver, write, admit);
+  if (ref.owner == "Landroid/content/pm/ApplicationInfo;" &&
+      (ref.name == "sourceDir" || ref.name == "nativeLibraryDir") &&
+      ref.type == "Ljava/lang/String;" && !has(field.access, "static"))
+    return applicationInfoStringValue(
+        heap, receiver, ref.name == "nativeLibraryDir", write, admit);
   return {ExecutionStop::Unsupported,
           0,
           {},
@@ -313,10 +527,11 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
            "Android framework storage budget exhausted");
     return object->Identity;
   };
-  auto identity = [&](uint32_t &slot, const char *name) -> uint32_t {
+  auto identity = [&](uint32_t &slot, const char *name,
+                      uint64_t extra = 0) -> uint32_t {
     if (!slot) {
       tick();
-      slot = ref(heap.allocate(Object::Instance, name, 0));
+      slot = ref(heap.allocate(Object::Instance, name, 0, extra));
     }
     return slot;
   };
@@ -334,22 +549,83 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     return identity(application, "android/app/Application");
   };
   auto string = [&](std::string_view text) -> uint32_t {
-    auto bytes = javaStringBytes(text);
-    for (size_t i = 0; i < bytes.size(); i += 2)
-      tick();
-    auto object =
-        heap.allocate(Object::String, "java/lang/String", bytes.size());
-    auto id = ref(object);
-    object->Bytes = std::move(bytes);
-    object->Length = object->Bytes.size() / 2;
-    return id;
+    auto value = stringValue(heap, text, admit);
+    if (value.stop != ExecutionStop::Returned)
+      throw Stop{std::move(value)};
+    return value.value;
   };
   auto execute = [&]() -> uint64_t {
+    if ((method.Op == SecureSettingString ||
+         method.Op == SecureSettingIntDefault) &&
+        !arguments[0])
+      throw Stop{{ExecutionStop::Thrown, 0, "java/lang/NullPointerException",
+                  "Settings.Secure read requires a resolver"}};
     if (!snapshot || !program.containsClass("Landroid/app/ActivityThread;"))
       return unsupported(
           "Android application lifecycle snapshot is not supplied");
     using Phase = AndroidApplicationSnapshot::Phase;
     switch (method.Op) {
+    case SecureSettingString:
+    case SecureSettingIntDefault: {
+      if (!content_resolver || arguments[0] != content_resolver)
+        return unsupported("unmodeled Settings.Secure ContentResolver");
+      auto key = heap.get(arguments[1]);
+      if (!key)
+        return unsupported("null Settings.Secure key requires provider lookup");
+      for (size_t i = 0; i < key->Bytes.size(); i += 2)
+        tick();
+      const std::optional<std::string> *setting;
+      uint32_t *retained;
+      if (key->Bytes == javaStringBytes("android_id")) {
+        if (!snapshot->secure_settings_cache)
+          return unsupported("Android secure settings cache is not supplied");
+        setting = &snapshot->secure_settings_cache->android_id;
+        retained = &secure_android_id;
+      } else if (key->Bytes == javaStringBytes("adb_enabled")) {
+        // API 28 moves this deprecated Secure key to the Global cache.
+        if (!snapshot->global_settings_cache)
+          return unsupported("Android global settings cache is not supplied");
+        setting = &snapshot->global_settings_cache->adb_enabled;
+        retained = &global_adb_enabled;
+      } else {
+        return unsupported("unmodeled Settings.Secure key");
+      }
+      const auto &value = *setting;
+      if (value && !*retained)
+        *retained = string(*value);
+      if (method.Op == SecureSettingIntDefault) {
+        const auto fallback = uint32_t(arguments[2]);
+        if (!value)
+          return fallback;
+        // The admitted subset is ASCII Integer.parseInt in radix ten.
+        // Unicode Character.digit tables require a separate versioned model.
+        for (unsigned char byte : *value) {
+          tick();
+          if (byte > 127)
+            return unsupported("non-ASCII Settings integer value");
+        }
+        std::string_view text = *value;
+        bool negative = text.starts_with('-');
+        if (negative || text.starts_with('+'))
+          text.remove_prefix(1);
+        if (text.empty())
+          return fallback;
+        const uint32_t limit = negative ? 2147483648u : 2147483647u;
+        uint32_t magnitude = 0;
+        for (unsigned char byte : text) {
+          if (byte < '0' || byte > '9')
+            return fallback;
+          const uint32_t digit = byte - '0';
+          if (magnitude > (limit - digit) / 10)
+            return fallback;
+          magnitude = magnitude * 10 + digit;
+        }
+        return negative ? uint32_t(0u - magnitude) : magnitude;
+      }
+      if (!value)
+        return 0;
+      return *retained;
+    }
     case CurrentActivityThread:
       return snapshot->phase == Phase::Unattached
                  ? 0
@@ -365,6 +641,9 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     case ContextClassLoader:
     case PackageName:
     case FilesDirectory:
+    case ContextContentResolver:
+    case ContextApplicationInfo:
+    case ContextPackageManager:
       if (!receiver || (receiver != application && receiver != context))
         return unsupported("unmodeled Android Context instance");
       if (method.Op == ApplicationContext)
@@ -373,6 +652,32 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
         return identity(context, "android/app/ContextImpl");
       if (method.Op == ContextClassLoader)
         return appLoader();
+      if (method.Op == ContextApplicationInfo) {
+        auto value =
+            identity(application_info, "android/content/pm/ApplicationInfo",
+                     sizeof(ApplicationInfoState) +
+                         ::neverd::limits::dalvik::
+                             kAndroidApplicationInfoStateOverheadBytes);
+        application_info_states.try_emplace(value);
+        return value;
+      }
+      if (method.Op == ContextPackageManager) {
+        if (!snapshot->package_manager_available)
+          return unsupported(
+              "Android PackageManager availability is not supplied");
+        if (!*snapshot->package_manager_available)
+          return 0;
+        // ContextWrapper delegates to the ContextImpl's cached manager. The
+        // snapshot supplies availability; no service lookup or RPC is inferred.
+        return identity(package_manager,
+                        "android/app/ApplicationPackageManager");
+      }
+      if (method.Op == ContextContentResolver)
+        // The attached ContextImpl owns one resolver. ContextWrapper delegates
+        // to it. Materializing its identity does not acquire a provider or
+        // supply a response to any content operation.
+        return identity(content_resolver,
+                        "android/app/ContextImpl$ApplicationContentResolver");
       if (method.Op == FilesDirectory) {
         if (!snapshot->files_directory)
           return unsupported("Android files directory is not supplied");
@@ -384,17 +689,40 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
       }
       if (!snapshot->package_name)
         return unsupported("Android application package name is not supplied");
-      if (!package) {
-        auto bytes = javaStringBytes(*snapshot->package_name);
-        for (size_t i = 0; i < bytes.size(); i += 2)
-          tick();
-        auto text =
-            heap.allocate(Object::String, "java/lang/String", bytes.size());
-        package = ref(text);
-        text->Bytes = std::move(bytes);
-        text->Length = text->Bytes.size() / 2;
-      }
+      if (!package)
+        package = string(*snapshot->package_name);
       return package;
+    case PackageApplicationInfo: {
+      if (!package_manager || receiver != package_manager)
+        return unsupported("unmodeled Android PackageManager instance");
+      auto name = heap.get(arguments[0]);
+      if (!name)
+        return unsupported(
+            "null package name has no supplied application info query");
+      if (name->Length > ::neverd::limits::dalvik::kMaxAndroidClassNameBytes)
+        return unsupported("Android package name exceeds the query budget");
+      for (size_t i = 0; i < name->Bytes.size(); i += 2)
+        tick();
+      const auto &queries = snapshot->application_info_queries;
+      for (size_t i = 0; i < queries.size(); ++i) {
+        tick();
+        const auto &query = queries[i];
+        if (uint32_t(query.flags) != uint32_t(arguments[1]) ||
+            javaStringBytes(query.package_name) != name->Bytes)
+          continue;
+        tick();
+        auto result = ref(heap.allocate(
+            Object::Instance, "android/content/pm/ApplicationInfo", 0,
+            sizeof(ApplicationInfoState) +
+                ::neverd::limits::dalvik::
+                    kAndroidApplicationInfoStateOverheadBytes));
+        ApplicationInfoState state;
+        state.query = i;
+        application_info_states.emplace(result, std::move(state));
+        return result;
+      }
+      return unsupported("Android application info query is not supplied");
+    }
     case FilePath:
     case FileName:
     case FileParent:

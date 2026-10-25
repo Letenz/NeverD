@@ -664,8 +664,8 @@ diagnostic; fixed-image authentication still requires its stricter evidence.
 | `item_define` | `{address,action,size?}`. Capability present only with an engine that keeps data items. `action:"code"` decodes native file-backed executable bytes from the exact address up to a basic block boundary or existing code, without creating a function. Calls fall through; branches, returns and unmodelled flow end the block. At most 256 instructions; invalid or truncated bytes, ambiguous modes, and overlaps with another typed item fail atomically. Stores one validated `kind:"code"` row per instruction, with its actual size. `"data"` makes the item a value of `size` 1, 2, 4 or 8 bytes, or without a size the next of byte, word, dword and qword after the current one; `"string"` makes the string that starts there an item, read with the `string_options` encodings; `"undefine"` shows the item's bytes as undefined bytes. Data/string edits are refused on automatic function instructions. Undefine hides an automatic or manually defined instruction without deleting its function; undo restores the prior item, and the override survives reopen. Manually defined code can also be replaced. Commits the items (the project folder's `items.json`) plus one history command, invalidates caches and increments revision. Returns `{address,kind,size,saved}`; code's size is the entire converted block. `saved:false` for already defined code or undefined bytes. Requires clean annotations and the writer lock. |
 | `operand_format` | `{address,operand?:0-7,action}`. Capability present only with an engine that keeps operand formats. The address must start an instruction whose listing shows formats (x86 so far; other dialects are `unsupported`). A format changes an operand that is a plain number: `operand` when it is one, otherwise (or without `operand`) the instruction's last number; an instruction without one is `invalid_request`. `action` is a base of `include/neverd/OperandFormats.def` (`number`, `hex`, `decimal`, `binary`, `char`, `offset`, `struct`; `number` also clears both flags), or `negate`/`invert` to toggle the sign change or the bitwise complement. `struct` (capability `operand_struct`) shows a structure offset, as IDA's T does, and takes `type`, a structure or union of the local types, and `delta?`, how many bytes into it the register points: it also changes a displacement from a base register, which it takes first when `operand` names none, and the listing shows `[rcx+_KTHREAD.Process]` or `[rcx+(_KAPC.Type-10h)]`, the number again where the type has no member; a structure offset changes neither sign nor bits. A type the program lacks is `invalid_request`. Commits the formats (the project folder's `operands.json`) plus one history command; listing lines show the change without the listing being built again. Increments revision and returns `{address,operand,format:{base,negate,invert,type?,delta?},saved}` with the operand that took the format, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
 | `reload` | Explicitly reloads the sidecars, discards staged annotations, clears dirty state, invalidates caches and increments revision. Returns metadata. |
-| `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename"|"function"|"item"|"operand"|"code"|"types",address,before,after,index,applied}`; a `types` item's address is the declaration's place in `types.json`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
-| `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename, function, item, operand, code and types history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |
+| `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename"|"function"|"item"|"operand"|"code"|"types"|"patch",address,before,after,index,applied}`; a `types` item's address is the declaration's place in `types.json`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
+| `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename, function, item, operand, code, types and patch history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |
 | `history_reset` | Explicitly starts empty history from the current sidecars, preserving comments/renames. Requires clean annotations and the writer lock, then reloads their state. It never resolves a pending recovery journal or maps comments to a changed binary. |
 | `contributions` | Available before opening a file. Returns `{schema_version:1,registry_revision:string,revision:string,items,complete:true}`. Each item has `{id,title,kind,namespace,version,query}` and optional table `columns`. The payload revision belongs to the registry, independently of the envelope's image revision. |
 | `contribution_register` | `{path}`. Validates a local manifest completely before adding or replacing its namespace; returns the new contributions listing. Registration never executes a query or loads scripts/QML. |
@@ -1221,3 +1221,54 @@ discarding what it holds) or `unavailable` (an engine or image whose
 decompiles keep no such state, such as one that is not x86-64), and
 `prepared` counts the functions it holds. Every revision change starts the preparation over, since
 the engine may have dropped it.
+
+
+### Interactive byte and source patches
+
+These operations appear in `hello.capabilities` only when the linked SDK
+exports their implementation. Byte overlays, source proofs and whole-function
+replacement are advertised independently.
+
+| Operation | Request and result |
+|---|---|
+| `patch_context` | `address`; current bytes/instruction, applicable action names, and `revert_ranges:[{address,size}]` for canonical changed runs intersecting that instruction (or the addressed byte when no instruction is available). Pass these ranges to `patch_revert` to restore operand-only changes too. |
+| `patch_preview` | A patch request below; returns `address`, `file_off`, `size`, `original`, `current`/`hex`, `covers`, `decoded`, `covers_truncated`, `decoded_truncated` and `warnings` without mutation. Instruction arrays are bounded for display; validation still checks the complete range. |
+| `patch_apply` | The same request, optionally `expected` original hex; applies and journals one edit, persists `patches.json` and invalidates analysis. Requires the writer and no staged unsaved annotations. |
+| `patch_revert` | `address` and optional `size` (zero restores the containing changed run), or `ranges:[{address,size}]`; restores immutable input bytes. A batch is one history command. |
+| `patches` | Optional `offset`, `limit`, or `ranges_only`; returns canonical changed runs, their original/current bytes and kind, with ordinary page metadata. |
+| `patch_export` | `path` and optional `allow_unsigned`; exclusively publishes a new binary by replaying the overlay. Never overwrites an existing destination. |
+| `patch_source_target` | `function`, `representation` (`c`/`llvmc`), zero-based `line`, and `literal` (zero-based integer index, or -1 for a statement); returns only proven actions and the exact `source_anchor`. |
+| `patch_source_preview` | A proven source patch request; returns `before` and `after` C, or `after_error`, using an isolated session. |
+| `source_patch_context` | Function `address`; compilable HighC `source`, replacement `symbol` and explicit original `bindings`. Requires an empty byte overlay. |
+| `source_patch` | `address`, C `source`, `symbol`, output `path`, `compiler` (`clang`/`neverc`/`gcc`), optional `compiler_path`, `timeout_seconds` and `bindings`; returns the source publisher's receipt and produced `path`. |
+
+A patch request contains `address` and `kind`: `bytes`, `assemble`, `nop`,
+`fill_nops`, `branch_always`, `branch_never`, `branch_invert`, `skip_call`,
+`skip_call_value` or `constant`. `bytes` holds hex pairs; `text` holds one
+assembly instruction; `value` is an unsigned address-form string; `size` is a
+byte count. Assembly accepts `dialect` (`intel`/`att`), `fill_nops` (default true),
+`allow_overlap` (default false), and a `symbols` object of signed integer
+bindings. Referenced frame-variable names receive the listing's explicit
+frame displacements; ambiguous or unresolved names are never guessed.
+
+A source edit also supplies `function`, `representation`, `line`, `literal`
+and the returned `source_anchor`. Preview and apply repeat the source proof;
+changed text or bytes refuse the edit. Source navigation addresses alone are
+insufficient. Literal proof currently requires a direct x86 MOV scalar value,
+possibly reaching a return through local copies and zero extensions. Arithmetic,
+partial writes, casts, predecessor merges and multiple literals remain refused.
+
+Whole-function `bindings` are `{symbol,kind,address,size}` rows, with kind
+`function`, `data`, `const` or `original`. The last kind explicitly names the
+saved original function body. A whole-function rewrite uses the existing
+source publisher and produces a new file; export and reopen any byte overlay
+before requesting it. Neither source preview nor successful publication adds
+an in-memory byte patch.
+
+Overlay admission rejects relocation fields, loader-rewritten or zero-fill
+bytes, ambiguous mappings and load headers. Signed PE/Mach-O export requires
+explicit unsigned consent. History stores the full durable overlay, while
+history listing responses expose `changed_rows` and `details_omitted` instead
+of repeating potentially large byte payloads. Patch history items and undo/redo
+responses expose the virtual program address of the first changed run;
+durable history retains its canonical file-offset key for replay.

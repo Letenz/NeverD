@@ -295,6 +295,19 @@ public:
   bool keepsDataItems() const {
     return capabilities_.contains(QStringLiteral("item_define"));
   }
+  bool hasBytePatch(Address address, Address size = 1) const;
+  bool hasBytePatches() const { return !patchRanges_.isEmpty(); }
+  void refreshBytePatches();
+  bool keepsBytePatches() const {
+    return capabilities_.contains(QStringLiteral("patch_apply"));
+  }
+  bool keepsSourcePatches() const {
+    return capabilities_.contains(QStringLiteral("source_patch"));
+  }
+  void editBytePatch(
+      const QString &operation, const QJsonObject &request, quint64 epoch,
+      std::function<void()> done = {},
+      std::function<void(const QString &, const QString &)> failed = {});
   /// Define the item at \p address: \p action "data" makes a value, the
   /// next size each time; "string" the string that starts there; "undefine"
   /// shows the item's bytes as bytes.  Each commits at once, like a rename.
@@ -353,6 +366,9 @@ public:
                                     const QJsonObject &payload, QObject *owner,
                                     Reply done, Failure failed = {});
 
+  void produceBinary(const QString &operation, const QJsonObject &payload,
+                     QObject *owner, Reply done, Failure failed = {});
+
   // Local types.
   /// Adds the types \p source declares in \p language (c, cpp, rust or go)
   /// to the program's local types; \p done has the types declared or the
@@ -376,6 +392,7 @@ public:
   QJsonObject selection() const { return selection_; }
 
 signals:
+  void bytePatchesChanged();
   void stateChanged();
   void opened();
   void unloaded();
@@ -450,6 +467,7 @@ private:
   bool acceptsEdit(std::optional<quint64> epoch);
 
   EngineClient client_;
+  QVector<std::pair<Address, Address>> patchRanges_;
   QueryService queries_;
   AnalysisPool analysis_;
   QObject reads_, external_;

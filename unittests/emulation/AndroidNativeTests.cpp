@@ -1057,6 +1057,61 @@ TEST_P(AndroidNative, DefaultScopeRejectsUnknownOrRepeatedProviders) {
               std::string::npos);
   }
 }
+TEST_P(AndroidNative, ResidencyObservationsShareRoutesBitsAndErrno) {
+  Options.Android->Initialize = false;
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{0x100000000, {0, 1, 0}},
+                                             {0x100000000, {1, 0, 1}}};
+  Options.Android->Libraries["libresidency.so"] = {"mincore"};
+  for (uint64_t Route : {0u, 1u, 2u, 3u}) {
+    auto R = run("residency_observe", {Buffer, Route, 8193, Buffer + 48, 4});
+    returned(R, 0);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    std::vector<uint8_t> Expected(64);
+    llvm::support::endian::write64le(Expected.data(), 0x100000000);
+    llvm::support::endian::write64le(Expected.data() + 16, 733);
+    llvm::support::endian::write64le(Expected.data() + 32, 733);
+    Expected[49] = 1;
+    Expected[56] = 1;
+    Expected[58] = 1;
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  }
+}
+TEST_P(AndroidNative,
+       ResidencyMissingInputAndClosedProvidersRemainUnsupported) {
+  Options.Android->Initialize = false;
+  auto R = run("residency_observe", {Buffer, 0, 12288, Buffer + 48, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("page residency"), std::string::npos);
+  Options.LinuxKernel.emplace().ResidencyObservations.emplace();
+  R = run("residency_observe", {Buffer, 0, 12288, Buffer + 48, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("exhausted"), std::string::npos);
+  Options.LinuxKernel->ResidencyObservations->push_back(
+      {0x100000000, {1, 0, 1}});
+  Options.Android->Libraries["libresidency.so"] = {"mincore"};
+  R = run("residency_observe", {Buffer, 4, 12288, Buffer + 48, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+}
+TEST_P(AndroidNative, ResidencyHolesAndCopyFaultsHaveKernelErrorOrdering) {
+  Options.Android->Initialize = false;
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{0x100000000, {1, 0, 1}}};
+  for (uint64_t Route : {0u, 1u, 2u}) {
+    auto R = run("residency_observe", {Buffer, Route, 12288, Buffer + 48, 1});
+    returned(R, Route == 2 ? uint64_t(-12) : UINT64_MAX);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes[48], 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes[49], 0u);
+    EXPECT_EQ(
+        llvm::support::endian::read64le(R.MemorySnapshots[0].Bytes.data() + 16),
+        Route == 2 ? 733u : 12u);
+    R = run("residency_observe", {Buffer, Route, 12288, 0, 0});
+    returned(R, Route == 2 ? uint64_t(-14) : UINT64_MAX);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Relocations, AndroidNative,
                          testing::Values("none", "android", "relr"));
 TEST(AndroidOptions, StrictWireTypesAndProfiles) {

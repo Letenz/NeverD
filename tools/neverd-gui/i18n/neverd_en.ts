@@ -1143,6 +1143,126 @@
         <source>Export data...</source>
         <translation>Export data...</translation>
     </message>
+    <message>
+        <source>Always branch</source>
+        <translation>Always branch</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>Assemble…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>Change a uniquely encoded immediate operand</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>Change bytes…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>Change immediate…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>Compile a replacement function into a new binary</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>Edit an instruction with a live byte preview</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>Edit the bytes at the current address</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>Fill a whole instruction range with NOPs</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>Fill selection with NOPs</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>Inspect and selectively revert byte patches</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>Invert condition</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>NOP instruction</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>Never branch</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>Open the patch menu</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Patch</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>Patched binary…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>Patched bytes</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>Replace the call with NOPs</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>Replace the call with a return-register assignment</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>Replace the conditional branch with NOPs</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>Replace the current instruction with NOPs</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>Replay all byte patches into a new binary</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>Restore original bytes</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>Restore the input bytes for this patch</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>Reverse the conditional branch</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>Rewrite function in C…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>Skip call</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>Skip call and return value…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>Take the conditional branch unconditionally</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1277,6 +1397,18 @@
     <message>
         <source>Disassembly</source>
         <translation>Disassembly</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>Action</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>Original bytes</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>Patched bytes</translation>
     </message>
 </context>
 <context>
@@ -1518,6 +1650,10 @@
     <message>
         <source>Operand &amp;type</source>
         <translation>Operand &amp;type</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Patch</translation>
     </message>
 </context>
 <context>
@@ -3038,6 +3174,72 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <source>Delete types…</source>
         <translation>Delete types…</translation>
     </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>Apply byte patch</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>Before:
+%1
+After:
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>Checking available patches…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>Export unsigned binary</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>Invalid patch value.</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>Original: %1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Patch</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>Patch value</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>Patched binary written to %1</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>Patched: %1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>Produce patched binary</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>Remove the signature metadata and export an unsigned copy?</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>Restore selected original bytes</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>Unsigned patched binary written to %1</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>Unsigned value (decimal or 0x hexadecimal):</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3393,6 +3595,34 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
             <numerusform>Showed %n operands as members of %1</numerusform>
             <numerusform>Showed %n operands as members of %1</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>Applied patch at %1 (bytes: %2): %3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>Instructions: %1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>Restored original bytes at %1 (%2 ranges).</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>Patch at %1 made no changes.</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>Undid edit at %1.</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>Redid edit at %1.</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>Rewritten function at %1 saved to %2</translation>
     </message>
 </context>
 <context>
@@ -8445,6 +8675,156 @@ Secondary SHA-256: %3
     <message>
         <source>Start address:</source>
         <translation>Start address:</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>Apply patch</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>Assembly dialect</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>Assembly instruction</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>Byte display truncated; the full range is %1 bytes.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>Fill with NOPs</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>Hexadecimal bytes</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>New: %1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>Original: %1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>Patch at %1 — Enter applies, Esc cancels</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>Preparing preview…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>Replace following instructions</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>Review the covered instructions and enable replacement to apply.</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>The input changed. Reopen the patch editor.</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Close</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>%1 original symbol bindings prepared. Output uses a new file.</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>Compare with original</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>Compile to new binary…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>Compiler path:</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>Compiler:</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>Compiling and validating the replacement…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>Empty selects the sole external definition</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>Executable name or full path</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>Open new binary</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>Optional external function name to call the saved original body</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>Original-body binding:</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>Preparing compilable C and original bindings…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>Produce replacement binary</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>Publication receipt</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>Replacement C source</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>Replacement function:</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>Replacement published to %1</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>Rewrite function in C</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>The analysis changed. Reopen this editor before compiling.</translation>
     </message>
 </context>
 </TS>

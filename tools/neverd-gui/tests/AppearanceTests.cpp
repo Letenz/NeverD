@@ -33,20 +33,25 @@
 #include <QFontInfo>
 #include <QGlyphRun>
 #include <QInputDialog>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPixmap>
 #include <QScopeGuard>
 #include <QScreen>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QStyle>
+#include <QStyleOption>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextLayout>
 #include <QToolButton>
+#include <QWheelEvent>
 #include <QWindow>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
@@ -239,6 +244,176 @@ private slots:
       QVERIFY(!action->icon().pixmap(16, 16).isNull());
       QVERIFY(action->isIconVisibleInMenu());
     }
+  }
+
+  void menuColumnsStayTogether_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void menuColumnsStayTogether() {
+    QFETCH(bool, dark);
+    Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    Theme::instance().apply();
+    QMenu menu;
+    menu.ensurePolished();
+    QStyleOption option;
+    option.initFrom(&menu);
+    const int iconExtent =
+        menu.style()->pixelMetric(QStyle::PM_SmallIconSize, &option, &menu);
+    QPixmap marker(iconExtent, iconExtent);
+    marker.fill(Qt::magenta);
+    auto *withIcon = menu.addAction(QIcon(marker), "Menu entry");
+    withIcon->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
+    auto *plain = menu.addAction("Menu entry");
+    auto *checked = menu.addAction("Menu entry");
+    checked->setCheckable(true);
+    checked->setChecked(true);
+    auto *checkedIcon = menu.addAction(QIcon(marker), "Menu entry");
+    checkedIcon->setCheckable(true);
+    checkedIcon->setChecked(true);
+    auto *submenu = menu.addMenu(QIcon(marker), "Menu entry");
+    submenu->addAction("Child entry");
+    // Rendering columns does not need popup activation. Cocoa can dismiss
+    // an unfocused popup before an exposure wait, unrelated to its layout.
+    menu.resize(menu.sizeHint());
+    const auto capture = menu.grab().toImage();
+    const qreal dpr = capture.devicePixelRatio();
+    const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(capture.save(captures + "/menu-columns-" +
+                           QTest::currentDataTag() + ".png"));
+    }
+    // Measure painted columns: Qt adds its icon column after item padding,
+    // so checking the style-sheet literal alone misses a double reservation.
+    const auto bounds = [&](QAction *action, const QColor &color, int fromX) {
+      const QRect row = menu.actionGeometry(action);
+      QRect ink;
+      for (int y = qRound(row.top() * dpr);
+           y < qRound((row.bottom() + 1) * dpr); ++y)
+        for (int x = fromX; x < capture.width(); ++x) {
+          const auto pixel = capture.pixelColor(x, y);
+          if (qAbs(pixel.red() - color.red()) < 12 &&
+              qAbs(pixel.green() - color.green()) < 12 &&
+              qAbs(pixel.blue() - color.blue()) < 12)
+            ink |= QRect(x, y, 1, 1);
+        }
+      return ink;
+    };
+    const QRect iconInk = bounds(withIcon, Qt::magenta, 0);
+    QVERIFY(!iconInk.isEmpty());
+    const auto foreground = Theme::instance().chrome("MenuText");
+    const QRect labelInk = bounds(withIcon, foreground, iconInk.right() + 1);
+    QVERIFY(!labelInk.isEmpty());
+    const qreal gap = (labelInk.left() - iconInk.right() - 1) / dpr;
+    qInfo() << "Menu icon-to-label gap" << gap << "DPR" << dpr
+            << "icon physical bounds" << iconInk << "label bounds" << labelInk;
+    QVERIFY(gap >= 6 && gap <= 10);
+    for (auto *action : {plain, checked, checkedIcon, submenu->menuAction()}) {
+      const QRect label = bounds(action, foreground, iconInk.right() + 1);
+      QVERIFY(!label.isEmpty());
+      QCOMPARE(label.left(), labelInk.left());
+    }
+    // Checking an icon must not move it when the active border appears.
+    QCOMPARE(bounds(checkedIcon, Qt::magenta, 0).left(), iconInk.left());
+    if (!captures.isEmpty()) {
+      ActionRegistry registry;
+      QMenuBar bar;
+      registry.buildMenus(&bar, [](QMenu *, const QString &) {});
+      for (const auto *name : {"menuFile", "menuEdit", "menuOptions"}) {
+        auto *actual = bar.findChild<QMenu *>(QLatin1String(name));
+        QVERIFY(actual);
+        actual->ensurePolished();
+        actual->resize(actual->sizeHint());
+        QVERIFY(actual->grab().save(captures + "/" + QLatin1String(name) + "-" +
+                                    QTest::currentDataTag() + ".png"));
+      }
+    }
+  }
+
+  void longMenusScrollWithinOneColumn_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void longMenusScrollWithinOneColumn() {
+    QFETCH(bool, dark);
+    Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    Theme::instance().apply();
+    class Menu : public QMenu {
+    public:
+      using QMenu::columnCount;
+      using QMenu::QMenu;
+    };
+    QWidget anchor;
+    anchor.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&anchor));
+    Menu menu(&anchor);
+    auto *first = menu.addAction("First command");
+    menu.ensurePolished();
+    const QRect available = anchor.screen()->availableGeometry();
+    const QRect screen = anchor.screen()->geometry();
+    const int rowHeight = menu.actionGeometry(first).height();
+    QVERIFY(rowHeight > 0);
+    // Windows/KDE may use the taskbar area for popups; Cocoa/GNOME use the
+    // available area. Overflow either policy, regardless of resolution/font.
+    const int rows = screen.height() / rowHeight + 12;
+    for (int i = 1; i < rows; ++i)
+      menu.addAction(QString("Command %1").arg(i));
+    auto *last = menu.actions().last();
+    QSignalSpy triggered(&menu, &QMenu::triggered);
+    menu.popup(available.topLeft() + QPoint(20, 20));
+    QVERIFY(menu.isVisible());
+    QCOMPARE(menu.columnCount(), 1);
+    QVERIFY(menu.height() <= screen.height());
+    const int left = menu.actionGeometry(first).left();
+    for (auto *action : menu.actions())
+      QCOMPARE(menu.actionGeometry(action).left(), left);
+    QVERIFY(menu.actionGeometry(last).top() >= menu.height());
+
+    const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(menu.grab().save(captures + "/long-menu-" +
+                               QTest::currentDataTag() + ".png"));
+    }
+    const auto wheel = [&](int delta) {
+      const QPoint center = menu.rect().center();
+      QWheelEvent event(center, menu.mapToGlobal(center), {}, QPoint(0, delta),
+                        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+      QApplication::sendEvent(&menu, &event);
+    };
+    const int beforeWheel = menu.actionGeometry(first).top();
+    wheel(-120);
+    const int afterWheel = menu.actionGeometry(first).top();
+    QVERIFY(afterWheel < beforeWheel);
+    wheel(120);
+    QVERIFY(menu.actionGeometry(first).top() > afterWheel);
+
+    // The bottom scroller consumes a click and scrolls without activating a
+    // command or dismissing the popup. Moving away stops its repeat timer.
+    const int scrollerHeight = menu.style()->pixelMetric(
+        QStyle::PM_MenuScrollerHeight, nullptr, &menu);
+    QVERIFY(scrollerHeight > 0);
+    const QPoint down(menu.width() / 2, menu.height() - scrollerHeight / 2 - 1);
+    const int beforeArrow = menu.actionGeometry(first).top();
+    QTest::mouseClick(&menu, Qt::LeftButton, Qt::NoModifier, down);
+    QTRY_VERIFY(menu.actionGeometry(first).top() < beforeArrow);
+    QTest::mouseMove(&menu, menu.rect().center());
+    QVERIFY(menu.isVisible());
+    QCOMPARE(triggered.count(), 0);
+
+    QTest::keyClick(&menu, Qt::Key_End);
+    QCOMPARE(menu.activeAction(), last);
+    QVERIFY(menu.rect().contains(menu.actionGeometry(last).center()));
+    QTest::keyClick(&menu, Qt::Key_Home);
+    QCOMPARE(menu.activeAction(), first);
+    QVERIFY(menu.rect().contains(menu.actionGeometry(first).center()));
+    QTest::keyClick(&menu, Qt::Key_Escape);
+    QVERIFY(!menu.isVisible());
   }
 
   void tabCloseIconKeepsItsSizeAndInset_data() {

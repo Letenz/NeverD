@@ -11,6 +11,7 @@
 
 #include "PipelineLowIRDetail.h"
 #include "PipelineMedAudit.h"
+#include "PipelineRegisterCalls.h"
 #include "PipelineSEHRuntimeMemory.h"
 #include "PipelineSourceStackAccesses.h"
 #include "PipelineTrimStorage.h"
@@ -236,6 +237,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         trimFuncStorage(MF);
         prepareMedStackAccesses(MF, Projected ? *Projected : LF, Img,
                                 medStackProjection(Opts));
+        if (medStackProjection(Opts) == MedStackProjection::Source)
+          expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
         MF.SourceFile = LF.SourceFile;
@@ -334,6 +337,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallEntryStackSlots);
   COPY_SOURCE_FACT(CallMayWriteGPRs);
   COPY_SOURCE_FACT(CallExitConstants);
+  COPY_SOURCE_FACT(CallRegisterLeaves);
   COPY_SOURCE_FACT(CallVariadicFrom);
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);

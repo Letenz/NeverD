@@ -499,6 +499,26 @@ void GraphView::drawWaiting(QPainter &painter, const QRect &area) const {
   painter.restore();
 }
 
+QRect GraphView::cursorViewportRect() const {
+  if (cursorNode_ < 0 || cursorNode_ >= nodes_.size())
+    return {};
+  const auto &node = nodes_[cursorNode_];
+  if (cursorRow_ < 0 || cursorRow_ >= node.rows.size())
+    return {};
+  auto &theme = Theme::instance();
+  auto &layout = node.rows[cursorRow_].styled.layout(
+      theme.codeFont(), styleStamp_,
+      [&theme](int role) { return theme.listingRole(role); });
+  const qreal x =
+      node.box.left() + ::neverd::limits::gui_config::kGraphViewNodePadding +
+      (layout.lineCount() ? layout.lineAt(0).cursorToX(cursorColumn_) : 0);
+  const qreal y =
+      node.box.top() + ::neverd::limits::gui_config::kGraphViewNodePadding +
+      std::round(lineHeight_ * TitleRatio) + cursorRow_ * lineHeight_;
+  return QRect(toWidget(QPointF(x, y)).toPoint(),
+               QSize(1, qRound(lineHeight_ * scale_)));
+}
+
 void GraphView::paintEvent(QPaintEvent *) {
   QPainter painter(this);
   const auto &theme = Theme::instance();

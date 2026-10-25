@@ -1394,12 +1394,11 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
   if (IC == I::Rdtsc || IC == I::Rdtscp)
     return emitRdtscValue(Op, IC, Builder);
 
-  // TSX: XTEST reports whether execution is transactional; XBEGIN returns
-  // its abort status (or ~0 when the transaction starts).
-  if ((IC == I::Xtest || IC == I::Xbegin) && Op.Output.Size > 0) {
+  // XTEST reports whether execution is transactional. An original XBEGIN
+  // needs a checkpoint/continuation, not the C builtin's local status result.
+  if (IC == I::Xtest && Op.Output.Size > 0) {
     auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
-        Mod, IC == I::Xtest ? llvm::Intrinsic::x86_xtest
-                            : llvm::Intrinsic::x86_xbegin);
+        Mod, llvm::Intrinsic::x86_xtest);
     llvm::Value *Value = Builder.CreateCall(Fn, {}, "tsx");
     return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
   }

@@ -151,6 +151,7 @@ private:
   class EpollWait;
   struct EpollState;
   size_t NextConnection = 0;
+  uint32_t TCPConnectFailuresConsumed = 0;
   size_t NextDatagramConnection = 0;
   std::optional<uint64_t> receiveSocketError(OpenSocket &Socket,
                                              const LinuxNetworkReceive &Event,

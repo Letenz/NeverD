@@ -20,6 +20,13 @@ context menu such as Output's Copy/Select all/Clear, not just registry actions.
 If icons are actually missing from a packaged application, inspect its resource
 registration and SVG runtime separately from the visibility policy.
 
+An unusually wide context menu can be vertical overflow, not an icon-spacing
+problem: Fusion wraps a menu taller than the screen into multiple columns.
+NeverD enables `SH_Menu_Scrollable` in the shared `WorkbenchStyle` on macOS,
+Windows and Linux. Keep Qt's own scrolling, submenu and keyboard behavior;
+check against `QScreen::availableGeometry()` in logical coordinates rather
+than the monitor's physical pixel count.
+
 For a disproportionately small tab-close glyph, compare an ordinary `QTabBar`
 with the actual docking tab, including the style chain and the visible stroke
 in logical pixels. KDDockWidgets installs a default `QProxyStyle` on its tab

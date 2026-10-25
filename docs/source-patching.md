@@ -257,3 +257,8 @@ The [Apple compatibility checks](https://github.com/gmh5225/test_mac_intel/actio
 The Mach-O fixes authenticate selected Thumb functions independently of mixed ARM/Thumb image summaries, canonicalize proven Thumb export pointers, and normalize ARM32 unwind code addresses without changing data pointers or range lengths. The integrated LLVM source build passed all 154 CPU matrix checks and 258 exception-contract checks locally, with no failures or skips. Legacy Mach-O probes use a documented open-source linker and reserve unwind capacity; i386 has a correctly aligned startup entry and a 64 KiB page-zero segment.
 
 These results establish C execution under the named emulators and compatibility layers. Wine is not Microsoft Windows, Darling is not macOS, and ARMv7k execution inside the iOS HLE does not qualify watchOS, WatchKit or an Apple device. No legacy Apple SDK or native 32-bit hardware coverage is inferred, and these probes do not qualify C++ exception unwinding. Previous native and compatibility evidence remains separate. NeverC was neither built nor changed.
+
+<!-- i18n-section: interactive-byte-patches -->
+## Interactive byte patches
+
+For instruction edits, use the [workbench patch menu](gui.md#interactive-byte-patches), `neverd patch-bytes`, or Python `Session.byte_patches`, `Session.apply_byte_patch` and `Session.export_byte_patches`. These share the byte overlay; they do not invoke the whole-function publisher described here. A source replacement requires exporting and reopening any byte overlay first.

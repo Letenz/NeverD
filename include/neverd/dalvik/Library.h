@@ -52,7 +52,15 @@ enum LibraryOperation {
   FileParent,
   FileIsAbsolute,
   ThreadInstrumentation,
-  LoadNativeLibrary
+  LoadNativeLibrary,
+  ContextContentResolver,
+  BuilderAppendChar,
+  BuilderString,
+  SecureSettingString,
+  SecureSettingIntDefault,
+  ContextApplicationInfo,
+  ContextPackageManager,
+  PackageApplicationInfo
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

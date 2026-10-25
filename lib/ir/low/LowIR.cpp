@@ -119,7 +119,7 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
       return invalid(X86CompactMalformed);
     return llvm::Error::success();
   }
-  if (isApxAtomicIntrinsic(Id)) {
+  if (isX86AtomicIntrinsic(Id)) {
     if (!intrinsicApxAtomicShapeIsValid(Id,
                                         apxAtomicLowShape(Op, Arch::Unknown)))
       return invalid(

@@ -1143,6 +1143,126 @@
         <source>Export data...</source>
         <translation>Экспорт данных...</translation>
     </message>
+    <message>
+        <source>Always branch</source>
+        <translation>Всегда переходить</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>Ассемблировать…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>Изменить однозначно закодированный непосредственный операнд</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>Изменить байты…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>Изменить непосредственный операнд…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>Скомпилировать заменяющую функцию в новый бинарный файл</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>Редактировать инструкцию с предварительным просмотром байтов</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>Редактировать байты по текущему адресу</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>Заполнить диапазон целых инструкций командами NOP</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>Заполнить выделение командами NOP</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>Просмотреть и выборочно отменить изменения байтов</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>Инвертировать условие</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>Заменить инструкцию на NOP</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>Никогда не переходить</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>Открыть меню исправлений</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Исправление</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>Изменённый бинарный файл…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>Изменённые байты</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>Заменить вызов командами NOP</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>Заменить вызов присваиванием регистру возврата</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>Заменить условный переход командами NOP</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>Заменить текущую инструкцию командами NOP</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>Применить все изменения байтов к новому бинарному файлу</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>Восстановить исходные байты</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>Восстановить входные байты этого исправления</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>Инвертировать условный переход</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>Переписать функцию на C…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>Пропустить вызов</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>Пропустить вызов и вернуть значение…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>Выполнить условный переход безусловно</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1277,6 +1397,18 @@
     <message>
         <source>Disassembly</source>
         <translation>Дизассемблированный код</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>Действие</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>Исходные байты</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>Изменённые байты</translation>
     </message>
 </context>
 <context>
@@ -1518,6 +1650,10 @@
     <message>
         <source>Operand &amp;type</source>
         <translation>&amp;Тип операнда</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Исправление</translation>
     </message>
 </context>
 <context>
@@ -3044,6 +3180,72 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Delete types…</source>
         <translation>Удалить типы…</translation>
     </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>Применить изменение байтов</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>До:
+%1
+После:
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>Проверка доступных исправлений…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>Экспортировать неподписанный файл</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>Недопустимое значение исправления.</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>Исходное: %1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Исправление</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>Значение исправления</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>Изменённый бинарный файл записан в %1</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>Изменено: %1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>Создать изменённый бинарный файл</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>Удалить метаданные подписи и экспортировать неподписанную копию?</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>Восстановить выбранные исходные байты</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>Неподписанный изменённый бинарный файл записан в %1</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>Беззнаковое значение (десятичное или шестнадцатеричное с 0x):</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3400,6 +3602,34 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
             <numerusform>%n операнда показаны как поля %1</numerusform>
             <numerusform>%n операндов показаны как поля %1</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>Патч применён по адресу %1 (%2 байт): %3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>Инструкции: %1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>Исходные байты восстановлены по адресу %1 (%2 диапазонов).</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>Патч по адресу %1 не внёс изменений.</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>Изменение по адресу %1 отменено.</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>Изменение по адресу %1 повторено.</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>Переписанная функция по адресу %1 сохранена в %2</translation>
     </message>
 </context>
 <context>
@@ -8481,6 +8711,156 @@ Secondary SHA-256: %3
     <message>
         <source>Start address:</source>
         <translation>Начальный адрес:</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>Применить исправление</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>Диалект ассемблера</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>Инструкция ассемблера</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>Отображение байтов сокращено; полный диапазон содержит %1 байт.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>Заполнить командами NOP</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>Шестнадцатеричные байты</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>Новое: %1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>Исходное: %1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>Исправление по адресу %1 — Enter применяет, Esc отменяет</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>Подготовка предварительного просмотра…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>Заменить следующие инструкции</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>Проверьте затрагиваемые инструкции и разрешите их замену для применения.</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>Входные данные изменились. Откройте редактор исправлений заново.</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Закрыть</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>Подготовлено привязок исходных символов: %1. Результат сохраняется в новый файл.</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>Сравнить с оригиналом</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>Скомпилировать в новый бинарный файл…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>Путь к компилятору:</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>Компилятор:</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>Компиляция и проверка замены…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>Пустое поле выбирает единственное внешнее определение</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>Имя исполняемого файла или полный путь</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>Открыть новый бинарный файл</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>Необязательное имя внешней функции для вызова сохранённого исходного тела</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>Привязка исходного тела:</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>Подготовка компилируемого C и исходных привязок…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>Создать бинарный файл с заменой</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>Квитанция публикации</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>Заменяющий исходный код C</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>Заменяющая функция:</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>Замена опубликована в %1</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>Переписать функцию на C</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>Анализ изменился. Откройте этот редактор заново перед компиляцией.</translation>
     </message>
 </context>
 </TS>
