@@ -362,8 +362,10 @@ int main(int argc, char **argv) {
   QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {
     QSettings().setValue(GeometryKey, window.saveGeometry());
   });
+  // Cocoa can close the window while already handling an application quit.
+  // Do not reenter native termination from inside that close event.
   QObject::connect(&window, &MainWindow::shutdownAccepted, &app,
-                   &QCoreApplication::quit);
+                   &QCoreApplication::quit, Qt::QueuedConnection);
 
 #ifdef NEVERD_GUI_TEST_PROBES
   if (probe) {

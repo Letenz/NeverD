@@ -67,9 +67,9 @@ private:
   std::vector<AnonymousVMAName> AnonymousVMANames;
   // Provenance only, independent of names and page permissions. No RAM owners
   // are retained; shared unmap retires these sorted, disjoint intervals.
-  std::vector<std::pair<uint64_t, uint64_t>> AnonymousResidencyRanges;
+  std::vector<std::pair<uint64_t, uint64_t>> AnonymousAllocationRanges;
   size_t NextResidencyObservation = 0;
-  void setResidencyOwnership(uint64_t Address, uint64_t Size, bool Owned);
+  void setAllocationOwnership(uint64_t Address, uint64_t Size, bool Owned);
   std::vector<AnonymousVMAName> keptAnonymousVMANames(uint64_t Address,
                                                       uint64_t Size) const;
   void retireAnonymousVMANames(uint64_t Address, uint64_t Size);
@@ -131,6 +131,8 @@ private:
   llvm::Expected<uint64_t> protect(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> unmap(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> advise(const ProcessServiceEvent &Event);
+  llvm::Expected<std::optional<uint64_t>>
+  discard(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   residency(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<uint64_t> setBreak(uint64_t Address);

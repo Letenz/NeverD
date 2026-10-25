@@ -486,25 +486,23 @@ private slots:
     registry.buildMenus(window.menuBar(), [](QMenu *, const QString &) {});
     registry.buildToolbars(&window);
     QSet<QString> ids;
-    QHash<QString, QString> globalKeys, viewKeys;
-    const auto &views = registry.viewActions();
+    QHash<QString, QString> keys;
     for (auto *action : registry.allActions()) {
       QVERIFY2(!ids.contains(action->objectName()),
                qPrintable(action->objectName()));
       ids.insert(action->objectName());
       QVERIFY2(!action->text().isEmpty(), qPrintable(action->objectName()));
       QVERIFY2(!action->icon().isNull(), qPrintable(action->objectName()));
-      const auto key = action->shortcut().toString(QKeySequence::PortableText);
-      if (key.isEmpty())
-        continue;
-      auto &keys = views.contains(action) ? viewKeys : globalKeys;
-      QVERIFY2(!keys.contains(key),
-               qPrintable(key + QStringLiteral(": ") + keys.value(key) +
-                          QStringLiteral(" and ") + action->objectName()));
-      keys.insert(key, action->objectName());
-      // A view shortcut must not also be a window-wide one.
-      if (views.contains(action))
-        QVERIFY2(!globalKeys.contains(key), qPrintable(key));
+      // Check aliases too: a view shortcut and a window shortcut can both
+      // be active while an analysis view has focus.
+      for (const auto &shortcut : action->shortcuts()) {
+        const auto key = shortcut.toString(QKeySequence::PortableText);
+        QVERIFY2(!key.isEmpty(), qPrintable(action->objectName()));
+        QVERIFY2(!keys.contains(key),
+                 qPrintable(key + QStringLiteral(": ") + keys.value(key) +
+                            QStringLiteral(" and ") + action->objectName()));
+        keys.insert(key, action->objectName());
+      }
     }
     QCOMPARE(ids.size(), int(ActionId::Count));
     // Every command is reachable from a menu.
@@ -567,6 +565,64 @@ private slots:
     QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
     action->setShortcut({});
     QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
+  }
+
+  void commentKeysShareOneViewScopedAction() {
+    QMainWindow window;
+    auto *view = new QWidget(&window);
+    view->setFocusPolicy(Qt::StrongFocus);
+    auto *layout = new QVBoxLayout(view);
+    auto *input = new QLineEdit(view);
+    auto *editor = new QPlainTextEdit(view);
+    layout->addWidget(input);
+    layout->addWidget(editor);
+    window.setCentralWidget(view);
+    ActionRegistry registry;
+    registry.buildMenus(window.menuBar(), [](QMenu *, const QString &) {});
+    registry.attachViewShortcuts(view);
+    auto *comment = registry.action(ActionId::EditRepeatableComment);
+    QCOMPARE(comment->shortcuts(), QList({QKeySequence(Qt::Key_Semicolon),
+                                          QKeySequence(Qt::Key_Slash)}));
+    QCOMPARE(comment->shortcutContext(), Qt::WidgetWithChildrenShortcut);
+    QVERIFY(comment->toolTip().contains(QStringLiteral(";, /")));
+    QVERIFY(!registry.findChild<QAction *>(QStringLiteral("EditComment")));
+    for (auto *action : registry.allActions())
+      QVERIFY(!action->shortcuts().contains(QKeySequence(Qt::Key_Colon)));
+    auto *menu = window.findChild<QMenu *>(QStringLiteral("menuComments"));
+    QVERIFY(menu);
+    QCOMPARE(menu->actions(), QList({comment}));
+    QSignalSpy triggered(comment, &QAction::triggered);
+    window.show();
+    window.raise();
+    window.activateWindow();
+    const bool active = QTest::qWaitForWindowActive(&window);
+    if (!active && QGuiApplication::platformName() == QLatin1String("cocoa"))
+      QSKIP("Comment key dispatch requires a foreground Cocoa window.");
+    QVERIFY(active);
+    view->setFocus();
+    QTRY_VERIFY(view->hasFocus());
+    auto *handle = window.windowHandle();
+    QTest::keyClick(handle, Qt::Key_Semicolon);
+    QCOMPARE(triggered.size(), 1);
+    QTest::keyClick(handle, Qt::Key_Slash);
+    QCOMPARE(triggered.size(), 2);
+    QTest::keyClick(handle, Qt::Key_Colon, Qt::ShiftModifier);
+    QCOMPARE(triggered.size(), 2);
+    input->setFocus();
+    QTRY_VERIFY(input->hasFocus());
+    QTest::keyClicks(input, ";/:");
+    QCOMPARE(input->text(), QStringLiteral(";/:"));
+    editor->setFocus();
+    QTRY_VERIFY(editor->hasFocus());
+    QTest::keyClicks(editor, ";/:");
+    QCOMPARE(editor->toPlainText(), QStringLiteral(";/:"));
+    QCOMPARE(triggered.size(), 2);
+    view->setFocus();
+    QTRY_VERIFY(view->hasFocus());
+    comment->setEnabled(false);
+    QTest::keyClick(handle, Qt::Key_Semicolon);
+    QTest::keyClick(handle, Qt::Key_Slash);
+    QCOMPARE(triggered.size(), 2);
   }
 
   void deepLinksTakeIdasFormAndRefuseWhatTheyCannotName() {

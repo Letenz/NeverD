@@ -64,10 +64,16 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Options and results
 
-Options are a JSON object with at most 64 KiB of request text, excluding two
-hexadecimal characters per validated `android.dex_images` byte. That explicit
-DEX allowance raises the total wire ceiling to 2112 KiB; it does not enlarge
-other field budgets. JSON escape overhead still counts as request text.
+Options are a JSON object with at most 64 KiB of metadata, excluding two
+hexadecimal characters per validated `android.dex_images` byte and per
+validated `linux_files.files[].bytes_hex` byte. The total wire ceiling is
+34880 KiB: up to 1 MiB of decoded DEX, up to 16 MiB of decoded Linux
+regular-file bytes, and the metadata allowance. The existing aggregate
+Linux file budget still charges paths, directories, links, devices and
+write reservations, so regular-file content cannot consume that entire
+16 MiB by itself. Paths, other binary fields, whitespace and JSON escape
+overhead remain metadata. These transport allowances do not enlarge any
+decoded field budget or grant access to host files.
 Unknown fields, null field values,
 invalid types, embedded NULs in strings and nonpositive limits are rejected.
 
@@ -432,9 +438,10 @@ overflow return `EINVAL`; an aligned empty range succeeds. Holes return
 `ENOMEM` while still applying advice to mapped portions on either side. The
 behavior argument uses its low 32 bits, matching the Linux `int` ABI. These
 rules follow Linux's [advice dispatch](https://github.com/torvalds/linux/blob/v6.8/mm/madvise.c)
-and [KSM policy](https://github.com/torvalds/linux/blob/v6.8/mm/ksm.c). Other
-advice, including `MADV_DONTNEED` and `MADV_FREE`, stops as an unsupported
-service before changing state; discarding content is not modeled as a hint.
+and [KSM policy](https://github.com/torvalds/linux/blob/v6.8/mm/ksm.c).
+`MADV_DONTNEED` additionally admits owned private anonymous mappings, with the
+page-discard contract below. Other advice, including `MADV_FREE`, remains
+unsupported; discarding content is not modeled as a content-preserving hint.
 
 Explicit `linux_files.devices[].read_only_mappings` additionally admit
 read-only shared device RAM snapshots, with shared backing across opens,
@@ -975,3 +982,34 @@ representable 32-bit/64-bit results preserve errno. Out-of-range results stop
 explicitly without choosing libc-specific wrapping or saturation. This subset
 follows [C11 section 7.22.1.2](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf);
 it does not add general `strtol` bases, end pointers or locale mutation.
+
+### Private anonymous page discard
+
+`madvise(MADV_DONTNEED)` shares the LinuxMemory implementation across raw LP64
+syscalls and Android Bionic direct, syscall and dynamic-import routes. It admits
+only private anonymous mmap and brk ranges allocated by that owner. Ownership
+is recorded when pages are mapped, independently of optional VMA-name and
+residency observations. Initial image/input RAM, file mappings, devices, locked
+or huge pages and unmodeled advice values are not inferred from generic RAM.
+
+The low 32 bits select the advice. Alignment, rounded length and unsigned end
+overflow are checked before mapping lookup; a valid zero length returns zero.
+Every covered page receives fresh zero backing with its previous permissions.
+Virtual addresses, VMA names, program break and KSM eligibility are retained.
+Previously pinned views and other physical aliases retain the original bytes;
+this operation does not memset shared backing. AddressSpace remains the mapping
+and generation authority, so CPU projections refresh before execution resumes.
+
+Mapped pages on both sides of a hole are discarded before ENOMEM is returned.
+Unknown backing stops explicitly at that range, preserving earlier completed
+page effects. A temporary replacement allocation is prepared before removing
+each old mapping. Exhausting the model's backing budget stops without claiming
+a kernel allocation result or removing the current page; previous page effects
+remain. Unexpected mapping failures are terminal. OS mutation ownership must
+remain exclusive throughout the stopped operation.
+
+This is the byte-visible contract for the restricted anonymous domain, based on
+Android common 4.4.115 `mm/madvise.c` at
+`aa856bd83c43969dc3e8f8c0e97e6105e91aef76`. It does not model lazy page faults,
+RSS, swap or host reclamation. Mincore still requires its separate explicit
+query-time observations; no residency bit is inferred from this host storage.

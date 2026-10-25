@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Every workbench command: identifier, menu text, default shortcut, icon and
+/// Every workbench command: identifier, menu text, default shortcuts, icon and
 /// status tip.  Shortcuts are IDA's defaults, so existing muscle memory
 /// carries over: IdaActions.def pairs each command with IDA's.  Menus.def and
 /// Toolbars.def place the commands; MainWindow implements them.
@@ -17,6 +17,7 @@
 // NEVERD_VIEW_ACTION(Id, Text, Shortcut, Icon, Tip): shortcut active only while
 // an analysis view has the keyboard focus, so single keys such as N or G keep
 // typing into text fields.
+// Multiple shortcuts use QKeySequence's list format, separated by "; ".
 #ifndef NEVERD_ACTION
 #error "Define NEVERD_ACTION before including Actions.def"
 #endif
@@ -303,13 +304,10 @@ NEVERD_VIEW_ACTION(
     EditUndefine, QT_TRANSLATE_NOOP("Actions", "Undef&ine"), "U", "undefine",
     QT_TRANSLATE_NOOP("Actions",
                       "Turn the current item back into undefined bytes"))
-NEVERD_VIEW_ACTION(EditComment,
-                   QT_TRANSLATE_NOOP("Actions", "Enter &comment..."), ":",
-                   "comment",
-                   QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
+// A semicolon key followed by the list separator, then the slash key.
 NEVERD_VIEW_ACTION(EditRepeatableComment,
                    QT_TRANSLATE_NOOP("Actions", "Enter re&peatable comment..."),
-                   ";", "comment_repeatable",
+                   ";; /", "comment_repeatable",
                    QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
 NEVERD_VIEW_ACTION(EditBookmark,
                    QT_TRANSLATE_NOOP("Actions", "Mar&k position..."), "Alt+M",
