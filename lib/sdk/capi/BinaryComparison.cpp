@@ -452,14 +452,39 @@ void appendFunction(ProgramBuilder &Builder, const FuncInfo &F,
     Builder.addTraits(TraitIncomplete);
 }
 
+void hashWord(llvm::SHA256 &Hash, uint64_t Value) {
+  uint8_t Bytes[sizeof(Value)];
+  for (unsigned I = 0; I < sizeof(Value); ++I)
+    Bytes[I] = static_cast<uint8_t>(Value >> (I * kBitsPerByte));
+  Hash.update(Bytes);
+}
+
+std::string byteOverlayIdentity(const patch::PatchOverlay &Overlay) {
+  // The patch owner bounds both retained bytes and rows. Hash the effective
+  // file bytes independently of edit kinds, history and row partitioning.
+  // Data outside the selected function inventory still belongs to the input.
+  llvm::SHA256 Hash;
+  Hash.update("neverd.bindiff.byte-overlay-v1");
+  const auto &Rows = Overlay.rows();
+  for (auto Begin = Rows.begin(); Begin != Rows.end();) {
+    auto End = Begin;
+    uint64_t Next = Begin->first;
+    do {
+      Next += End->second.Current.size();
+      ++End;
+    } while (End != Rows.end() && End->first == Next);
+    hashWord(Hash, Begin->first);
+    hashWord(Hash, Next - Begin->first);
+    for (auto It = Begin; It != End; ++It)
+      Hash.update(It->second.Current);
+    Begin = End;
+  }
+  return llvm::toHex(Hash.final(), true);
+}
+
 std::string revision(const Program &P) {
   llvm::SHA256 Hash;
-  const auto Word = [&](uint64_t V) {
-    uint8_t Bytes[sizeof(V)];
-    for (unsigned I = 0; I < sizeof(V); ++I)
-      Bytes[I] = static_cast<uint8_t>(V >> (I * kBitsPerByte));
-    Hash.update(Bytes);
-  };
+  const auto Word = [&](uint64_t V) { hashWord(Hash, V); };
   const auto Text = [&](llvm::StringRef T) {
     Word(T.size());
     Hash.update(T);
@@ -581,6 +606,9 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   }
   if (S.Img.MachOSharedCache)
     Identity.Analysis += ":" + jsonToString(sharedCacheIdentity(S.Img));
+  if (!S.BytePatches.empty())
+    Identity.Analysis +=
+        ":byte-overlay-v1:" + byteOverlayIdentity(S.BytePatches);
   Identity.ImageBase = S.Img.Base;
   Identity.EntryPoint = S.Img.Entry;
   Identity.DiscoveryComplete = S.DiscoveredFunctions.has_value() &&

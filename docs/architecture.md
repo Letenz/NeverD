@@ -1158,6 +1158,12 @@ forwards actual per-side stages and preserves the old comparison on stop.
 `InstructionFlow` traversal; it must not introduce a second sized/unsized or
 exception-chunk traversal. The adapter preserves original bytes/operands and
 binds the snapshot to input content, ABI, settings and normalization revisions.
+The same owner binds active byte overlays by canonical file offsets and current
+bytes, including data outside the decoded inventory. Edit kinds and adjacent
+row partitioning do not affect this component; an empty overlay retains the
+historical identity. The original file hash and packed-project state keep their
+separate meanings. Overlay admission bounds this indivisible identity digest by
+the shared patch byte/run ceilings, before the normal snapshot stop checkpoint.
 Incomplete decoding and unresolved control flow remain explicit coverage gaps.
 Profile selection and ISA/bitness admission belong to this adapter, with the
 default in `diff/Limits.h`; consumers do not guess an input's architecture.

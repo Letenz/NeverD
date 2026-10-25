@@ -2298,6 +2298,14 @@ the disposable compositor. The native gesture case explicitly skips with the
 offscreen platform. These tests do not qualify release chronology, fresh native
 authentication or automated patch presence.
 
+`BinaryDiffSDK.ByteOverlaysBindDataOnlyChangesAndReopenedReports` checks that
+patching data outside decoded functions changes analysis identity, invalidates
+earlier saved binding, survives sidecar reload and recovers the original identity
+after revert. `ByteOverlayIdentityIgnoresEditKindsAndGrouping` checks identical
+bytes authored through different commands and adjacent row partitions. Python
+lineage integration verifies distinct snapshots for the data-only patch and one
+snapshot again after revert; the underlying input file remains unchanged.
+
 `scripts/benchmark_binary_lineage.py` retains native synthetic ELF inputs and
 their exact reports for repeatable scale checks. Each snapshot has the same
 independently named/addressed functions with changed immediate returns. A chain,

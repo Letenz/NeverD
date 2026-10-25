@@ -127,6 +127,52 @@ class LineageIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(NeverDError, "closed"):
             self.lineage.summary()
 
+    def test_data_only_byte_patch_is_a_distinct_snapshot_and_revert_recovers_it(self):
+        temporary = tempfile.TemporaryDirectory(prefix="neverd-lineage-overlay-")
+        self.addCleanup(temporary.cleanup)
+        raw = Path(temporary.name) / "input.raw"
+        original = bytes.fromhex("b807000000c3") + bytes(18)
+        raw.write_bytes(original)
+        sessions = []
+        for _ in range(2):
+            session = self.host.call("neverd_session_create")
+            self.assertTrue(session)
+            sessions.append(session)
+            self.addCleanup(self.host.call, "neverd_session_destroy", session)
+            self.assertEqual(self.host.call("neverd_session_set_load_options", session,
+                b'{"loader":"binary","processor":"x86_64","platform":"sysv","base":4096}'), 0)
+            self.assertEqual(self.host.call("neverd_session_load", session, str(raw).encode()), 1)
+
+        def compare():
+            comparison = self.host.call("neverd_comparison_create")
+            try:
+                self.assertEqual(self.host.call("neverd_comparison_run", comparison, *sessions,
+                    b'{"discover":false}', abi.ComparisonProgressCallback(), None), 1)
+                return self.host.owned_string("neverd_comparison_export_json", comparison)
+            finally:
+                self.host.call("neverd_comparison_destroy", comparison)
+
+        before = compare()
+        options = abi.NeverDBytePatchOptionsV1()
+        options.struct_size = ctypes.sizeof(options)
+        options.address = 0x1010
+        options.kind = b"bytes"
+        options.bytes = b"2a"
+        self.assertTrue(self.host.owned_string("neverd_byte_patch_apply", sessions[0], ctypes.byref(options)))
+        after = compare()
+        old, new = json.loads(before), json.loads(after)
+        self.assertEqual(old["primary"]["sha256"], new["primary"]["sha256"])
+        self.assertEqual(old["functions"], new["functions"])
+        self.assertNotEqual(old["primary"]["revision"], new["primary"]["revision"])
+        self.assertEqual(raw.read_bytes(), original)
+        self.lineage.load_reports([before, after])
+        self.assertEqual(self.lineage.summary()["versions"], 2)
+        self.assertEqual(self.lineage.summary()["nodes"], 2)
+        self.assertEqual(self.host.call("neverd_byte_patch_revert", sessions[0], 0x1010, 1), 0)
+        restored = compare()
+        self.lineage.load_reports([before, restored])
+        self.assertEqual(self.lineage.summary()["versions"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

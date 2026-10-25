@@ -49,6 +49,14 @@ identity are refused. Identical content analyzed identically is one snapshot;
 separate release aliases and chronological ancestry are outside this profile.
 Labels and branches are analyst-authored metadata, not evidence of ancestry.
 
+Active byte patches contribute their effective file offsets and bytes to the
+analysis identity, including data outside decoded functions. The underlying
+file's SHA-256 remains unchanged. The overlay component ignores edit kinds and
+row partitioning; reverting every changed byte removes that component. Saved
+comparison binding therefore refuses an earlier unpatched analysis even when
+the decoded function inventory is unchanged. Packed project state remains an
+additional, independent part of snapshot identity.
+
 An edge retains one accepted pair from one source report. Traversal is undirected;
 the original comparison direction remains in its evidence. Direct, indirect,
 reverse, cyclic and parallel report paths remain visible. A shortest predecessor
