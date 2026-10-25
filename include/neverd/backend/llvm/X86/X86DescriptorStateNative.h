@@ -140,7 +140,7 @@ inline std::optional<X86DescriptorStateNative> x86DescriptorStateNative(
     P.InputConstraint = Address ? "{bx}" : "r";
     P.Constraints += P.InputConstraint + ",";
   }
-  P.Constraints += P.Verify ? "~{cc},~{memory}" : "~{memory}";
+  P.Constraints += P.Verify ? "~{flags},~{memory}" : "~{memory}";
   return P;
 }
 

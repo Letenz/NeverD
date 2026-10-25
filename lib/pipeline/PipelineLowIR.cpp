@@ -4774,7 +4774,7 @@ Pipeline::warmAnalysisCache(const BinaryImage &Img, const PipelineOptions &Opts,
     // selection's calls. Warming supplies those same declaration facts.
     const CallArgumentConvention *Convention =
         callArgumentConvention(Img.Arch, Img.abiFormat());
-    if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
+    if (!needsCallSignatureRecovery(Convention) || Img.IsRelocatable)
       return std::nullopt;
     PipelineAnalysisCache &Cache = *Opts.AnalysisCache;
     const std::map<va_t, PointerVariableCallee> PointerCallees =

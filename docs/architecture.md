@@ -45,6 +45,9 @@ ordered, potentially trapping reads even when the result is unused. Constant
 propagation does not turn a 16-bit DX port into an 8-bit port. C output selects
 qualified builtins, real MSVC intrinsics or owned assembly at compile time.
 LLVM-to-C validates types and full memory effects before recognizing a call.
+Its port recognizer zero-extends a validated 8-bit immediate from the LLVM
+constant before rendering C. DX operands retain their full 16-bit value;
+the signed spelling of an instruction byte cannot choose a different port.
 
 `X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
 LLVM/C API names. LLVM emission and both C projections share that contract.
@@ -98,6 +101,58 @@ use. Separate target attributes would discard one group's requirements in a
 mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP
 comparison completion in long mode requires LAHF/SAHF on both native and
 assembly routes, and its `sahf` attribute survives every capability combination.
+SHA-256 vector projections participate in the same feature set, including the
+SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
+shape before selecting a compiler intrinsic.
+
+Source LLVM may retain loaded-image data in one external byte array, preserving
+overlapping scalar fields, pointer cells and original address differences.
+`LLVMOriginalImageStorage.h` owns the marker and its admission checks. This is
+an original-image source view, not a relocated reconstruction: native emission,
+relocatable objects and escaped address fragments retain their separate guards.
+The SDK includes this choice in its per-function LLVM cache key.
+
+Source unknown entry values use distinct opaque SSA seeds. A copy or PHI may
+transport an unavailable value without observing it; a real observation still
+requires its availability. Callee-save restoration follows those uses through
+dead copies and joins, while calls, exceptional entries and actual consumers
+retain their evidence. Native reconstruction does not acquire a machine-entry
+contract from these source seeds.
+
+After all native exception edges exist, the LLVM emitter removes an entry seed
+only when its private slot has one later definition dominating every read.
+This keeps SSA promotion from recomputing whole-function dominance frontiers
+for already defined temporaries. Bypassed definitions, first loop iterations,
+ordered accesses and escaping storage retain the original seed.
+
+LowIR owns x64 internal-call return proofs. Replaced-PC tail transfers require
+an exact write to the pushed return slot and a checked parent stack. Bounded
+closed recursive groups must preserve every invocation's return slot and
+ordinary preserved registers; unknown calls, memory writes or stack offsets
+cannot supply that proof. COFF stack-probe allocation recovery similarly uses
+the decoded subtraction and unwind-prologue boundary, sharing the decoded
+callee register-effect authority across frame analyses.
+
+LLVM-to-C assigns split Windows protected ranges to blocks independently of
+LLVM block order. Shared handlers remain outside protected scopes, normal-edge
+PHI copies retain their original destinations, and inconsistent incoming scope
+states are refused. Unsupported C scope layouts throw a recoverable emission
+error instead of terminating the embedding process. Source-only unresolved SEH
+frames remain explicitly marked in LLVM and C; native emission still refuses
+them without the missing runtime stack contract.
+
+X86 LLVM assembly that modifies arithmetic flags declares `~{flags}`. LLVM's
+x86 register constraint parser does not map `~{cc}` to EFLAGS; an apparently
+correct instruction window can otherwise reuse a stale comparison after a
+native flag write. GNU C assembly still spells this clobber `"cc"`. Owned
+assembly producers and LLVM-to-C recognizers share the exact LLVM contract;
+the recognizer rejects older windows that omitted the actual EFLAGS effect.
+
+The shared LLVM intrinsic dispatcher refuses an operation unless its target
+handler owns the result or effect. Unknown void operations cannot disappear,
+and unhandled values cannot become zero. The emitter throws while it still
+owns the incomplete module; direct callers and both serial and sharded
+pipeline paths therefore receive a diagnostic instead of executable output.
 
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
@@ -124,6 +179,12 @@ entries and unwind frame starts; a frame that begins later, a chained row or a
 cold fragment cannot supply an independent callable identity. Next-entry bounds
 use those primary identities as well. Explicitly selecting code for analysis
 retains its separate decode and admission checks.
+COFF `IMAGE_SCN_CNT_CODE` is instruction-storage evidence independently of
+page execute permission. Ownership, selected pipeline entries and SDK batch
+selection share that distinction without changing the image's page flags.
+A completed SDK discovery run reconciles provisional loader boundary guesses
+against the detector result. Stated symbols and user-created or renamed
+identities remain; a later catalog rebuild cannot resurrect a refuted guess.
 Patch/lift output requires every explicitly selected entry to survive into
 MedIR before LLVM emission. Automatically included exception callbacks cannot
 substitute for a rejected parent. Failures retain the entry's audit disposition
@@ -1981,7 +2042,10 @@ from the selected allocator backend.
 compilation and records the actual commits for qualification and installation.
 The private text helper uses Highway only after an inline short-run scan and
 simdutf only to prove that an entire UTF-8 span needs no repair. Existing string
-metadata and byte-preserving repair remain authoritative. Transport parsing
+metadata and byte-preserving repair remain authoritative. Metadata normalization
+keeps already-valid UTF-8 in its existing string storage; both owned and copied
+text use the same valid-prefix scanner and malformed-byte escape implementation.
+Transport parsing
 copies validated simdjson values into the owned nlohmann DOM and checks decoded
 keys during object insertion. Floating-point tokens and negative zero retain
 the original numeric parser; refused SIMD input uses the original admission path.
@@ -11379,3 +11443,8 @@ The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter in
 Core retains exact root/offset relations through complete registers and frame spills, intersects them at joins and forgets overwritten or possibly corrupted relations. Fresh node roots restore only retained relations; lost entry bindings are never recreated. Physical frame addresses and native stack offsets remain frame-only. `ProveStoreFrameSeparation` separately proves that each complete executed write misses the frame, including wide, conditional atomic and full segmented addresses. Declarations grant no unchecked store exemption. Preparation, operations and symbolic nodes use existing budgets. Raw integrity binds every declaration field and order; an empty vector preserves the prior digest encoding. Ordinary source and native proof consumers still refuse this raw domain.
 
 Before original calls, `SourceFrameAnalysis` can observe proven private bytes on x64/ARM64 in a bounded, call-free, acyclic prefix. `observeSourceFrameBytes` authenticates immutable image loads without relocations; HighC and LLVM C show terminated text as comments without changing operations. Exact alignment guards remain active. These observations grant no ABI or native-rewrite authority.
+
+Entry-stack offset recovery accepts a narrower scalar displacement only when
+its nonnegative value is independent of sign or zero extension. Pointer
+provenance and negative narrow constants cannot certify a frame offset. The
+same proof supplies stack annotations and saved-register recovery.

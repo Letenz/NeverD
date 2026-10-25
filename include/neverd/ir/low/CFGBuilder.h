@@ -1273,6 +1273,13 @@ private:
   bool buildNoReturnProof(const BinaryImage &Img, Decoder &Dec, va_t Entry,
                           const std::string &Name);
   bool SkipX87StackFixup = false;
+  bool SkipCalleeRegisterProofs = false;
+  /// Facts live for one build of the unchanged image. Nested proof builders
+  /// cannot assume facts about the CFG currently being constructed.
+  mutable std::map<va_t, std::optional<uint32_t>> CalleePreservedGPRs;
+  std::optional<uint32_t>
+  provedCalleePreservedGPRs(const LowOp &Call,
+                            const std::function<bool(size_t)> &Consume) const;
   // Optional evidence across *all* raw-build normalization stages, including
   // speculative CFGs and own-interior-call retries. It never escapes a build.
   struct CallRegisterBodyWitness {
@@ -1329,6 +1336,9 @@ private:
   /// Replays a checked near RET as its physical pop and the unique internal
   /// continuation. The final graph must prove the same invocation again.
   void rewriteOwnInteriorReturn(const BinaryImage &Img, InsnRecord &Rec);
+  /// A full-width replacement of the pushed PC can be a tail transfer when
+  /// its pop restores the enclosing ABI stack and the parent PC is intact.
+  void rewriteOwnInteriorTailReturn(const BinaryImage &Img, InsnRecord &Rec);
   /// A direct i386 call to a get-PC thunk, a function whose body is `mov r32,
   /// [esp]; ret`, is lifted as what it does: copy the return address into
   /// that register (CFGBuilderX86GetPc.cpp).
@@ -1349,10 +1359,14 @@ private:
     std::set<va_t> Subroutines;
     /// Normal exits of a single-site invocation with a separate nonlocal exit.
     std::map<va_t, OwnInteriorReturn> Returns;
+    std::set<va_t> TailReturns;
     /// The first return no proof covers, or the target whose returns
     /// disagree.
     std::optional<va_t> Unproven;
   };
+  /// Prove a closed group of internal near calls preserves each invocation's
+  /// PC, including recursive groups whose inline stack offsets cannot join.
+  std::set<va_t> proveClosedOwnSubroutines(const BinaryImage &Img) const;
   /// Tracks the stack pointer from each target's pushed return-address slot
   /// and classifies how the returns reached from it treat that slot.
   OwnInteriorCallVerdict classifyOwnInteriorCalls(const BinaryImage &Img,
@@ -2840,6 +2854,7 @@ private:
   /// Targets proven to be subroutines, whose calls stay calls.
   std::set<va_t> KeptOwnInteriorCallTargets;
   std::map<va_t, OwnInteriorReturn> OwnInteriorReturns;
+  std::set<va_t> OwnInteriorTailReturns;
   /// Executable addresses taken via a relocation-free PC-relative `lea` while
   /// exploring this function (same-section function pointers); copied into the
   /// LowFunc so the pipeline merges them into the image's CodeRefTargets (a

@@ -49,6 +49,11 @@
 
 namespace neverd {
 
+bool needsCallSignatureRecovery(const CallArgumentConvention *Convention) {
+  return Convention && (Convention->ArgumentsFromCallSetup ||
+                        Convention->StackArgumentSummary);
+}
+
 namespace {
 /// The entries callee lifts know: the function symbols of \p Img that are
 /// not boundary guesses.
@@ -348,6 +353,7 @@ OmittedCalleeMemo::CalleeSummary summarizeCallee(const MedFunc &MF,
 std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
                                 const PipelineResult &Result) {
   std::vector<va_t> Callees;
+  const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
   // A call through a function-pointer variable passes the arguments of the
   // routine of this image the variable starts at (CallArgumentSources).
   MedDefinitionIndex Definitions(F);
@@ -355,7 +361,13 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
   // A call to the stub of an import the loader starts at this image's own
   // routine passes that routine's arguments.
   for (const MedBlock &B : F.Blocks)
-    for (const MedOp &Op : B.Ops)
+    for (const MedOp &Op : B.Ops) {
+      // Summary-driven conventions need a body only when the stack bound is
+      // missing. A complete read summary already includes zero stack demand;
+      // traversing all of its descendants cannot strengthen that contract.
+      if (Convention && !Convention->ArgumentsFromCallSetup &&
+          Convention->StackArgumentSummary && Op.CalleeStackArgs >= 0)
+        continue;
       if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
         Callees.push_back(importOwnRoutine(Img, &Result.CallArgumentSources,
                                            Op.Inputs[0].ConstVal)
@@ -368,6 +380,7 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
               Source != Result.CallArgumentSources.end() &&
               Source->second != *Slot)
             Callees.push_back(Source->second);
+    }
   return Callees;
 }
 
@@ -569,7 +582,7 @@ std::vector<std::shared_ptr<const MedFunc>>
 omittedDirectCalleeSignatures(const BinaryImage &Img,
                               const PipelineResult &Result) {
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
-  if (!Convention || !Convention->ArgumentsFromCallSetup || Img.IsRelocatable)
+  if (!needsCallSignatureRecovery(Convention) || Img.IsRelocatable)
     return {};
   std::set<va_t> Present, Queued;
   std::queue<va_t> Pending;
@@ -1167,8 +1180,7 @@ AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
   AnalysisCacheWarmup Warmup;
   OmittedCalleeMemo *Memo = Summaries.CalleeSignatureMemo.get();
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
-  if (!Memo || !Convention || !Convention->ArgumentsFromCallSetup ||
-      Img.IsRelocatable)
+  if (!Memo || !needsCallSignatureRecovery(Convention) || Img.IsRelocatable)
     return Warmup;
   Memo->adopt(Img, Summaries);
   CalleeReader Reader(Img, Summaries);

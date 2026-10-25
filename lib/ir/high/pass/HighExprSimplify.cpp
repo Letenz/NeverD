@@ -20,6 +20,7 @@
 #include "HighDCEDetail.h"
 
 #include "neverd/ir/Limits.h"
+#include "neverd/ir/high/HighIntegerProjection.h"
 #include "neverd/ir/high/MedToHigh.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -398,6 +399,11 @@ static ExprPtr demandMaskedBits(const ExprPtr &E, uint64_t Demand,
   auto Copy = std::make_shared<HighExpr>(*E);
   Copy->Operands = {std::move(Left), std::move(Right)};
   return Copy;
+}
+
+ExprPtr projectHighIntegerBits(const ExprPtr &Value, uint64_t Demand) {
+  size_t Budget = limits::ir::kHighExpressionDemandedMaskWork;
+  return demandMaskedBits(Value, Demand, Budget);
 }
 
 /// Rewrite \p X knowing only its low \p Bytes bytes are read (the operand

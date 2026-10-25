@@ -23,6 +23,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QFontDialog>
 #include <QFontInfo>
 #include <QGlyphRun>
@@ -85,9 +86,11 @@ private slots:
     if (kind == "file")
       dialog =
           std::make_unique<QFileDialog>(nullptr, "Open file", settings_.path());
-    else if (kind == "font")
+    else if (kind == "font") {
       dialog = std::make_unique<QFontDialog>(Theme::defaultCodeFont());
-    else if (kind == "color")
+      static_cast<QFontDialog *>(dialog.get())
+          ->setOption(QFontDialog::MonospacedFonts);
+    } else if (kind == "color")
       dialog = std::make_unique<QColorDialog>();
     else if (kind == "message")
       dialog = std::make_unique<QMessageBox>(QMessageBox::Information,
@@ -113,6 +116,9 @@ private slots:
     QCOMPARE(
         dialog->palette().color(QPalette::Window),
         Theme::instance().chrome(kind == "quick-start" ? "Base" : "Window"));
+    if (auto *fonts = qobject_cast<QFontDialog *>(dialog.get()))
+      QCOMPARE(fonts->currentFont().family(),
+               Theme::defaultCodeFont().family());
     const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
     if (!captures.isEmpty()) {
       QDir().mkpath(captures);
@@ -206,27 +212,42 @@ private slots:
     const auto restore = qScopeGuard([&] { applyLanguage(original); });
     for (const auto &language : languages()) {
       applyLanguage(language.code);
-      QTextLayout layout(
-          QString::fromUtf8("Open 中國 日本語 한글 العربية Русский →"),
-          QApplication::font());
+      const auto sample =
+          QString::fromUtf8("Open 中國 日本語 한글 العربية Русский →");
+      QTextLayout layout(sample, QApplication::font());
       layout.beginLayout();
       auto line = layout.createLine();
       line.setLineWidth(2000);
       layout.endLayout();
-      const auto runs = layout.glyphRuns();
+      const auto runs = layout.glyphRuns(0, -1, QTextLayout::RetrieveAll);
       QVERIFY(!runs.isEmpty());
       for (const auto &run : runs) {
-        QVERIFY2(run.rawFont().familyName().startsWith("Noto "),
-                 qPrintable(run.rawFont().familyName()));
+        QString text;
+        for (const auto index : run.stringIndexes())
+          text += sample.at(index);
+        const auto diagnostic =
+            QStringLiteral("%1: %2 rendered [%3]")
+                .arg(language.code, run.rawFont().familyName(), text);
+        const auto family = run.rawFont().familyName();
+        QVERIFY2(family == "Noto Sans" || family == "Noto Sans Arabic" ||
+                     family == "Noto Sans Symbols 2" ||
+                     family == "JetBrains Mono NL" ||
+                     family.startsWith("Noto Sans CJK "),
+                 qPrintable(diagnostic));
         for (const auto glyph : run.glyphIndexes())
           QVERIFY(glyph != 0);
       }
     }
-    const auto code = Theme::defaultCodeFont();
-    QCOMPARE(QFontInfo(code).family(), QString("Noto Sans Mono"));
-    const QFontMetrics metrics(code);
-    QCOMPARE(metrics.horizontalAdvance("WWWW"),
-             metrics.horizontalAdvance("iiii"));
+    auto code = Theme::defaultCodeFont();
+    QCOMPARE(QFontInfo(code).family(), QString("JetBrains Mono NL"));
+    QVERIFY(QFontInfo(code).fixedPitch());
+    QVERIFY(QFontDatabase::isFixedPitch(code.family()));
+    for (const int size : {6, 10, 14, 24, 48}) {
+      code.setPointSize(size);
+      const QFontMetricsF metrics(code);
+      QCOMPARE(metrics.horizontalAdvance("WWWW"),
+               metrics.horizontalAdvance("iiii"));
+    }
   }
 
   void clientResizeKeepsOppositeEdgesAndBounds() {
@@ -272,6 +293,25 @@ private slots:
       send(QEvent::MouseMove, global + delta * 100);
       QCOMPARE(window.width(), delta.x() ? 500 : original.width());
       QCOMPARE(window.height(), delta.y() ? 400 : original.height());
+      // Cocoa may classify the constrained maximum as a zoomed window.
+      // Reproduce that notification on the headless backend as well.
+      if (platform == QLatin1String("offscreen")) {
+        window.windowHandle()->setWindowStates(Qt::WindowMaximized);
+        QWindowStateChangeEvent maximized(Qt::WindowNoState);
+        QCoreApplication::sendEvent(window.windowHandle(), &maximized);
+      }
+      QVERIFY2(QWidget::mouseGrabber() == &window,
+               qPrintable(QStringLiteral("Resize lost its grab in state %1")
+                              .arg(int(window.windowState()))));
+      if (platform == QLatin1String("offscreen")) {
+        window.windowHandle()->setWindowStates(Qt::WindowNoState);
+        QWindowStateChangeEvent restored(Qt::WindowMaximized);
+        QCoreApplication::sendEvent(window.windowHandle(), &restored);
+      }
+      // Cocoa can report the same normal state during a geometry change.
+      // That notification must not end the gesture before its release.
+      QWindowStateChangeEvent unchanged(window.windowState());
+      QCoreApplication::sendEvent(window.windowHandle(), &unchanged);
       send(QEvent::MouseMove, global - delta * 100);
       QCOMPARE(window.width(), delta.x() ? 240 : original.width());
       QCOMPARE(window.height(), delta.y() ? 180 : original.height());

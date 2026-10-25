@@ -67,6 +67,24 @@ inline llvm::Value *create(llvm::IRBuilder<> &Builder,
   return Builder.CreateCall(Function, {}, "unknown_state");
 }
 
+/// One unrecovered value captured at function entry. A distinct declaration
+/// per seed prevents CSE from equating unrelated registers, while memory(none)
+/// lets optimization remove seeds whose storage is always overwritten before
+/// use. Unlike freeze(poison), this opaque value cannot be chosen as zero.
+inline llvm::Value *createEntrySeed(llvm::IRBuilder<> &Builder,
+                                    llvm::IntegerType *Type) {
+  auto &Module = *Builder.GetInsertBlock()->getModule();
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Type, false), llvm::GlobalValue::ExternalLinkage,
+      "__neverd_source_entry_unknown_i" + std::to_string(Type->getBitWidth()),
+      Module);
+  Function->addFnAttr(Attribute);
+  Function->addFnAttr(llvm::Attribute::NoUnwind);
+  Function->addFnAttr(llvm::Attribute::WillReturn);
+  Function->setMemoryEffects(llvm::MemoryEffects::none());
+  return Builder.CreateCall(Function, {}, "unknown_entry_state");
+}
+
 } // namespace neverd::llvm_source_unknown
 
 #endif // NEVERD_BACKEND_LLVMSOURCEUNKNOWNVALUE_H

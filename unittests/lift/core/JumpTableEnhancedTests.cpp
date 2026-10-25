@@ -2726,7 +2726,7 @@ TEST_F(JTE_X86_32, GOTOFFPrivateSpillRejectsMemoryWritingStringIntrinsic) {
   ASSERT_EQ(Low.RelocatedInstructionScalarModelOccurrences.size(), 1u);
   ASSERT_TRUE(lowFunctionHasIntrinsic(
       Low, neverd::Intrinsic::X86RequireDivPrecondition));
-  ASSERT_TRUE(lowFunctionHasIntrinsic(Low, neverd::Intrinsic::Stosb));
+  ASSERT_TRUE(lowFunctionHasIntrinsic(Low, neverd::Intrinsic::X86RepStosState));
   EXPECT_TRUE(Builder.i386GOTOFFGraphQueryIssuedForTesting());
   EXPECT_FALSE(Builder.i386GOTOFFGraphQueryBudgetExhaustedForTesting());
   EXPECT_TRUE(Low.EverPublishedJumpTableBranchAddresses.empty());

@@ -2526,48 +2526,48 @@ TEST(SymSimplifyGuard, DeepO0ForwardsSemanticOptionsAndCountsDefinitionsOnce) {
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
-TEST(SymSimplifyGuard, DeepRepairsFrameRelativeIntToPtrAfterO2) {
-  llvm::LLVMContext C;
-  llvm::Module M("m", C);
-  auto *I32 = llvm::Type::getInt32Ty(C);
-  auto *I64 = llvm::Type::getInt64Ty(C);
-  auto *Ptr = llvm::PointerType::getUnqual(C);
-  auto *ObserveTy = llvm::FunctionType::get(llvm::Type::getVoidTy(C), {I64},
-                                            /*isVarArg=*/false);
-  llvm::FunctionCallee Observe = M.getOrInsertFunction("observe_sp", ObserveTy);
-  auto *FT = llvm::FunctionType::get(llvm::Type::getVoidTy(C), {Ptr},
-                                     /*isVarArg=*/false);
-  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
-                                   "frame_relative", &M);
-  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, kFrameSetupBlock, F));
-  llvm::Value *FrameBase = B.CreatePtrToInt(F->getArg(0), I64, kRspInitValue);
-  B.CreateCall(Observe, {FrameBase});
-  llvm::Constant *NegativeAddress = llvm::ConstantExpr::getIntToPtr(
-      llvm::ConstantInt::getSigned(I64, -16), Ptr);
-  B.CreateStore(llvm::ConstantInt::get(I32, 7), NegativeAddress,
-                /*isVolatile=*/true);
-  B.CreateRetVoid();
-
-  Pipeline::OptimizationOptions Options;
-  Options.LLVMLevel = llvm::OptimizationLevel::O2;
-  OptimizationResult Result = Pipeline::optimizeModule(M, Options);
-
-  EXPECT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
-  EXPECT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
-  llvm::Function *Optimized = M.getFunction("frame_relative");
-  ASSERT_NE(Optimized, nullptr);
-  const llvm::StoreInst *StackStore = nullptr;
-  for (const llvm::Instruction &I : llvm::instructions(*Optimized))
-    if (const auto *Candidate = llvm::dyn_cast<llvm::StoreInst>(&I))
-      if (Candidate->isVolatile())
-        StackStore = Candidate;
-  ASSERT_NE(StackStore, nullptr) << printFunction(*Optimized);
-  const auto *Fixed =
-      llvm::dyn_cast<llvm::IntToPtrInst>(StackStore->getPointerOperand());
-  ASSERT_NE(Fixed, nullptr) << printFunction(*Optimized);
-  EXPECT_EQ(Fixed->getName(), "stackptr");
-  EXPECT_TRUE(llvm::isa<llvm::BinaryOperator>(Fixed->getOperand(0)));
-  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+TEST(SymSimplifyGuard, DeepKeepsAbsoluteAddressesDistinctFromFrameOffsets) {
+  for (bool BeforeFrame : {false, true}) {
+    for (unsigned Bits : {32u, 64u}) {
+      llvm::LLVMContext C;
+      llvm::Module M("absolute_address", C);
+      M.setDataLayout(Bits == 32 ? "e-p:32:32" : "e-p:64:64");
+      auto *Integer = llvm::IntegerType::get(C, Bits);
+      auto *Ptr = llvm::PointerType::getUnqual(C);
+      auto Observe = M.getOrInsertFunction(
+          "observe_sp",
+          llvm::FunctionType::get(llvm::Type::getVoidTy(C), {Integer}, false));
+      auto *F = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(C), {Ptr}, false),
+          llvm::Function::ExternalLinkage, "absolute_store", &M);
+      llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, kFrameSetupBlock, F));
+      auto *Address = llvm::ConstantExpr::getIntToPtr(
+          llvm::ConstantInt::getSigned(Integer, -16), Ptr);
+      auto Store = [&] { B.CreateStore(B.getInt32(7), Address, true); };
+      if (BeforeFrame)
+        Store();
+      auto *FrameBase = B.CreatePtrToInt(F->getArg(0), Integer, kRspInitValue);
+      B.CreateCall(Observe, {FrameBase});
+      if (!BeforeFrame)
+        Store();
+      B.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      Pipeline::OptimizationOptions Options;
+      Options.LLVMLevel = llvm::OptimizationLevel::O2;
+      const auto Result = Pipeline::optimizeModule(M, Options);
+      ASSERT_NE(Result.Stop, OptimizationStopReason::VerificationFailed);
+      ASSERT_NE(Result.Stop, OptimizationStopReason::InputInvalid);
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      unsigned Stores = 0;
+      for (const auto &I : llvm::instructions(*M.getFunction("absolute_store")))
+        if (const auto *Write = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+          ++Stores;
+          EXPECT_TRUE(Write->isVolatile());
+          EXPECT_EQ(Write->getPointerOperand(), Address);
+        }
+      EXPECT_EQ(Stores, 1u);
+    }
+  }
 }
 
 TEST(SymSimplifyGuard, VerifierRejectionIsTransactional) {

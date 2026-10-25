@@ -226,8 +226,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
       // symbol to prove the VA is a "known" start: C++ unwind ActionVAs
       // are often outside RuntimeFunctionAddrs, and that walk dominates
       // single-function export on a large PE.
-      const Segment *Seg = Img.getSegmentFor(Addr);
-      if (!Seg || !Seg->isExecutable())
+      if (!Img.hasExecutableCodeOwnerAt(Addr))
         continue;
       FuncEntries.push_back({Addr, NameAt(Addr)});
     }
@@ -284,8 +283,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
       return Edit != Opts.FunctionEdits.end() && !Edit->second;
     });
     for (const auto &[Entry, Created] : Opts.FunctionEdits) {
-      const Segment *Code = Img.getSegmentFor(Entry);
-      if (!Created || !Code || !Code->isExecutable() ||
+      if (!Created || !Img.hasExecutableCodeOwnerAt(Entry) ||
           llvm::any_of(FuncEntries,
                        [&](const std::pair<va_t, std::string> &Known) {
                          return Known.first == Entry;

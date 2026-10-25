@@ -18,6 +18,8 @@
 #include "../core/WindowsVariadicFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
+#include "neverd/backend/LLVMOriginalImageStorage.h"
 #include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/CEmitterOptions.h"
@@ -41,7 +43,9 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <array>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <map>
 #include <set>
@@ -277,6 +281,253 @@ int main(void) {
         source_call_execution_test::compileAndRun(
             Provider + Source + Main,
             {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+  }
+}
+
+TEST(CallExitRegisters, SourceEntryRegistersRemainDistinctUnknownValues) {
+  for (bool NoOpt : {false, true}) {
+    SCOPED_TRACE(NoOpt);
+    MedFunc Function;
+    Function.Entry = 0x1000;
+    Function.Name = "entry_register_difference";
+    Function.ReturnType = NdType::makeInt(8, false);
+    Function.Blocks.resize(1);
+    auto &Block = Function.Blocks.front();
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    MedVar Left;
+    Left.Kind = MedVar::Reg;
+    Left.Id = 1;
+    Left.Size = 8;
+    Left.RegOff = x86reg::RAX;
+    Left.TheArch = Arch::X64;
+    MedVar Right = Left;
+    Right.Id = 2;
+    Right.RegOff = x86reg::R10;
+    MedOp Difference;
+    Difference.Opcode = NdOp::INT_XOR;
+    Difference.Output = Left;
+    Difference.Output.Id = 3;
+    Difference.Output.SSAVer = 1;
+    Difference.addInput(Left);
+    Difference.addInput(Right);
+    Block.Ops.push_back(Difference);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(Difference.Output);
+    Block.Ops.push_back(Return);
+    llvm::LLVMContext Context;
+    MedLLVMEmitter Emitter;
+    Emitter.setPreserveUnknownSourceValues(true);
+    auto Module = Emitter.emit({Function}, Context);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    if (NoOpt)
+      Pipeline::promoteScaffoldingAllocas(*Module);
+    else
+      Pipeline::optimizeOrPromoteModule(*Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    std::set<const llvm::Function *> Seeds;
+    for (const auto &LLVMBlock : *Module->getFunction(Function.Name))
+      for (const auto &Instruction : LLVMBlock)
+        if (llvm_source_unknown::isValue(&Instruction) &&
+            !Instruction.use_empty())
+          Seeds.insert(
+              llvm::cast<llvm::CallInst>(Instruction).getCalledFunction());
+    // The overwritten output seed cannot affect any result. The two incoming
+    // registers must not become the same readnone call or an invented zero.
+    EXPECT_EQ(Seeds.size(), 2u);
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, {}));
+    EXPECT_NE(Source.find("unknown machine state"), std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("return 0;"), std::string::npos) << Source;
+  }
+}
+
+TEST(SourceImageStorage, LoadedPointersAndOverlappingFieldsKeepOneIdentity) {
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    constexpr va_t Base = 0x1000, Record = Base + 0x400;
+    const uint64_t TextSize = limits::kMaxSingleGlobalEmbedLen + 0x1000;
+    const va_t Data = Base + TextSize;
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = Format;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = Base;
+    Text.Size = Text.FileSz = TextSize;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size);
+    const uint16_t Header = 7;
+    std::memcpy(Text.Data.data() + Record - Base, &Header, sizeof(Header));
+    std::memcpy(Text.Data.data() + Record - Base + 8, &Data, sizeof(Data));
+    Image.Segments.push_back(std::move(Text));
+    Segment Writable;
+    Writable.Name = ".data";
+    Writable.VA = Data;
+    Writable.Size = Writable.FileSz = 32;
+    Writable.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Writable.Data.resize(Writable.Size);
+    Image.Segments.push_back(std::move(Writable));
+    Image.DataInCode.insert(Record);
+    Image.DataPtrRelocSlots.insert(Record + 8);
+    Image.CodePtrRelocSlots.insert(Record + 16);
+    Image.RelocDataAddrs.insert(Data);
+
+    MedFunc Function;
+    Function.Entry = Base + 0x100;
+    Function.Name = "read_live_record";
+    Function.ReturnType = NdType::makeInt(8, false);
+    Function.Blocks.resize(1);
+    auto &Block = Function.Blocks.front();
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    auto Value = [](int Id, unsigned Size) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.Id = Id;
+      V.SSAVer = 1;
+      V.Size = Size;
+      V.TheArch = Arch::X64;
+      return V;
+    };
+    auto Address = [](va_t VA) {
+      return MedVar::makeConst(VA, 8, ConstantAddressProvenance::DataAddress,
+                               VA);
+    };
+    MedVar Parameter = Value(0, 2);
+    Parameter.Kind = MedVar::Param;
+    Parameter.RegOff = getTargetRegInfo(Arch::X64).integerParamRegs(Format)[0];
+    Function.Params.push_back(Parameter);
+    auto Add = [&](NdOp Opcode, const MedVar &Out,
+                   std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Out;
+      Op.Addr = Function.Entry + Block.Ops.size();
+      for (const auto &In : Inputs)
+        Op.addInput(In);
+      Block.Ops.push_back(Op);
+    };
+    Add(NdOp::LOAD, Value(1, 2), {Address(Record)});
+    // A PC-derived data address must retain the original image layout, not
+    // the byte offset of a freshly emitted C/LLVM basic-block label.
+    Add(NdOp::COPY, Value(6, 8),
+        {MedVar::makeConst(Base + 0x180, 8,
+                           ConstantAddressProvenance::CodeAddress)});
+    Add(NdOp::INT_ADD, Value(7, 8),
+        {Value(6, 8), MedVar::makeConst(Data + 2 - (Base + 0x180), 8,
+                                        ConstantAddressProvenance::Scalar)});
+    Add(NdOp::STORE, {}, {Value(7, 8), Parameter});
+    Add(NdOp::LOAD, Value(2, 8), {Address(Record + 8)});
+    Add(NdOp::LOAD, Value(3, 8), {Value(2, 8)});
+    Add(NdOp::INT_ZEXT, Value(4, 8), {Value(1, 2)});
+    Add(NdOp::INT_ADD, Value(5, 8), {Value(3, 8), Value(4, 8)});
+    Add(NdOp::LOAD, Value(8, 8), {Address(Record + 16)});
+    Add(NdOp::INDIR_CALL, Value(9, 8), {Value(8, 8), Value(5, 8)});
+    Block.Ops.back().CalleeRegisterArgs = 1;
+    Block.Ops.back().CalleeVectorArgs = 0;
+    Block.Ops.back().CalleeStackArgs = 0;
+    Add(NdOp::RETURN, {}, {Value(9, 8)});
+    recoverCallAbi(Function, Arch::X64, {}, &Image);
+    ASSERT_EQ(Function.CallInfos.size(), 1u);
+    ASSERT_EQ(Function.CallInfos.front().Args.size(), 1u);
+
+    {
+      auto Relocatable = Image;
+      Relocatable.IsRelocatable = true;
+      llvm::LLVMContext Context;
+      MedLLVMEmitter Emitter;
+      Emitter.setOriginalImageStorageForSource(true);
+      Emitter.setPreserveUnknownSourceValues(true);
+      auto Module = Emitter.emit({Function}, Context, "relocatable_source",
+                                 Arch::X64, {}, &Relocatable, Format);
+      // A relocatable object has no single loaded-image coordinate system.
+      // The source option must not bypass relocation identity validation.
+      if (Module)
+        for (const auto &Global : Module->globals())
+          EXPECT_FALSE(llvm_original_image::isMarked(Global));
+    }
+
+    for (bool Original : {false, true}) {
+      SCOPED_TRACE(Original);
+      llvm::LLVMContext Context;
+      MedLLVMEmitter Emitter;
+      Emitter.setOriginalImageStorageForSource(Original);
+      Emitter.setPreserveUnknownSourceValues(Original);
+      auto Module = Emitter.emit({Function}, Context, "source_image", Arch::X64,
+                                 {}, &Image, Format);
+      if (!Original) {
+        // This mixed object is not a bounded all-pointer table. Standalone
+        // reconstruction must still refuse a stale copy of its pointer.
+        EXPECT_EQ(Module, nullptr);
+        continue;
+      }
+      ASSERT_NE(Module, nullptr);
+      ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+      unsigned Storage = 0;
+      for (const auto &Global : Module->globals())
+        if (llvm_original_image::isMarked(Global)) {
+          ++Storage;
+          EXPECT_FALSE(Global.hasInitializer());
+          EXPECT_FALSE(Global.isConstant());
+        }
+      EXPECT_EQ(Storage, 1u);
+      Pipeline::optimizeOrPromoteModule(*Module);
+      for (bool Only : {false, true}) {
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        ASSERT_TRUE(LLVMCEmitter().emit(
+            *Module, OS, {}, nullptr, &Image,
+            Only ? Module->getFunction(Function.Name) : nullptr));
+        const std::string Prefix = "extern uint8_t ";
+        const size_t Start = Source.find(Prefix);
+        ASSERT_NE(Start, std::string::npos) << Source;
+        const size_t NameStart = Start + Prefix.size();
+        const std::string Name =
+            Source.substr(NameStart, Source.find('[', NameStart) - NameStart);
+        Source +=
+            "\nuint8_t " + Name + "[" + std::to_string(TextSize + 32) + "];\n";
+        Source += "#define image " + Name + "\n#define data_offset " +
+                  std::to_string(TextSize) + "\n";
+        Source += R"(
+static unsigned calls;
+static uint64_t first_target(uint64_t value) { ++calls; return value + 3; }
+static uint64_t second_target(uint64_t value) { ++calls; return value + 5; }
+int main(void) {
+  for (unsigned offset = 0; offset <= 16; offset += 16) {
+    uint64_t first = UINT64_C(0x0123456789abcdef);
+    uint64_t second = UINT64_C(0xfedcba9876543210);
+    __builtin_memcpy(image + data_offset, &first, 8);
+    __builtin_memcpy(image + data_offset + 16, &second, 8);
+    const uintptr_t relocated = (uintptr_t)(image + data_offset + offset);
+    __builtin_memcpy(image + 0x408, &relocated, 8);
+    const uintptr_t target = (uintptr_t)(offset ? second_target : first_target);
+    __builtin_memcpy(image + 0x410, &target, 8);
+    calls = 0;
+    const uint16_t header = 7, replacement = 0x97ba;
+    __builtin_memcpy(image + 0x400, &header, 2);
+    const uint64_t expected = offset ? second :
+        ((first & ~UINT64_C(0xffff0000)) | (UINT64_C(0x97ba) << 16));
+    if (read_live_record(replacement) != expected + header + (offset ? 5 : 3) ||
+        calls != 1) return 1;
+    uint16_t stored = 0;
+    __builtin_memcpy(&stored, image + data_offset + 2, 2);
+    if (stored != replacement) return 2;
+  }
+  return 0;
+}
+)";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source, {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
     }
   }
 }
@@ -680,6 +931,116 @@ int main(void) {
     }
 }
 
+TEST(Win64CallContract, MissingInteriorStackSlotCannotDiscardLaterArguments) {
+  constexpr va_t Consumer = Text + 0x80;
+  for (bool Initialized : {false, true}) {
+    SCOPED_TRACE(Initialized);
+    std::vector<uint8_t> Code(0xC0, 0xCC);
+    std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38,    // sub rsp,38h
+                                   0xB9, 1,    0,    0,    0, // mov ecx,1
+                                   0xBA, 2,    0,    0,    0, // mov edx,2
+                                   0x41, 0xB8, 3,    0,    0,    0, // mov r8d,3
+                                   0x41, 0xB9, 4,    0,    0,    0, // mov r9d,4
+                                   0x48, 0xC7, 0x44, 0x24, 0x20, 13, 0, 0, 0,
+                                   0x48, 0xC7, 0x44, 0x24, 0x30, 29, 0, 0, 0};
+    if (Initialized) {
+      const std::array<uint8_t, 9> Middle = {0x48, 0xC7, 0x44, 0x24, 0x28,
+                                             99,   0,    0,    0};
+      Caller.insert(Caller.end(), Middle.begin(), Middle.end());
+    }
+    Caller.push_back(0xE8);
+    const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
+    Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+    for (uint8_t Byte : {0x48, 0x83, 0xC4, 0x38, 0xC3})
+      Caller.push_back(Byte);
+    put(Code, Text, Caller);
+    put(Code, Consumer,
+        {0x48, 0x83, 0xEC, 0x28,       // sub rsp,28h
+         0x48, 0x8D, 0x44, 0x24, 0x58, // lea rax,[rsp+58h]
+         0x48, 0x89, 0x44, 0x24, 0x20, // spill address of sixth slot
+         0x48, 0x8B, 0x44, 0x24, 0x50, // mov rax,[rsp+50h] (fifth)
+         0x48, 0x03, 0x44, 0x24, 0x60, // add rax,[rsp+60h] (seventh)
+         0x48, 0x01, 0xC8,             // add rax,rcx
+         0x48, 0x01, 0xD0,             // add rax,rdx
+         0x4C, 0x01, 0xC0,             // add rax,r8
+         0x4C, 0x01, 0xC8,             // add rax,r9
+         0x48, 0x83, 0xC4, 0x28, 0xC3});
+    auto Image = makeImage(
+        Code, {{Text, "call_sparse_stack"}, {Consumer, "read_sparse_stack"}},
+        {});
+    for (bool Selected : {false, true})
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(Selected);
+        SCOPED_TRACE(LLVM);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries =
+            Selected ? std::set<va_t>{Text} : std::set<va_t>{Text, Consumer};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        bool Observed = false;
+        for (const auto &Function : Result.MedFuncs)
+          if (Function.Entry == Text)
+            for (const auto &Call : Function.CallInfos)
+              if (Call.TargetAddr == Consumer) {
+                Observed = true;
+                EXPECT_EQ(Call.Args.size(), 7u);
+                if (Call.Args.size() == 7u) {
+                  EXPECT_EQ(Call.Args[6].ConstVal, 29u);
+                  if (!Initialized)
+                    EXPECT_EQ(Call.Args[5].Kind, MedVar::Unspecified);
+                }
+              }
+        if (!LLVM) {
+          std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+            if (!E)
+              return;
+            if (E->Kind == ExprKind::Call && E->CallAddr == Consumer) {
+              Observed = true;
+              EXPECT_EQ(E->Operands.size(), 7u);
+            }
+            for (const auto &Operand : E->Operands)
+              Visit(Operand);
+          };
+          for (const auto &Function : Result.HighFuncs)
+            if (Function.Entry == Text)
+              walkStmts(Function.Body,
+                        [&](const HighStmt &S) { forEachExpr(S, Visit); });
+        }
+        EXPECT_TRUE(Observed);
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        }
+        // An unwritten slot is unavailable, not invented padding. Execute the
+        // same caller with defined bytes to check that the seventh value
+        // reaches the independent arithmetic oracle on both source routes.
+        if (Initialized && !Selected) {
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          if (LLVM)
+            ASSERT_TRUE(
+                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+          else
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source +
+                    "\nint main(void) { return call_sparse_stack() != 52; }\n",
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+      }
+  }
+}
+
 TEST(Win64CallContract, UnreadRegisterHolesBeforeStackArgumentsStayUnread) {
   constexpr va_t Consumer = Text + 0x80;
   std::vector<uint8_t> Code(0xA0, 0xCC);
@@ -945,81 +1306,179 @@ TEST(CallExitRegisters, OverwrittenEntrySpillsAreNotValueReads) {
 }
 
 TEST(CallExitRegisters, EntrySpillProofKeepsObservedBytesAndEscapes) {
-  for (unsigned Mode = 0; Mode < 7; ++Mode) {
-    SCOPED_TRACE(Mode);
-    MedFunc Function;
-    Function.Entry = Text;
-    Function.FrameSize = 40;
-    Function.CC = CallingConv::Win64;
-    auto Register = [](int Id, uint64_t Offset) {
-      MedVar V;
-      V.Kind = MedVar::Reg;
-      V.Id = Id;
-      V.RegOff = Offset;
-      V.Size = 8;
-      V.TheArch = Arch::X64;
-      return V;
-    };
-    const MedVar SP = Register(0, x86reg::RSP);
-    const MedVar Incoming = Register(1, x86reg::R9);
-    MedVar Address = Register(2, x86reg::R10);
-    Address.SSAVer = 1;
-    MedVar Loaded = Register(3, x86reg::RAX);
-    Loaded.SSAVer = 1;
-    auto Operation = [](NdOp Opcode, MedVar Output,
-                        std::initializer_list<MedVar> Inputs) {
-      MedOp Op;
-      Op.Opcode = Opcode;
-      Op.Output = Output;
-      for (const auto &Input : Inputs)
-        Op.addInput(Input);
-      return Op;
-    };
-    MedBlock Entry;
-    Entry.Id = 0;
-    Entry.StartAddr = Text;
-    Entry.Ops = {
-        Operation(NdOp::COPY, SP, {SP}),
-        Operation(NdOp::COPY, Incoming, {Incoming}),
-        Operation(NdOp::INT_ADD, Address, {SP, MedVar::makeConst(32, 8)}),
-        Operation(NdOp::STORE, {}, {Address, Incoming})};
-    const auto Write = Operation(
-        NdOp::STORE, {}, {Address, MedVar::makeConst(19, Mode == 1 ? 4 : 8)});
-    const auto Read = Operation(NdOp::LOAD, Loaded, {Address});
-    const auto Return = Operation(NdOp::RETURN, {}, {Loaded});
-    if (Mode == 2)
-      Entry.Ops.push_back(Operation(
-          NdOp::CALL, {}, {MedVar::makeConst(Text + 0x80, 8), Address}));
-    if (Mode == 3)
-      Entry.Ops.push_back(Read);
-    if (Mode >= 5) {
-      Entry.Succs = {1, 2};
-      Entry.Ops.push_back(Operation(
-          NdOp::COND_BR, {}, {MedVar::makeConst(Text + 0x20, 8), Incoming}));
-      Function.Blocks.push_back(std::move(Entry));
-      for (int Id : {1, 2}) {
-        MedBlock Arm;
-        Arm.Id = Id;
-        Arm.StartAddr = Text + 0x20 * Id;
-        Arm.Preds = {0};
-        if (Mode == 5 || Id == 1)
-          Arm.Ops.push_back(Write);
-        Arm.Ops.push_back(Read);
-        Arm.Ops.push_back(Return);
-        Function.Blocks.push_back(std::move(Arm));
+  for (unsigned Version : {0u, 3u})
+    for (unsigned Mode = 0; Mode < 7; ++Mode) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Version);
+      MedFunc Function;
+      Function.Entry = Text;
+      Function.FrameSize = 40;
+      Function.CC = CallingConv::Win64;
+      auto Register = [](int Id, uint64_t Offset) {
+        MedVar V;
+        V.Kind = MedVar::Reg;
+        V.Id = Id;
+        V.RegOff = Offset;
+        V.Size = 8;
+        V.TheArch = Arch::X64;
+        return V;
+      };
+      const MedVar SP = Register(0, x86reg::RSP);
+      MedVar Incoming = Register(1, x86reg::R9);
+      Incoming.SSAVer = Version;
+      MedVar Address = Register(2, x86reg::R10);
+      Address.SSAVer = 1;
+      MedVar Loaded = Register(3, x86reg::RAX);
+      Loaded.SSAVer = 1;
+      auto Operation = [](NdOp Opcode, MedVar Output,
+                          std::initializer_list<MedVar> Inputs) {
+        MedOp Op;
+        Op.Opcode = Opcode;
+        Op.Output = Output;
+        for (const auto &Input : Inputs)
+          Op.addInput(Input);
+        return Op;
+      };
+      MedBlock Entry;
+      Entry.Id = 0;
+      Entry.StartAddr = Text;
+      Entry.Ops = {
+          Operation(NdOp::COPY, SP, {SP}),
+          Operation(NdOp::COPY, Incoming, {Incoming}),
+          Operation(NdOp::INT_ADD, Address, {SP, MedVar::makeConst(32, 8)}),
+          Operation(NdOp::STORE, {}, {Address, Incoming})};
+      const auto Write = Operation(
+          NdOp::STORE, {}, {Address, MedVar::makeConst(19, Mode == 1 ? 4 : 8)});
+      const auto Read = Operation(NdOp::LOAD, Loaded, {Address});
+      const auto Return = Operation(NdOp::RETURN, {}, {Loaded});
+      if (Mode == 2)
+        Entry.Ops.push_back(Operation(
+            NdOp::CALL, {}, {MedVar::makeConst(Text + 0x80, 8), Address}));
+      if (Mode == 3)
+        Entry.Ops.push_back(Read);
+      if (Mode >= 5) {
+        Entry.Succs = {1, 2};
+        Entry.Ops.push_back(Operation(
+            NdOp::COND_BR, {}, {MedVar::makeConst(Text + 0x20, 8), Incoming}));
+        Function.Blocks.push_back(std::move(Entry));
+        for (int Id : {1, 2}) {
+          MedBlock Arm;
+          Arm.Id = Id;
+          Arm.StartAddr = Text + 0x20 * Id;
+          Arm.Preds = {0};
+          if (Mode == 5 || Id == 1)
+            Arm.Ops.push_back(Write);
+          Arm.Ops.push_back(Read);
+          Arm.Ops.push_back(Return);
+          Function.Blocks.push_back(std::move(Arm));
+        }
+      } else if (Mode == 4) {
+        Entry.Ops.push_back(Operation(NdOp::RETURN, {}, {Address}));
+        Function.Blocks.push_back(std::move(Entry));
+      } else {
+        Entry.Ops.push_back(Write);
+        Entry.Ops.push_back(Read);
+        Entry.Ops.push_back(Return);
+        Function.Blocks.push_back(std::move(Entry));
       }
-    } else if (Mode == 4) {
-      Entry.Ops.push_back(Operation(NdOp::RETURN, {}, {Address}));
-      Function.Blocks.push_back(std::move(Entry));
-    } else {
-      Entry.Ops.push_back(Write);
-      Entry.Ops.push_back(Read);
-      Entry.Ops.push_back(Return);
-      Function.Blocks.push_back(std::move(Entry));
+      markSourceStackAccesses(Function, Arch::X64, BinaryFormat::COFF);
+      EXPECT_EQ(Function.Blocks.front().Ops[3].PrologueSave,
+                Mode == 0 || Mode == 5);
     }
-    markSourceStackAccesses(Function, Arch::X64, BinaryFormat::COFF);
-    EXPECT_EQ(Function.Blocks.front().Ops[3].PrologueSave,
-              Mode == 0 || Mode == 5);
+}
+
+class OverwrittenCallClobberSpills : public testing::TestWithParam<unsigned> {};
+
+INSTANTIATE_TEST_SUITE_P(SourceStackSpills, OverwrittenCallClobberSpills,
+                         testing::Values(0u, 1u, 2u));
+
+TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
+  const unsigned Variant = GetParam();
+#if !defined(__x86_64__) && !defined(_M_X64)
+  if (Variant)
+    GTEST_SKIP() << "Native x64 flags-transfer execution requires an x64 host";
+#endif
+  for (BinaryFormat Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+    // An opaque call leaves R11 unavailable to an ordinary source function.
+    // Its scratch spill is fully overwritten before the body reads the slot.
+    const auto Call = throughSlot(Text + 4, slot(0));
+    std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
+    Code.insert(Code.end(), Call.begin(), Call.end());
+    const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
+    Code.insert(Code.end(), Save.begin(), Save.end());
+    if (Variant)
+      Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
+    if (Variant == 2)
+      Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
+    const std::vector<uint8_t> Body = {
+        0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
+        0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
+        0x48, 0x83, 0xC4, 0x28, 0xC3};
+    Code.insert(Code.end(), Body.begin(), Body.end());
+    auto Image = makeImage(Code, {{Text, "reused_scratch"}}, {"rand"});
+    Image.Format = Format;
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(testing::Message() << unsigned(Format) << ':' << Variant
+                                        << ':' << LLVM << ':' << NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        if (Variant) {
+          EXPECT_NE(Source.find("__readeflags"), std::string::npos) << Source;
+          EXPECT_NE(Source.find("__writeeflags"), std::string::npos) << Source;
+        }
+        if (Source.find("__builtin_trap") != std::string::npos)
+          continue;
+        // Execute the same recovered IR with the host intrinsic header.
+        // COFF emission above keeps the Windows spelling; selecting ELF
+        // here supplies x86intrin.h for the native Linux compiler.
+        std::string Native;
+        llvm::raw_string_ostream NativeOutput(Native);
+        COptions.Format = BinaryFormat::ELF;
+        if (LLVM)
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, NativeOutput, COptions));
+        else
+          ASSERT_TRUE(
+              HighCEmitter().emit(Result.HighFuncs, NativeOutput, COptions));
+        const std::string Provider = R"(
+#include <stdlib.h>
+static unsigned calls;
+static int spill_provider(void) { ++calls; return 13; }
+#define rand spill_provider
+)";
+        const std::string Oracle = R"(
+int main(void) { return reused_scratch() != 19 || calls != 1; }
+)";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Provider + Native + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
   }
 }
 
@@ -1483,6 +1942,101 @@ TEST(CallExitRegisters, AbsorbingImmediateMasksDoNotReadEntryRegisters) {
   }
 }
 
+TEST(CallExitRegisters, PartialRegisterReadsObserveOnlySelectedBits) {
+  for (bool LLVM : {false, true})
+    for (unsigned Bytes : {1u, 2u, 4u})
+      for (unsigned Offset : {0u, 1u, 3u})
+        for (bool ObserveUpper : {false, true}) {
+          const uint64_t Mask = (uint64_t{1} << (Bytes * 8)) - 1;
+          const unsigned ReadOffset = ObserveUpper ? 7 : Offset;
+          SCOPED_TRACE(Bytes);
+          SCOPED_TRACE(Offset);
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(ObserveUpper);
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          if (LLVM) {
+            llvm::LLVMContext Context;
+            llvm::Module Module("partial-register-read", Context);
+            Module.setDataLayout("e-p:64:64");
+            auto *Byte = llvm::Type::getIntNTy(Context, Bytes * 8);
+            auto *Word = llvm::Type::getInt64Ty(Context);
+            auto *Function = llvm::Function::Create(
+                llvm::FunctionType::get(Byte, {Byte}, false),
+                llvm::GlobalValue::ExternalLinkage, "read_partial", Module);
+            llvm::IRBuilder<> Builder(
+                llvm::BasicBlock::Create(Context, "entry", Function));
+            auto *Unknown = llvm_source_unknown::create(Builder, Word);
+            auto *Upper = Builder.CreateAnd(
+                Unknown, Builder.getInt64(~(Mask << (Offset * 8))));
+            auto *Packed = Builder.CreateOr(
+                Upper,
+                Builder.CreateShl(Builder.CreateZExt(Function->getArg(0), Word),
+                                  Offset * 8));
+            if (ReadOffset)
+              Packed = Builder.CreateLShr(Packed, ReadOffset * 8);
+            Builder.CreateRet(Builder.CreateTrunc(Packed, Byte));
+            ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+            ASSERT_TRUE(LLVMCEmitter().emit(Module, Output));
+          } else {
+            HighFunc Function;
+            Function.Name = "read_partial";
+            Function.ReturnType = NdType::makeInt(Bytes, false);
+            Function.Params.push_back({"arg0", Function.ReturnType});
+            MedVar Parameter;
+            Parameter.Kind = MedVar::Param;
+            Parameter.Id = 0;
+            Parameter.Size = Bytes;
+            Parameter.TheArch = Arch::X64;
+            auto Lower = HighExpr::makeUnary(
+                NdOp::INT_ZEXT,
+                HighExpr::makeVar(Parameter, Function.ReturnType));
+            Lower->Type = NdType::makeInt(8, false);
+            Lower = HighExpr::makeBinop(NdOp::INT_LEFT, Lower,
+                                        HighExpr::makeConst(Offset * 8, 8));
+            auto Upper = HighExpr::makeBinop(
+                NdOp::INT_AND, HighExpr::makeUndef(8),
+                HighExpr::makeConst(~(Mask << (Offset * 8)), 8));
+            auto Packed = HighExpr::makeBinop(NdOp::INT_OR, Upper, Lower);
+            auto Read = HighExpr::makeBinop(NdOp::SUBBYTES, Packed,
+                                            HighExpr::makeConst(ReadOffset, 4));
+            Read->Type = Function.ReturnType;
+            HighStmt Return;
+            Return.Kind = StmtKind::Return;
+            Return.RetVal = Read;
+            Function.Body.push_back(Return);
+            ASSERT_TRUE(HighCEmitter().emit({Function}, Output));
+          }
+          const std::string Guard = R"(
+static unsigned unavailable_count;
+static void observe_unavailable(void) { ++unavailable_count; }
+#define __builtin_trap() observe_unavailable()
+)";
+          const std::string Oracle = ObserveUpper ? R"(
+int main(void) {
+  read_partial(0xa5);
+  return unavailable_count != 1;
+}
+)"
+                                                  : R"(
+int main(void) {
+  const uint64_t mask = (UINT64_C(1) << (sizeof(read_partial(0)) * 8)) - 1;
+  uint64_t seed = 1;
+  for (unsigned i = 0; i < 1024; ++i) {
+    seed = seed * UINT64_C(6364136223846793005) + 1;
+    const uint64_t value = i < 256 ? i : (seed & mask);
+    if (read_partial(value) != value || unavailable_count != 0) return 1;
+  }
+  return 0;
+}
+)";
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Guard + Source + Oracle,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+}
+
 TEST(CallExitRegisters, BitScanLoopsDeferClobberedDestinationReads) {
   for (bool Forward : {false, true})
     for (bool Initialized : {false, true})
@@ -1899,12 +2453,24 @@ TEST(Win64CallContract, CpuidScratchExchangeAddsNoPhantomParameters) {
     for (auto &Block : *Caller)
       for (auto &Instruction : Block)
         if (auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
-            Call && (!Call->getCalledFunction() ||
-                     !Call->getCalledFunction()->isIntrinsic())) {
+            Call && !llvm_source_unknown::isValue(Call) &&
+            (!Call->getCalledFunction() ||
+             !Call->getCalledFunction()->isIntrinsic())) {
           ++Calls;
           EXPECT_EQ(Call->arg_size(), 0u);
         }
     EXPECT_EQ(Calls, 1u);
+    // Unoptimized IR may keep unobserved entry-state transport. Neither the
+    // wrapper nor its CPUID helper may turn that transport into a source read.
+    std::string LLVMSource;
+    llvm::raw_string_ostream Output(LLVMSource);
+    CEmitterOptions COptions;
+    COptions.TheArch = Img.Arch;
+    COptions.Format = Img.Format;
+    COptions.Image = &Img;
+    ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+    EXPECT_EQ(LLVMSource.find("unknown machine state"), std::string::npos)
+        << LLVMSource;
   }
 }
 

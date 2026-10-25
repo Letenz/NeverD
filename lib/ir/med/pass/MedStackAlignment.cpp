@@ -348,10 +348,15 @@ private:
               Op.Opcode == NdOp::INT_ADD && Op.Inputs[0].isConst() ? 1 : 0;
           const MedVar &Base = Op.Inputs[BaseIndex];
           const MedVar &Delta = Op.Inputs[1 - BaseIndex];
-          if (Delta.Size == TRI.PointerSize) {
-            auto Signed = safety::detail::signedStackConstant(Delta);
+          auto Signed = safety::detail::signedStackConstant(Delta);
+          // ARM64 immediates can retain their encoded 32-bit carrier in a
+          // pointer-width ADD/SUB. A nonnegative narrow constant has the same
+          // value under either extension. Do not guess the extension of a
+          // negative narrow carrier or admit a wider/truncated displacement.
+          if (Signed && (Delta.Size == TRI.PointerSize ||
+                         (Delta.Size < TRI.PointerSize && *Signed >= 0))) {
             auto BaseOffset = resolve(Base, Depth + 1);
-            if (Signed && BaseOffset)
+            if (BaseOffset)
               Result = safety::detail::checkedStackOffset(
                   *BaseOffset, *Signed, Op.Opcode == NdOp::INT_SUB);
           }

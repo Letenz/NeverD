@@ -2,7 +2,56 @@
 
 [← Documentation Index](README.md)
 
+The source projection regressions include
+`NeverDOwnInteriorCallTests` (checked replaced-PC tails and closed recursive
+groups), `NeverDExecutableCodeOwnerTests` (COFF content flags independently of
+page permissions), `NeverDMedPrologueSavesTests` (observed versus dead restore
+joins), and `NeverDSessionFunctionDiscoveryTests` (completed discovery,
+refuted guesses and explicit user identities). Replaced-PC and recursive
+fixtures execute both C routes at O0/O2 with independent callbacks or return
+values; malformed return-slot and arbitrary-write controls remain refused.
+
+`NeverDLLVMCValueTests` executes byte-shuffle and SHA-256 projections against
+independent scalar oracles and compiles mixed SHA/SGX/AMX feature selection.
+The latter does not execute privileged or tile-state instructions.
+`NeverDWin64CallContractTests` checks unknown-entry seeds, call-exit value
+transport and original-image byte-storage identity. The image test preserves
+mutable pointer slots and overlapping fields across COFF/ELF/Mach-O; native
+and relocatable output retain their stricter address rules.
+`Win64CallContract.MissingInteriorStackSlotCannotDiscardLaterArguments`
+checks whole-module and selected-function recovery through both C routes.
+Missing fixed stack positions remain unavailable while later arguments survive;
+the defined-input variant executes against an independent sum at O0/O2 with
+UBSan. Run the System V and other call-contract owners after changing the
+shared omitted-callee signature policy.
+`NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
+with original-image source mode both enabled and disabled.
+
+`NeverDCOFFExceptionIRTests` executes split protected-range loops with every
+test exception mask at O0/O2, checks unprotected operations remain outside the
+range, and rejects conflicting or nested scope states. The portable harness
+tests the emitted source control flow, not native Windows unwinding.
+`NeverDMedEntryFrameTests` checks that independent unknown SEH frames retain
+their source diagnostics and still fail native emission. The SDK LLVM suite
+checks recovery after emission exceptions and preservation of that source-only
+limitation through module preparation.
+
 # Testing NeverD
+
+`NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
+port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
+Independent recorder functions check 1,584 operand cases per program through
+the native-builtin and MSVC selections at O0/O2. Clang and available GCC run
+i386 and x64 observers; `NEVERD_TEST_NEVERC` adds the x64 NeverC observers.
+These checks execute ordinary C operand transport, not privileged port I/O.
+`NEVERD_PORT_SOURCE_EXPORT_DIR` preserves the four complete observer sources.
+
+`NeverDPipelineOutcomeTests` checks LLVM intrinsic refusal on x86, x64, ARM
+and AArch64. Both void and value-producing unknown IDs must fail direct
+emission and all 64 combinations of architecture, serial/sharded emission,
+optimization and source projection. Neither a module nor source observations
+may escape a failed pipeline run. Reusing an emitter after refusal must still
+produce verified LLVM for a valid function and reset the diagnostic count.
 
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
@@ -1539,6 +1588,9 @@ number boundaries, BOMs, depth and error precedence; nested/concurrent queues,
 thread limits, original exceptions and large stacks. The full build additionally
 runs `NeverDStringScanTests`, `NeverDTextEncodingTests`, pipeline, SDK and worker
 owners. Compare complete string metadata and output, not only throughput.
+`NeverDTextEncodingTests` also requires in-place normalization to retain valid
+string storage, including embedded NUL and Unicode noncharacters, while keeping
+the same malformed-byte escapes with SIMD validation enabled or disabled.
 Native pipeline CI repeats the complete selected owners and actual SDK/worker
 checks with both the default oneTBB backend and the explicit native-thread baseline.
 It also runs the pinned Capstone fork's x86 unit inventory, including guard-page
@@ -5100,6 +5152,14 @@ automatic load retains the previous successful database and statistics.
 public C SDK, including header JSON counts and their manual-load reset.
 See [signature selection](signature-selection.md) for the evidence boundaries.
 
+`SignatureMatcherCRCReuse.*` additionally bounds repeated-checksum work while
+checking indexed/value/packed matching, all CRC lengths, tail disagreements,
+truncation, changed buffers and parallel equivalence. The Release
+`neverd-signature-bench` tool separates pattern reading/parsing, index building
+and repeated scans, with reproducible hashes and optional work counters.
+See [signature quality and performance](signature-quality.md) for the
+measurement contract, negative workloads and final-name truth checks.
+
 The feature repository retains the original compiler objects, truth, source
 profiles and digests. `NeverDLibraryRecognitionTests` consumes those archives
 and checks all 59 rules in the five supported libc++/MSVC STL/ATL/musl profiles.
@@ -6474,7 +6534,13 @@ before source emission.
 `NeverDMedPrologueSavesTests` runs the same save, restore, overlapping-store,
 return-address and process-entry cases through separate and combined source
 annotations. It also checks a function that has both a saved register and a
-return-address read. Run it with `NeverDMedStackAlignmentTests`,
+return-address read. Scratch-spill cases cover post-entry registers,
+temporaries and unavailable values across x86, x64, ARM and AArch64 with
+COFF/ELF/Mach-O frame models. Explicit x86 flags transfers keep their effects
+without observing unrelated lifted-frame bytes. Malformed transfers, exceptional
+edges, observed restores, ABI-preserved/result registers and later implicit call
+readers retain the spill. A restored scratch register must be killed before a
+later call, including across a straight continuation. Run it with `NeverDMedStackAlignmentTests`,
 `NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
 `NeverDPipelineOutcomeTests` after changing source stack-access analysis.
 `PipelineSourceStackAccesses` checks source, LLVM source projection, machine
@@ -8920,6 +8986,13 @@ values, escaping pointers, volatile reads, atomic/volatile stores and source
 observations. The narrow O1 entry re-lift also catches an unused ECX PHI that
 previously became an uninitialized native frame read on catch return. The
 source-frame initialization validator must still reject that old generated code.
+The same target checks redundant entry seeds in raw native/source LLVM before
+optimization. A cross-block definition chain must have one store per temporary;
+promotion preserves its independently computed result. Bypassed definitions,
+first loop iterations, reads before writes, later seeds, escapes, ordering and
+source metadata must retain observable initial values. Run the Win64 call
+contract, multi-root entry-frame, PHI, value and exception suites with this
+target when changing the emitter's seed cleanup.
 `RegistrationFrameStores` and `RegistrationFrameTaint` test bounded LLVM spill
 proofs, joins, backedges, partial writes and exhausted budgets. Loader tests keep
 independent SafeSEH/code references and real function boundaries while excluding
@@ -12444,6 +12517,18 @@ of incoming-register home slots through both routes. The companion
 `EntrySpillProofKeepsObservedBytesAndEscapes` retains partial observations,
 reads or calls before overwrite, returned frame addresses and branches where
 only one arm overwrites the saved bytes.
+`OverwrittenCallClobberSpills.*` checks post-call scratch stores,
+with and without flags transfers and unused restores. Both source routes keep
+the call and flags effects while discarding overwritten values. COFF, ELF and
+Mach-O image models exercise optimized/unoptimized source; host-header emission
+of the same recovered IR executes at O0/O2 with UBSan and an independent call
+counter. Flags execution cases explicitly skip on non-x64 hosts. This does not
+qualify native Windows or Darwin execution. All scratch
+proofs share the existing per-function work budget; opaque calls, unknown memory
+accesses, partial overwrites and escaping addresses remain barriers.
+`MedPrologueSaves.OutOfFrameExtentsAreNotPrivateStorage` checks both source
+entry points at signed offset limits and across the private frame and return
+slot boundaries. Extents must fit before either proof computes an end offset.
 
 The threaded arm64e loader validates unique segment ownership and rejects roots
 at or after `__LINKEDIT`. Mixed weak-bind, lazy-bind or classic rebase streams
@@ -12503,3 +12588,31 @@ completions; fault-only observations do not qualify successful enclave/SMX
 execution. New-SDK IR must use the native state intrinsics, while the pinned
 older SDK exercises the owned assembly path. Keep LLVM builds separate from
 NeverD native-profile tests so linked compiler tools do not change mid-run.
+
+`NeverDMedStackAlignmentTests` checks pointer-width stack arithmetic with
+nonnegative narrow constants on all four scalar architectures. Negative narrow
+constants, address occurrences and wider operands remain unproved.
+`NeverDAAPCS64CallContractTests` retains narrow stack values across real frames.
+The corpus SEH source checks execute both normal and exception paths at O0/O2
+with UBSan and separately compile the emitted Windows protected scopes.
+
+### X86 assembly flag effects
+
+`NeverDX86AsmFlagsTests` keeps an ordinary comparison live across VERR, VERW,
+LAR and LSL, in register and memory forms. It executes production objects and
+O0/O2 compilations of exported IR and LLVM-to-C output on Linux x64 and
+freestanding i386. The production objects use the normal Codegen profile,
+with the independent driver compiled at both levels;
+`NEVERD_TEST_NEVERC` adds NeverC compilation of the x64 source. Null selectors
+provide a nonprivileged, independent ZF oracle. The suite also compiles owned
+SGX, VMX, descriptor and system assembly across ELF, COFF and Mach-O, without
+executing privileged instructions.
+
+Set `NEVERD_ASM_FLAGS_EXPORT_DIR` to retain the execution probes and the owned
+assembly inventories. Run `llc -O2 -stop-after=finalize-isel` on each exported
+`.ll` file: every `INLINEASM` in these flag-writing fixtures must declare an
+`implicit-def early-clobber $eflags`. Run the complete
+`NeverDX86VirtualizationSourceTests`, `NeverDLLVMCValueTests` and
+`NeverDLLVMCIntrinsicSemanticTests` owners when changing these shared assembly
+contracts. Export/machine-effect checks do not establish successful privileged
+execution or a full guest exception-state contract.

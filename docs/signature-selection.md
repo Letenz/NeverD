@@ -38,6 +38,10 @@ classification describes build targets; it does not prove the current CPU
 privilege level or authorize execution. `user`/`kernel` cover the intended
 ring 3/ring 0 distinction on x86 without applying ring terminology to ARM.
 
+Selection is one part of the [signature quality and performance
+contract](signature-quality.md). New packs need measured net coverage,
+final-name accuracy and runtime/memory comparisons, not just more records.
+
 WDK and Windows SDK packs contain both platform-specific code and common
 helpers. WDK also contains user-mode libraries. Their aggregate files have
 no kernel/user exclusion. Common MSVC, Intel math, Watcom and libgcc helpers

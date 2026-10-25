@@ -16,6 +16,7 @@
 #include "X86BoundedLeaf.h"
 #include "X86RepState.h"
 
+#include "neverd/backend/llvm/X86/LLVMX86SHA.h"
 #include "neverd/backend/llvm/X86/X86SgxNative.h"
 
 #include "llvm/IR/Function.h"
@@ -37,8 +38,9 @@ std::string featureNames(const std::set<std::string> &Features) {
   return Text;
 }
 std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
-                     bool Compare, bool Bounded, bool BoundedEnclu) {
-  if (Amx.empty() && !Sgx && !Rep && !Bounded)
+                     bool Compare, bool Bounded, bool BoundedEnclu,
+                     const std::set<std::string> &Required = {}) {
+  if (Amx.empty() && !Sgx && !Rep && !Bounded && Required.empty())
     return {};
   std::string Text;
   if (!Amx.empty())
@@ -83,13 +85,18 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
             "#define NEVERD_X86_REP(native, ...) __VA_ARGS__\n"
             "#endif\n#endif\n";
   const auto AmxNames = featureNames(Amx);
-  const auto Attribute = [Compare](const std::string &Names) {
-    const auto All =
-        Names + (Compare ? (Names.empty() ? "sahf" : ",sahf") : "");
-    return "__attribute__((target(\"" + All + "\")))\n";
+  const auto Attribute = [&](const std::string &Names) {
+    auto All = featureNames(Required);
+    if (!Names.empty())
+      All += (All.empty() ? "" : ",") + Names;
+    if (Compare)
+      All += All.empty() ? "sahf" : ",sahf";
+    return All.empty() ? std::string()
+                       : "__attribute__((target(\"" + All + "\")))\n";
   };
-  const auto End =
-      Compare ? "#else\n" + Attribute("") + "#endif\n" : "#endif\n";
+  const auto End = Compare || !Required.empty()
+                       ? "#else\n" + Attribute("") + "#endif\n"
+                       : "#endif\n";
   std::string SgxCondition;
   if (Sgx)
     SgxCondition = "defined(NEVERD_X86_NATIVE_SGX)";
@@ -105,7 +112,7 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
     Text += "#if defined(NEVERD_X86_NATIVE_AMX)\n" + Attribute(AmxNames) + End;
   else if (!SgxCondition.empty())
     Text += "#if " + SgxCondition + "\n" + Attribute("sgx") + End;
-  else if (Compare)
+  else if (Compare || !Required.empty())
     Text += Attribute("");
   return Text;
 }
@@ -137,11 +144,14 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
 std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
+  std::set<std::string> Required;
   for (const auto &Block : Function)
     for (const auto &Instruction : Block) {
       const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction);
       if (!Call)
         continue;
+      if (llvmX86SHA256CName(*Call))
+        Required.insert("sha");
       const auto *Result = llvm::dyn_cast<llvm::StructType>(Call->getType());
       const Arch RepArch = Result && Result->getNumElements() &&
                                    Result->getElementType(0)->isIntegerTy(64)
@@ -166,6 +176,6 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
       }
     }
   return preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
-                  BoundedEnclu);
+                  BoundedEnclu, Required);
 }
 } // namespace neverd

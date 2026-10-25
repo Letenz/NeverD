@@ -35,6 +35,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -1127,8 +1128,10 @@ struct BinaryImage {
 
   /// Classify one mapped address using the finest format-native provenance.
   /// An exact format-native section takes precedence over coarse segment
-  /// permissions. Mach-O uses instruction attributes; ELF/COFF use the
-  /// section's executable flag. This matters when linkers place non-code data
+  /// permissions. Mach-O uses instruction attributes; ELF uses the section's
+  /// executable flag. COFF also declares instruction storage with CNT_CODE,
+  /// independently of runtime page permissions (for example INITDATA).
+  /// This matters when linkers place non-code data
   /// in the same RX mapping as `.text`. A header or alignment gap is not code
   /// when section metadata exists; section-less images retain the historical
   /// segment fallback.
@@ -1143,6 +1146,9 @@ struct BinaryImage {
       if (isMachO())
         return (Sec->Type & (llvm::MachO::S_ATTR_PURE_INSTRUCTIONS |
                              llvm::MachO::S_ATTR_SOME_INSTRUCTIONS)) != 0;
+      if (Format == BinaryFormat::COFF &&
+          (Sec->Type & llvm::COFF::IMAGE_SCN_CNT_CODE))
+        return true;
       return Sec->isExecutable();
     }
     if (segmentHasReadableSectionMetadata(*Seg))
@@ -1986,10 +1992,13 @@ struct BinaryImage {
       return false;
     const va_t Last = Start + Size - 1;
     const Segment *Seg = getSegmentFor(Start);
-    if (!Seg || !Seg->isExecutable() || getSegmentFor(Last) != Seg)
+    if (!Seg || getSegmentFor(Last) != Seg)
       return false;
-    if (isCodeRange(Start, Size))
+    if ((Seg->isExecutable() || Format == BinaryFormat::COFF) &&
+        isCodeRange(Start, Size))
       return true;
+    if (!Seg->isExecutable())
+      return false;
     for (const auto &[RangeStart, RangeEnd] : ImportStubRanges)
       if (Start >= RangeStart && Last < RangeEnd)
         return true;

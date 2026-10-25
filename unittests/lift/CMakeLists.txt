@@ -187,6 +187,9 @@ add_neverd_unittest(NeverDNativeConstantStoresTests
 add_neverd_unittest(NeverDMedEntryFrameTests
   core/MedSSAMultiRootTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
+add_neverd_unittest(NeverDExecutableCodeOwnerTests
+  core/ExecutableCodeOwnerIndexTests.cpp
+  LINK_COMPONENTS Pipeline)
 target_include_directories(NeverDMedEntryFrameTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
@@ -688,6 +691,14 @@ target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
 add_neverd_unittest(NeverDX86BoundedLeafTests
   x86/X86BoundedLeafTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86AsmFlagsTests
+  x86/X86AsmFlagsTests.cpp
+  LINK_COMPONENTS BackendC CodeGen)
+
+add_neverd_unittest(NeverDX86PortSourceTests
+  x86/X86PortSourceTests.cpp
+  LINK_COMPONENTS BackendC)
 
 add_neverd_unittest(NeverDX86RepStateTests
   x86_64/X86RepStateTests.cpp
@@ -1810,6 +1821,34 @@ target_include_directories(NeverDWindowsEHMetadataEncoderTests PRIVATE
 if(TARGET neverd)
   add_dependencies(NeverDLiftTests neverd)
 endif()
+
+# Keep C pointer and integer projection regressions independently runnable.
+add_neverd_unittest(NeverDCPointerProjectionTests
+  core/HighCPointerAddressTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+target_include_directories(NeverDCPointerProjectionTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(NeverDCPointerProjectionTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}"
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+add_dependencies(NeverDCPointerProjectionTests neverd)
+
+# Keep SEH continuation and handler projection regressions independently runnable.
+add_neverd_unittest(NeverDCOFFExceptionIRTests
+  eh/COFFExceptionIRTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+target_include_directories(NeverDCOFFExceptionIRTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(NeverDCOFFExceptionIRTests PRIVATE
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}"
+)
 
 # Pins the format-neutral distinction between an explicitly returned semantic
 # value producer and an incidental call result left in the native return
