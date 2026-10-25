@@ -105,31 +105,45 @@ int run() {
       if (!std::getline(std::cin, Command) || Command != "run")
         return fail("expected run on stdin before each sample");
     }
-    std::vector<MedFunc> Converted;
-    Converted.reserve(Prepared.LowFuncs.size());
-    llvm::sys::TimePoint<> Ignored;
-    std::chrono::nanoseconds UserBefore, SystemBefore, UserAfter, SystemAfter;
-    llvm::sys::Process::GetTimeUsage(Ignored, UserBefore, SystemBefore);
-    const auto Start = std::chrono::steady_clock::now();
-    for (const auto &Low : Prepared.LowFuncs) {
-      LowToMedConverter Converter;
-      Converter.setBinaryImage(&*Image);
-      Converted.push_back(
-          Converter.convert(Low, Image->Arch, Image->abiFormat()));
-    }
-    const auto End = std::chrono::steady_clock::now();
-    llvm::sys::Process::GetTimeUsage(Ignored, UserAfter, SystemAfter);
+    llvm::json::Object Sample;
+    {
+      std::vector<MedFunc> Converted;
+      Converted.reserve(Prepared.LowFuncs.size());
+      llvm::sys::TimePoint<> Ignored;
+      std::chrono::nanoseconds UserBefore, SystemBefore, UserAfter, SystemAfter;
+      llvm::sys::Process::GetTimeUsage(Ignored, UserBefore, SystemBefore);
+      const auto Start = std::chrono::steady_clock::now();
+      for (const auto &Low : Prepared.LowFuncs) {
+        LowToMedConverter Converter;
+        Converter.setBinaryImage(&*Image);
+        Converted.push_back(
+            Converter.convert(Low, Image->Arch, Image->abiFormat()));
+      }
+      const auto End = std::chrono::steady_clock::now();
+      llvm::sys::Process::GetTimeUsage(Ignored, UserAfter, SystemAfter);
 
-    for (const auto &Func : Converted)
-      if (Func.SkippedSSA || !verifyMedFunc(Func, "med-bench"))
-        return fail("conversion skipped SSA or produced invalid MedIR");
-    std::string Dump;
-    llvm::raw_string_ostream OS(Dump);
-    Pipeline::dumpMedIR(Converted, OS);
-    const auto Digest = llvm::toHex(
-        llvm::SHA256::hash(llvm::arrayRefFromStringRef(Dump)), true);
+      for (const auto &Func : Converted)
+        if (Func.SkippedSSA || !verifyMedFunc(Func, "med-bench"))
+          return fail("conversion skipped SSA or produced invalid MedIR");
+      std::string Dump;
+      llvm::raw_string_ostream OS(Dump);
+      Pipeline::dumpMedIR(Converted, OS);
+      const auto Digest = llvm::toHex(
+          llvm::SHA256::hash(llvm::arrayRefFromStringRef(Dump)), true);
+      if (Warmup)
+        ExpectedDigest = Digest;
+      else if (Digest != ExpectedDigest)
+        return fail("MedIR dump changed between repetitions");
+      Sample = llvm::json::Object{
+          {"wall_ms",
+           std::chrono::duration<double, std::milli>(End - Start).count()},
+          {"cpu_ms", std::chrono::duration<double, std::milli>(
+                         UserAfter + SystemAfter - UserBefore - SystemBefore)
+                         .count()}};
+    }
+    // Release the conversion and dump before notifying an interleaving driver,
+    // so their cleanup cannot compete with the other process's next sample.
     if (Warmup) {
-      ExpectedDigest = Digest;
       Result["med_dump_sha256"] = ExpectedDigest;
       if (Interleave) {
         auto Ready = Result;
@@ -139,18 +153,10 @@ int run() {
       Warmup = false;
       continue;
     }
-    if (Digest != ExpectedDigest)
-      return fail("MedIR dump changed between repetitions");
-    llvm::json::Object Sample{
-        {"wall_ms",
-         std::chrono::duration<double, std::milli>(End - Start).count()},
-        {"cpu_ms", std::chrono::duration<double, std::milli>(
-                       UserAfter + SystemAfter - UserBefore - SystemBefore)
-                       .count()}};
-    if (Interleave)
-      writeRow(Sample);
-    Samples.push_back(std::move(Sample));
+    Samples.push_back(llvm::json::Object(Sample));
     --Remaining;
+    if (Interleave)
+      writeRow(std::move(Sample));
   }
   Result["samples"] = std::move(Samples);
   writeRow(std::move(Result));

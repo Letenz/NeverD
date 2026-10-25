@@ -21,11 +21,15 @@ fail the run. The dump hash is an output parity check, not a semantic oracle.
 For interleaved comparisons without repeating image preparation, pass
 `--interleave`. The tool writes a JSON line with `ready: true` after warmup,
 then waits for `run` followed by a newline on stdin before each sample. It
-verifies the result and writes that sample as a JSON line before waiting again.
+verifies the result and releases the conversion and dump before writing that
+sample as a JSON line and waiting again.
 After the requested repetitions it writes the same aggregate JSON as normal
 mode and exits. EOF or any other command before the last sample fails the run.
 A driver can keep baseline and candidate processes ready and alternate batches;
 stdin waits and JSON output remain outside the measured intervals.
+After a process's last sample, drain its aggregate result and wait for it to
+exit before starting the other process's next batch, so final image teardown
+does not overlap that batch.
 
 This exercises standalone conversion with the loaded image's layout and ABI.
 It does not install pipeline-owned interprocedural summaries or source hints,
