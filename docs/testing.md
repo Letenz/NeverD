@@ -5655,6 +5655,16 @@ handler and landing-pad cases retain the exception-boundary coverage.
 
 `HighCIntegerConversion.*` in `NeverDHighControlFlowTests` checks the integer conversions the HighC writer leaves to C. A conversion inside an operand that keeps the bytes an outer conversion keeps prints no cast of its own; an assignment to a declared integer local and a return convert implicitly, and a literal is spelled as the value it converts to, while a pointer keeps its explicit conversion. Stores convert like assignments, and a zero-extended argument to a typed wider parameter keeps its extension. A callee whose debug symbol has no type, or that nothing declares while the code reads more than an int of its result, returns its whole register, so a 64-bit pointer keeps its upper half. Each case runs at `-O0` and `-O2` with undefined-behavior traps against reference arithmetic.
 
+`HighCIntegerConversion.NarrowCopyKeepsLowBytesThroughSourceProjection` starts
+from MedIR and checks narrowing copies followed by zero extension for i386,
+x86-64 and AArch64. The emitted C executes at O0/O2 with undefined-behavior
+traps, comparing byte/word/dword results against independently narrowed inputs.
+`NeverDX86CompressExpandSourceTests` additionally exports actual `KMOVW` and
+compact-memory instruction pipelines. The oracle in
+`scripts/verify_x86_compact_memory.py` compiles their C with Clang and NeverC,
+records native-call operand and return transport, and verifies the word-mask
+boundary. Physical AVX-512 execution is a separate, unqualified capability.
+
 Source projection also revalidates variadic object lists after this cleanup: empty instruction anchors are accepted, while hidden effects or control transfers are rejected. Synchronized cleanup accepts a single `int64_t` or `uint64_t` view of the same saved receiver; narrowing, floating conversions, address arithmetic and reassignment remain rejected. Foundation object sets and normal/exceptional unlock traces run at both `-O0` and `-O2`.
 
 ```sh

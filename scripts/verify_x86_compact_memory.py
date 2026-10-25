@@ -45,8 +45,11 @@ def decode(code, mode):
             at += 1
         if at + 6 <= len(code) and code[at] == 0x62:
             p0, p1, p2, op, modrm = code[at + 1:at + 6]
-            if (p0 & 7) == 2 and (p1 & 3) == 1 and op in (0x62, 0x63, 0x88, 0x89, 0x8a, 0x8b):
-                assert modrm >> 6 != 3, (start, 'register form replaced native memory')
+            # Register forms can appear independently when the compiler assembles
+            # the returned wide value. Count only memory forms; audit() still
+            # requires the exact native-memory instruction and repetition count.
+            if ((p0 & 7) == 2 and (p1 & 3) == 1 and modrm >> 6 != 3
+                    and op in (0x62, 0x63, 0x88, 0x89, 0x8a, 0x8b)):
                 base = (modrm & 7) | ((~p0 & 0x20) >> 2)
                 assert (modrm >> 6, base) == (0, 3), (start, 'DS-default base changed')
                 assert (p1 & 0x78) == 0x78 and (p2 & 0x18) == 8
@@ -80,7 +83,10 @@ def audit(path, matrix, bits=64, pipeline=False):
     for i, (start, name) in enumerate(symbols):
         end = symbols[i + 1][0] if i + 1 < len(symbols) else len(code)
         index = 0 if pipeline else int(name.removeprefix('compact_'))
-        decoded = decode(code[start:end], capstone.CS_MODE_64 if bits == 64 else capstone.CS_MODE_32)
+        try:
+            decoded = decode(code[start:end], capstone.CS_MODE_64 if bits == 64 else capstone.CS_MODE_32)
+        except AssertionError as error:
+            raise AssertionError((path, name, error.args)) from error
         assert decoded == [matrix[index]] * (1 if pipeline else 2), (path, name, decoded, matrix[index])
     return {'file': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
             'functions': len(symbols), 'native_instructions': len(symbols) * (1 if pipeline else 2)}
