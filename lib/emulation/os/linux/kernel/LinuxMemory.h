@@ -11,6 +11,8 @@
 
 #include "neverd/emulation/AddressSpace.h"
 
+#include <string>
+
 namespace neverd::emulation::linux_model {
 /// Own Linux placement and program-break policy for one stopped process.
 /// AddressSpace remains the only mapping/permission authority. These services
@@ -24,9 +26,11 @@ public:
          ProcessResult &Result);
   struct ProcMapping : LinuxProcMapping {
     unsigned Permissions = 0;
+    uint64_t AnonymousName = 0;
   };
   llvm::Error initializeProc();
   llvm::Expected<std::vector<ProcMapping>> procMappings() const;
+  llvm::Expected<std::string> procAnonymousName(uint64_t Address) const;
   /// KSM eligibility only; the deterministic profile has no background scanner.
   bool isMergeable(uint64_t Address) const;
   llvm::Expected<std::optional<uint64_t>>
@@ -50,6 +54,17 @@ private:
   const ProcessOptions &Options;
   std::vector<LinuxProcMapping> ProcMappings;
   void retireProcMappings(uint64_t Address, uint64_t Size);
+  // Sorted disjoint metadata intervals. Pointer identity controls merging;
+  // no name bytes or RAM owners survive the calling service here.
+  struct AnonymousVMAName {
+    uint64_t Begin, End, Name;
+  };
+  std::vector<AnonymousVMAName> AnonymousVMANames;
+  std::vector<AnonymousVMAName> keptAnonymousVMANames(uint64_t Address,
+                                                      uint64_t Size) const;
+  void retireAnonymousVMANames(uint64_t Address, uint64_t Size);
+  llvm::Expected<std::optional<uint64_t>>
+  prctl(const ProcessServiceEvent &Event, ProcessResult &Result);
   const uint64_t PageSize, UserLimit, Limit, MinimumBreak, GuardBase, GuardEnd;
   uint64_t ProgramBreak;
   // Sorted, disjoint eligible intervals [begin, end). These own neither RAM

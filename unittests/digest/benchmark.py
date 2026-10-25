@@ -28,7 +28,7 @@ def main():
     control = "baseline" if args.baseline else "portable"
     paths = {"native": args.native.resolve(), control: args.control.resolve()}
     result = {
-        "scope": "one-shot SHA-256 only; not whole-request latency",
+        "scope": "first-call and warmed one-shot SHA-256; not whole-request latency",
         "host": platform.uname()._asdict(),
         "binaries": {name: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                      for name, path in paths.items()},
@@ -57,9 +57,11 @@ def main():
             for field in ("digest", "consumed"):
                 if sample["native"][field] != sample[control][field]:
                     raise ValueError(f"{field} differs between native and {control}")
+            if args.baseline and sample["native"]["hardware"] != sample[control]["hardware"]:
+                raise ValueError("baseline and native selected different implementations")
             samples.append(sample)
         summary = {}
-        for clock in ("wall_ns", "cpu_ns"):
+        for clock in ("first_wall_ns", "wall_ns", "cpu_ns"):
             times = {name: statistics.median(sample[name][clock] for sample in samples[1:])
                      for name in paths}
             summary[clock] = {**times, f"native_over_{control}":

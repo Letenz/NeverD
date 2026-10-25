@@ -6613,6 +6613,10 @@ Coverage: %7</source>
         <source>Optimized SSA with wrapping loop analysis</source>
         <translation>SSA محسّنة مع تحليل حلقات الالتفاف العددي</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>SSA محسّنة مع تحليل الحلقات ذات الحدود المحددة بالمعاملات</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6779,6 +6783,14 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
         <translation>دليل الإثبات: تصل كل دورة للعدّاد إلى مخرج مشترك، حتى بعد الالتفاف العددي.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>SSA محسّنة مع تحليل الحلقات ذات الحدود المحددة بالمعاملات</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
+        <translation>البرهان: تصل كل دورة للعدّاد إلى مخرج مشترك بالنسبة إلى معامل إدخال. قد يحدث سلوك غير معرّف قبل الخروج.</translation>
     </message>
 </context>
 <context>

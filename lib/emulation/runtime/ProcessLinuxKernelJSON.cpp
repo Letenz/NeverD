@@ -64,6 +64,11 @@ linuxKernelOptionsFromJSON(const llvm::json::Value &Value) {
         Out.XAttrQueryImport = LinuxXAttrQueryImport::NameBeforeTarget;
       else
         return invalid(field::XAttrQueryImport);
+    } else if (Key == field::AnonymousVMANames) {
+      auto Name = Entry.getAsString();
+      if (!Name || *Name != "android-user-pointer")
+        return invalid(field::AnonymousVMANames);
+      Out.AnonymousVMANames = LinuxAnonymousVMANames::AndroidUserPointer;
     } else if (Key == field::KernelTasks) {
       const auto *Tasks = Entry.getAsArray();
       if (!Tasks || Tasks->size() > linux_model::KernelTaskLimit)

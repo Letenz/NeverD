@@ -155,15 +155,22 @@ LinuxFiles::procRecords(const OpenProcFile &File, ProcessResult &Result,
       << llvm::format_hex_no_prefix(M.Offset, 8) << ' '
       << llvm::format_hex_no_prefix(Major, 2) << ':'
       << llvm::format_hex_no_prefix(Minor, 2) << ' ' << Inode << ' ';
-    if (!M.Path.empty()) {
+    if (!M.Path.empty() || M.AnonymousName) {
       if (Line.size() < 72)
         Line.resize(72, ' ');
       L << ' ';
-      for (char C : M.Path)
-        if (C == '\n')
-          L << "\\012";
-        else
-          L << C;
+      if (!M.Path.empty()) {
+        for (char C : M.Path)
+          if (C == '\n')
+            L << "\\012";
+          else
+            L << C;
+      } else {
+        auto Name = Memory->procAnonymousName(M.AnonymousName);
+        if (!Name)
+          return Name.takeError();
+        L << *Name; // Legacy anonymous names do not escape newline bytes.
+      }
     }
     L << '\n';
     Records.emplace_back(M.Address, std::move(Line));

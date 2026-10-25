@@ -282,6 +282,11 @@ void ComparisonFlowDialog::controls() {
         LoopStatus->text() + '\n' +
         tr("Proof: every counter cycle reaches a shared exit, including after "
            "wraparound."));
+  else if (Loop["proof"] == "parameter_modular")
+    LoopStatus->setText(
+        LoopStatus->text() + '\n' +
+        tr("Proof: every counter cycle reaches a shared exit relative to an "
+           "input parameter. Undefined behavior may occur before exit."));
 
   const bool Node = !Nodes->row(NodeTable->currentIndex().row()).isEmpty();
   const bool Idle =
@@ -338,7 +343,10 @@ void ComparisonFlowDialog::selectSide() {
     Summary->setText(
         Summary->text() + '\n' +
         tr("SSA representation: %1")
-            .arg(Profile ==
+            .arg(Profile == ::neverd::limits::diff::
+                                kLLVMParameterBoundProgressSSAProfile
+                     ? tr("Optimized SSA with parameter-bound loop analysis")
+                 : Profile ==
                          ::neverd::limits::diff::kLLVMModularProgressSSAProfile
                      ? tr("Optimized SSA with wrapping loop analysis")
                  : Profile ==

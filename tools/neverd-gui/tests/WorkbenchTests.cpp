@@ -97,6 +97,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
@@ -1796,6 +1797,52 @@ private slots:
         QVERIFY(!visibleDialog("jumpDialog"));
       }
     }
+  }
+
+  void commandPaletteDropsFromTheCommandCenter() {
+    // A click on the command center drops the palette from it, as in Visual
+    // Studio Code; its key still opens it over the pane its commands act on.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "classic-jumps.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *center = bench.window->findChild<QAbstractButton *>(
+        QStringLiteral("commandCenter"));
+    if (!center)
+      QSKIP("This window draws no command center.");
+    auto *bar = center->parentWidget();
+    auto *assembly = bench.window->disassembly();
+    QVERIFY(activateTestWindow(assembly->window()));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    QTest::mouseClick(center, Qt::LeftButton);
+    QPointer<QDialog> palette = visibleDialog("commandPalette");
+    QVERIFY(palette);
+    const QRect dropped = palette->geometry();
+    QCOMPARE(dropped.top(), bar->mapToGlobal(QPoint(0, bar->height())).y());
+    QVERIFY(dropped.width() >= center->width());
+    // Centered under the field, unless that would leave the screen.
+    const QRect area = center->screen()->availableGeometry();
+    QCOMPARE(
+        dropped.left(),
+        std::clamp(center->mapToGlobal(QPoint(center->width() / 2, 0)).x() -
+                       dropped.width() / 2,
+                   area.left(),
+                   std::max(area.left(), area.right() + 1 - dropped.width())));
+    palette->reject();
+    QTRY_VERIFY(!palette);
+    QVERIFY(activateTestWindow(assembly->window()));
+    assembly->focusContent();
+    QTRY_VERIFY(assembly->listing()->hasFocus());
+    bench.action(ActionId::OptionsPalette)->trigger();
+    palette = visibleDialog("commandPalette");
+    QVERIFY(palette);
+    auto *pane = bench.dockFor(assembly)->widget();
+    QCOMPARE(palette->geometry().center(),
+             pane->mapToGlobal(pane->rect().center()));
+    palette->reject();
+    QTRY_VERIFY(!palette);
   }
 
   void selectedBytesExportWithIdasKey() {

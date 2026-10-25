@@ -87,6 +87,14 @@ sparse leading-byte index, verifies masks/CRC/tails, then checks references and
 settles aliases. Parsed-file caching and one index per loaded database already
 avoid repeated text parsing and per-segment index construction.
 
+Index construction preserves every decision and candidate order while sharing
+one immutable candidate permutation across its leaves. Index copies retain that
+storage; rebuilding one cannot invalidate a retained copy. Shared prologues are
+examined together during construction instead of recounting every module at
+every uniform byte. The resulting nodes still check each stated byte, including
+the common prefix. Wildcards, short input bounds and final verification retain
+their meaning.
+
 Packed batch matching now reuses a CRC for candidates at the same input address,
 leading width and CRC length. Changing the input address or leading width
 invalidates that reuse. Bounds and leading-byte checks run before a checksum
@@ -117,7 +125,8 @@ Build Release targets `NeverDSignatureTests`, `neverd-signature-bench` and
 ```sh
 build-release/bin/NeverDSignatureTests --gtest_filter='SignatureMatcher*'
 build-release/bin/neverd-signature-bench program.exe --sig-base signatures \
-  --entries function-vas.txt --threads 1 --repetitions 21 > matching.json
+  --entries function-vas.txt --threads 1 --index-repetitions 7 \
+  --repetitions 21 > matching.json
 build-release/bin/neverd-signature-bench program.elf --sig-base signatures \
   --stride 16 --threads 1 --repetitions 21 > dense-scan.json
 python signatures/scripts/evaluate_probes.py \
@@ -143,6 +152,14 @@ without the persistent cache; it does not measure cache mapping, function
 discovery, reference resolution or final names. Measure those separately with
 the normal CLI/SDK. Peak RSS covers the whole benchmark process, including
 source buffers and hashing, not just the matcher.
+
+`--index-repetitions` constructs a fresh index each time, discarding its previous
+storage outside the timed region. It records every build, including the first,
+in `index_samples_ms` and `index_samples_cpu_ms`; the existing `index_ms` field
+remains the first wall-time sample. `index_sha256` fingerprints decisions and
+candidate order independently of their storage layout, and must agree across
+builds. Hashing is outside the timed region. These are fresh index allocations
+in one process, not cold-filesystem or cold-process measurements.
 
 Retain each build's executable and JSON. Alternate old/new runs, repeat with
 one worker and production worker counts, report medians and spread, and avoid

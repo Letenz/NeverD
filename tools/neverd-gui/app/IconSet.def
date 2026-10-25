@@ -184,6 +184,7 @@ NEVERD_ICON("comment_repeatable", Edit, "a comment with a repeat badge")
 NEVERD_ICON("bookmark", Edit, "a flag")
 NEVERD_ICON("pin", Edit, "a push pin")
 NEVERD_ICON("lock", Edit, "a padlock")
+NEVERD_ICON("lock_open", Edit, "a padlock with its shackle raised open")
 
 // Analysis.
 NEVERD_ICON("analyze", Analysis, "a gear with a play mark")

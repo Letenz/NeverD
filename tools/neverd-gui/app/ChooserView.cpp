@@ -745,6 +745,7 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   table_->setIconSize(QSize(16, 16));
   table_->installEventFilter(this);
   layout->addWidget(table_, 1);
+  filter_->setObjectName(QStringLiteral("chooserFilter"));
   filter_->setPlaceholderText(tr("Quick filter"));
   filter_->setClearButtonEnabled(true);
   filter_->setVisible(false);

@@ -131,6 +131,7 @@ llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
     setMergeable(Begin, End - Begin, false);
     retireDeviceRanges(Begin, End - Begin);
     retireProcMappings(Begin, End - Begin);
+    retireAnonymousVMANames(Begin, End - Begin);
     Removed = true;
   }
   return Removed;
@@ -357,6 +358,8 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     }
   }
   switch (Kind) {
+  case ServiceKind::Prctl:
+    return prctl(Event, Result);
   case ServiceKind::Mmap:
     if (!supportedProtection(Event.Arguments[2]) ||
         Event.Arguments[3] != (MapPrivate | MapAnonymous))
