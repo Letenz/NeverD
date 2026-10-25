@@ -1924,6 +1924,56 @@ TEST(LLVMCIntrinsicSemantics, PackedIntegerNumericCastsKeepEveryLimb) {
     compileAndCheck(Source, false, {}, Level, true);
 }
 
+TEST(LLVMCIntrinsicSemantics, PackedWideVectorCastsKeepLaneOrder) {
+  for (bool LittleEndian : {false, true}) {
+    SCOPED_TRACE(LittleEndian);
+    llvm::LLVMContext Context;
+    llvm::Module Module("packed-wide-vector-casts", Context);
+    Module.setDataLayout(LittleEndian ? "e-p:64:64" : "E-p:64:64");
+    llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+    std::string Main = "int main(void) {\n";
+    for (unsigned Bits : {1024U, 2048U}) {
+      auto *Integer = Builder.getIntNTy(Bits);
+      auto *Vector =
+          llvm::FixedVectorType::get(Builder.getInt64Ty(), Bits / 64);
+      const std::string Width = std::to_string(Bits);
+      auto *Function = llvm::Function::Create(
+          llvm::FunctionType::get(Integer, {Integer}, false),
+          llvm::GlobalValue::ExternalLinkage, "lanes" + Width, Module);
+      Builder.SetInsertPoint(
+          llvm::BasicBlock::Create(Context, "entry", Function));
+      llvm::Value *Value = Builder.CreateBitCast(Function->getArg(0), Vector);
+      for (unsigned Lane = 0; Lane != Bits / 64; ++Lane) {
+        auto *Part = Builder.CreateExtractElement(Value, Lane);
+        Value = Builder.CreateInsertElement(
+            Value, Builder.CreateXor(Part, Builder.getInt64(Lane + 1)), Lane);
+      }
+      Builder.CreateRet(Builder.CreateBitCast(Value, Integer));
+      Main += "{ typedef unsigned _BitInt(" + Width +
+              ") bits;\n"
+              "bits input = 0, mask = 0;\n"
+              "for (unsigned i = 0; i != " +
+              std::to_string(Bits / 64) +
+              "; ++i) {\n"
+              "const unsigned shift = " +
+              (LittleEndian ? "64 * i" : Width + " - 64 * (i + 1)") +
+              ";\n"
+              "input |= (bits)(UINT64_C(0xfedcba9876543210) + i) << shift;\n"
+              "mask |= (bits)(i + 1) << shift;\n"
+              "}\n"
+              "if (lanes" +
+              Width +
+              "(input) != (input ^ mask)) return 1;\n"
+              "}\n";
+    }
+    Main += "return 0; }\n";
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    const auto Source = "#include <stdint.h>\n" + emit(Module) + Main;
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndCheck(Source, false, {}, Level, true);
+  }
+}
+
 TEST(LLVMCIntrinsicSemantics, FloatingComparisonsReadBitcastValue) {
   llvm::LLVMContext Context;
   llvm::Module Module("floating-bitcast-comparison", Context);
