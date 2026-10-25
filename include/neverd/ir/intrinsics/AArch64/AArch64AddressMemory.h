@@ -29,7 +29,7 @@ namespace neverd {
 
 inline bool isAArch64AddressMemoryIntrinsic(Intrinsic Id) {
   switch (Id) {
-#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic) case Intrinsic::Id:
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, ...) case Intrinsic::Id:
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
     return true;
   default:
@@ -37,9 +37,31 @@ inline bool isAArch64AddressMemoryIntrinsic(Intrinsic Id) {
   }
 }
 
+inline bool isAArch64AddressStoreIntrinsic(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic, Store, Vector)       \
+  case Intrinsic::Id:                                                          \
+    return Store;
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+  default:
+    return false;
+  }
+}
+
+inline bool isAArch64AddressVectorIntrinsic(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic, Store, Vector)       \
+  case Intrinsic::Id:                                                          \
+    return Vector;
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+  default:
+    return false;
+  }
+}
+
 inline unsigned aarch64AddressMemoryOperandCount(Intrinsic Id) {
-  return Id == Intrinsic::A64_StoreRegisterOffset ? kAddressStoreOperandCount
-                                                  : kAddressLoadOperandCount;
+  return isAArch64AddressStoreIntrinsic(Id) ? kAddressStoreOperandCount
+                                            : kAddressLoadOperandCount;
 }
 
 struct AArch64AddressMemoryOperation {
@@ -70,6 +92,9 @@ struct AArch64AddressMemoryInstruction {
     return *aarch64AddressMemoryOperation(Word);
   }
   bool isLoad() const { return operation().ResultBytes != 0; }
+  bool isVector() const {
+    return isAArch64AddressVectorIntrinsic(operation().Id);
+  }
   unsigned accessBytes() const { return operation().AccessBytes; }
   bool usesFullWidthIndex() const { return Word & kAddressMemoryWideIndexBit; }
   unsigned indexBytes() const {
@@ -181,7 +206,8 @@ inline bool aarch64AddressMemoryShapeIsValid(
   if (Instruction->isLoad())
     return DataBytes == 0;
   return DataBytes == Instruction->accessBytes() &&
-         (Instruction->destination() != kAddressMemoryRegisterMask ||
+         (Instruction->isVector() ||
+          Instruction->destination() != kAddressMemoryRegisterMask ||
           (Data && !*Data));
 }
 

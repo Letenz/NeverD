@@ -28,11 +28,13 @@ inline bool aarch64AddressMemoryHighShapeIsValid(const HighExpr &Expression) {
     return Type &&
            (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Unknown);
   };
-  const bool Store =
-      Expression.IntrinsicId == Intrinsic::A64_StoreRegisterOffset;
-  if (Store ? (!Expression.Type || Expression.Type->Size)
-            : (!Integer(Expression.Type) &&
-               (!Expression.Type || Expression.Type->Kind != NdTypeKind::Ptr)))
+  const bool Store = isAArch64AddressStoreIntrinsic(Expression.IntrinsicId);
+  const bool Vector = isAArch64AddressVectorIntrinsic(Expression.IntrinsicId);
+  if ((Vector && !Store && !Integer(Expression.Type)) ||
+      (Store
+           ? (!Expression.Type || Expression.Type->Size)
+           : (!Integer(Expression.Type) &&
+              (!Expression.Type || Expression.Type->Kind != NdTypeKind::Ptr))))
     return false;
   for (const auto &Operand : Expression.Operands)
     if (!Operand || !Operand->Type ||
