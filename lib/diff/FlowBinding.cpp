@@ -17,13 +17,20 @@
 namespace neverd::diff {
 bool sameLLVMGraphAfterPhiRenumbering(
     const DataFlowGraph &Saved, const DataFlowGraph &Fresh,
-    const DataFlowOptions &Options, llvm::function_ref<void(uint64_t)> Charge) {
+    const DataFlowOptions &Options,
+    llvm::function_ref<void(uint64_t)> ChargeWork,
+    const ComparisonControl &Control) {
+  const auto Charge = [&](uint64_t Amount) {
+    Control.check();
+    ChargeWork(Amount);
+    Control.check();
+  };
   Charge(1);
   if (!isLLVMDataFlowProfile(Saved.Profile) || Saved.Profile != Fresh.Profile ||
       Saved.Nodes.size() != Fresh.Nodes.size() ||
       Saved.Blocks.size() != Fresh.Blocks.size())
     return false;
-  if (Fresh.validate(Options))
+  if (Fresh.validate(Options, Control))
     return false;
   const auto Count = Saved.Nodes.size();
   Charge(3 * uint64_t(Count));

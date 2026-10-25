@@ -159,9 +159,11 @@ std::optional<ReviewAssessment> reviewAssessmentNamed(llvm::StringRef Name) {
       return A;
   return std::nullopt;
 }
-std::optional<std::string> validateReviewJournal(const ReviewJournal &Journal,
-                                                 const ProgramIdentity &P,
-                                                 const ProgramIdentity &S) {
+std::optional<std::string>
+validateReviewJournal(const ReviewJournal &Journal, const ProgramIdentity &P,
+                      const ProgramIdentity &S,
+                      const ComparisonControl &Control) {
+  Control.check();
   if (Journal.Records.size() > limits::diff::kMaxReviewRecords)
     return "review history exceeds its record allowance";
   if (!Journal.Records.empty())
@@ -171,6 +173,7 @@ std::optional<std::string> validateReviewJournal(const ReviewJournal &Journal,
   std::string Previous;
   std::map<CaseKey, std::string> Latest;
   for (uint32_t I = 0; I < Journal.Records.size(); ++I) {
+    Control.check();
     const auto &R = Journal.Records[I];
     if (const auto Error = draftError(R))
       return Error;
@@ -250,10 +253,11 @@ llvm::json::Object reviewJournalJSON(const ReviewJournal &J) {
                             {"author_authentication", "not_performed"},
                             {"records", std::move(Records)}};
 }
-std::optional<ReviewJournal> readReviewJournal(const llvm::json::Value &Value,
-                                               const ProgramIdentity &P,
-                                               const ProgramIdentity &S,
-                                               std::string &Error) {
+std::optional<ReviewJournal>
+readReviewJournal(const llvm::json::Value &Value, const ProgramIdentity &P,
+                  const ProgramIdentity &S, std::string &Error,
+                  const ComparisonControl &Control) {
+  Control.check();
   Error.clear();
   try {
     const auto *O = Value.getAsObject();
@@ -269,6 +273,7 @@ std::optional<ReviewJournal> readReviewJournal(const llvm::json::Value &Value,
     ReviewJournal Out;
     uint64_t Bytes = 0;
     for (const auto &V : *Records) {
+      Control.check();
       const auto *Row = V.getAsObject();
       require(Row, "review record must be an object");
       fields(*Row, {"id", "sequence", "previous", "supersedes", "primary",
@@ -308,9 +313,11 @@ std::optional<ReviewJournal> readReviewJournal(const llvm::json::Value &Value,
     }
     require(text(*O, "head") == Out.head(),
             "review head does not name its last record");
-    if (const auto E = validateReviewJournal(Out, P, S))
+    if (const auto E = validateReviewJournal(Out, P, S, Control))
       throw std::invalid_argument(*E);
     return Out;
+  } catch (const ComparisonInterrupted &) {
+    throw;
   } catch (const std::exception &E) {
     Error = E.what();
     return std::nullopt;

@@ -5658,6 +5658,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>Применение сохранённого анализа</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Проверка сохранённых свидетельств</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Чтение сохранённого сравнения</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Проверка сохранённого сравнения</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Пересчёт сохранённых измерений</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Восстановление сравнения</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7807,6 +7827,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Этот рабочий процесс не поддерживает сравнение бинарных файлов.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Восстановление остановлено. Можно повторить попытку.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Восстановление остановлено. Предыдущее сравнение по-прежнему доступно.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Не удалось восстановить сравнение. Предыдущее сравнение по-прежнему доступно. %1</translation>
     </message>
 </context>
 <context>

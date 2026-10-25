@@ -300,10 +300,7 @@ Json hello() {
         "cooperative; partial snapshots retained";
     result["comparison_cancellable_operations"] = Json::array();
     for (const auto Operation : ComparisonService::CancellableOperations)
-      if ((Operation != "comparison_source_page" ||
-           ComparisonService::sourceSupported()) &&
-          (Operation != "comparison_source_difference" ||
-           ComparisonService::sourceDifferenceSupported()))
+      if (ComparisonService::cancellable(Operation))
         result["comparison_cancellable_operations"].push_back(
             std::string(Operation));
   }
@@ -522,10 +519,11 @@ void executeLoop(State &state, Transport &transport) {
           const bool ComparisonOperation = ComparisonService::cancellable(op);
           const bool ComparisonPartial =
               ComparisonOperation && result.contains("payload") &&
+              !result["payload"].value("restore_completed", false) &&
               result["payload"].value("state", std::string()) == "cancelled";
           const bool ComparisonStopped =
               ComparisonPartial ||
-              (ComparisonOperation && result.contains("error") &&
+              (result.contains("error") &&
                result["error"].value("code", std::string()) == "cancelled");
           result["completed_before_cancellation"] = !ComparisonStopped;
           if (ComparisonOperation)

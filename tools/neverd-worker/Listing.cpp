@@ -1085,13 +1085,19 @@ struct Listing::Impl {
       if (function.end <= function.entry)
         function.end = function.entry + 1;
     }
-    // Byte signatures name library code.
+    // Only admitted identities classify library code. A byte candidate must
+    // not hide an application routine as a library function in the workbench.
     if (const auto matches = takeJson(neverd_sig_matches_json(session));
         matches.is_array())
-      for (const auto &match : matches)
+      for (const auto &match : matches) {
+        const auto autoName = match.find("auto_name");
+        if (autoName == match.end() || !autoName->is_string() ||
+            autoName->get_ref<const std::string &>().empty())
+          continue;
         if (auto *function =
                 functionAtEntry(jsonAddress(match.value("addr", Json()))))
           function->library = true;
+      }
     // A chunk is code of the kind its function is.
     for (auto &function : functions)
       if (function.chunkOf)

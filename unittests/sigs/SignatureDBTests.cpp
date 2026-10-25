@@ -70,6 +70,130 @@ neverd::BinaryImage makeMatchingImage() {
 
 } // namespace
 
+TEST(SignatureDBIdentity, ByteAgreementNeverInventsSourceIdentity) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "AABB 00 0000 0002 :0000 library_guess\n", "candidate"));
+  Database.apply(makeMatchingImage(), {0x1000});
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "library_guess");
+  EXPECT_TRUE(Database.buildNameMap().empty());
+  EXPECT_EQ(Database.nameDecision(0x1000), nullptr);
+}
+
+TEST(SignatureDBIdentity, OnlyTheIndependentlyStatedAliasIsAdmitted) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "AABB 00 0000 0002 :0000 short :0000 independently_stated\n"
+      "AABB 00 0000 0002 :0000 conflicting_candidate\n",
+      "aliases"));
+  auto Image = makeMatchingImage();
+  neverd::Symbol Stated;
+  Stated.Addr = 0x1000;
+  Stated.Name = "independently_stated";
+  Stated.IsFunc = true;
+  Stated.Origin = neverd::NameOrigin::Stated;
+  Image.Symbols.push_back(Stated);
+  Database.apply(Image, {0x1000});
+  ASSERT_EQ(Database.matches().size(), 2u);
+  EXPECT_TRUE(Database.buildCandidateNameMap().empty());
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "independently_stated");
+  ASSERT_NE(Database.nameDecision(0x1000), nullptr);
+  EXPECT_EQ(Database.nameDecision(0x1000)->Evidence,
+            SignatureNameEvidence::ImageSymbol);
+
+  // Neither the pattern's preferred alias nor its competing pattern acquires
+  // identity from the symbol that proves only one spelling at this address.
+  Image.Symbols.front().Name = "different_type_same_code";
+  Database.apply(Image, {0x1000});
+  EXPECT_TRUE(Database.buildNameMap().empty());
+}
+
+TEST(SignatureDBIdentity, AnalysisUserDataAndOtherAddressesAreNotEvidence) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText("AABB 00 0000 0002 :0000 candidate\n",
+                                        "candidate"));
+  for (neverd::NameOrigin Origin :
+       {neverd::NameOrigin::Synthesized, neverd::NameOrigin::Analysis,
+        neverd::NameOrigin::User, neverd::NameOrigin::Stated}) {
+    auto Image = makeMatchingImage();
+    neverd::Symbol Symbol;
+    Symbol.Addr = 0x1000;
+    Symbol.Name = "candidate";
+    Symbol.IsFunc = Origin != neverd::NameOrigin::Stated;
+    Symbol.Origin = Origin;
+    Image.Symbols.push_back(Symbol);
+    Symbol.Addr = 0x2000;
+    Symbol.IsFunc = true;
+    Symbol.Origin = neverd::NameOrigin::Stated;
+    Image.Symbols.push_back(Symbol);
+    Database.apply(Image, {0x1000});
+    EXPECT_TRUE(Database.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDBIdentity, ExportsReapplyAndTransactionsRetainOnlyCurrentProof) {
+  SignatureDB Database;
+  const char *Pattern = "AABB 00 0000 0002 :0000 candidate\n";
+  ASSERT_FALSE(Database.loadPatternText(Pattern, "source"));
+  auto Image = makeMatchingImage();
+  neverd::Export Export;
+  Export.Addr = 0x1000;
+  Export.Name = "candidate";
+  Image.Exports.push_back(Export);
+  Database.apply(Image, {0x1000});
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "candidate");
+
+  auto Error = Database.loadPatternText("invalid record\n", "source");
+  ASSERT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "candidate");
+  ASSERT_FALSE(Database.loadPatternText(Pattern, "source"));
+  EXPECT_TRUE(Database.buildNameMap().empty());
+
+  Database.apply(Image, {0x1000});
+  ASSERT_NE(Database.nameDecision(0x1000), nullptr);
+  Image.Exports.clear();
+  Database.apply(Image, {0x1000});
+  EXPECT_EQ(Database.nameDecision(0x1000), nullptr);
+  EXPECT_EQ(Database.matches().size(), 1u);
+  Image.Exports.push_back(Export);
+  Database.apply(Image, {0x1000});
+  Database.clear();
+  EXPECT_TRUE(Database.buildNameMap().empty());
+}
+
+TEST(SignatureDBIdentity, FoldedAliasesAreIndependentOfSymbolOrder) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "AABB 00 0000 0002 :0000 short :0000 _also_stated :0000 longest_name\n",
+      "folded"));
+  auto Image = makeMatchingImage();
+  for (const char *Name : {"longest_name", "_also_stated", "_also_stated"}) {
+    neverd::Symbol S;
+    S.Addr = 0x1000;
+    S.Name = Name;
+    S.IsFunc = true;
+    S.Origin = neverd::NameOrigin::Stated;
+    Image.Symbols.push_back(std::move(S));
+  }
+  for (unsigned Order = 0; Order != 2; ++Order) {
+    Database.apply(Image, {0x1000});
+    EXPECT_EQ(Database.buildNameMap().at(0x1000), "longest_name");
+    std::reverse(Image.Symbols.begin(), Image.Symbols.end());
+  }
+  for (auto &S : Image.Symbols)
+    S.IsBoundaryGuess = true;
+  Database.apply(Image, {0x1000});
+  EXPECT_TRUE(Database.buildNameMap().empty());
+  for (auto &S : Image.Symbols) {
+    S.IsBoundaryGuess = false;
+    S.IsSection = true;
+  }
+  Database.apply(Image, {0x1000});
+  EXPECT_TRUE(Database.buildNameMap().empty());
+}
+
 TEST(SignatureDBTransactions, FailedInMemoryBatchDoesNotMutateDatabase) {
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText("AABB 00 0000 0002 :0000 first_name\n",
@@ -300,10 +424,10 @@ TEST(SignatureDBAddresses, NeverWrapsASecondaryPublicNameAddress) {
   Database.apply(Image, {std::numeric_limits<uint64_t>::max()});
 
   EXPECT_TRUE(Database.matches().empty());
-  EXPECT_TRUE(Database.buildNameMap().empty());
+  EXPECT_TRUE(Database.buildCandidateNameMap().empty());
 }
 
-TEST(SignatureDBAddresses, OmitsDisputedNamesFromTheApplicationMap) {
+TEST(SignatureDBAddresses, OmitsDisputedNamesFromTheCandidateMap) {
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText("AABB 00 0000 0002 :0000 first_name\n"
                                         "AABB 00 0000 0002 :0000 second_name\n",
@@ -313,7 +437,7 @@ TEST(SignatureDBAddresses, OmitsDisputedNamesFromTheApplicationMap) {
   Database.apply(Image, {0x1000});
 
   ASSERT_EQ(Database.matches().size(), 2u);
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1000), 0u);
 }
 
 namespace {
@@ -362,9 +486,31 @@ TEST(SignatureDBReferences, ACallToARoutineNamedOtherwiseDropsTheMatch) {
       CalleeLine + callerLine("caller", " ^0005 somebody_else"), "refs"));
   Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
 
-  const auto Names = Database.buildNameMap();
+  const auto Names = Database.buildCandidateNameMap();
   EXPECT_EQ(Names.count(0x1000), 0u);
   EXPECT_EQ(Names.at(0x1100), "callee");
+}
+
+TEST(SignatureDBIdentity, ConfirmedReferencesDoNotRecoverErasedTypes) {
+  // The same load/call sequence can implement read(First *) or read(Second *)
+  // when the nominally different types share a layout. Naming its callee does
+  // not recover the caller's erased source type, even with no known collision.
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      CalleeLine + callerLine("read_first", " ^0005 callee"), "types"));
+  auto Image = makeCallingImage(0x1100);
+  neverd::Symbol Symbol;
+  Symbol.Addr = 0x1100;
+  Symbol.Name = "callee";
+  Symbol.IsFunc = true;
+  Symbol.Origin = neverd::NameOrigin::Stated;
+  Image.Symbols.push_back(Symbol);
+  Database.apply(Image, {0x1000, 0x1100});
+  ASSERT_NE(Database.findMatch(0x1000), nullptr);
+  EXPECT_TRUE(Database.findMatch(0x1000)->Confirmed);
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "read_first");
+  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildNameMap().at(0x1100), "callee");
 }
 
 TEST(SignatureDBReferences, ACallNothingNamesKeepsTheMatch) {
@@ -373,7 +519,7 @@ TEST(SignatureDBReferences, ACallNothingNamesKeepsTheMatch) {
       callerLine("caller", " ^0005 somebody_else"), "refs"));
   Database.apply(makeCallingImage(0x1100), {0x1000});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
 }
 
 TEST(SignatureDBReferences, AConfirmedCallSettlesIdenticalBytes) {
@@ -385,7 +531,7 @@ TEST(SignatureDBReferences, AConfirmedCallSettlesIdenticalBytes) {
       "refs"));
   Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller_of_callee");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller_of_callee");
   for (const SigMatch &Match : Database.matches())
     EXPECT_EQ(Match.Confirmed, Match.Name == "caller_of_callee") << Match.Name;
 }
@@ -401,7 +547,7 @@ TEST(SignatureDBReferences, ThePatternOfADisputedCalleeConfirms) {
       "refs"));
   Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
 
-  const auto Names = Database.buildNameMap();
+  const auto Names = Database.buildCandidateNameMap();
   EXPECT_EQ(Names.count(0x1100), 0u);
   EXPECT_EQ(Names.at(0x1000), "caller_of_callee");
 }
@@ -416,7 +562,7 @@ TEST(SignatureDBReferences, IncrementalLinkingThunksAreFollowed) {
       "refs"));
   Database.apply(makeCallingImage(0x1200), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
 }
 
 TEST(SignatureDBReferences, ARoutineThatOnlyJumpsOnContradictsNothing) {
@@ -428,7 +574,7 @@ TEST(SignatureDBReferences, ARoutineThatOnlyJumpsOnContradictsNothing) {
       CalleeLine + callerLine("caller", " ^0005 free"), "refs"));
   Database.apply(makeCallingImage(0x1200), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
   for (const SigMatch &Match : Database.matches())
     if (Match.Address == 0x1000)
       EXPECT_FALSE(Match.Confirmed);
@@ -477,7 +623,7 @@ TEST(SignatureDBReferences, ReferencesAtOneOffsetAreAlternatives) {
   Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
 
   ASSERT_EQ(Database.matches().size(), 2u);
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
   for (const SigMatch &Match : Database.matches())
     if (Match.Address == 0x1000)
       EXPECT_TRUE(Match.Confirmed);
@@ -494,7 +640,7 @@ TEST(SignatureDBReferences, AnELFImportsStubSettlesACallToIt) {
       << "the call to another import contradicts do_toupper";
   EXPECT_EQ(Database.matches()[0].Name, "do_tolower");
   EXPECT_TRUE(Database.matches()[0].Confirmed);
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "do_tolower");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "do_tolower");
 }
 
 TEST(SignatureDBReferences, AVersionedReferenceNamesTheImportItBindsTo) {
@@ -520,7 +666,7 @@ TEST(SignatureDBReferences, ACOFFImportThunkSettlesNothing) {
   EXPECT_EQ(Database.matches().size(), 2u);
   for (const SigMatch &Match : Database.matches())
     EXPECT_FALSE(Match.Confirmed) << Match.Name;
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1000), 0u);
 }
 
 TEST(SignatureDBReferences, WhatReferencesNameSettlesTheirCallersInTurn) {
@@ -547,7 +693,7 @@ TEST(SignatureDBReferences, WhatReferencesNameSettlesTheirCallersInTurn) {
       "refs"));
   Database.apply(Image, {0x1000, 0x1100});
 
-  const auto Names = Database.buildNameMap();
+  const auto Names = Database.buildCandidateNameMap();
   EXPECT_EQ(Names.at(0x1100), "inner_a");
   EXPECT_EQ(Names.at(0x1000), "outer_a");
 }
@@ -588,8 +734,8 @@ TEST(SignatureDBReferences, RejectedCalleeCannotRemainConfirmationEvidence) {
       "refs"));
   Database.apply(Image, {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
-  EXPECT_EQ(Database.buildNameMap().count(0x1100), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
   for (const SigMatch &Match : Database.matches()) {
     EXPECT_NE(Match.Name, "inner_rejected");
     if (Match.Address == 0x1000)
@@ -622,12 +768,12 @@ TEST(SignatureDBReferences, WithdrawingEvidenceDoesNotPermanentlyDropACaller) {
       "refs"));
   Database.apply(Image, {0x1000, 0x1100, 0x1300});
 
-  EXPECT_EQ(Database.buildNameMap().count(0x1300), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1300), 0u);
   EXPECT_TRUE(
       std::any_of(Database.matches().begin(), Database.matches().end(),
                   [](const SigMatch &M) { return M.Name == "grand_b"; }));
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
-  EXPECT_EQ(Database.buildNameMap().count(0x1100), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
   for (const SigMatch &Match : Database.matches()) {
     EXPECT_NE(Match.Name, "inner_rejected");
     if (Match.Address == 0x1000)
@@ -645,8 +791,8 @@ TEST(SignatureDBReferences, AnotherViableModuleWithTheSameNameStillConfirms) {
       "refs"));
   Database.apply(makeNestedCallingImage(), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "outer");
-  EXPECT_EQ(Database.buildNameMap().count(0x1100), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "outer");
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
   EXPECT_EQ(std::count_if(Database.matches().begin(), Database.matches().end(),
                           [](const SigMatch &M) { return M.Name == "inner"; }),
             1);
@@ -687,7 +833,7 @@ TEST(SignatureDBReferences, ParallelWithdrawalAgreesWithSerialChecking) {
   for (unsigned Threads : {1u, 4u}) {
     neverd::setWorkerThreadCount(Threads);
     Database.apply(Image, Entries);
-    EXPECT_TRUE(Database.buildNameMap().empty());
+    EXPECT_TRUE(Database.buildCandidateNameMap().empty());
     EXPECT_EQ(Database.matches().size(), 2 * CallerCount + 2);
     for (const SigMatch &Match : Database.matches())
       EXPECT_FALSE(Match.Confirmed);
@@ -725,7 +871,7 @@ TEST(SignatureDBReferences, UnsettledCyclesCannotNameTheirDependentCallers) {
        {std::vector<uint64_t>{0x1000, 0x1100, 0x1250, 0x1300},
         std::vector<uint64_t>{0x1300, 0x1250, 0x1100, 0x1000}}) {
     Database.apply(Image, Entries);
-    const auto Names = Database.buildNameMap();
+    const auto Names = Database.buildCandidateNameMap();
     ASSERT_EQ(Names.size(), 1u);
     EXPECT_EQ(Names.at(0x1250), "callee");
   }
@@ -826,7 +972,7 @@ TEST(SignatureDBReferences, AnOddOffsetStatesAnARMStateBranch) {
       "refs"));
   Database.apply(makeARMStateCallingImage(0x1100), {0x1000, 0x1100});
 
-  const auto Names = Database.buildNameMap();
+  const auto Names = Database.buildCandidateNameMap();
   EXPECT_EQ(Names.at(0x1000), "caller");
   EXPECT_EQ(Names.at(0x1100), "callee");
   for (const SigMatch &Match : Database.matches())
@@ -842,7 +988,7 @@ TEST(SignatureDBReferences, AnARMStateVeneerIsFollowedInARMState) {
       "refs"));
   Database.apply(makeARMStateCallingImage(0x1200), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller")
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller")
       << "the veneer leads to the callee";
 }
 
@@ -863,7 +1009,7 @@ TEST(SignatureDBReferences, AnEvenOffsetStatesAThumbBranch) {
       "refs"));
   Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
 }
 
 TEST(SignatureDBReferences, AnARMLongBranchThunkIsFollowed) {
@@ -886,7 +1032,7 @@ TEST(SignatureDBReferences, AnARMLongBranchThunkIsFollowed) {
       "refs"));
   Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
 }
 
 TEST(SignatureDBReferences, AThumbPositionIndependentThunkIsFollowed) {
@@ -911,7 +1057,7 @@ TEST(SignatureDBReferences, AThumbPositionIndependentThunkIsFollowed) {
       "refs"));
   Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
 }
 
 TEST(SignatureDBReferences, AnARMv5LongBranchIsFollowed) {
@@ -933,7 +1079,7 @@ TEST(SignatureDBReferences, AnARMv5LongBranchIsFollowed) {
       "refs"));
   Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller");
 }
 
 TEST(SignatureDBReferences, AArch64RangeThunksAreFollowed) {
@@ -975,7 +1121,7 @@ TEST(SignatureDBReferences, AArch64RangeThunksAreFollowed) {
         "refs"));
     Database.apply(Image, {0x1000, 0x1100});
 
-    EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller")
+    EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "caller")
         << "thunk starting " << std::hex << Thunk[0];
   }
 }
@@ -990,7 +1136,7 @@ TEST(SignatureDBAliases, OneModulesNamesForAnOffsetAreOneRoutine) {
   EXPECT_EQ(Database.matches()[0].Name, "puts");
   EXPECT_EQ(Database.matches()[0].Aliases,
             std::vector<std::string>{"_IO_puts"});
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "puts");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "puts");
 }
 
 TEST(SignatureDBAliases, MatchesThatShareANameAgreeOnIt) {
@@ -1002,7 +1148,7 @@ TEST(SignatureDBAliases, MatchesThatShareANameAgreeOnIt) {
       "libc"));
   Database.apply(makeMatchingImage(), {0x1000});
 
-  EXPECT_EQ(Database.buildNameMap().at(0x1000), "__libc_malloc");
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "__libc_malloc");
 }
 
 TEST(SignatureDBAliases, AliasSetsWithNothingInCommonAreDisputed) {
@@ -1013,7 +1159,7 @@ TEST(SignatureDBAliases, AliasSetsWithNothingInCommonAreDisputed) {
                                "libc"));
   Database.apply(makeMatchingImage(), {0x1000});
 
-  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1000), 0u);
 }
 
 TEST(SignatureDBAliases, ACallByAnyNameOfTheCalleeConfirms) {
@@ -1027,7 +1173,7 @@ TEST(SignatureDBAliases, ACallByAnyNameOfTheCalleeConfirms) {
       "refs"));
   Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
 
-  const auto Names = Database.buildNameMap();
+  const auto Names = Database.buildCandidateNameMap();
   EXPECT_EQ(Names.at(0x1100), "callee");
   EXPECT_EQ(Names.at(0x1000), "caller");
 }

@@ -5766,6 +5766,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>جارٍ تطبيق التحليل المحفوظ</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>جارٍ التحقق من الأدلة المحفوظة</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>جارٍ قراءة المقارنة المحفوظة</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>جارٍ التحقق من المقارنة المحفوظة</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>جارٍ إعادة حساب القياسات المحفوظة</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>جارٍ استعادة المقارنة</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7915,6 +7935,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>هذه العملية لا تدعم مقارنة الملفات الثنائية.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>توقفت الاستعادة. يمكنك إعادة المحاولة.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>توقفت الاستعادة. لا تزال المقارنة السابقة متاحة.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>تعذرت استعادة المقارنة. لا تزال المقارنة السابقة متاحة. %1</translation>
     </message>
 </context>
 <context>

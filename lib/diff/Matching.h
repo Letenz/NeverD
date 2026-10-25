@@ -14,6 +14,7 @@
 #define NEVERD_LIB_DIFF_MATCHING_H
 
 #include "neverd/diff/Comparison.h"
+#include "neverd/diff/Control.h"
 #include "neverd/diff/FunctionDelta.h"
 #include "neverd/diff/Program.h"
 
@@ -24,7 +25,8 @@
 namespace neverd::diff {
 
 /// Stable mnemonic identities shared by matching and measurement validation.
-std::vector<uint64_t> mnemonicKeys(const Program &P);
+std::vector<uint64_t> mnemonicKeys(const Program &P,
+                                   const ComparisonControl &Control = {});
 
 /// compareFunctions with each program's mnemonic keys (hashText of each
 /// mnemonic) already computed.

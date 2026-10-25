@@ -11,6 +11,7 @@
 #ifndef NEVERD_DIFF_REVIEWJOURNAL_H
 #define NEVERD_DIFF_REVIEWJOURNAL_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/Program.h"
 
 #include "llvm/Support/JSON.h"
@@ -55,10 +56,9 @@ struct ReviewJournal {
 
 /// Reject invalid fields, sequence/digest links or size. No content is repaired
 /// or inferred. The complete input identities are part of each record digest.
-std::optional<std::string>
-validateReviewJournal(const ReviewJournal &Journal,
-                      const ProgramIdentity &Primary,
-                      const ProgramIdentity &Secondary);
+std::optional<std::string> validateReviewJournal(
+    const ReviewJournal &Journal, const ProgramIdentity &Primary,
+    const ProgramIdentity &Secondary, const ComparisonControl &Control = {});
 /// Adds an explicitly authored assessment of an accepted pair. ExpectedHead
 /// prevents lost updates; failed admission leaves the journal unchanged.
 /// Undoing a match does not undo this independent history. Add a new record to
@@ -75,10 +75,11 @@ bool reviewPairActive(const ReviewRecord &Record,
 
 llvm::json::Object reviewRecordJSON(const ReviewRecord &Record);
 llvm::json::Object reviewJournalJSON(const ReviewJournal &Journal);
-std::optional<ReviewJournal> readReviewJournal(const llvm::json::Value &Value,
-                                               const ProgramIdentity &Primary,
-                                               const ProgramIdentity &Secondary,
-                                               std::string &Error);
+std::optional<ReviewJournal>
+readReviewJournal(const llvm::json::Value &Value,
+                  const ProgramIdentity &Primary,
+                  const ProgramIdentity &Secondary, std::string &Error,
+                  const ComparisonControl &Control = {});
 } // namespace neverd::diff
 
 #endif // NEVERD_DIFF_REVIEWJOURNAL_H

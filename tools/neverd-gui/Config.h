@@ -221,6 +221,8 @@ inline constexpr int kWindowFrameShadowExtent = 10;
 inline constexpr int kWindowFrameResizeInset = 8;
 /// Corner resize reach measured from the visible edge.
 inline constexpr int kWindowFrameCornerReach = 16;
+/// Bound a full-screen exit's wait if the user changed Dock/display settings.
+inline constexpr int kWindowFrameScreenRestoreTimeoutMs = 1000;
 
 // tools/neverd-gui/app/WorkbenchStyle.cpp
 /// The size of icons drawn on the 16 pixel grid of IconSet.def.

@@ -5586,6 +5586,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>저장된 분석 적용 중</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>저장된 근거 확인 중</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>저장된 비교 읽는 중</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>저장된 비교 확인 중</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>저장된 측정값 다시 계산 중</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>비교 복원 중</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7735,6 +7755,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>이 작업 프로세스는 바이너리 비교를 지원하지 않습니다.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>복원이 중지되었습니다. 다시 시도할 수 있습니다.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>복원이 중지되었습니다. 이전 비교를 계속 사용할 수 있습니다.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>비교를 복원할 수 없습니다. 이전 비교를 계속 사용할 수 있습니다. %1</translation>
     </message>
 </context>
 <context>

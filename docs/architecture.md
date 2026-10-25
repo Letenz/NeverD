@@ -708,6 +708,21 @@ does not run another matcher or promote a candidate. Mapping edits and restore
 invalidate that inventory cache. CLI and the Qt counterpart picker consume this
 projection; the picker keeps bounded pages and invalidates its selection when
 the worker's comparison revision changes.
+`ComparisonJSON` owns strict saved-report validation and transactional binding.
+Its optional `ComparisonControl` carries cooperative cancellation/deadlines
+through record readers, graph/native/region validators and measurement workers.
+`ComparisonInterrupted` distinguishes a stopped restore from invalid evidence;
+worker exceptions are joined and rethrown by the shared parallel owner. Progress
+callbacks remain on the coordinator, including the last checkpoint before
+publication. The C ABI admits one operation, parses one DOM and commits only a
+fully validated replacement; failure/stop leaves the prior result, histories and
+caches intact. Restore operation status is separate from the saved result state.
+The worker resolves the additive progress export at runtime and uses that same
+capability for advertisement and cancellation admission. Neither adapter owns a
+second evidence validator or a separate persistence format. JSON DOM parsing,
+individual allocations/copies and whole-value equality are explicit indivisible
+checkpoints, so this remains cooperative cancellation rather than a deadline
+for every host operation.
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
@@ -1703,8 +1718,13 @@ of the name each is shown under, as the kernel's exports are typed from
 the image states (`BinaryImage::statedFunctionNameAt`, as
 `getFunctionNameAt` chooses it): the export at the entry, else a symbol a
 producer stated, a PDB's function names among them; else the debug
-information's; else the name signatures recognized the function's bytes by
-(`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
+information's; else a signature identity admitted by independent image-symbol
+or exception-personality context (`SignatureDB::buildNameMap`). Byte/reference
+agreement alone remains a candidate (`buildCandidateNameMap`) and cannot
+authorize type lookup, safety sinks, automatic renaming or library folding.
+The signature database owns this decision; SDK, CLI and worker consume it.
+The separately gated library-feature path retains its independent identity
+verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
 which GNU ld keeps at each object's first function or variable
 (`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
@@ -2390,6 +2410,13 @@ scale; off-diagonal entries partition the remaining minterms between the two
 factors. It checks every matrix entry, including absent edges and coefficients
 that wrap to zero, within shared work and storage limits. The independent
 polynomial difference verifier still authorizes the replacement.
+Polynomial synthesis also restricts the linear remainder's corner table to
+the inputs that remainder actually uses. Variables confined to higher-degree
+products no longer replicate its coefficients or dilute its synthesis budget.
+Support discovery consumes the shared work allowance, and constants keep a
+single coefficient with the minterm basis's negative sign. Projection does
+not authorize a replacement: the complete polynomial difference must still
+be proved before CLI or GUI source output uses the result.
 Cubic recovery uses a minterm shared by all three factors as an anchor. Its
 diagonal coefficient fixes the scale; coefficients with two copies of the
 anchor identify how many factors select each other minterm. Coefficients with
@@ -2594,6 +2621,13 @@ Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
 All signature, pairing and reconstruction work uses the existing cumulative
 work/storage allowances and decision-node limit.
+Full-block two-bit admission caches structural identities before constructing
+Boolean corrections. Partial cache entries can answer only identity queries
+and must be completed before arithmetic reads their correction. A full block
+can search past a failed positional probe without repeatedly materializing
+upper carries. Partial factor blocks retain complete probes, preserving their
+existing work headroom. These rules remain in the shared symbolic owner used
+by CLI and GUI source optimization.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding
@@ -9340,10 +9374,12 @@ original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and
-bytes remain unchanged. Unknown or overlapping writes invalidate facts;
-calls, ordered memory, malformed graphs and control-flow joins prevent this
-proof. Replayed operations must be total and explicitly typed, store/load
-truncation is retained, and budgets count rendered trees including repeated
+bytes remain unchanged. Unknown or overlapping writes invalidate facts. A
+statement's outermost direct call can consume forwarded arguments, then clears
+all stored-memory facts. Nested calls, indirect targets, ordered memory,
+malformed graphs and control-flow joins prevent this proof. Replayed operations
+must be total and explicitly typed; store/load truncation and the read's signed
+interpretation are retained. Budgets count rendered trees including repeated
 DAG edges. The proof applies to both 32-bit and 64-bit targets.
 HighIR's scalar-definition proof also survives an ordinary store whose address
 and value contain no hidden effects: the store changes memory, not an

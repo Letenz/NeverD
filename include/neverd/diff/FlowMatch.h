@@ -12,6 +12,7 @@
 #ifndef NEVERD_DIFF_FLOWMATCH_H
 #define NEVERD_DIFF_FLOWMATCH_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/DataFlow.h"
 
 namespace neverd::diff {
@@ -52,8 +53,10 @@ class FlowMatchInput {
                             const ComparisonControl &);
 
 public:
+  /// Validation throws ComparisonInterrupted when the supplied control stops.
   FlowMatchInput(const DataFlowGraph &Graph, const FlowFingerprints &Keys,
-                 const DataFlowOptions &Options = {});
+                 const DataFlowOptions &Options = {},
+                 const ComparisonControl &Control = {});
 };
 FlowNeighborhoodMatch
 matchDataFlowNeighborhood(const FlowMatchInput &Primary, uint32_t PrimaryRoot,

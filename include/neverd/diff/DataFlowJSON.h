@@ -11,6 +11,7 @@
 #ifndef NEVERD_DIFF_DATAFLOWJSON_H
 #define NEVERD_DIFF_DATAFLOWJSON_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/FlowEvidence.h"
 
 #include "llvm/Support/JSON.h"
@@ -49,13 +50,15 @@ void writeDataFlowEvidence(llvm::json::OStream &Out,
                            const DataFlowEvidence *Evidence);
 std::shared_ptr<const DataFlowEvidence>
 readDataFlowEvidence(const llvm::json::Value &Value,
-                     const DataFlowSettings &Settings);
+                     const DataFlowSettings &Settings,
+                     const ComparisonControl &Control = {});
 llvm::json::Object dataFlowEntriesJSON(const DataFlowEvidence &Evidence,
                                        uint64_t Offset, unsigned Limit);
 /// Stream one graph without building a second complete node inventory.
 void writeDataFlowGraph(llvm::json::OStream &Out, const DataFlowGraph &Graph);
 DataFlowGraph readDataFlowGraph(const llvm::json::Value &Value,
-                                const DataFlowOptions &Options = {});
+                                const DataFlowOptions &Options = {},
+                                const ComparisonControl &Control = {});
 llvm::json::Object dataFlowNodeJSON(const DataFlowGraph &Graph, uint32_t Node);
 llvm::json::Object dataFlowPageJSON(const DataFlowGraph &Graph, bool Blocks,
                                     uint64_t Offset, unsigned Limit);

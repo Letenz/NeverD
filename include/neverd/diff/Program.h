@@ -25,6 +25,8 @@
 #ifndef NEVERD_DIFF_PROGRAM_H
 #define NEVERD_DIFF_PROGRAM_H
 
+#include "neverd/diff/Control.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -272,7 +274,8 @@ struct Program {
 
   /// Checks every index and order the comparison relies on.  An error names
   /// the first violation.
-  std::optional<std::string> validate() const;
+  std::optional<std::string>
+  validate(const ComparisonControl &Control = {}) const;
 };
 
 /// Builds a program one function at a time, keeping its arrays consistent.

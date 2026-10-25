@@ -569,7 +569,9 @@ std::map<uint32_t, uint32_t> uniqueWindows(const Program &P, const Program &S,
 
 std::optional<std::string> validateRegions(const RegionAnalysis &R,
                                            const RegionSettings &Settings,
-                                           const Program &P, const Program &S) {
+                                           const Program &P, const Program &S,
+                                           const ComparisonControl &Control) {
+  Control.check();
   if (!R.State)
     return R.Anchors.empty() && R.Hypotheses.empty()
                ? std::optional<std::string>()
@@ -581,7 +583,6 @@ std::optional<std::string> validateRegions(const RegionAnalysis &R,
       R.Hypotheses.size() > Settings.MaxHypotheses)
     return "region report exceeds its settings";
   RegionAnalysis Checked;
-  const ComparisonControl Control;
   Budget Work(Checked, Settings, Control);
   try {
     std::map<uint32_t, uint32_t> Unique;
@@ -599,6 +600,7 @@ std::optional<std::string> validateRegions(const RegionAnalysis &R,
                  B.InstructionCount;
     };
     for (const auto &A : R.Anchors) {
+      Control.check();
       if (!Span(P, A.Primary) || !Span(S, A.Secondary) ||
           A.Primary.InstructionCount != A.Secondary.InstructionCount)
         return "region anchor has invalid snapshot coordinates";
@@ -642,6 +644,7 @@ std::optional<std::string> validateRegions(const RegionAnalysis &R,
     }
     std::set<uint32_t> Used;
     for (const auto &H : R.Hypotheses) {
+      Control.check();
       if (H.Anchors.empty() ||
           H.Anchors.size() > limits::kMaxRegionGroupAnchors ||
           !std::is_sorted(H.Anchors.begin(), H.Anchors.end()))
@@ -678,6 +681,9 @@ std::optional<std::string> validateRegions(const RegionAnalysis &R,
         return "region report has an inconsistent suppressed-group count";
     }
   } catch (const Interrupted &) {
+    if (Checked.State == ComparisonState::Cancelled ||
+        Checked.State == ComparisonState::TimedOut)
+      throw ComparisonInterrupted(*Checked.State);
     return "region evidence validation exceeds its work allowance";
   }
   return {};
