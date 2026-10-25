@@ -157,8 +157,13 @@ void save(llvm::StringRef Name, llvm::StringRef Text) {
   llvm::raw_fd_ostream OS(FD, true);
   OS << Text;
   OS.close();
-  if (OS.has_error())
-    throw std::runtime_error("cannot write lineage output");
+  if (OS.has_error()) {
+    const auto Error = OS.error();
+    // The CLI owns this failure. Clear the stream's error before unwinding so
+    // its destructor does not terminate the process and bypass temp cleanup.
+    OS.clear_error();
+    throw std::runtime_error("cannot write lineage output: " + Error.message());
+  }
   check();
   if (auto E = llvm::sys::fs::rename(Temporary, Name))
     throw std::runtime_error("cannot publish lineage output: " + E.message());

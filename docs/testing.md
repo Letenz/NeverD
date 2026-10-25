@@ -2148,11 +2148,21 @@ deep chains, cyclic conflict groups, report-local rejection and exact identity
 fixtures. SDK tests cover detached ownership, failed/stopped replacement, final
 commit cancellation, retry and cache budgets. Real CLI/worker tests cover
 40 MiB source persistence, partial metadata edits, stale revisions and stops.
+Linux CLI checks inject a temporary-file write failure and a signal after
+publication, verifying target preservation, cleanup and distinct I/O errors.
+`NeverDWorkerComparison` also successfully restores a 64 MiB padded report through
+both restore and start-with-restore paths, beyond the smaller IPC reply allowance.
 Python `test_lineage_integration` uses `NEVERD_TEST_LIBNEVERD` for real C ABI
 coverage. Build `neverd-gui-lineage-tests`; set `NEVERD_LINEAGE_SCREENSHOTS` and
 run it separately at `QT_SCALE_FACTOR=1` and `1.5` to inspect both themes,
-ordinary/narrow geometry and large fonts. These tests do not qualify release
-chronology, fresh native authentication or automated patch presence.
+ordinary/narrow geometry and large fonts. The desktop checks include 203
+snapshots across pages, preserving the selected snapshot when editing metadata,
+graph-to-table navigation and original evidence copy. Run the same binary with
+`XDG_CURRENT_DESKTOP=GNOME python3 tools/neverd-gui/tests/run_wayland_docking.py
+--scale 1.5 <binary>` for real corner dragging and geometry restoration inside
+the disposable compositor. The native gesture case explicitly skips with the
+offscreen platform. These tests do not qualify release chronology, fresh native
+authentication or automated patch presence.
 
 Build `NeverDBinaryDiffTests`, `NeverDBinaryDiffFlowPipelineTests`,
 `NeverDBinaryDiffSDKTests`, `neverd`,

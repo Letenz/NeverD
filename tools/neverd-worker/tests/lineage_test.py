@@ -112,9 +112,30 @@ def run(args, root):
             preload = root / "late-cancel.so"
             subprocess.run([args.cc, "-shared", "-fPIC", "-x", "c", "-", "-o", str(preload), "-ldl"],
                            input=b"""#include <dlfcn.h>
+#include <errno.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+ssize_t write(int fd, const void *data, size_t size) {
+  ssize_t (*real_write)(int, const void *, size_t) = dlsym(RTLD_NEXT, "write");
+  const char *target = getenv("NEVERD_TEST_LINEAGE_TARGET");
+  if (target && getenv("NEVERD_TEST_LINEAGE_FAIL_WRITE")) {
+    char descriptor[64], path[4096];
+    snprintf(descriptor, sizeof(descriptor), "/proc/self/fd/%d", fd);
+    ssize_t length = readlink(descriptor, path, sizeof(path) - 1);
+    if (length > 0) {
+      path[length] = 0;
+      size_t prefix = strlen(target);
+      if (!strncmp(path, target, prefix) && !strncmp(path + prefix, ".tmp-", 5)) {
+        errno = ENOSPC;
+        return -1;
+      }
+    }
+  }
+  return real_write(fd, data, size);
+}
 int rename(const char *from, const char *to) {
   int (*real_rename)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
   int result = real_rename(from, to);
@@ -123,6 +144,19 @@ int rename(const char *from, const char *to) {
   return result;
 }
 """, capture_output=True, check=True)
+            # A disk write failure must unwind through temporary-file cleanup,
+            # not terminate in LLVM's stream destructor before cleanup runs.
+            failed_env = dict(os.environ, LD_PRELOAD=str(preload),
+                              NEVERD_TEST_LINEAGE_TARGET=str(target),
+                              NEVERD_TEST_LINEAGE_FAIL_WRITE="1")
+            result = subprocess.run([args.neverd, "lineage", "--reopen", str(saved),
+                                     "--save", str(target)], capture_output=True,
+                                    env=failed_env, timeout=30)
+            assert result.returncode == 1 and not result.stdout, result
+            assert b"cannot write lineage output" in result.stderr, result.stderr
+            assert b"LLVM ERROR" not in result.stderr, result.stderr
+            assert target.read_bytes() == b"original target"
+            assert not list(root.glob(target.name + ".tmp-*"))
             published = root / "late-signal.ndlineage"
             env = dict(os.environ, LD_PRELOAD=str(preload), NEVERD_TEST_LINEAGE_TARGET=str(published))
             with open("/dev/full", "wb") as full:
