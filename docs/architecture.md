@@ -4462,6 +4462,16 @@ call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
 
+Explicit source declarations can bind entry and call carriers on HighC and on
+an LLVM-to-C source projection. Machine lifting, patching and analysis ignore
+these declarations, including when a patch request also sets the source-view
+flag. LLVM source projection does not enable runtime signature discovery.
+`MedTypePass` connects declared incoming stack bytes to raw entry-SP loads by
+initializing their local source frame once. Ordinary MedIR stores preserve
+subsequent writes and floating-point bit patterns; both emitters consume that
+same initialization. This transports an already supplied declaration and does
+not infer an original prototype or authorize a machine-code rewrite.
+
 The `neverd-bytecode` tool and C/Python plugins accept externally specified
 instruction languages through the shared recovery pipeline. C/Python callers
 can supply a static profile or a synchronous per-instruction decoder callback.
