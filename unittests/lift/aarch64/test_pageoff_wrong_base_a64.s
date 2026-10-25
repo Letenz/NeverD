@@ -27,11 +27,9 @@ a64_pageoff_wrong_base_no_escape:
 .size a64_pageoff_wrong_base_no_escape, .-a64_pageoff_wrong_base_no_escape
 
 .p2align 2
-.globl a64_writable_unknown_callee
-.type a64_writable_unknown_callee, %function
-a64_writable_unknown_callee:
-  ret
-.size a64_writable_unknown_callee, .-a64_writable_unknown_callee
+// Keep the call genuinely unknown. A defined RET-only body can prove that it
+// ignores the argument and no longer exercises an incomplete-address escape.
+.extern a64_writable_unknown_callee
 
 .section .data.jt_a64_pageoff_wrong_base,"aw",%progbits
 .p2align 3

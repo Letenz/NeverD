@@ -32,11 +32,9 @@ a64_pageoff_bypass_may_escape:
 .size a64_pageoff_bypass_may_escape, .-a64_pageoff_bypass_may_escape
 
 .p2align 2
-.globl a64_pageoff_bypass_unknown_callee
-.type a64_pageoff_bypass_unknown_callee, %function
-a64_pageoff_bypass_unknown_callee:
-  ret
-.size a64_pageoff_bypass_unknown_callee, .-a64_pageoff_bypass_unknown_callee
+// A local RET-only definition proves that no argument is read. Keep this
+// callee unresolved so the possible writable-table escape remains observable.
+.extern a64_pageoff_bypass_unknown_callee
 
 .section .data.jt_a64_pageoff_bypass,"aw",%progbits
 .p2align 3
