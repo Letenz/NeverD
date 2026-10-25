@@ -49,6 +49,18 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`NeverDX86FourSourceSourceTests` verifies all six four-source arithmetic
+families, malformed native/assembly contracts, unknown operand suppression and
+observable raw-pipeline inputs/results. `NEVERD_FOUR_SOURCE_EXPORT_DIR` exports
+IR, both C routes and native objects for `scripts/verify_x86_four_source.py`.
+That script checks O0/O2 object encodings and executes independent operand
+recorders. `scripts/verify_x86_four_source_registers.py` separately checks LLVM
+and NeverC compiler-probe register/stack transport without executing native
+four-source arithmetic. Pair these with `NeverDX86FourFMAExactTests`,
+`NeverDX86VP4DPWTests` and `NeverDNdOpEmulatorTests` for numerical and
+unknown-value regressions. Hardware AVX512_4FMAPS/AVX512_4VNNIW behavior remains
+unqualified on hosts without those capabilities.
+
 `NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
 port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
 Independent recorder functions check 1,584 operand cases per program through

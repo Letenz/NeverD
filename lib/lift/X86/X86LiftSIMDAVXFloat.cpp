@@ -15,7 +15,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86FourSource.h"
 #include "X86LiftDetail.h"
+#include "X86NativeMemory.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86/X86Lifter.h"
@@ -2521,18 +2523,26 @@ bool liftSIMDAVXFloat(X86Lifter &L, X86Lifter::LiftState &S,
         return false;
       Mask = NdVar::reg(Info.Offset, MaskSize);
     }
+    if (!x86NativeDsAddressIsValid(L.targetArch(), X86, Memory))
+      return false;
+    const auto Kind = Scalar ? (Negative ? X86FourSourceKind::FNMAddSS
+                                         : X86FourSourceKind::FMAddSS)
+                             : (Negative ? X86FourSourceKind::FNMAddPS
+                                         : X86FourSourceKind::FMAddPS);
+    const bool Zero = HasMask && X86.operands[1].avx_zero_opmask;
+    const X86FourSourceControl C{Kind, Zero};
+    const auto Sources = x86FourSourceSnapshot(S, GroupBase, C);
     const uint8_t Control = static_cast<uint8_t>(
-        (Scalar ? 1 : 0) | (Negative ? 2 : 0) |
-        (HasMask && X86.operands[1].avx_zero_opmask ? 4 : 0));
+        static_cast<unsigned>(Kind) | (Zero ? X86FourSourceZero : 0));
     const NdVar OldDestination = L.operandRead(S, Destination);
     const NdVar ArchitecturalOut = L.operandWrite(Destination);
     const NdVar Out = Scalar ? S.makeTemp(16) : ArchitecturalOut;
     const NdVar Address = S.computeEA(Memory);
-    S.emitIntrinsic(Intrinsic::X86FourFMA, Out,
-                    {Address, OldDestination, NdVar::cst(GroupBase, 1), Mask,
-                     NdVar::cst(Control, 1)},
-                    NdMemoryOrdering::None,
-                    X86Lifter::LiftState::memoryAddressSpace(Memory));
+    S.emitIntrinsic(
+        Intrinsic::X86FourSourceMemory, Out,
+        {Address, OldDestination, Sources, Mask, NdVar::cst(Control, 1)},
+        NdMemoryOrdering::None,
+        X86Lifter::LiftState::memoryAddressSpace(Memory));
     if (Scalar) {
       NdVar Full = S.makeTemp(64);
       S.emit(NdOp::CONCAT, Full, {NdVar::cst(0, 48), Out});

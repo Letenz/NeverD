@@ -13,7 +13,9 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86FourSource.h"
 #include "X86LiftDetail.h"
+#include "X86NativeMemory.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86/X86Lifter.h"
@@ -422,13 +424,19 @@ bool liftLegacyXOP(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     }
 
-    const Intrinsic Id = InsnId == X86_INS_VP4DPWSSD ? Intrinsic::X86VP4DPWSSD
-                                                     : Intrinsic::X86VP4DPWSSDS;
+    if (!x86NativeDsAddressIsValid(L.targetArch(), X86, Memory))
+      return false;
+    const auto Kind = InsnId == X86_INS_VP4DPWSSD ? X86FourSourceKind::DPWSSD
+                                                  : X86FourSourceKind::DPWSSDS;
+    const X86FourSourceControl C{Kind, ZeroMask};
+    const auto Sources = x86FourSourceSnapshot(S, SourceBase, C);
+    const auto Control =
+        static_cast<unsigned>(Kind) | (ZeroMask ? X86FourSourceZero : 0);
     const NdVar OldDestination = L.operandRead(S, Destination);
-    if (!S.emitMemoryIntrinsic(Id, Memory,
-                               {OldDestination, NdVar::cst(SourceBase, 1), Mask,
-                                NdVar::cst(ZeroMask ? 1 : 0, 1)},
-                               L.operandWrite(Destination)))
+    if (!S.emitMemoryIntrinsic(
+            Intrinsic::X86FourSourceMemory, Memory,
+            {OldDestination, Sources, Mask, NdVar::cst(Control, 1)},
+            L.operandWrite(Destination)))
       break;
     break;
   }

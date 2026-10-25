@@ -147,6 +147,7 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationEntryABI.cpp
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp
+  X86/X86FourSource.cpp
   NdOpEmulatorFloatConvert.cpp
   X86/NdOpEmulatorX86FPArith.cpp
   X86/NdOpEmulatorX86FPConvert.cpp

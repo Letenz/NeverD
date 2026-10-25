@@ -462,6 +462,10 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
 
+  // Append-only: all four vector sources are explicit SSA values in one
+  // packed operand. Legacy physical-block IDs retain their serialized values.
+  X86FourSourceMemory,
+
   _Count = 16000
 };
 
@@ -853,6 +857,7 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::EVEXCompressStore:
   case Intrinsic::EVEXExpandLoad:
+  case Intrinsic::X86FourSourceMemory:
   case Intrinsic::X86AMXState:
     return true;
   case Intrinsic::X86FPRoundMemoryState:
@@ -1077,6 +1082,13 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     return NumInputs == 5 && AddressSize == 8 && MaskSize && MaskSize <= 8 &&
            (DataSize == 16 || DataSize == 32 || DataSize == 64) &&
            OutputSize == (Id == Intrinsic::EVEXExpandLoad ? DataSize : 0);
+
+  case Intrinsic::X86FourSourceMemory:
+    // [id,address,accumulator,packed four sources,mask,control].
+    // The shared X86FourSourceShape owns the remaining control/type checks.
+    return NumInputs == 6 && AddressSize == 8 &&
+           (OutputSize == 16 || OutputSize == 64) && MaskSize == OutputSize &&
+           DataSize == (OutputSize == 16 ? 16 : 4 * OutputSize);
 
   case Intrinsic::X86AMXState:
     // [id, base, versioned descriptor, optional stride]. The shared AMX
