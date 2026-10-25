@@ -1682,8 +1682,8 @@ allocations after the active operand list shrinks.
 
 ## Acceleration libraries
 
-The bounded byte/Unicode, JSON and scheduler contracts can be checked without
-LLVM. This includes the default oneTBB scheduler and mimalloc:
+The bounded byte/Unicode, ordered integer search, JSON and scheduler contracts
+can be checked without LLVM. This includes the default oneTBB scheduler and mimalloc:
 
 ```bash
 cmake -S unittests/acceleration -B build-acceleration -G Ninja \
@@ -1697,6 +1697,24 @@ set to `OFF` for the native/scalar/parser baseline; allocator settings remain
 independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
 AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
 pass. The acceleration CI also runs installed binaries on each native host.
+
+`SortedSearch.*` compares ranks against independent counts, checks every
+insertion point across narrowed tails, and puts read-only input against an
+inaccessible page. It exercises every supported/generated Highway target,
+including unsigned high-bit addresses and duplicate keys. Test XML records the
+targets and, on Linux ARM64 with SVE, the actual vector length. For example,
+QEMU's `-cpu max,sve-max-vq=3` exercises 384-bit SVE, whose lane count does not
+divide the fixed tail. Emulation checks correctness, not native speed.
+
+The optional `neverd-sorted-search-bench` target accepts `std`, `simd`, or, in
+the full build, `owner`, followed by sorted keys and query files containing
+hexadecimal unsigned integers. An optional final Highway target name selects
+a supported implementation. It validates the complete result vector and
+reports warm lookup wall/process CPU time; parsing, reference computation,
+allocation and index construction are outside the clock. Compare `owner`
+between baseline and candidate builds to include the real
+`BinaryImage::hasFunctionSymbolAt` call. Use identical inputs and build settings,
+alternate process order, and keep builds/tests/profilers outside timing runs.
 
 `NeverDSharedSchedulerTests` reproduces the core, component-archive, CLI and
 plugin link boundaries. Its callbacks and exceptions must cross those

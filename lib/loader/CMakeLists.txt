@@ -1,3 +1,6 @@
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/NeverDPerformance.cmake")
+neverd_add_sorted_search()
+
 # The binary-file ISA model (scripts/generate_isa_model.py), embedded so a
 # lookup reads no file at run time.
 set(NEVERD_ISA_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/Raw/ISAModel.bin")
@@ -191,6 +194,7 @@ add_neverd_component_library(NeverDLoader
 
   LINK_LIBS
   LLVMSwiftDemangle
+  neverd_sorted_search
 )
 
 target_include_directories(NeverDLoader PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Raw")
