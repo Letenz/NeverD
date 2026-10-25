@@ -154,6 +154,11 @@ void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
     for (size_t Quad = 0; Quad != BlockQuads; ++Quad)
       Schedule[Quad] = vreinterpretq_u32_u8(
           vrev32q_u8(vld1q_u8(Data + Quad * RegisterBytes)));
+    // Constant schedule indices let Clang keep the four message quads in
+    // registers instead of loading and storing the ring on every quad.
+#if defined(__clang__)
+#pragma clang loop unroll(full)
+#endif
     for (size_t Quad = 0; Quad != Quads; ++Quad) {
       uint32x4_t &Words = Schedule[Quad % BlockQuads];
       const uint32x4_t Message =
