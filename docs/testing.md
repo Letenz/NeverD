@@ -497,6 +497,13 @@ XTEST completions against every incoming arithmetic-flag combination in both
 code modes, retaining DF/GPRs and refusing invented ambient transaction state.
 The source suite carries those flags through LAHF/SETO and compiles native LLVM,
 HighC and LLVM-to-C across ELF/COFF/Mach-O at O0/O2, including NeverC on x64.
+XABORT tests cover every encoded byte on x86/x64 through full, lightweight and
+lift decoding, including ignored prefixes and Capstone's signed immediates.
+Forged decoder records and malformed LowIR/MedIR/HighIR operands fail before
+effects. Native and legacy LLVM C contracts reject variable immediates and
+lost memory effects. The source suite compiles 0/127/128/255 through native
+LLVM, HighC and LLVM-to-C across both code modes and all three formats, with
+NeverC for x64; compilation does not qualify hardware rollback.
 The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
 whose original abort target and checkpoint are absent.
 Both source inventories reject incomplete address fragments in addresses

@@ -37,6 +37,7 @@ complete instruction support or semantic test coverage.
 | ENCLS, ENCLV | Native supervisor/VMM completion on x86/x64, preserving rAX/rBX results, rCX/rDX inputs and leaf-dependent arithmetic flags. Enclave memory and fault ordering remain instruction-owned. |
 | RDPID | Explicit natural-width query result; ordered hardware effect. |
 | XTEST | Retains the native transaction query, its actual ZF and the required clearing of CF/PF/AF/SF/OF; no GPR or DF modification. |
+| XABORT | Exact constant imm8 through validated native LLVM, HighC and LLVM-to-C. Missing or inconsistent decoded operands and nonconstant IR fail; enclosing RTM checkpoint recovery remains separate. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
 | CLTS | Ordered processor-state effect with no fabricated register output. |
 | Operand-free WRMSRNS | Distinct nonserializing instruction with explicit ECX/EAX/EDX inputs on x86 and x64. |

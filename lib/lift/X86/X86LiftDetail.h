@@ -321,7 +321,7 @@ bool liftSIMDLogicShift(X86Lifter &L, X86Lifter::LiftState &S,
 bool liftSIMDConvert(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                      const cs_x86 &X86);
 
-/// AES/SHA/PCLMULQDQ/CRC32 plus the TSX and MPX extensions.
+/// AES/SHA/PCLMULQDQ/CRC32 and MPX admission.
 bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                     const cs_x86 &X86);
 
@@ -377,6 +377,10 @@ bool liftSgx(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
              const cs_x86 &X86);
 bool liftSystemState(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                      const cs_x86 &X86);
+
+/// Bounded transactional instructions; XBEGIN requires a separate continuation.
+bool liftTransactions(X86Lifter &L, X86Lifter::LiftState &S,
+                      const cs_insn *Insn, const cs_x86 &X86);
 
 /// Architectural VMX/SVM operands and completion.
 bool liftVirtualization(X86Lifter &L, X86Lifter::LiftState &S,
