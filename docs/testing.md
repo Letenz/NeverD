@@ -1675,6 +1675,12 @@ ctest --test-dir build-digest --output-on-failure --no-tests=error
 
 `digest.yml` requires native ARM64 compilation and hardware selection on Linux
 (Clang/GCC), macOS and Windows (MSVC/clang-cl). Both backends must pass every case.
+Its CMake argument array always contains the required profile and architecture
+checks, so macOS's Bash 3.2 can expand it with `nounset` enabled.
+`NeverDGoogleTest.cmake` handles GoogleTest 1.17's character-conversion warning
+under clang-cl: the warning remains visible but is not fatal inside the fetched
+framework targets. The exception is private, compiler-checked, and does not
+weaken NeverD or consumer warnings. All four GoogleTest entry points use it.
 The optional `NeverDDigestTestsBench` and `NeverDPortableDigestTestsBench` targets
 feed `unittests/digest/benchmark.py`; it alternates process order, excludes an
 initial pair, compares complete digest/consumption results, and retains seven

@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/digest.yml'
+      - 'cmake/NeverDGoogleTest.cmake'
       - 'include/neverd/support/SHA256.h'
       - 'include/neverd/support/LoadProgress.h'
       - 'lib/support/SHA256*'
@@ -14,6 +15,7 @@ on:
     branches: [dev]
     paths:
       - '.github/workflows/digest.yml'
+      - 'cmake/NeverDGoogleTest.cmake'
       - 'include/neverd/support/SHA256.h'
       - 'include/neverd/support/LoadProgress.h'
       - 'lib/support/SHA256*'
@@ -72,12 +74,12 @@ jobs:
       - name: Build exact native owners and portable controls
         run: |
           set -euo pipefail
-          options=()
+          options=(-DCMAKE_BUILD_TYPE=Release -DNEVERD_DIGEST_REQUIRE_ARM64=ON)
           if [ "$CXX" = clang-cl ]; then
             options+=(-DCMAKE_C_COMPILER_TARGET=aarch64-pc-windows-msvc
                       -DCMAKE_CXX_COMPILER_TARGET=aarch64-pc-windows-msvc)
           fi
-          cmake -S unittests/digest -B build-digest -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEVERD_DIGEST_REQUIRE_ARM64=ON "${options[@]}"
+          cmake -S unittests/digest -B build-digest -G Ninja "${options[@]}"
           python scripts/build.py build-digest --target NeverDDigestTests NeverDPortableDigestTests NeverDDigestTestsBench NeverDPortableDigestTestsBench --parallel 3
           git rev-parse HEAD > build-digest/source.txt
           git submodule status third_party/llvm-project > build-digest/llvm-source.txt
