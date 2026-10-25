@@ -7731,6 +7731,13 @@ with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
 do not need vocabulary entries.
 
+`AndroidFormatting` owns both ordinary and fortify string formatting. Its
+entrypoint classification supplies the fixed-argument layout and object-size
+checks to one formatter and the shared AAPCS64 `ArgumentReader`; it does not
+duplicate conversion rules for checked imports, dynamic providers, SDK or CLI.
+Fortify paths requiring unmodeled process-abort effects stop before publishing
+output. Existing memory, deadline and representable-result limits still apply.
+
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
 Mutable bytes are one object per granted catalogue path; independent opens

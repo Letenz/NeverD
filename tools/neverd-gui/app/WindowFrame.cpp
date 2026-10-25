@@ -193,8 +193,45 @@ bool WindowFrame::resizable() const {
   return window_.minimumSize() != window_.maximumSize();
 }
 
+void WindowFrame::toggleFullScreen() {
+  if (restoreAfterFullScreen_)
+    return;
+  const bool windows =
+      QGuiApplication::platformName() == QLatin1String("windows");
+  if (!window_.isFullScreen()) {
+    beforeFullScreen_ = window_.windowState() & Qt::WindowMaximized;
+    if (windows && beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
+      // Qt uses one saved rectangle for frameless maximization and full
+      // screen. A direct transition overwrites the normal restore geometry.
+      window_.showNormal();
+      window_.showFullScreen();
+      return;
+    }
+    window_.setWindowState(beforeFullScreen_ | Qt::WindowFullScreen);
+    return;
+  }
+  if (QGuiApplication::platformName() == QLatin1String("cocoa") &&
+      beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
+    // Cocoa's full-screen exit restores the frame before the Dock occupies
+    // its desktop space again. Asking Qt to maximize at that point zooms to
+    // the wrong work area and loses both maximization and normal geometry.
+    restoreAfterFullScreen_ = true;
+    window_.showNormal();
+  } else {
+    // Leaving full screen directly maximized uses Win32's native maximize,
+    // then clears the rectangle Qt's frameless Restore still needs. Reenter
+    // maximization through Qt's normal frameless path instead.
+    if (windows && beforeFullScreen_.testFlag(Qt::WindowMaximized))
+      window_.showNormal();
+    window_.setWindowState(beforeFullScreen_);
+  }
+}
+
 void WindowFrame::syncWindowState() {
   const auto states = handle_.windowStates();
+  if (restoreAfterFullScreen_ && states.testFlag(Qt::WindowMaximized) &&
+      !states.testFlag(Qt::WindowFullScreen))
+    restoreAfterFullScreen_ = false;
   if (states == states_)
     return;
   // Cocoa can infer a maximized state when a drag reaches the window's size
@@ -221,6 +258,13 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   }
   if (object != &handle_)
     return false;
+  if (event->type() == QEvent::Expose && restoreAfterFullScreen_ &&
+      handle_.isExposed() && !states_.testFlag(Qt::WindowFullScreen)) {
+    // The desktop's screen/work-area notifications precede its exposure.
+    // Wait for that native boundary instead of a guessed animation delay.
+    restoreAfterFullScreen_ = false;
+    window_.setWindowState(beforeFullScreen_);
+  }
   // QWidget reports a requested state at once, before the window system
   // applies it; the native window receives this event only when the window
   // system has applied a state, such as with a Wayland configure.
