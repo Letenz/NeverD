@@ -22,6 +22,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/DirectTailCall.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -393,11 +394,11 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
       break;
     }
     // x86 lifts `call [slot]` as an INDIR_CALL of the slot address. Only the
-    // import the loader binds to the slot can prove the call never returns.
+    // import binding or a proved immutable code pointer can name its target.
     if (Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs >= 1 &&
         Op.Inputs[0].isConst()) {
-      return libc::isNoReturnTarget(*CurrentImg, Op.Inputs[0].Offset,
-                                    NoReturnTargets);
+      return libc::isNoReturnLoadedTarget(*CurrentImg, Op.Inputs[0].Offset,
+                                          NoReturnTargets);
     }
   }
   if (Target == InvalidVA)
@@ -741,11 +742,11 @@ void CFGBuilder::rewriteAsIndirectTailCall(InsnRecord &Rec) {
   Rec.BranchTarget = InvalidVA;
   // A jump through the slot of an import that never returns, as a PLT entry
   // of exit, never returns either, as a call through that slot does not.
-  // Only the import the loader binds to the slot proves it: a jump that
-  // ends its function's code range is an ordinary tail call.
+  // A loader binding or immutable code pointer proves the target. A jump
+  // that ends its function's code range is an ordinary tail call.
   Rec.IsNoReturnCall =
       Target.isConst() &&
-      libc::isNoReturnTarget(*CurrentImg, Target.Offset, NoReturnTargets);
+      libc::isNoReturnLoadedTarget(*CurrentImg, Target.Offset, NoReturnTargets);
 }
 
 } // namespace neverd

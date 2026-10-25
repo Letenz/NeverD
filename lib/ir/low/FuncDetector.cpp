@@ -19,6 +19,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/COFF/ControlFlowEntries.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -52,17 +53,21 @@ namespace {
 bool isUnconditionalNoReturnCall(const BinaryImage &Img,
                                  const std::vector<LowOp> &Ops) {
   va_t Target = InvalidVA;
-  bool IsConditional = false;
+  bool IsConditional = false, IsIndirect = false;
   for (const LowOp &Op : Ops) {
     if (Op.Opcode == NdOp::COND_BR)
       IsConditional = true;
     // x86 lifts `call [slot]` as an INDIR_CALL of the slot address, which
     // names the import the loader binds there, as the CFG builder reads it.
     else if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-             Op.NumInputs > 0 && Op.Inputs[0].isConst())
+             Op.NumInputs > 0 && Op.Inputs[0].isConst()) {
       Target = Op.Inputs[0].Offset;
+      IsIndirect = Op.Opcode == NdOp::INDIR_CALL;
+    }
   }
-  return !IsConditional && libc::isNoReturnTarget(Img, Target);
+  return !IsConditional &&
+         (IsIndirect ? libc::isNoReturnLoadedTarget(Img, Target)
+                     : libc::isNoReturnTarget(Img, Target));
 }
 
 bool hasBoundedSemanticTerminator(
@@ -105,7 +110,8 @@ bool hasBoundedSemanticTerminator(
         return true;
 
       const va_t CallTarget = Dec.directCallTarget(DI);
-      if (CallTarget != InvalidVA && libc::isNoReturnTarget(Img, CallTarget)) {
+      if (CallTarget != InvalidVA &&
+          libc::isNoReturnLoadedTarget(Img, CallTarget)) {
         std::vector<LowOp> Ops;
         try {
           Dec.liftToLow(DI, Ops);

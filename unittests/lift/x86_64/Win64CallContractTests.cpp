@@ -33,6 +33,8 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -872,6 +874,117 @@ PipelineResult run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   auto Result = Pipeline().run(Img, Ctx, Opts);
   EXPECT_TRUE(Result.Success) << Result.Error;
   return Result;
+}
+
+TEST(Win64CallContract, ImmutableNoReturnSlotsEndBothSourcePaths) {
+  constexpr va_t Target = Text + 0x80;
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    std::vector<uint8_t> Code(0x90, 0xCC);
+    put(Code, Text,
+        {0x48, 0x83, 0xEC, 0x28, // sub rsp,40
+         0x85, 0xC9,             // test ecx,ecx
+         0x74, 7});              // je normal
+    put(Code, Text + 8, throughSlot(Text + 8, Iat));
+    put(Code, Text + 15, {0xB8, 37, 0, 0, 0, 0x48, 0x83, 0xC4, 0x28, 0xC3});
+    put(Code, Target,
+        {0x0F, 0x0B}); // abort's named body is independently terminal
+    auto Image =
+        makeImage(Code, {{Text, "loaded_noreturn"}, {Target, "abort"}}, {});
+    Symbol SlotSymbol;
+    SlotSymbol.Name = "stop_callback";
+    SlotSymbol.Addr = Iat;
+    SlotSymbol.Size = 8;
+    Image.Symbols.push_back(SlotSymbol);
+    auto &Data = Image.Segments.back();
+    Data.Name = ".rdata";
+    Data.Size = Data.FileSz = 8;
+    Data.Data.resize(8);
+    for (unsigned I = 0; I != 8; ++I)
+      Data.Data[I] = static_cast<uint8_t>(Target >> (I * 8));
+    for (auto &Segment : Image.Segments) {
+      Segment.FileSz = Segment.Size;
+      Section Section;
+      Section.Name = Segment.Name;
+      Section.VA = Segment.VA;
+      Section.Flags = Segment.Flags;
+      Section.Size = Section.FileSz = Segment.Size;
+      Image.Sections.push_back(Section);
+    }
+    Image.CodePtrRelocSlots.insert(Iat);
+    Image.BaseRelocations.push_back({Iat, 10}); // IMAGE_REL_BASED_DIR64
+    if (Mutation == 1) {
+      Data.Flags = Data.Flags | SegmentFlags::Writable;
+      Image.Sections.back().Flags = Data.Flags;
+    } else if (Mutation == 2)
+      Image.BaseRelocations.clear();
+    else if (Mutation == 3)
+      Image.BaseRelocations.push_back({Iat, 10});
+    else if (Mutation == 4)
+      Image.DataPtrRelocSlots.insert(Iat);
+    else if (Mutation == 5)
+      Image.UserNoReturn[Target] = false;
+    else if (Mutation == 6)
+      Image.UserNoReturn[Iat] = false;
+    else if (Mutation == 7)
+      Image.Segments.push_back(Data);
+    const bool Expected = Mutation == 0;
+    libc::NoReturnTargetIndex Index(Image);
+    EXPECT_EQ(libc::isNoReturnLoadedTarget(Image, Iat), Expected);
+    EXPECT_EQ(libc::isNoReturnLoadedTarget(Image, Iat, &Index), Expected);
+    // Storage's loaded target never gives a direct call into data its ABI.
+    EXPECT_FALSE(libc::isNoReturnTarget(Image, Iat, &Index));
+    if (!Expected)
+      continue;
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text};
+      Options.SourceProjection = true;
+      Options.LiftMode = LLVM;
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      bool Found = false;
+      for (const auto &Function : Result.LowFuncs)
+        if (Function.Entry == Text)
+          for (const auto &Block : Function.Blocks)
+            for (const auto &Instruction : Block.InstructionBoundaries)
+              if (Instruction.Address == Text + 8) {
+                Found = true;
+                EXPECT_TRUE(hasLowInstructionControlFlag(
+                    Instruction.ControlFlags,
+                    LowInstructionControlFlag::NoReturn));
+                EXPECT_EQ(Block.EndAddr, Text + 14);
+              }
+      ASSERT_TRUE(Found);
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      ASSERT_TRUE(
+          LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions)
+               : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+      EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+      const std::string Oracle = R"(
+extern _Noreturn void _Exit(int);
+_Noreturn uint64_t stop_provider(void) __asm__("abort");
+_Noreturn uint64_t stop_provider(void) { _Exit(0); }
+int main(void) {
+  if (loaded_noreturn(0) != 37) return 1;
+  loaded_noreturn(1);
+  return 2;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+  }
 }
 
 TEST(Win64CallContract, BoundIntegerOperandsAgreeAcrossSourceRoutes) {

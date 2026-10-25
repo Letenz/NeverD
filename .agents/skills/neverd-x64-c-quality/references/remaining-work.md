@@ -11,6 +11,10 @@ completed discovery is different from a real function rejected by lifting;
 stated symbols and user identities cannot be removed by that reconciliation.
 COFF instruction-content flags and page execute permissions are separate.
 Full source emission is not proof of executable kernel reconstruction.
+Discovery and CFG recovery now share no-return evidence for loaded targets.
+A loader import binding or a unique immutable relocated code pointer can
+transfer its target's fact; writable, conflicting and user-overridden pointers
+do not acquire it. Public fixtures cover both C routes and their continuations.
 
 Mapped LLVM C pages now leave EH tokens without a storage extent instead of
 querying DataLayout for an unsized type. The same public exception fixture
