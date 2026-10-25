@@ -160,7 +160,12 @@ public:
   ///
   /// What the references confirm and contradict names routines the bytes
   /// alone could not, and those are what the references of their callers are
-  /// checked against in turn: the check repeats until it names nothing new.
+  /// checked against in turn. A contradicted pattern cannot confirm a caller,
+  /// and withdrawing evidence rechecks callers even if their target remains
+  /// ambiguous. Provisional rejections can be withdrawn too. The check repeats
+  /// within a bounded number of rounds; unresolved addresses and their
+  /// dependent callers remain unnamed if propagation does not converge within
+  /// that budget.
   void apply(const BinaryImage &Img, const std::vector<uint64_t> &FuncEntries);
 
   /// Name the personality routines \p Img installs but cannot name itself,

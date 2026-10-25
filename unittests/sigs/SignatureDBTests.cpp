@@ -8,6 +8,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/sigs/SignatureDB.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/BinaryFormat/COFF.h"
@@ -549,6 +550,185 @@ TEST(SignatureDBReferences, WhatReferencesNameSettlesTheirCallersInTurn) {
   const auto Names = Database.buildNameMap();
   EXPECT_EQ(Names.at(0x1100), "inner_a");
   EXPECT_EQ(Names.at(0x1000), "outer_a");
+}
+
+namespace {
+
+/// A caller at 0x1000 reaches 0x1100, whose call reaches import_a at 0x1200.
+neverd::BinaryImage makeNestedCallingImage() {
+  neverd::BinaryImage Image =
+      makeImportCallingImage(neverd::BinaryFormat::ELF, "import_a");
+  auto &Data = Image.Segments[0].Data;
+  const int32_t Outer = 0x1100 - 0x1009;
+  std::memcpy(Data.data() + 5, &Outer, sizeof(Outer));
+  const uint8_t Inner[] = {0x53, 0xE8, 0, 0, 0, 0, 0x5B, 0xC3};
+  std::copy(std::begin(Inner), std::end(Inner), Data.begin() + 0x100);
+  const int32_t ToStub = 0x1200 - 0x1106;
+  std::memcpy(Data.data() + 0x102, &ToStub, sizeof(ToStub));
+
+  return Image;
+}
+
+} // namespace
+
+TEST(SignatureDBReferences, RejectedCalleeCannotRemainConfirmationEvidence) {
+  // The inner candidate's call contradicts its claimed identity. Two other
+  // inner names stay ambiguous, so its settled name is absent both before
+  // and after that rejection. Its raw byte hit must not keep confirming the
+  // outer candidate, and the outer must be reconsidered even though the
+  // inner's settled name did not change.
+  neverd::BinaryImage Image = makeNestedCallingImage();
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      callerLine("outer_rejected", " ^0005 inner_rejected") +
+          callerLine("outer_twin", "") +
+          "53E8........5BC3 00 0000 0008 :0000 inner_rejected ^0002 import_b\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_twin_a\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_twin_b\n",
+      "refs"));
+  Database.apply(Image, {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildNameMap().count(0x1100), 0u);
+  for (const SigMatch &Match : Database.matches()) {
+    EXPECT_NE(Match.Name, "inner_rejected");
+    if (Match.Address == 0x1000)
+      EXPECT_FALSE(Match.Confirmed) << Match.Name;
+  }
+}
+
+TEST(SignatureDBReferences, WithdrawingEvidenceDoesNotPermanentlyDropACaller) {
+  // The outer candidate first appears confirmed, which provisionally rejects
+  // grand_b. Withdrawing that evidence must restore grand_b as well.
+  neverd::BinaryImage Image = makeNestedCallingImage();
+  auto &Code = Image.Segments[0];
+  auto &Data = Code.Data;
+  Code.Size = Code.FileSz = 0x400;
+  Data.resize(0x400, 0xCC);
+  const uint8_t Grand[] = {0x56, 0xE8, 0, 0, 0, 0, 0x5E, 0xC3};
+  std::copy(std::begin(Grand), std::end(Grand), Data.begin() + 0x300);
+  const int32_t ToOuter = 0x1000 - 0x1306;
+  std::memcpy(Data.data() + 0x302, &ToOuter, sizeof(ToOuter));
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      callerLine("outer_rejected", " ^0005 inner_rejected") +
+          callerLine("outer_twin", "") +
+          "53E8........5BC3 00 0000 0008 :0000 inner_rejected ^0002 import_b\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_twin_a\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_twin_b\n"
+          "56E8........5EC3 00 0000 0008 :0000 grand_a ^0002 outer_rejected\n"
+          "56E8........5EC3 00 0000 0008 :0000 grand_b ^0002 outer_twin\n",
+      "refs"));
+  Database.apply(Image, {0x1000, 0x1100, 0x1300});
+
+  EXPECT_EQ(Database.buildNameMap().count(0x1300), 0u);
+  EXPECT_TRUE(
+      std::any_of(Database.matches().begin(), Database.matches().end(),
+                  [](const SigMatch &M) { return M.Name == "grand_b"; }));
+  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u);
+  EXPECT_EQ(Database.buildNameMap().count(0x1100), 0u);
+  for (const SigMatch &Match : Database.matches()) {
+    EXPECT_NE(Match.Name, "inner_rejected");
+    if (Match.Address == 0x1000)
+      EXPECT_FALSE(Match.Confirmed) << Match.Name;
+  }
+}
+
+TEST(SignatureDBReferences, AnotherViableModuleWithTheSameNameStillConfirms) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      callerLine("outer", " ^0005 inner") + callerLine("outer_twin", "") +
+          "53E8........5BC3 00 0000 0008 :0000 inner ^0002 import_b\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_twin\n",
+      "refs"));
+  Database.apply(makeNestedCallingImage(), {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "outer");
+  EXPECT_EQ(Database.buildNameMap().count(0x1100), 0u);
+  EXPECT_EQ(std::count_if(Database.matches().begin(), Database.matches().end(),
+                          [](const SigMatch &M) { return M.Name == "inner"; }),
+            1);
+  for (const SigMatch &Match : Database.matches())
+    if (Match.Name == "outer")
+      EXPECT_TRUE(Match.Confirmed);
+}
+
+TEST(SignatureDBReferences, ParallelWithdrawalAgreesWithSerialChecking) {
+  neverd::BinaryImage Image = makeNestedCallingImage();
+  auto &Code = Image.Segments[0];
+  auto &Data = Code.Data;
+  constexpr size_t CallerCount = 4096;
+  constexpr uint64_t FirstCaller = 0x2000;
+  constexpr size_t Stride = 16;
+  const std::vector<uint8_t> Caller(Data.begin(), Data.begin() + 11);
+  Code.Size = Code.FileSz = FirstCaller - Code.VA + CallerCount * Stride;
+  Data.resize(Code.FileSz, 0xCC);
+  std::vector<uint64_t> Entries{0x1100};
+  for (size_t I = 0; I < CallerCount; ++I) {
+    const uint64_t Address = FirstCaller + I * Stride;
+    const size_t Offset = Address - Code.VA;
+    std::copy(Caller.begin(), Caller.end(), Data.begin() + Offset);
+    const int32_t Disp = static_cast<int32_t>(0x1100 - (Address + 9));
+    std::memcpy(Data.data() + Offset + 5, &Disp, sizeof(Disp));
+    Entries.push_back(Address);
+  }
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      callerLine("outer_rejected", " ^0005 inner_rejected") +
+          callerLine("outer_twin", "") +
+          "53E8........5BC3 00 0000 0008 :0000 inner_rejected ^0002 import_b\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_twin_a\n"
+          "53E8........5BC3 00 0000 0008 :0000 inner_twin_b\n",
+      "refs"));
+  const unsigned Previous = neverd::workerThreadOverride().load();
+  for (unsigned Threads : {1u, 4u}) {
+    neverd::setWorkerThreadCount(Threads);
+    Database.apply(Image, Entries);
+    EXPECT_TRUE(Database.buildNameMap().empty());
+    EXPECT_EQ(Database.matches().size(), 2 * CallerCount + 2);
+    for (const SigMatch &Match : Database.matches())
+      EXPECT_FALSE(Match.Confirmed);
+    std::reverse(Entries.begin(), Entries.end());
+  }
+  neverd::setWorkerThreadCount(Previous);
+}
+
+TEST(SignatureDBReferences, UnsettledCyclesCannotNameTheirDependentCallers) {
+  neverd::BinaryImage Image = makeNestedCallingImage();
+  auto &Code = Image.Segments[0];
+  auto &Data = Code.Data;
+  // 0x1000 and 0x1100 each contradict the other's only proposed identity.
+  const int32_t ToOuter = 0x1000 - 0x1106;
+  std::memcpy(Data.data() + 0x102, &ToOuter, sizeof(ToOuter));
+  Code.Size = Code.FileSz = 0x400;
+  Data.resize(0x400, 0xCC);
+  const uint8_t Grand[] = {0x56, 0xE8, 0, 0, 0, 0, 0x5E, 0xC3};
+  std::copy(std::begin(Grand), std::end(Grand), Data.begin() + 0x300);
+  const int32_t GrandCall = 0x1000 - 0x1306;
+  std::memcpy(Data.data() + 0x302, &GrandCall, sizeof(GrandCall));
+  const uint8_t Independent[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xC3};
+  std::copy(std::begin(Independent), std::end(Independent),
+            Data.begin() + 0x250);
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      callerLine("outer", " ^0005 other_inner") +
+          "53E8........5BC3 00 0000 0008 :0000 inner ^0002 other_outer\n"
+          "56E8........5EC3 00 0000 0008 :0000 grand ^0002 outer\n"
+          "56E8........5EC3 00 0000 0008 :0000 grand_twin\n" +
+          CalleeLine,
+      "refs"));
+  for (const std::vector<uint64_t> Entries :
+       {std::vector<uint64_t>{0x1000, 0x1100, 0x1250, 0x1300},
+        std::vector<uint64_t>{0x1300, 0x1250, 0x1100, 0x1000}}) {
+    Database.apply(Image, Entries);
+    const auto Names = Database.buildNameMap();
+    ASSERT_EQ(Names.size(), 1u);
+    EXPECT_EQ(Names.at(0x1250), "callee");
+  }
 }
 
 TEST(SignatureDBReferences, AStubTheLoaderPairedWithAnImportSettlesACall) {
