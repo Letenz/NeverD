@@ -29,6 +29,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
+#include <algorithm>
 #include <regex>
 #include <set>
 
@@ -322,6 +323,99 @@ TEST(MedSSAMultiRoot, DoesNotInventADownstreamRootFromBlockOrder) {
   ASSERT_TRUE(MedReturn.Inputs[0].isConst());
   EXPECT_EQ(MedReturn.Inputs[0].ConstVal, SourceValue);
   EXPECT_TRUE(verifyMedFunc(Med, "source-scc-order"));
+}
+
+TEST(MedSSAMultiRoot, LoopLiveInsRespectDefinitionsAndUseOrder) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool DefineAtEntry : {false, true})
+        for (bool DefineBeforeUse : {false, true}) {
+          SCOPED_TRACE(static_cast<int>(Architecture));
+          SCOPED_TRACE(static_cast<int>(Format));
+          SCOPED_TRACE(DefineAtEntry);
+          SCOPED_TRACE(DefineBeforeUse);
+          const auto &TRI = getTargetRegInfo(Architecture);
+          const auto Arguments = TRI.integerArgumentLayout(Format).Registers;
+          ASSERT_GE(Arguments.size(), 2u);
+          const uint64_t ValueReg = Arguments[1];
+          const uint16_t Width = TRI.PointerSize;
+          LowFunc Low;
+          Low.Entry = 0x1000;
+          Low.Name = "loop_live_in";
+          Low.Blocks.resize(4);
+          for (int B = 0; B < 4; ++B) {
+            Low.Blocks[B].Id = B;
+            Low.Blocks[B].StartAddr = Low.Entry + 16 * B;
+            Low.Blocks[B].EndAddr = Low.Entry + 16 * B + 12;
+          }
+          Low.Blocks[0].Succs = {1};
+          Low.Blocks[1].Preds = {0, 2};
+          Low.Blocks[1].Succs = {2, 3};
+          Low.Blocks[2].Preds = {1};
+          Low.Blocks[2].Succs = {1};
+          Low.Blocks[3].Preds = {1};
+
+          auto Define = [&](int B) {
+            LowOp Op;
+            Op.Opcode = NdOp::COPY;
+            Op.Addr = Low.Blocks[B].StartAddr + 4 * Low.Blocks[B].Ops.size();
+            Op.Output = NdVar::reg(ValueReg, Width);
+            Op.addInput(NdVar::scalar(0x33, Width));
+            Low.Blocks[B].Ops.push_back(Op);
+          };
+          if (DefineAtEntry)
+            Define(0);
+          LowOp Branch;
+          Branch.Opcode = NdOp::BRANCH;
+          Branch.Addr = Low.Entry + 8;
+          Branch.addInput(NdVar::cst(0x1010, Width));
+          Low.Blocks[0].Ops.push_back(Branch);
+          Branch.Addr = 0x1028;
+
+          LowOp Condition;
+          Condition.Opcode = NdOp::COND_BR;
+          Condition.Addr = 0x1010;
+          Condition.addInput(NdVar::cst(0x1030, Width));
+          Condition.addInput(NdVar::reg(Arguments[0], Width));
+          Low.Blocks[1].Ops.push_back(Condition);
+
+          // Keep the store observable. A definition after its read does not
+          // kill the first iteration's incoming value; one before it does.
+          if (DefineBeforeUse)
+            Define(2);
+          LowOp Store;
+          Store.Opcode = NdOp::STORE;
+          Store.Addr = 0x1020 + 4 * Low.Blocks[2].Ops.size();
+          Store.addInput(NdVar::cst(0x4000, Width));
+          Store.addInput(NdVar::reg(ValueReg, Width));
+          Low.Blocks[2].Ops.push_back(Store);
+          if (!DefineBeforeUse)
+            Define(2);
+          Low.Blocks[2].Ops.push_back(Branch);
+          LowOp Return;
+          Return.Opcode = NdOp::RETURN;
+          Return.Addr = 0x1030;
+          Return.addInput(NdVar::scalar(0, Width));
+          Low.Blocks[3].Ops.push_back(Return);
+
+          const auto Med =
+              LowToMedConverter().convert(Low, Architecture, Format);
+          ASSERT_FALSE(Med.SkippedSSA);
+          ASSERT_TRUE(verifyMedFunc(Med, "loop-live-in"));
+          EXPECT_EQ(std::any_of(Med.Params.begin(), Med.Params.end(),
+                                [&](const MedVar &Param) {
+                                  return Param.Kind == MedVar::Param &&
+                                         Param.RegOff == ValueReg &&
+                                         Param.Id >= 0;
+                                }),
+                    !DefineAtEntry && !DefineBeforeUse);
+          unsigned Stores = 0;
+          for (const auto &Block : Med.Blocks)
+            for (const auto &Op : Block.Ops)
+              Stores += Op.Opcode == NdOp::STORE;
+          EXPECT_EQ(Stores, 1u);
+        }
 }
 
 TEST(MedTempIdentity, SeparatesReusedLowTempSlotsByWidth) {

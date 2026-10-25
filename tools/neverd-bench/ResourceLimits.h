@@ -1,11 +1,11 @@
-//===- ResourceLimits.h - Signature benchmark defaults ---------*- C++ -*-===//
+//===- ResourceLimits.h - Benchmark defaults -------------------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Defaults for repeatable signature matching measurements.
+/// Defaults for repeatable component measurements.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -18,6 +18,9 @@ inline constexpr unsigned kSignatureRepetitions = 7;
 inline constexpr unsigned kSignatureIndexRepetitions = 1;
 inline constexpr unsigned kSignatureThreads = 1;
 inline constexpr char kSignatureRoot[] = "signatures";
+inline constexpr unsigned kMedRepetitions = 7;
+inline constexpr unsigned kMedThreads = 1;
+inline constexpr unsigned kMedMaxFunctions = 0;
 
 } // namespace neverd::bench
 
