@@ -652,6 +652,15 @@ with `NeverDX86FPEncodingTests`, `NeverDX86APXBMISemanticTests` and
 `NeverDX86UndefinedEffectsTests` when changing the shared prefix/effect boundary.
 These are semantic/model checks and do not require TBM hardware.
 
+`NeverDX86TBMPipeline` additionally lifts raw TBM fixtures through LLVM, HighC
+and LLVM-to-C with pipeline optimization on/off, then compiles at O0/O2 and
+executes the generated value/flag projections. The Linux x86-64 test requires
+the CLI and Clang. Its independent bit-position oracle covers zero, all ones,
+each bit boundary and mixed-width inputs with an aliased source/destination.
+Compilation disables TBM and the test inspects the exact assembly before
+linking it, so the original TBM bytes are never executed on the host. This
+checks emitted-code semantics, not physical TBM faults or performance.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
