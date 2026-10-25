@@ -338,8 +338,9 @@ def parameter_views(client, args, root, fixture):
 def loop_progress(client, args, root, fixture):
     source = fixture.with_name("control_regions_fixture.c")
     for family, version in ((2, 1), (3, 2), (4, 3), (5, 4), (6, 4),
-                            (5, 5), (6, 5), (7, 5)):
-        source = fixture.with_name("modular_progress_fixture.c" if family == 7
+                            (5, 5), (6, 5), (7, 5), (8, 6)):
+        source = fixture.with_name("parameter_bound_progress_fixture.c" if family == 8
+                                   else "modular_progress_fixture.c" if family == 7
                                    else "branch_progress_fixture.c" if family >= 5
                                    else "control_regions_fixture.c")
         for arch, target in (("x64", "x86_64-unknown-linux-gnu"),
@@ -377,14 +378,15 @@ def loop_progress(client, args, root, fixture):
                     witnesses.append(proof)
             assert witnesses
             if version >= 4:
-                guard_count = 1 if family == 7 else 2
+                guard_count = 1 if family >= 7 else 2
                 assert page["progress"]["loop_count"] == 1
                 assert page["progress"]["backedge_count"] == 1
                 assert page["progress"]["guard_count"] == guard_count
                 assert len({proof["latch"] for proof in witnesses}) == 1
                 assert len({proof["block"] for proof in witnesses}) == guard_count
-                if version == 5:
+                if version >= 5:
                     assert {proof["proof"] for proof in witnesses} == {
+                        "parameter_modular" if family == 8 else
                         "modular" if family == 7 else "nowrap"}
                 for proof in {w["block"]: w for w in witnesses}.values():
                     assert ok(client, "comparison_slice", {"side": "primary", "address": address,
@@ -405,7 +407,7 @@ def loop_progress(client, args, root, fixture):
             assert json.loads(cli.stdout) == document
             ok(client, "comparison_start", {**start, "restore_path": str(saved)})
             assert ok(client, "comparison_export") == document
-            if version == 5:
+            if version >= 5:
                 forged = json.loads(json.dumps(document))
                 witness = forged["dataflow"]["primary"]["entries"][0]["graph"]["progress"]["loops"][0]
                 witness["proof"] = "nowrap" if witness["proof"] == "modular" else "modular"

@@ -863,6 +863,28 @@ Schema 9 adds the canonical `proof` marker (`nowrap` or `modular`) to each guard
 witness. Replay rederives that marker with the complete group, and paged adapters
 only present it. The v1-v4 model default omits this field and preserves their
 published charge order and serialized bytes.
+`llvm-progress-ssa-v6` extends the same owner with parameter-relative EQ/NE
+guards. `FlowProgress` accepts only the same parameter index and exact bit view,
+directly or as P+K, K+P or P-K; it does not recognize parameters by names or
+register aliases. For X=counter-P, `(counter+A) pred (P+B)` becomes
+`X pred (B-A)` in the source-width ring. The original common-exit residue proof
+then covers every concrete parameter and seed without a separate odd-step
+restriction. All guards must share the relative domain; mixed absolute/relative
+or different-parameter groups refuse. Existing nowrap and v5 modular proofs
+retain priority and markers. Bound arithmetic may ignore overflow flags only
+because their poison is consumed by the direct guard, making the concrete
+continuation set a conservative superset.
+For a hypothetical infinite defined continuation, choose an admissible fixed
+parameter and seed. Independent undef uses include those coherent choices;
+the exact PHI recurrence preserves their relative orbit. At a shared exit every
+guard must exit or become undefined, contradicting defined infinite continuation.
+This uses LLVM's [undef/branch semantics](https://llvm.org/docs/LangRef.html#undefined-values),
+not an implicit freeze. Freeze/reset barriers are not traversed; a fresh freeze
+used only to select a guard does not change the counter or parameter proof.
+Schema 10 strictly gates `parameter_modular`. Saved validation rederives it;
+fresh native binding rejects changed parameters even when the changed graph
+still has a valid progress proof. CLI/SDK/worker/Qt only select or present this
+core contract, with no independent proof logic or new resource policy.
 Fresh source binding first compares exact graph records. If LLVM PHI numbering
 changed, `FlowBinding` anchors every non-PHI operation in its existing order and
 block, then propagates a bidirectional map through ordered inputs. Every node

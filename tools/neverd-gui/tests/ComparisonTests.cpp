@@ -369,6 +369,7 @@ private slots:
     QTest::newRow("common-update-v4") << 4 << 6;
     QTest::newRow("nowrap-proof-v5") << 5 << 6;
     QTest::newRow("modular-proof-v5") << 5 << 7;
+    QTest::newRow("parameter-bound-proof-v6") << 6 << 8;
   }
   void loopProgressExplainsProofAndRestoresSelection() {
     QFETCH(int, Version);
@@ -453,6 +454,19 @@ private slots:
       QVERIFY(write(A, Bytes));
       QVERIFY(write(B, Bytes));
     }
+    if (Family == 8) {
+      // Owned parameter_bound_progress_fixture.c, x64 O0; never executed.
+      const auto Bytes =
+          QByteArray::fromHex("554889e5897dfc8975f88b45fc8945f48b45fc83e00183f8"
+                              "0074228b45fc83f0176bc007"
+                              "83c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb"
+                              "1e8b45fc83c0116b4df40d"
+                              "31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483"
+                              "c0038945f48b45f48b4df8"
+                              "83c10039c8759f8b45fc3345f883c0035dc3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
     ComparisonDialog View(TEST_COMPARISON_WORKER);
     auto &Session = View.session();
     QSignalSpy Failures(&Session, &ComparisonSession::failed);
@@ -532,7 +546,7 @@ private slots:
       Table->selectRow(Proved);
     }
     if (Version >= 4) {
-      const int GuardCount = Family == 7 ? 1 : 2;
+      const int GuardCount = Family >= 7 ? 1 : 2;
       QVERIFY(Status->text().contains("Counter loops: 1"));
       QVERIFY(Status->text().contains("Backedges: 1"));
       QVERIFY(Status->text().contains(QString("Guards: %1").arg(GuardCount)));
@@ -550,12 +564,20 @@ private slots:
             LoopStatus->text().contains(QString("guard #%1 in block %2")
                                             .arg(Witness["compare"].toInt())
                                             .arg(Witness["block"].toInt())));
-        if (Version == 5) {
+        if (Version >= 5) {
           QCOMPARE(Witness["proof"].toString(),
-                   QString(Family == 7 ? "modular" : "nowrap"));
+                   QString(Family == 8   ? "parameter_modular"
+                           : Family == 7 ? "modular"
+                                         : "nowrap"));
           QVERIFY(LoopStatus->text().contains(
-              Family == 7 ? "every counter cycle reaches a shared exit"
+              Family >= 7 ? "every counter cycle reaches a shared exit"
                           : "monotone counter with a no-overflow contract"));
+          if (Family == 8) {
+            QVERIFY(
+                LoopStatus->text().contains("relative to an input parameter"));
+            QVERIFY(
+                LoopStatus->text().contains("Undefined behavior may occur"));
+          }
         }
       }
       QCOMPARE(Guards.size(), GuardCount);
@@ -574,7 +596,8 @@ private slots:
         Dialog->resize(1280, 800);
         QTest::qWait(40);
         QVERIFY(Dialog->grab().save(Captures +
-                                    (Family == 7    ? "/modular-proof"
+                                    (Family == 8    ? "/parameter-bound-proof"
+                                     : Family == 7  ? "/modular-proof"
                                      : Version == 5 ? "/nowrap-proof"
                                      : Family == 6  ? "/common-update"
                                      : Family == 5  ? "/selected-updates"

@@ -248,6 +248,14 @@ class ComparisonIntegrationTests(unittest.TestCase):
             "f9027c1dffc989c740f6c70175df83c71131d789f8c1e00701f031f883f9017fe331f0"
             "83c003c3", 5, 2, "nowrap")
 
+    def test_parameter_bound_progress_pages_slices_and_reopens(self) -> None:
+        # Owned parameter_bound_progress_fixture.c, x64 O0. Inspect only.
+        self._check_counter_progress(
+            "554889e5897dfc8975f88b45fc8945f48b45fc83e00183f80074228b45fc83f0176bc007"
+            "83c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b4df40d"
+            "31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f48b45f48b4df8"
+            "83c10039c8759f8b45fc3345f883c0035dc3", 6, 1, "parameter_modular")
+
     def _check_counter_progress(self, code, version, guard_count, proof_kind=None):
         from neverd_plugin import abi
 
@@ -295,7 +303,7 @@ class ComparisonIntegrationTests(unittest.TestCase):
                                         saved.encode()), 1)
         self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
         fields = ["loop_count", "backedge_count", "guard_count", "header", "latch"]
-        if version == 5:
+        if version >= 5:
             fields += ["proof", "missing_proof"]
         for field in fields:
             for layer in range(guard_count):

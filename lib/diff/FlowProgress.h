@@ -5,9 +5,10 @@
 //===----------------------------------------------------------------------===//
 /// \file
 /// Interruptible proof for acyclic bodies and versioned counter components.
-/// v1/v2 use one linear pass; v3-v5 repeat SCC analysis for nested loops under
+/// v1/v2 use one linear pass; v3-v6 repeat SCC analysis for nested loops under
 /// the same work and cancellation allowance. v4 groups shared counter paths;
 /// v5 adds affine observations and common exits across modular counter orbits.
+/// v6 also proves modular exits relative to the same input parameter.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_DIFF_FLOWPROGRESS_H
@@ -28,9 +29,12 @@ enum class FlowProgressMode : uint8_t {
   MultiBlock,
   Nested,
   Branched,
-  Modular
+  Modular,
+  ParameterBound
 };
 inline FlowProgressMode flowProgressMode(llvm::StringRef Profile) {
+  if (Profile == LLVMParameterBoundProgressDataFlowProfile)
+    return FlowProgressMode::ParameterBound;
   if (Profile == LLVMModularProgressDataFlowProfile)
     return FlowProgressMode::Modular;
   if (Profile == LLVMBranchProgressDataFlowProfile)

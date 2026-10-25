@@ -481,6 +481,34 @@ Ordinary native optimization is unchanged: compiler transformations can still
 produce unsupported shapes or require seed/bound relationships outside this
 proof, which remain explicitly unproven.
 
+**Optimized SSA with parameter-bound loop analysis**
+(`--dataflow-profile=llvm-progress-ssa-v6`) also handles equality exits relative
+to an input parameter. For example, repeatedly adding 3 to a 32-bit unsigned
+counter eventually reaches any input target from any initial counter value.
+Adding 2 can miss that target and remains unproven without additional evidence.
+The analysis checks counter cycles mathematically; it does not run the loop.
+
+Every continuation arm must use the same nonzero modular step. Its direct
+equality/inequality guard compares the counter or one fixed add/sub observation
+against the same parameter or one fixed add/sub translation of that parameter.
+The analysis expresses all guards relative to that parameter and requires a
+shared exit in every possible counter cycle. This also admits qualifying
+even-step loops that continue only while equal. Different parameters, mixed
+literal/parameter exit domains, changing bounds, reversed parameter subtraction
+and freezes on the recurrence or guard path remain unproven. A fresh choice
+between guarded paths is allowed when every path satisfies the common proof.
+Nested-loop and complete-PHI checks still apply. Existing nowrap and fixed-bound
+proofs take priority; no parameter attributes are invented.
+
+Schema 10 adds the proof basis `parameter_modular`; it retains all counts,
+witness identities, parameter provenance, paging and source authentication.
+The interface explains that undefined behavior may occur before the exit: this
+is a finite-execution contract, not a promise of normal return, an iteration
+count or equivalence. Recipes are `llvm-progress-neighborhoods-v6` and
+`llvm-progress-fragments-v6`. Earlier modes retain their exact contracts and
+saved encodings. General invariant expressions and seed/bound relationships
+remain outside this version's proof.
+
 Reopening LLVM reports also tolerates changes in PHI numbering when every
 operation, input, source observation and proof still matches exactly after an
 authenticated node mapping. The saved IDs and report contents stay intact.

@@ -232,23 +232,26 @@ neverd_comparison_flow_regions_json(neverd_comparison_t Comparison,
 /// llvm-progress-ssa-v2 (also single-entry multi-block counter components),
 /// llvm-progress-ssa-v3 (also nested single-entry counter components),
 /// llvm-progress-ssa-v4 (also shared-counter branches and compiler latches),
-/// or llvm-progress-ssa-v5 (also affine guards and wrapping counter cycles).
-/// Schema 6 witnesses add header to block (latch)/counter/update/compare.
-/// Schema 8 counts loops, physical backedges and consuming guards separately.
-/// Its witness block is the guard block; latch names the backedge source.
-/// Guard-node pages retain every witness and authoritative complete totals.
-/// Schema 7 retains those fields for every proved nesting layer. Only
-/// latch-node pages carry witnesses; v1/schema5 and v2/schema6 remain
-/// unchanged. Schema 4 retains parameter source/view widths, optional native
-/// site and elision counts; paged nodes expose only their referenced parameter
-/// records. Parameter rows consume the same retained-item allowances as nodes;
-/// node counts/coverage still count operations. LLVM schema 3 retains exact
-/// semantics and plural {address,sequence} origins; unsupported effects/types
-/// remain unavailable with reasons. Region nodes return plural originals rather
-/// than inventing a singular native origin. Query: side, kind
-/// (functions/nodes/blocks), offset, limit; nodes/blocks also require address.
-/// Unavailable functions return their explicit reason. Saved graphs bind to
-/// fresh native pipeline evidence; hashes are not equivalence.
+/// llvm-progress-ssa-v5 (also affine guards and wrapping counter cycles),
+/// or llvm-progress-ssa-v6 (also parameter-relative equality exit guards).
+/// Schema 10 also records proof:parameter_modular, derived from shared
+/// parameter-bound exits. It does not prove an iteration count or normal
+/// return. Schema 6 witnesses add header to block
+/// (latch)/counter/update/compare. Schema 8 counts loops, physical backedges
+/// and consuming guards separately. Its witness block is the guard block; latch
+/// names the backedge source. Guard-node pages retain every witness and
+/// authoritative complete totals. Schema 7 retains those fields for every
+/// proved nesting layer. Only latch-node pages carry witnesses; v1/schema5 and
+/// v2/schema6 remain unchanged. Schema 4 retains parameter source/view widths,
+/// optional native site and elision counts; paged nodes expose only their
+/// referenced parameter records. Parameter rows consume the same retained-item
+/// allowances as nodes; node counts/coverage still count operations. LLVM
+/// schema 3 retains exact semantics and plural {address,sequence} origins;
+/// unsupported effects/types remain unavailable with reasons. Region nodes
+/// return plural originals rather than inventing a singular native origin.
+/// Query: side, kind (functions/nodes/blocks), offset, limit; nodes/blocks also
+/// require address. Unavailable functions return their explicit reason. Saved
+/// graphs bind to fresh native pipeline evidence; hashes are not equivalence.
 NEVERD_API const char *
 neverd_comparison_dataflow_json(neverd_comparison_t Comparison,
                                 const char *Query);
