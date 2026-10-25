@@ -23,6 +23,7 @@ QMenu::indicator:checked { image: url(:/neverd/icons/menu_check-${Mode}.svg); }
 QMenu::icon:checked { background: ${OptionActiveBackground}; border: 1px solid ${OptionActiveBorder}; border-radius: 3px; }
 QMenu::right-arrow { image: url(:/neverd/icons/chevron_right-${Mode}.svg); width: 10px; height: 10px; }
 QToolBar { background: ${ToolBar}; border: none; spacing: 1px; padding: 2px 4px; }
+QToolBar#focusToolbar { background: transparent; padding: 0; }
 QToolBar::separator { background: ${Separator}; width: 1px; margin: 3px 4px; }
 QToolBar::handle:horizontal { image: url(:/neverd/icons/grip_vertical-${Mode}.svg); width: 6px; margin: 0 2px; }
 QToolBar::handle:vertical { image: url(:/neverd/icons/grip_horizontal-${Mode}.svg); height: 6px; margin: 2px 0; }
