@@ -27,7 +27,7 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
     if (const auto Instruction =
             aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes))) {
       // Preserve the raw index: the machine instruction owns its scale and
-      // AddressAdd's access-EL check. Reading both inputs before publishing
+      // AddressAdd's access-EL check. Reading inputs before publishing
       // the result also retains source/destination aliases.
       const NdVar Base = NdVar::reg(
           Instruction->stackBase()
@@ -36,19 +36,47 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
           kAddressMemoryPointerBytes);
       const NdVar Index =
           Instruction->index() == kAddressMemoryRegisterMask
-              ? NdVar::scalar(0, kAddressMemoryPointerBytes)
+              ? NdVar::scalar(0, Instruction->indexBytes())
               : NdVar::reg(a64reg::X0 + Instruction->index() *
                                             kAddressMemoryPointerBytes,
-                           kAddressMemoryPointerBytes);
+                           Instruction->indexBytes());
+      if (!Instruction->isLoad()) {
+        const NdVar Data =
+            Instruction->destination() == kAddressMemoryRegisterMask
+                ? NdVar::scalar(0, Instruction->accessBytes())
+                : NdVar::reg(a64reg::X0 + Instruction->destination() *
+                                              kAddressMemoryPointerBytes,
+                             Instruction->accessBytes());
+        S.emitIntrinsic(Instruction->operation().Id, NdVar{},
+                        {Base, Index,
+                         NdVar::cst(Instruction->Word, kAddressMemoryWordBytes),
+                         Data});
+        return true;
+      }
       const NdVar Destination =
           Instruction->destination() == kAddressMemoryRegisterMask
               ? S.makeTemp(kAddressMemoryPointerBytes)
               : NdVar::reg(a64reg::X0 + Instruction->destination() *
                                             kAddressMemoryPointerBytes,
                            kAddressMemoryPointerBytes);
-      S.emitIntrinsic(Intrinsic::A64_Load64RegisterOffset, Destination,
+      const auto Operation = Instruction->operation();
+      const NdVar Data =
+          Instruction->accessBytes() == kAddressMemoryPointerBytes
+              ? Destination
+              : S.makeTemp(Instruction->accessBytes());
+      S.emitIntrinsic(Operation.Id, Data,
                       {Base, Index,
                        NdVar::cst(Instruction->Word, kAddressMemoryWordBytes)});
+      if (Data.Size != Destination.Size) {
+        if (Operation.Signed && Operation.ResultBytes < Destination.Size) {
+          const auto Signed = S.makeTemp(Operation.ResultBytes);
+          S.emit(NdOp::INT_SEXT, Signed, {Data});
+          S.emit(NdOp::INT_ZEXT, Destination, {Signed});
+        } else {
+          S.emit(Operation.Signed ? NdOp::INT_SEXT : NdOp::INT_ZEXT,
+                 Destination, {Data});
+        }
+      }
       return true;
     }
   }

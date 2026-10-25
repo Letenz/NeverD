@@ -37,7 +37,10 @@ struct BodyProof {
       return false;
     const auto Instruction = aarch64AddressMemoryInstruction(
         E->Operands[kAddressMemoryWordOperand]->ConstVal);
-    return !Instruction->stackBase() && !Instruction->indexShift();
+    return Instruction->isLoad() && !Instruction->stackBase() &&
+           Instruction->usesFullWidthIndex() &&
+           Instruction->accessBytes() == kAddressMemoryPointerBytes &&
+           !Instruction->indexShift();
   }
   template <class Match>
   bool resolve(const ExprPtr &E, const Match &Leaf, unsigned Depth = 0) {

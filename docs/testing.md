@@ -287,9 +287,19 @@ PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
 state must return a normal error for both one-function serial and eight-function
 sharded LLVM emission, with and without optimization.
-`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks original 64-bit
-LSL register-offset loads through both raw decoders, strict/permissive lifting,
-SSA and both C routes. Independent LLVM MC words check source aliases, zero
+`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks all 13 GPR
+register-offset operations across 104 extension/scale encodings through both
+raw decoders, strict/permissive lifting, SSA and both C routes. Independent
+native-word comparisons exercise each family through HighC and LLVMC at O0/O2,
+including signed data, W-result zero extension, narrow-index high garbage,
+negative offsets, exact store widths and unchanged neighbouring bytes.
+Eighteen decoded narrow-index aliases also exercise source ABI recovery.
+Native harnesses also link the LLVM-generated objects and compare their memory
+and return values with independent instruction words. Fifty-two additional MC
+fixtures cover SP provenance, zero indices, discarded loads, zero stores and
+aliased base/index/data registers across every scalar family.
+The software tracer reads only accessed bytes and keeps failed stores from
+changing finite memory in either mode. Independent LLVM MC words check source aliases, zero
 indices, discarded destinations and both encoded scales. O0/O2 object checks
 retain one load even with an unused result; native AArch64 C execution covers
 positive/negative offsets and stores on both sides of the load. Malformed
@@ -297,14 +307,26 @@ LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
 and the software tracer refuses state-dependent addresses in both modes, even
 when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
 Control-independent addresses retain finite image reads without guessing CPTA.
+Whole-W interval certificates cover all 104 encodings, exhaustively check small
+positive ranges and reject signed-W domain discontinuities, address-region
+crossings, wrap, SP and malformed words. Exact-use zero-extension proofs keep
+unknown X high bits from borrowing this domain. `NeverDJumpTableTests` runs
+`JTE_AArch64.*`, guarded-range/cache/predicate-demand cases and the shared table
+owners; selecting `*JumpTable*` alone does not include the `JTE_AArch64` suite.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives only a validated scalar memory operation. Run this group with the
 decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
-Include `NativeBooleanResultProof.*` and the jump-table/computed-goto tests:
+Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
+jump-table/computed-goto tests:
 identical-address reads preserve the differential result proof, while either
 tainted address input must refuse it. Computed-goto execution covers both a
 zero-register index and a load overwriting its index register. Selector tests
 reject stale or duplicated authentication records and duplicate load occurrences.
+Run `ResolverGuardPredicates.*` and `ResolverPredicateDemand.*` as well:
+explicit guarded upper-bound queries retain compound unsigned path predicates
+without claiming a finite mask or predecessor join, while ordinary equality and
+cheap-bound queries keep their existing demand policy. Bounds above 64 and
+cold/warm query mixtures exercise the distinct cache modes.
 `MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
 an edited store must lose its previous prologue-save annotation before the
 ObjC private-copy machine replay compares both saved representations.

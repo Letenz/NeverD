@@ -1,0 +1,22 @@
+//===- JumpTableEntryObservation.def - Native load checks -------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// LLVM text observations for compact table loads preserved as original machine
+/// instructions. TEXT owns the test's independent syntax expectations.
+//===----------------------------------------------------------------------===//
+
+#ifndef JUMP_TABLE_ENTRY_OBSERVATION_TEXT
+#error "Define JUMP_TABLE_ENTRY_OBSERVATION_TEXT before including this file"
+#endif
+
+JUMP_TABLE_ENTRY_OBSERVATION_TEXT(kOriginalTableLoadTruncation, "= trunc i64 ")
+JUMP_TABLE_ENTRY_OBSERVATION_TEXT(kOriginalTableLoadResultType, " to ")
+JUMP_TABLE_ENTRY_OBSERVATION_TEXT(kOriginalTableLoadDefinition,
+                                  " = call i64 asm sideeffect ")
+JUMP_TABLE_ENTRY_OBSERVATION_TEXT(kOriginalTableLoadMarker,
+                                  "neverd.address.load")
+
+#undef JUMP_TABLE_ENTRY_OBSERVATION_TEXT

@@ -1230,7 +1230,7 @@ bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
 //===----------------------------------------------------------------------===//
 
 bool CFGBuilder::aarch64OriginalTableLoadMatches(
-    const LowOp &Load, va_t Base, uint32_t Capacity,
+    const LowOp &Load, const JumpTableLoadRole &Role, uint32_t Capacity,
     size_t *AggregateEvidenceBudget, bool &AnalysisComplete,
     ResolverQueryScope *ReadOnlyScope,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
@@ -1238,11 +1238,16 @@ bool CFGBuilder::aarch64OriginalTableLoadMatches(
   AnalysisComplete = true;
   const auto Instruction = originalAArch64TableLoad(Load);
   if (!CurrentImg || CurrentImg->Arch != Arch::AArch64 || !Instruction ||
-      Instruction->indexShift() != kAddressMemoryScaleShift || !Capacity ||
-      Capacity > limits::kMaxJumpTableEntries)
+      Role.AllowedBases.size() != 1 || Role.Indices.empty() ||
+      (uint64_t(1) << Instruction->indexShift()) !=
+          Instruction->accessBytes() ||
+      !Capacity || Capacity > limits::kMaxJumpTableEntries)
     return false;
-  // A storage ceiling alone grants no selector domain. The separate
-  // native-width query below proves the original index lies in this range.
+  const va_t Base = Role.AllowedBases.front();
+  // A storage ceiling alone grants no selector domain. Inline tables have no
+  // independent storage owner: the resolver limit is only an address-equality
+  // envelope, and the separate native-width query must prove the raw index
+  // lies inside it. Target and runtime-domain certification remain mandatory.
   const uint64_t LastIndex =
       Instruction->index() == kAddressMemoryRegisterMask ? 0 : Capacity - 1;
   for (uint64_t Index = 0; Index <= LastIndex; ++Index) {
@@ -1254,7 +1259,7 @@ bool CFGBuilder::aarch64OriginalTableLoadMatches(
       --*AggregateEvidenceBudget;
     }
     const auto Address = Instruction->controlIndependentAddress(Base, Index);
-    if (!Address || *Address != Base + Index * kAddressMemoryPointerBytes)
+    if (!Address || *Address != Base + Index * Instruction->accessBytes())
       return false;
   }
   JumpTableValueQuery BaseQuery;
@@ -1269,13 +1274,70 @@ bool CFGBuilder::aarch64OriginalTableLoadMatches(
   IndexQuery.UseAddr = Load.Addr;
   IndexQuery.UseSeq = Load.Seq;
   IndexQuery.Relation = JumpTableValueRelation::UnsignedLessThan;
-  IndexQuery.UnsignedUpperBound = Capacity;
-  const auto Results = tableValuesMatchAtUses(
-      {BaseQuery, IndexQuery}, &AnalysisComplete, nullptr, InvalidVA, nullptr,
-      AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
-      nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
-      CertifiedEdgeOverrides, UseGroupContext, ReadOnlyScope);
-  return AnalysisComplete && Results.size() == 2 && Results[0] && Results[1];
+  // The address-equality envelope may exceed the storage owner. Do not turn
+  // that owner's size into a selector bound before the common domain proof.
+  IndexQuery.UnsignedUpperBound = Instruction->controlIndependentAddressRange(
+                                      Base, limits::kMaxJumpTableEntries - 1)
+                                      ? limits::kMaxJumpTableEntries
+                                      : Capacity;
+  const auto Match = [&](llvm::ArrayRef<JumpTableValueQuery> Queries) {
+    return tableValuesMatchAtUses(
+        Queries, &AnalysisComplete, nullptr, InvalidVA, nullptr,
+        AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
+        nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
+        CertifiedEdgeOverrides, UseGroupContext, ReadOnlyScope);
+  };
+  JumpTableValueQuery IdentityQuery;
+  IdentityQuery.Candidate = IndexQuery.Candidate;
+  IdentityQuery.UseAddr = Load.Addr;
+  IdentityQuery.UseSeq = Load.Seq;
+  IdentityQuery.AllowZeroExtension = Role.AllowZeroExtension;
+  if (AggregateEvidenceBudget) {
+    // Prepay the additional retained occurrence copy before allocating it.
+    if (Role.Indices.size() > *AggregateEvidenceBudget / 3) {
+      *AggregateEvidenceBudget = 0;
+      AnalysisComplete = false;
+      return false;
+    }
+    *AggregateEvidenceBudget -= Role.Indices.size() * 3;
+  }
+  IdentityQuery.Alternatives = Role.Indices;
+  const auto Identities = Match({BaseQuery, IdentityQuery});
+  if (!AnalysisComplete || Identities.size() != 2 || !Identities[0] ||
+      !Identities[1])
+    return false;
+  // A zero-extended W index has a complete, branch-independent input domain.
+  // Proving AddressAdd agrees throughout it breaks no runtime-domain tie:
+  // the common selector/storage fixed point still owns every table slot.
+  if (Instruction->controlIndependentAddressRange(Base,
+                                                  kAddressMemoryNarrowMask)) {
+    if (!Instruction->usesFullWidthIndex())
+      return true;
+    JumpTableValueQuery NarrowIdentity;
+    NarrowIdentity.Candidate = IndexQuery.Candidate;
+    NarrowIdentity.UseAddr = Load.Addr;
+    NarrowIdentity.UseSeq = Load.Seq;
+    NdVar Narrow = IndexQuery.Candidate;
+    Narrow.Size = kAddressMemoryNarrowIndexBytes;
+    NarrowIdentity.Alternatives = {{Narrow, Load.Addr, Load.Seq, false}};
+    NarrowIdentity.AllowZeroExtension = true;
+    const auto NarrowResult = Match({NarrowIdentity});
+    if (!AnalysisComplete)
+      return false;
+    if (NarrowResult.size() == 1 && NarrowResult[0])
+      return true;
+  }
+  const auto Results = Match({IndexQuery});
+  if (!AnalysisComplete || Results.size() != 1)
+    return false;
+  if (Results[0])
+    return true;
+  // Masks and exact remainders need no branch reconstruction. Otherwise
+  // retain CMP/B.HI and other compound unsigned guards for the complete raw
+  // index, without granting finite-mask or predecessor-join authority.
+  IndexQuery.Relation = JumpTableValueRelation::GuardedUnsignedLessThan;
+  const auto Guarded = Match({IndexQuery});
+  return AnalysisComplete && Guarded.size() == 1 && Guarded[0];
 }
 
 bool CFGBuilder::tryConstBaseAbsoluteTable(

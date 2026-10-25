@@ -395,7 +395,7 @@ struct Transfer {
             }
           }
         }
-      } else if (lowAArch64AddressMemoryShapeIsValid(Op)) {
+      } else if (lowAArch64AddressLoadShapeIsValid(Op)) {
         // Equal explicit operands, memory and control state execute the same
         // original read in both runs. No address or no-fault fact is inferred.
         // A differing Boolean bit must never influence either address input.

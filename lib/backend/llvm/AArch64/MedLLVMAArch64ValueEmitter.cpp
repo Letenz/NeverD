@@ -48,24 +48,40 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
         Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
     if (Instruction.stackBase())
       llvm::report_fatal_error(kAddressMemorySPUnsupported);
-    auto Integer = [&](const MedVar &Input) {
+    auto Integer = [&](const MedVar &Input) -> llvm::Value * {
       auto *Value = getVar(Input, Builder);
-      return Value->getType()->isPointerTy()
-                 ? Builder.CreatePtrToInt(Value, Builder.getInt64Ty())
-                 : Value;
+      if (Value->getType()->isPointerTy())
+        return Builder.CreatePtrToInt(Value, Builder.getInt64Ty());
+      if (!Value->getType()->isIntegerTy())
+        llvm::report_fatal_error(kAddressMemoryMalformed);
+      return Builder.CreateZExtOrTrunc(Value, Builder.getInt64Ty());
     };
+    if (!Instruction.isLoad()) {
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(Builder.getVoidTy(),
+                                  {Builder.getInt64Ty(), Builder.getInt64Ty(),
+                                   Builder.getInt32Ty(), Builder.getInt64Ty()},
+                                  false),
+          kAddressStoreAsm, kAddressStoreConstraints, /*hasSideEffects=*/true);
+      return Builder.CreateCall(
+          Asm, {Integer(Op.Inputs[kAddressMemoryBaseOperand + 1]),
+                Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
+                Builder.getInt32(Instruction.scratchWord()),
+                Integer(Op.Inputs[kAddressMemoryDataOperand + 1])});
+    }
     auto *Asm = llvm::InlineAsm::get(
         llvm::FunctionType::get(
             Builder.getInt64Ty(),
             {Builder.getInt64Ty(), Builder.getInt64Ty(), Builder.getInt32Ty()},
             false),
         kAddressLoadAsm, kAddressLoadConstraints, /*hasSideEffects=*/true);
-    return Builder.CreateCall(
-        Asm,
-        {Integer(Op.Inputs[kAddressMemoryBaseOperand + 1]),
-         Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
-         Builder.getInt32(Instruction.scratchWord())},
-        kAddressLoadResult);
+    auto *Result =
+        Builder.CreateCall(Asm,
+                           {Integer(Op.Inputs[kAddressMemoryBaseOperand + 1]),
+                            Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
+                            Builder.getInt32(Instruction.scratchWord())},
+                           kAddressLoadResult);
+    return Builder.CreateZExtOrTrunc(Result, sizeToType(Op.Output.Size));
   }
 
   if (isAArch64PAuthLoadIntrinsic(IC)) {
