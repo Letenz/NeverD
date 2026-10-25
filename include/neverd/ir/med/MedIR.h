@@ -411,6 +411,15 @@ struct MedCallClobber {
   uint16_t PreservedPrefixSize = 0;
 };
 
+/// A callee-input observation proof bound to one original direct call.
+/// Rewriting its target or occurrence invalidates this source-only evidence.
+struct MedCallUnreadRegisters {
+  va_t Target = InvalidVA;
+  va_t Instruction = InvalidVA;
+  int OriginSeq = -1;
+  uint32_t Families = 0;
+};
+
 /// Caller-observed AArch64 direct-call return fields that include implicit
 /// clobbers.  Whole-program recovery validates these against the callee before
 /// materializing a multi-register return.
@@ -478,6 +487,8 @@ struct MedFunc {
   /// Exact SSA values implicitly defined by CALL/INDIR_CALL for caller-saved
   /// registers not represented by the call's explicit return value.
   std::vector<MedCallClobber> CallClobbers;
+  /// Original call-site id -> checked unobserved incoming GPR families.
+  std::map<uint32_t, MedCallUnreadRegisters> CallUnreadRegisters;
   std::vector<MedStructReturnCandidate> StructReturnCandidates;
   SourceRegisterCopies RegisterCopyProjections;
   SourceClassGetterCalls ClassGetterCallFacts;

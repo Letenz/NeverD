@@ -1537,7 +1537,8 @@ cl::opt<std::string> DiffDataFlowProfile(
              "llvm-progress-ssa-v3 (nested loop progress), "
              "llvm-progress-ssa-v4 (branching loop progress), "
              "llvm-progress-ssa-v5 (wrapping counter progress), "
-             "llvm-progress-ssa-v6 (parameter-bound loop progress)"),
+             "llvm-progress-ssa-v6 (parameter-bound loop progress), "
+             "llvm-progress-ssa-v7 (expression-bound loop progress)"),
     cl::sub(DiffCmd));
 cl::opt<bool>
     DiffFlowFragments("flow-fragments",

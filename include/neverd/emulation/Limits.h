@@ -18,6 +18,14 @@
 
 namespace neverd::limits::emulation {
 
+/// Future regular-file objects, including generations whose names retire.
+inline constexpr uint32_t kMaxLinuxFileCreations = 64;
+/// Explicit parent grants and successful operations for each namespace policy.
+inline constexpr uint32_t kMaxLinuxFileRenameParents = 64;
+inline constexpr uint32_t kMaxLinuxFileRenames = 64;
+inline constexpr uint32_t kMaxLinuxFileUnlinkParents = 64;
+inline constexpr uint32_t kMaxLinuxFileUnlinks = 64;
+
 /// Offline stream and datagram connections admitted together.
 inline constexpr int kMaxNetworkConnections = 256;
 /// Receive and expected-send event entries admitted per connection.

@@ -460,11 +460,16 @@ enum class Intrinsic : uint16_t {
 
 // Append-only: original memory instructions retain CPA2 address semantics.
 #define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, ...) Id,
-#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+#define NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(...)
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
 
   // Append-only: all four vector sources are explicit SSA values in one
   // packed operand. Legacy physical-block IDs retain their serialized values.
   X86FourSourceMemory,
+
+// Append-only: keep every previously published scalar and x86 identity.
+#define NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
 
   // Append-only: preserve legacy RAO/VEX encoding independently of APX.
   X86LegacyRaoAdd,

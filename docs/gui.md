@@ -70,6 +70,13 @@ Menus, tabs, lists, buttons and labels keep the system font, as in the classic
 disassembler's default font settings. A saved code-font choice overrides the
 default for code views and text fields.
 
+Disassembly and source views preserve small wheel and trackpad movements,
+including horizontal scrolling in source views. Control plus the wheel changes
+the code font (Command on macOS); precision events accumulate until a font
+point is reached, and empty gesture begin/end events do not change the size.
+Menus and context menus show their action icons on every platform, including
+macOS, where Qt otherwise hides them by default.
+
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
 forward navigation also stays in the active code window, and within a function
@@ -127,8 +134,7 @@ workbench. The workbench opens with the default desktop:
 - the title bar the window draws itself, as Visual Studio Code does: the
   application icon, the menus, a command center that names the open file and
   opens the command palette (**Ctrl+Shift+P**), and the minimize, maximize and
-  close buttons (on macOS the menus stay in the menu bar and the system's
-  traffic lights take the buttons' place);
+  close buttons; the workbench owns this chrome on macOS too;
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
   and external symbols, with the current position; click or drag to navigate;

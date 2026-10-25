@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Address.h"
+#include "WheelInput.h"
 
 #include <QAbstractScrollArea>
 #include <QHash>
@@ -107,6 +108,7 @@ private:
   void updateMetrics();
   int visibleRows() const;
 
+  WheelInput wheel_;
   Session &session_;
   QAction *ExportAction = nullptr;
   const AddressSpace &space_;

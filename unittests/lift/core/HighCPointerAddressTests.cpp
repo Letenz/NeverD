@@ -10,6 +10,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
+#include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"

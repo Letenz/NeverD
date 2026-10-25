@@ -60,6 +60,180 @@ protected:
   }
 };
 
+TEST_P(AndroidFiles,
+       RenamePreservesObjectsAcrossRawNamedVariadicAndDynamicCalls) {
+  Options.LinuxFiles = fileRenameTestInput();
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  Options.Android->ThreadLimit = 1;
+  Options.Android->Libraries["libfiles.so"] = {"rename", "renameat"};
+  auto Valid = linux_model::validateFileOptions(*Options.LinuxFiles);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  returned(run("files_rename_raw"));
+  returned(run("files_rename_reuse", {0}));
+  for (unsigned mode = 0; mode != 7; ++mode) {
+    SCOPED_TRACE(mode);
+    auto r = run("files_rename_bionic", {mode});
+    if (mode < 5)
+      returned(r);
+    else {
+      EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(r.Diagnostic.find("inactive dynamic library"),
+                std::string::npos);
+      ASSERT_FALSE(r.NativeCalls.empty());
+      EXPECT_EQ(r.NativeCalls.back().Library, "libfiles.so");
+      EXPECT_FALSE(r.NativeCalls.back().Result);
+    }
+  }
+}
+TEST_P(AndroidFiles, RenameKeepsUnknownProvidersAndOtherPathCasesPending) {
+  Options.LinuxFiles = fileRenameTestInput();
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (unsigned mode = 0; mode != 6; ++mode) {
+    auto r = run("files_rename_pending", {mode});
+    EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService) << r.Diagnostic;
+    ASSERT_FALSE(r.Services.empty());
+    EXPECT_FALSE(r.Services.back().Result);
+  }
+  Options.LinuxFiles->FileRenames.reset();
+  auto r = run("files_rename_raw");
+  EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(r.Diagnostic.find("explicit provider"), std::string::npos);
+}
+
+TEST_P(AndroidFiles, RenameKeepsFDInfoBoundToTheOpenFileAfterPathReuse) {
+  Options.LinuxFiles = fileRenameTestInput();
+  Options.LinuxFiles->DynamicProc = LinuxProcOptions{"fixture", 12};
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  Options.Android->ThreadLimit = 1;
+  auto Valid = linux_model::validateFileOptions(*Options.LinuxFiles);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+  returned(run("files_rename_fdinfo", {0}));
+}
+
+TEST_P(AndroidFiles, UnlinkErrorsShareRawNamedVariadicAndDynamicResults) {
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  Options.Android->ThreadLimit = 1;
+  Options.Android->Libraries["libfiles.so"] = {"unlink", "unlinkat"};
+  constexpr uint64_t buffer = 0x20000000;
+  Options.Android->Memory.push_back(
+      {buffer, 4096, std::vector<uint8_t>(4096, 0xa5), false});
+  Options.Android->ReadMemory.push_back({buffer, 128});
+  returned(run("files_unlink_errors"));
+  for (unsigned mode = 0; mode != 7; ++mode) {
+    SCOPED_TRACE(mode);
+    auto r = run("files_unlink_bionic", {mode, buffer + 8});
+    if (mode < 5)
+      returned(r);
+    else {
+      EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(r.Diagnostic.find("inactive dynamic library"),
+                std::string::npos);
+      ASSERT_FALSE(r.NativeCalls.empty());
+      EXPECT_EQ(r.NativeCalls.back().Library, "libfiles.so");
+      EXPECT_FALSE(r.NativeCalls.back().Result);
+    }
+    auto expected = std::vector<uint8_t>(128, 0xa5);
+    if (mode < 5)
+      for (unsigned i = 0; i != 4; ++i) {
+        const uint64_t errors[] = {2, 2, 20, 14};
+        llvm::support::endian::write64le(expected.data() + 8 + i * 16,
+                                         UINT64_MAX);
+        llvm::support::endian::write64le(expected.data() + 16 + i * 16,
+                                         errors[i]);
+      }
+    ASSERT_EQ(r.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(r.MemorySnapshots[0].Bytes, expected);
+  }
+}
+TEST_P(AndroidFiles,
+       UnlinkPreservesExplicitUnknownObjectAndProviderBoundaries) {
+  Options.LinuxFiles->SymbolicLinks["/links/raw"] = {'/', 'x'};
+  for (unsigned mode = 0; mode != 6; ++mode) {
+    auto r = run("files_unlink_pending", {mode});
+    EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService) << r.Diagnostic;
+    ASSERT_FALSE(r.Services.empty());
+    EXPECT_FALSE(r.Services.back().Result);
+  }
+  Options.LinuxFiles.reset();
+  auto r = run("files_unlink_errors");
+  EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(r.Diagnostic.find("explicit linux_files"), std::string::npos);
+}
+
+TEST_P(AndroidFiles, UnlinkClosedFileSharesRawNamedVariadicAndDynamicResults) {
+  Options.LinuxFiles = fileUnlinkTestInput();
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  Options.Android->ThreadLimit = 1;
+  Options.Android->Libraries["libfiles.so"] = {"unlink", "unlinkat"};
+  returned(run("files_unlink_pending", {0}));
+  for (unsigned Mode = 0; Mode != 7; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto R = run("files_unlink_closed_bionic", {Mode});
+    if (Mode < 5)
+      returned(R);
+    else {
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(R.Diagnostic.find("inactive dynamic library"),
+                std::string::npos);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Library, "libfiles.so");
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+    }
+  }
+  Options.LinuxFiles->FileUnlinks.reset();
+  auto Refused = run("files_unlink_closed_bionic", {0});
+  EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Refused.Diagnostic.find("explicit provider"), std::string::npos);
+  ASSERT_FALSE(Refused.NativeCalls.empty());
+  EXPECT_FALSE(Refused.NativeCalls.back().Result);
+}
+
+TEST_P(AndroidFiles, FileCreationSharesRawNamedVariadicDynamicAndStdioOwners) {
+  Options.LinuxFiles = fileCreationTestInput();
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  Options.Android->ThreadLimit = 1;
+  Options.Android->Libraries["libfiles.so"] = {"open", "openat"};
+  returned(run("files_creation_raw"));
+  for (unsigned Mode = 0; Mode != 8; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto R = run("files_creation_bionic", {Mode});
+    if (Mode != 5 && Mode != 6)
+      returned(R);
+    else {
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(R.Diagnostic.find("inactive dynamic library"),
+                std::string::npos);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+    }
+  }
+  Options.LinuxFiles->FileCreations.reset();
+  auto Refused = run("files_creation_bionic", {0});
+  EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Refused.Diagnostic.find("explicit object reservation"),
+            std::string::npos);
+  ASSERT_FALSE(Refused.NativeCalls.empty());
+  EXPECT_FALSE(Refused.NativeCalls.back().Result);
+}
+
+TEST_P(AndroidFiles, FileCreationCountsShareEveryCallerRoute) {
+  Options.LinuxFiles = fileCreationCountTestInput();
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  Options.Android->ThreadLimit = 1;
+  Options.Android->Libraries["libfiles.so"] = {"openat"};
+  returned(run("files_creation_counted_raw"));
+  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    returned(run("files_creation_counted_bionic", {Mode}));
+  }
+  Options.LinuxFiles->FileCreations->Files.at("/fixture/data").Count = 1;
+  auto Refused = run("files_creation_counted_bionic", {2});
+  EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Refused.Diagnostic.find("already consumed"), std::string::npos);
+  ASSERT_FALSE(Refused.NativeCalls.empty());
+  EXPECT_FALSE(Refused.NativeCalls.back().Result);
+}
+
 TEST_P(AndroidFiles, OpensOwnCursorsAndReuseTheLowestAvailableDescriptor) {
   returned(run("files_sequence"));
 }
@@ -554,9 +728,9 @@ TEST_P(AndroidFiles, AbsentInputsAndUnmodeledFormsCannotFabricateAResult) {
     }
     auto R = run("files_unsupported", {Mode});
     ASSERT_EQ(R.Services.size(), Mode == 6 ? 2u : 1u);
-    if (Mode == 1 || Mode == 5) {
-      // O_CREAT on an existing file does not create an object; opening a
-      // known directory likewise needs no unknown metadata or permissions.
+    if (Mode == 1 || Mode == 3 || Mode == 5) {
+      // Existing files, resolved parent components and known directories
+      // require neither new objects nor inferred filesystem metadata.
       returned(R, 3);
       EXPECT_EQ(R.Services.front().Number, 56u);
       EXPECT_EQ(R.Services.front().Result, 3u);

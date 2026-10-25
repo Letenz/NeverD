@@ -121,6 +121,7 @@ add_neverd_unittest(NeverDBinaryDiffTests
   BinaryDiffProgressTests.cpp
   BinaryDiffBranchProgressTests.cpp
   BinaryDiffModularProgressTests.cpp
+  BinaryDiffInvariantBoundProgressTests.cpp
   BinaryDiffParameterBoundProgressTests.cpp
   BinaryDiffFlowBindingTests.cpp
   BinaryDiffFlowRegionsTests.cpp

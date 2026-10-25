@@ -542,14 +542,14 @@ bool NdOpEmulator::step(const LowOp &Op) {
         }
         return storeMemoryBytes(*Address, readOperandBytes(Data));
       }
-      const auto Value = loadMemory(*Address, Instruction->accessBytes());
+      const auto Value = loadMemoryBytes(*Address, Instruction->accessBytes());
       if (!Value)
         return false;
       if (CollectLoads &&
           static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
         LoadLog.push_back(
             {*Address, static_cast<uint16_t>(Instruction->accessBytes())});
-      writeOutput(Op.Output, *Value);
+      writeOutputBytes(Op.Output, *Value);
       return true;
     }
     if (isX86SystemStateIntrinsic(Id)) {

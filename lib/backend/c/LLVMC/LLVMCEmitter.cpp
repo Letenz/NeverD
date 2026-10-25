@@ -2385,7 +2385,10 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     // a comment spells as its language does.
     std::string Comment;
     if (Fn.isDeclaration()) {
-      const llvm::StringRef CName = cNameOfGlobal(RawName, true);
+      // Identifier allocation may have recovered the image symbol from a
+      // synthesized LLVM declaration. The linker label must use that same
+      // identity, including when another declaration already uses its stem.
+      const llvm::StringRef CName = FunctionSymbolNames.at(&Fn);
       if (linksByLabel(CName, Name)) {
         std::string Label;
         llvm::raw_string_ostream(Label).write_escaped(
@@ -2539,7 +2542,8 @@ static void lowerPackedVectorBitcasts(llvm::Module &Mod) {
     const unsigned ScalarBits = Scalar->getPrimitiveSizeInBits();
     const unsigned Count = Vector->getNumElements();
     const unsigned Bits = Vector->getElementType()->getPrimitiveSizeInBits();
-    if (ScalarBits > 512 || uint64_t(Count) * Bits != ScalarBits)
+    if (ScalarBits > limits::kMaxCSourceIntegerBytes * 8 ||
+        uint64_t(Count) * Bits != ScalarBits)
       continue;
     auto *Integer = llvm::IntegerType::get(Mod.getContext(), ScalarBits);
     auto *LaneInteger = llvm::IntegerType::get(Mod.getContext(), Bits);

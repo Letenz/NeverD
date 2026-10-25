@@ -120,6 +120,9 @@ inline constexpr qreal kGraphViewArrowHalfWidth = 4.5;
 // tools/neverd-gui/app/HexView.cpp
 inline constexpr int kHexViewMargin = 6;
 
+// tools/neverd-gui/app/WheelInput.cpp
+inline constexpr int kTextViewWheelLinesPerNotch = 3;
+
 // tools/neverd-gui/app/ListingView.cpp
 inline constexpr int kListingViewPrefetchMargin = 80;
 inline constexpr int kListingViewTextMargin = 6;

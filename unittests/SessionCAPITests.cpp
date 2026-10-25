@@ -19,6 +19,7 @@
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/support/ProjectWriteLock.h"
+#include "neverd/types/HeaderLibrary.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
@@ -5147,7 +5148,21 @@ TEST_F(SessionCAPIKernelInputs, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
   EXPECT_EQ(Joined.getString("name"), "windows-kernel-x64");
   EXPECT_GT(Joined.getInteger("types").value_or(0), 3000);
   EXPECT_GT(Joined.getInteger("prototypes").value_or(0), 1500);
-  EXPECT_EQ(Joined.getArray("conflicts")->size(), 0u);
+  // A newer WDK may contain by-value records incompatible with this kernel's
+  // PDB. Those records must remain opaque; conflicts must not be hidden.
+  ASSERT_NE(Joined.getArray("conflicts"), nullptr);
+  for (const auto &Conflict : *Joined.getArray("conflicts")) {
+    ASSERT_TRUE(Conflict.getAsString());
+    const std::string Name = Conflict.getAsString()->str();
+    const char *Raw = neverd_local_type_json(Session, Name.c_str(), nullptr);
+    if (!Raw)
+      continue; // A dependent alias of a removed record may be absent.
+    auto Type = llvm::json::parse(takeString(Raw));
+    ASSERT_TRUE(static_cast<bool>(Type)) << Name;
+    ASSERT_NE(Type->getAsObject(), nullptr) << Name;
+    EXPECT_EQ(Type->getAsObject()->getBoolean("defined"), false) << Name;
+    EXPECT_EQ(Type->getAsObject()->getString("origin"), "header") << Name;
+  }
   // A record the PDB has stays the PDB's.
   auto Thread = llvm::json::parse(
       takeString(neverd_local_type_json(Session, "_KTHREAD", nullptr)));
@@ -5216,7 +5231,16 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
                 .find("PEPROCESS IoThreadToProcess(PETHREAD Thread)"),
             std::string::npos);
   // Exported under another name than the PDB's RtlAreNamesEqual.
-  EXPECT_NE(signature("FsRtlAreNamesEqual").find("Name1, "), std::string::npos);
+  const auto *KernelHeaders = neverd::types::headerLibrary(
+      neverd::types::HeaderLibrary::WindowsKernelX64);
+  ASSERT_NE(KernelHeaders, nullptr);
+  const auto *NamesEqual = KernelHeaders->findPrototype("FsRtlAreNamesEqual");
+  ASSERT_NE(NamesEqual, nullptr);
+  ASSERT_EQ(NamesEqual->Params.size(), 4u);
+  const auto NamesSignature = signature("FsRtlAreNamesEqual");
+  EXPECT_NE(NamesSignature.find(NamesEqual->Params[0].Name + ", "),
+            std::string::npos)
+      << NamesSignature;
   // A system call stub reads none of the arguments its dispatcher takes from
   // the stack; its definition still takes all seven.
   EXPECT_NE(signature("ZwCreateKey").find(" Disposition) {"),
@@ -7355,9 +7379,10 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
       << Dpc;
   EXPECT_NE(Dpc.find("Dpc->DpcData = 0;"), std::string::npos);
   // A scalar read of a union in place reads its scalar.
-  EXPECT_NE(decompile("PsGetProcessCreateTimeQuadPart")
-                .find("return Process->CreateTime.QuadPart;"),
-            std::string::npos);
+  const auto CreateTime = decompile("PsGetProcessCreateTimeQuadPart");
+  EXPECT_NE(CreateTime.find("return Process->CreateTime.QuadPart;"),
+            std::string::npos)
+      << CreateTime;
   // LLVM-C signs as HighC does, with the prototype's pointers, and stores
   // and returns them as their members' and its result's types.
   const auto llvm = [&](const char *Name) {
@@ -7380,10 +7405,11 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsHoldTheRecordsTheyName) {
       LlvmDpc.find("Dpc->DeferredRoutine = "
                    "(__typeof__(Dpc->DeferredRoutine))(DeferredRoutine);"),
       std::string::npos);
-  EXPECT_NE(llvm("PsGetProcessId")
-                .find("HANDLE PsGetProcessId(PEPROCESS Process) {\n    "
-                      "return (HANDLE)Process->UniqueProcessId;"),
-            std::string::npos);
+  const auto ProcessId = llvm("PsGetProcessId");
+  EXPECT_NE(ProcessId.find("HANDLE PsGetProcessId(PEPROCESS Process) {\n    "
+                           "return (HANDLE)Process->UniqueProcessId;"),
+            std::string::npos)
+      << ProcessId;
 
   // A member the user renames reads by its new name, in the definition and
   // in the code alike.

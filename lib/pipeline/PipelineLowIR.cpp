@@ -4414,6 +4414,7 @@ void computeCallRegisterEffects(
   Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
   Result.CallExitConstants = std::move(Summaries.ExitConstants);
   Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);
+  Result.CallUnreadGPRs = std::move(Summaries.Unread);
   Result.CallEntryStackArgs = std::move(Summaries.EntryStackArgs);
   Result.CallVariadicFrom = std::move(Summaries.VariadicFrom);
 }
