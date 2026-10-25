@@ -523,6 +523,9 @@ complete seven-test SP report for both report arguments to require all 184
 register-offset faults and matching GPR results. Signed W/X indices, each
 encoded extension/scale and all scalar/vector access widths remain in the
 original generated functions.
+Both harnesses must match the independent sample count. Passing a 177-sample
+immediate GPR export to the 184-sample register profile must fail compilation,
+even when the supplied report contains a successful register export.
 The controlled FVP driver's `--profile stack` additionally requires all four
 SA=1 readbacks and 83 guest checks per route. Its `--profile stack-register`
 requires the same controls for all 184 register-offset SP samples;

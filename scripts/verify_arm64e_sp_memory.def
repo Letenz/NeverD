@@ -156,5 +156,6 @@
         "stack_abi_qualified": false
       }
     }
-  }
+  },
+  "control_inventory_check": "#include \"Arm64eSPFault.def\"\n_Static_assert(sizeof(immediate_cases) / sizeof(immediate_cases[0]) == SP_TEST_CASE_COUNT, SP_TEST_CASE_COUNT_ERROR);\n"
 }

@@ -129,6 +129,10 @@ def main():
             shutil.copy2(header, work / header.name)
             harness = harness[:harness.index(CONFIG["main_token"])] + fault.read_text()
         else:
+            header = ROOT / CONFIG["fault_header"]
+            shutil.copy2(header, work / header.name)
+            harness = harness.replace(CONFIG["main_token"],
+                                      CONFIG["control_inventory_check"] + CONFIG["main_token"])
             for original, replacement in CONFIG["control_replacements"]:
                 if harness.count(original) != 1:
                     raise ValueError(CONFIG["errors"]["harness"])
