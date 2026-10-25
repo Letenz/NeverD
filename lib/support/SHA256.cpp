@@ -41,6 +41,9 @@
 #endif
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
+#elif defined(__linux__)
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
 #endif
 #elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__) ||           \
     defined(_M_IX86)
@@ -60,6 +63,9 @@ namespace {
 #if defined(__APPLE__)
 #define NEVERD_SHA256_DARWIN_FEATURE(Name)                                     \
   constexpr const char *DarwinFeature = Name;
+#elif defined(__linux__)
+#define NEVERD_SHA256_LINUX_FEATURES(Features)                                 \
+  constexpr unsigned long LinuxFeatures = Features;
 #else
 #define NEVERD_SHA256_ARM_FEATURES(Features, Target)                           \
   constexpr llvm::StringLiteral TargetFeatures(Features);
@@ -115,6 +121,9 @@ bool hasTargetFeatures() {
   size_t Size = sizeof(Supported);
   return sysctlbyname(DarwinFeature, &Supported, &Size, nullptr, 0) == 0 &&
          Size == sizeof(Supported) && Supported == 1;
+#elif defined(NEVERD_SHA_ARM64) && defined(__linux__)
+  // The kernel's process capabilities also work without a mounted /proc.
+  return (getauxval(AT_HWCAP) & LinuxFeatures) == LinuxFeatures;
 #else
   const llvm::StringMap<bool> Host = llvm::sys::getHostCPUFeatures();
   llvm::SmallVector<llvm::StringRef, 4> Features;
