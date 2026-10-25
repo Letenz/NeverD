@@ -13205,3 +13205,29 @@ refusals and exact writes against complete TLS backing, and known pointer
 returns under a small copy budget. `ProcessPublic.AndroidErrorTextMatchesSDKAndCLI`
 compares complete reports through both public entrypoints. Run these alongside
 thread, environment, calendar, dynamic-loader and string regressions.
+
+`LinuxMemory.Residency*` covers ordered observations, PROT_NONE, exact output
+bytes, early errors versus consumed copy faults, completed VMA/page chunks,
+partial-copy refusal, brk provenance, named external RAM, unmap/address reuse,
+adjacent unknown backing and MMIO without device transactions.
+`LinuxKernelAvailability.ResidencyObservationsAreExplicitStrictAndBounded`
+checks typed and JSON admission. `LinuxProcess.Residency*` runs independent
+O0/O2 workloads on x64 and AArch64; `AndroidNative.Residency*` compares raw,
+libc, syscall and dynamic routes across relocation packings.
+`ProcessPublic.AndroidResidencyObservationsMatchSDKAndCLI` compares 36 complete
+SDK/CLI report pairs against independent guarded bytes and errno values. Run
+`NeverDLinuxProcessTests`, `NeverDAndroidNativeTests` and `NeverDProcessPublicTests`
+with CPU emulation enabled after changing the shared memory contract.
+
+`LinuxNetwork.TCPConnectFailuresPreserveAdmissionAndBoundedOwnership` verifies
+that early errors, unconsumed exact peers, UDP and nonblocking sockets cannot
+consume the failure tail. Aliases, exhausted counts and failed-description reuse
+remain explicit boundaries. `LinuxNetworkJSON` checks strict typed/wire input
+and the 4,096 combined TCP/UDP/failure budget. Android O0/O2 relocation variants
+exercise named, dynamic, variadic and raw ARM64 connect calls with independent
+errno and guarded-memory expectations. Run both Linux and Android network owners
+after changing connection admission. All transport tests are offline.
+
+`ProcessPublic.AndroidConnectionFailuresMatchSDKAndCLI` compares six complete
+SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
+failed-description reuse.

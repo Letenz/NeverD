@@ -8280,8 +8280,15 @@ changing the allocator. Android preparation still accounts for every requested
 byte, and the existing final snapshot path checks current permissions. Terminal
 CPU/model faults retain their diagnostics without attempting observation reads.
 `LinuxResidency.cpp` owns bounded `mincore` validation within `LinuxMemory`.
-It uses `AddressSpace` mapping facts for first-page holes and does not maintain
-a second map or equate allocated backing storage with Linux page residency.
+It uses `AddressSpace` mapping facts for first-page holes. Optional ordered
+residency observations are matched against separately tracked anonymous
+allocation provenance, never VMA names or allocated RAM contents. `mapPages`
+publishes provenance only after complete mapping success; shared `unmapPages`
+retires it, including brk shrink and thread retirement. These intervals retain
+no RAM and confer no access permissions. Proc and residency share live VMA
+boundaries, while only residency admits device boundaries for explicit refusal.
+A monotonic query/output walk preserves complete vector chunks before errors;
+unknown partial-copy progress remains unsupported.
 Linux memory dispatch selects each operation before applying its own argument
 policy; raw and Bionic calls share that decision.
 `AndroidMemory` owns copies of caller-specified regular files into explicit
