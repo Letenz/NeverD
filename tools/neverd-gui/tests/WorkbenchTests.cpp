@@ -215,13 +215,18 @@ QDialog *visibleDialog(const QString &name = {}) {
 }
 
 bool activateTestWindow(QWidget *window) {
-  window->activateWindow();
   // Qt can report a transient family as active before native keyboard focus
-  // reaches this particular window. Wait for both before sending test input.
-  const bool active =
-      QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
-        return QGuiApplication::focusWindow() == window->windowHandle();
-      });
+  // reaches this particular window. A dialog's pending activation can also
+  // supersede a single request. Keep requesting within the ordinary test
+  // deadline, and require both observations before sending keyboard input.
+  const bool active = QTest::qWaitFor([window] {
+    if (window->isActiveWindow() &&
+        QGuiApplication::focusWindow() == window->windowHandle())
+      return true;
+    window->raise();
+    window->activateWindow();
+    return false;
+  });
   if (!active)
     qWarning() << "Native focus did not reach" << window << "visible"
                << window->isVisible() << "exposed"
