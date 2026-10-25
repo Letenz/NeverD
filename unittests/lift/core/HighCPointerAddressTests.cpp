@@ -43632,7 +43632,9 @@ TEST(HighCPointerAddresses, OddWideIntegerSlicePrintsBitInt) {
   // A YMM value shifted by one 32-bit lane leaves a 224-bit slice.
   EXPECT_EQ(typeToC(NdType::makeInt(28, false)), "unsigned _BitInt(224)");
   EXPECT_EQ(typeToC(NdType::makeInt(32, false)), "uint256_t");
-  EXPECT_THROW(typeToC(NdType::makeInt(65, false)), std::invalid_argument);
+  EXPECT_EQ(typeToC(NdType::makeInt(65, false)), "unsigned _BitInt(520)");
+  EXPECT_EQ(typeToC(NdType::makeInt(256, false)), "unsigned _BitInt(2048)");
+  EXPECT_THROW(typeToC(NdType::makeInt(257, false)), std::invalid_argument);
 }
 
 // Caller keeps RDX live across a direct call, as MSVC /LTCG does when the
