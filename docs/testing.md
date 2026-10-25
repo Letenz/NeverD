@@ -791,6 +791,26 @@ function cannot suppress later record queries on the same writer.
 Run the store-forwarding, source-dialect and local-types debug-context owners
 after changing frame-member queries.
 
+`*PackageApplicationInfo*` tests exact name/flag keys, independent mutable
+query results, retained Context fields, nullable and unknown field states,
+UTF-16 names, invalid typed/JSON responses and terminal work/storage limits.
+The native fixture checks ordinary and jvalue-array calls and field ownership
+across detach and a second thread; DEX queries enter the same owner. Run the
+full Dalvik, Android JNI and ProcessReport suites for this shared contract.
+These tests do not execute a package service or Binder transaction.
+
+
+`AndroidFrameworkTest.*PackageManager*`, the Android JNI PackageManager
+fixture and `ProcessReport.AndroidPackageManagerAvailabilityIsExplicitAndStrict`
+check unknown/absent/present service state, retained context ownership, hierarchy,
+DEX/JNI sharing, thread lifetime, null/type refusal and terminal resource bounds.
+Run the full Dalvik, Android JNI and ProcessReport suites when changing this
+shared framework state. Package-service or Binder execution is not covered.
+JNI's null receiver is an admission failure; the DEX/library null receiver
+separately exercises Java NullPointerException. The lookup-only native mode
+does not require service availability and never calls the manager getter.
+
+
 `AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
 terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
 calls. Independent O0/O2 fixtures run across relocation packing and available
@@ -878,6 +898,58 @@ field IDs, getters, null/replacement writes and detach/reattach across native
 fixture variants and CPU backends. `ProcessReport.AndroidInstrumentationInputIsExplicitAndStrict`
 checks JSON types and phase constraints. Run these with the full Dalvik suite,
 Android JNI regressions and ProcessReport tests after changing framework fields.
+
+`AndroidFrameworkTest.SecureCache*` and
+`DexReadsTheSameRetainedSecureCacheString` check the declared stable cache,
+unknown/null/empty/UTF-16 values, identity, resolver ownership, key admission,
+typed input validation and terminal budgets. The corresponding JNI test runs
+original ARM64 calls through all available backend/packing variants.
+`ProcessReport.AndroidSecureSettingsCacheRequiresExplicitNullableValue` checks
+strict JSON admission and nullable values. Run complete Dalvik, JNI and report
+suites for changes to this shared snapshot.
+`SecureKeyConstantsShareDexAndRuntimeLiteralStorage` and
+`AndroidJNI.SecureKeyConstantsUseInternedStaticFieldStorage` check the API 28
+`ADB_ENABLED` and `ANDROID_ID` key constants through DEX and native JNI, literal
+identity, read-only static storage and unknown-field refusal. These constants
+do not supply the corresponding settings values or a provider.
+`AndroidFrameworkTest.SettingsInt*` and
+`AndroidJNI.SecureSettingsIntegersUseGlobalCacheAndCallerDefault` cover the
+separate Global cache, shared string/int reads, DEX and native JNI transport,
+signed limits, invalid ASCII/default behavior, explicit absence versus unknown,
+Unicode refusal, resolver ownership and terminal budgets.
+`ProcessReport.AndroidGlobalSettingsCacheRequiresExplicitNullableValue` checks
+strict input admission. Run full Dalvik, JNI and report suites after changing
+these shared settings contracts.
+
+`AndroidFrameworkTest.ApplicationInfo*` checks retained identity, nullable
+sourceDir input, UTF-16 contents, mutable DEX/Runtime sharing, trusted field
+ownership, foreign/type/null refusal and terminal storage/work budgets.
+`AndroidJNI.ApplicationInfoSharesFieldsAcrossThreadsAndDetach` exercises original
+ARM64 getters and field reads/writes across threads, detach and reference
+deletion on all available backend/fixture variants.
+`ProcessReport.AndroidApplicationInfoRequiresExplicitNullableSourceDirectory`
+checks strict JSON admission. The NativeDirectory cases also check independent
+unknown/null/String state, DEX/JNI writes, cross-thread identity and strict
+`native_library_dir` input without inferring it from sourceDir. Run full Dalvik,
+JNI and report suites for this shared snapshot and field contract.
+
+`StringBuilderTest.*` covers API 28 empty construction, exact UTF-16 units,
+stable mutation identity, independent immutable results, DEX construction,
+hierarchy, terminal budgets and refusal boundaries.
+`AndroidJNI.MutableStringBuilderSharesUTF16ValuesWithJNI` executes independent
+original ARM64 JNI callers through the available backends and fixture packing
+variants, including both ordinary and jvalue-array arguments. Unknown capacity
+queries remain a stop. Run the complete Dalvik and JNI suites after changes to
+these shared value semantics.
+
+`AndroidFrameworkTest.ContentResolver*` and
+`DexAndLibraryShareTheContextResolver` check the retained resolver across
+Application/base Context calls, its concrete hierarchy, separate workload
+ownership, null/type/foreign-instance refusal, DEX sharing and terminal heap
+and instruction limits. `AndroidJNI.ApplicationContentResolver*` checks original
+native callers across O0/O2, relocation packing and available CPU backends,
+including global/local references, detach/reattach and two native threads.
+These tests do not supply content providers, settings or Binder responses.
 
 `LinuxFileNamespace.CreatedDirectories*` and `Directory*` check directory
 inodes, complete stat layouts, parent updates, setgid/umask, reservation/time
@@ -13282,3 +13354,35 @@ refusals and exact writes against complete TLS backing, and known pointer
 returns under a small copy budget. `ProcessPublic.AndroidErrorTextMatchesSDKAndCLI`
 compares complete reports through both public entrypoints. Run these alongside
 thread, environment, calendar, dynamic-loader and string regressions.
+
+`LinuxMemory.Residency*` covers ordered observations, PROT_NONE, exact output
+bytes, early errors versus consumed copy faults, completed VMA/page chunks,
+partial-copy refusal, brk provenance, named external RAM, unmap/address reuse,
+adjacent unknown backing and MMIO without device transactions.
+`LinuxKernelAvailability.ResidencyObservationsAreExplicitStrictAndBounded`
+checks typed and JSON admission. `LinuxProcess.Residency*` runs independent
+O0/O2 workloads on x64 and AArch64; `AndroidNative.Residency*` compares raw,
+libc, syscall and dynamic routes across relocation packings.
+`ProcessPublic.AndroidResidencyObservationsMatchSDKAndCLI` compares 36 complete
+SDK/CLI report pairs against independent guarded bytes and errno values. Run
+`NeverDLinuxProcessTests`, `NeverDAndroidNativeTests` and `NeverDProcessPublicTests`
+with CPU emulation enabled after changing the shared memory contract.
+
+`LinuxNetwork.TCPConnectFailuresPreserveAdmissionAndBoundedOwnership` verifies
+that early errors, unconsumed exact peers, UDP and nonblocking sockets cannot
+consume the failure tail. Aliases, exhausted counts and failed-description reuse
+remain explicit boundaries. `LinuxNetworkJSON` checks strict typed/wire input
+and the 4,096 combined TCP/UDP/failure budget. Android O0/O2 relocation variants
+exercise named, dynamic, variadic and raw ARM64 connect calls with independent
+errno and guarded-memory expectations. Run both Linux and Android network owners
+after changing connection admission. All transport tests are offline.
+
+`ProcessPublic.AndroidConnectionFailuresMatchSDKAndCLI` compares six complete
+SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
+failed-description reuse.
+
+`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 28 complete
+SDK/CLI reports across O0/O2 JNI callers. Resolver identity, UTF-16 builders,
+missing and null settings, signed integer defaults, mutable application fields,
+package-manager availability and exact package queries retain the same shared
+semantics through typed and public wire entrypoints.

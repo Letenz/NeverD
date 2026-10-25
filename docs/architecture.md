@@ -8300,8 +8300,15 @@ changing the allocator. Android preparation still accounts for every requested
 byte, and the existing final snapshot path checks current permissions. Terminal
 CPU/model faults retain their diagnostics without attempting observation reads.
 `LinuxResidency.cpp` owns bounded `mincore` validation within `LinuxMemory`.
-It uses `AddressSpace` mapping facts for first-page holes and does not maintain
-a second map or equate allocated backing storage with Linux page residency.
+It uses `AddressSpace` mapping facts for first-page holes. Optional ordered
+residency observations are matched against separately tracked anonymous
+allocation provenance, never VMA names or allocated RAM contents. `mapPages`
+publishes provenance only after complete mapping success; shared `unmapPages`
+retires it, including brk shrink and thread retirement. These intervals retain
+no RAM and confer no access permissions. Proc and residency share live VMA
+boundaries, while only residency admits device boundaries for explicit refusal.
+A monotonic query/output walk preserves complete vector chunks before errors;
+unknown partial-copy progress remains unsupported.
 Linux memory dispatch selects each operation before applying its own argument
 policy; raw and Bionic calls share that decision.
 `AndroidMemory` owns copies of caller-specified regular files into explicit
@@ -11453,6 +11460,19 @@ Program registers framework field ownership by declaration identity, independent
 of supplied source metadata. Runtime routes those instance fields to the same
 AndroidFramework state as library getters. Instrumentation starts from explicit
 optional state and retains compatible guest writes; JNI IDs do not own a copy.
+The attached Context's ApplicationInfo follows the same ownership rule. Its
+getter retains one instance shared by Application and base Context; `sourceDir`
+and `nativeLibraryDir` reads use independent nullable inputs until guest writes
+establish their values. Knowing one field does not supply the other.
+PackageManager ApplicationInfo queries match explicit own-user positive
+responses by exact package and flags. The same AndroidFramework field owner
+stores independent mutable slots per returned object; immutable response
+indices distinguish fresh parcel results from the Context's retained instance.
+The JSON adapter reuses one ApplicationInfo schema decoder, and the typed
+validator owns response bounds and preconditions. No JNI-side field copies or
+package service execution are introduced.
+Framework String materialization shares one budgeted helper across methods and
+fields. File existence and APK contents remain separate filesystem inputs.
 Exact loader-scoped negative class lookup observations are admitted by the
 shared Android application validator and checked against the Runtime's actual
 Program visibility. AndroidFramework creates the shared throwable and message;
@@ -11560,6 +11580,31 @@ preserves the same heap throwable through move-exception, rethrow and JNI.
 Frame storage is released on every unwind, including caught exceptions;
 resource/unsupported stops remain terminal and cannot be caught by Java.
 This is neither a second decoder nor an ART/JVM class-loader implementation.
+
+`AndroidFramework` also owns the explicitly supplied, generation-stable Secure
+and Global settings caches of its attached resolver. The bounded `android_id`
+and redirected `adb_enabled` reads keep
+unknown, cached null, empty and nonempty values distinct, with the same retained
+String identity for JNI and DEX. Typed snapshots and JSON share admission;
+neither transport chooses a default identifier or setting. The defaulted
+integer getter reuses that String owner, checks ASCII decimal int32 bounds, and
+uses the caller's default only for known absence or invalid ASCII text. Unknown
+state and unmodeled Unicode digit semantics remain explicit stops.
+This projection requires an
+existing own-user cache and does not implement Binder/provider acquisition,
+generation changes, other users or writes. Its contract follows API 28
+[Settings.Secure and NameValueCache](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/provider/Settings.java).
+
+The API 28 value profile admits StringBuilder's empty constructor,
+`append(char)` and `toString()` through that same Library owner. Its retained
+UTF-16 value is mutable; append returns the original identity and charges its
+copy before mutation. Nonempty String results own independent bytes; the empty
+result uses the literal pool. Program declares the concrete, abstract-base and
+interface hierarchy. This bounded value projection does not expose ART backing
+arrays or capacity, and other overloads remain unsupported.
+The contract follows the public API 28
+[StringBuilder](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/StringBuilder.java)
+and its abstract base; no implementation bodies are incorporated.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.

@@ -442,6 +442,1168 @@ TEST_F(AndroidFrameworkTest, FilesDirectoryRetainsFileAndStringIdentities) {
                 javaStringBytes(expected.substr(0, expected.rfind('/'))));
   }
 }
+TEST_F(AndroidFrameworkTest, ContentResolverBelongsToTheAttachedContext) {
+  auto app = call(CurrentApplication);
+  auto resolver = call(ContextContentResolver, app);
+  auto base = call(BaseContext, app);
+  EXPECT_NE(resolver, 0u);
+  EXPECT_NE(resolver, app);
+  EXPECT_NE(resolver, base);
+  EXPECT_EQ(call(ContextContentResolver, app), resolver);
+  EXPECT_EQ(call(ContextContentResolver, base), resolver);
+  EXPECT_EQ(heap->get(resolver)->ClassName,
+            "android/app/ContextImpl$ApplicationContentResolver");
+  EXPECT_EQ(
+      program.parent("Landroid/app/ContextImpl$ApplicationContentResolver;"),
+      "Landroid/content/ContentResolver;");
+  EXPECT_TRUE(
+      program.assignable("Landroid/app/ContextImpl$ApplicationContentResolver;",
+                         "Landroid/content/ContentResolver;"));
+  // A separate workload owns a separate resolver, even with shared storage.
+  Runtime other(program, heap, AndroidApplicationSnapshot{Phase::Application});
+  auto other_app =
+      other.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto other_resolver =
+      other.library(operation(ContextContentResolver), other_app, {}, Admit);
+  EXPECT_EQ(other_resolver.stop, ExecutionStop::Returned);
+  EXPECT_NE(other_resolver.value, resolver);
+}
+TEST_F(AndroidFrameworkTest, PackageManagerUsesExplicitAvailabilityAndContext) {
+  for (bool available : {false, true}) {
+    AndroidApplicationSnapshot snapshot{Phase::Application};
+    snapshot.package_manager_available = available;
+    Runtime state(program, heap, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+    auto first =
+        state.library(operation(ContextPackageManager), app, {}, Admit);
+    ASSERT_EQ(first.stop, ExecutionStop::Returned) << first.diagnostic;
+    EXPECT_EQ(first.value == 0, !available);
+    for (uint64_t receiver : {app, base}) {
+      auto again =
+          state.library(operation(ContextPackageManager), receiver, {}, Admit);
+      EXPECT_EQ(again.stop, ExecutionStop::Returned);
+      EXPECT_EQ(again.value, first.value);
+    }
+    if (!available)
+      continue;
+    EXPECT_NE(first.value, app);
+    EXPECT_NE(first.value, base);
+    EXPECT_EQ(heap->get(first.value)->ClassName,
+              "android/app/ApplicationPackageManager");
+    EXPECT_EQ(program.parent("Landroid/app/ApplicationPackageManager;"),
+              "Landroid/content/pm/PackageManager;");
+    EXPECT_TRUE(program.assignable("Landroid/app/ApplicationPackageManager;",
+                                   "Landroid/content/pm/PackageManager;"));
+    Runtime other(program, heap, snapshot);
+    auto other_app =
+        other.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto other_manager =
+        other.library(operation(ContextPackageManager), other_app, {}, Admit);
+    ASSERT_EQ(other_manager.stop, ExecutionStop::Returned);
+    EXPECT_NE(other_manager.value, first.value);
+  }
+}
+TEST_F(AndroidFrameworkTest, PackageManagerRequiresKnownAvailability) {
+  auto app = call(CurrentApplication);
+  auto unknown =
+      runtime.library(operation(ContextPackageManager), app, {}, Admit);
+  EXPECT_EQ(unknown.stop, ExecutionStop::Unsupported);
+  EXPECT_NE(unknown.diagnostic.find("availability is not supplied"),
+            std::string::npos);
+}
+TEST_F(AndroidFrameworkTest, PackageManagerRequiresItsOwnContextAndLifecycle) {
+  for (auto phase :
+       {std::optional<Phase>{}, std::optional{Phase::Unattached},
+        std::optional{Phase::Attached}, std::optional{Phase::Application}}) {
+    std::optional<AndroidApplicationSnapshot> snapshot;
+    if (phase) {
+      snapshot.emplace();
+      snapshot->phase = *phase;
+      snapshot->package_manager_available = true;
+    }
+    Runtime state(program, heap, snapshot);
+    auto foreign =
+        heap->allocate(Object::Instance, "android/app/Application", 0);
+    auto result = state.library(operation(ContextPackageManager),
+                                foreign->Identity, {}, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+  }
+  auto null = runtime.library(operation(ContextPackageManager), 0, {}, Admit);
+  EXPECT_EQ(null.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(null.exception, "java/lang/NullPointerException");
+  auto wrong = heap->allocate(Object::Instance, "java/lang/Object", 0);
+  EXPECT_EQ(
+      runtime
+          .library(operation(ContextPackageManager), wrong->Identity, {}, Admit)
+          .stop,
+      ExecutionStop::Invalid);
+}
+TEST_F(AndroidFrameworkTest, PackageManagerHonorsHeapAndWorkLimits) {
+  for (bool available : {false, true}) {
+    AndroidApplicationSnapshot snapshot{Phase::Application};
+    snapshot.package_manager_available = available;
+    auto bounded = std::make_shared<Heap>(65536, 1);
+    Runtime state(program, bounded, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit);
+    ASSERT_EQ(app.stop, ExecutionStop::Returned);
+    auto result =
+        state.library(operation(ContextPackageManager), app.value, {}, Admit);
+    EXPECT_EQ(result.stop,
+              available ? ExecutionStop::HeapLimit : ExecutionStop::Returned);
+    if (!available)
+      EXPECT_EQ(result.value, 0u);
+    else
+      EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+                ExecutionStop::HeapLimit);
+  }
+  for (unsigned budget : {0u, 1u}) {
+    AndroidApplicationSnapshot snapshot{Phase::Application};
+    snapshot.package_manager_available = true;
+    Runtime limited(program, heap, snapshot);
+    auto app = limited.library(operation(CurrentApplication), 0, {}, Admit);
+    ASSERT_EQ(app.stop, ExecutionStop::Returned);
+    unsigned work = 0;
+    auto result =
+        limited.library(operation(ContextPackageManager), app.value, {}, [&] {
+          return work++ < budget ? ExecutionStop::Returned
+                                 : ExecutionStop::InstructionLimit;
+        });
+    EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+    EXPECT_EQ(
+        limited.library(operation(ContextPackageManager), app.value, {}, Admit)
+            .stop,
+        ExecutionStop::InstructionLimit);
+  }
+}
+const FieldRef SourceDirectoryField{"Landroid/content/pm/ApplicationInfo;",
+                                    "sourceDir", "Ljava/lang/String;"};
+const FieldRef NativeDirectoryField{"Landroid/content/pm/ApplicationInfo;",
+                                    "nativeLibraryDir", "Ljava/lang/String;"};
+TEST_F(AndroidFrameworkTest,
+       PackageApplicationInfoResultsHaveIndependentFields) {
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_manager_available = true;
+  input.application_info =
+      AndroidApplicationSnapshot::ApplicationInfo{"/context"};
+  input.application_info_queries = {
+      {"test.app", 0, {"/query", std::optional<std::string>{"/query/lib"}}},
+      {"test.app", -1, {std::nullopt, std::optional<std::string>{}}},
+      {"other.\xc3\xa9", 0, {"/unicode"}}};
+  Runtime state(program, heap, input);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto context_info =
+      state.library(operation(ContextApplicationInfo), app, {}, Admit).value;
+  auto manager =
+      state.library(operation(ContextPackageManager), app, {}, Admit).value;
+  uint64_t args[]{heap->literal("test.app")->Identity, 0};
+  auto first =
+      state.library(operation(PackageApplicationInfo), manager, args, Admit);
+  auto second =
+      state.library(operation(PackageApplicationInfo), manager, args, Admit);
+  ASSERT_EQ(first.stop, ExecutionStop::Returned);
+  ASSERT_EQ(second.stop, ExecutionStop::Returned);
+  EXPECT_NE(first.value, second.value);
+  EXPECT_NE(first.value, context_info);
+  EXPECT_EQ(heap->get(first.value)->ClassName,
+            "android/content/pm/ApplicationInfo");
+  const auto *source = program.findField(SourceDirectoryField, false);
+  const auto *native = program.findField(NativeDirectoryField, false);
+  auto read = [&](uint64_t object, const Field *field) {
+    auto result = state.field(*field, object, {}, Admit, 65536);
+    EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    return result.value;
+  };
+  auto changed = heap->literal("changed")->Identity;
+  EXPECT_EQ(state.field(*source, first.value, changed, Admit, 65536).value,
+            changed);
+  EXPECT_EQ(state.field(*native, first.value, 0, Admit, 65536).value, 0u);
+  EXPECT_EQ(read(first.value, source), changed);
+  EXPECT_EQ(read(first.value, native), 0u);
+  EXPECT_EQ(heap->get(read(second.value, source))->Bytes,
+            javaStringBytes("/query"));
+  EXPECT_EQ(heap->get(read(second.value, native))->Bytes,
+            javaStringBytes("/query/lib"));
+  EXPECT_EQ(heap->get(read(context_info, source))->Bytes,
+            javaStringBytes("/context"));
+  args[1] = UINT64_MAX; // Java int arguments use their low 32 bits.
+  auto nulls =
+      state.library(operation(PackageApplicationInfo), manager, args, Admit);
+  ASSERT_EQ(nulls.stop, ExecutionStop::Returned);
+  EXPECT_EQ(read(nulls.value, source), 0u);
+  EXPECT_EQ(read(nulls.value, native), 0u);
+  args[0] = heap->literal("other.\xc3\xa9")->Identity;
+  args[1] = 0;
+  auto unicode =
+      state.library(operation(PackageApplicationInfo), manager, args, Admit);
+  ASSERT_EQ(unicode.stop, ExecutionStop::Returned);
+  EXPECT_EQ(heap->get(read(unicode.value, source))->Bytes,
+            javaStringBytes("/unicode"));
+  EXPECT_EQ(state.field(*native, unicode.value, {}, Admit, 65536).stop,
+            ExecutionStop::Unsupported);
+}
+TEST_F(AndroidFrameworkTest,
+       PackageApplicationInfoRejectsUnsuppliedQueriesAndOwners) {
+  for (unsigned mode = 0; mode < 8; ++mode) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    input.package_manager_available = true;
+    if (mode != 0)
+      input.application_info_queries = {{"test.app", 0, {"/query"}}};
+    Runtime state(program, heap, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto manager =
+        state.library(operation(ContextPackageManager), app, {}, Admit).value;
+    uint64_t args[]{
+        heap->literal(mode == 1 ? "other.app" : "test.app")->Identity,
+        mode == 2 ? 1u : 0u};
+    if (mode == 3)
+      args[0] = 0;
+    if (mode == 4)
+      manager = heap->allocate(Object::Instance,
+                               "android/app/ApplicationPackageManager", 0)
+                    ->Identity;
+    if (mode == 5)
+      manager = 0;
+    if (mode == 6)
+      args[0] = app;
+    if (mode == 7)
+      args[0] = heap->literal(std::string(1025, 'x'))->Identity;
+    auto result =
+        state.library(operation(PackageApplicationInfo), manager, args, Admit);
+    EXPECT_EQ(result.stop, mode == 5   ? ExecutionStop::Thrown
+                           : mode == 6 ? ExecutionStop::Invalid
+                                       : ExecutionStop::Unsupported)
+        << mode;
+    if (mode == 5)
+      EXPECT_EQ(result.exception, "java/lang/NullPointerException");
+  }
+}
+TEST_F(AndroidFrameworkTest, PackageApplicationInfoValidatesTypedResponses) {
+  AndroidApplicationSnapshot good{Phase::Application};
+  good.package_manager_available = true;
+  good.application_info_queries = {{"test.app", INT32_MIN, {"/query"}}};
+  EXPECT_NO_THROW((Runtime(program, heap, good)));
+  for (unsigned mode = 0; mode < 10; ++mode) {
+    auto bad = good;
+    auto &query = bad.application_info_queries[0];
+    switch (mode) {
+    case 0:
+      bad.phase = Phase::Attached;
+      break;
+    case 1:
+      bad.package_manager_available.reset();
+      break;
+    case 2:
+      bad.package_manager_available = false;
+      break;
+    case 3:
+      query.package_name.clear();
+      break;
+    case 4:
+      query.package_name = std::string("a\0b", 3);
+      break;
+    case 5:
+      query.package_name = std::string(1025, 'x');
+      break;
+    case 6:
+      query.info.source_dir = std::string(4097, 'x');
+      break;
+    case 7:
+      query.info.native_library_dir = std::string(4097, 'x');
+      break;
+    case 8:
+      bad.application_info_queries.push_back(query);
+      break;
+    case 9:
+      query.package_name = "\xff";
+      break;
+    }
+    EXPECT_THROW((Runtime(program, heap, bad)), Error) << mode;
+  }
+  for (unsigned i = 1; i < 64; ++i)
+    good.application_info_queries.push_back(
+        {"test." + std::to_string(i), 0, {}});
+  EXPECT_NO_THROW((Runtime(program, heap, good)));
+  good.application_info_queries.push_back({"test.extra", 0, {}});
+  EXPECT_THROW((Runtime(program, heap, good)), Error);
+}
+TEST_F(AndroidFrameworkTest, PackageApplicationInfoHonorsTerminalBudgets) {
+  for (unsigned mode = 0; mode < 4; ++mode) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    input.package_manager_available = true;
+    input.application_info_queries = {{"test.app", 0, {"/query"}}};
+    auto bounded = std::make_shared<Heap>(65536, 16);
+    Runtime state(program, bounded, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto manager =
+        state.library(operation(ContextPackageManager), app, {}, Admit).value;
+    const uint64_t args[]{bounded->literal("test.app")->Identity, 0};
+    if (mode == 0)
+      while (bounded->allocate(Object::Instance, "java/lang/Object", 0)) {
+      }
+    unsigned ticks = 0;
+    auto result =
+        state.library(operation(PackageApplicationInfo), manager, args, [&] {
+          return mode != 0 && ++ticks > (mode == 1   ? 0u
+                                         : mode == 2 ? 4u
+                                                     : 10u)
+                     ? ExecutionStop::InstructionLimit
+                     : ExecutionStop::Returned;
+        });
+    const auto expected =
+        mode == 0 ? ExecutionStop::HeapLimit : ExecutionStop::InstructionLimit;
+    EXPECT_EQ(result.stop, expected) << mode;
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              expected);
+  }
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_manager_available = true;
+  input.application_info_queries = {{"test.app", 0, {"/query"}}};
+  auto byte_limited = std::make_shared<Heap>(4096, 4096);
+  Runtime state(program, byte_limited, input);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto manager =
+      state.library(operation(ContextPackageManager), app, {}, Admit).value;
+  const uint64_t args[]{byte_limited->literal("test.app")->Identity, 0};
+  ExecutionResult result;
+  unsigned count = 0;
+  do {
+    result =
+        state.library(operation(PackageApplicationInfo), manager, args, Admit);
+    ++count;
+  } while (result.stop == ExecutionStop::Returned && count < 64);
+  EXPECT_GT(count, 1u);
+  EXPECT_LT(count, 64u);
+  EXPECT_EQ(result.stop, ExecutionStop::HeapLimit);
+  EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+            ExecutionStop::HeapLimit);
+}
+TEST_F(AndroidFrameworkTest,
+       PackageApplicationInfoDexAndLibraryShareFieldOwnership) {
+  Class reader;
+  reader.name = "Ltest/PackageInfoReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {
+      reader.name,
+      "query",
+      {"Landroid/content/pm/PackageManager;", "Ljava/lang/String;", "I"},
+      "Landroid/content/pm/ApplicationInfo;"};
+  method.access = {"public", "static"};
+  method.registers = 4;
+  Instruction get;
+  get.opcode = "invoke-virtual";
+  get.registers = {1, 2, 3};
+  get.reference = MethodRef{"Landroid/content/pm/PackageManager;",
+                            "getApplicationInfo",
+                            {"Ljava/lang/String;", "I"},
+                            "Landroid/content/pm/ApplicationInfo;"};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result-object";
+  move.registers = {0};
+  Instruction put;
+  put.pc = 4;
+  put.opcode = "iput-object";
+  put.registers = {2, 0};
+  put.reference = SourceDirectoryField;
+  Instruction ret;
+  ret.pc = 6;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {get, move, put, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_manager_available = true;
+  input.application_info_queries = {{"test.app", 0, {"/query"}}};
+  Runtime state(code, heap, input);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto manager =
+      state.library(operation(ContextPackageManager), app, {}, Admit).value;
+  const uint64_t args[]{manager, heap->literal("test.app")->Identity, 0};
+  auto result =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  const auto *field = code.findField(SourceDirectoryField, false);
+  EXPECT_EQ(state.field(*field, result.value, {}, Admit, 65536).value, args[1]);
+  auto next = state.library(operation(PackageApplicationInfo), manager,
+                            std::span(args).subspan(1), Admit);
+  ASSERT_EQ(next.stop, ExecutionStop::Returned);
+  EXPECT_NE(next.value, result.value);
+  auto value = state.field(*field, next.value, {}, Admit, 65536);
+  ASSERT_EQ(value.stop, ExecutionStop::Returned);
+  EXPECT_EQ(heap->get(value.value)->Bytes, javaStringBytes("/query"));
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationInfoNativeDirectoryRetainsIndependentField) {
+  const auto *field = program.findField(NativeDirectoryField, false);
+  const auto *source = program.findField(SourceDirectoryField, false);
+  ASSERT_NE(field, nullptr);
+  EXPECT_TRUE(program.androidFrameworkField(*field));
+  EXPECT_TRUE(has(field->access, "public"));
+  EXPECT_FALSE(has(field->access, "final"));
+  EXPECT_EQ(program.findField(NativeDirectoryField, true), nullptr);
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.application_info =
+      AndroidApplicationSnapshot::ApplicationInfo{"/source.apk"};
+  for (auto value :
+       {std::optional<std::string>{}, std::optional<std::string>{""},
+        std::optional<std::string>{"/lib/\xc3\xa9"}}) {
+    input.application_info->native_library_dir.emplace(value);
+    Runtime state(program, heap, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto info =
+        state.library(operation(ContextApplicationInfo), app, {}, Admit).value;
+    auto source_value = state.field(*source, info, {}, Admit, 65536);
+    ASSERT_EQ(source_value.stop, ExecutionStop::Returned);
+    auto native = state.field(*field, info, {}, Admit, 65536);
+    ASSERT_EQ(native.stop, ExecutionStop::Returned) << native.diagnostic;
+    if (value) {
+      ASSERT_NE(native.value, 0u);
+      EXPECT_EQ(heap->get(native.value)->Bytes, javaStringBytes(*value));
+    } else {
+      EXPECT_EQ(native.value, 0u);
+    }
+    EXPECT_EQ(state.field(*field, info, {}, Admit, 65536).value, native.value);
+    EXPECT_EQ(state.field(*field, info, source_value.value, Admit, 65536).value,
+              source_value.value);
+    EXPECT_EQ(state.field(*field, info, 0, Admit, 65536).value, 0u);
+    EXPECT_EQ(state.field(*source, info, {}, Admit, 65536).value,
+              source_value.value);
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationInfoNativeDirectoryDoesNotInferMissingState) {
+  const auto *field = program.findField(NativeDirectoryField, false);
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.application_info =
+      AndroidApplicationSnapshot::ApplicationInfo{"/source.apk"};
+  Runtime state(program, heap, input);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto info =
+      state.library(operation(ContextApplicationInfo), app, {}, Admit).value;
+  auto result = state.field(*field, info, {}, Admit, 65536);
+  EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+  EXPECT_NE(result.diagnostic.find("nativeLibraryDir is not supplied"),
+            std::string::npos);
+  for (auto value : {std::string(4097, 'x'), std::string("\xff")}) {
+    input.application_info->native_library_dir.emplace(value);
+    EXPECT_THROW(Runtime(program, heap, input), Error);
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationInfoRetainsNullableMutableSourceDirectory) {
+  const auto *field = program.findField(SourceDirectoryField, false);
+  ASSERT_NE(field, nullptr);
+  EXPECT_TRUE(has(field->access, "public"));
+  EXPECT_FALSE(has(field->access, "final"));
+  EXPECT_TRUE(program.androidFrameworkField(*field));
+  Field copy = *field;
+  EXPECT_FALSE(program.androidFrameworkField(copy));
+  EXPECT_EQ(program.findField(SourceDirectoryField, true), nullptr);
+  EXPECT_TRUE(program.assignable("Landroid/content/pm/ApplicationInfo;",
+                                 "Landroid/content/pm/PackageItemInfo;"));
+  EXPECT_TRUE(program.assignable("Landroid/content/pm/ApplicationInfo;",
+                                 "Landroid/os/Parcelable;"));
+  for (auto text :
+       {std::optional<std::string>{}, std::optional<std::string>{""},
+        std::optional<std::string>{"/app/base.apk"},
+        std::optional<std::string>{std::string("a\0\xc3\xa9", 4)}}) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    input.application_info = AndroidApplicationSnapshot::ApplicationInfo{text};
+    Runtime state(program, heap, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+    auto info =
+        state.library(operation(ContextApplicationInfo), app, {}, Admit);
+    ASSERT_EQ(info.stop, ExecutionStop::Returned) << info.diagnostic;
+    EXPECT_NE(info.value, 0u);
+    EXPECT_EQ(
+        state.library(operation(ContextApplicationInfo), base, {}, Admit).value,
+        info.value);
+    auto value = state.field(*field, info.value, {}, Admit, 65536);
+    ASSERT_EQ(value.stop, ExecutionStop::Returned) << value.diagnostic;
+    if (text) {
+      ASSERT_NE(value.value, 0u);
+      EXPECT_EQ(heap->get(value.value)->Bytes, javaStringBytes(*text));
+      EXPECT_NE(value.value, heap->literal(*text)->Identity);
+    } else {
+      EXPECT_EQ(value.value, 0u);
+    }
+    EXPECT_EQ(state.field(*field, info.value, {}, Admit, 65536).value,
+              value.value);
+    auto replacement = heap->literal("replacement")->Identity;
+    EXPECT_EQ(state.field(*field, info.value, replacement, Admit, 65536).value,
+              replacement);
+    EXPECT_EQ(state.field(*field, info.value, {}, Admit, 65536).value,
+              replacement);
+    EXPECT_EQ(state.field(*field, info.value, 0, Admit, 65536).value, 0u);
+    EXPECT_EQ(state.field(*field, info.value, {}, Admit, 65536).value, 0u);
+  }
+}
+TEST_F(AndroidFrameworkTest, ApplicationInfoRejectsUnknownAndForeignState) {
+  const auto *field = program.findField(SourceDirectoryField, false);
+  auto app = call(CurrentApplication);
+  auto info = call(ContextApplicationInfo, app);
+  auto absent = runtime.field(*field, info, {}, Admit, 65536);
+  EXPECT_EQ(absent.stop, ExecutionStop::Unsupported);
+  EXPECT_NE(absent.diagnostic.find("sourceDir is not supplied"),
+            std::string::npos);
+  // A guest write establishes a value without inventing an initial read.
+  Runtime writable(program, heap,
+                   AndroidApplicationSnapshot{Phase::Application});
+  app = writable.library(operation(CurrentApplication), 0, {}, Admit).value;
+  info =
+      writable.library(operation(ContextApplicationInfo), app, {}, Admit).value;
+  EXPECT_EQ(writable.field(*field, info, 0, Admit, 65536).stop,
+            ExecutionStop::Returned);
+  EXPECT_EQ(writable.field(*field, info, {}, Admit, 65536).value, 0u);
+  for (auto type : {"android/content/pm/ApplicationInfo", "java/lang/Object"}) {
+    Runtime state(program, heap,
+                  AndroidApplicationSnapshot{Phase::Application});
+    auto foreign = heap->allocate(Object::Instance, type, 0);
+    EXPECT_EQ(state.field(*field, foreign->Identity, 0, Admit, 65536).stop,
+              std::string_view(type) == "java/lang/Object"
+                  ? ExecutionStop::Invalid
+                  : ExecutionStop::Unsupported);
+  }
+  auto wrong = heap->allocate(Object::Instance, "java/lang/Object", 0);
+  EXPECT_EQ(writable.field(*field, info, wrong->Identity, Admit, 65536).stop,
+            ExecutionStop::Invalid);
+  Runtime nulls(program, heap, AndroidApplicationSnapshot{Phase::Application});
+  EXPECT_EQ(nulls.field(*field, 0, {}, Admit, 65536).exception,
+            "java/lang/NullPointerException");
+  EXPECT_EQ(
+      nulls.library(operation(ContextApplicationInfo), 0, {}, Admit).exception,
+      "java/lang/NullPointerException");
+  for (auto phase : {Phase::Unattached, Phase::Attached, Phase::Application}) {
+    Runtime state(program, heap, AndroidApplicationSnapshot{phase});
+    auto foreign =
+        heap->allocate(Object::Instance, "android/app/Application", 0);
+    EXPECT_EQ(state
+                  .library(operation(ContextApplicationInfo), foreign->Identity,
+                           {}, Admit)
+                  .stop,
+              ExecutionStop::Unsupported);
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationInfoHonorsTypedInputAndTerminalBudgets) {
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.application_info =
+      AndroidApplicationSnapshot::ApplicationInfo{"/app.apk"};
+  for (auto phase : {Phase::Unattached, Phase::Attached}) {
+    auto invalid = input;
+    invalid.phase = phase;
+    EXPECT_THROW(Runtime(program, heap, invalid), Error);
+  }
+  for (auto text : {std::string(4097, 'x'), std::string("\xff")}) {
+    auto invalid = input;
+    invalid.application_info->source_dir = text;
+    EXPECT_THROW(Runtime(program, heap, invalid), Error);
+  }
+  const auto *field = program.findField(SourceDirectoryField, false);
+  for (unsigned limit : {1u, 2u}) {
+    auto storage = std::make_shared<Heap>(65536, limit);
+    Runtime state(program, storage, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto info =
+        state.library(operation(ContextApplicationInfo), app, {}, Admit);
+    auto stopped =
+        limit == 1 ? info : state.field(*field, info.value, {}, Admit, 65536);
+    EXPECT_EQ(stopped.stop, ExecutionStop::HeapLimit);
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              ExecutionStop::HeapLimit);
+  }
+  for (bool allocate_info : {false, true}) {
+    Runtime state(program, heap, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto info =
+        allocate_info
+            ? state.library(operation(ContextApplicationInfo), app, {}, Admit)
+                  .value
+            : 0;
+    unsigned work = 0;
+    auto budget = [&] {
+      return work++ < 1 ? ExecutionStop::Returned
+                        : ExecutionStop::InstructionLimit;
+    };
+    auto result =
+        allocate_info
+            ? state.field(*field, info, {}, budget, 65536)
+            : state.library(operation(ContextApplicationInfo), app, {}, budget);
+    EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              ExecutionStop::InstructionLimit);
+  }
+}
+TEST_F(AndroidFrameworkTest, ApplicationInfoSharesDexFieldWritesAndReads) {
+  for (const auto &selected : {SourceDirectoryField, NativeDirectoryField}) {
+    Class reader;
+    reader.name = "Ltest/InfoReader;";
+    reader.superclass = "Ljava/lang/Object;";
+    reader.access = {"public"};
+    Method method;
+    method.reference = {reader.name,
+                        "replace",
+                        {"Landroid/content/Context;", "Ljava/lang/String;"},
+                        "Ljava/lang/String;"};
+    method.access = {"public", "static"};
+    method.registers = 3;
+    Instruction get;
+    get.opcode = "invoke-virtual";
+    get.registers = {1};
+    get.reference = MethodRef{"Landroid/content/Context;",
+                              "getApplicationInfo",
+                              {},
+                              "Landroid/content/pm/ApplicationInfo;"};
+    Instruction move;
+    move.pc = 3;
+    move.opcode = "move-result-object";
+    move.registers = {0};
+    Instruction put;
+    put.pc = 4;
+    put.opcode = "iput-object";
+    put.registers = {2, 0};
+    put.reference = selected;
+    Instruction read;
+    read.pc = 6;
+    read.opcode = "iget-object";
+    read.registers = {0, 0};
+    read.reference = selected;
+    Instruction ret;
+    ret.pc = 8;
+    ret.opcode = "return-object";
+    ret.registers = {0};
+    method.instructions = {get, move, put, read, ret};
+    reader.methods.push_back(method);
+    Program code({reader}, Properties{});
+    Runtime state(code, heap, AndroidApplicationSnapshot{Phase::Application});
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+    auto info =
+        state.library(operation(ContextApplicationInfo), app, {}, Admit).value;
+    const auto *field = code.findField(selected, false);
+    for (auto context : {app, base}) {
+      const uint64_t args[]{context, heap->literal("dex-value")->Identity};
+      auto result =
+          state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+      ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+      EXPECT_EQ(result.value, args[1]);
+      EXPECT_EQ(state.field(*field, info, {}, Admit, 65536).value, args[1]);
+      EXPECT_EQ(state.field(*field, info, 0, Admit, 65536).value, 0u);
+    }
+  }
+}
+TEST_F(AndroidFrameworkTest, SecureCacheDistinguishesUnknownNullEmptyAndValue) {
+  using Cache = AndroidApplicationSnapshot::SecureSettingsCache;
+  for (auto input :
+       {std::optional<Cache>{}, std::optional{Cache{}},
+        std::optional{Cache{""}},
+        std::optional{Cache{std::string("A\0", 2) + "\xc3\xa9"}}}) {
+    AndroidApplicationSnapshot snapshot{Phase::Application};
+    snapshot.secure_settings_cache = input;
+    Runtime state(program, heap, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto resolver =
+        state.library(operation(ContextContentResolver), app, {}, Admit).value;
+    const uint64_t args[]{resolver, heap->literal("android_id")->Identity};
+    auto result = state.library(operation(SecureSettingString), 0, args, Admit);
+    if (!input) {
+      EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+      continue;
+    }
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(
+        state.library(operation(SecureSettingString), 0, args, Admit).value,
+        result.value);
+    if (!input->android_id) {
+      EXPECT_EQ(result.value, 0u);
+    } else {
+      ASSERT_NE(result.value, 0u);
+      EXPECT_EQ(heap->get(result.value)->Bytes,
+                javaStringBytes(*input->android_id));
+    }
+  }
+}
+TEST_F(AndroidFrameworkTest, SecureCacheRequiresOwnResolverAndExactKey) {
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  snapshot.secure_settings_cache =
+      AndroidApplicationSnapshot::SecureSettingsCache{"fixture"};
+  for (unsigned mode = 0; mode != 4; ++mode) {
+    Runtime state(program, heap, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto resolver =
+        state.library(operation(ContextContentResolver), app, {}, Admit).value;
+    uint64_t args[]{resolver, heap->literal("android_id")->Identity};
+    if (mode == 0)
+      args[0] = 0;
+    if (mode == 1)
+      args[0] = heap->allocate(
+                        Object::Instance,
+                        "android/app/ContextImpl$ApplicationContentResolver", 0)
+                    ->Identity;
+    if (mode == 2)
+      args[1] = heap->literal("unmodeled_key")->Identity;
+    if (mode == 3)
+      args[1] = 0;
+    auto result = state.library(operation(SecureSettingString), 0, args, Admit);
+    EXPECT_EQ(result.stop,
+              mode == 0 ? ExecutionStop::Thrown : ExecutionStop::Unsupported);
+    if (mode == 0) {
+      EXPECT_EQ(result.exception, "java/lang/NullPointerException");
+      EXPECT_FALSE(state.snapshot().terminal);
+    }
+  }
+}
+TEST_F(AndroidFrameworkTest, SecureCacheValidatesTypedStateAndBudgets) {
+  using Cache = AndroidApplicationSnapshot::SecureSettingsCache;
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  snapshot.secure_settings_cache = Cache{"value"};
+  for (auto phase : {Phase::Unattached, Phase::Attached}) {
+    snapshot.phase = phase;
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  }
+  snapshot.phase = Phase::Application;
+  for (auto bad : {std::string(4097, 'x'), std::string("\xc0\x80")}) {
+    snapshot.secure_settings_cache = Cache{bad};
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  }
+  snapshot.secure_settings_cache = Cache{"value"};
+  for (unsigned mode = 0; mode != 3; ++mode) {
+    auto storage = std::make_shared<Heap>(65536, mode == 0 ? 3 : 4096);
+    Runtime state(program, storage, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto resolver =
+        state.library(operation(ContextContentResolver), app, {}, Admit).value;
+    const uint64_t args[]{resolver, storage->literal("android_id")->Identity};
+    unsigned remaining = mode == 1 ? 0 : 11;
+    auto result = state.library(operation(SecureSettingString), 0, args, [&] {
+      if (mode == 0)
+        return ExecutionStop::Returned;
+      if (!remaining)
+        return ExecutionStop::InstructionLimit;
+      --remaining;
+      return ExecutionStop::Returned;
+    });
+    EXPECT_EQ(result.stop, mode == 0 ? ExecutionStop::HeapLimit
+                                     : ExecutionStop::InstructionLimit);
+    EXPECT_EQ(
+        state.library(operation(SecureSettingString), 0, args, Admit).stop,
+        result.stop);
+  }
+}
+TEST_F(AndroidFrameworkTest, SettingsIntUsesGlobalCacheAndJavaDefaultRules) {
+  constexpr uint32_t fallback = uint32_t(-23);
+  struct Case {
+    std::optional<std::string> text;
+    uint32_t expected;
+  };
+  const Case cases[]{{std::nullopt, fallback},
+                     {"0", 0},
+                     {"1", 1},
+                     {"-0", 0},
+                     {"+7", 7},
+                     {"00042", 42},
+                     {"2147483647", 2147483647u},
+                     {"-2147483648", 2147483648u},
+                     {"2147483648", fallback},
+                     {"-2147483649", fallback},
+                     {"99999999999999999999", fallback},
+                     {"", fallback},
+                     {"+", fallback},
+                     {"-", fallback},
+                     {"0x10", fallback},
+                     {" 1", fallback},
+                     {"1 ", fallback},
+                     {"1.0", fallback},
+                     {std::string("1\0", 2), fallback}};
+  for (const auto &test : cases) {
+    AndroidApplicationSnapshot snapshot{Phase::Application};
+    snapshot.secure_settings_cache =
+        AndroidApplicationSnapshot::SecureSettingsCache{"99"};
+    snapshot.global_settings_cache =
+        AndroidApplicationSnapshot::GlobalSettingsCache{test.text};
+    Runtime state(program, heap, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto resolver =
+        state.library(operation(ContextContentResolver), app, {}, Admit).value;
+    const uint64_t args[]{resolver, heap->literal("adb_enabled")->Identity,
+                          fallback};
+    auto result =
+        state.library(operation(SecureSettingIntDefault), 0, args, Admit);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, test.expected) << test.text.value_or("<null>");
+    auto text = state.library(operation(SecureSettingString), 0,
+                              std::span(args).first<2>(), Admit);
+    ASSERT_EQ(text.stop, ExecutionStop::Returned);
+    if (test.text) {
+      ASSERT_NE(text.value, 0u);
+      EXPECT_EQ(heap->get(text.value)->Bytes, javaStringBytes(*test.text));
+      EXPECT_EQ(state
+                    .library(operation(SecureSettingString), 0,
+                             std::span(args).first<2>(), Admit)
+                    .value,
+                text.value);
+    } else {
+      EXPECT_EQ(text.value, 0u);
+    }
+    const uint64_t secure[]{resolver, heap->literal("android_id")->Identity, 0};
+    EXPECT_EQ(
+        state.library(operation(SecureSettingIntDefault), 0, secure, Admit)
+            .value,
+        99u);
+  }
+}
+TEST_F(AndroidFrameworkTest, SettingsIntPreservesUnknownAndUnicodeBoundaries) {
+  for (auto value :
+       {std::optional<std::string>{}, std::optional<std::string>{"\xd9\xa1"},
+        std::optional<std::string>{"\xef\xbc\x91"}}) {
+    AndroidApplicationSnapshot snapshot{Phase::Application};
+    if (value)
+      snapshot.global_settings_cache =
+          AndroidApplicationSnapshot::GlobalSettingsCache{value};
+    Runtime state(program, heap, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto resolver =
+        state.library(operation(ContextContentResolver), app, {}, Admit).value;
+    const uint64_t args[]{resolver, heap->literal("adb_enabled")->Identity, 17};
+    auto result =
+        state.library(operation(SecureSettingIntDefault), 0, args, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+    EXPECT_NE(
+        result.diagnostic.find(value ? "non-ASCII" : "cache is not supplied"),
+        std::string::npos);
+  }
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  snapshot.global_settings_cache =
+      AndroidApplicationSnapshot::GlobalSettingsCache{"1"};
+  Runtime state(program, heap, snapshot);
+  const uint64_t args[]{0, heap->literal("adb_enabled")->Identity, 17};
+  auto result =
+      state.library(operation(SecureSettingIntDefault), 0, args, Admit);
+  EXPECT_EQ(result.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(result.exception, "java/lang/NullPointerException");
+  EXPECT_FALSE(state.snapshot().terminal);
+  for (auto phase : {Phase::Unattached, Phase::Attached}) {
+    snapshot.phase = phase;
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  }
+  snapshot.phase = Phase::Application;
+  for (auto bad : {std::string(4097, 'x'), std::string("\xc0\x80")}) {
+    snapshot.global_settings_cache =
+        AndroidApplicationSnapshot::GlobalSettingsCache{bad};
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  }
+}
+TEST_F(AndroidFrameworkTest, SettingsIntSharesDexAndLibraryState) {
+  Class reader;
+  reader.name = "Ltest/IntegerSettingReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {
+      reader.name,
+      "read",
+      {"Landroid/content/ContentResolver;", "Ljava/lang/String;", "I"},
+      "I"};
+  method.access = {"public", "static"};
+  method.registers = 3;
+  Instruction get;
+  get.opcode = "invoke-static";
+  get.registers = {0, 1, 2};
+  get.reference = MethodRef{"Landroid/provider/Settings$Secure;", "getInt",
+                            method.reference.parameters, "I"};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result";
+  move.registers = {0};
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return";
+  ret.registers = {0};
+  method.instructions = {get, move, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  snapshot.global_settings_cache =
+      AndroidApplicationSnapshot::GlobalSettingsCache{"-2147483648"};
+  Runtime state(code, heap, snapshot);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto resolver =
+      state.library(operation(ContextContentResolver), app, {}, Admit).value;
+  const uint64_t args[]{resolver, heap->literal("adb_enabled")->Identity, 0};
+  auto dex =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(dex.stop, ExecutionStop::Returned) << dex.diagnostic;
+  EXPECT_EQ(dex.value, 2147483648u);
+  EXPECT_EQ(
+      state.library(operation(SecureSettingIntDefault), 0, args, Admit).value,
+      dex.value);
+}
+TEST_F(AndroidFrameworkTest, SettingsIntRetainsTerminalHeapAndWorkLimits) {
+  for (bool exhaust_heap : {false, true}) {
+    auto storage = std::make_shared<Heap>(65536, exhaust_heap ? 3 : 4096);
+    AndroidApplicationSnapshot snapshot{Phase::Application};
+    snapshot.global_settings_cache =
+        AndroidApplicationSnapshot::GlobalSettingsCache{std::string(128, '0')};
+    Runtime state(program, storage, snapshot);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto resolver =
+        state.library(operation(ContextContentResolver), app, {}, Admit).value;
+    const uint64_t args[]{resolver, storage->literal("adb_enabled")->Identity,
+                          17};
+    unsigned work = 0;
+    auto result =
+        state.library(operation(SecureSettingIntDefault), 0, args, [&] {
+          return !exhaust_heap && ++work > 20 ? ExecutionStop::InstructionLimit
+                                              : ExecutionStop::Returned;
+        });
+    EXPECT_EQ(result.stop, exhaust_heap ? ExecutionStop::HeapLimit
+                                        : ExecutionStop::InstructionLimit);
+    EXPECT_EQ(
+        state.library(operation(SecureSettingIntDefault), 0, args, Admit).stop,
+        result.stop);
+  }
+}
+TEST_F(AndroidFrameworkTest, DexReadsTheSameRetainedSecureCacheString) {
+  Class reader;
+  reader.name = "Ltest/SecureReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {
+      reader.name,
+      "read",
+      {"Landroid/content/ContentResolver;", "Ljava/lang/String;"},
+      "Ljava/lang/String;"};
+  method.access = {"public", "static"};
+  method.registers = 2;
+  Instruction get;
+  get.opcode = "invoke-static";
+  get.registers = {0, 1};
+  get.reference =
+      MethodRef{"Landroid/provider/Settings$Secure;", "getString",
+                method.reference.parameters, method.reference.returns};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result-object";
+  move.registers = {0};
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {get, move, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  snapshot.secure_settings_cache =
+      AndroidApplicationSnapshot::SecureSettingsCache{"fixture"};
+  Runtime state(code, heap, snapshot);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto resolver =
+      state.library(operation(ContextContentResolver), app, {}, Admit).value;
+  const uint64_t args[]{resolver, heap->literal("android_id")->Identity};
+  auto result =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(heap->get(result.value)->Bytes, javaStringBytes("fixture"));
+  EXPECT_EQ(state.library(operation(SecureSettingString), 0, args, Admit).value,
+            result.value);
+}
+TEST_F(AndroidFrameworkTest,
+       SecureKeyConstantsShareDexAndRuntimeLiteralStorage) {
+  for (auto [name, text] : {std::pair{"ADB_ENABLED", "adb_enabled"},
+                            {"ANDROID_ID", "android_id"}}) {
+    const FieldRef key{"Landroid/provider/Settings$Secure;", name,
+                       "Ljava/lang/String;"};
+    Class reader;
+    reader.name = "Ltest/ConstantReader;";
+    reader.superclass = "Ljava/lang/Object;";
+    reader.access = {"public"};
+    Method method;
+    method.reference = {reader.name, "read", {}, "Ljava/lang/String;"};
+    method.access = {"public", "static"};
+    method.registers = 1;
+    Instruction get;
+    get.opcode = "sget-object";
+    get.registers = {0};
+    get.reference = key;
+    Instruction ret;
+    ret.pc = 2;
+    ret.opcode = "return-object";
+    ret.registers = {0};
+    method.instructions = {get, ret};
+    reader.methods.push_back(method);
+    Program code({reader}, Properties{});
+    // Constants do not depend on a supplied application or provider snapshot.
+    Runtime state(code, heap);
+    const auto *field = code.findStaticField(key);
+    ASSERT_NE(field, nullptr);
+    EXPECT_EQ(code.findField(key, false), nullptr);
+    EXPECT_FALSE(code.androidFrameworkField(*field));
+    auto dex =
+        state.execute(*code.findStatic(method.reference), {}, Admit, 65536);
+    ASSERT_EQ(dex.stop, ExecutionStop::Returned) << dex.diagnostic;
+    EXPECT_EQ(dex.value, heap->literal(text)->Identity);
+    auto direct = state.field(*field, 0, {}, Admit, 65536);
+    ASSERT_EQ(direct.stop, ExecutionStop::Returned) << direct.diagnostic;
+    EXPECT_EQ(direct.value, dex.value);
+    auto write = state.field(*field, 0, heap->literal("replacement")->Identity,
+                             Admit, 65536);
+    EXPECT_EQ(write.stop, ExecutionStop::Invalid);
+    EXPECT_NE(write.diagnostic.find("final field write"), std::string::npos);
+  }
+}
+TEST_F(AndroidFrameworkTest, ContentResolverRequiresItsOwnContextAndLifecycle) {
+  for (auto phase :
+       {std::optional<Phase>{}, std::optional{Phase::Unattached},
+        std::optional{Phase::Attached}, std::optional{Phase::Application}}) {
+    Runtime state(program, heap,
+                  phase ? std::optional{AndroidApplicationSnapshot{*phase}}
+                        : std::nullopt);
+    auto foreign =
+        heap->allocate(Object::Instance, "android/app/Application", 0);
+    auto result = state.library(operation(ContextContentResolver),
+                                foreign->Identity, {}, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              ExecutionStop::Unsupported);
+  }
+  auto null = runtime.library(operation(ContextContentResolver), 0, {}, Admit);
+  EXPECT_EQ(null.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(null.exception, "java/lang/NullPointerException");
+  auto wrong = heap->allocate(Object::Instance, "java/lang/Object", 0);
+  EXPECT_EQ(runtime
+                .library(operation(ContextContentResolver), wrong->Identity, {},
+                         Admit)
+                .stop,
+            ExecutionStop::Invalid);
+}
+TEST_F(AndroidFrameworkTest, ContentResolverHonorsHeapAndWorkLimits) {
+  auto bounded = std::make_shared<Heap>(65536, 1);
+  Runtime state(program, bounded,
+                AndroidApplicationSnapshot{Phase::Application});
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit);
+  ASSERT_EQ(app.stop, ExecutionStop::Returned);
+  EXPECT_EQ(
+      state.library(operation(ContextContentResolver), app.value, {}, Admit)
+          .stop,
+      ExecutionStop::HeapLimit);
+  EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+            ExecutionStop::HeapLimit);
+  for (unsigned budget : {0u, 1u}) {
+    Runtime limited(program, heap,
+                    AndroidApplicationSnapshot{Phase::Application});
+    auto instance =
+        limited.library(operation(CurrentApplication), 0, {}, Admit);
+    ASSERT_EQ(instance.stop, ExecutionStop::Returned);
+    unsigned work = 0;
+    auto result = limited.library(
+        operation(ContextContentResolver), instance.value, {}, [&] {
+          return work++ < budget ? ExecutionStop::Returned
+                                 : ExecutionStop::InstructionLimit;
+        });
+    EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+    EXPECT_EQ(limited
+                  .library(operation(ContextContentResolver), instance.value,
+                           {}, Admit)
+                  .stop,
+              ExecutionStop::InstructionLimit);
+  }
+}
+TEST_F(AndroidFrameworkTest, DexAndLibraryShareTheContextResolver) {
+  Class reader;
+  reader.name = "Ltest/ResolverReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {reader.name,
+                      "read",
+                      {"Landroid/content/Context;"},
+                      "Landroid/content/ContentResolver;"};
+  method.access = {"public", "static"};
+  method.registers = 1;
+  Instruction get;
+  get.opcode = "invoke-virtual";
+  get.registers = {0};
+  get.reference = MethodRef{"Landroid/content/Context;",
+                            "getContentResolver",
+                            {},
+                            "Landroid/content/ContentResolver;"};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result-object";
+  move.registers = {0};
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {get, move, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  Runtime state(code, heap, AndroidApplicationSnapshot{Phase::Application});
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+  auto resolver =
+      state.library(operation(ContextContentResolver), app, {}, Admit);
+  ASSERT_EQ(resolver.stop, ExecutionStop::Returned);
+  for (uint64_t receiver : {app, base}) {
+    const uint64_t args[]{receiver};
+    auto result =
+        state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+    EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, resolver.value);
+  }
+}
+TEST_F(AndroidFrameworkTest, DexAndLibraryShareThePackageManager) {
+  Class reader;
+  reader.name = "Ltest/PackageManagerReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {reader.name,
+                      "read",
+                      {"Landroid/content/Context;"},
+                      "Landroid/content/pm/PackageManager;"};
+  method.access = {"public", "static"};
+  method.registers = 1;
+  Instruction get;
+  get.opcode = "invoke-virtual";
+  get.registers = {0};
+  get.reference = MethodRef{"Landroid/content/Context;",
+                            "getPackageManager",
+                            {},
+                            "Landroid/content/pm/PackageManager;"};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result-object";
+  move.registers = {0};
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {get, move, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  snapshot.package_manager_available = true;
+  Runtime state(code, heap, snapshot);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+  auto manager =
+      state.library(operation(ContextPackageManager), app, {}, Admit);
+  ASSERT_EQ(manager.stop, ExecutionStop::Returned);
+  for (uint64_t receiver : {app, base}) {
+    const uint64_t args[]{receiver};
+    auto result =
+        state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+    EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, manager.value);
+  }
+}
 TEST_F(AndroidFrameworkTest,
        FilesDirectoryDoesNotManufactureMissingStateOrForeignFiles) {
   auto app = call(CurrentApplication);
