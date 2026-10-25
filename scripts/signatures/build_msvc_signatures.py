@@ -393,6 +393,16 @@ class Shape:
                 return self.lead[:index]
         return self.lead
 
+    def fully_verified(self) -> bool:
+        """Whether the matcher verifies a complete nonempty function body."""
+        if not self.total:
+            return False
+        leading = len(self.lead) // 2
+        if leading >= self.total:
+            return self.crc_len == 0
+        end = leading + self.crc_len
+        return end <= self.total and end + len(self.tail) // 2 >= self.total
+
     def covered_by(self, other: "Shape") -> bool:
         """Whether a routine at least as long states every byte this line states.
 
@@ -470,7 +480,7 @@ def parse_line(text: str) -> PatternLine | None:
     if caller:
         shape = Shape.of(" ".join(rest))
         if any(int(n.split()[0][1:], 16) != 0 for n in names) or \
-                len(shape.lead) // 2 + shape.crc_len + len(shape.tail) // 2 < shape.total:
+                not shape.fully_verified():
             raise BuildError("!caller requires a complete body with public names at its start")
     return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller)
 

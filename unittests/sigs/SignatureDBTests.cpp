@@ -1746,6 +1746,51 @@ TEST(SignatureDBCallerContext, EveryParentVariantMustNameTheSameTarget) {
   }
 }
 
+TEST(SignatureDBCallerContext,
+     AlternativesRequireCompleteAndUniqueBodyEvidence) {
+  for (const std::string &Fallback : {"", "AABBCCDDC3", "11223344C3"}) {
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(
+        incomingCallerLine("parent", " ^0005 callee ^0005 fallback") +
+            IncomingLeaf +
+            (Fallback.empty()
+                 ? ""
+                 : Fallback + " 00 0000 0005 !caller :0000 fallback\n"),
+        "alternatives"));
+    Database.apply(incomingCallerImage(), {0x1000, 0x1100});
+    EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100),
+              Fallback == "11223344C3" ? 1u : 0u);
+    if (Fallback == "11223344C3")
+      EXPECT_EQ(Database.buildCandidateNameMap().at(0x1100), "callee");
+    EXPECT_TRUE(Database.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDBCallerContext, AlternativesUseTheSameFrozenReferenceChecks) {
+  for (bool KnownSupport : {false, true}) {
+    SignatureDB Database;
+    const std::string Body = "53E8........5BC3 00 0000 0008 !caller :0000 ";
+    ASSERT_FALSE(Database.loadPatternText(
+        incomingCallerLine("parent", " ^0005 callee ^0005 fallback") + Body +
+            "callee ^0002 support\n" + Body + "fallback ^0002 wrong\n" +
+            (KnownSupport ? "AABBCCDDC3 00 0000 0005 :0000 support\n" : ""),
+        "alternatives"));
+    auto Image = incomingCallerImage();
+    auto &Code = Image.Segments.front().Data;
+    const uint8_t Child[] = {0x53, 0xe8, 0, 0, 0, 0, 0x5b, 0xc3};
+    std::copy(std::begin(Child), std::end(Child), Code.begin() + 0x100);
+    neverd::writeLE<uint32_t>(Code.data() + 0x102, 0x1200 - 0x1106);
+    const uint8_t Support[] = {0xaa, 0xbb, 0xcc, 0xdd, 0xc3};
+    std::copy(std::begin(Support), std::end(Support), Code.begin() + 0x200);
+    Database.apply(Image, {0x1000, 0x1100, 0x1200});
+    EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100),
+              KnownSupport ? 1u : 0u);
+    if (KnownSupport)
+      EXPECT_EQ(Database.buildCandidateNameMap().at(0x1100), "callee");
+    EXPECT_TRUE(Database.buildNameMap().empty());
+  }
+}
+
 TEST(SignatureDBCallerContext, SourceMetadataRefinesOnlyACompleteParent) {
   for (bool Partial : {false, true}) {
     SignatureDB Database;
@@ -1837,7 +1882,7 @@ TEST(SignatureDBCallerContext, AContradictedParentCannotNameItsTarget) {
   EXPECT_EQ(Names.at(0x1100), "other");
 }
 
-TEST(SignatureDBCallerContext, ExistingCompleteBodiesNeedNoDuplicateRecord) {
+TEST(SignatureDBCallerContext, OnlyExplicitContextBodiesCanBeReused) {
   for (bool Required : {false, true}) {
     SignatureDB Database;
     const std::string Body = "53E8........5BC3 00 0000 0008 ";
@@ -1854,17 +1899,21 @@ TEST(SignatureDBCallerContext, ExistingCompleteBodiesNeedNoDuplicateRecord) {
     neverd::writeLE<uint32_t>(Code.data() + 0x102, 0x1200 - 0x1106);
     Database.apply(Image, {0x1000, 0x1100, 0x1200});
     EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100), 0u);
-    // Activating native incoming context reuses the existing callee body.
+    // Native incoming context can reuse !refs bodies. It cannot turn an
+    // ordinary nominal byte claim into a new incoming-context claim.
     ASSERT_FALSE(Database.loadPatternText(
         "33C0C3 00 0000 0003 !caller :0000 unrelated\n", "native"));
     Database.apply(Image, {0x1000, 0x1100, 0x1200});
-    EXPECT_EQ(Database.buildCandidateNameMap().at(0x1100), "callee");
+    EXPECT_EQ(Database.buildCandidateNameMap().count(0x1100),
+              Required ? 1u : 0u);
+    if (Required)
+      EXPECT_EQ(Database.buildCandidateNameMap().at(0x1100), "callee");
     EXPECT_EQ(llvm::count_if(Database.matches(),
                              [](const SigMatch &Match) {
                                return Match.Address == 0x1100 &&
                                       Match.CallerConfirmed;
                              }),
-              1);
+              Required ? 1 : 0);
     EXPECT_TRUE(Database.buildNameMap().empty());
   }
 }

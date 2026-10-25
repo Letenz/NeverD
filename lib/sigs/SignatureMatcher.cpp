@@ -748,7 +748,8 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
     return;
   auto Callers = std::make_shared<std::vector<CallerEntry>>();
   for (size_t I = 0; I < Modules.size(); ++I)
-    if (SignatureMatcher::isFullyVerified(Modules[I]))
+    if ((Modules[I].RequireCaller || Modules[I].RequireReferences) &&
+        SignatureMatcher::isFullyVerified(Modules[I]))
       for (size_t N = 0; N < Modules[I].PublicNameCount; ++N)
         if (Modules[I].publicNames()[N].Offset == 0)
           Callers->push_back({I, N,

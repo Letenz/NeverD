@@ -118,8 +118,9 @@ public:
 
     /// !caller records never enter the byte decision tree. Lookup names from
     /// an established caller instead, then verify only those complete bodies.
-    /// When such records are present, complete existing modules participate in
-    /// name lookup too, so callers can reuse them without duplicate records.
+    /// Existing !refs bodies participate too, so callers can reuse explicitly
+    /// contextual records without duplicating them. Ordinary nominal byte
+    /// claims do not acquire incoming support merely by being loaded.
     /// Numeric indices retain the same copy/move lifetime as byte candidates.
     struct CallerEntry {
       size_t Module = 0;

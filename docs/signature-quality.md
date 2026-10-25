@@ -63,7 +63,10 @@ linkage name and excluded from the global byte index. After ordinary reference
 settlement, a caller can request a matching body at its actual direct branch
 or supported function-address target. The caller must have a settled candidate,
 whole-function coverage and the ordinary fixed-byte floor. Every surviving
-variant of that name must state the same single callee at the same site.
+variant of that name must state the same complete set of alternatives at the
+same site. A site with several alternatives needs complete native bodies for
+every alternative and exactly one name surviving body and frozen reference
+checks. Missing alternatives or multiple surviving names leave it unresolved.
 Ambiguous, partial or context-dependent callers cannot anchor a request.
 Only requested executable entries without a settled candidate are eligible.
 An incoming candidate cannot support another round of inference. Its own
@@ -77,7 +80,8 @@ independent identity evidence or automatic names.
 The supplement builder requires exact raw source ownership and keeps distinct
 same-byte names separate; they are queries, not claims of byte uniqueness.
 When incoming context is loaded, the name index also reuses complete existing
-patterns, including unresolved `!refs` records. An incoming request supplies
+`!refs` records. Ordinary nominal byte claims are not opted into incoming
+inference merely by being loaded. An incoming request supplies
 the context for that occurrence; its own reference contradictions still reject
 it. No duplicate body is needed just to support both directions of evidence.
 
@@ -88,6 +92,16 @@ child enter the frozen validation pass. Contradicting a refinement removes its
 dependent names, including individual aliases; temporary anchor rows never
 appear in the results. Source references are intersected across raw versions,
 and supplement deduplication respects independently selected library packs.
+An ambiguous ordinary body does not cover an audited incoming-context record:
+the latter supplies the source ownership needed for a name-directed query.
+
+`scripts/signatures/refine_pattern_metadata.py` adds missing import or primary
+vftable references to existing complete bodies. Every existing alias needs raw
+source ownership, and all matching raw versions participate: an absent field
+prevents its addition, while alternative names remain alternatives. The tool
+preserves bytes, names and existing fields, writes changed files separately,
+and records input/output hashes. Repeat `--name` to restrict a review to named
+records; evaluate the changed packs through the normal CLI before publication.
 
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,

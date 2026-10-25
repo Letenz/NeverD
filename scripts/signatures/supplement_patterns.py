@@ -182,7 +182,15 @@ def select(candidates: dict[str, builder.FoldResult],
             old_fields = {offset for other in previous for offset, _ in other.refs}
             adds_reference = any(len(names) == 1 and offset not in old_fields
                                  for offset, names in builder.ref_table(line.refs).items())
-            if not previous or adds_reference:
+            # An ordinary byte claim does not cover an incoming query when
+            # raw sources give the same body another nominal identity. Keep
+            # the audited candidate's own context, rather than opting every
+            # older ordinary pattern into incoming inference at load time.
+            ambiguous_ordinary = previous and all(
+                not old.require_caller and not old.require_references for old in previous) and any(
+                    builder.another_routine(line.names, other.names)
+                    for other in source_by_key[line.key])
+            if not previous or adds_reference or ambiguous_ordinary:
                 selected[name].append(line)
         selected[name].sort(key=lambda line: line.text)
     return selected

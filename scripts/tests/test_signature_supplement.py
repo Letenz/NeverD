@@ -63,6 +63,15 @@ class SupplementTests(unittest.TestCase):
         result = self.select(a, [("runtime", a), ("older", unknown)])
         self.assertEqual(result[0].refs, ())
 
+    def test_ambiguous_ordinary_body_does_not_cover_an_incoming_query(self):
+        line = "33C0C3 00 0000 0003 !caller :0000 routine\n"
+        old = line.replace(" !caller", "")
+        rival = old.replace("routine", "other")
+        self.assertEqual(self.select(line, [("runtime", line)], old), [])
+        result = self.select(line, [("runtime", line + rival)], old)
+        self.assertEqual([item.text for item in result], [line.strip()])
+        self.assertEqual(self.select(line, [("runtime", line + rival)], line), [])
+
     def test_owned_caller_metadata_only_adds_missing_unanimous_fields(self):
         a = "E8........C3 00 0000 0006 !caller :0000 parent ^0001 callee\n"
         old = "E8........C3 00 0000 0006 :0000 parent\n"
