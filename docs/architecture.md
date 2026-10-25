@@ -134,6 +134,13 @@ XABORT's constant byte and void completion use the shared system-state shape
 across LowIR, MedIR and C admission. Native LLVM and both C routes retain the
 same byte; a missing or dynamic operand cannot become an arbitrary abort code.
 
+`X86LiftTBM` owns the nine trailing-bit operations, including their XOP
+byte/detail validation, source-before-destination carry calculation, defined
+flags and undefined AF/PF effects. The common three-byte prefix and memory-tail
+validators retain VEX/XOP addressing rules; TBM owns its opcode/group, width and
+operand roles. Its arithmetic LowIR is shared by LLVM and both C routes.
+Undefined-output coverage is separate from an opaque machine-state bank audit.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR

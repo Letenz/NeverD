@@ -632,6 +632,17 @@ ELF/COFF/Mach-O, including both orders of an incomplete arm and raw FS offsets.
 The shared native memory owner is also covered by the AArch64/x86-64 ELF/PE
 rematerialized-table recurrence in `NeverDNativePointerRelocationBoundaryTests`.
 
+`NeverDX86TBMTests` exercises all nine trailing-bit operations through full,
+lightweight and lift decoding, with 32/64-bit values, register aliases,
+register/memory sources, i386 ignored XOP fields and FS/GS/address overrides.
+An independent bit-position oracle checks results and CF/ZF/SF/OF; AF/PF are
+recorded as undefined bits, and DF is preserved. Faulting loads must leave
+architectural outputs unchanged. Mutated raw bytes and decoded detail must
+fail before appending LowIR in both strict and permissive mode. Run this target
+with `NeverDX86FPEncodingTests`, `NeverDX86APXBMISemanticTests` and
+`NeverDX86UndefinedEffectsTests` when changing the shared prefix/effect boundary.
+These are semantic/model checks and do not require TBM hardware.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
