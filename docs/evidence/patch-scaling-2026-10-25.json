@@ -1888,6 +1888,7 @@
         "seconds": 0.8863303661346436
       }
     ],
+    "delivery_command_paths": "Repository-relative checkout paths; only the developer checkout prefix was normalized after publication. Original outcomes, timings and artifact hashes are retained.",
     "delivery_checks": [
       {
         "name": "final-delivery-x11",
@@ -1896,7 +1897,7 @@
           "-a",
           "-s",
           "-screen 0 2560x1600x24",
-          "/home/ad/code/NeverD/build-gui/bin/neverd-gui-patch-tests"
+          "build-gui/bin/neverd-gui-patch-tests"
         ],
         "exit_code": 0,
         "seconds": 29.762424588901922
@@ -1906,7 +1907,7 @@
         "command": [
           "python3",
           "tools/neverd-gui/tests/run_wayland_docking.py",
-          "/home/ad/code/NeverD/build-gui/bin/neverd-gui-patch-tests"
+          "build-gui/bin/neverd-gui-patch-tests"
         ],
         "exit_code": 0,
         "seconds": 36.84962201304734
@@ -1916,7 +1917,7 @@
         "command": [
           "ctest",
           "--test-dir",
-          "/home/ad/code/NeverD/build-gui",
+          "build-gui",
           "--output-on-failure",
           "-R",
           "^(NeverDGui(Units|PatchKeys|NativePatchKeys|Smoke)|NeverDWorker(Patch|NativePatch|SourceBytePatch|AnalysisSnapshot|HistoryContributions))$"
