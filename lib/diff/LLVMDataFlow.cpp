@@ -529,4 +529,12 @@ DataFlowGraph buildLLVMBranchProgressDataFlow(
                     Control, true, LLVMBranchProgressDataFlowProfile)
       .run();
 }
+DataFlowGraph buildLLVMModularProgressDataFlow(
+    const llvm::Function &F, const LLVMSourceMap &Sources, uint64_t Entry,
+    llvm::StringRef Revision, llvm::StringRef ABI, bool NativeComplete,
+    const DataFlowOptions &Options, const ComparisonControl &Control) {
+  return Projection(F, Sources, Entry, Revision, ABI, NativeComplete, Options,
+                    Control, true, LLVMModularProgressDataFlowProfile)
+      .run();
+}
 } // namespace neverd::diff

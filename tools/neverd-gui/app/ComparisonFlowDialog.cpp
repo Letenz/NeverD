@@ -273,6 +273,15 @@ void ComparisonFlowDialog::controls() {
                 .arg(Loop["counter"].toInt())
                 .arg(Loop["update"].toInt())
                 .arg(Loop["compare"].toInt()));
+  if (Loop["proof"] == "nowrap")
+    LoopStatus->setText(
+        LoopStatus->text() + '\n' +
+        tr("Proof: a monotone counter with a no-overflow contract."));
+  else if (Loop["proof"] == "modular")
+    LoopStatus->setText(
+        LoopStatus->text() + '\n' +
+        tr("Proof: every counter cycle reaches a shared exit, including after "
+           "wraparound."));
 
   const bool Node = !Nodes->row(NodeTable->currentIndex().row()).isEmpty();
   const bool Idle =
@@ -330,6 +339,9 @@ void ComparisonFlowDialog::selectSide() {
         Summary->text() + '\n' +
         tr("SSA representation: %1")
             .arg(Profile ==
+                         ::neverd::limits::diff::kLLVMModularProgressSSAProfile
+                     ? tr("Optimized SSA with wrapping loop analysis")
+                 : Profile ==
                          ::neverd::limits::diff::kLLVMBranchProgressSSAProfile
                      ? tr("Optimized SSA with branching loop analysis")
                  : Profile ==

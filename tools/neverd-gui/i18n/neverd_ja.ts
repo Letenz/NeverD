@@ -6409,6 +6409,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>分岐ループ解析付き最適化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>ラップアラウンドループ解析付き最適化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6563,6 +6567,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>証明済みループ: ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · ブロック %6 のガード #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>ラップアラウンドループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>証明根拠：オーバーフローしない契約を持つ単調カウンター。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>証明根拠：ラップアラウンド後も、すべてのカウンター周期が共通の出口に到達します。</translation>
     </message>
 </context>
 <context>

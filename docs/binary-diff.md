@@ -452,6 +452,41 @@ The recipes are `llvm-progress-neighborhoods-v4` and
 All scans, grouping and ordering use the existing work/storage/cancellation
 allowances, without a fixed limit on loop depth or the number of backedges.
 
+**Optimized SSA with wrapping loop analysis**
+(`--dataflow-profile=llvm-progress-ssa-v5`) also handles fixed-step counters
+without an overflow prohibition. For example, an unsigned counter adding 3
+eventually visits zero from every initial value. Adding 2 cannot reach zero
+from an odd initial value, but it does reach the exit range `0..1` from every
+initial value. The proof checks this reachability mathematically, without
+executing or counting iterations.
+
+Every recurrence arm must use the same nonzero modular step. Guards may compare
+the current counter, its exact update, or one fixed add/sub translation against
+a literal or another such observation of the same counter. This includes
+compiler-generated wrap tests such as `counter + 4 < counter + 2`.
+All possible continuation paths must share enough exit values to
+cover every counter cycle. Different modular steps, incompatible exits, resets,
+freezes in the recurrence and more complex observations remain unproven. The
+existing monotone nowrap proof is preferred when available; it also admits a
+single affine guard and can still use nonliteral bounds or different steps.
+Unique-entry, complete-PHI and final residual-acyclicity requirements remain.
+This does not prove an iteration count or equivalence between functions.
+
+Schema 9 adds `proof: "nowrap"` or `proof: "modular"` to each witness. The
+selected operation explains this basis alongside its guard, counter and latch.
+Totals, paging, slicing and fresh-source report validation use the same core
+model. Recipes are `llvm-progress-neighborhoods-v5` and
+`llvm-progress-fragments-v5`. Existing profiles and report bytes stay supported.
+Ordinary native optimization is unchanged: compiler transformations can still
+produce unsupported shapes or require seed/bound relationships outside this
+proof, which remain explicitly unproven.
+
+Reopening LLVM reports also tolerates changes in PHI numbering when every
+operation, input, source observation and proof still matches exactly after an
+authenticated node mapping. The saved IDs and report contents stay intact.
+Different constants, origins, contracts or ordinary instruction order are not
+accepted through this path; ambiguous unanchored PHIs remain a refusal.
+
 Native-to-SSA change associations and call-effect contracts currently require
 the original MedIR profile. Change review explicitly reports an unsupported
 association profile for LLVM evidence while retaining native changes. Local

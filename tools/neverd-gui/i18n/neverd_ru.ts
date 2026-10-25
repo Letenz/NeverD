@@ -6481,6 +6481,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>Оптимизированная SSA с анализом разветвлённых циклов</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Оптимизированная SSA с анализом циклов с переходом через границу диапазона</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6635,6 +6639,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Доказанный цикл: блок заголовка %1 → блок возврата %2 · счётчик #%3 → обновление #%4 · условие #%5 в блоке %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Оптимизированная SSA с анализом циклов с переходом через границу диапазона</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Основание доказательства: монотонный счётчик с контрактом отсутствия переполнения.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Основание доказательства: каждый цикл счётчика достигает общего выхода, в том числе после перехода через границу диапазона.</translation>
     </message>
 </context>
 <context>

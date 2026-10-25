@@ -795,6 +795,45 @@ the guard count. Production and replay derive them independently. Metadata
 paging uses these totals in constant time; guard-sorted witnesses retain the
 existing logarithmic node lookup. Legacy scanners, charge order and wire
 fields remain exact, and frontend adapters introduce no new proof rules.
+`llvm-progress-ssa-v5` adds modular counter progress in the same owner. A guard
+may observe one direct fixed affine translation of the counter. The common
+nowrap domain takes priority; otherwise every recurrence arm must have the same
+nonzero width-normalized delta. Each guard compares against a literal or another
+fixed affine observation of that same counter.
+`ConstantRange` constructs each continuation region after operand/polarity
+normalization and affine translation. Ignoring observation overflow flags gives
+a continuation superset, so the complement of their union contains only common
+exits. Width+1 APInt endpoints retain 2^64 exactly. Sorted interval unions and
+their complemented gaps project onto residues modulo 2^ctz(delta); coverage of
+every residue proves that every possible counter orbit encounters a common exit.
+No iteration simulation, fixed seed or native noundef attribute is introduced.
+For an unfrozen undef seed, a defined continuation must hold for every
+contributing choice, including a coherent initial value following that orbit;
+at a common exit the selected guard exits or is undefined. Exact forwarding
+and final residual acyclicity prevent resets or an unrelated infinite suffix.
+For `(counter+A) pred (counter+B)`, the fixed difference `D=B-A` determines the
+wrap point `-D`; equal offsets give a constant comparison. Signed predicates
+rotate both observations by the sign bit. This yields an exact concrete region
+without treating independently varying undef uses as correlated; the proof
+uses the coherent choices included among all contributing undef choices.
+The new interval work is charged O(G log G), with O(G) scratch for G guards;
+residual component rounds retain their existing accounting and final DAG check.
+Schema 9 adds the canonical `proof` marker (`nowrap` or `modular`) to each guard
+witness. Replay rederives that marker with the complete group, and paged adapters
+only present it. The v1-v4 model default omits this field and preserves their
+published charge order and serialized bytes.
+Fresh source binding first compares exact graph records. If LLVM PHI numbering
+changed, `FlowBinding` anchors every non-PHI operation in its existing order and
+block, then propagates a bidirectional map through ordered inputs. Every node
+must be bound; conflicts, unanchored PHI cycles and ordinary instruction
+reordering refuse. Fresh graph validation precedes reference traversal. Only
+node references, block terminators and progress counter/update/compare IDs are
+translated before complete graph equality, including origins, predecessor
+labels, attributes, contracts and counts. Saved nodes and report IDs remain
+untouched. This is exact source authentication under renumbering, not semantic
+equivalence. The additional binding pass charges allocation, traversal and
+copy/comparison payloads to the existing per-graph work allowance; validation
+retains its own bounded pass. Public restore remains synchronous.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
