@@ -212,12 +212,16 @@ NEVERD_ANDROID_CALL(MutexInit, "pthread_mutex_init", initializeMutex)
 #undef NEVERD_ANDROID_MUTEX_ATTRIBUTE_CALL
 NEVERD_ANDROID_SYMBOL(PthreadMutexObjectPrefix, "pthread_mutex_")
 NEVERD_ANDROID_CALL(Snprintf, "snprintf", format)
+NEVERD_ANDROID_CALL(SnprintfChk, "__snprintf_chk", format)
 NEVERD_ANDROID_CALL(JNIGetCreatedJavaVMs, "JNI_GetCreatedJavaVMs", jniVM)
 NEVERD_ANDROID_PREFIX(JNIVM, "JavaVM.", jniVM)
 NEVERD_ANDROID_PREFIX(JNIEnv, "JNIEnv.", jniCall)
 NEVERD_ANDROID_CALL(Vsnprintf, "vsnprintf", format)
+NEVERD_ANDROID_CALL(VsnprintfChk, "__vsnprintf_chk", format)
 NEVERD_ANDROID_CALL(Sprintf, "sprintf", format)
+NEVERD_ANDROID_CALL(SprintfChk, "__sprintf_chk", format)
 NEVERD_ANDROID_CALL(Vsprintf, "vsprintf", format)
+NEVERD_ANDROID_CALL(VsprintfChk, "__vsprintf_chk", format)
 
 NEVERD_ANDROID_CALL(Getcwd, "getcwd", getcwd)
 
