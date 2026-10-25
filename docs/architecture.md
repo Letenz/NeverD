@@ -45,6 +45,9 @@ ordered, potentially trapping reads even when the result is unused. Constant
 propagation does not turn a 16-bit DX port into an 8-bit port. C output selects
 qualified builtins, real MSVC intrinsics or owned assembly at compile time.
 LLVM-to-C validates types and full memory effects before recognizing a call.
+Its port recognizer zero-extends a validated 8-bit immediate from the LLVM
+constant before rendering C. DX operands retain their full 16-bit value;
+the signed spelling of an instruction byte cannot choose a different port.
 
 `X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
 LLVM/C API names. LLVM emission and both C projections share that contract.
@@ -131,6 +134,19 @@ states are refused. Unsupported C scope layouts throw a recoverable emission
 error instead of terminating the embedding process. Source-only unresolved SEH
 frames remain explicitly marked in LLVM and C; native emission still refuses
 them without the missing runtime stack contract.
+
+X86 LLVM assembly that modifies arithmetic flags declares `~{flags}`. LLVM's
+x86 register constraint parser does not map `~{cc}` to EFLAGS; an apparently
+correct instruction window can otherwise reuse a stale comparison after a
+native flag write. GNU C assembly still spells this clobber `"cc"`. Owned
+assembly producers and LLVM-to-C recognizers share the exact LLVM contract;
+the recognizer rejects older windows that omitted the actual EFLAGS effect.
+
+The shared LLVM intrinsic dispatcher refuses an operation unless its target
+handler owns the result or effect. Unknown void operations cannot disappear,
+and unhandled values cannot become zero. The emitter throws while it still
+owns the incomplete module; direct callers and both serial and sharded
+pipeline paths therefore receive a diagnostic instead of executable output.
 
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 

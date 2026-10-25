@@ -39,7 +39,7 @@ inline std::optional<X86SgxAsm> x86SgxAsm(Intrinsic Id, Arch A) {
     P.Constraints += std::string(C) + ',';
   for (const auto *C : P.InputConstraints)
     P.Constraints += std::string(C) + ',';
-  P.Constraints += "~{cc},~{memory}";
+  P.Constraints += "~{flags},~{memory}";
   return P;
 }
 

@@ -1847,15 +1847,25 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     AppliedStates applied;
     window.windowHandle()->installEventFilter(&applied);
+    // Windows implements frameless maximization through Qt geometry changes;
+    // it does not necessarily send a native state event for that transition.
+    if (QGuiApplication::platformName() == QLatin1String("windows"))
+      connect(window.windowHandle(), &QWindow::windowStateChanged, &applied,
+              [&](Qt::WindowState) {
+                applied.states = window.windowHandle()->windowStates();
+                ++applied.count;
+              });
     QScreen *screen = window.screen();
     const auto barRect = [&] {
       return QRect(bar->mapToGlobal(QPoint(0, 0)), bar->size());
     };
     const auto report = [&](const char *step) {
-      qInfo() << step << "applied" << applied.states << "frame"
-              << window.frameGeometry() << "client" << window.geometry()
-              << "contents" << window.contentsMargins() << "bar" << barRect()
-              << "screen" << screen->geometry() << "available"
+      qInfo() << step << "applied" << applied.states << "handle"
+              << window.windowHandle()->windowStates() << "widget"
+              << window.windowState() << "frame" << window.frameGeometry()
+              << "client" << window.geometry() << "contents"
+              << window.contentsMargins() << "bar" << barRect() << "screen"
+              << screen->geometry() << "available"
               << screen->availableGeometry();
     };
     // Each step waits until the window system confirms the state on the
@@ -1872,15 +1882,19 @@ private slots:
           10000);
       QTest::qWait(300);
       report(step);
-      return confirmed;
+      return confirmed &&
+             effectiveState(applied.states) == effectiveState(states);
     };
     report("normal");
     const QSize normal = window.size();
     QVERIFY(screen->geometry().contains(barRect()));
 
     QVERIFY(request(Qt::WindowMaximized, "maximized"));
+    QCOMPARE(window.contentsMargins().left(), 0);
+    QCOMPARE(window.contentsMargins().right(), 0);
     QVERIFY(screen->availableGeometry().contains(barRect()));
     QVERIFY(request(Qt::WindowNoState, "restored"));
+    QVERIFY(window.contentsMargins().left() > 0);
     QCOMPARE(window.size(), normal);
 
     // Full screen twice: its client area must not lose the title bar, and a

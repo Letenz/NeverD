@@ -38,6 +38,21 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
+port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
+Independent recorder functions check 1,584 operand cases per program through
+the native-builtin and MSVC selections at O0/O2. Clang and available GCC run
+i386 and x64 observers; `NEVERD_TEST_NEVERC` adds the x64 NeverC observers.
+These checks execute ordinary C operand transport, not privileged port I/O.
+`NEVERD_PORT_SOURCE_EXPORT_DIR` preserves the four complete observer sources.
+
+`NeverDPipelineOutcomeTests` checks LLVM intrinsic refusal on x86, x64, ARM
+and AArch64. Both void and value-producing unknown IDs must fail direct
+emission and all 64 combinations of architecture, serial/sharded emission,
+optimization and source projection. Neither a module nor source observations
+may escape a failed pipeline run. Reusing an emitter after refusal must still
+produce verified LLVM for a valid function and reset the diagnostic count.
+
 `NeverDArm64eAnalysisTests` covers Apple arm64e static analysis independently
 of the disabled-key CPU tests in `NeverDAArch64PAuthTests`. It checks both
 decoder routes for PAC/AUT/XPAC, implicit HINT operands, authenticated
@@ -12539,3 +12554,24 @@ constants, address occurrences and wider operands remain unproved.
 `NeverDAAPCS64CallContractTests` retains narrow stack values across real frames.
 The corpus SEH source checks execute both normal and exception paths at O0/O2
 with UBSan and separately compile the emitted Windows protected scopes.
+
+### X86 assembly flag effects
+
+`NeverDX86AsmFlagsTests` keeps an ordinary comparison live across VERR, VERW,
+LAR and LSL, in register and memory forms. It executes production objects and
+O0/O2 compilations of exported IR and LLVM-to-C output on Linux x64 and
+freestanding i386. The production objects use the normal Codegen profile,
+with the independent driver compiled at both levels;
+`NEVERD_TEST_NEVERC` adds NeverC compilation of the x64 source. Null selectors
+provide a nonprivileged, independent ZF oracle. The suite also compiles owned
+SGX, VMX, descriptor and system assembly across ELF, COFF and Mach-O, without
+executing privileged instructions.
+
+Set `NEVERD_ASM_FLAGS_EXPORT_DIR` to retain the execution probes and the owned
+assembly inventories. Run `llc -O2 -stop-after=finalize-isel` on each exported
+`.ll` file: every `INLINEASM` in these flag-writing fixtures must declare an
+`implicit-def early-clobber $eflags`. Run the complete
+`NeverDX86VirtualizationSourceTests`, `NeverDLLVMCValueTests` and
+`NeverDLLVMCIntrinsicSemanticTests` owners when changing these shared assembly
+contracts. Export/machine-effect checks do not establish successful privileged
+execution or a full guest exception-state contract.

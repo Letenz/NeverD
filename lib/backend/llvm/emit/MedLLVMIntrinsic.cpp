@@ -30,16 +30,15 @@
 #include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/ir/med/X86/X86RegistrationSEHRegisters.h"
-#include "neverd/support/Diagnostic.h"
 
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
+
+#include <stdexcept>
+#include <string>
 
 namespace neverd {
 
@@ -108,6 +107,17 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
 
   using I = Intrinsic;
   auto IC = static_cast<I>(IntrCode);
+  auto refuseUnhandled = [&]() -> llvm::Value * {
+    if (Op.Output.Size)
+      ++UnhandledValueIntrinsicCount;
+    // The module is still owned by emit(). Throwing prevents either a direct
+    // caller or a pipeline shard from publishing guessed values or effects.
+    throw std::runtime_error(
+        "unsupported LLVM intrinsic: code=" + std::to_string(IntrCode) + " (" +
+        intrinsicName(IC) + ") out_sz=" + std::to_string(Op.Output.Size) +
+        " n_in=" + std::to_string(Op.NumInputs) +
+        " target=" + std::to_string(static_cast<unsigned>(TargetArch)));
+  };
   if (isPortableX87Intrinsic(IC))
     return emitPortableX87Intrinsic(Op, Builder);
 
@@ -213,8 +223,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     return nullptr;
 
   // Masked stores are value-dispatch intrinsics with a void result.  They must
-  // be dispatched before the generic zero-output early return; otherwise the
-  // observable store is silently dropped.  The arity check also makes the
+  // be dispatched before refusing unhandled void operations. The arity check
+  // also makes the
   // handler's nullptr-success convention unambiguous.
   if ((TargetArch == Arch::X86 || TargetArch == Arch::X64) &&
       (IC == I::MaskedStoreB || IC == I::MaskedStoreW ||
@@ -227,8 +237,7 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   }
 
   // GFNI is an x86 value-producing family.  Dispatch it before the generic
-  // void early return so a malformed zero-width shape cannot be mistaken for
-  // a successfully handled side effect or a non-x86 zero fallback.
+  // void refusal so a malformed zero-width shape receives its own diagnostic.
   const bool IsGfni =
       IC == I::Gf2p8MulB || IC == I::Gf2p8AffineQb || IC == I::Gf2p8AffineInvQb;
   if (IsGfni) {
@@ -238,9 +247,7 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   }
 
   if (Op.Output.Size == 0)
-    return nullptr;
-
-  auto *OutTy = sizeToType(Op.Output.Size);
+    return refuseUnhandled();
 
   if (const SyscallConvention *Syscall = modeledSyscallConvention(IC))
     return emitLinuxSyscall(Op, *Syscall, Builder);
@@ -279,34 +286,7 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     llvm::report_fatal_error(
         "segmented-memory intrinsic was not handled by the target backend");
 
-  if (IC == I::Hlt) {
-    auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
-        Mod, llvm::Intrinsic::debugtrap);
-    Builder.CreateCall(Fn, {});
-    return (Op.Output.Size > 0) ? llvm::ConstantInt::get(OutTy, 0) : nullptr;
-  }
-
-  {
-    // The bare-mnemonic inline-asm fallback is for VOID side-effect intrinsics
-    // only (dsb/isb/wfe/...).  A value-producing intrinsic (Output.Size > 0)
-    // reaching here has no real handler: emitting its mnemonic with bare `r`
-    // operands yields malformed asm (e.g. a 1-operand `sel`/`ssat`) that aborts
-    // codegen and crashes the whole process.  Fall through to the warning +
-    // safe 0 so it surfaces as a test mismatch instead (see #270d ArmSsat, #280
-    // ArmSel).
-    const char *AsmStr = intrinsicAsmMnemonic(IC);
-    if (AsmStr && Op.Output.Size == 0) {
-      emitVoidInlineAsm(AsmStr, Op, Builder);
-      return nullptr;
-    }
-  }
-
-  syncWarning() << "INTRINSIC unhandled intrinsic: code=" << IntrCode << " ("
-                << intrinsicName(IC) << ") out_sz=" << Op.Output.Size
-                << " n_in=" << static_cast<unsigned>(Op.NumInputs) << "\n";
-  if (Op.Output.Size > 0)
-    ++UnhandledValueIntrinsicCount;
-  return (Op.Output.Size > 0) ? llvm::ConstantInt::get(OutTy, 0) : nullptr;
+  return refuseUnhandled();
 }
 
 //===----------------------------------------------------------------------===//

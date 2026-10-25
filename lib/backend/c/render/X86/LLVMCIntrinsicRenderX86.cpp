@@ -287,7 +287,14 @@ renderX86ScalarSystemCall(Arch TheArch, BinaryFormat Format,
                         Constant->getZExtValue() <= UINT8_MAX;
     if (!Value->getType()->isIntegerTy(Bytes * 8) && !(I == 0 && ImmediatePort))
       return Reject();
-    Arguments.push_back(Args[Input]);
+    // The N constraint names an unsigned instruction byte. A signed C
+    // spelling such as -128 must not widen to port 0xff80. DX operands keep
+    // their full 16-bit value; only a validated immediate is zero-extended.
+    Arguments.push_back(
+        I == 0 && ImmediatePort
+            ? "0x" + llvm::utohexstr(
+                         llvm::cast<llvm::ConstantInt>(Value)->getZExtValue())
+            : Args[Input]);
   }
   if (Asm) {
     std::string Constraints;
@@ -438,7 +445,7 @@ std::optional<X86RepStos> classifyX86RepStos(Arch TheArch,
               : "test $5,$5\n\tje 1f\n\tstd\n\t1:\n\t" + Rep + "\n\tcld";
       const std::string Constraints = std::string("={di},={cx},0,1,{ax},") +
                                       (Dynamic ? "r," : "") +
-                                      "~{memory},~{dirflag},~{cc}";
+                                      "~{memory},~{dirflag},~{flags}";
       if (IA->getAsmString() != Asm ||
           IA->getConstraintString() != Constraints ||
           Call.arg_size() != (Dynamic ? 4u : 3u) ||
@@ -484,7 +491,7 @@ std::optional<X86RepMovs> classifyX86RepMovs(Arch TheArch,
               : "test $6,$6\n\tje 1f\n\tstd\n\t1:\n\t" + Rep + "\n\tcld";
       const std::string Constraints = std::string("={si},={di},={cx},0,1,2,") +
                                       (Dynamic ? "r," : "") +
-                                      "~{memory},~{dirflag},~{cc}";
+                                      "~{memory},~{dirflag},~{flags}";
       if (IA->getAsmString() != Asm ||
           IA->getConstraintString() != Constraints ||
           Call.arg_size() != (Dynamic ? 4u : 3u) ||

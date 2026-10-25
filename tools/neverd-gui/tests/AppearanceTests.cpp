@@ -293,6 +293,13 @@ private slots:
       send(QEvent::MouseMove, global + delta * 100);
       QCOMPARE(window.width(), delta.x() ? 500 : original.width());
       QCOMPARE(window.height(), delta.y() ? 400 : original.height());
+      QVERIFY2(QWidget::mouseGrabber() == &window,
+               qPrintable(QStringLiteral("Resize lost its grab in state %1")
+                              .arg(int(window.windowState()))));
+      // Cocoa can report the same normal state during a geometry change.
+      // That notification must not end the gesture before its release.
+      QWindowStateChangeEvent unchanged(window.windowState());
+      QCoreApplication::sendEvent(window.windowHandle(), &unchanged);
       send(QEvent::MouseMove, global - delta * 100);
       QCOMPARE(window.width(), delta.x() ? 240 : original.width());
       QCOMPARE(window.height(), delta.y() ? 180 : original.height());

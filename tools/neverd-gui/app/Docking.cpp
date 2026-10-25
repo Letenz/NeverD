@@ -45,6 +45,7 @@
 #include <kddockwidgets/core/TabBar.h>
 #include <kddockwidgets/core/TitleBar.h>
 #include <kddockwidgets/qtcommon/View.h>
+#include <kddockwidgets/qtwidgets/Platform.h>
 #include <kddockwidgets/qtwidgets/ViewFactory.h>
 #include <kddockwidgets/qtwidgets/views/FloatingWindow.h>
 #include <kddockwidgets/qtwidgets/views/Group.h>
@@ -55,6 +56,14 @@
 namespace neverd::gui {
 namespace {
 constexpr char FloatingLocked[] = "neverdFloatingLocked";
+
+// WindowFrame owns native moving and resizing. Let the docking library handle
+// client drags on every desktop instead of installing a second Windows frame
+// handler that turns unlocked docking gestures into system window moves.
+class DockPlatform final : public KDDockWidgets::QtWidgets::Platform {
+public:
+  bool supportsAeroSnap() const override { return false; }
+};
 
 bool onWayland() {
   return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
@@ -601,7 +610,8 @@ public:
 } // namespace
 
 void configureDocking() {
-  KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
+  if (!KDDockWidgets::Core::Platform::hasInstance())
+    new DockPlatform;
   auto &config = KDDockWidgets::Config::self();
   // Every docked window carries a closable tab, as in classic disassemblers.
   // The drawn floating caption remains a docking drag source on every desktop.

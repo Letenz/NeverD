@@ -112,7 +112,7 @@ x86VirtualizationAsm(Intrinsic Id, Arch TargetArch, NdMemoryAddressSpace Space,
   for (const auto &I : P.InputConstraints)
     Constraint(I);
   if (C.Result != X86VirtualizationResult::None)
-    Constraint("~{cc}");
+    Constraint("~{flags}");
   Constraint("~{memory}");
   return P;
 }
