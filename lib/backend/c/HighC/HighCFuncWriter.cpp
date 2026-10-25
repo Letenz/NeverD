@@ -352,6 +352,14 @@ void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
           Self(Self, Clause);
         if (Stmt.Kind == StmtKind::Return && Stmt.RetVal &&
             Stmt.CxxContinuationReturnTargets.empty()) {
+          // An inferred void tail still carries the machine result width of
+          // its callee. Keep that declaration evidence with the returned call;
+          // the statement writer already emits its effects and a bare return.
+          // A declared void ABI has no such result carrier to preserve.
+          if (!Declared && returnedCall(*Stmt.RetVal)) {
+            Projected.push_back(std::move(Stmt));
+            continue;
+          }
           if (highCExpressionHasEffect(*Stmt.RetVal)) {
             HighStmt Evaluate;
             Evaluate.Kind = StmtKind::ExprStmt;
