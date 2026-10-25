@@ -661,7 +661,7 @@ Knowledge Exchange assets, and it registers only the `neverd://` scheme.
 | T | Show the operand as a structure offset, the local types ranked by the code's accesses |
 | Y | Set the type of the local, parameter or global object under the pseudocode cursor, or the current function's declaration, checked as you type |
 | C | Define native instructions from the selected byte through a basic block |
-| : or ; | Comment the address |
+| ; or / | Enter or edit the comment at the current address or source line |
 | Alt+M / Ctrl+M | Mark a position / jump to a marked position |
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
 | Alt+T, Ctrl+T / Alt+B, Ctrl+B | Search text / bytes, and repeat |
@@ -679,6 +679,9 @@ Knowledge Exchange assets, and it registers only the `neverd://` scheme.
 | Ctrl+W | Save the project |
 | Ctrl+Shift+P | Command palette |
 
+There is one comment command: **Enter repeatable comment**. Both `;` and `/`
+open the same editor and edit the same saved comment; `:` has no binding.
+
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
 Shortcuts** lists every command with its key. Menus, buttons and labels
@@ -695,8 +698,9 @@ A command IDA also has takes IDA's default key: the legacy scheme of IDA's
 workbench unit tests fail when a default drifts from IDA's or when a command of
 the workbench's own takes a key IDA gives another command. **File → Open**
 therefore has no key: IDA's Ctrl+O makes an operand an offset into the current
-segment. One difference is deliberate: in a disassembly, pseudocode or IR
-window Ctrl+F finds text, where IDA's disassembly goes to the next error.
+segment. Deliberate differences are the unified comment command above and
+Ctrl+F: in a disassembly, pseudocode or IR window it finds text, where IDA's
+disassembly goes to the next error.
 
 Buttons in Local Types, Type Libraries, Pathfinder, Declare and Find show
 shortcut hints. The main toolbars use icons only, with shortcuts in their tooltips.

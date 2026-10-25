@@ -256,6 +256,34 @@ TEST_P(LinuxProcess, ResidencyObservationsExecuteOnBothLP64ABIs) {
   }
 }
 
+TEST_P(LinuxProcess, DiscardPreservesOuterPagesThenClearsBothSidesOfAHole) {
+  Options.Limits.Instructions = 500000;
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  for (const char *Opt : {"O0", "O2"}) {
+    const auto Fixture = Path.parent_path() /
+                         (Path.stem().string() + "-residency-" + Opt + ".elf");
+    Options.Arguments = {"discard", "d"};
+    auto Run = emulateProcess(Fixture, ProcessProfile::LinuxELF64, Options);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    const auto &R = *Run;
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    std::string Expected(4096, '1');
+    Expected.append(4096, '\0');
+    Expected.append(4096, '3');
+    Expected.append(8192, '\0');
+    EXPECT_EQ(R.StandardOutput, Expected);
+    unsigned Calls = 0;
+    for (const auto &Call : R.Services)
+      if (Call.Number ==
+          (GetParam().ISA == GuestArchitecture::X64 ? 28u : 233u)) {
+        ASSERT_TRUE(Call.Result);
+        EXPECT_EQ(*Call.Result, Calls++ == 0 ? 0u : uint64_t(-12));
+      }
+    EXPECT_EQ(Calls, 2u);
+  }
+}
+
 TEST_P(LinuxProcess, SignalActionsShareExactLP64StateAndCopyFailureOrdering) {
   for (const char *Opt : {"O0", "O2"}) {
     SCOPED_TRACE(Opt);

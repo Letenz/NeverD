@@ -50,6 +50,12 @@ struct ExecutionResult {
 // Return Returned to admit an instruction, or the resource stop to propagate.
 // The owner supplies one workload-wide instruction/deadline budget.
 using AdmitInstruction = std::function<ExecutionStop()>;
+// Workload services retain their existing OS owner. The callback returns a
+// nonnegative Java long in milliseconds or an explicit resource/service stop.
+// It must remain valid for the Runtime's lifetime; no host clock is inferred.
+struct RuntimeServices {
+  std::function<ExecutionResult()> uptime_milliseconds;
+};
 class Program {
 public:
   // Input declarations must come from the shared validated DEX reader.
@@ -116,7 +122,8 @@ private:
 class Runtime {
 public:
   explicit Runtime(const Program &program, std::shared_ptr<Heap> heap = {},
-                   std::optional<AndroidApplicationSnapshot> application = {});
+                   std::optional<AndroidApplicationSnapshot> application = {},
+                   RuntimeServices services = {});
   ~Runtime();
   Runtime(const Runtime &) = delete;
   Runtime &operator=(const Runtime &) = delete;
