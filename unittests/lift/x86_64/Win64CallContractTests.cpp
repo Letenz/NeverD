@@ -2037,6 +2037,78 @@ int main(void) {
         }
 }
 
+TEST(CallExitRegisters, LowReadsDoNotReplaceAPropagatedWideConstantReturn) {
+  for (const auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (const unsigned Bytes : {1u, 2u, 4u})
+      for (const bool Rewrite : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(Bytes);
+        SCOPED_TRACE(Rewrite);
+        // A store consumes AL/AX/EAX without changing the full RAX value.
+        // Its synthetic low register view must not become a new return write
+        // after the original MOVABS and RETURN operands become constants.
+        std::vector<uint8_t> Code = {0x48, 0xb8, 0xab, 0xed, 0xff,
+                                     0xff, 0x44, 0x33, 0x22, 0x11};
+        if (Bytes == 2)
+          Code.push_back(0x66);
+        Code.push_back(Bytes == 1 ? 0x88 : 0x89);
+        Code.push_back(Format == BinaryFormat::COFF ? 0x01 : 0x07);
+        if (Rewrite)
+          Code.insert(Code.end(), {0xb8, 0x10, 0x32, 0x54, 0x76});
+        Code.push_back(0xc3);
+        auto Image = makeImage(Code, {{Text, "read_low"}}, {});
+        Image.Format = Format;
+        for (const bool LLVM : {false, true})
+          for (const bool NoOpt : {false, true}) {
+            SCOPED_TRACE(LLVM);
+            SCOPED_TRACE(NoOpt);
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.OnlyFunctionEntries = {Text};
+            Options.LiftMode = LLVM;
+            Options.SourceProjection = true;
+            Options.NoOpt = NoOpt;
+            auto Result = Pipeline().run(Image, Context, Options);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            std::string Source;
+            llvm::raw_string_ostream Output(Source);
+            CEmitterOptions COptions;
+            COptions.TheArch = Image.Arch;
+            COptions.Format = Image.Format;
+            COptions.Image = &Image;
+            if (LLVM) {
+              ASSERT_TRUE(Result.LlvmModule);
+              ASSERT_FALSE(
+                  llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+              ASSERT_TRUE(
+                  LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+            } else
+              ASSERT_TRUE(
+                  HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+            const auto Expected = Rewrite ? "UINT64_C(0x76543210)"
+                                          : "UINT64_C(0x11223344ffffedab)";
+            const auto Mask = (uint64_t{1} << (8 * Bytes)) - 1;
+            const std::string Oracle = R"(
+int main(void) {
+  uint64_t out = UINT64_C(0xaabbccddeeff0011);
+  if ((uint64_t)read_low(&out) != )" + std::string(Expected) +
+                                       R"() return 1;
+  const uint64_t mask = )" + std::to_string(Mask) +
+                                       R"(;
+  return out != ((UINT64_C(0xaabbccddeeff0011) & ~mask) |
+                 (UINT64_C(0x11223344ffffedab) & mask));
+}
+)";
+            for (llvm::StringRef Level : {"-O0", "-O2"})
+              source_call_execution_test::compileAndRun(
+                  Source + Oracle,
+                  {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+          }
+      }
+}
+
 TEST(CallExitRegisters, BitScanLoopsDeferClobberedDestinationReads) {
   for (bool Forward : {false, true})
     for (bool Initialized : {false, true})
