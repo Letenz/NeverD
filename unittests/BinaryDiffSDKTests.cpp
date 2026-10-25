@@ -169,6 +169,97 @@ protected:
   }
 };
 
+TEST_F(BinaryDiffSDK, ByteOverlaysBindDataOnlyChangesAndReopenedReports) {
+  const std::array<uint8_t, 24> Bytes{0xb8, 7, 0, 0, 0, 0xc3};
+  auto A = input(Bytes);
+  auto B = input(Bytes);
+  const auto Before = take(neverd_comparison_export_json(compare(A, B)));
+  auto Original = llvm::json::parse(Before);
+  ASSERT_TRUE(bool(Original));
+  const auto *OriginalIdentity = Original->getAsObject()->getObject("primary");
+  ASSERT_TRUE(OriginalIdentity);
+  neverd_byte_patch_options_v1 Patch{};
+  Patch.struct_size = sizeof(Patch);
+  Patch.address = 0x1010;
+  Patch.kind = "bytes";
+  Patch.bytes = "2a";
+  ASSERT_FALSE(take(neverd_byte_patch_apply(A, &Patch)).empty())
+      << take(neverd_last_error(A));
+  const auto ChangedComparison = compare(A, B);
+  const auto After = take(neverd_comparison_export_json(ChangedComparison));
+  auto Changed = llvm::json::parse(After);
+  ASSERT_TRUE(bool(Changed));
+  const auto *ChangedIdentity = Changed->getAsObject()->getObject("primary");
+  ASSERT_TRUE(ChangedIdentity);
+  EXPECT_EQ(OriginalIdentity->getString("sha256"),
+            ChangedIdentity->getString("sha256"));
+  EXPECT_NE(OriginalIdentity->getString("analysis"),
+            ChangedIdentity->getString("analysis"));
+  EXPECT_NE(OriginalIdentity->getString("revision"),
+            ChangedIdentity->getString("revision"));
+  EXPECT_EQ(render(*Original->getAsObject()->get("functions")),
+            render(*Changed->getAsObject()->get("functions")));
+  EXPECT_EQ(neverd_comparison_restore_json(ChangedComparison, Before.c_str()),
+            0);
+  EXPECT_FALSE(take(neverd_comparison_last_error(ChangedComparison)).empty());
+  EXPECT_EQ(take(neverd_comparison_export_json(ChangedComparison)), After);
+
+  // An unpacked sidecar must bind the same effective bytes after reload.
+  ASSERT_EQ(neverd_byte_patches_save(A), 0) << take(neverd_last_error(A));
+  auto Replayed = neverd_session_create();
+  Sessions.push_back(Replayed);
+  ASSERT_EQ(
+      neverd_session_set_load_options(
+          Replayed,
+          R"({"loader":"binary","processor":"x86_64","platform":"sysv","base":4096})"),
+      0);
+  ASSERT_EQ(
+      neverd_session_load(Replayed, (Directory / "0.raw").string().c_str()), 1)
+      << take(neverd_last_error(Replayed));
+  const auto Reopened = compare(Replayed, B);
+  EXPECT_EQ(neverd_comparison_restore_json(Reopened, After.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+
+  ASSERT_EQ(neverd_byte_patch_revert(A, Patch.address, 1), 0);
+  const auto Restored = compare(A, B);
+  EXPECT_EQ(neverd_comparison_restore_json(Restored, Before.c_str()), 1)
+      << take(neverd_comparison_last_error(Restored));
+}
+
+TEST_F(BinaryDiffSDK, ByteOverlayIdentityIgnoresEditKindsAndGrouping) {
+  const std::array<uint8_t, 24> Bytes{0xb8, 7, 0, 0, 0, 0xc3};
+  auto A = input(Bytes);
+  auto B = input(Bytes);
+  neverd_byte_patch_options_v1 Patch{};
+  Patch.struct_size = sizeof(Patch);
+  Patch.address = 0x1000;
+  Patch.kind = "constant";
+  Patch.value = 0x2211;
+  ASSERT_FALSE(take(neverd_byte_patch_apply(A, &Patch)).empty())
+      << take(neverd_last_error(A));
+  Patch.value = 0x11;
+  ASSERT_FALSE(take(neverd_byte_patch_apply(B, &Patch)).empty())
+      << take(neverd_last_error(B));
+  Patch.address = 0x1002;
+  Patch.kind = "bytes";
+  Patch.bytes = "22";
+  ASSERT_FALSE(take(neverd_byte_patch_apply(B, &Patch)).empty())
+      << take(neverd_last_error(B));
+  const auto ARows = parsed(neverd_byte_patches_json(A));
+  const auto BRows = parsed(neverd_byte_patches_json(B));
+  ASSERT_TRUE(ARows.getAsArray());
+  ASSERT_TRUE(BRows.getAsArray());
+  ASSERT_EQ(ARows.getAsArray()->size(), 1u);
+  ASSERT_EQ(BRows.getAsArray()->size(), 2u);
+  const auto Report = parsed(neverd_comparison_export_json(compare(A, B)));
+  const auto *Primary = Report.getAsObject()->getObject("primary");
+  const auto *Secondary = Report.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Primary);
+  ASSERT_TRUE(Secondary);
+  EXPECT_EQ(Primary->getString("analysis"), Secondary->getString("analysis"));
+  EXPECT_EQ(Primary->getString("revision"), Secondary->getString("revision"));
+}
+
 TEST_F(BinaryDiffSDK, AArch64ProfilesPreservePlacementAndOriginalInstructions) {
   const auto EvidenceSnapshot = [](neverd_comparison_t C) {
     auto Document = parsed(neverd_comparison_export_json(C));
