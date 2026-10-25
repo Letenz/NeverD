@@ -1,0 +1,1775 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-25",
+  "baseline_commit": "640418249fe0684ed1a2a9e216603bf6296e18e6",
+  "baseline_tree": "72cf7e955cb831d70bcf60f963d65defde9de1c2",
+  "baseline_equivalent_merge": "ab1c58d00a5c85bef2d0754bc4982be30808b7a9",
+  "candidate": "Same baseline plus the patch-scaling production changes identified by source and artifact hashes below, before later dev integration.",
+  "mode": "PR Review; sampled interactive-patch edit, persistence and GUI refresh paths.",
+  "host_cpu": "Intel Core i9-13900H, 20 logical CPUs; scheduler affinity unrestricted",
+  "compiler": "Ubuntu clang version 23.1.2 (++20260910044155+069ef0e7cb36-1~exp1~20260910044205.69)",
+  "build": {
+    "profile": "Release",
+    "llvm": "Repository prebuilt LLVM package",
+    "qt": "6.8.3",
+    "cpu_emulation": false,
+    "driver_emulation": false,
+    "python_plugins": false,
+    "mimalloc": true,
+    "highway": true,
+    "simdutf": true,
+    "simdjson": true,
+    "tbb": true
+  },
+  "dependency_inputs": {
+    "purpose": "configure_inputs",
+    "schema": 1,
+    "sources": {
+      "neverd_highway": {
+        "branch": "master",
+        "commit": "1693ca7926ed12c5520623564e465cff97d93374",
+        "repository": "https://github.com/NeverSight/highway.git",
+        "selection": "managed",
+        "sha256": "f5149df5acb77cd9730ed8e5160f2deff0b02fe49cc45443fd396fdb5f0519d2",
+        "used": true
+      },
+      "neverd_mimalloc": {
+        "branch": "main3",
+        "commit": "e8e7bc41ce904b4c83fe20e87d93f24d5286315a",
+        "repository": "https://github.com/NeverSight/mimalloc.git",
+        "selection": "managed",
+        "sha256": "aea4126df4ada4e8f733e2a0f08642a8aabe6c2afc01886a1a9a259c18231ac3",
+        "used": true
+      },
+      "neverd_simdjson": {
+        "branch": "master",
+        "commit": "edb7016c62efbe6155226896cdba5736307190e3",
+        "repository": "https://github.com/NeverSight/simdjson.git",
+        "selection": "managed",
+        "sha256": "e4e849bbb16878f8555501cc09bf4a6d90d4a06ccfc67a202a3c030486c3823d",
+        "used": true
+      },
+      "neverd_simdutf": {
+        "branch": "master",
+        "commit": "8d82299606e675b50de8dc16fd118aae4b65bfde",
+        "repository": "https://github.com/NeverSight/simdutf.git",
+        "selection": "managed",
+        "sha256": "48e9c9fc33940bcc81cdaec785ce6e21ea20f7b03b7a26bff56abb41d2cf5126",
+        "used": true
+      },
+      "neverd_tbb": {
+        "branch": "master",
+        "commit": "d26e0502ca39f888c1266cbbf1e2c2226d31e41b",
+        "repository": "https://github.com/NeverSight/oneTBB.git",
+        "selection": "managed",
+        "sha256": "98300a443e43d047eabae27d3e30232efe7508b20d8e24a92ff2d54ef511761b",
+        "used": true
+      }
+    }
+  },
+  "production_source_sha256": {
+    "include/neverd/sdk/NeverDCAPIBytePatch.h": "83a4519bc05272158dd21c47d285c05f6473144dc161f240f169b94e064cd23d",
+    "lib/patch/PatchOverlay.cpp": "a2c65be2d78e51b22731441636478f6eaf8cfd15fd380de05988c1e389e1e9dc",
+    "lib/sdk/capi/NeverDCAPIBytePatch.cpp": "96931b6e41e777498f2aab92c625af762c20fd6a40e0c570a79aa445bae6ad66",
+    "pluginsdk/python/neverd_plugin/abi.py": "9f0aae307e1de2652de8d94af57fb9d494d7b12e73e49c3583e7f2e8c9f15345",
+    "pluginsdk/python/neverd_plugin/api.py": "b7851491f784a3503250eb1968fb23e4dd7b584f271eb7a18e3ce4770b8d36a4",
+    "tools/neverd-worker/EnginePatch.cpp": "10e72bf3b8a2c01708cd6ca425effc3b02f373c229533b49b244560d46b8d91f",
+    "tools/neverd-gui/app/Session.cpp": "20ee2c65decbeaf71360857b74e1c534bbd0f2775fdbaaace27fce36aab39b19"
+  },
+  "method": "Four sequential processes in baseline/candidate/candidate/baseline order, 21 samples per process/case, pooled 42 per variant. Identical driver hash and fixtures; no warmup samples discarded. Setup, reset/undo and byte-oracle export checks are outside timings. SDK samples include Python binding overhead; worker samples include IPC. Every edit checks expected bytes. Worker SDK identity checked through /proc/<pid>/maps.",
+  "limitations": [
+    "Other development builds were running on this shared host. Absolute wall times and especially tails are noisy; load averages are retained per run. No own builds or runtime tests overlapped this paired campaign.",
+    "Synthetic warm raw-x64 fixtures measure established overlays, not cold image snapshots, ELF/PE/Mach-O loading, instruction assembly, source recompilation, reanalysis, GUI paint latency, peak memory or power.",
+    "Worker commits include synchronous history and sidecar persistence; fixture projects use the local NVMe filesystem. No crash/power-loss experiment was performed by this benchmark.",
+    "Only Linux x86-64 was timed. There are no timed IDA, Binary Ninja, Ghidra or other competitor results, and these figures establish no world-ranking claim.",
+    "The optional new range API removes work proportional to patched byte payloads; output still scales with canonical row count. Durable history/sidecar snapshots and range publication still scale with total overlay state.",
+    "The 65,536-row candidate-only stress run used an earlier driver revision (its hash is retained); it proves byte-oracle correctness and records diagnostic timings, not a paired baseline speedup."
+  ],
+  "pooled_results": [
+    {
+      "operation": "sdk_single_byte_edit",
+      "adjacent_rows": 64,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 0.282933,
+          "p95_ms": 3.430657
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.1301665,
+          "p95_ms": 0.255105
+        },
+        "median_speedup": 2.1736237818486326
+      },
+      "cpu": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 0.2749585,
+          "p95_ms": 0.376261
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.126932,
+          "p95_ms": 0.239814
+        },
+        "median_speedup": 2.1661874074307503
+      }
+    },
+    {
+      "operation": "sdk_single_byte_edit",
+      "adjacent_rows": 1024,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 74.5865555,
+          "p95_ms": 102.767321
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.2650305,
+          "p95_ms": 3.649387
+        },
+        "median_speedup": 281.4263094247643
+      },
+      "cpu": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 69.900661,
+          "p95_ms": 72.782583
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.25562799999999997,
+          "p95_ms": 0.307492
+        },
+        "median_speedup": 273.4468094261975
+      }
+    },
+    {
+      "operation": "sdk_single_byte_edit",
+      "adjacent_rows": 2048,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 581.5226805,
+          "p95_ms": 1011.866967
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.26848649999999996,
+          "p95_ms": 0.371496
+        },
+        "median_speedup": 2165.9289405612576
+      },
+      "cpu": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 523.0459935,
+          "p95_ms": 597.332981
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.262066,
+          "p95_ms": 0.361831
+        },
+        "median_speedup": 1995.8559809361
+      }
+    },
+    {
+      "operation": "worker_patch_ranges",
+      "changed_bytes": 4096,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 0.411673,
+          "p95_ms": 5.219555
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.387438,
+          "p95_ms": 2.089125
+        },
+        "median_speedup": 1.0625519437948783
+      }
+    },
+    {
+      "operation": "worker_patch_ranges",
+      "changed_bytes": 1048576,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 93.2402905,
+          "p95_ms": 129.888305
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 0.1093035,
+          "p95_ms": 0.198753
+        },
+        "median_speedup": 853.0403006308123
+      }
+    },
+    {
+      "operation": "worker_single_byte_commit",
+      "adjacent_rows": 64,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 68.5056865,
+          "p95_ms": 83.344778
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 64.8228255,
+          "p95_ms": 84.955019
+        },
+        "median_speedup": 1.0568142621305516
+      }
+    },
+    {
+      "operation": "worker_single_byte_commit",
+      "adjacent_rows": 1024,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 261.7007595,
+          "p95_ms": 440.635748
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 132.43978850000002,
+          "p95_ms": 205.548111
+        },
+        "median_speedup": 1.9759980173933904
+      }
+    },
+    {
+      "operation": "worker_single_byte_commit",
+      "adjacent_rows": 2048,
+      "wall": {
+        "baseline": {
+          "sample_count": 42,
+          "median_ms": 949.8611814999999,
+          "p95_ms": 1574.096467
+        },
+        "candidate": {
+          "sample_count": 42,
+          "median_ms": 202.7781655,
+          "p95_ms": 278.101479
+        },
+        "median_speedup": 4.6842379659460915
+      }
+    }
+  ],
+  "runs": [
+    {
+      "label": "baseline-a",
+      "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+      "machine": "x86_64",
+      "processor": "",
+      "timestamp_utc": "2026-10-25T19:18:45Z",
+      "benchmark_sha256": "b6dc2136108e29c9f51427e576a9c759f9691844b9917e535e8b5c99ebfcbc35",
+      "cpu_count": 20,
+      "load_average": [
+        32.896484375,
+        36.05615234375,
+        35.0615234375
+      ],
+      "library": "/mnt/data/neverd-patch-scaling/baseline/bin/libneverd.so",
+      "library_sha256": "e1f705618bc625817e6d7b274b221c13741892cbf7b047f46c04ac2362b50f06",
+      "worker": "/mnt/data/neverd-patch-scaling/baseline/bin/neverd-worker",
+      "worker_sha256": "cd5adb705f1ffa8bb07d3ea8dd86ad8990b1ae73e9677fc4ebdc462c9b3ade42",
+      "samples": 21,
+      "results": [
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 0.290188,
+            "p95_ms": 3.448257,
+            "samples_ms": [
+              0.320008,
+              3.448257,
+              0.33048,
+              0.285518,
+              0.292604,
+              5.158773,
+              0.284807,
+              0.26689,
+              0.24782,
+              0.327841,
+              0.290188,
+              0.308071,
+              0.283299,
+              0.277618,
+              0.29724,
+              0.297552,
+              0.271197,
+              0.271931,
+              0.283901,
+              0.292039,
+              0.265103
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.279365,
+            "p95_ms": 0.323629,
+            "samples_ms": [
+              0.312313,
+              0.276225,
+              0.323629,
+              0.279406,
+              0.285824,
+              0.43281,
+              0.279365,
+              0.261096,
+              0.242311,
+              0.320482,
+              0.284327,
+              0.294121,
+              0.27656,
+              0.271363,
+              0.291061,
+              0.292001,
+              0.266132,
+              0.26627,
+              0.279128,
+              0.269266,
+              0.259351
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 75.470995,
+            "p95_ms": 96.444369,
+            "samples_ms": [
+              86.225363,
+              83.199852,
+              80.870089,
+              100.330088,
+              78.519295,
+              81.741888,
+              78.064874,
+              73.487714,
+              72.474473,
+              75.470995,
+              78.99267,
+              84.965301,
+              96.444369,
+              67.983806,
+              64.56288,
+              69.365874,
+              71.27289,
+              65.874252,
+              63.075152,
+              63.90712,
+              64.972554
+            ]
+          },
+          "cpu": {
+            "median_ms": 69.011905,
+            "p95_ms": 71.970516,
+            "samples_ms": [
+              68.751491,
+              71.643845,
+              71.232766,
+              71.912645,
+              70.137189,
+              71.970516,
+              70.334138,
+              70.037962,
+              69.011905,
+              69.840561,
+              68.921573,
+              73.178932,
+              69.778731,
+              66.810261,
+              61.630182,
+              66.212926,
+              62.864131,
+              58.960302,
+              58.282027,
+              58.473426,
+              59.825318
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 555.747475,
+            "p95_ms": 832.555662,
+            "samples_ms": [
+              488.119503,
+              494.787489,
+              547.992108,
+              604.058711,
+              591.472251,
+              832.555662,
+              530.221076,
+              1011.866967,
+              558.061986,
+              542.813559,
+              529.540837,
+              708.537696,
+              536.077538,
+              575.522476,
+              554.721729,
+              555.747475,
+              601.910981,
+              560.523961,
+              546.274187,
+              609.53687,
+              554.577885
+            ]
+          },
+          "cpu": {
+            "median_ms": 521.434395,
+            "p95_ms": 530.091136,
+            "samples_ms": [
+              439.342574,
+              457.069257,
+              512.79009,
+              522.484771,
+              511.786077,
+              524.322849,
+              516.182837,
+              530.091136,
+              525.961877,
+              515.724141,
+              520.653056,
+              529.448001,
+              528.865169,
+              529.37046,
+              523.779941,
+              512.354099,
+              533.037562,
+              515.471839,
+              520.649858,
+              521.434395,
+              523.607216
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 4096,
+          "wall": {
+            "median_ms": 0.429249,
+            "p95_ms": 5.251111,
+            "samples_ms": [
+              24.551572,
+              0.501134,
+              0.421292,
+              5.251111,
+              0.490611,
+              2.045166,
+              0.429249,
+              0.407786,
+              0.395293,
+              0.415328,
+              0.403343,
+              0.367701,
+              0.939043,
+              0.535442,
+              0.45277,
+              0.435352,
+              0.411507,
+              0.532041,
+              0.41845,
+              0.411839,
+              0.404745
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 1048576,
+          "wall": {
+            "median_ms": 125.243828,
+            "p95_ms": 129.888305,
+            "samples_ms": [
+              189.02031,
+              81.518222,
+              65.900317,
+              87.419857,
+              126.011963,
+              127.593775,
+              128.993088,
+              106.956244,
+              126.380306,
+              101.755523,
+              127.872401,
+              125.243828,
+              99.225369,
+              77.807158,
+              120.902795,
+              126.922205,
+              124.8509,
+              128.013485,
+              129.888305,
+              128.362313,
+              124.196276
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 68.214587,
+            "p95_ms": 78.331962,
+            "samples_ms": [
+              87.54323,
+              60.521324,
+              78.331962,
+              66.569208,
+              64.412278,
+              63.105359,
+              75.519437,
+              74.897645,
+              56.850422,
+              54.812929,
+              60.28974,
+              72.047586,
+              59.789561,
+              52.551884,
+              60.271153,
+              73.662768,
+              69.98998,
+              68.214587,
+              70.698452,
+              76.562037,
+              73.638812
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 241.285637,
+            "p95_ms": 440.635748,
+            "samples_ms": [
+              646.59749,
+              370.431782,
+              243.87767,
+              315.141281,
+              362.842427,
+              212.516892,
+              329.838452,
+              262.751313,
+              192.163139,
+              207.798762,
+              260.228581,
+              163.505761,
+              241.285637,
+              218.042112,
+              236.762825,
+              211.014565,
+              230.650365,
+              211.485658,
+              216.976106,
+              440.635748,
+              320.544541
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 880.281627,
+            "p95_ms": 1239.789394,
+            "samples_ms": [
+              873.791391,
+              1236.484225,
+              736.810315,
+              1239.789394,
+              842.91777,
+              595.069484,
+              902.932241,
+              880.281627,
+              986.563337,
+              809.922089,
+              1328.489369,
+              1014.174538,
+              905.567536,
+              768.616177,
+              880.929079,
+              735.53368,
+              1033.021836,
+              739.349298,
+              818.877104,
+              995.131115,
+              731.956679
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "candidate-a",
+      "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+      "machine": "x86_64",
+      "processor": "",
+      "timestamp_utc": "2026-10-25T19:19:41Z",
+      "benchmark_sha256": "b6dc2136108e29c9f51427e576a9c759f9691844b9917e535e8b5c99ebfcbc35",
+      "cpu_count": 20,
+      "load_average": [
+        32.1728515625,
+        35.2890625,
+        34.85400390625
+      ],
+      "library": "/mnt/data/neverd-interactive-patch-review/bin/libneverd.so",
+      "library_sha256": "33a630f8b0e24408c06b9fb115da04e07f7dcdf9a858dc348211b87fa12ee779",
+      "worker": "/mnt/data/neverd-interactive-patch-review/bin/neverd-worker",
+      "worker_sha256": "eb7e04beb834548d699937e638706f0f018b0e92eb45880cc5a8a90ab1077b1a",
+      "samples": 21,
+      "results": [
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 0.106323,
+            "p95_ms": 0.469563,
+            "samples_ms": [
+              0.469563,
+              0.134007,
+              0.106323,
+              0.101915,
+              5.230503,
+              0.152018,
+              0.109764,
+              0.102254,
+              0.099603,
+              0.095415,
+              0.21206,
+              0.130068,
+              0.101435,
+              0.09388,
+              0.088518,
+              0.098647,
+              0.245023,
+              0.13778,
+              0.110934,
+              0.097287,
+              0.090355
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.1046,
+            "p95_ms": 0.239814,
+            "samples_ms": [
+              0.462754,
+              0.129394,
+              0.1046,
+              0.100315,
+              0.226331,
+              0.150083,
+              0.108267,
+              0.100871,
+              0.09807,
+              0.093471,
+              0.207544,
+              0.127932,
+              0.099937,
+              0.092439,
+              0.087356,
+              0.097521,
+              0.239814,
+              0.135568,
+              0.109235,
+              0.095874,
+              0.08908
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 0.24844,
+            "p95_ms": 3.649387,
+            "samples_ms": [
+              0.260319,
+              0.24844,
+              0.262526,
+              0.263649,
+              0.247946,
+              3.296894,
+              3.649387,
+              4.428547,
+              0.245377,
+              0.236512,
+              0.232734,
+              0.24335,
+              0.256998,
+              0.254454,
+              0.247139,
+              0.24254,
+              0.246363,
+              0.269252,
+              0.247242,
+              0.219574,
+              0.253036
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.240983,
+            "p95_ms": 0.258025,
+            "samples_ms": [
+              0.254371,
+              0.242006,
+              0.2571,
+              0.258025,
+              0.242359,
+              0.229428,
+              0.222102,
+              0.234703,
+              0.238627,
+              0.230048,
+              0.22651,
+              0.237404,
+              0.24121,
+              0.249009,
+              0.240983,
+              0.236444,
+              0.239961,
+              0.263492,
+              0.24134,
+              0.214181,
+              0.247263
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 0.268325,
+            "p95_ms": 0.299518,
+            "samples_ms": [
+              0.293761,
+              0.253978,
+              0.244373,
+              0.265964,
+              0.271148,
+              0.282115,
+              0.250913,
+              0.268648,
+              0.307973,
+              0.287718,
+              0.27593,
+              0.25858,
+              0.266971,
+              0.264895,
+              0.273215,
+              0.299518,
+              0.284116,
+              0.252446,
+              0.256366,
+              0.264455,
+              0.268325
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.261812,
+            "p95_ms": 0.292851,
+            "samples_ms": [
+              0.287675,
+              0.247327,
+              0.23778,
+              0.26,
+              0.264624,
+              0.275945,
+              0.244498,
+              0.262551,
+              0.292893,
+              0.26232,
+              0.269099,
+              0.252112,
+              0.260442,
+              0.258823,
+              0.267011,
+              0.292851,
+              0.276412,
+              0.247197,
+              0.24801,
+              0.250237,
+              0.261812
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 4096,
+          "wall": {
+            "median_ms": 0.423401,
+            "p95_ms": 1.061324,
+            "samples_ms": [
+              2.685604,
+              0.974412,
+              0.816754,
+              0.423401,
+              0.701993,
+              1.013067,
+              0.785023,
+              0.351475,
+              0.720603,
+              0.33119,
+              0.712781,
+              0.319609,
+              0.742358,
+              1.061324,
+              0.139051,
+              0.082152,
+              0.135449,
+              0.091883,
+              0.075891,
+              0.077977,
+              0.075487
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 1048576,
+          "wall": {
+            "median_ms": 0.106754,
+            "p95_ms": 0.18527,
+            "samples_ms": [
+              0.275219,
+              0.18527,
+              0.147989,
+              0.122356,
+              0.106754,
+              0.101106,
+              0.099691,
+              0.11423,
+              0.128131,
+              0.123143,
+              0.123067,
+              0.12155,
+              0.133652,
+              0.099046,
+              0.092622,
+              0.093029,
+              0.089179,
+              0.087379,
+              0.086,
+              0.087282,
+              0.090048
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 62.164271,
+            "p95_ms": 80.008398,
+            "samples_ms": [
+              55.995207,
+              59.741653,
+              71.720841,
+              71.197299,
+              62.164271,
+              63.817302,
+              66.758018,
+              55.868341,
+              55.847701,
+              63.097758,
+              80.008398,
+              84.955019,
+              76.648637,
+              60.598778,
+              60.100099,
+              68.666547,
+              52.040254,
+              64.473196,
+              59.464526,
+              54.961688,
+              61.149967
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 144.62858,
+            "p95_ms": 204.99539,
+            "samples_ms": [
+              181.417005,
+              204.99539,
+              134.005832,
+              139.013576,
+              189.331651,
+              113.243767,
+              178.020247,
+              193.225286,
+              168.230569,
+              205.548111,
+              102.667017,
+              114.05231,
+              144.62858,
+              155.126331,
+              125.895043,
+              162.113763,
+              168.797821,
+              122.325309,
+              89.201341,
+              137.993167,
+              115.543846
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 197.872841,
+            "p95_ms": 241.771104,
+            "samples_ms": [
+              182.188758,
+              278.101479,
+              114.513776,
+              132.439738,
+              223.943773,
+              180.811667,
+              164.075209,
+              232.81667,
+              168.936673,
+              241.771104,
+              200.618688,
+              214.888232,
+              197.872841,
+              191.221294,
+              204.937643,
+              161.001238,
+              221.191887,
+              237.277035,
+              195.61227,
+              233.098639,
+              166.193742
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "candidate-b",
+      "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+      "machine": "x86_64",
+      "processor": "",
+      "timestamp_utc": "2026-10-25T19:20:01Z",
+      "benchmark_sha256": "b6dc2136108e29c9f51427e576a9c759f9691844b9917e535e8b5c99ebfcbc35",
+      "cpu_count": 20,
+      "load_average": [
+        32.81591796875,
+        35.236328125,
+        34.8466796875
+      ],
+      "library": "/mnt/data/neverd-interactive-patch-review/bin/libneverd.so",
+      "library_sha256": "33a630f8b0e24408c06b9fb115da04e07f7dcdf9a858dc348211b87fa12ee779",
+      "worker": "/mnt/data/neverd-interactive-patch-review/bin/neverd-worker",
+      "worker_sha256": "eb7e04beb834548d699937e638706f0f018b0e92eb45880cc5a8a90ab1077b1a",
+      "samples": 21,
+      "results": [
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 0.132586,
+            "p95_ms": 0.21825,
+            "samples_ms": [
+              0.255105,
+              0.169887,
+              0.163276,
+              0.21825,
+              0.138745,
+              0.145362,
+              0.139658,
+              0.132586,
+              0.131969,
+              0.133075,
+              0.137013,
+              0.132006,
+              0.129982,
+              0.129172,
+              0.128351,
+              0.136603,
+              0.130265,
+              0.123384,
+              0.125289,
+              0.120527,
+              0.125145
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.128802,
+            "p95_ms": 0.172907,
+            "samples_ms": [
+              0.246538,
+              0.164089,
+              0.158514,
+              0.172907,
+              0.134746,
+              0.141017,
+              0.135777,
+              0.128882,
+              0.127767,
+              0.128802,
+              0.133149,
+              0.128157,
+              0.126097,
+              0.124959,
+              0.124863,
+              0.132335,
+              0.125821,
+              0.119316,
+              0.121289,
+              0.116811,
+              0.12169
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 0.274146,
+            "p95_ms": 3.385075,
+            "samples_ms": [
+              0.315497,
+              0.270406,
+              0.264854,
+              3.385075,
+              0.287612,
+              0.267245,
+              0.278082,
+              5.097487,
+              0.281,
+              0.274146,
+              0.262974,
+              0.265207,
+              0.276407,
+              0.262294,
+              0.279535,
+              2.404394,
+              0.271341,
+              0.270211,
+              0.331585,
+              0.264619,
+              0.273769
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.262808,
+            "p95_ms": 0.323736,
+            "samples_ms": [
+              0.307492,
+              0.262019,
+              0.256584,
+              0.248164,
+              0.277917,
+              0.259489,
+              0.270576,
+              0.259491,
+              0.273256,
+              0.265995,
+              0.254956,
+              0.256582,
+              0.268153,
+              0.254249,
+              0.271574,
+              0.366481,
+              0.262736,
+              0.262808,
+              0.323736,
+              0.2563,
+              0.265012
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 0.294967,
+            "p95_ms": 2.27936,
+            "samples_ms": [
+              0.34595,
+              0.350312,
+              4.538046,
+              0.357919,
+              0.34972,
+              0.333883,
+              0.371496,
+              0.335689,
+              0.296888,
+              0.264933,
+              0.294967,
+              2.27936,
+              0.26604,
+              0.241105,
+              0.225199,
+              0.242466,
+              0.219346,
+              0.180798,
+              0.232747,
+              0.190156,
+              0.20671
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.288435,
+            "p95_ms": 0.42567,
+            "samples_ms": [
+              0.338072,
+              0.342723,
+              0.42567,
+              0.350059,
+              0.34078,
+              0.325737,
+              0.361831,
+              0.32749,
+              0.28908,
+              0.258931,
+              0.288435,
+              0.464496,
+              0.259902,
+              0.235223,
+              0.221168,
+              0.237022,
+              0.214295,
+              0.177472,
+              0.227934,
+              0.186697,
+              0.202261
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 4096,
+          "wall": {
+            "median_ms": 0.241029,
+            "p95_ms": 2.089125,
+            "samples_ms": [
+              1.529319,
+              1.988196,
+              1.986632,
+              1.653803,
+              3.231891,
+              2.089125,
+              0.970957,
+              2.015992,
+              2.008082,
+              0.984021,
+              0.241029,
+              0.145543,
+              0.112836,
+              0.164003,
+              0.105168,
+              0.084453,
+              0.090156,
+              0.086076,
+              0.099072,
+              0.09352,
+              0.090433
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 1048576,
+          "wall": {
+            "median_ms": 0.111373,
+            "p95_ms": 0.198753,
+            "samples_ms": [
+              0.871586,
+              0.198753,
+              0.143358,
+              0.124619,
+              0.115009,
+              0.105517,
+              0.104219,
+              0.107234,
+              0.105306,
+              0.113984,
+              0.115282,
+              0.111373,
+              0.112428,
+              0.107233,
+              0.095081,
+              0.094791,
+              0.085123,
+              0.090415,
+              0.10611,
+              0.116303,
+              0.111691
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 68.014933,
+            "p95_ms": 87.700068,
+            "samples_ms": [
+              87.700068,
+              48.313962,
+              79.672904,
+              67.052826,
+              69.203066,
+              73.834865,
+              71.103516,
+              59.808772,
+              75.044462,
+              94.05662,
+              67.996406,
+              61.506967,
+              56.941348,
+              68.014933,
+              65.172455,
+              64.175929,
+              77.055475,
+              63.818954,
+              53.141138,
+              74.811885,
+              81.18564
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 122.546878,
+            "p95_ms": 206.286919,
+            "samples_ms": [
+              332.092715,
+              206.286919,
+              125.898128,
+              193.00842,
+              120.053887,
+              111.723046,
+              92.334769,
+              100.314222,
+              129.241882,
+              103.196403,
+              89.955976,
+              110.873985,
+              130.873745,
+              137.088061,
+              135.350937,
+              168.416825,
+              122.546878,
+              104.230954,
+              102.392878,
+              121.766618,
+              136.58
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 206.549529,
+            "p95_ms": 323.089809,
+            "samples_ms": [
+              413.15664,
+              215.011142,
+              175.182751,
+              197.994753,
+              184.18202,
+              180.000824,
+              266.816146,
+              206.061322,
+              323.089809,
+              176.552713,
+              206.549529,
+              223.515229,
+              158.984606,
+              234.992705,
+              274.100623,
+              256.651383,
+              267.203672,
+              114.094617,
+              136.903183,
+              113.556731,
+              246.302192
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "baseline-b",
+      "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+      "machine": "x86_64",
+      "processor": "",
+      "timestamp_utc": "2026-10-25T19:20:22Z",
+      "benchmark_sha256": "b6dc2136108e29c9f51427e576a9c759f9691844b9917e535e8b5c99ebfcbc35",
+      "cpu_count": 20,
+      "load_average": [
+        32.1708984375,
+        34.9287109375,
+        34.7529296875
+      ],
+      "library": "/mnt/data/neverd-patch-scaling/baseline/bin/libneverd.so",
+      "library_sha256": "e1f705618bc625817e6d7b274b221c13741892cbf7b047f46c04ac2362b50f06",
+      "worker": "/mnt/data/neverd-patch-scaling/baseline/bin/neverd-worker",
+      "worker_sha256": "cd5adb705f1ffa8bb07d3ea8dd86ad8990b1ae73e9677fc4ebdc462c9b3ade42",
+      "samples": 21,
+      "results": [
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 0.278107,
+            "p95_ms": 2.744153,
+            "samples_ms": [
+              0.313071,
+              0.304442,
+              0.278597,
+              0.278821,
+              0.279442,
+              0.270581,
+              0.270938,
+              0.27588,
+              0.278107,
+              0.269063,
+              0.274967,
+              0.259367,
+              2.744153,
+              0.258256,
+              0.259323,
+              0.287465,
+              0.308515,
+              0.27625,
+              3.430657,
+              0.282567,
+              0.256548
+            ]
+          },
+          "cpu": {
+            "median_ms": 0.271748,
+            "p95_ms": 0.376261,
+            "samples_ms": [
+              0.3057,
+              0.295974,
+              0.273459,
+              0.272986,
+              0.273692,
+              0.263945,
+              0.264914,
+              0.270053,
+              0.271748,
+              0.263153,
+              0.268666,
+              0.254339,
+              0.380421,
+              0.253321,
+              0.25416,
+              0.281916,
+              0.302585,
+              0.270907,
+              0.376261,
+              0.277394,
+              0.252477
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 74.17286,
+            "p95_ms": 126.09516,
+            "samples_ms": [
+              76.365867,
+              83.645932,
+              74.17286,
+              73.444033,
+              73.733822,
+              72.147546,
+              75.000251,
+              74.018678,
+              102.767321,
+              143.563383,
+              101.211458,
+              71.35005,
+              70.92944,
+              70.246148,
+              70.022111,
+              75.161719,
+              72.257092,
+              78.2593,
+              77.718897,
+              72.723102,
+              126.09516
+            ]
+          },
+          "cpu": {
+            "median_ms": 70.266073,
+            "p95_ms": 72.782583,
+            "samples_ms": [
+              69.206804,
+              70.428562,
+              70.849803,
+              69.55972,
+              69.843845,
+              69.725789,
+              70.266073,
+              70.305421,
+              70.04076,
+              69.927136,
+              69.874186,
+              70.797661,
+              68.903294,
+              69.802818,
+              69.306593,
+              72.782583,
+              72.159831,
+              71.861194,
+              70.276071,
+              72.43162,
+              74.843127
+            ]
+          }
+        },
+        {
+          "operation": "sdk_single_byte_edit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 610.254098,
+            "p95_ms": 1140.434533,
+            "samples_ms": [
+              593.610281,
+              534.210923,
+              521.807297,
+              587.522885,
+              557.00453,
+              533.620364,
+              703.333594,
+              528.417705,
+              564.334418,
+              622.786813,
+              598.790718,
+              554.73761,
+              618.065643,
+              639.524588,
+              626.955273,
+              620.384989,
+              610.254098,
+              624.283461,
+              1140.434533,
+              1178.013887,
+              611.063744
+            ]
+          },
+          "cpu": {
+            "median_ms": 529.176,
+            "p95_ms": 620.934726,
+            "samples_ms": [
+              529.176,
+              513.986503,
+              515.687392,
+              526.107539,
+              513.506802,
+              513.824921,
+              517.394312,
+              520.985127,
+              504.302324,
+              529.680182,
+              509.99485,
+              495.088778,
+              590.786943,
+              597.332981,
+              596.342204,
+              592.322085,
+              592.070702,
+              596.06469,
+              621.161279,
+              620.934726,
+              595.048927
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 4096,
+          "wall": {
+            "median_ms": 0.392401,
+            "p95_ms": 0.555,
+            "samples_ms": [
+              5.219555,
+              0.529969,
+              0.450296,
+              0.403578,
+              0.411298,
+              0.38886,
+              0.380582,
+              0.555,
+              0.519133,
+              0.380883,
+              0.441207,
+              0.371155,
+              0.374638,
+              0.377989,
+              0.370077,
+              0.364908,
+              0.356107,
+              0.370792,
+              0.393154,
+              0.392401,
+              0.400362
+            ]
+          }
+        },
+        {
+          "operation": "worker_patch_ranges",
+          "changed_bytes": 1048576,
+          "wall": {
+            "median_ms": 79.193191,
+            "p95_ms": 127.752933,
+            "samples_ms": [
+              172.352958,
+              79.193191,
+              68.993838,
+              90.552555,
+              79.138813,
+              81.344595,
+              81.486634,
+              95.928026,
+              99.701759,
+              78.695757,
+              63.051129,
+              86.846231,
+              88.270788,
+              63.868448,
+              62.911627,
+              60.717377,
+              61.062876,
+              63.124372,
+              63.641576,
+              87.582347,
+              127.752933
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 64,
+          "wall": {
+            "median_ms": 68.747099,
+            "p95_ms": 83.344778,
+            "samples_ms": [
+              83.353684,
+              68.747099,
+              41.976039,
+              69.707067,
+              66.815992,
+              60.030337,
+              79.28975,
+              74.27999,
+              67.413322,
+              57.722023,
+              70.401727,
+              83.344778,
+              76.244683,
+              62.249568,
+              70.54666,
+              65.594436,
+              68.264274,
+              67.330679,
+              65.841601,
+              69.009939,
+              73.121957
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 1024,
+          "wall": {
+            "median_ms": 307.008152,
+            "p95_ms": 420.391056,
+            "samples_ms": [
+              269.356175,
+              223.55021,
+              228.448767,
+              292.437879,
+              260.650206,
+              229.012742,
+              233.923615,
+              245.518907,
+              389.946637,
+              198.351154,
+              185.072349,
+              347.995609,
+              311.991896,
+              364.887547,
+              337.643333,
+              309.205124,
+              307.008152,
+              420.391056,
+              366.70823,
+              493.445978,
+              419.954536
+            ]
+          }
+        },
+        {
+          "operation": "worker_single_byte_commit",
+          "adjacent_rows": 2048,
+          "wall": {
+            "median_ms": 1087.290165,
+            "p95_ms": 1605.659756,
+            "samples_ms": [
+              1503.492339,
+              1133.094168,
+              1404.939103,
+              1150.722125,
+              1168.348027,
+              1663.005437,
+              912.95844,
+              1273.965818,
+              845.476752,
+              929.085038,
+              953.03851,
+              1278.864278,
+              935.009845,
+              1056.182049,
+              956.067687,
+              946.683853,
+              1605.659756,
+              1087.290165,
+              902.603239,
+              825.990465,
+              1574.096467
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "candidate_stress": {
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+    "machine": "x86_64",
+    "benchmark_sha256": "1a61ea45ff24258342b442cf3cfd3b1d6b54fb9bc1b9772920a8afdfdb34725d",
+    "cpu_count": 20,
+    "load_average": [
+      37.69189453125,
+      37.6162109375,
+      35.28466796875
+    ],
+    "library": "/mnt/data/neverd-interactive-patch-review/bin/libneverd.so",
+    "library_sha256": "33a630f8b0e24408c06b9fb115da04e07f7dcdf9a858dc348211b87fa12ee779",
+    "worker": null,
+    "worker_sha256": null,
+    "samples": 7,
+    "results": [
+      {
+        "operation": "sdk_single_byte_edit",
+        "adjacent_rows": 8192,
+        "wall": {
+          "median_ms": 0.409227,
+          "p95_ms": 0.746007,
+          "samples_ms": [
+            0.746007,
+            0.447499,
+            0.409227,
+            0.390838,
+            0.436199,
+            0.405753,
+            0.384875
+          ]
+        },
+        "cpu": {
+          "median_ms": 0.396771,
+          "p95_ms": 0.734755,
+          "samples_ms": [
+            0.734755,
+            0.431334,
+            0.393809,
+            0.385365,
+            0.428809,
+            0.396771,
+            0.37895
+          ]
+        }
+      },
+      {
+        "operation": "sdk_single_byte_edit",
+        "adjacent_rows": 16384,
+        "wall": {
+          "median_ms": 0.886289,
+          "p95_ms": 3.671069,
+          "samples_ms": [
+            0.687337,
+            0.584577,
+            3.671069,
+            0.693448,
+            0.886289,
+            0.970333,
+            1.038267
+          ]
+        },
+        "cpu": {
+          "median_ms": 0.684289,
+          "p95_ms": 1.030263,
+          "samples_ms": [
+            0.68131,
+            0.577017,
+            0.661896,
+            0.684289,
+            0.877118,
+            0.961729,
+            1.030263
+          ]
+        }
+      },
+      {
+        "operation": "sdk_single_byte_edit",
+        "adjacent_rows": 65536,
+        "wall": {
+          "median_ms": 1.844303,
+          "p95_ms": 8.542575,
+          "samples_ms": [
+            1.674876,
+            1.844303,
+            2.903127,
+            1.423459,
+            1.454816,
+            8.542575,
+            4.471213
+          ]
+        },
+        "cpu": {
+          "median_ms": 1.478357,
+          "p95_ms": 2.840969,
+          "samples_ms": [
+            1.613959,
+            1.549926,
+            2.840969,
+            1.415302,
+            1.446775,
+            1.478357,
+            1.463429
+          ]
+        }
+      }
+    ]
+  }
+}
