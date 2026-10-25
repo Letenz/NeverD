@@ -91,6 +91,21 @@ NdVar X86Lifter::LiftState::computeEA(const cs_x86_op &MemOp,
       emit(NdOp::SUBBYTES, Converted, {V, NdVar::scalar(0, ArithmeticSize)});
     return Converted;
   };
+  if (ArithmeticSize < 8 && !SegmentRelative &&
+      MemOp.mem.base == X86_REG_INVALID && !HasIndex &&
+      !RelocatedDisplacement && !HasAmbiguousI386GOTOFFDisplacement) {
+    // An absolute displacement supplies the entire effective address, even
+    // when its encoding is narrower than a process pointer. Wrap it first,
+    // then publish the complete address at the normalized carrier width.
+    // A narrow Address constant followed by ZEXT would instead claim that an
+    // incomplete relocation fragment was being extended into a pointer.
+    NdVar Absolute =
+        AtAddressWidth(NdVar::address(uint64_t(MemOp.mem.disp), 8));
+    Absolute.Size = 8;
+    NdVar Complete = makeTemp(8);
+    emit(NdOp::COPY, Complete, {Absolute});
+    return Complete;
+  }
   auto Acc = [&](NdVar V) {
     // An FS/GS memory operand consumes this number as an offset inside the
     // selected segment address space.  Even when its bits equal an image VA,

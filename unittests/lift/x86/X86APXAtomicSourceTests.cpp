@@ -34,6 +34,15 @@
 
 using namespace neverd;
 namespace {
+#ifdef NEVERD_TEST_LEGACY_ATOMIC
+constexpr auto AtomicInventory = X86LegacyAtomicInventory;
+constexpr auto CompareId = Intrinsic::X86LegacyCmpccXadd;
+constexpr const char *ExportVariable = "NEVERD_LEGACY_ATOMIC_EXPORT_DIR";
+#else
+constexpr auto AtomicInventory = X86APXAtomicInventory;
+constexpr auto CompareId = Intrinsic::ApxCmpccXadd;
+constexpr const char *ExportVariable = "NEVERD_APX_ATOMIC_EXPORT_DIR";
+#endif
 constexpr va_t kEntry = 0x1000;
 struct Case {
   X86APXAtomicPlan Plan;
@@ -43,8 +52,8 @@ std::vector<Case> cases() {
   std::vector<Case> Cases;
   for (unsigned Bytes : {4u, 8u})
     for (unsigned Segment : {0u, 0x64u, 0x65u})
-      for (auto Id : X86APXAtomicInventory)
-        for (unsigned CC = 0; CC < (Id == Intrinsic::ApxCmpccXadd ? 16u : 1u);
+      for (auto Id : AtomicInventory)
+        for (unsigned CC = 0; CC < (isX86CmpccXaddIntrinsic(Id) ? 16u : 1u);
              ++CC)
           for (unsigned Variant = 0; Variant < 3; ++Variant)
             Cases.push_back(
@@ -200,7 +209,7 @@ TEST(X86APXAtomicSource, MedEmitterPreservesOperandsAndRefusesMalformedState) {
             }
     EXPECT_EQ(Count, 1u);
   }
-  const auto P = *x86APXAtomicPlan(Intrinsic::ApxCmpccXadd, 8, 64, 0, 4);
+  const auto P = *x86APXAtomicPlan(CompareId, 8, 64, 0, 4);
   for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
     auto F = med(P);
     auto &Op = F.Blocks[0].Ops[0];
@@ -239,7 +248,7 @@ TEST(X86APXAtomicSource, MedEmitterPreservesOperandsAndRefusesMalformedState) {
 }
 
 TEST(X86APXAtomicSource, SourceRoutesValidateContractsBeforePrinting) {
-  for (auto Id : X86APXAtomicInventory)
+  for (auto Id : AtomicInventory)
     for (unsigned Bytes : {4u, 8u}) {
       const auto P = *x86APXAtomicPlan(Id, Bytes, 64, 0);
       for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
@@ -275,7 +284,7 @@ TEST(X86APXAtomicSource, SourceRoutesValidateContractsBeforePrinting) {
       }
     }
   for (bool Native : {false, true}) {
-    auto P = *x86APXAtomicPlan(Intrinsic::ApxCmpccXadd, 8, 32, 0x65, 15);
+    auto P = *x86APXAtomicPlan(CompareId, 8, 32, 0x65, 15);
     if (Native && !llvm::Intrinsic::lookupIntrinsicID(P.llvmName()))
       continue;
     for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
@@ -320,6 +329,20 @@ TEST(X86APXAtomicSource, SourceRoutesValidateContractsBeforePrinting) {
   }
 }
 
+TEST(X86APXAtomicSource, IncompleteAddressesAndStoredValuesRemainRejected) {
+  for (auto Id : AtomicInventory) {
+    const auto P = *x86APXAtomicPlan(Id, 4, 64, 0);
+    for (unsigned Input = 1; Input != (P.compare() ? 4u : 3u); ++Input) {
+      SCOPED_TRACE(P.name() + "/" + std::to_string(Input));
+      auto F = med(P);
+      F.Blocks[0].Ops[0].Inputs[Input].Provenance =
+          ConstantAddressProvenance::AddressFragment;
+      llvm::LLVMContext Context;
+      EXPECT_FALSE(MedLLVMEmitter().emit({F}, Context, "fragment", Arch::X64));
+    }
+  }
+}
+
 TEST(X86APXAtomicSource, ExportsLiveDeadAndRepeatedTransactions) {
   llvm::LLVMContext Context;
   llvm::Module M("apx-source", Context);
@@ -357,7 +380,7 @@ TEST(X86APXAtomicSource, ExportsLiveDeadAndRepeatedTransactions) {
   llvm::raw_string_ostream OS(Source), IROS(IR);
   ASSERT_TRUE(LLVMCEmitter().emit(M, OS, O));
   M.print(IROS, nullptr);
-  const auto *Directory = std::getenv("NEVERD_APX_ATOMIC_EXPORT_DIR");
+  const auto *Directory = std::getenv(ExportVariable);
   if (Directory) {
     ASSERT_FALSE(llvm::sys::fs::create_directories(Directory));
     write(std::string(Directory) + "/formats.json",
@@ -385,7 +408,7 @@ TEST(X86APXAtomicSource, ExportsLiveDeadAndRepeatedTransactions) {
 }
 
 TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
-  const char *Directory = std::getenv("NEVERD_APX_ATOMIC_EXPORT_DIR");
+  const char *Directory = std::getenv(ExportVariable);
   if (Directory)
     ASSERT_FALSE(llvm::sys::fs::create_directories(std::string(Directory) +
                                                    "/pipeline"));
@@ -417,16 +440,36 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
             Bytes.push_back(0x67);
           if (P.SegmentPrefix)
             Bytes.push_back(P.SegmentPrefix);
-          unsigned PP = P.Id == Intrinsic::ApxRaoAnd   ? 1
-                        : P.Id == Intrinsic::ApxRaoOr  ? 3
-                        : P.Id == Intrinsic::ApxRaoXor ? 2
-                                                       : 0;
-          Bytes.insert(Bytes.end(),
-                       {0x62, uint8_t(P.compare() ? 0xf2 : 0xf4),
-                        uint8_t((P.Bytes == 8 ? 0x80 : 0) |
-                                (P.compare() ? 0x6d : 0x7c | PP)),
-                        0x08, uint8_t(P.compare() ? 0xe0 | P.Condition : 0xfc),
-                        uint8_t(P.compare() ? 0x01 : 0x11)});
+          unsigned PP = x86AtomicSemanticId(P.Id) == Intrinsic::ApxRaoAnd   ? 1
+                        : x86AtomicSemanticId(P.Id) == Intrinsic::ApxRaoOr  ? 3
+                        : x86AtomicSemanticId(P.Id) == Intrinsic::ApxRaoXor ? 2
+                                                                            : 0;
+          if (P.legacy()) {
+            if (P.compare()) {
+              Bytes.insert(Bytes.end(),
+                           {0xc4, 0xe2,
+                            uint8_t((P.Bytes == 8 ? 0x80 : 0) | 0x69),
+                            uint8_t(0xe0 | P.Condition), 0x01});
+            } else {
+              const unsigned Prefix = PP == 1   ? 0x66
+                                      : PP == 3 ? 0xf2
+                                      : PP == 2 ? 0xf3
+                                                : 0;
+              if (Prefix)
+                Bytes.push_back(Prefix);
+              if (P.Bytes == 8)
+                Bytes.push_back(0x48);
+              Bytes.insert(Bytes.end(), {0x0f, 0x38, 0xfc, 0x11});
+            }
+          } else {
+            Bytes.insert(Bytes.end(),
+                         {0x62, uint8_t(P.compare() ? 0xf2 : 0xf4),
+                          uint8_t((P.Bytes == 8 ? 0x80 : 0) |
+                                  (P.compare() ? 0x6d : 0x7c | PP)),
+                          0x08,
+                          uint8_t(P.compare() ? 0xe0 | P.Condition : 0xfc),
+                          uint8_t(P.compare() ? 0x01 : 0x11)});
+          }
           Bytes.insert(Bytes.end(),
                        {0x9f, 0x0f, 0x90, 0xc0, 0x0f, 0xb7, 0xc0, 0xc3});
           BinaryImage Image;
@@ -492,5 +535,212 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
     }
   EXPECT_EQ(Index, 504u);
 }
+
+#ifdef NEVERD_TEST_LEGACY_ATOMIC
+TEST(X86LegacyAtomicSource, I386PreservesNativeModeAndAddressControls) {
+  constexpr const char *Triples[] = {
+      "i386-unknown-linux-gnu", "i386-pc-windows-msvc", "i386-apple-darwin"};
+  constexpr BinaryFormat Formats[] = {BinaryFormat::ELF, BinaryFormat::COFF,
+                                      BinaryFormat::MachO};
+  const auto *Directory = std::getenv(ExportVariable);
+  for (unsigned Format = 0; Format != 3; ++Format) {
+    llvm::LLVMContext Context;
+    llvm::Module M("legacy-rao-i386", Context);
+    M.setTargetTriple(llvm::Triple(Triples[Format]));
+    llvm::IRBuilder<> B(Context);
+    std::string High =
+        "#include <stdint.h>\n" + std::string(X86APXAtomicCompilerDispatch);
+    std::string Matrix = "[";
+    unsigned Index = 0;
+    for (auto Id : X86LegacyAtomicInventory) {
+      if (isX86CmpccXaddIntrinsic(Id))
+        continue;
+      for (unsigned Bits : {16u, 32u})
+        for (unsigned Segment : {0u, 0x26u, 0x2eu, 0x36u, 0x3eu, 0x64u, 0x65u})
+          for (unsigned Repeats : {1u, 2u}) {
+            const auto P =
+                *x86APXAtomicPlan(Id, 4, Bits, Segment, 0, Arch::X86);
+            const auto Name = "rao32_" + std::to_string(Index++);
+            auto *F = llvm::Function::Create(
+                llvm::FunctionType::get(
+                    B.getInt32Ty(),
+                    {B.getInt32Ty(), B.getInt32Ty(), B.getPtrTy()}, false),
+                llvm::GlobalValue::ExternalLinkage, Name, M);
+            B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+            auto *Ordinary = B.CreateXor(F->getArg(0), F->getArg(1));
+            B.CreateStore(Ordinary, F->getArg(2));
+            High += "uint32_t " + Name +
+                    "(uint32_t address, uint32_t add, uint32_t *ordinary) { "
+                    "*ordinary = address ^ add; ";
+            const bool Native =
+                llvm::Intrinsic::lookupIntrinsicID(P.llvmName()) != 0;
+            for (unsigned I = 0; I != Repeats; ++I) {
+              auto *Call = call(B, M, P, {F->getArg(0), F->getArg(1)}, Native);
+              const auto Parsed = x86APXAtomicCallPlan(Arch::X86, *Call);
+              ASSERT_TRUE(Parsed);
+              EXPECT_EQ(Parsed->AddressBits, Bits);
+              EXPECT_EQ(Parsed->TargetArch, Arch::X86);
+              EXPECT_THROW(x86APXAtomicCallPlan(Arch::X64, *Call),
+                           std::invalid_argument);
+              // HighIR addresses are normalized offsets. Explicit native calls
+              // also cover CS/ES/SS, which normalized HighIR does not admit.
+              High += *renderX86APXAtomicCall(
+                  Arch::X86, *Call, "", false,
+                  Native ? std::vector<std::string>{"address", "add",
+                                                    std::to_string(Bits),
+                                                    std::to_string(Segment)}
+                         : std::vector<std::string>{"address", "add"});
+            }
+            B.CreateRet(B.CreateXor(
+                Ordinary, B.CreateLoad(B.getInt32Ty(), F->getArg(2))));
+            High += "return address ^ add ^ *ordinary; }\n";
+            if (Index != 1)
+              Matrix += ",";
+            Matrix += "{\"operation\":\"" + P.operation() +
+                      "\",\"address_bits\":" + std::to_string(Bits) +
+                      ",\"segment\":" + std::to_string(Segment) +
+                      ",\"repeats\":" + std::to_string(Repeats) + "}";
+          }
+      // Normalized LowIR/MedIR uses an eight-byte offset even on i386.
+      const auto P = *x86APXAtomicPlan(Id, 4, 32, 0, 0, Arch::X86);
+      auto F = med(P);
+      auto Lowered = MedLLVMEmitter().emit({F}, Context, "rao-i386", Arch::X86);
+      ASSERT_TRUE(Lowered);
+      ASSERT_FALSE(llvm::verifyModule(*Lowered, &llvm::errs()));
+      EXPECT_NO_THROW(highExpression(*high(P), Arch::X86));
+      F.Blocks[0].Ops[0].Inputs[2] = temporary(5, 4);
+      EXPECT_THROW(MedLLVMEmitter().emit({F}, Context, "wrong-arch", Arch::X86),
+                   std::invalid_argument);
+    }
+    Matrix += "]\n";
+    ASSERT_EQ(Index, 112u);
+    ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    CEmitterOptions O;
+    O.TheArch = Arch::X86;
+    O.Format = Formats[Format];
+    std::string Source, IR;
+    llvm::raw_string_ostream OS(Source), IROS(IR);
+    ASSERT_TRUE(LLVMCEmitter().emit(M, OS, O));
+    M.print(IROS, nullptr);
+    auto Object = Codegen().compile(M, Arch::X86, Formats[Format]);
+    ASSERT_TRUE(Object.Success) << IR;
+    if (Directory) {
+      const auto Stem =
+          std::string(Directory) + "/i386-" + std::to_string(Format);
+      write(Stem + ".ll", IR);
+      write(Stem + "-call.c", High);
+      write(Stem + "-llvm.c", Source);
+      write(Stem + ".json", Matrix);
+      write(Stem + ".o", llvm::StringRef(reinterpret_cast<const char *>(
+                                             Object.ObjectData.data()),
+                                         Object.ObjectData.size()));
+    }
+  }
+}
+
+TEST(X86LegacyAtomicSource, I386DecodedPipelineKeepsFlagsAndWrappedAddresses) {
+  const auto *Directory = std::getenv(ExportVariable);
+  if (Directory)
+    ASSERT_FALSE(llvm::sys::fs::create_directories(std::string(Directory) +
+                                                   "/i386-pipeline"));
+  unsigned Index = 0;
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (unsigned Kind = 0; Kind != 4; ++Kind)
+      for (unsigned Segment : {0u, 0x64u, 0x65u})
+        for (bool Narrow : {false, true})
+          for (bool NoOpt : {false, true}) {
+            const auto P =
+                *x86APXAtomicPlan(X86LegacyAtomicInventory[Kind], 4,
+                                  Narrow ? 16 : 32, Segment, 0, Arch::X86);
+            SCOPED_TRACE(P.name() + "/" + std::to_string(Index));
+            std::vector<uint8_t> Bytes;
+            const auto Immediate = [&](uint8_t Opcode, uint32_t Value) {
+              Bytes.push_back(Opcode);
+              for (unsigned I = 0; I != 4; ++I)
+                Bytes.push_back(uint8_t(Value >> (8 * I)));
+            };
+            Immediate(0xb9, 0x76540208);
+            Immediate(0xb8, 0x89abcdef);
+            Immediate(0xba, 0xfedcba98);
+            Bytes.insert(Bytes.end(), {0x39, 0xd0});
+            if (Narrow)
+              Bytes.push_back(0x67);
+            if (Segment)
+              Bytes.push_back(Segment);
+            constexpr uint8_t Mandatory[] = {0, 0x66, 0xf2, 0xf3};
+            if (Mandatory[Kind])
+              Bytes.push_back(Mandatory[Kind]);
+            Bytes.insert(Bytes.end(),
+                         {0x0f, 0x38, 0xfc, uint8_t(Narrow ? 0x16 : 0x11)});
+            if (Narrow)
+              Bytes.insert(Bytes.end(), {0x08, 0x02});
+            Bytes.insert(Bytes.end(),
+                         {0x9f, 0x0f, 0x90, 0xc0, 0x0f, 0xb7, 0xc0, 0xc3});
+            BinaryImage Image;
+            Image.Arch = Arch::X86;
+            Image.Bits = Bitness::Bits32;
+            Image.Format = Format;
+            Image.Entry = Image.Base = kEntry;
+            neverd::Segment Text;
+            Text.VA = kEntry;
+            Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+            Text.Data = Bytes;
+            Text.Size = Text.FileSz = Bytes.size();
+            Image.Segments.push_back(std::move(Text));
+            auto Symbol = Symbol::makeFunc(kEntry, Bytes.size());
+            Symbol.Name = "rao32_pipeline";
+            Image.Symbols.push_back(std::move(Symbol));
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.NoOpt = NoOpt;
+            Options.OnlyFunctionEntries = {kEntry};
+            llvm::LLVMContext Context;
+            auto R = Pipeline().run(Image, Context, Options);
+            ASSERT_TRUE(R.Success) << R.Error;
+            auto M =
+                MedLLVMEmitter().emit(R.MedFuncs, Context, "rao32-pipeline",
+                                      Arch::X86, {}, &Image, Format);
+            ASSERT_TRUE(M);
+            ASSERT_FALSE(llvm::verifyModule(*M, &llvm::errs()));
+            CEmitterOptions O;
+            O.TheArch = Arch::X86;
+            O.Format = Format;
+            O.Image = &Image;
+            std::string High, LLVM, IR;
+            llvm::raw_string_ostream HOS(High), LOS(LLVM), IROS(IR);
+            ASSERT_TRUE(HighCEmitter().emit(R.HighFuncs, HOS, O));
+            Pipeline::promoteScaffoldingAllocas(*M);
+            ASSERT_TRUE(LLVMCEmitter().emit(*M, LOS, O));
+            M->print(IROS, nullptr);
+            EXPECT_NE(High.find(P.builtin()), std::string::npos);
+            EXPECT_NE(LLVM.find(P.builtin()), std::string::npos);
+            auto Object = Codegen().compile(*M, Arch::X86, Format);
+            ASSERT_TRUE(Object.Success) << IR;
+            if (Directory) {
+              const auto Stem = std::string(Directory) + "/i386-pipeline/" +
+                                std::to_string(Index);
+              write(Stem + "-high.c", High);
+              write(Stem + "-llvm.c", LLVM);
+              write(Stem + ".ll", IR);
+              write(Stem + ".o", llvm::StringRef(reinterpret_cast<const char *>(
+                                                     Object.ObjectData.data()),
+                                                 Object.ObjectData.size()));
+              const auto Triple =
+                  Format == BinaryFormat::ELF    ? "i386-unknown-linux-gnu"
+                  : Format == BinaryFormat::COFF ? "i386-pc-windows-msvc"
+                                                 : "i386-apple-darwin";
+              write(Stem + ".json",
+                    "{\"operation\":\"" + P.operation() +
+                        "\",\"address_bits\":" +
+                        std::to_string(Narrow ? 16 : 32) +
+                        ",\"segment\":" + std::to_string(Segment) +
+                        ",\"triple\":\"" + Triple + "\"}\n");
+            }
+            ++Index;
+          }
+  EXPECT_EQ(Index, 144u);
+}
+#endif
 
 } // namespace

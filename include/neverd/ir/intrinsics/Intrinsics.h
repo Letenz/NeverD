@@ -466,6 +466,13 @@ enum class Intrinsic : uint16_t {
   // packed operand. Legacy physical-block IDs retain their serialized values.
   X86FourSourceMemory,
 
+  // Append-only: preserve legacy RAO/VEX encoding independently of APX.
+  X86LegacyRaoAdd,
+  X86LegacyRaoAnd,
+  X86LegacyRaoOr,
+  X86LegacyRaoXor,
+  X86LegacyCmpccXadd,
+
   _Count = 16000
 };
 
@@ -594,6 +601,30 @@ constexpr bool isAMXIntrinsic(Intrinsic Id) {
   }
 }
 
+/// Map encoding identities to the shared arithmetic/transaction contract.
+constexpr Intrinsic x86AtomicSemanticId(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::X86LegacyRaoAdd:
+    return Intrinsic::ApxRaoAdd;
+  case Intrinsic::X86LegacyRaoAnd:
+    return Intrinsic::ApxRaoAnd;
+  case Intrinsic::X86LegacyRaoOr:
+    return Intrinsic::ApxRaoOr;
+  case Intrinsic::X86LegacyRaoXor:
+    return Intrinsic::ApxRaoXor;
+  case Intrinsic::X86LegacyCmpccXadd:
+    return Intrinsic::ApxCmpccXadd;
+  default:
+    return Id;
+  }
+}
+constexpr bool isX86LegacyAtomicIntrinsic(Intrinsic Id) {
+  return x86AtomicSemanticId(Id) != Id;
+}
+constexpr bool isX86CmpccXaddIntrinsic(Intrinsic Id) {
+  return x86AtomicSemanticId(Id) == Intrinsic::ApxCmpccXadd;
+}
+
 constexpr bool isApxAtomicIntrinsic(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::ApxRaoAdd:
@@ -607,11 +638,15 @@ constexpr bool isApxAtomicIntrinsic(Intrinsic Id) {
   }
 }
 
+constexpr bool isX86AtomicIntrinsic(Intrinsic Id) {
+  return isApxAtomicIntrinsic(x86AtomicSemanticId(Id));
+}
+
 /// Representation-neutral APX atomic operand facts.  LowIR and MedIR use
 /// different value kinds, so each caller classifies its own variables and
 /// passes only the semantic facts which the shared contract owns.  Unknown is
 /// accepted only where the containing IR has no target field; every known
-/// target must be x86-64.
+/// target must be x86-64, except the 32-bit legacy RAO form.
 struct ApxAtomicIntrinsicShape {
   Arch TargetArch = Arch::Unknown;
   NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
@@ -634,13 +669,16 @@ struct ApxAtomicIntrinsicShape {
 constexpr bool
 intrinsicApxAtomicShapeIsValid(Intrinsic Id,
                                const ApxAtomicIntrinsicShape &Shape) {
-  if (!isApxAtomicIntrinsic(Id) ||
-      (Shape.TargetArch != Arch::Unknown && Shape.TargetArch != Arch::X64) ||
+  const bool I386 = isX86LegacyAtomicIntrinsic(Id) &&
+                    !isX86CmpccXaddIntrinsic(Id) && Shape.SourceSize == 4;
+  if (!isX86AtomicIntrinsic(Id) ||
+      (Shape.TargetArch != Arch::Unknown && Shape.TargetArch != Arch::X64 &&
+       !(Shape.TargetArch == Arch::X86 && I386)) ||
       !Shape.IntrinsicIdIsConst || Shape.IntrinsicIdSize != 2 ||
       !Shape.AddressIsScalar || Shape.AddressSize != 8)
     return false;
 
-  if (Id != Intrinsic::ApxCmpccXadd)
+  if (!isX86CmpccXaddIntrinsic(Id))
     return Shape.NumInputs == 3 && Shape.OutputSize == 0 &&
            Shape.SourceIsScalar &&
            (Shape.SourceSize == 4 || Shape.SourceSize == 8) &&
@@ -950,10 +988,15 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::X86FourFMA:
   case Intrinsic::X86VP4DPWSSD:
   case Intrinsic::X86VP4DPWSSDS:
+  case Intrinsic::X86LegacyRaoAdd:
   case Intrinsic::ApxRaoAdd:
+  case Intrinsic::X86LegacyRaoAnd:
   case Intrinsic::ApxRaoAnd:
+  case Intrinsic::X86LegacyRaoOr:
   case Intrinsic::ApxRaoOr:
+  case Intrinsic::X86LegacyRaoXor:
   case Intrinsic::ApxRaoXor:
+  case Intrinsic::X86LegacyCmpccXadd:
   case Intrinsic::ApxCmpccXadd:
   case Intrinsic::CetWrss:
   case Intrinsic::CetWruss:
@@ -1266,12 +1309,17 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   case Intrinsic::X86VP4DPWSSDS:
     return NumInputs == 6 && OutputSize == 64 && AddressSize == 8 &&
            MaskSize == 64 && DataSize == 1;
+  case Intrinsic::X86LegacyRaoAdd:
   case Intrinsic::ApxRaoAdd:
+  case Intrinsic::X86LegacyRaoAnd:
   case Intrinsic::ApxRaoAnd:
+  case Intrinsic::X86LegacyRaoOr:
   case Intrinsic::ApxRaoOr:
+  case Intrinsic::X86LegacyRaoXor:
   case Intrinsic::ApxRaoXor:
     return NumInputs == 3 && OutputSize == 0 && AddressSize == 8 &&
            (MaskSize == 4 || MaskSize == 8) && DataSize == 0;
+  case Intrinsic::X86LegacyCmpccXadd:
   case Intrinsic::ApxCmpccXadd:
     return NumInputs == 5 && (OutputSize == 4 || OutputSize == 8) &&
            AddressSize == 8 && MaskSize == OutputSize && DataSize == OutputSize;
