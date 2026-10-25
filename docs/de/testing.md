@@ -4,6 +4,8 @@
 
 # NeverD testen
 
+`PEFunctionAddresses.*` prüft x64-PE-Blattfunktionen ohne Stackframe, Eigentümerschaft und Instruktionsgrenzen, abgewiesene Präfixe und schmale Operanden, Ausgänge, Abbruch und gleiche Ergebnisse mit 1/2/4/16 Workern. Signaturtests decken alle 16 rel32-Bedingungen in beiden Richtungen, explizite Einstiegsbereiche und Quellrelokationen ab. Python-Tests bewahren Alternativen und gemeinsam notwendige Stellen, prüfen jeden ursprünglichen Gegenbeleg und vermeiden doppelte Ansprüche.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*` und `DriverMSRDeclaration.*` prüfen explizite MSR-Werte, vollständige Aufteilung, Zustandserhalt, Wiederholungen, exakte Budgets, fehlende/ungültige Angaben und fehlende Speicherrechte auf verfügbaren Backends. `KernelMSRRead.*` erhält ungenutzte Abhängigkeiten. Native Treiber-, Treiberemulations- und Kernelsnapshot-Suiten ausführen; nicht verfügbare WHP/HVF-Läufe sind übersprungen, nicht nativ qualifiziert.

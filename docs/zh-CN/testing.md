@@ -4,6 +4,8 @@
 
 # 测试 NeverD
 
+`PEFunctionAddresses.*` 检查 x64 PE 无栈帧叶函数、归属及指令边界、被拒绝的前缀和窄操作数、可调用出口、取消，以及 1/2/4/16 个工作线程结果一致。特征测试覆盖全部 16 种条件 rel32 编码、正负位移、显式入口范围和源重定位约束。Python 补充特征测试要求每个单位置条件区分全部原始冲突声明，保留备选名称及必须联合使用的位置，并避免重复已有声明。
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*` 与 `DriverMSRDeclaration.*` 在可用后端上检查显式 MSR 输入、全宽拆分、状态保留、重复读取、精确指令预算、缺失/无效声明及不授予内存权限。`KernelMSRRead.*` 检查未使用声明仍保留依赖。运行原生驱动、驱动模拟和内核快照测试组；不可用的 WHP/HVF 记为跳过，不算原生验证。

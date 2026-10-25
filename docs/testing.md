@@ -5854,6 +5854,8 @@ framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
 
+`PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
+
 `PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
 different addresses, recursion through aliases, canonical indirect import
 relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`

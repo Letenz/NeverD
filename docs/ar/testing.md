@@ -4,6 +4,8 @@
 
 # اختبار NeverD
 
+تتحقق اختبارات `PEFunctionAddresses.*` من دوال PE x64 الورقية بلا إطار مكدس، والملكية وحدود التعليمات، ورفض البادئات والمعاملات الضيقة، والمخارج والإلغاء وتطابق النتائج مع 1/2/4/16 عاملاً. تغطي اختبارات التواقيع شروط rel32 الستة عشر في الاتجاهين، ونطاق المداخل الصريح وقيود إعادة التمركز. وتحافظ اختبارات Python على البدائل والمواقع الضرورية معاً، وتفحص جميع الأمثلة الأصلية المضادة وتتجنب التكرار.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 تختبر `DriverMSRExecution.*` و`DriverMSRDeclaration.*` قيم MSR الصريحة وتقسيمها الكامل وحفظ الحالة والقراءة المتكررة والميزانيات الدقيقة والمدخلات الغائبة أو غير الصحيحة وعدم منح صلاحيات الذاكرة على الخلفيات المتاحة. تحفظ `KernelMSRRead.*` التبعيات غير المستخدمة. شغّل مجموعات برنامج التشغيل الأصلي والمحاكاة ولقطات النواة؛ يعد غياب WHP/HVF تخطياً لا تحققاً أصلياً.

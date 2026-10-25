@@ -4,6 +4,8 @@
 
 # NeverD 테스트
 
+`PEFunctionAddresses.*`는 스택 프레임 없는 x64 PE 리프, 소유 관계와 명령 경계, 거부되는 접두사와 좁은 피연산자, 종료 증명, 취소 및 1/2/4/16 작업자의 결과 일치를 검사합니다. 시그니처 테스트는 16개 조건부 rel32 형식의 양방향 변위, 명시적 진입점 범위와 원본 재배치 제약을 확인합니다. Python 테스트는 각 단일 위치 조건이 모든 원본 충돌 선언을 구별하며 대체 이름과 함께 필요한 위치를 보존하고 기존 선언을 중복하지 않는지 검사합니다.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*`와 `DriverMSRDeclaration.*`는 가용 백엔드에서 명시적 MSR 값, 전체 너비 분할, 상태 보존, 반복 읽기, 정확한 명령 예산, 누락·잘못된 선언과 메모리 권한 부재를 검사합니다. `KernelMSRRead.*`는 미사용 선언의 의존성을 유지합니다. 원시 드라이버, 드라이버 에뮬레이션 및 커널 스냅샷 테스트를 실행합니다. 사용할 수 없는 WHP/HVF는 검증 통과가 아닌 건너뛰기입니다.
