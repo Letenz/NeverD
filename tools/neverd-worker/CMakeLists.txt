@@ -36,7 +36,7 @@ target_link_libraries(neverd_worker_format PUBLIC neverd_worker_protocol)
 target_include_directories(neverd_worker_format PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 target_link_libraries(neverd_worker_graph PUBLIC neverd_worker_protocol)
 # The engine the worker serves, which neverd-mcp also runs in its own process.
-add_library(neverd_worker_engine STATIC Engine.cpp ComparisonService.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp)
+add_library(neverd_worker_engine STATIC Engine.cpp EnginePatch.cpp ComparisonService.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp)
 target_compile_features(neverd_worker_engine PUBLIC cxx_std_20)
 target_include_directories(neverd_worker_engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 # The C ABI is the only engine dependency. Never add LLVM to this target.
@@ -87,8 +87,12 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
   endif()
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
-    add_executable(neverd-worker-test-server main.cpp Engine.cpp ComparisonService.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp tests/mock_engine.cpp)
+    add_executable(neverd-worker-test-server main.cpp Engine.cpp EnginePatch.cpp ComparisonService.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp tests/mock_engine.cpp)
     set_target_properties(neverd-worker-test-server PROPERTIES ENABLE_EXPORTS ON)
+    add_test(NAME NeverDWorkerPatch
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/byte_patch_test.py"
+              "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerPatch PROPERTIES TIMEOUT 60)
     target_compile_features(neverd-worker-test-server PRIVATE cxx_std_20)
     target_compile_definitions(neverd-worker-test-server PRIVATE NEVERD_EXPORTS)
     target_include_directories(neverd-worker-test-server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
@@ -116,7 +120,7 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       PROPERTY TIMEOUT)
     set_tests_properties(NeverDWorkerUnwindQuery PROPERTIES
       TIMEOUT "${_neverd_worker_transport_timeout}")
-    add_executable(neverd-worker-discovery-test-server main.cpp Engine.cpp ComparisonService.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp tests/mock_engine.cpp)
+    add_executable(neverd-worker-discovery-test-server main.cpp Engine.cpp EnginePatch.cpp ComparisonService.cpp Listing.cpp StringReferences.cpp TextFold.cpp ProjectHistory.cpp Contributions.cpp tests/mock_engine.cpp)
     set_target_properties(neverd-worker-discovery-test-server PROPERTIES ENABLE_EXPORTS ON)
     target_compile_features(neverd-worker-discovery-test-server PRIVATE cxx_std_20)
     target_compile_definitions(neverd-worker-discovery-test-server PRIVATE NEVERD_EXPORTS NEVERD_TEST_STEPPED_DISCOVERY)
@@ -188,6 +192,14 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
           set(_neverd_worker_source_cc "${_neverd_worker_source_clang}")
         endif()
       endif()
+      add_test(NAME NeverDWorkerNativePatch
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/byte_patch_test.py"
+                "$<TARGET_FILE:neverd-worker>" --real)
+      set_tests_properties(NeverDWorkerNativePatch PROPERTIES TIMEOUT 90)
+      add_test(NAME NeverDWorkerSourceBytePatch
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_byte_patch_test.py"
+                "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_source_cc}")
+      set_tests_properties(NeverDWorkerSourceBytePatch PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
       add_test(NAME NeverDWorkerNativeMakeCode
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/make_code_test.py"
                 "$<TARGET_FILE:neverd-worker>" --real)

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
+<!-- i18n-source: dfc80a0bf5685db7576ab0eb49dc067cdc190a437a85b33c4a4186eed6915fce -->
 
 [← Documentation Index](README.md)
 
@@ -259,3 +259,10 @@ ctest --test-dir build-source -L \
 تتحقق إصلاحات Mach-O من دوال Thumb المختارة بصورة مستقلة عن وصف الصورة العام المختلط ARM/Thumb، وتوحّد مؤشرات تصدير Thumb المثبتة وعناوين شيفرة فك المكدس في ARM32 دون تغيير مؤشرات البيانات أو أطوال النطاقات. اجتاز البناء باستخدام مصادر LLVM المدمجة محليًا جميع فحوص مصفوفة CPU البالغ عددها 283 وفحوص عقود الاستثناءات البالغ عددها 258، دون إخفاق أو تخطٍ. تستخدم اختبارات Mach-O القديمة رابطًا مفتوح المصدر موثقًا وتحجز سعة لبيانات فك المكدس؛ ولـ i386 نقطة بدء بمحاذاة صحيحة ومقطع صفحة صفر بحجم 64 KiB.
 
 تثبت هذه النتائج تنفيذ C ضمن المحاكيات وطبقات التوافق المذكورة. Wine ليس Microsoft Windows، وDarling ليس macOS، وتنفيذ ARMv7k داخل محاكاة iOS عالية المستوى لا يثبت دعم watchOS أو WatchKit أو أجهزة Apple الفعلية. لا يُستنتج منها تحقق من SDK قديم لـ Apple أو عتاد أصلي ذي 32 بت، كما لا تثبت هذه الاختبارات فك مكدس استثناءات C++. تبقى أدلة التشغيل الأصلي والتوافق السابقة منفصلة. لم يُبنَ NeverC ولم يُعدّل.
+
+<!-- i18n-section: interactive-byte-patches -->
+## مسؤولية التصحيحات التفاعلية
+
+تتولى `lib/patch` التحقق من البايتات وترميز LLVM MC ولقطة الإدخال الثابتة وسجلات التغييرات الموحدة والتصدير الحصري. تتحقق SDK من أهداف المصدر باستخدام نص C الفعلي ومواضع LowIR الأصلية والمعاملات المفكوكة؛ لا تكفي علامة التنقل وحدها للسماح بالتعديل. يدمج العامل ملف `patches.json` الاختياري مع التراجع والإعادة ويبطل التحليل بعد التعديل. تقرأ التواقيع البايتات الأصلية، وتفقد الدوال المعدلة آثار المكتبة المستنتجة من هويتها. تستخدم GUI وCLI وPython واجهات API نفسها. يظل استبدال الدالة كاملة عبر `neverd_patch_source` ويتطلب تصدير تغييرات البايتات وإعادة فتحها أولاً.
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`

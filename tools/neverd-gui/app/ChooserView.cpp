@@ -102,11 +102,22 @@ ChooserModel::ChooserModel(Session &session, const AddressSpace &space,
       kind_(kind),
       operation_(QString::fromLatin1(Specs[static_cast<int>(kind)].operation)),
       columns_(columnsOf(kind)) {
-  connect(&session_, &Session::revisionChanged, this, [this] {
-    // A local display name changes neither the table's rows nor their order.
-    if (!session_.queries().localNamesOnly())
-      reload();
-  });
+  connect(&session_, &Session::revisionChanged, this,
+          [this, epoch = session_.epoch()]() mutable {
+            const bool sameProject = epoch == session_.epoch();
+            epoch = session_.epoch();
+            // A local display name changes neither rows nor their order.
+            if (session_.queries().localNamesOnly())
+              return;
+            // Edits invalidate engine answers, not the visible inventory.
+            // Stage fresh pages and publish only actual changes, just as for
+            // background discovery. A different project discards old rows.
+            if (sameProject && (kind_ == ChooserKind::Functions ||
+                                kind_ == ChooserKind::Names))
+              refreshFunctions();
+            else
+              reload();
+          });
   connect(&session_, &Session::unloaded, this, &ChooserModel::reload);
   if (kind_ == ChooserKind::Functions || kind_ == ChooserKind::Names)
     connect(&session_, &Session::functionsChanged, this,

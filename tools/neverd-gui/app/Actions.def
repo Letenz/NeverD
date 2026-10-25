@@ -25,6 +25,69 @@
   NEVERD_ACTION(Id, Text, Shortcut, Icon, Tip)
 #endif
 
+// Interactive patch commands. Second keys belong only to PatchMenu.def.
+NEVERD_VIEW_ACTION(EditPatchMenu, QT_TRANSLATE_NOOP("Actions", "Patch"), "J",
+                   "patch", QT_TRANSLATE_NOOP("Actions", "Open the patch menu"))
+NEVERD_ACTION(EditPatchNop, QT_TRANSLATE_NOOP("Actions", "NOP instruction"), "",
+              "patch_nop",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Replace the current instruction with NOPs"))
+NEVERD_ACTION(EditPatchAssemble, QT_TRANSLATE_NOOP("Actions", "Assemble…"), "",
+              "patch_assemble",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Edit an instruction with a live byte preview"))
+NEVERD_ACTION(EditPatchBytes, QT_TRANSLATE_NOOP("Actions", "Change bytes…"), "",
+              "patch",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Edit the bytes at the current address"))
+NEVERD_ACTION(EditPatchFillNops,
+              QT_TRANSLATE_NOOP("Actions", "Fill selection with NOPs"), "",
+              "patch_nop",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Fill a whole instruction range with NOPs"))
+NEVERD_ACTION(EditPatchAlwaysBranch,
+              QT_TRANSLATE_NOOP("Actions", "Always branch"), "", "patch",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Take the conditional branch unconditionally"))
+NEVERD_ACTION(EditPatchNeverBranch,
+              QT_TRANSLATE_NOOP("Actions", "Never branch"), "", "patch_nop",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Replace the conditional branch with NOPs"))
+NEVERD_ACTION(EditPatchInvertBranch,
+              QT_TRANSLATE_NOOP("Actions", "Invert condition"), "", "patch",
+              QT_TRANSLATE_NOOP("Actions", "Reverse the conditional branch"))
+NEVERD_ACTION(EditPatchSkipCall, QT_TRANSLATE_NOOP("Actions", "Skip call"), "",
+              "patch_nop",
+              QT_TRANSLATE_NOOP("Actions", "Replace the call with NOPs"))
+NEVERD_ACTION(
+    EditPatchSkipCallValue,
+    QT_TRANSLATE_NOOP("Actions", "Skip call and return value…"), "", "patch",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Replace the call with a return-register assignment"))
+NEVERD_ACTION(EditPatchConstant,
+              QT_TRANSLATE_NOOP("Actions", "Change immediate…"), "", "patch",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Change a uniquely encoded immediate operand"))
+NEVERD_ACTION(
+    EditPatchRewriteFunction,
+    QT_TRANSLATE_NOOP("Actions", "Rewrite function in C…"), "",
+    "patch_assemble",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Compile a replacement function into a new binary"))
+NEVERD_ACTION(EditPatchRevert,
+              QT_TRANSLATE_NOOP("Actions", "Restore original bytes"), "",
+              "patch_revert",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Restore the input bytes for this patch"))
+NEVERD_ACTION(EditPatchedBytes, QT_TRANSLATE_NOOP("Actions", "Patched bytes"),
+              "Ctrl+Alt+P", "patched_bytes",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Inspect and selectively revert byte patches"))
+NEVERD_ACTION(FileProducePatchedBinary,
+              QT_TRANSLATE_NOOP("Actions", "Patched binary…"), "", "patch",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Replay all byte patches into a new binary"))
+
 // File.
 NEVERD_ACTION(FileOpen, QT_TRANSLATE_NOOP("Actions", "&Open..."), "", "open",
               QT_TRANSLATE_NOOP("Actions", "Open a binary for analysis"))

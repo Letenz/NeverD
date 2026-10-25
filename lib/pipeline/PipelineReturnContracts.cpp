@@ -435,7 +435,8 @@ private:
         if (const auto Debug = Dbg->resolveFunction(*Target);
             Debug && Debug->Addr == *Target && Debug->ReturnType)
           return Debug->ReturnType->Kind == NdTypeKind::Void;
-      if (const auto Name = Names.find(*Target); Name != Names.end())
+      if (const auto Name = Names.find(*Target);
+          Name != Names.end() && !Img.functionHasBytePatch(*Target))
         if (const std::optional<bool> None = namedNoValue(Name->second))
           return *None;
       if (const auto Known = NoValue.find(*Target); Known != NoValue.end())

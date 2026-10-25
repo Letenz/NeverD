@@ -4,6 +4,7 @@
    drawn for it, and CodeFont is the code font in which text fields type. */
 QMainWindow, QDialog { background: ${Window}; }
 QDialog#commandPalette { border: 1px solid ${MenuSeparator}; }
+QFrame#patchEditor { background: ${Window}; border: 1px solid ${Border}; }
 QMenuBar { background: ${MenuBar}; color: ${MenuBarText}; border: none; padding: 0 2px; }
 QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 3px; }
 QMenuBar::item:selected, QMenuBar::item:pressed { background: ${MenuBarSelection}; }

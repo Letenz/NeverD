@@ -1221,3 +1221,52 @@ discarding what it holds) or `unavailable` (an engine or image whose
 decompiles keep no such state, such as one that is not x86-64), and
 `prepared` counts the functions it holds. Every revision change starts the preparation over, since
 the engine may have dropped it.
+
+
+### Interactive byte and source patches
+
+These operations appear in `hello.capabilities` only when the linked SDK
+exports their implementation. Byte overlays, source proofs and whole-function
+replacement are advertised independently.
+
+| Operation | Request and result |
+|---|---|
+| `patch_context` | `address`; current bytes/instruction, applicable action names, and `revert_ranges:[{address,size}]` for canonical changed runs intersecting that instruction (or the addressed byte when no instruction is available). Pass these ranges to `patch_revert` to restore operand-only changes too. |
+| `patch_preview` | A patch request below; returns `address`, `file_off`, `size`, `original`, `current`/`hex`, `covers`, `decoded`, `covers_truncated`, `decoded_truncated` and `warnings` without mutation. Instruction arrays are bounded for display; validation still checks the complete range. |
+| `patch_apply` | The same request, optionally `expected` original hex; applies and journals one edit, persists `patches.json` and invalidates analysis. Requires the writer and no staged unsaved annotations. |
+| `patch_revert` | `address` and optional `size` (zero restores the containing changed run), or `ranges:[{address,size}]`; restores immutable input bytes. A batch is one history command. |
+| `patches` | Optional `offset`, `limit`, or `ranges_only`; returns canonical changed runs, their original/current bytes and kind, with ordinary page metadata. |
+| `patch_export` | `path` and optional `allow_unsigned`; exclusively publishes a new binary by replaying the overlay. Never overwrites an existing destination. |
+| `patch_source_target` | `function`, `representation` (`c`/`llvmc`), zero-based `line`, and `literal` (zero-based integer index, or -1 for a statement); returns only proven actions and the exact `source_anchor`. |
+| `patch_source_preview` | A proven source patch request; returns `before` and `after` C, or `after_error`, using an isolated session. |
+| `source_patch_context` | Function `address`; compilable HighC `source`, replacement `symbol` and explicit original `bindings`. Requires an empty byte overlay. |
+| `source_patch` | `address`, C `source`, `symbol`, output `path`, `compiler` (`clang`/`neverc`/`gcc`), optional `compiler_path`, `timeout_seconds` and `bindings`; returns the source publisher's receipt and produced `path`. |
+
+A patch request contains `address` and `kind`: `bytes`, `assemble`, `nop`,
+`fill_nops`, `branch_always`, `branch_never`, `branch_invert`, `skip_call`,
+`skip_call_value` or `constant`. `bytes` holds hex pairs; `text` holds one
+assembly instruction; `value` is an unsigned address-form string; `size` is a
+byte count. Assembly accepts `dialect` (`intel`/`att`), `fill_nops` (default true),
+`allow_overlap` (default false), and a `symbols` object of signed integer
+bindings. Referenced frame-variable names receive the listing's explicit
+frame displacements; ambiguous or unresolved names are never guessed.
+
+A source edit also supplies `function`, `representation`, `line`, `literal`
+and the returned `source_anchor`. Preview and apply repeat the source proof;
+changed text or bytes refuse the edit. Source navigation addresses alone are
+insufficient. Literal proof currently requires a direct x86 MOV scalar value,
+possibly reaching a return through local copies and zero extensions. Arithmetic,
+partial writes, casts, predecessor merges and multiple literals remain refused.
+
+Whole-function `bindings` are `{symbol,kind,address,size}` rows, with kind
+`function`, `data`, `const` or `original`. The last kind explicitly names the
+saved original function body. A whole-function rewrite uses the existing
+source publisher and produces a new file; export and reopen any byte overlay
+before requesting it. Neither source preview nor successful publication adds
+an in-memory byte patch.
+
+Overlay admission rejects relocation fields, loader-rewritten or zero-fill
+bytes, ambiguous mappings and load headers. Signed PE/Mach-O export requires
+explicit unsigned consent. History stores the full durable overlay, while
+history listing responses expose `changed_rows` and `details_omitted` instead
+of repeating potentially large byte payloads.
