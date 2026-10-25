@@ -226,9 +226,9 @@ const char *validateAArch64SVEState(const MedFunc &Func, Arch Architecture) {
       // Valid PAuth operations only write their explicit scalar result. Reuse
       // that contract without admitting opaque calls or unresolved PACM.
       const bool PAuth = aarch64PAuthMedShapeIsValid(Op);
-      const bool ScalarMemory = aarch64AddressMemoryMedShapeIsValid(Op);
+      const bool OriginalMemory = aarch64AddressMemoryMedShapeIsValid(Op);
       if (Op.Opcode == NdOp::INTRINSIC &&
-          (!Id || (!Vector && !Predicate && !PAuth && !ScalarMemory &&
+          (!Id || (!Vector && !Predicate && !PAuth && !OriginalMemory &&
                    !scalarStateIntrinsic(*Id))))
         return kStateCall;
       if ((Vector && !aarch64VectorMedShapeIsValid(Op)) ||

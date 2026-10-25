@@ -130,7 +130,9 @@ readComparisonDataFlow(Session &S, const Program &P,
               throw LLVMDataFlowUnsupported(
                   "no retained native LLVM function binding");
             const auto Build =
-                Settings.Profile == LLVMParameterBoundProgressDataFlowProfile
+                Settings.Profile == LLVMInvariantBoundProgressDataFlowProfile
+                    ? buildLLVMInvariantBoundProgressDataFlow
+                : Settings.Profile == LLVMParameterBoundProgressDataFlowProfile
                     ? buildLLVMParameterBoundProgressDataFlow
                 : Settings.Profile == LLVMModularProgressDataFlowProfile
                     ? buildLLVMModularProgressDataFlow

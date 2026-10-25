@@ -308,6 +308,8 @@ struct PipelineResult {
   /// Bytes of each GPR family a lifted callee reads before writing (its
   /// register arguments, including pass-throughs), keyed by callee entry.
   std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
+  /// Incoming GPR values proved unobserved independently of argument inference.
+  std::map<va_t, GPRFamilyMask> CallUnreadGPRs;
   /// For each function-pointer variable a call may go through, by address,
   /// the key of the routine whose summary gives that call its arguments: the
   /// routine the variable starts at (collectPointerVariableCallees), or the

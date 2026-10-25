@@ -233,7 +233,10 @@ neverd_comparison_flow_regions_json(neverd_comparison_t Comparison,
 /// llvm-progress-ssa-v3 (also nested single-entry counter components),
 /// llvm-progress-ssa-v4 (also shared-counter branches and compiler latches),
 /// llvm-progress-ssa-v5 (also affine guards and wrapping counter cycles),
-/// or llvm-progress-ssa-v6 (also parameter-relative equality exit guards).
+/// llvm-progress-ssa-v6 (also parameter-relative equality exit guards), or
+/// llvm-progress-ssa-v7 (also pure input-derived expression bounds).
+/// Schema 11 adds proof:invariant_modular; the complete expression must have
+/// no PHI/freeze/cyclic dependency and all guards must share its basis.
 /// Schema 10 also records proof:parameter_modular, derived from shared
 /// parameter-bound exits. It does not prove an iteration count or normal
 /// return. Schema 6 witnesses add header to block

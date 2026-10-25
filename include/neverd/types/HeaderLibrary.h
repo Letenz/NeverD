@@ -88,7 +88,11 @@ struct HeaderMerge {
 /// Adds the types and prototypes of \p Headers that \p Library has none of
 /// the name of, as HeaderLibrary.h describes. Prototypes whose by-value
 /// layouts change or whose named dependencies were removed are omitted.
-HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers);
+/// A known Windows kernel provider can complete its opaque executive pointer
+/// aliases from matching program PDB records. Existing program aliases win.
+HeaderMerge
+mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers,
+                 std::optional<HeaderLibrary> Provider = std::nullopt);
 
 } // namespace neverd::types
 

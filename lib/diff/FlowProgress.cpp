@@ -11,6 +11,7 @@
 
 #include "FlowProgress.h"
 
+#include "FlowInvariantBounds.h"
 #include "FlowParameterViews.h"
 #include "LLVMFlowSemantics.h"
 
@@ -44,6 +45,8 @@ llvm::StringRef flowCounterProofName(FlowCounterProof Proof) {
     return "modular";
   case FlowCounterProof::ParameterModular:
     return "parameter_modular";
+  case FlowCounterProof::InvariantModular:
+    return "invariant_modular";
   }
   return "invalid";
 }
@@ -420,7 +423,7 @@ bool modularExitCoverage(llvm::ArrayRef<llvm::ConstantRange> Continued,
   return Covered == Period;
 }
 
-/// v4-v6 group all paths that advance one header counter. Original predecessor
+/// v4-v7 group all paths that advance one header counter. Original predecessor
 /// inventories and scratch are shared across candidates/components. A funnel
 /// has one unconditional physical backedge and several consuming guards; its
 /// witnesses belong to those guards, not duplicate rows for the same latch.
@@ -436,7 +439,8 @@ class BranchProof {
   const DataFlowGraph &G;
   llvm::StringRef Contract;
   llvm::function_ref<void(uint64_t)> Charge;
-  const bool Modular, ParameterBound;
+  const bool Modular, ParameterBound, InvariantBound;
+  std::optional<FlowInvariantBounds> Invariants;
   std::vector<std::vector<uint32_t>> Predecessors;
   std::vector<uint32_t> HeaderValues, ArmValues, Owners;
   std::vector<uint8_t> Seen;
@@ -658,7 +662,8 @@ class BranchProof {
         Base->Value, (N.Opcode == "sub" ? -Bits : Bits).getZExtValue()};
   }
 
-  bool modularCandidate(uint32_t Counter, uint32_t Header) {
+  bool modularCandidate(uint32_t Counter, uint32_t Header,
+                        bool InvariantFallback = false) {
     Trial.clear();
     if (!indexPhi(Counter, Header, G.Nodes[Counter].Semantics, HeaderValues))
       return false;
@@ -722,6 +727,7 @@ class BranchProof {
       return false;
     std::vector<llvm::ConstantRange> Continued;
     std::optional<uint64_t> Parameter;
+    std::optional<uint32_t> Basis;
     for (size_t I = 0; I < Guards.size(); ++I) {
       const auto &Guard = Guards[I];
       const auto &Observed = Observations[I];
@@ -739,8 +745,24 @@ class BranchProof {
         Pred = llvm::CmpInst::getSwappedPredicate(Pred);
       if (G.Blocks[Guard.Block].Successors[0] != Guard.Target)
         Pred = llvm::CmpInst::getInversePredicate(Pred);
-      if (Bound.Type == FlowOperand::Kind::Constant &&
-          Bound.Semantics == "i" + std::to_string(Width)) {
+      if (InvariantFallback) {
+        if (!llvm::CmpInst::isEquality(Pred))
+          return false;
+        if (!Invariants)
+          Invariants.emplace(G, Contract, Charge);
+        const auto Relative = Invariants->observe(Bound);
+        if (!Relative || (Basis && *Basis != Relative->Node))
+          return false;
+        Basis = Relative->Node;
+        // X = counter - B for the same input-derived basis B in every guard.
+        // Coherent fixed leaf choices yield a fixed root or UB/poison; select
+        // may mask poison. The exact relative exits exclude infinite defined
+        // continuation without freezing undef or assuming correlated uses.
+        Continued.push_back(llvm::ConstantRange::makeExactICmpRegion(
+            Pred, llvm::APInt(Width, Relative->Offset) -
+                      llvm::APInt(Width, Observed.Offset)));
+      } else if (Bound.Type == FlowOperand::Kind::Constant &&
+                 Bound.Semantics == "i" + std::to_string(Width)) {
         if (Parameter)
           return false;
         Continued.push_back(llvm::ConstantRange::makeExactICmpRegion(
@@ -776,8 +798,9 @@ class BranchProof {
       return false;
     for (auto &L : Trial) {
       Charge(1);
-      L.Proof = Parameter ? FlowCounterProof::ParameterModular
-                          : FlowCounterProof::Modular;
+      L.Proof = Basis       ? FlowCounterProof::InvariantModular
+                : Parameter ? FlowCounterProof::ParameterModular
+                            : FlowCounterProof::Modular;
     }
     return true;
   }
@@ -785,9 +808,9 @@ class BranchProof {
 public:
   BranchProof(const DataFlowGraph &Graph, llvm::StringRef Contract,
               llvm::function_ref<void(uint64_t)> Charge, bool Modular,
-              bool ParameterBound)
+              bool ParameterBound, bool InvariantBound)
       : G(Graph), Contract(Contract), Charge(Charge), Modular(Modular),
-        ParameterBound(ParameterBound) {
+        ParameterBound(ParameterBound), InvariantBound(InvariantBound) {
     Charge(5 * uint64_t(G.Blocks.size()));
     Predecessors.resize(G.Blocks.size());
     HeaderValues.resize(G.Blocks.size(), NoIndex);
@@ -828,11 +851,24 @@ public:
         if (Counter != NoIndex && (!Count || Candidates[0] != Counter))
           Candidates[Count++] = Counter;
       }
-      for (size_t I = 0; I < Count; ++I) {
-        Charge(1);
-        if (!(Modular ? modularCandidate(Candidates[I], Header)
-                      : candidate(Candidates[I], Header)))
-          continue;
+      bool Proved = false;
+      // Exhaust every legacy counter candidate first. A wrapping first
+      // operand must not allocate/charge the invariant walk before a second
+      // operand's existing nowrap proof. Legacy successes keep their exact
+      // charge sequence, witness choice and minimum allowance.
+      for (bool Fallback : {false, true}) {
+        if (Fallback && (!InvariantBound || Proved))
+          break;
+        for (size_t I = 0; I < Count; ++I) {
+          Charge(1);
+          if (!(Modular ? modularCandidate(Candidates[I], Header, Fallback)
+                        : candidate(Candidates[I], Header)))
+            continue;
+          Proved = true;
+          break;
+        }
+      }
+      if (Proved) {
         if (Trial.size() > Allowance - P.Loops.size())
           throw DataFlowInterrupted(ComparisonState::ResourceLimited);
         Charge(1 + Trial.size());
@@ -843,7 +879,6 @@ public:
           Charge(1);
           Cut[Edge.Latch] = Header;
         }
-        break;
       }
     }
   }
@@ -864,13 +899,16 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
   const uint64_t Retained = G.Nodes.size() + G.ParameterViews.size() + 1;
   if (Retained > Options.MaxNodes)
     throw DataFlowInterrupted(ComparisonState::ResourceLimited);
-  const bool ParameterBound = Mode == FlowProgressMode::ParameterBound;
+  const bool InvariantBound = Mode == FlowProgressMode::InvariantBound;
+  const bool ParameterBound =
+      Mode == FlowProgressMode::ParameterBound || InvariantBound;
   const bool Modular = Mode == FlowProgressMode::Modular || ParameterBound;
   const bool Branched = Mode == FlowProgressMode::Branched || Modular;
   const bool Nested = Mode == FlowProgressMode::Nested || Branched;
   std::optional<BranchProof> Branches;
   if (Branched)
-    Branches.emplace(G, Contract, Charge, Modular, ParameterBound);
+    Branches.emplace(G, Contract, Charge, Modular, ParameterBound,
+                     InvariantBound);
   do {
     const auto Previous = P.Loops.size();
     std::optional<FlowComponents> C;

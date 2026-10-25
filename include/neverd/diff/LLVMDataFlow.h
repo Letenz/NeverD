@@ -79,6 +79,12 @@ DataFlowGraph buildLLVMParameterBoundProgressDataFlow(
     uint64_t Entry, llvm::StringRef Revision, llvm::StringRef ABI,
     bool NativeComplete, const DataFlowOptions &Options = {},
     const ComparisonControl &Control = {});
+/// Versioned extension for shared input-derived expression modular exit guards.
+DataFlowGraph buildLLVMInvariantBoundProgressDataFlow(
+    const llvm::Function &Function, const LLVMSourceMap &Sources,
+    uint64_t Entry, llvm::StringRef Revision, llvm::StringRef ABI,
+    bool NativeComplete, const DataFlowOptions &Options = {},
+    const ComparisonControl &Control = {});
 } // namespace diff
 } // namespace neverd
 

@@ -15,6 +15,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/Limits.h"
@@ -29,7 +30,9 @@
 #include "neverd/types/TypeParse.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -98,6 +101,78 @@ TEST(RecordCallContract, HeaderRecordsUseTheirTargetsMachinePositions) {
       EXPECT_EQ(Layout->Positions, I386 ? 6u : Indirect ? 3u : 10u);
       EXPECT_EQ(Layout->Registers, I386 ? 0u : Indirect ? 3u : 2u);
       EXPECT_EQ(Layout->Parameters[2].Indirect, Indirect);
+    }
+  }
+}
+
+TEST(RecordCallContract, LLVMOperandsKeepPhysicalStackPieceLocations) {
+  const auto *Header = types::headerLibrary(types::HeaderLibrary::LinuxX64);
+  ASSERT_NE(Header, nullptr);
+  auto Types = std::make_shared<types::TypeLibrary>(Header->dataModel());
+  types::mergeHeaderTypes(*Types, *Header);
+  EmptyDebug Empty;
+  sdk::LocalTypesDebugContext Debug(Empty, Types, {}, nullptr,
+                                    {types::HeaderLibrary::LinuxX64});
+  const auto Cookie = Debug.resolvePrototype("fopencookie");
+  ASSERT_TRUE(Cookie);
+  const auto Layout = libc::recordCallArguments(
+      *Cookie, Arch::X64, BinaryFormat::ELF, libc::LibCVariant::GNU);
+  ASSERT_TRUE(Layout);
+  ASSERT_EQ(Layout->Positions, 10u);
+  for (unsigned Variant = 0; Variant != 10; ++Variant) {
+    SCOPED_TRACE(Variant);
+    llvm::LLVMContext Context;
+    llvm::Module Module("record-call", Context);
+    llvm::IRBuilder<> Builder(Context);
+    const unsigned Registers = Variant == 2 || Variant == 8 ? 6 : 2;
+    std::vector<llvm::Value *> Values;
+    std::vector<llvm::Type *> Types;
+    for (unsigned I = 0; I != Registers + 4; ++I) {
+      auto *Type = Variant == 6 && I == Registers ? Builder.getInt32Ty()
+                                                  : Builder.getInt64Ty();
+      Values.push_back(llvm::ConstantInt::get(Type, 0x100 + I));
+      Types.push_back(Type);
+    }
+    auto *Caller = llvm::Function::Create(
+        llvm::FunctionType::get(Builder.getVoidTy(), false),
+        llvm::GlobalValue::ExternalLinkage, "caller", Module);
+    Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Caller));
+    auto *Callee = llvm::Function::Create(
+        llvm::FunctionType::get(Builder.getInt64Ty(), Types, false),
+        llvm::GlobalValue::ExternalLinkage, "fopencookie", Module);
+    auto *Call = Builder.CreateCall(Callee, Values);
+    Builder.CreateRetVoid();
+    std::vector<int64_t> Offsets = {0, 8, 16, 24};
+    if (Variant == 1)
+      Offsets = {16, 0, 24, 8};
+    else if (Variant == 3)
+      Offsets = {0, 8, 24, 32};
+    else if (Variant == 4)
+      Offsets = {0, 8, 8, 24};
+    if (Variant < 8)
+      setLLVMArgumentBanks(*Call, Registers, Variant == 7 ? 1 : 0, Offsets,
+                           Variant == 5 ? 4 : 8);
+    const auto Bound = bindLLVMIntegerCallArguments(*Call, *Layout, Arch::X64,
+                                                    BinaryFormat::ELF);
+    const bool Complete = Variant < 3 || Variant == 8;
+    ASSERT_EQ(bool(Bound), Complete);
+    if (!Complete)
+      continue;
+    EXPECT_EQ(Bound->Positions, Values.size());
+    ASSERT_EQ(Bound->Parameters.size(), 3u);
+    EXPECT_EQ(Bound->Parameters[0].Pieces[0].Argument, 0u);
+    EXPECT_EQ(Bound->Parameters[1].Pieces[0].Argument, 1u);
+    ASSERT_EQ(Bound->Parameters[2].Pieces.size(), 4u);
+    const unsigned Reordered[] = {1, 3, 0, 2};
+    for (unsigned I = 0; I != 4; ++I) {
+      const auto &Piece = Bound->Parameters[2].Pieces[I];
+      const unsigned Index = Registers + (Variant == 1 ? Reordered[I] : I);
+      EXPECT_EQ(Piece.Offset, I * 8);
+      EXPECT_EQ(Piece.Bytes, 8u);
+      EXPECT_EQ(
+          llvm::cast<llvm::ConstantInt>(Call->getArgOperand(Piece.Argument))
+              ->getZExtValue(),
+          0x100 + Index);
     }
   }
 }

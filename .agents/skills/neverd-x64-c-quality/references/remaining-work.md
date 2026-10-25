@@ -93,6 +93,12 @@ An export inventory is only a coverage audit; undocumented and ordinal-only
 exports still require authenticated declarations. The retained Microsoft
 SDK/WDK input supplies x86/x64/ARM64 declarations; the older MinGW DDK input
 alone has no ARM64 kernel headers. Input availability is not full ABI coverage.
+Runtime Windows kernel type joins now associate official opaque executive
+pointer aliases with complete program PDB records when their kernel prefix
+matches at offset zero. Both C routes recover the executive members through
+the same local types. Existing aliases and incomplete or mismatched records
+remain unchanged. WDK/kernel version conflicts stay visible as opaque records;
+they do not authorize importing an incompatible layout.
 
 The shared call-read summary excludes register copies proved overwritten before
 observation, including CPUID scratch exchanges. Calls, exits, partial writes
@@ -102,10 +108,15 @@ unknown after earlier calls; never erase those inputs or replace them with zero.
 Source stack preparation now also discards post-entry scalar spills proved
 overwritten before observation. Explicit x86 flags transfers remain emitted;
 their frame loads/stores are already separate operations. Unread scratch
-restores require a register overwrite before a later call, or a normal exit;
+restores require a register overwrite before a later call, a checked absence of
+callee input observations, or a normal exit;
 ABI-preserved/result registers, PHIs and implicit clobber readers keep their
 values. This bounded shared proof removes avoidable HighC/LLVMC traps but does
 not recover escaping VM state or authorize a dynamic code-address fallback.
+The separate call-input proof does not mistake an inferred argument list or a
+nested may-write for absence of an observation. It fixes a HighC scratch-save
+trap that LLVMC's later cleanup already removed; both routes execute the public
+preserving-callee case. Opaque calls and unmodeled entry observers retain state.
 Pure POPCOUNT steps used to compute x86 parity no longer prevent an otherwise
 complete explicit scratch overwrite proof; trapping operations still do.
 Physical CALL return-slot writes remain barriers: they are absent from the C
@@ -113,6 +124,15 @@ frame projection. Discarding an old save solely because CALL overwrites its
 bytes can turn a later return-slot read into an uninitialized C value. A full
 source projection of the new return-address value is required before admitting
 that optimization; runtime code-address relocation remains a separate proof.
+Shared source preparation now rejects exact x86/x64 loads reached by those
+unrepresented physical CALL writes, including when the old frame content is a
+known constant. Complete later stores permit the read; partial writes, joins,
+loops and unknown call positions retain the diagnostic. Both source routes use
+the same bounded check. This closes stale-value success, not the missing
+machine-state/continuation source ABI, unresolved aliases or native proof.
+The shared stack-address owner also recognizes canonical zero-extended
+32-bit memory-address containers. This closes the i386 observation gap without
+treating truncated 64-bit pointers or wider incoming registers as frame roots.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by
@@ -555,6 +575,11 @@ conditional memory, invocation lifetime and both C routes remain open.
   four-case recovery fixture exercises the same structure through both C routes.
 
 ## Established rules
+
+- Integer record calls in LLVMC bind physical ABI pieces through the shared
+  LLVM call-contract metadata. Compacted register banks and reordered stack
+  operands retain their byte locations; incomplete or ambiguous carriers
+  fail. This does not extend unsupported mixed floating record conventions.
 
 - HighC owns structured `__try` / `__except` / `__finally` and source-like
   statements. LLVMC preserves a goto projection when structure is uncertain.

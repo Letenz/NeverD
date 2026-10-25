@@ -129,6 +129,9 @@ public:
   void setCallEntryReadGPRs(const std::map<va_t, GPRReadWidths> *M) {
     CallEntryReadGPRs = M;
   }
+  void setCallUnreadGPRs(const std::map<va_t, GPRFamilyMask> *M) {
+    CallUnreadGPRs = M;
+  }
   /// The routine whose summary gives a call through each function-pointer
   /// variable its arguments (PipelineResult::CallArgumentSources).
   void setCallArgumentSources(const std::map<va_t, va_t> *M) {
@@ -443,6 +446,7 @@ private:
   const std::map<va_t, uint32_t> *CallMayWriteGPRs = nullptr;
   const std::map<va_t, GPRExitConstants> *CallExitConstants = nullptr;
   const std::map<va_t, GPRReadWidths> *CallEntryReadGPRs = nullptr;
+  const std::map<va_t, GPRFamilyMask> *CallUnreadGPRs = nullptr;
   const std::map<va_t, va_t> *CallArgumentSources = nullptr;
   const std::map<va_t, int> *CallEntryStackArgs = nullptr;
   const std::set<va_t> *CallEntryStackSlots = nullptr;

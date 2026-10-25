@@ -139,7 +139,7 @@ std::optional<MedVar> findTableSwitchIndex(const MedDispatchContext &C,
         return std::nullopt;
       const auto Instruction = aarch64AddressMemoryInstruction(
           Op->Inputs[kAddressMemoryWordOperand + 1].ConstVal);
-      if (Instruction->stackBase() ||
+      if (Instruction->stackBase() || Instruction->isVector() ||
           (uint64_t(1) << Instruction->indexShift()) !=
               Instruction->accessBytes())
         return std::nullopt;

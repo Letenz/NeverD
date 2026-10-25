@@ -54,13 +54,16 @@ inline constexpr llvm::StringLiteral LLVMModularProgressDataFlowProfile(
     limits::diff::kLLVMModularProgressSSAProfile);
 inline constexpr llvm::StringLiteral LLVMParameterBoundProgressDataFlowProfile(
     limits::diff::kLLVMParameterBoundProgressSSAProfile);
+inline constexpr llvm::StringLiteral LLVMInvariantBoundProgressDataFlowProfile(
+    limits::diff::kLLVMInvariantBoundProgressSSAProfile);
 inline bool hasProgressProof(llvm::StringRef Profile) {
   return Profile == LLVMProgressDataFlowProfile ||
          Profile == LLVMMultiBlockProgressDataFlowProfile ||
          Profile == LLVMNestedProgressDataFlowProfile ||
          Profile == LLVMBranchProgressDataFlowProfile ||
          Profile == LLVMModularProgressDataFlowProfile ||
-         Profile == LLVMParameterBoundProgressDataFlowProfile;
+         Profile == LLVMParameterBoundProgressDataFlowProfile ||
+         Profile == LLVMInvariantBoundProgressDataFlowProfile;
 }
 inline bool hasParameterViews(llvm::StringRef Profile) {
   return Profile == LLVMParameterDataFlowProfile || hasProgressProof(Profile);
@@ -181,7 +184,8 @@ enum class FlowCounterProof : uint8_t {
   None,
   NoWrap,
   Modular,
-  ParameterModular
+  ParameterModular,
+  InvariantModular
 };
 llvm::StringRef flowCounterProofName(FlowCounterProof Proof);
 struct FlowLoopProgress {

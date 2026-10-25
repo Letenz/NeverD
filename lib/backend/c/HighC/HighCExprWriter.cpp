@@ -2738,10 +2738,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         Source < ArityIntegers + ArityFloats)
       FloatParam =
           NdType::makeFloat(Arity->FpIsFloat ? sizeof(float) : sizeof(double));
-    if (const auto Float = floatArgumentText(*Op, FloatParam)) {
+    if (FloatParam && FloatParam->Kind == NdTypeKind::Float) {
       if (PointerArgument)
         PointerArgumentOperands.erase(PointerArgument);
-      S += *Float;
+      S += exprStrAsTypedArg(*Op, FloatParam);
       continue;
     }
     std::string Arg = exprStr(Imm ? *Imm : *Op);

@@ -851,6 +851,80 @@ TEST(HeaderLibrary, SupplementsPreservePrimaryDeclarationsAndRejectChangedABI) {
   EXPECT_FALSE(Primary.find("Holder")->Record->Defined);
 }
 
+TEST(HeaderLibrary, ExecutivePointerAliasesUseTheProgramsPDBRecords) {
+  for (const auto Id :
+       {HeaderLibrary::WindowsKernelX86, HeaderLibrary::WindowsKernelX64,
+        HeaderLibrary::WindowsKernelARM64}) {
+    SCOPED_TRACE(headerLibraryName(Id).str());
+    TypeLibrary Headers(headerLibraryModel(Id));
+    ParseOptions HeaderOptions;
+    HeaderOptions.Origin = TypeOrigin::Header;
+    ASSERT_TRUE(parseCTypes(R"(
+      typedef const struct _KPROCESS *PEPROCESS;
+      typedef struct _KTHREAD *PETHREAD;
+      typedef struct _KPROCESS *PKPROCESS;
+      typedef struct _KTHREAD *PKTHREAD;
+      void Observe(PEPROCESS Process, PETHREAD Thread);
+    )",
+                            Headers, HeaderOptions)
+                    .ok());
+    const auto Pointee = [](const TypeLibrary &Library, const char *Name) {
+      const auto *Alias = Library.find(Name);
+      return Alias && Alias->Target && Alias->Target->Element
+                 ? Alias->Target->Element->Name
+                 : std::string();
+    };
+    for (unsigned Variant = 0; Variant < 8; ++Variant) {
+      SCOPED_TRACE(Variant);
+      TypeLibrary Program(headerLibraryModel(Id));
+      ParseOptions Options;
+      Options.Origin = Variant == 1 ? TypeOrigin::User : TypeOrigin::PDB;
+      ASSERT_TRUE(parseCTypes("struct _KPROCESS { unsigned long Flags; };\n"
+                              "struct _KTHREAD { unsigned long Flags; };\n",
+                              Program, Options)
+                      .ok());
+      const std::string Executive =
+          Variant == 2 ? "struct _EPROCESS; struct _ETHREAD;"
+                       : std::string("struct _EPROCESS { ") +
+                             (Variant == 3 ? "unsigned long Before; " : "") +
+                             "struct _KPROCESS Pcb; void *Identity; };\n"
+                             "struct _ETHREAD { struct " +
+                             (Variant == 4 ? "_KPROCESS" : "_KTHREAD") +
+                             " Tcb; void *Identity; };";
+      ASSERT_TRUE(parseCTypes(Executive, Program, Options).ok());
+      if (Variant == 5)
+        ASSERT_TRUE(parseCTypes("typedef void *PEPROCESS;", Program).ok());
+      const std::optional<HeaderLibrary> Provider =
+          Variant == 7 ? std::nullopt
+                       : std::optional(
+                             Variant == 6 ? HeaderLibrary::WindowsUserX64 : Id);
+      const auto Merge = mergeHeaderTypes(Program, Headers, Provider);
+      EXPECT_TRUE(Merge.Conflicts.empty());
+      EXPECT_EQ(Pointee(Program, "PEPROCESS"), Variant == 5 ? ""
+                                               : Variant == 0 || Variant == 4
+                                                   ? "_EPROCESS"
+                                                   : "_KPROCESS");
+      EXPECT_EQ(Pointee(Program, "PETHREAD"),
+                Variant == 0 || Variant == 3 || Variant == 5 ? "_ETHREAD"
+                                                             : "_KTHREAD");
+      EXPECT_EQ(Pointee(Program, "PKPROCESS"), "_KPROCESS");
+      EXPECT_EQ(Pointee(Program, "PKTHREAD"), "_KTHREAD");
+      if (Variant != 5) {
+        const auto &Pointer = Program.find("PEPROCESS")->Target;
+        EXPECT_EQ(Pointer->PointerBytes, pointerBytes(Program.dataModel()));
+        EXPECT_TRUE(Pointer->Element->Const);
+      }
+      ASSERT_NE(Program.findPrototype("Observe"), nullptr);
+      EXPECT_EQ(Program.findPrototype("Observe")->Params.size(), 2u);
+      // The provider remains immutable for sessions with no program records.
+      EXPECT_EQ(Pointee(Headers, "PEPROCESS"), "_KPROCESS");
+    }
+    TypeLibrary Program(headerLibraryModel(Id));
+    EXPECT_TRUE(mergeHeaderTypes(Program, Headers).Conflicts.empty());
+    EXPECT_EQ(Pointee(Program, "PEPROCESS"), "_KPROCESS");
+  }
+}
+
 TEST(HeaderLibrary, DeclaresTheKernelRoutinesTheCallAnalysisFixes) {
   // WindowsKernelRoutines.inc fixes the bytes each parameter of a routine
   // takes, which the call analysis reads before any prototype; the kernel's

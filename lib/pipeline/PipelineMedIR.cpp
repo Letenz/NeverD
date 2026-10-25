@@ -19,6 +19,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedCallReturnReads.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -57,6 +58,9 @@ void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
     return;
   simplifyProvenStackAlignment(Func, Image.Arch, Image.abiFormat(),
                                Func.EntryKind);
+  std::string Diagnostic;
+  if (!validateSourceCallReturnReads(Func, Image, Diagnostic))
+    throw LowToMedConversionError(Diagnostic);
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
 }
 
@@ -168,6 +172,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
     Local.setCallExitConstants(&Result.CallExitConstants);
     Local.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+    Local.setCallUnreadGPRs(&Result.CallUnreadGPRs);
     Local.setCallArgumentSources(&Result.CallArgumentSources);
     Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
     Local.setCallEntryStackSlots(&Result.CallEntryStackSlots);
@@ -298,6 +303,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallEntryVariadicArguments);
   COPY_SOURCE_FACT(OmittedCalleeVariadicArguments);
   COPY_SOURCE_FACT(CallEntryReadGPRs);
+  COPY_SOURCE_FACT(CallUnreadGPRs);
   COPY_SOURCE_FACT(CallEntryStackArgs);
   COPY_SOURCE_FACT(CallEntryStackPops);
   COPY_SOURCE_FACT(CallEntryStackSlots);
