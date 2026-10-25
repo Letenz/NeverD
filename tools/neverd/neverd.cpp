@@ -93,6 +93,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runIdentify();
   if (DiffCmd)
     return runDiff();
+  if (LineageCmd)
+    return runLineage();
   if (SimplifyCmd)
     return runSimplify();
   if (MergeProjectCmd)

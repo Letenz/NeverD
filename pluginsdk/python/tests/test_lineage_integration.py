@@ -1,0 +1,132 @@
+"""Native lineage ownership, callback and persistence contracts."""
+
+from __future__ import annotations
+
+import ctypes
+import json
+import os
+from pathlib import Path
+import tempfile
+import threading
+import unittest
+
+from neverd_plugin import Lineage, NeverDError, abi
+from neverd_plugin.ffi import HostAPI
+
+
+class LineageUnavailableTests(unittest.TestCase):
+    def test_optional_exports_fail_before_creating_a_handle(self):
+        with self.assertRaisesRegex(RuntimeError, "does not export"):
+            Lineage(host=HostAPI(object()))
+
+
+class LineageIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        if not library:
+            self.skipTest("NEVERD_TEST_LIBNEVERD is not configured")
+        path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(path.parent))
+            self.addCleanup(directory.close)
+        self.host = HostAPI(ctypes.CDLL(str(path)))
+        temporary = tempfile.TemporaryDirectory(prefix="neverd-lineage-python-")
+        self.addCleanup(temporary.cleanup)
+        sessions = []
+        for number in (1, 2):
+            binary = Path(temporary.name) / f"return-{number}.raw"
+            binary.write_bytes(bytes([0xB8, number, 0, 0, 0, 0xC3]))
+            session = self.host.call("neverd_session_create")
+            self.assertTrue(session)
+            sessions.append(session)
+            self.assertEqual(self.host.call("neverd_session_set_load_options", session,
+                b'{"loader":"binary","processor":"x86_64","platform":"sysv","base":4096}'), 0)
+            self.assertEqual(self.host.call("neverd_session_load", session, str(binary).encode()), 1)
+        comparison = self.host.call("neverd_comparison_create")
+        try:
+            self.assertEqual(self.host.call("neverd_comparison_run", comparison, *sessions,
+                b'{"discover":false}', abi.ComparisonProgressCallback(), None), 1)
+            self.report = self.host.owned_string("neverd_comparison_export_json", comparison)
+        finally:
+            self.host.call("neverd_comparison_destroy", comparison)
+            for session in sessions:
+                self.host.call("neverd_session_destroy", session)
+        self.lineage = Lineage(host=self.host)
+        self.addCleanup(self.lineage.close)
+        self.lineage.load_reports([self.report])
+
+    def test_detached_sources_pages_and_reopen_remain_exact(self):
+        summary = self.lineage.summary()
+        self.assertEqual(summary["versions"], 2)
+        self.assertFalse(summary["native_authenticated"])
+        pages = list(self.lineage.pages("versions", limit=1))
+        self.assertEqual([len(p["items"]) for p in pages], [1, 1])
+        self.assertNotEqual(pages[0]["items"][0]["id"], pages[1]["items"][0]["id"])
+        report_id = self.lineage.query("reports")["items"][0]["id"]
+        self.assertEqual(self.lineage.report(report_id), self.report)
+        saved = self.lineage.export()
+        self.lineage.load(saved)
+        self.assertEqual(self.lineage.export(), saved)
+        with self.assertRaises(NeverDError):
+            self.lineage.load("{invalid")
+        self.assertEqual(self.lineage.status()["operation_state"], "failed")
+        self.assertEqual(self.lineage.export(), saved)
+
+    def test_callbacks_cancel_on_owner_thread_and_retry(self):
+        saved = self.lineage.export()
+        owner = threading.get_ident()
+        calls = []
+
+        def progress(phase, done, total):
+            calls.append((phase, threading.get_ident()))
+            self.assertEqual(self.lineage.status()["operation_state"], "running")
+            if phase == "lineage:commit":
+                self.lineage.cancel()
+
+        with self.assertRaises(NeverDError):
+            self.lineage.load(saved, progress=progress)
+        self.assertTrue(calls)
+        self.assertTrue(all(thread == owner for _, thread in calls))
+        self.assertEqual(self.lineage.status()["operation_state"], "cancelled")
+        self.assertEqual(self.lineage.export(), saved)
+        self.lineage.load(saved)
+        self.assertEqual(self.lineage.summary()["nodes"], 2)
+
+    def test_callback_exception_and_reentrant_close_do_not_escape_c(self):
+        saved = self.lineage.export()
+
+        def progress(*_):
+            self.lineage.close()
+
+        with self.assertRaisesRegex(NeverDError, "during an operation"):
+            self.lineage.load(saved, progress=progress)
+        self.assertEqual(self.lineage.status()["operation_state"], "cancelled")
+        self.assertEqual(self.lineage.export(), saved)
+
+    def test_revision_and_small_current_budget_are_not_bypassed(self):
+        revision = self.lineage.summary()["revision"]
+        version = self.lineage.query("versions")["items"][0]["id"]
+        trace = self.lineage.query("trace_nodes", version=version, address="0x1000", limit=1)
+        self.assertEqual(trace["total"], 2)
+        with self.assertRaises(NeverDError):
+            self.lineage.query("trace_nodes", version=version, address="0x1000", max_work=1)
+        self.assertEqual(self.lineage.status()["operation_state"], "resource_limited")
+        document = json.loads(self.lineage.export())
+        document["versions"][0]["label"] = "Release 1"
+        self.lineage.load(document)
+        with self.assertRaisesRegex(NeverDError, "stale"):
+            self.lineage.query("versions", revision=revision)
+        self.assertNotEqual(self.lineage.summary()["revision"], revision)
+
+    def test_embedded_nul_and_closed_handle_refuse_without_native_truncation(self):
+        saved = self.lineage.export()
+        with self.assertRaises(ValueError):
+            self.lineage.load(saved + "\0invalid suffix")
+        self.assertEqual(self.lineage.export(), saved)
+        self.lineage.close()
+        with self.assertRaisesRegex(NeverDError, "closed"):
+            self.lineage.summary()
+
+
+if __name__ == "__main__":
+    unittest.main()

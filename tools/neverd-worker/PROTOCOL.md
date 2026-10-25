@@ -1221,3 +1221,31 @@ discarding what it holds) or `unavailable` (an engine or image whose
 decompiles keep no such state, such as one that is not x86-64), and
 `prepared` counts the functions it holds. Every revision change starts the preparation over, since
 the engine may have dropped it.
+
+## Offline version comparison graphs
+
+Optional `lineage_load`, `lineage_summary`, `lineage_status`, `lineage_query`,
+`lineage_save`, `lineage_save_report` and `lineage_close` capabilities use the
+additive native lineage API. `lineage_cancellable_operations` advertises the
+load/query/save operations with cooperative cancellation and retained old data.
+
+- `lineage_load`: `reports` is an array of local report paths; `path` reopens a
+  collection. `append: true` retains a loaded collection and excludes `path`.
+  Optional `versions` replaces metadata; `version_updates` merges per-snapshot
+  edits while preserving other labels (duplicates still fail shared validation).
+  `options` contains shared admission settings.
+- `lineage_query`: `query` is the [shared page request](../../docs/binary-diff-lineage.md#queries-and-limits).
+  An absent revision is filled; explicit stale revisions remain errors.
+- `lineage_save`: `path` publishes a whole collection locally.
+  `lineage_save_report` also requires `report`, preserving its exact bytes.
+- `lineage_summary` and `lineage_status` separate `operation_state`,
+  `loaded_revision` and historical report completeness. `lineage_close` releases
+  the collection without touching comparison/project sessions.
+
+Every operation optionally accepts `expected_lineage_revision`; stale requests
+fail before mutation. Unknown payload fields are refused. Sources and bundles
+are read/written locally with explicit aggregate admission, including files over
+32 MiB. Full documents never cross the 8 MiB IPC frame. Failed or stopped
+replacement retains the prior collection; no partial new graph is published.
+Save closes its temporary file, checks cancellation, then renames once. A late
+cancel cannot relabel publication as stopped.

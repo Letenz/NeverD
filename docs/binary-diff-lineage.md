@@ -1,0 +1,143 @@
+# Offline version comparison graphs
+
+Combine saved `.nddiff` reports to trace reported function associations across
+analyzed snapshots. The `lineage` command, Python `Lineage`, C ABI and desktop
+**File → Version comparison graph** use the same engine. Native input files are
+not required after reports have been saved.
+
+```sh
+neverd lineage --report release-a-b.nddiff --report release-b-c.nddiff \
+  --report release-a-c.nddiff --save releases.ndlineage --json
+neverd lineage --reopen releases.ndlineage --list versions --json
+neverd lineage --reopen releases.ndlineage --snapshot SNAPSHOT_ID \
+  --address 0x1000 --list trace_nodes --limit 100 --json
+neverd lineage --reopen releases.ndlineage --list trace_edges \
+  --snapshot SNAPSHOT_ID --address 0x1000 --offset 0 --json
+neverd lineage --reopen releases.ndlineage --export-report REPORT_ID \
+  --save original.nddiff
+```
+
+Use IDs returned by `versions` and `reports`. Function addresses are exact entry
+addresses. `--reopen` can be combined with more `--report` arguments. `--save`
+writes the whole collection, except with `--export-report`, when it writes the
+exact original source bytes. Output files are replaced only after successful
+preparation and the final cancellation check. A stdout failure after file
+publication cannot roll back the file.
+
+The desktop opens an independent worker. Add comparisons, label snapshots and
+branches, filter functions, activate a function to trace it, inspect direct
+source evidence and conflicts, then save or reopen the collection. Tables retain
+one bounded page; Previous/Next visit the complete admitted inventory. The
+diagram shows the current source-report page, not an entire unbounded graph.
+Keyboard activation and Copy copy original row evidence; context menus also copy
+full values. Resource settings apply to subsequent loads and queries. Invalid,
+stopped or over-budget replacement leaves the old collection available.
+
+## Evidence and identity
+
+A snapshot is one binary content hash **and exact analysis identity**, including
+project identity, format, architecture, ABI, normalization, revision, analysis
+settings, endianness, bitness, image base, entry and discovery completeness. Only
+the caller's filesystem path is excluded. Different inventories under the same
+identity are refused. Identical content analyzed identically is one snapshot;
+separate release aliases and chronological ancestry are outside this profile.
+Labels and branches are analyst-authored metadata, not evidence of ancestry.
+
+An edge retains one accepted pair from one source report. Traversal is undirected;
+the original comparison direction remains in its evidence. Direct, indirect,
+reverse, cyclic and parallel report paths remain visible. A shortest predecessor
+witness is supplied without discarding the other edges. Conflicting counterparts
+in the same snapshot, and an effective report-local Unmatch reached through
+other reports, produce explicit conflict groups. No winner is selected.
+
+Ambiguities, decision histories and native/SSA region hypotheses remain separate
+from accepted edges. Native region anchors contain original snapshot **indices**,
+not freshly resolved addresses. SSA previews expose counts and frontiers; the
+exact source contains complete node mappings. Invalid anchor references fail
+explicitly. Manual assessments retain their original report, case, pair, author,
+note and supersession. They never propagate a patch verdict along graph paths.
+
+A source digest binds exact report bytes, including whitespace. It authenticates
+neither an author nor native inputs. Historical `analyst-review-v1` digests retain
+their original field coverage; newer project metadata is not retroactively added
+to that journal format. `native_authenticated` remains false. Complete traversal
+means all admitted associations were traversed, not semantic equivalence, patch
+presence or vulnerability elimination. Incomplete source reports stay explicit.
+
+## Queries and limits
+
+Every C ABI query requires `kind` and the exact collection `revision`. CLI, worker
+and Python fill the current revision only when omitted; an explicit stale value
+is refused. All pages return `items`, `total`, `offset`, nullable `next_offset`,
+`revision`, `kind` and charged `work`. Unused or unknown query fields are refused.
+
+| Kind | Additional selectors |
+| --- | --- |
+| `versions`, `reports`, `edges`, `conflicts` | None |
+| `functions` | `version`, optional name/address `search` |
+| `trace_nodes`, `trace_edges`, `trace_conflicts` | `version`, string `address` |
+| `conflict_members` | Conflict `index` |
+| `reviews` | Optional `report`; `latest: false` includes superseded history |
+| `decisions`, `ambiguities`, `warnings`, `native_regions`, `flow_regions` | `report` |
+| `ambiguity_primary`, `ambiguity_secondary` | `report`, ambiguity `index` |
+| `native_region_anchors`, `flow_region_anchors` | `report`, hypothesis `index` |
+
+Use `offset`, `limit`, `max_work` and `timeout_ms` on any query. Default pages
+contain 200 rows; the shared maximum is 4,096 rows and 8 MiB. An oversized page
+fails instead of silently truncating. Reduce its row allowance or export the
+original report when individual evidence exceeds a page. CLI `--query` accepts
+this object directly; ordinary page options cannot be mixed with it or with
+source export. `--history` selects superseded review history.
+
+Admission options are `max_source_bytes`, `max_nodes`, `max_edges`, `max_work`
+and `timeout_ms`. Defaults are 256 MiB retained report/label text, 1,048,576
+function records, 4,194,304 association records and 2,147,483,648 work units.
+A zero deadline means no deadline. Admission accounts for the old collection,
+candidate and retained trace during replacement. Exact validated source records
+may be reused, but cache hits are charged against current allowances. One complete
+trace is cached by collection revision and source node, independently of page
+number and trace page kind. Current work/deadline settings still apply.
+
+Source-byte accounting is not process RSS. Work counts lineage byte/record/walk
+operations, not ordered-index comparisons or all hidden saved-reader verifier
+operations. The saved reader retains its own verification budgets. JSON parsing,
+allocations and whole-value copies/comparisons are indivisible cooperative
+checkpoints. Local file input has an explicit aggregate 2 GiB bound. Whole
+collections and reports remain in the worker; only bounded pages cross IPC.
+
+CLI exits: `0` complete without conflicts, `2` conflicts, `3` incomplete source
+reports (takes precedence over conflicts), `1` invalid input or I/O failure,
+`130` cancelled, `124` timed out, `4` resource limited. Inspect the summary to see
+both conflicts and incomplete sources. A stopped load/query produces no partial
+stdout or replacement file. Late cancellation does not undo publication.
+
+## Python and persistence
+
+```python
+from pathlib import Path
+from neverd_plugin import Lineage
+
+with Lineage() as graph:  # Uses the configured native host library.
+    graph.load_reports([Path("a-b.nddiff").read_bytes().decode("utf-8"),
+                        Path("b-c.nddiff").read_bytes().decode("utf-8")])
+    for page in graph.pages("versions", limit=100):
+        print(page["items"])
+    Path("releases.ndlineage").write_text(graph.export())
+```
+
+Use binary-preserving UTF-8 reads (`read_bytes().decode("utf-8")`) when exact
+source line endings matter; ordinary text-mode reads may normalize them before
+admission. `load`, `load_reports`, `query`, `export` and `report` support progress
+callbacks. Callback exceptions cancel native work and are reraised after it
+returns. Only `status` and `cancel` may overlap an operation. Close the handle
+after active work returns. Missing optional native exports fail before creating
+a handle. `pages()` fixes one revision for the entire iterator.
+
+A `.ndlineage` v1 document has `schema: "neverd.bindiff.lineage"`,
+`schema_version: 1`, `reports` containing exact JSON strings, and `versions`
+containing `{id, label, branch}` metadata. Reload revalidates source reports and
+reconstructs the graph; derived edges or conclusions are not trusted from disk.
+
+This profile does not complete the [advanced acceptance map](binary-diff-acceptance.md).
+Release aliases, package-wide graphs, automated patch/backport/revert evidence,
+and independent large-corpus quality/latency qualification remain separate work.

@@ -21,6 +21,7 @@
 #include "ItemViewActivation.h"
 #include "JumpDialog.h"
 #include "Language.h"
+#include "LineageDialog.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
 #include "LocalTypesView.h"
@@ -1772,6 +1773,13 @@ void MainWindow::connectActions() {
     connect(actions_.action(id), &QAction::triggered, this, slot);
   };
   on(ActionId::FileOpen, [this] { openDialog(); });
+  on(ActionId::FileLineage, [this] {
+    if (!lineage_)
+      lineage_ = new LineageDialog(session_.workerPath(), this);
+    lineage_->show();
+    lineage_->raise();
+    lineage_->activateWindow();
+  });
   on(ActionId::FileCompare, [this] {
     if (!comparison_)
       comparison_ = new ComparisonDialog(session_.workerPath(),

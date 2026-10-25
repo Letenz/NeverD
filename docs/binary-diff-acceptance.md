@@ -16,7 +16,7 @@ were understood.
 | A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
 | B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
-| D: version and branch lineage | Pairwise reports and analyst history are reusable inputs | Version graph, conflicting direct/indirect paths, uncertainty, content-addressed reuse, timeline/assessment projections and CLI/GUI persistence; annotation application remains #99 |
+| D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence | Integrated qualification of the new profile; separate release aliases/chronology, package-wide graphs, automated patch/backport/revert evidence and large-corpus quality/latency; annotation application remains #99 |
 | E: software/game packages | Native loaders, module resources and a separate qualified offline web-package behavior comparison exist | One package manifest workflow routing native/managed/metadata/script/config/resource changes, repacking distinctions, qualified Unity/Unreal/Godot adapters and unknown/encrypted coverage |
 | F: competitive qualification | Owned native/compiler regressions and reproducible local receipts | Pinned BinDiff, Diaphora and Ghidra Version Tracking baselines; licensed ground truth, common-input and end-to-end tracks, held-out corpora, per-category quality/resource metrics, frozen numeric gates and statistical evidence |
 
@@ -61,3 +61,12 @@ See [the comparison profiles](binary-diff.md) for exact evidence meanings and
 [the test guide](testing.md#structural-binary-comparison) for owning checks.
 No comparative performance or “best in class” claim is established by the
 current regressions.
+
+The lineage implementation is undergoing integrated qualification. Isolated core,
+C ABI, Python and real worker/CLI results are development evidence, not a claim
+that the complete desktop/product build or a final delivery merge is qualified.
+The preceding fixed integration `183c8acd77b6cbece352b8c7b2dbb70fc97064b7`
+selected 5,439 CTests: 5,376 passed and 63 skipped, with no failures. Its compiler,
+historical-report, Python and Qt checks passed. The normal push delivered
+`32a3acca81cd4850b0fbb50f5ae5f2369bbbfb5c` after additional concurrent upstream
+merges; those later deltas need their own integration coverage.

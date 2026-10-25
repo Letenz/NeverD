@@ -226,6 +226,11 @@ struct ProgramIdentity {
   bool DiscoveryComplete = true;
 };
 
+/// Versioned, length-delimited identity of an analyzed snapshot. Preserves
+/// exact field bytes and excludes only the caller's path. This is an encoding,
+/// not a digest or authentication of the input or its analysis.
+std::string programAnalysisIdentity(const ProgramIdentity &Identity);
+
 /// One side of a comparison.
 struct Program {
   ProgramIdentity Identity;

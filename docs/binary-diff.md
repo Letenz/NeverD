@@ -1179,8 +1179,8 @@ reference provenance and broader profile qualification remain work in progress.
 Native runs and verified finite SSA neighborhoods are parts of the required
 transformation work. Broader CFG/IR region matching, compiler/O-level/LTO/PGO/obfuscation
 qualification, cross-ISA profiles, security-fix triage, interprocedural data effects,
-broader semantic validation beyond the pure scalar-return profile, branch-aware
-multi-version lineage, native/game package
+broader semantic validation beyond the pure scalar-return profile, release-aware
+lineage beyond the offline snapshot graph, native/game package
 adapters and competitive qualification remain outstanding. No comparative
 performance superiority is established.
 The [advanced acceptance map](binary-diff-acceptance.md) tracks the required
@@ -1195,3 +1195,11 @@ checks. SDK/core suites have their respective test labels. Shared traversal
 changes also require the session discovery and worker/CLI instruction-flow tests.
 Set `NEVERD_DIFF_SCREENSHOTS` while running the GUI test to retain real light/dark
 Qt captures; run separately with `QT_SCALE_FACTOR=1` and `1.5` for DPI review.
+
+## Multi-version review
+
+The [offline version graph](binary-diff-lineage.md) combines retained comparisons,
+traces function associations across branches and cycles, exposes conflicting
+paths and keeps manual assessments attached to their original evidence. CLI,
+C ABI, Python, worker and desktop share this model and exact source persistence.
+This first profile makes no chronology or automatic patch-presence inference.
