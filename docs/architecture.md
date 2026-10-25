@@ -474,8 +474,16 @@ occurrences, accessed-byte ownership and raw-base rebasing agree; source body
 filtering cannot bypass that requirement. This is not automatic immediate
 CPA2 lifting coverage.
 Both native compiler routes use fixed separate input/output registers, preserving
-source aliases and the encoded scale. SP provenance is retained in IR, but
-execution projection refuses it without its alignment and tagging environment.
+source aliases and the encoded scale. The common machine table also owns literal
+SP forms. With no image, an explicit raw-SP parameter can select the physical SP
+for one original memory instruction. Both projections save the host SP in X14,
+select the supplied SP, execute the unchanged SP-base access and restore the host
+SP on normal completion; X14 and memory are explicit clobbers. A fault observes
+the supplied SP. LLVMC checks the complete template, constraints and literal Rn,
+rather than recognizing an SP instruction as an ordinary GPR access.
+Image-backed bases, constants, SSA/frame values and reconstructed source stacks
+retain their admission failure before body filtering. This single-access contract
+does not reconstruct a stack ABI, asynchronous unwind or tagging environment.
 The software tracer admits a finite image/RAM read only when the authoritative
 address owner proves identical address bits for CPTA on/off and every internal
 CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
@@ -11908,6 +11916,15 @@ the C text. GUI worker previews and CLI `--stack-frame` requests use this same
 check for both C routes. The SDK checks optional input digests and original
 graph snapshots; the worker owns project history while CLI policies are
 explicit JSON inputs. See [stack-frame corrections](gui-stack-frame.md).
+
+For validated original AArch64 memory operations, a constant raw index supplies
+the encoded nominal byte displacement through the instruction owner. The same
+must-analysis records the exact instruction/sequence, original word, width and
+read/write direction, including SP origin. LowToMed frame bounds reuse these
+observations instead of its flow-insensitive address map. Unknown indices,
+conflicting predecessors, independent roots and expired temporaries grant no
+access. Nominal extents grant no checked-address, incoming-byte, translation or
+no-fault proof; opaque operations remain incomplete to generic memory analyses.
 
 ## Explicit runtime modules and persistent execution
 
