@@ -303,6 +303,11 @@ find() { return 0; }
         # Exercise the actual declarative inventory and its identity checks.
         # Stop before the first filesystem mutation or CTest invocation.
         inventory = textwrap.dedent(script.split('          evidence = Path(', 1)[0])
+        body = ast.parse(textwrap.dedent(script.split('\n          PY\n', 1)[0]))
+        owners = next(node for node in ast.walk(body)
+                      if isinstance(node, ast.Assign) and any(
+                          isinstance(target, ast.Name) and target.id == "owners"
+                          for target in node.targets))
         for runner, profile in (("Linux", "linux-semantic"),
                                 ("macOS", "macos-patch"),
                                 ("Windows", "windows-focused")):
@@ -311,6 +316,17 @@ find() { return 0; }
                 scope = {}
                 exec(compile(inventory, str(WORKFLOW), "exec"), scope)
                 self.assertEqual(len(scope["expected"]), scope["expected_count"])
+                exec(compile(ast.Module(body=[owners], type_ignores=[]),
+                             str(WORKFLOW), "exec"), scope)
+                for item in scope["expected"]:
+                    self.assertTrue(item.labels.intersection(scope["owners"]),
+                                    f"selector omits {runner}: {item.name}")
+                code_owners = [item for item in scope["expected"]
+                               if item.name.startswith("ExecutableCodeOwnerIndex.")]
+                self.assertEqual(len(code_owners), 6)
+                for item in code_owners:
+                    self.assertEqual(item.labels,
+                                     frozenset({"NeverDExecutableCodeOwnerTests"}))
 
     def test_med_ir_exports_source_abi_and_objc_dependencies(self):
         with tempfile.TemporaryDirectory(prefix="neverd-med-ir-link-") as directory:

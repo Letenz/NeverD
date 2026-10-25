@@ -948,17 +948,17 @@ jobs:
                   ("LowInstructionBoundary.IndexedNoReturnPreservesConditionalAndReturningPaths",
                    "NeverDLiftTests", "NeverDLowInstructionBoundaryTests"),
                   ("ExecutableCodeOwnerIndex.PreservesMetadataBoundariesAndRawThumbSpelling",
-                   "NeverDExecutableCodeOwnerTests", "NeverDLiftTests"),
+                   "NeverDExecutableCodeOwnerTests"),
                   ("ExecutableCodeOwnerIndex.FreshScopeObservesEditsAndMismatchUsesLiveImage",
-                   "NeverDExecutableCodeOwnerTests", "NeverDLiftTests"),
+                   "NeverDExecutableCodeOwnerTests"),
                   ("ExecutableCodeOwnerIndex.KeepsMappingPrecedenceAndLiveEntryEvidence",
-                   "NeverDExecutableCodeOwnerTests", "NeverDLiftTests"),
+                   "NeverDExecutableCodeOwnerTests"),
                   ("ExecutableCodeOwnerIndex.FunctionEndsKeepExactRawEntriesAndSmallestEnd",
-                   "NeverDExecutableCodeOwnerTests", "NeverDLiftTests"),
+                   "NeverDExecutableCodeOwnerTests"),
                   ("ExecutableCodeOwnerIndex.FunctionEndScopeObservesEditsAndImageMismatch",
-                   "NeverDExecutableCodeOwnerTests", "NeverDLiftTests"),
+                   "NeverDExecutableCodeOwnerTests"),
                   ("ExecutableCodeOwnerIndex.IndexedFunctionEndsPreserveNativeInteriorRoots",
-                   "NeverDExecutableCodeOwnerTests", "NeverDLiftTests"),
+                   "NeverDExecutableCodeOwnerTests"),
                   ("MedVariadic.HomeSlotProofKeepsIdentityPhiAndAddressSpaceBoundaries",
                    "NeverDLiftTests"),
                   ("MedVariadic.DefinitionLookupIsFreshForEachFunctionAndEdit",
@@ -1567,15 +1567,9 @@ jobs:
           tests_file.write_text(
               "".join(item.name + "\n" for item in expected), encoding="utf-8"
           )
-          # CTest accepts any matching label. Select the owning aggregates;
-          # additional labels remain part of each exact expected identity.
-          owners = (
-              "NeverDLanguageEHTests", "NeverDLibCTests", "NeverDLiftTests",
-              "NeverDMetadataJSONTests",
-              "NeverDMobileTests", "NeverDSessionCAPITests",
-              "NeverDObjCRuntimeSourceTests",
-              "NeverDPipelineOutcomeTests",
-          )
+          # Names and labels come from the same exact inventory. Moving a
+          # test into a dedicated owner must not leave the selector behind.
+          owners = sorted({label for item in expected for label in item.labels})
           owner_regex = "^(" + "|".join(re.escape(owner) for owner in owners) + ")$"
           common = [
               "ctest", "--test-dir", "build-ci", "--build-config", "Release",
