@@ -5141,6 +5141,58 @@ TEST_F(ProcessPublic, DexWireAllowanceReachesSharedValidation) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidLargeFilePayloadsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const std::string Options = std::string(R"({"backend":"unicorn","android":{
+        "entry_symbol":"jni_vm_lifecycle","initialize":false,"jni":true},
+        "linux_files":{"files":[{"path":"/payload","bytes_hex":")") +
+                              std::string(3u * 1024u * 1024u, 'a') + R"("}]}})";
+  ASSERT_GT(Options.size(), 2112u * 1024u);
+  for (const char *Variant : {"jni-O0-none", "jni-O2-relr"}) {
+    SCOPED_TRACE(Variant);
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string(Variant) + ".so"))
+               .string();
+    auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::cantFail(llvm::json::parse(Text));
+    ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned") << Text;
+    EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+    EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+              process_cli::Success);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
+#endif
+}
+
+TEST_F(ProcessPublic, LinuxFileWireAllowanceReachesSharedValidation) {
+  // More than the former complete wire limit: admission must pass both the
+  // C-string scan and the common parser before profile validation refuses it.
+  const std::string Request =
+      std::string(R"({"linux_files":{"files":[{"path":"/f","bytes_hex":")") +
+      std::string(3u * 1024u * 1024u, 'a') + R"("}]}})";
+  ASSERT_GT(Request.size(), 2112u * 1024u);
+  ASSERT_LT(Request.size(), NEVERD_PROCESS_OPTIONS_JSON_LIMIT);
+  EXPECT_EQ(neverd_emulate_process_json(Session, MissingPath, WindowsPE64,
+                                        Request.c_str()),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)), field::LinuxFilesProfile);
+  const std::string Padded = Request + std::string(65536, ' ');
+  EXPECT_EQ(neverd_emulate_process_json(Session, MissingPath, WindowsPE64,
+                                        Padded.c_str()),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_last_error(Session)), field::TooLarge);
+  EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+}
+
 TEST_F(ProcessPublic, InvalidSetupDoesNotPoisonTheReusableSession) {
   EXPECT_EQ(
       neverd_emulate_process_json(nullptr, Path.c_str(), LinuxELF64, nullptr),

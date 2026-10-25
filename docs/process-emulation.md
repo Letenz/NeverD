@@ -64,10 +64,16 @@ output = bytes.fromhex(report["stdout_hex"])
 
 ## Options and results
 
-Options are a JSON object with at most 64 KiB of request text, excluding two
-hexadecimal characters per validated `android.dex_images` byte. That explicit
-DEX allowance raises the total wire ceiling to 2112 KiB; it does not enlarge
-other field budgets. JSON escape overhead still counts as request text.
+Options are a JSON object with at most 64 KiB of metadata, excluding two
+hexadecimal characters per validated `android.dex_images` byte and per
+validated `linux_files.files[].bytes_hex` byte. The total wire ceiling is
+34880 KiB: up to 1 MiB of decoded DEX, up to 16 MiB of decoded Linux
+regular-file bytes, and the metadata allowance. The existing aggregate
+Linux file budget still charges paths, directories, links, devices and
+write reservations, so regular-file content cannot consume that entire
+16 MiB by itself. Paths, other binary fields, whitespace and JSON escape
+overhead remain metadata. These transport allowances do not enlarge any
+decoded field budget or grant access to host files.
 Unknown fields, null field values,
 invalid types, embedded NULs in strings and nonpositive limits are rejected.
 

@@ -8122,6 +8122,13 @@ time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
+`processOptionsFromJSON` owns request wire accounting for every frontend.
+Only validated DEX and Linux regular-file bytes earn hexadecimal payload
+capacity beyond the metadata ceiling. The Android and Linux input owners
+retain their independent decoded and aggregate budgets; strings, paths,
+other binary fields and JSON escape overhead remain metadata. The C ABI
+uses the same outer limit before scanning its NUL-terminated input.
+
 `LinuxFiles` also owns the opt-in directory creation provider, mutable directory
 metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in

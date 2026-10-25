@@ -13637,3 +13637,8 @@ The URL and named UTF-8 byte encoding fixtures compare complete SDK and CLI
 reports, including terminal diagnostics, Java state and guarded native memory.
 The same UTF-16 encoder serves DEX and JNI callers; the native matrix checks
 optimization, relocation packing, reference retention and independent arrays.
+
+Regular-file bytes use a bounded hexadecimal transport allowance only after
+validation by the shared Linux file-input owner. JSON tests cover the decoded
+aggregate limit, malformed data, paths, escapes, and independent metadata limits.
+Public SDK and CLI tests compare complete reports for large admitted payloads.

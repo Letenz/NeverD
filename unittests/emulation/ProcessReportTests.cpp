@@ -3072,9 +3072,9 @@ TEST(ProcessReport, DexWireBudgetPreservesTheMetadataAndDecodedByteBounds) {
   const std::string Request = Prefix + Hex + Suffix;
   ASSERT_GT(Request.size(), 65536u);
   check(Request, true);
-  check(Request + std::string(field::JSONLimit - Request.size(), ' '), true);
-  check(Request + std::string(field::JSONLimit - Request.size() + 1, ' '),
-        false);
+  const size_t WireLimit = Hex.size() + field::JSONMetadataLimit;
+  check(Request + std::string(WireLimit - Request.size(), ' '), true);
+  check(Request + std::string(WireLimit - Request.size() + 1, ' '), false);
   check(Prefix + Hex + "ab" + Suffix, false);
   check(Prefix + Hex.substr(0, Hex.size() / 2) + "\",\"" +
             Hex.substr(Hex.size() / 2) + Suffix,
@@ -3092,6 +3092,110 @@ TEST(ProcessReport, DexWireBudgetPreservesTheMetadataAndDecodedByteBounds) {
     ASSERT_FALSE(bool(Rejected));
     EXPECT_EQ(llvm::toString(Rejected.takeError()), field::TooLarge);
   }
+}
+TEST(ProcessReport, LinuxFileWireBudgetPreservesMetadataAndDecodedBounds) {
+  const size_t FileLimit = 16u * 1024u * 1024u;
+  const std::string Prefix =
+      R"({"linux_files":{"files":[{"path":"/f","bytes_hex":")";
+  const std::string Suffix = R"("}]}})";
+  // The existing decoded catalogue budget includes the path and its terminator.
+  const std::string Hex((FileLimit - 3) * 2, 'a');
+  const std::string Request = Prefix + Hex + Suffix;
+  auto check = [&](const std::string &Text, bool Accepted) {
+    auto O = processOptionsFromJSON(Text);
+    const bool Valid = bool(O);
+    const auto Error = Valid ? std::string() : llvm::toString(O.takeError());
+    EXPECT_EQ(Valid, Accepted) << Error;
+    if (!Valid)
+      return;
+    ASSERT_TRUE(O->LinuxFiles);
+    const auto &Bytes = O->LinuxFiles->Files.at("/f");
+    EXPECT_EQ(Bytes.size(), FileLimit - 3);
+    EXPECT_TRUE(llvm::all_of(Bytes, [](uint8_t B) { return B == 0xaa; }));
+  };
+  check(Request, true);
+  const size_t WireLimit = Hex.size() + field::JSONMetadataLimit;
+  check(Request + std::string(WireLimit - Request.size(), ' '), true);
+  check(Request + std::string(WireLimit - Request.size() + 1, ' '), false);
+  check(Prefix + Hex + "aa" + Suffix, false);
+  check(Prefix + Hex + R"("},{"path":"/g","bytes_hex":")" + Suffix, false);
+}
+
+TEST(ProcessReport, LinuxFileWireAllowanceCombinesValidatedPayloads) {
+  const size_t FileBytes = 16u * 1024u * 1024u - 6;
+  const size_t DexBytes = 1024u * 1024u;
+  const std::string First(FileBytes, 'a');
+  const std::string Second(FileBytes, 'b');
+  const std::string Dex(DexBytes * 2, 'c');
+  const std::string Request =
+      std::string(R"({"linux_files":{"files":[{"path":"/a","bytes_hex":")") +
+      First + R"("},{"path":"/b","bytes_hex":")" + Second +
+      R"("}]},"android":{"jni":true,"dex_images":[")" + Dex + R"("]}})";
+  ASSERT_GT(Request.size(), 32u * 1024u * 1024u);
+  auto O = processOptionsFromJSON(Request);
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxFiles);
+  ASSERT_TRUE(O->Android);
+  ASSERT_EQ(O->LinuxFiles->Files.size(), 2u);
+  EXPECT_EQ(O->LinuxFiles->Files.at("/a").size(), FileBytes / 2);
+  EXPECT_EQ(O->LinuxFiles->Files.at("/b").size(), FileBytes / 2);
+  EXPECT_EQ(O->LinuxFiles->Files.at("/a").back(), 0xaa);
+  EXPECT_EQ(O->LinuxFiles->Files.at("/b").back(), 0xbb);
+  ASSERT_EQ(O->Android->DexImages.size(), 1u);
+  EXPECT_EQ(O->Android->DexImages.front().size(), DexBytes);
+  EXPECT_EQ(O->Android->DexImages.front().back(), 0xcc);
+  const size_t WireLimit =
+      (FileBytes + DexBytes) * 2 + field::JSONMetadataLimit;
+  auto Exact = processOptionsFromJSON(
+      Request + std::string(WireLimit - Request.size(), ' '));
+  ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+  auto Excess = processOptionsFromJSON(
+      Request + std::string(WireLimit - Request.size() + 1, ' '));
+  ASSERT_FALSE(bool(Excess));
+  EXPECT_EQ(llvm::toString(Excess.takeError()), field::TooLarge);
+}
+
+TEST(ProcessReport, LinuxFileWireAllowanceRequiresValidatedRegularFiles) {
+  const std::string Hex(80000, 'a');
+  for (const auto &Text :
+       {std::string(R"({"darwin_files":{"files":[{"path":"/f","bytes_hex":")") +
+            Hex + R"("}]}})",
+        std::string(R"({"arguments":[")") + Hex + R"("]})"}) {
+    auto O = processOptionsFromJSON(Text);
+    ASSERT_FALSE(bool(O));
+    EXPECT_EQ(llvm::toString(O.takeError()), field::TooLarge);
+  }
+  for (const auto &Text :
+       {std::string(R"({"linux_files":{"files":[{"path":"/f","bytes_hex":")") +
+            Hex + R"(g0"}]}})",
+        std::string(R"({"linux_files":{"files":[{"path":"/f","bytes_hex":")") +
+            Hex + R"(","unknown":0}]}})",
+        std::string(R"({"linux_files":{"files":[{"path":"/f","bytes_hex":")") +
+            Hex + R"("},{"path":"/f","bytes_hex":""}]}})",
+        std::string(R"({"linux_files":{"files":[{"path":"/f","bytes":")") +
+            Hex + R"("}]}})"}) {
+    auto O = processOptionsFromJSON(Text);
+    ASSERT_FALSE(bool(O));
+    llvm::consumeError(O.takeError());
+  }
+}
+
+TEST(ProcessReport, LinuxFileWireAllowanceChargesJSONEscapeOverhead) {
+  const std::string Hex(80000, 'a');
+  const std::string Request =
+      std::string(
+          R"({"linux_files":{"files":[{"path":"/f","bytes_hex":"\u0061)") +
+      Hex.substr(1) + R"("}]}})";
+  const size_t WireLimit = Hex.size() + field::JSONMetadataLimit;
+  auto Exact = processOptionsFromJSON(
+      Request + std::string(WireLimit - Request.size(), ' '));
+  ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+  ASSERT_TRUE(Exact->LinuxFiles);
+  EXPECT_EQ(Exact->LinuxFiles->Files.at("/f").size(), Hex.size() / 2);
+  auto Excess = processOptionsFromJSON(
+      Request + std::string(WireLimit - Request.size() + 1, ' '));
+  ASSERT_FALSE(bool(Excess));
+  EXPECT_EQ(llvm::toString(Excess.takeError()), field::TooLarge);
 }
 TEST(ProcessReport, DarwinFileInputsAreLosslessAndRequireDarwinProfiles) {
   auto O = processOptionsFromJSON(R"({"darwin_files":{"files":[
