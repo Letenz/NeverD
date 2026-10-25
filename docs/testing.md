@@ -907,6 +907,9 @@ after changing frame-member queries.
 `*PackageApplicationInfo*` tests exact name/flag keys, independent mutable
 query results, retained Context fields, nullable and unknown field states,
 UTF-16 names, invalid typed/JSON responses and terminal work/storage limits.
+`AndroidFrameworkTest.PackageQueriesAdmitOneResultAllocation` compares the
+shared query allocation budget and checks that exhaustion leaves no result
+object allocated.
 The native fixture checks ordinary and jvalue-array calls and field ownership
 across detach and a second thread; DEX queries enter the same owner. Run the
 full Dalvik, Android JNI and ProcessReport suites for this shared contract.
