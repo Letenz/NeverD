@@ -132,10 +132,12 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
     ExhaustedArm,
     MixedIndirect,
     UnsupportedArm,
-    PACMArm
+    PACMArm,
+    ScalableCPAArm
   };
-  // Scalable ADDPT remains decodable but unmodelled. PACM now has executed
-  // prefix semantics and must no longer stand in for an unsupported opcode.
+  // PTRUES remains refused because its NZCV effects are not modelled. PACM
+  // and scalable ADDPT now have checked semantics and are positive cases.
+  constexpr uint32_t UnsupportedPtrues = 0x2519e3e0;
   constexpr uint32_t ScalableAddpt = 0x04e20820;
   const std::pair<Arch, InstructionMode> Targets[] = {
       {Arch::X86, InstructionMode::Default},
@@ -150,7 +152,7 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
             Shape::Trap, Shape::Indirect, Shape::Cycle, Shape::Truncated,
             Shape::CFGBoundary, Shape::Exhausted, Shape::EscapingBranch,
             Shape::TruncatedArm, Shape::ExhaustedArm, Shape::MixedIndirect,
-            Shape::UnsupportedArm, Shape::PACMArm}) {
+            Shape::UnsupportedArm, Shape::PACMArm, Shape::ScalableCPAArm}) {
         SCOPED_TRACE(testing::Message()
                      << unsigned(Architecture) << ':' << unsigned(Mode) << ':'
                      << unsigned(Format) << ':' << unsigned(Form));
@@ -158,7 +160,9 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         const bool X86 = Architecture == Arch::X86 || Architecture == Arch::X64;
         const bool Thumb = Mode == InstructionMode::Thumb;
         const bool A64 = Architecture == Arch::AArch64;
-        if ((Form == Shape::UnsupportedArm || Form == Shape::PACMArm) && !A64)
+        if ((Form == Shape::UnsupportedArm || Form == Shape::PACMArm ||
+             Form == Shape::ScalableCPAArm) &&
+            !A64)
           continue;
         // Pin both the 64/65 linear-prefix and 256/257 reachable-probe edges.
         size_t Prefix = limits::kMaxVerifyInsns;
@@ -170,7 +174,7 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
             Form == Shape::Conditional || Form == Shape::EscapingBranch ||
             Form == Shape::TruncatedArm || Form == Shape::ExhaustedArm ||
             Form == Shape::MixedIndirect || Form == Shape::UnsupportedArm ||
-            Form == Shape::PACMArm;
+            Form == Shape::PACMArm || Form == Shape::ScalableCPAArm;
         std::vector<uint8_t> Body;
         const auto Word = [&](uint32_t Value) {
           const size_t At = Body.size();
@@ -228,6 +232,9 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         else if (Form == Shape::Indirect || Form == Shape::MixedIndirect)
           Indirect();
         else if (Form == Shape::UnsupportedArm) {
+          Word(UnsupportedPtrues);
+          Return();
+        } else if (Form == Shape::ScalableCPAArm) {
           Word(ScalableAddpt);
           Return();
         } else if (Form == Shape::PACMArm) {
@@ -281,14 +288,21 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         Img.Symbols.push_back(Symbol::makeFunc(Base, X86 || Thumb ? 6 : 8));
         Decoder Dec;
         ASSERT_TRUE(Dec.init(Img));
-        if (Form == Shape::UnsupportedArm) {
+        if (Form == Shape::UnsupportedArm || Form == Shape::ScalableCPAArm) {
           uint8_t Bytes[4];
-          writeLE<uint32_t>(Bytes, ScalableAddpt);
+          writeLE<uint32_t>(Bytes, Form == Shape::UnsupportedArm
+                                       ? UnsupportedPtrues
+                                       : ScalableAddpt);
           DecodedInsn I;
           ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), Callee, I), 4);
           ASSERT_FALSE(I.Raw->illegal);
           std::vector<LowOp> Ops;
-          EXPECT_THROW(Dec.liftToLow(I, Ops), UnliftedInstruction);
+          if (Form == Shape::UnsupportedArm)
+            EXPECT_THROW(Dec.liftToLow(I, Ops), UnliftedInstruction);
+          else {
+            EXPECT_NO_THROW(Dec.liftToLow(I, Ops));
+            EXPECT_FALSE(Ops.empty());
+          }
         }
         FuncDetector Detector;
         const auto Functions = Detector.detect(Img, Dec);
@@ -297,7 +311,8 @@ TEST(FunctionDiscoveryAlignment, LongCalleesNeedReachableCallableExits) {
         const bool Expected =
             Form == Shape::PrefixBoundary || Form == Shape::Straight ||
             Form == Shape::Conditional || Form == Shape::CFGBoundary ||
-            Form == Shape::MixedIndirect || Form == Shape::PACMArm;
+            Form == Shape::MixedIndirect || Form == Shape::PACMArm ||
+            Form == Shape::ScalableCPAArm;
         EXPECT_EQ(
             llvm::any_of(Functions,
                          [&](const auto &F) { return F.first == Callee; }),
