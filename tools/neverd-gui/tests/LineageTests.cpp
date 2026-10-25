@@ -31,6 +31,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -348,6 +349,108 @@ private slots:
     QCOMPARE(Versions->selected().value("id"), ID);
     QCOMPARE(Versions->selected().value("label").toString(),
              QString("Second-page release"));
+  }
+
+  void smallerPagesRecoverLargeMetadataWithoutLosingSnapshots() {
+    // These report-only fixture identities isolate paging. The source reader
+    // still validates every report; no fresh native authentication is claimed.
+    const auto Original =
+        QJsonDocument::fromJson(read(Reports[0].toString())).object();
+    QJsonArray Many;
+    for (int I = 0; I < 100; ++I) {
+      auto Document = Original;
+      for (const auto &[Side, Number] :
+           {qMakePair("primary", I * 2), qMakePair("secondary", I * 2 + 1)}) {
+        auto Identity = Document[Side].toObject();
+        Identity["sha256"] =
+            QString::number(Number + 2000, 16).rightJustified(64, '0');
+        Document[Side] = Identity;
+      }
+      const auto Path =
+          Directory.filePath(QString("large-page-%1.nddiff").arg(I));
+      QVERIFY(
+          write(Path, QJsonDocument(Document).toJson(QJsonDocument::Compact)));
+      Many.append(Path);
+    }
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    View.show();
+    View.resize(760, 560);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Many}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Sources = View.findChild<LineagePageView *>("lineageSources");
+    QVERIFY(Versions && Sources);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 200,
+                             Timeout);
+    const auto Initial = Versions->rows();
+    const QString Padding(48 * 1024, 'x');
+    QJsonArray Updates;
+    for (int I = 0; I < Initial.size(); ++I)
+      Updates.append(
+          QJsonObject{{"id", Initial[I].toObject()["id"]},
+                      {"label", QString("Snapshot %1: ").arg(I) + Padding},
+                      {"branch", ""}});
+    Session.load({{"append", true}, {"version_updates", Updates}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Errors.size(), 0);
+    QCOMPARE(Session.summary()["versions"].toInt(), 200);
+    QVERIFY(Versions->rows().isEmpty());
+    QVERIFY(Sources->rows().isEmpty());
+
+    // Admission succeeded, but both default pages exceed the byte allowance.
+    // The user must be able to recover without replacing or truncating data.
+    auto *Rows = Versions->findChild<QSpinBox *>("lineagePageRows");
+    QVERIFY(Rows && Rows->isEnabled());
+    QCOMPARE(Rows->value(), 200);
+    Rows->setValue(100);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 100,
+                             Timeout);
+    for (int I = 0; I < 100; ++I) {
+      QCOMPARE(Versions->rows()[I].toObject()["id"],
+               Initial[I].toObject()["id"]);
+      QVERIFY(
+          Versions->rows()[I].toObject()["label"].toString().endsWith(Padding));
+    }
+    QToolButton *Next = nullptr, *Previous = nullptr;
+    for (auto *Button : Versions->findChildren<QToolButton *>()) {
+      if (Button->arrowType() == Qt::RightArrow)
+        Next = Button;
+      if (Button->arrowType() == Qt::LeftArrow)
+        Previous = Button;
+    }
+    QVERIFY(Next && Previous && Next->isEnabled());
+    QTest::mouseClick(Next, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->offset() == 100,
+                             Timeout);
+    QCOMPARE(Versions->rows().size(), 100);
+    for (int I = 0; I < 100; ++I)
+      QCOMPARE(Versions->rows()[I].toObject()["id"],
+               Initial[I + 100].toObject()["id"]);
+    QVERIFY(!Next->isEnabled());
+    Rows->setValue(50);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 50,
+                             Timeout);
+    QCOMPARE(Versions->offset(), 100);
+    QVERIFY(Previous->isEnabled());
+    QTest::mouseClick(Previous, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->offset() == 50,
+                             Timeout);
+    QCOMPARE(Versions->rows()[0].toObject()["id"],
+             Initial[50].toObject()["id"]);
+
+    auto *SourceRows = Sources->findChild<QSpinBox *>("lineagePageRows");
+    QVERIFY(SourceRows && SourceRows->isEnabled());
+    SourceRows->setValue(50);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Sources->rows().size() == 50,
+                             Timeout);
+    QCOMPARE(Session.summary()["versions"].toInt(), 200);
+    QCOMPARE(Errors.size(), 0);
+    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Output.isEmpty())
+      QVERIFY(View.grab().save(Output + "/large-page-recovered.png"));
   }
 
   void replacementResetsNavigationButAppendAndFailureKeepIt() {
