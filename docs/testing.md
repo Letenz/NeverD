@@ -2424,7 +2424,8 @@ its dock button and the tab context menu in both themes. Direct dock actions
 work with the floating lock enabled; title-bar docking first unlocks it.
 `NeverDGuiDocking` checks the drawn floating caption with both values of the
 retired native-caption preference, including visible minimize and maximize
-controls and full-size close targets. `doubleClickDetachStartsLocked` and
+controls, full-size close targets, and a padlock that opens and closes with the
+lock over the caption's own color. `doubleClickDetachStartsLocked` and
 `lockedDragsStayFloating` check the default lock, caption movement and rejected
 tab docking. `explicitDockIgnoresLock` clicks the dock button while locked.
 `floatingEdgesResizeWithoutDocking` resizes all four edges and all four corners
@@ -2527,7 +2528,10 @@ project as appropriate. `auxiliaryChoosersStayInteractive` checks Pathfinder
 and type-library choices, including invalidation by a project edit.
 `jumpBrowserKeepsItsOpeningAddress` evaluates relative expressions after
 background navigation. `commandPaletteReturnsToItsSource` checks cancellation
-and dispatch into the original docked or floating pane. Ordinary source xrefs
+and dispatch into the original docked or floating pane.
+`commandPaletteDropsFromTheCommandCenter` clicks the title bar's command center
+and checks that the palette drops from it, while its key still opens the
+palette over the focused pane. Ordinary source xrefs
 also accept into their original code view after another code view gains focus.
 `changedSourceDismissesReferenceBrowsers` closes an already open ordinary xref
 browser when its source reloads, changes function or changes representation.
