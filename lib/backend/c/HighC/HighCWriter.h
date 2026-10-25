@@ -337,6 +337,7 @@ public:
   bool cxxThrowUsesRuntimeCall(const HighExpr &ThrowCall) const;
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
+  std::string sehFilterName(const HighEHClause &Clause);
   void writeUnstructuredSEHRegion(const HighStmt &Stmt, int Indent);
   /// The blocks the exception runtime enters for except clauses \p Entries of
   /// an unstructured region: each runs its handler's entry copies, then jumps
@@ -684,6 +685,8 @@ public:
   /// record an MSVC call returns through a hidden pointer; null where C
   /// cannot spell it.
   TypeRef callResultType(const HighExpr &Call) const;
+  bool debugCallReturnIsDeclared(const HighExpr &Call,
+                                 const FunctionSym &Function) const;
   TypeRef callResultPointerTypeNamed(const std::string &Name) const;
   /// The pointer type of the member \p Value reads, where it prints as a
   /// typed record's member (`Format->lpDecimalSep`); null otherwise.

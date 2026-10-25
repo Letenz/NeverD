@@ -5296,6 +5296,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     return true;
   }
 
+  if (auto Prefetch = renderX86PrefetchCall(Opts.TheArch, Call, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Prefetch->Code;
+    return true;
+  }
+
   auto Render =
       renderInlineAsm(Opts.TheArch, AsmStr, Call.getType()->isStructTy(), Name,
                       ResultLive, ArgStrs);
@@ -7567,6 +7573,21 @@ std::string LLVMCWriter::importCalleeCName(const llvm::Value *Callee) const {
     Ptr = LI->getPointerOperand()->stripPointerCasts();
 
   auto nameFromSlot = [&](va_t Slot) -> std::string {
+    // A data object's debug name names its storage, not the function pointer
+    // currently loaded from it. Only a loader-bound import can replace that
+    // load with a fixed callee identity.
+    if (llvm::isa<llvm::LoadInst>(Op)) {
+      if (!Img)
+        return {};
+      const Import *Imported = Img->findImportAt(Slot);
+      const auto Bound = Img->ImportStorageSlots.find(Slot);
+      const bool BoundImport =
+          Bound != Img->ImportStorageSlots.end() &&
+          !Img->ConflictingImportStorageSlots.count(Slot) &&
+          Bound->second.Addend == 0;
+      if ((!Imported || Imported->IATAddr != Slot) && !BoundImport)
+        return {};
+    }
     if (Dbg) {
       if (auto Data = Dbg->resolveDataObject(Slot); Data && !Data->Name.empty())
         return canonicalizeCProjectionIdentifier(Data->Name, "nd_import");

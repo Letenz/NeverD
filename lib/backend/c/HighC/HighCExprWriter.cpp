@@ -298,8 +298,10 @@ std::string HighCWriter::rawVarName(const MedVar &V) const {
   case MedVar::EHSelector:
     return "eh_selector";
   case MedVar::SEHExceptionCode:
-    return V.SSAVer <= 1 ? std::string("exception_code")
-                         : "exception_code_" + std::to_string(V.SSAVer);
+    // <excpt.h> defines exception_code as an alias of _exception_code.
+    // A local with that spelling would shadow GetExceptionCode's intrinsic.
+    return V.SSAVer <= 1 ? std::string("seh_exception_code")
+                         : "seh_exception_code_" + std::to_string(V.SSAVer);
   case MedVar::Temp:
     return "t" + std::to_string(V.Id) +
            (V.SSAVer == 0 ? "" : "_" + std::to_string(V.SSAVer));
@@ -3350,7 +3352,8 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
       Defined->second->SourceTypeHint)
     if (const auto Return = declaredFunctionReturnType(*Defined->second))
       return Return;
-  if (const auto Callee = debugCallee(E)) {
+  if (const auto Callee = debugCallee(E);
+      Callee && debugCallReturnIsDeclared(E, *Callee)) {
     // A result whose type C cannot spell is the register it arrives in.
     if (!hasCValueLayout(cDisplayType(Callee->ReturnType)))
       return {};

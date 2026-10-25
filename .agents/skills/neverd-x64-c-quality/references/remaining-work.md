@@ -12,6 +12,24 @@ stated symbols and user identities cannot be removed by that reconciliation.
 COFF instruction-content flags and page execute permissions are separate.
 Full source emission is not proof of executable kernel reconstruction.
 
+Mapped LLVM C pages now leave EH tokens without a storage extent instead of
+querying DataLayout for an unsized type. The same public exception fixture
+checks mapped/unmapped source identity and executes both continuations. SEH
+units include their platform declarations, name filter callees and retain
+implicit exception-code assignments without colliding with header macros.
+
+Debug-named callback storage remains a loaded target unless loader import
+evidence binds its identity. Switching the slot at runtime is covered on
+COFF and ELF. HighC call results use only an admitted declaration, including
+header-owned record argument adapters; a rejected debug prototype cannot
+silently change an integer carrier into a pointer result.
+
+LLVM C prefetch rendering now checks the full owned assembly contract and
+retains computed memory operands and FS/GS overrides. All six hint forms
+assemble at O0/O2; baseline read hints execute, while write hints and segment
+forms do not assume host features or segment bases. Altered constraints,
+dialect, effects, stack alignment and address width remain refused.
+
 CLAC/STAC, XEND and CLZERO now share the validated system-instruction contract in
 HighC, native LLVM and LLVMC. Their ordered effects survive unused results and
 source optimization; scalar emulation cannot silently claim completion.

@@ -1697,30 +1697,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       } else if (Clause.FilterValue) {
         OS << sehFilterValueText(*Clause.FilterValue);
       } else {
-        // The filter is named as the function list and a call to it name
-        // it: its definition here, else the image's name for the function
-        // there (an export, then its best symbol rather than a section's
-        // own), else debug information.
-        std::string FilterName;
-        if (auto It = DefinedFunctionsByAddress.find(Clause.FilterOrActionVA);
-            It != DefinedFunctionsByAddress.end() && It->second)
-          FilterName = functionIdentifier(*It->second);
-        if (FilterName.empty() && Opts.Image) {
-          const std::string &Listed =
-              imageFunctionNameAt(Clause.FilterOrActionVA);
-          if (!llvm::StringRef(Listed).starts_with(kAutoFuncPrefix))
-            FilterName = functionIdentifier(Listed);
-        }
-        if (FilterName.empty() && Dbg) {
-          if (auto Sym = Dbg->resolveFunction(Clause.FilterOrActionVA);
-              Sym && !Sym->Name.empty())
-            FilterName = functionIdentifier(Sym->Name);
-        }
-        if (FilterName.empty() && Clause.FilterOrActionVA)
-          FilterName = functionIdentifier(
-              (kAutoFuncPrefix + llvm::utohexstr(Clause.FilterOrActionVA))
-                  .str());
-        OS << FilterName << "(GetExceptionInformation())";
+        OS << sehFilterName(Clause) << "(GetExceptionInformation())";
       }
       OS << ") {\n";
       // GetExceptionCode() is only valid in the __except arm; the handler
@@ -2509,7 +2486,9 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         S.CxxContinuationReturnTargets.empty() && S.RetVal &&
         S.RetVal->Kind == ExprKind::Var) {
       const std::string Name = varName(S.RetVal->Var);
-      bool AssignedHere = false;
+      // The except arm captures this value before its explicit statements.
+      bool AssignedHere = S.RetVal->Var.Kind == MedVar::SEHExceptionCode &&
+                          SEHExceptionCodeNames.count(S.RetVal->Var.ConstVal);
       for (size_t K = 0; K < I; ++K) {
         const HighStmt &Prev = Stmts[K];
         if (Prev.Kind != StmtKind::Assign || !Prev.Dst)
