@@ -19,6 +19,7 @@
 #include "../render/X86/X86AmxState.h"
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86CompressExpand.h"
+#include "../render/X86/X86FourSource.h"
 #include "../render/X86/X86RepState.h"
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
@@ -2000,6 +2001,16 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (E.IntrinsicId == Intrinsic::X86FourSourceMemory) {
+    std::vector<std::string> Args;
+    for (const auto &V : E.Operands) {
+      if (!V)
+        throw std::invalid_argument(X86FourSourceMalformed);
+      Args.push_back(intrinsicOperandStr(*V));
+    }
+    return renderX86FourSourceExpression(Opts.TheArch, E, Args,
+                                         typeToC(E.Type));
+  }
   if (isX86CompactMemory(E.IntrinsicId)) {
     std::vector<std::string> Args;
     for (const auto &V : E.Operands) {

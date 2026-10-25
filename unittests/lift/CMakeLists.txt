@@ -707,6 +707,10 @@ add_neverd_unittest(NeverDX86CompressExpandSourceTests
   x86/X86CompressExpandSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 
+add_neverd_unittest(NeverDX86FourSourceSourceTests
+  x86/X86FourSourceSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
 add_neverd_unittest(NeverDX86APXAtomicSourceTests
   x86/X86APXAtomicSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -764,6 +768,12 @@ target_include_directories(NeverDX86AMXLLVMGuardTests PRIVATE
 
 # Pins exact 128/256/512-bit memory transfer behavior independently of the
 # aggregate lift suite, including fault atomicity and address wrap rejection.
+add_neverd_unittest(NeverDNdOpEmulatorTests
+  core/NdOpEmulatorTests.cpp
+  core/NdOpEmulatorBitOpsTests.cpp
+  core/NdOpEmulatorMemoryTests.cpp
+  LINK_COMPONENTS IRLow Lift Loader Symbolic)
+
 add_neverd_unittest(NeverDNdOpEmulatorWideMemoryTests
   core/NdOpEmulatorWideMemoryTests.cpp
 

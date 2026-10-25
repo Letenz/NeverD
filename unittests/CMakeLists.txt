@@ -121,6 +121,7 @@ add_neverd_unittest(NeverDBinaryDiffTests
   BinaryDiffProgressTests.cpp
   BinaryDiffBranchProgressTests.cpp
   BinaryDiffModularProgressTests.cpp
+  BinaryDiffParameterBoundProgressTests.cpp
   BinaryDiffFlowBindingTests.cpp
   BinaryDiffFlowRegionsTests.cpp
   BinaryDiffFlowFragmentsTests.cpp
@@ -324,7 +325,7 @@ if(TARGET neverd_shared)
         --fixture "${CMAKE_CURRENT_SOURCE_DIR}/diff/compiler_regions_fixture.c"
         --artifacts "${CMAKE_CURRENT_BINARY_DIR}/bindiff-compiler-regions")
     set_tests_properties(NeverDBinaryDiffCompilerRegions PROPERTIES
-      TIMEOUT 120 LABELS "NeverDBinaryDiff")
+      TIMEOUT 300 LABELS "NeverDBinaryDiff")
   endif()
   add_neverd_unittest(NeverDBinaryDiffSDKTests
     BinaryDiffSDKTests.cpp

@@ -183,6 +183,7 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Madvise:
   case ServiceKind::Mincore:
   case ServiceKind::Brk:
+  case ServiceKind::Prctl:
     return Memory.handle(Kind, Event, Result);
   case ServiceKind::ArchPrctl:
     return archPrctl(CPU, Event, Layout, Result);

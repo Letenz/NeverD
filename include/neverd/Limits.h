@@ -794,8 +794,9 @@ constexpr unsigned kMaxCPointerNesting = 16;
 /// Largest fixed integer vector represented by a C compiler vector type.
 constexpr unsigned kMaxCIntegerVectorBytes = 64;
 
-/// Largest scalar integer represented by the C source emitters.
-constexpr unsigned kMaxCIntegerBits = 512;
+/// Largest scalar C integer carrier used for packed architectural operands:
+/// the complete group of four 512-bit source registers.
+constexpr unsigned kMaxCSourceIntegerBytes = 4 * kMaxCIntegerVectorBytes;
 
 /// HighC dead-store / store-forward expression walks.
 constexpr unsigned kMaxHighCMemoryWalkDepth = 128;

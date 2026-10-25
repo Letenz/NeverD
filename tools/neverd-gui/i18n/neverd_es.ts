@@ -6469,6 +6469,10 @@ Cobertura: %7</translation>
         <source>Optimized SSA with wrapping loop analysis</source>
         <translation>SSA optimizada con análisis de bucles con retorno modular</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles con límite paramétrico</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6635,6 +6639,14 @@ La terminación no demuestra que coincidan los números de iteraciones ni los re
     <message>
         <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
         <translation>Prueba: cada ciclo del contador alcanza una salida común, incluso tras un retorno modular.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles con límite paramétrico</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
+        <translation>Prueba: cada ciclo del contador alcanza una salida común relativa a un parámetro de entrada. Puede producirse un comportamiento indefinido antes de salir.</translation>
     </message>
 </context>
 <context>

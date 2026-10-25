@@ -425,7 +425,8 @@ protected:
     lock_->setObjectName(QStringLiteral("floatingLockButton"));
     lock_->setCheckable(true);
     lock_->setAutoRaise(true);
-    lock_->setIcon(neverd::gui::icon("lock"));
+    // The padlock opens and closes with the state; no fill repeats it.
+    lock_->setProperty("glyphToggle", true);
     lock_->setFixedSize(::neverd::limits::gui_config::kTitleBarHeight,
                         ::neverd::limits::gui_config::kTitleBarHeight);
     m_layout->insertWidget(m_layout->indexOf(m_minimizeButton), lock_);
@@ -455,7 +456,7 @@ protected:
     QWidget::window()->installEventFilter(this);
     connect(&Theme::instance(), &Theme::changed, this, [this] {
       updateMaximize();
-      lock_->setIcon(neverd::gui::icon("lock"));
+      updateLock();
       update();
     });
     updateMaximize();
@@ -528,6 +529,7 @@ private:
     if (!lock_)
       return;
     const bool locked = lock_->isChecked();
+    lock_->setIcon(neverd::gui::icon(locked ? "lock" : "lock_open"));
     const auto text =
         locked
             ? QCoreApplication::translate("Docking", "Unlock floating window")

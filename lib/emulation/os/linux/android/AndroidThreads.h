@@ -31,11 +31,10 @@ public:
   enum class WaitSource { NativeCall, KernelService };
   GuestThreads(ExecutionBackend &CPU, const IntegerABI &Calls,
                const ProcessOptions &Options, ProcessResult &Result,
-               linux_model::LinuxClock &Clock,
-               linux_model::LinuxPriority &PriorityState,
-               linux_model::LinuxSignals &Signals)
-      : CPU(CPU), Calls(Calls), Options(Options), Result(Result), Clock(Clock),
-        PriorityState(PriorityState), Signals(Signals) {}
+               linux_model::LinuxServices &Kernel)
+      : CPU(CPU), Calls(Calls), Options(Options), Result(Result),
+        Kernel(Kernel), Clock(Kernel.clock()), PriorityState(Kernel.priority()),
+        Signals(Kernel.signals()) {}
   llvm::Error initialize(uint64_t StackBase);
   llvm::Error validateTLS();
   bool enabled() const { return Options.Android->ThreadLimit > 1; }
@@ -118,6 +117,7 @@ private:
   const IntegerABI &Calls;
   const ProcessOptions &Options;
   ProcessResult &Result;
+  linux_model::LinuxServices &Kernel;
   linux_model::LinuxClock &Clock;
   linux_model::LinuxPriority &PriorityState;
   linux_model::LinuxSignals &Signals;

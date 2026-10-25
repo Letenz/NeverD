@@ -1866,6 +1866,64 @@ TEST(LLVMCIntrinsicSemantics, FloatToIntegerPreservesSignedResultBits) {
     compileAndCheck(Source, false, {}, Level, true);
 }
 
+TEST(LLVMCIntrinsicSemantics, PackedIntegerNumericCastsKeepEveryLimb) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("packed-integer-numeric-casts", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  std::string Main = "int main(void) {\n";
+  for (unsigned Bits : {1024U, 1984U, 2048U}) {
+    auto *Integer = Builder.getIntNTy(Bits);
+    auto *Float = Builder.getDoubleTy();
+    const std::string Width = std::to_string(Bits);
+    for (bool ToFloat : {false, true})
+      for (bool Signed : {false, true}) {
+        llvm::Type *Input = ToFloat ? Integer : Float;
+        llvm::Type *Output = ToFloat ? Float : Integer;
+        const auto Opcode = ToFloat ? (Signed ? llvm::Instruction::SIToFP
+                                              : llvm::Instruction::UIToFP)
+                                    : (Signed ? llvm::Instruction::FPToSI
+                                              : llvm::Instruction::FPToUI);
+        const std::string Name =
+            std::string(ToFloat ? "to_float_" : "from_float_") +
+            (Signed ? "signed_" : "unsigned_") + Width;
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Output, {Input}, false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+        Builder.SetInsertPoint(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        Builder.CreateRet(
+            Builder.CreateCast(Opcode, Function->getArg(0), Output));
+      }
+    // The complete integer sign/magnitude may exceed double's range. Small
+    // signed values still observe every upper limb of the wider carrier.
+    Main += "{ typedef unsigned _BitInt(" + Width +
+            ") bits;\n"
+            "const int values[] = {-17, -1, 0, 1, 17};\n"
+            "for (unsigned i = 0; i != 5; ++i) {\n"
+            "const bits expected = (bits)values[i];\n"
+            "if (from_float_signed_" +
+            Width +
+            "(values[i]) != expected) return 1;\n"
+            "if (to_float_signed_" +
+            Width +
+            "(expected) != values[i]) return 2;\n"
+            "if (values[i] >= 0 && (from_float_unsigned_" +
+            Width + "(values[i]) != expected || to_float_unsigned_" + Width +
+            "(expected) != values[i])) return 3;\n"
+            "}\n"
+            "if (from_float_signed_" +
+            Width + "(-1.75) != ~(bits)0 || from_float_unsigned_" + Width +
+            "(1.75) != 1) return 4;\n"
+            "}\n";
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  const auto Source = "#include <stdint.h>\n" + emit(Module) + Main;
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Level, true);
+}
+
 TEST(LLVMCIntrinsicSemantics, FloatingComparisonsReadBitcastValue) {
   llvm::LLVMContext Context;
   llvm::Module Module("floating-bitcast-comparison", Context);

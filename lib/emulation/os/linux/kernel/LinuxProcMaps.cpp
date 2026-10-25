@@ -76,6 +76,13 @@ LinuxMemory::procMappings() const {
       Cut(M.Address);
       Cut(M.Address + M.Size);
     }
+    auto Name = std::upper_bound(
+        AnonymousVMANames.begin(), AnonymousVMANames.end(), Range.Address,
+        [](uint64_t At, const auto &N) { return At < N.End; });
+    for (auto I = Name; I != AnonymousVMANames.end() && I->Begin < End; ++I) {
+      Cut(I->Begin);
+      Cut(I->End);
+    }
     for (const auto &A : ReadOnlyDeviceRanges) {
       Cut(A.Begin);
       Cut(A.End);
@@ -95,6 +102,10 @@ LinuxMemory::procMappings() const {
       M.Address = Cuts[I - 1];
       M.Size = Cuts[I] - M.Address;
       M.Permissions = Range.Permissions;
+      while (Name != AnonymousVMANames.end() && Name->End <= M.Address)
+        ++Name;
+      if (Name != AnonymousVMANames.end() && Name->Begin <= M.Address)
+        M.AnonymousName = Name->Name;
       bool Labeled = false;
       for (const auto &Label : ProcMappings) {
         if (M.Address < Label.Address ||

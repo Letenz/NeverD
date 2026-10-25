@@ -29,6 +29,7 @@
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
+#include "../render/X86/X86FourSource.h"
 #include "../render/X86/X86ScalarSystem.h"
 #include "../render/X86/X86SystemRegister.h"
 #include "../render/X86/X86SystemState.h"
@@ -2538,7 +2539,7 @@ static void lowerPackedVectorBitcasts(llvm::Module &Mod) {
     const unsigned ScalarBits = Scalar->getPrimitiveSizeInBits();
     const unsigned Count = Vector->getNumElements();
     const unsigned Bits = Vector->getElementType()->getPrimitiveSizeInBits();
-    if (ScalarBits > limits::kMaxCIntegerBits ||
+    if (ScalarBits > limits::kMaxCSourceIntegerBytes * 8 ||
         uint64_t(Count) * Bits != ScalarBits)
       continue;
     auto *Integer = llvm::IntegerType::get(Mod.getContext(), ScalarBits);
@@ -2647,7 +2648,8 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
-    if (x86CompactCallPlan(TheArch, *Call))
+    if (x86CompactCallPlan(TheArch, *Call) ||
+        x86FourSourceCallPlan(TheArch, *Call))
       return true;
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (isX86AmxNativeRowCall(*Call, TheArch))
@@ -2842,6 +2844,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
           (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
           (void)x86CompactCallPlan(Opts.TheArch, *Call);
+          (void)x86FourSourceCallPlan(Opts.TheArch, *Call);
         }
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(

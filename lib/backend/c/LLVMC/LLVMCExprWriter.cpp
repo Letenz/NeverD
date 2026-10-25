@@ -160,10 +160,10 @@ std::string unsignedCmpOperand(const std::string &S) {
 }
 
 unsigned signedIntegerCarrierWidth(unsigned Width) {
-  if (Width > limits::kMaxCIntegerBits)
-    throw std::runtime_error("LLVMC signed operand exceeds " +
-                             std::to_string(limits::kMaxCIntegerBits) +
-                             "-bit carrier");
+  if (Width > limits::kMaxCSourceIntegerBytes * 8)
+    throw std::runtime_error(
+        "LLVMC signed operand exceeds " +
+        std::to_string(limits::kMaxCSourceIntegerBytes * 8) + "-bit carrier");
   return Width <= 8     ? 8
          : Width <= 16  ? 16
          : Width <= 32  ? 32
@@ -3699,11 +3699,11 @@ std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
       SrcTy->isIntegerTy() ? SrcTy->getIntegerBitWidth() : 0;
   const unsigned DstWidth =
       DstTy->isIntegerTy() ? DstTy->getIntegerBitWidth() : 0;
-  if (SrcWidth > limits::kMaxCIntegerBits ||
-      DstWidth > limits::kMaxCIntegerBits)
-    throw std::runtime_error("LLVMC integer cast exceeds " +
-                             std::to_string(limits::kMaxCIntegerBits) +
-                             "-bit carrier");
+  if (SrcWidth > limits::kMaxCSourceIntegerBytes * 8 ||
+      DstWidth > limits::kMaxCSourceIntegerBytes * 8)
+    throw std::runtime_error(
+        "LLVMC integer cast exceeds " +
+        std::to_string(limits::kMaxCSourceIntegerBytes * 8) + "-bit carrier");
 
   auto Cast = [](const std::string &Type, const std::string &Text) {
     return "(" + Type + ")(" + Text + ")";

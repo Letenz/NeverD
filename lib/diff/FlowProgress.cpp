@@ -11,6 +11,7 @@
 
 #include "FlowProgress.h"
 
+#include "FlowParameterViews.h"
 #include "LLVMFlowSemantics.h"
 
 #include "neverd/diff/Control.h"
@@ -41,6 +42,8 @@ llvm::StringRef flowCounterProofName(FlowCounterProof Proof) {
     return "nowrap";
   case FlowCounterProof::Modular:
     return "modular";
+  case FlowCounterProof::ParameterModular:
+    return "parameter_modular";
   }
   return "invalid";
 }
@@ -417,7 +420,7 @@ bool modularExitCoverage(llvm::ArrayRef<llvm::ConstantRange> Continued,
   return Covered == Period;
 }
 
-/// v4/v5 group all paths that advance one header counter. Original predecessor
+/// v4-v6 group all paths that advance one header counter. Original predecessor
 /// inventories and scratch are shared across candidates/components. A funnel
 /// has one unconditional physical backedge and several consuming guards; its
 /// witnesses belong to those guards, not duplicate rows for the same latch.
@@ -433,7 +436,7 @@ class BranchProof {
   const DataFlowGraph &G;
   llvm::StringRef Contract;
   llvm::function_ref<void(uint64_t)> Charge;
-  const bool Modular;
+  const bool Modular, ParameterBound;
   std::vector<std::vector<uint32_t>> Predecessors;
   std::vector<uint32_t> HeaderValues, ArmValues, Owners;
   std::vector<uint8_t> Seen;
@@ -606,6 +609,55 @@ class BranchProof {
     return {};
   }
 
+  struct ParameterObservation {
+    uint64_t Parameter, Offset;
+  };
+  std::optional<ParameterObservation>
+  parameterObservation(const FlowOperand &Input, unsigned Width) {
+    const auto Parameter = [&](const FlowOperand &Value) {
+      Charge(1 + Value.Semantics.size());
+      return Value.Type == FlowOperand::Kind::Parameter &&
+             Value.Value < G.ParameterViews.size() &&
+             G.ParameterViews[Value.Value].ViewBits == Width &&
+             Value.Semantics ==
+                 parameterViewSemantics(G.ParameterViews[Value.Value]);
+    };
+    if (Parameter(Input))
+      return ParameterObservation{Input.Value, 0};
+    if (Input.Type != FlowOperand::Kind::Node)
+      return {};
+    const auto &N = G.Nodes[Input.Node];
+    Charge(1 + N.Semantics.size());
+    if ((N.Opcode != "add" && N.Opcode != "sub") || N.Inputs.size() != 2)
+      return {};
+    const auto *Base = &N.Inputs[0], *Offset = &N.Inputs[1];
+    if (N.Opcode == "add" && Base->Type == FlowOperand::Kind::Constant)
+      std::swap(Base, Offset);
+    const auto Type = "i" + std::to_string(Width);
+    Charge(1 + Offset->Semantics.size());
+    if (!Parameter(*Base) || Offset->Type != FlowOperand::Kind::Constant ||
+        Offset->Semantics != Type)
+      return {};
+    llvm::StringRef Suffix(N.Semantics);
+    unsigned Flags = 0;
+    constexpr unsigned WrapFlags =
+        llvm::OverflowingBinaryOperator::NoSignedWrap |
+        llvm::OverflowingBinaryOperator::NoUnsignedWrap;
+    if (!Suffix.consume_front(Contract) ||
+        !Suffix.consume_front(";result=" + Type + ";flags=") ||
+        Suffix.getAsInteger(10, Flags) || Suffix != std::to_string(Flags) ||
+        (Flags & ~WrapFlags))
+      return {};
+    // Pure arithmetic on the same parameter has a coherent constant value
+    // throughout the recurrence, wherever evaluated. A freeze/PHI/select is
+    // deliberately not traversed: it could pick a new value each iteration.
+    // Ignoring overflow flags only adds concrete continuation possibilities;
+    // actual poison flows through the comparison into the direct branch.
+    const auto Bits = llvm::APInt(Width, Offset->Value);
+    return ParameterObservation{
+        Base->Value, (N.Opcode == "sub" ? -Bits : Bits).getZExtValue()};
+  }
+
   bool modularCandidate(uint32_t Counter, uint32_t Header) {
     Trial.clear();
     if (!indexPhi(Counter, Header, G.Nodes[Counter].Semantics, HeaderValues))
@@ -669,6 +721,7 @@ class BranchProof {
     if (!Uniform || !Delta)
       return false;
     std::vector<llvm::ConstantRange> Continued;
+    std::optional<uint64_t> Parameter;
     for (size_t I = 0; I < Guards.size(); ++I) {
       const auto &Guard = Guards[I];
       const auto &Observed = Observations[I];
@@ -687,31 +740,54 @@ class BranchProof {
       if (G.Blocks[Guard.Block].Successors[0] != Guard.Target)
         Pred = llvm::CmpInst::getInversePredicate(Pred);
       if (Bound.Type == FlowOperand::Kind::Constant &&
-          Bound.Semantics == "i" + std::to_string(Width))
+          Bound.Semantics == "i" + std::to_string(Width)) {
+        if (Parameter)
+          return false;
         Continued.push_back(llvm::ConstantRange::makeExactICmpRegion(
                                 Pred, llvm::APInt(Width, Bound.Value))
                                 .subtract(llvm::APInt(Width, Observed.Offset)));
-      else if (const auto Other =
-                   observationOffset(Bound, Guard, Counter, Header))
+      } else if (const auto Other =
+                     observationOffset(Bound, Guard, Counter, Header)) {
+        if (Parameter)
+          return false;
         Continued.push_back(
             sameCounterRegion(Pred, llvm::APInt(Width, Observed.Offset),
                               llvm::APInt(Width, *Other)));
-      else
+      } else if (ParameterBound && llvm::CmpInst::isEquality(Pred)) {
+        const auto Relative = parameterObservation(Bound, Width);
+        if (!Relative || (I && !Parameter) ||
+            (Parameter && *Parameter != Relative->Parameter))
+          return false;
+        Parameter = Relative->Parameter;
+        // Let X = counter - parameter. Equality (counter+A) == (parameter+B)
+        // is X == B-A, even across wraparound. Every continuation guard uses
+        // this same coordinate system. The fixed delta gives the same orbit
+        // residues as in v5, for every concrete parameter and initial seed.
+        // No undef is frozen: coherent choices are included among all choices
+        // that a defined continuation must satisfy. A common exit is therefore
+        // false or undefined; a varying undef bound cannot force continuation.
+        Continued.push_back(llvm::ConstantRange::makeExactICmpRegion(
+            Pred, llvm::APInt(Width, Relative->Offset) -
+                      llvm::APInt(Width, Observed.Offset)));
+      } else
         return false;
     }
     if (!modularExitCoverage(Continued, Width, Delta, Charge))
       return false;
     for (auto &L : Trial) {
       Charge(1);
-      L.Proof = FlowCounterProof::Modular;
+      L.Proof = Parameter ? FlowCounterProof::ParameterModular
+                          : FlowCounterProof::Modular;
     }
     return true;
   }
 
 public:
   BranchProof(const DataFlowGraph &Graph, llvm::StringRef Contract,
-              llvm::function_ref<void(uint64_t)> Charge, bool Modular)
-      : G(Graph), Contract(Contract), Charge(Charge), Modular(Modular) {
+              llvm::function_ref<void(uint64_t)> Charge, bool Modular,
+              bool ParameterBound)
+      : G(Graph), Contract(Contract), Charge(Charge), Modular(Modular),
+        ParameterBound(ParameterBound) {
     Charge(5 * uint64_t(G.Blocks.size()));
     Predecessors.resize(G.Blocks.size());
     HeaderValues.resize(G.Blocks.size(), NoIndex);
@@ -788,12 +864,13 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
   const uint64_t Retained = G.Nodes.size() + G.ParameterViews.size() + 1;
   if (Retained > Options.MaxNodes)
     throw DataFlowInterrupted(ComparisonState::ResourceLimited);
-  const bool Modular = Mode == FlowProgressMode::Modular;
+  const bool ParameterBound = Mode == FlowProgressMode::ParameterBound;
+  const bool Modular = Mode == FlowProgressMode::Modular || ParameterBound;
   const bool Branched = Mode == FlowProgressMode::Branched || Modular;
   const bool Nested = Mode == FlowProgressMode::Nested || Branched;
   std::optional<BranchProof> Branches;
   if (Branched)
-    Branches.emplace(G, Contract, Charge, Modular);
+    Branches.emplace(G, Contract, Charge, Modular, ParameterBound);
   do {
     const auto Previous = P.Loops.size();
     std::optional<FlowComponents> C;

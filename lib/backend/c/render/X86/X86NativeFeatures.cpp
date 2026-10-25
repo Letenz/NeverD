@@ -16,6 +16,7 @@
 #include "X86AmxState.h"
 #include "X86BoundedLeaf.h"
 #include "X86CompressExpand.h"
+#include "X86FourSource.h"
 #include "X86RepState.h"
 
 #include "neverd/backend/llvm/X86/LLVMX86SHA.h"
@@ -122,7 +123,7 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
 } // namespace
 
 std::string x86NativeFunctionPreamble(const HighFunc &Function) {
-  bool Atomic = false, Compact = false;
+  bool Atomic = false, Compact = false, FourSource = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
   std::set<std::string> Required;
@@ -137,6 +138,11 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
       const auto P = x86CompactHighPlan(Arch::X64, *E);
       for (const auto &Name : x86CompactSourceFeatures(P))
         Required.insert(Name);
+    }
+    if (E->IntrinsicId == Intrinsic::X86FourSourceMemory) {
+      (void)x86FourSourceHighPlan(Arch::X64, *E);
+      FourSource = true;
+      Required.insert("avx512f");
     }
     Sgx |= isX86SgxIntrinsic(E->IntrinsicId);
     if (isX86BoundedLeafIntrinsic(E->IntrinsicId)) {
@@ -154,11 +160,12 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
   walkStmts(Function.Body, [&](const HighStmt &S) { forEachExpr(S, Visit); });
   return std::string(Atomic ? X86APXAtomicCompilerDispatch : "") +
          (Compact ? X86CompactCompilerDispatch : "") +
+         (FourSource ? X86FourSourceCompilerDispatch : "") +
          preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
                   BoundedEnclu, Required);
 }
 std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
-  bool Atomic = false, Compact = false;
+  bool Atomic = false, Compact = false, FourSource = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
   std::set<std::string> Required;
@@ -177,6 +184,10 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
         Compact = true;
         for (const auto &Name : x86CompactSourceFeatures(*P))
           Required.insert(Name);
+      }
+      if (x86FourSourceCallPlan(Arch::X64, *Call)) {
+        FourSource = true;
+        Required.insert("avx512f");
       }
       if (llvmX86SHA256CName(*Call))
         Required.insert("sha");
@@ -207,12 +218,14 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
         Sgx |= Mnemonic == "encls" || Mnemonic == "enclv";
         // An older SDK's owned assembly can select a native C builtin later.
         // Its feature requirement must survive that assembly representation.
-        if (isX86RtmNativeName("llvm.x86." + Mnemonic.str()))
-          Required.insert("rtm");
+        if (const auto *Feature =
+                x86SystemNativeTargetFeature("llvm.x86." + Mnemonic.str()))
+          Required.insert(Feature);
       }
     }
   return std::string(Atomic ? X86APXAtomicCompilerDispatch : "") +
          (Compact ? X86CompactCompilerDispatch : "") +
+         (FourSource ? X86FourSourceCompilerDispatch : "") +
          preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
                   BoundedEnclu, Required);
 }
