@@ -16,6 +16,8 @@
 
 #include "llvm/Support/ConvertUTF.h"
 
+#include <cstddef>
+
 namespace neverd {
 namespace {
 
