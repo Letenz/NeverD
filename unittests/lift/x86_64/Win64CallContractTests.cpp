@@ -4490,6 +4490,7 @@ BinaryImage registerQueryImage(unsigned Mutation = 0) {
                                            : ExceptionPersonality::None;
     Exception.ParseStatus = ExceptionParseStatus::Partial;
     Image.ExceptionMetadata.Functions.push_back(std::move(Exception));
+    Image.ExceptionMetadata.rebuildIndex();
   }
   return Image;
 }
