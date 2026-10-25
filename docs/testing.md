@@ -2365,6 +2365,14 @@ All desktop windows use the application frame and shadow; native APIs still
 provide movement and window states. Cocoa resizing uses the same drawn edges
 with a mouse grab when Qt cannot start a native resize.
 
+`NeverDGuiUnits::returnOnAListOfChoicesPressesTheDefaultButton` presses Return
+on a dialog's combo box as Qt's GNOME theme handles it: a list of choices
+accepts the dialog, while a combo box that takes typing keeps the key.
+`NeverDGuiController::outputLogFollowsTheTheme` recolors lines written before a
+theme change, in both directions. `narrowHexViewScrollsToItsText` narrows the
+hex view below a row's width, then checks that arrow keys keep the byte in view
+and that a click on the last text cell, scrolled sideways, takes its byte.
+
 `NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
 and shortcut tooltips through action changes, translation and disabled actions.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
