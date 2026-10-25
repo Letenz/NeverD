@@ -1832,7 +1832,7 @@ void MainWindow::connectActions() {
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         commandWindow(), tr("Load signature pack"), {},
-        tr("Signature packs (*.pat *.json);;All files (*)"));
+        tr("Signature packs (*.pat *.npat *.json);;All files (*)"));
     if (!path.isEmpty())
       session_.loadSignatures(path, false);
   });

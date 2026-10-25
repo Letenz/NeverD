@@ -128,6 +128,19 @@ SHA-256 vector projections participate in the same feature set, including the
 SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
 shape before selecting a compiler intrinsic.
 
+`X86LiftTransactions` owns the bounded XABORT/XEND/XTEST instruction family,
+separate from SIMD cryptography. Raw byte/detail agreement precedes all effects.
+XABORT's constant byte and void completion use the shared system-state shape
+across LowIR, MedIR and C admission. Native LLVM and both C routes retain the
+same byte; a missing or dynamic operand cannot become an arbitrary abort code.
+
+`X86LiftTBM` owns the nine trailing-bit operations, including their XOP
+byte/detail validation, source-before-destination carry calculation, defined
+flags and undefined AF/PF effects. The common three-byte prefix and memory-tail
+validators retain VEX/XOP addressing rules; TBM owns its opcode/group, width and
+operand roles. Its arithmetic LowIR is shared by LLVM and both C routes.
+Undefined-output coverage is separate from an opaque machine-state bank audit.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR
@@ -465,8 +478,16 @@ occurrences, accessed-byte ownership and raw-base rebasing agree; source body
 filtering cannot bypass that requirement. This is not automatic immediate
 CPA2 lifting coverage.
 Both native compiler routes use fixed separate input/output registers, preserving
-source aliases and the encoded scale. SP provenance is retained in IR, but
-execution projection refuses it without its alignment and tagging environment.
+source aliases and the encoded scale. The common machine table also owns literal
+SP forms. With no image, an explicit raw-SP parameter can select the physical SP
+for one original memory instruction. Both projections save the host SP in X14,
+select the supplied SP, execute the unchanged SP-base access and restore the host
+SP on normal completion; X14 and memory are explicit clobbers. A fault observes
+the supplied SP. LLVMC checks the complete template, constraints and literal Rn,
+rather than recognizing an SP instruction as an ordinary GPR access.
+Image-backed bases, constants, SSA/frame values and reconstructed source stacks
+retain their admission failure before body filtering. This single-access contract
+does not reconstruct a stack ABI, asynchronous unwind or tagging environment.
 The software tracer admits a finite image/RAM read only when the authoritative
 address owner proves identical address bits for CPTA on/off and every internal
 CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
@@ -701,9 +722,15 @@ semantics.
 ## GUI project and search ownership
 
 `CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
-LowIR facts without reading memory or inventing live-in register values, then
-revalidates the producer's basic block after discovering new paths. Lost or
-incomplete proofs retain the original indirect transfer. The native function
+LowIR facts without inventing live-in register values. Exact ordinary scalar
+loads share `readImmutableImageScalar` with MedIR: only uniquely mapped,
+immutable data or supported instruction storage without overlapping fixups
+can supply bits, and pointer-width address candidates retain their separate
+relocation proof. Cold reads charge the image metadata inventory against the
+existing evidence budget; repeated reads cache successes and failures within
+one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
+Recovery revalidates the producer's basic block after discovering new paths.
+Lost or incomplete proofs retain the original indirect transfer. The native function
 disassembly API publishes these same instruction boundaries and targets; raw
 disassembly remains linear. The worker uses recovered bodies for function
 listings and replaces their linear reference-scan results, so skipped bytes do
@@ -1923,6 +1950,20 @@ or exception-personality context (`SignatureDB::buildNameMap`). Byte/reference
 agreement alone remains a candidate (`buildCandidateNameMap`) and cannot
 authorize type lookup, safety sinks, automatic renaming or library folding.
 The signature database owns this decision; SDK, CLI and worker consume it.
+Native `!refs` candidates require all outgoing context before settlement;
+`!caller` records are separate name-indexed bodies requested only after that
+settlement by a complete, strong and unambiguous ordinary caller. Incoming
+requests never change their anchors' outgoing evidence. Complete, strong
+incoming bodies can extend a bounded rooted chain, with every generation
+validated against the same original outgoing result. Only new frontiers are
+visited; short bodies and unrooted cycles cannot extend them. Both forms
+remain candidate evidence under the same identity boundary. The shared name
+index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
+claims are not opted into incoming inference merely by loading them. Source
+refinements of ordinary anchors share the frozen reference validation pass;
+contradicted refinements withdraw only the incoming names they supported.
+The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
+loader owns validation of primary MSVC RTTI metadata.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
@@ -4477,6 +4518,16 @@ Both source routes apply the same module-wide return modeling before recovering
 call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
 uses the two integer return registers; HighIR and LLVM emission must preserve
 both halves through callers and source returns.
+
+Explicit source declarations can bind entry and call carriers on HighC and on
+an LLVM-to-C source projection. Machine lifting, patching and analysis ignore
+these declarations, including when a patch request also sets the source-view
+flag. LLVM source projection does not enable runtime signature discovery.
+`MedTypePass` connects declared incoming stack bytes to raw entry-SP loads by
+initializing their local source frame once. Ordinary MedIR stores preserve
+subsequent writes and floating-point bit patterns; both emitters consume that
+same initialization. This transports an already supplied declaration and does
+not infer an original prototype or authorize a machine-code rewrite.
 
 The `neverd-bytecode` tool and C/Python plugins accept externally specified
 instruction languages through the shared recovery pipeline. C/Python callers
@@ -11887,6 +11938,15 @@ the C text. GUI worker previews and CLI `--stack-frame` requests use this same
 check for both C routes. The SDK checks optional input digests and original
 graph snapshots; the worker owns project history while CLI policies are
 explicit JSON inputs. See [stack-frame corrections](gui-stack-frame.md).
+
+For validated original AArch64 memory operations, a constant raw index supplies
+the encoded nominal byte displacement through the instruction owner. The same
+must-analysis records the exact instruction/sequence, original word, width and
+read/write direction, including SP origin. LowToMed frame bounds reuse these
+observations instead of its flow-insensitive address map. Unknown indices,
+conflicting predecessors, independent roots and expired temporaries grant no
+access. Nominal extents grant no checked-address, incoming-byte, translation or
+no-fault proof; opaque operations remain incomplete to generic memory analyses.
 
 ## Explicit runtime modules and persistent execution
 

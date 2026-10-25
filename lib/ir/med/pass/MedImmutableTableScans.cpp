@@ -353,26 +353,9 @@ public:
         if (auto Target = readImmutableImageCodePointer(Image, Slot))
           return address(*Target, true);
       }
-      auto Bytes = readImmutableImageBytes(Image, Slot, Size);
-      // Obfuscators also keep scalar constants among instruction bytes. A
-      // real LOAD may read those bytes; executable storage does not by itself
-      // make its contents an address. The code reader independently checks
-      // readable immutable mappings and rejects every overlapping fixup. Do
-      // not relax ordinary object reads or grant any new pointer identity.
-      if (!Bytes)
-        Bytes = readImmutableCodeBytes(Image, Slot, Size);
-      if (!Bytes)
-        return std::nullopt;
-      uint64_t Bits = 0;
-      for (unsigned I = 0; I < Size; ++I)
-        Bits |= uint64_t{(*Bytes)[I]} << (I * 8);
-      // Exact bytes alone cannot distinguish an address from an integer with
-      // the same bits. Only the pointer readers above may publish an address;
-      // retaining this LOAD preserves the backend's relocation proof.
-      if (Size == Image.getPointerSize() &&
-          Image.isPotentiallyRelocatableAddress(Bits))
-        return std::nullopt;
-      return literal(Bits, Size);
+      if (auto Bits = readImmutableImageScalar(Image, Slot, Size))
+        return literal(*Bits, Size);
+      return std::nullopt;
     }
     auto B = Op.NumInputs >= 2 ? value(Op.Inputs[1], Bindings, Depth + 1)
                                : std::nullopt;

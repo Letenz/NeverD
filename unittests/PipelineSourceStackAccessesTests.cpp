@@ -105,7 +105,7 @@ TEST(PipelineSourceStackAccesses, MachineRequestsKeepCallerStateOperations) {
         Options.MedAnalysisOnly = C.Analysis;
         Options.SourceProjection = C.Projection;
         auto F = savedCallerRegister(Architecture, ReadsRestore);
-        // This synthetic stack fixture has no original CALL occurrences.
+        // These ARM/x64 fixtures have no x86 registration-state provenance.
         LowFunc Source;
         Source.Entry = F.Entry;
         prepareMedStackAccesses(F, Source, Image, medStackProjection(Options));
