@@ -2534,6 +2534,106 @@ TEST_F(ProcessPublic, AndroidFinalizersKeepGuestEffectsAcrossSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidNarrowScanningMatchesSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  struct Case {
+    std::string Input, Format;
+    uint32_t Return;
+    bool Unsupported = false;
+  };
+  const Case Cases[] = {{" \tab cd!", "%2c%2s%n%c", 3},
+                        {"ab", "%5c%n", 1},
+                        {std::string(73, 'x'), "%s", 1},
+                        {"abcdefghij", "%c%c%c%c%c%c%c%c%c%c", 10},
+                        {" \t", "%s", UINT32_MAX},
+                        {"xy", "%c%lc", 0, true}};
+  for (const char *Variant : {"scan_text-O0-none", "scan_text-O2-relr"}) {
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string(Variant) + ".so"))
+               .string();
+    for (unsigned Mode = 0; Mode != 3; ++Mode)
+      for (unsigned Index = 0; Index != std::size(Cases); ++Index) {
+        SCOPED_TRACE(Variant);
+        SCOPED_TRACE(Mode);
+        SCOPED_TRACE(Index);
+        const auto &Test = Cases[Index];
+        auto Request = llvm::cantFail(llvm::json::parse(R"({
+          "backend":"unicorn","instruction_quantum":7,
+          "instruction_limit":500000,"event_limit":5000,
+          "android":{"entry_symbol":"scan_text","initialize":false,
+            "observe_memory_on_failure":true,
+            "read_memory":[{"address":"0x20000000","size":8192}]}})"));
+        auto &OptionsObject = *Request.getAsObject();
+        auto &Android = *OptionsObject.getObject(field::Android);
+        Android[field::Arguments] =
+            llvm::json::Array{"0x20000000", "0x20000400", "0x20000800", Mode};
+        std::vector<uint8_t> Expected(8192, 0xa5);
+        auto Put = [&](unsigned Offset, llvm::StringRef Text) {
+          std::copy(Text.bytes_begin(), Text.bytes_end(),
+                    Expected.begin() + Offset);
+          Expected[Offset + Text.size()] = 0;
+        };
+        Put(1024, Test.Input);
+        Put(2048, Test.Format);
+        Android[field::Memory] = llvm::json::Array{
+            llvm::json::Object{{field::Address, "0x20000000"},
+                               {field::Size, 8192},
+                               {"bytes_hex", llvm::toHex(Expected, true)}}};
+        const auto Options = jsonText(OptionsObject);
+        auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::cantFail(llvm::json::parse(Text));
+        auto *Object = Report.getAsObject();
+        ASSERT_NE(Object, nullptr);
+        ASSERT_EQ(Object->getString(field::Stop),
+                  Test.Unsupported ? "unsupported_service" : "returned")
+            << Text;
+        if (Test.Unsupported)
+          EXPECT_EQ(*Object->get(field::ReturnValue),
+                    llvm::json::Value(nullptr));
+        else
+          EXPECT_EQ(Object->getString(field::ReturnValue),
+                    llvm::utohexstr(Test.Return, true));
+        if (Index == 0) {
+          Expected[0] = ' ';
+          Expected[1] = '\t';
+          Put(64, "ab");
+          llvm::support::endian::write32le(Expected.data() + 128, 4);
+          Expected[192] = ' ';
+        } else if (Index == 1) {
+          Expected[0] = 'a';
+          Expected[1] = 'b';
+          llvm::support::endian::write32le(Expected.data() + 64, 2);
+        } else if (Index == 2) {
+          Put(0, Test.Input);
+        } else if (Index == 3) {
+          for (unsigned I = 0; I != 10; ++I)
+            Expected[I * 64] = 'a' + I;
+        }
+        const auto *Observed = Object->getObject(field::Android);
+        ASSERT_NE(Observed, nullptr);
+        const auto *Memory = Observed->getArray(field::Memory);
+        ASSERT_NE(Memory, nullptr);
+        ASSERT_EQ(Memory->size(), 1u);
+        EXPECT_EQ(Memory->front().getAsObject()->getString(field::Bytes),
+                  llvm::toHex(Expected, true));
+        EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                  Test.Unsupported ? process_cli::Incomplete
+                                   : process_cli::Success);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+      }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidFormattingKeepsDynamicNamesAcrossSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

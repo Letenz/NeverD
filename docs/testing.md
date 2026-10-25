@@ -11194,6 +11194,13 @@ failure reports for all four dynamically resolved names. Fixtures and expected
 bytes are independently authored; these tests require no Android device or
 host libc formatting oracle.
 
+Narrow scanning coverage includes whitespace-preserving `%c`, NUL-terminated
+`%s`, partial character widths at EOF, suppression, consumed-byte counts and
+outputs larger than an integer. The independent `android_scan_text.c` caller
+also crosses GP registers into stacked arguments with direct calls, `va_copy`
+and a wholly stacked `va_list`. Wide conversions remain explicit refusals.
+
+
 `AndroidSearchTests.cpp` executes independently compiled character-search
 callers at O0/O2 with ordinary, APS2 and RELR relocations on each available
 ARM64 backend. It checks first/last matches, NUL and unsigned characters,
@@ -13642,3 +13649,8 @@ Regular-file bytes use a bounded hexadecimal transport allowance only after
 validation by the shared Linux file-input owner. JSON tests cover the decoded
 aggregate limit, malformed data, paths, escapes, and independent metadata limits.
 Public SDK and CLI tests compare complete reports for large admitted payloads.
+
+Narrow scanning public regressions compare 36 full SDK/CLI reports across
+O0/O2, direct calls, copied lists and wholly stacked lists. The full 8 KiB
+buffer includes source, format and output canaries, including unsupported
+wide conversions that must not publish earlier staged assignments.
