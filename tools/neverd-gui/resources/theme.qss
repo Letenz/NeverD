@@ -118,7 +118,9 @@ QTabBar { background: ${TabBar}; }
 QTabBar::tab { background: ${TabInactive}; color: ${TabInactiveText}; padding: 5px 10px; border: none; border-right: 1px solid ${TabBar}; border-top: 1px solid transparent; }
 QTabBar::tab:selected { background: ${TabActive}; color: ${TabActiveText}; border-top: 1px solid ${TabActiveBorder}; }
 QTabBar::tab:hover:!selected { color: ${TabActiveText}; }
-QTabBar::close-button { image: url(:/neverd/icons/close_small.svg); subcontrol-position: right; border-radius: 3px; padding: 1px; margin-left: 4px; }
+/* Qt positions the close button at the tab edge, outside the text padding.
+   Leave room on its outer side without shrinking the glyph or click target. */
+QTabBar::close-button { image: url(:/neverd/icons/close_small.svg); subcontrol-position: right; border-radius: 3px; padding: 1px; margin-right: 4px; }
 QTabBar::close-button:hover { background: ${ToolBarHover}; }
 /* The arrows that scroll a tab bar too narrow for its tabs. */
 QTabBar QToolButton { background: ${TabBar}; border: none; border-radius: 0; }

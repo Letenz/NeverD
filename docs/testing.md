@@ -2491,6 +2491,19 @@ must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
 The shared frame tests separately exercise native edge gestures.
 
+Appearance tests use a custom entry point because `QTEST_MAIN` forces
+`AA_Use96Dpi`, hiding Cocoa's 72-DPI point-size conversion. The tests and their
+captures use the product's native DPI. Font checks compare interface, code and
+input-field sizes with the platform's GeneralFont reading size, preserve
+explicit choices across theme changes, and exercise fractional/pixel-sized
+zoom and resetting to the platform default. These cases run in the existing
+Windows/macOS native 100% and 150% appearance jobs as well as offscreen.
+The tab-close check measures the visible glyph and its distance from the tab's
+right edge in logical pixels on both plain and actual docking tabs, in both
+themes. This catches a docking-local native style shrinking only the close
+button, which a plain-widget screenshot misses, and a correctly sized glyph
+crowded against the edge despite padding around the tab text.
+
 The menu case injects macOS's hidden-icon default and checks registry actions
 and Output's dynamically created context menu after theme application. Screenshot
 color checks convert logical points using the captured image's device-pixel

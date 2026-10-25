@@ -169,7 +169,9 @@ be read. Inspect the whole window before adjusting individual colors.
 - Keep branding subordinate to starting work. Inspect the combined weight of
   the logo, title, tagline, and version; several individually modest elements
   can still dominate as a group. Startup preferences are secondary controls.
-- Reuse the desktop's system font and established density. In the verified
+- Use the platform's GeneralFont reading size for both interface and code,
+  retaining NeverD's bundled faces. Keep user overrides and avoid a
+  shared hard-coded point size or a second Retina multiplier. In the verified
   Quick Start, 14 logical pixels for row titles and 12 for supporting text fit
   the task; 16 pixels is not a mandatory minimum for every dense desktop row.
   Evaluate actual readability, contrast, DPI scaling, and larger system fonts.
