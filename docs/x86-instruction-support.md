@@ -113,6 +113,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | --- | --- |
 | LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
 | 3DNow! arithmetic, comparison, conversion and rearrangement operations | Packed-lane results, instruction-specific floating-point rules and MMX/x87 state. The 24 former COPY/scalar-FLOAT approximations now fail explicitly; decoder recognition remains available. |
+| BLCFILL, BLCI, BLCIC, BLCMSK, BLCS, BLSFILL, BLSIC, T1MSKC, TZMSK | The existing TBM value formulas omit the defined flag updates. They are incomplete support, despite accepting the instructions; source/destination aliasing, undefined flags, encoding validation and compiler interfaces require qualification together. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
@@ -206,6 +207,15 @@ positive controls. These are explicit remaining implementation gaps. 3DNow!
 completion must follow the packed-operation and state rules in
 [AMD APM volume 5](https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/26569.pdf),
 including its defined and undefined input domains.
+
+The same audit found a TBM counterexample that is still unresolved:
+`mov rdi, -1; clc; blcfill rax, rdi; setc al; movzx eax, al; ret` exports a
+constant zero. BLCFILL's carry comes from incrementing its source and must be
+one for that input, as specified in
+[AMD APM volume 3](https://docs.amd.com/api/khub/documents/j44LvPXzuuXgM0WyHKQfeQ/content).
+The nine legacy TBM handlers do not currently publish their defined flags.
+This finding is not qualified as fixed by the transaction or legacy-admission
+tests above.
 
 MPX memory forms retain their decoded identity in both full and lightweight
 decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.
