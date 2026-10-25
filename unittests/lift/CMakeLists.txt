@@ -1547,6 +1547,7 @@ add_neverd_unittest(NeverDSourceEntryBindingTests
   core/SourceABITests.cpp
   core/ObjCSourceTypeHintTests.cpp
   core/HighCSourceCallTests.cpp
+  core/NativeSourceHintsTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
 )
 target_include_directories(NeverDSourceEntryBindingTests PRIVATE
