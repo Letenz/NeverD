@@ -37,10 +37,25 @@ The finite-domain oracle's proof calls are not native executions or performance
 measurements.
 
 The publication commit `ac381aaef710b436ecc10d27d9386b3c3fba8edb` also contains
-concurrent upstream changes. Its subsequent local integration verification is
-tracked separately; neither source-file equality nor cancelled CI runs qualify
-that entire merge. Future receipts must name the tested commit, dependency pins,
-build profile, selected tests, failures/skips and delivered commit separately.
+concurrent upstream changes. Its exact-source local integration selected 2,521
+CTests: initially 2,497 passed, one failed and 23 skipped. The failure was a
+Windows HFA execution harness passing vector carriers to projected scalar
+parameters. Fixture repair `35826752e1fec446c30e1d83b56301b58c8a24ed` uses the
+actual projected argument types while retaining the independent byte oracle.
+The repaired test passed, producing a composite 2,498 passed / 23 skipped
+qualification; this was not a clean rerun of all 2,521 tests. Original failures
+and repair receipts are retained separately.
+
+Saved-decision consistency was subsequently qualified at
+`dc6e83e8185931aa0d35935985480cdf7048aa7c`: all 300 selected CTests passed,
+including the 527-comparison compiler fixture; 89 historical reports reopened
+byte-exactly, and Python/Qt integration passed. These are local Release results
+using the selected LLVM 23r6 prebuilt and Capstone
+`88f3e3966565fb9383cd4fbb20c051c9aa22f309`, with Z3, emulation and embedded
+Python plugins disabled. Native-backed Python bindings were tested separately.
+Neither source-file equality nor cancelled CI runs qualify an entire merge.
+Future receipts must name tested and delivered commits, dependency inputs,
+build profile, selected tests and failures/skips separately.
 
 See [the comparison profiles](binary-diff.md) for exact evidence meanings and
 [the test guide](testing.md#structural-binary-comparison) for owning checks.
