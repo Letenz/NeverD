@@ -29,8 +29,8 @@ AAPCS64_CALL_TEXT(kHeaderFloatOracle, R"(
 {0} {1}({2} x, {3} y) {{
   if (x != 1.25 || y != -2.5) __builtin_trap();
   return 7.75;
-}}
-int main(void) {{ return {4}(1.25, -2.5) != 7.75; }}
+}
+int main(void) {{ return {4}(1.25, -2.5) != 7.75; }
 )")
 
 #undef AAPCS64_CALL_TEXT
