@@ -2022,7 +2022,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     }
     return renderX86CompactExpression(Opts.TheArch, E, Args, typeToC(E.Type));
   }
-  if (isApxAtomicIntrinsic(E.IntrinsicId))
+  if (isX86AtomicIntrinsic(E.IntrinsicId))
     return renderX86APXAtomicExpression(
         Opts.TheArch, E,
         [this](const HighExpr &V) { return intrinsicOperandStr(V); });

@@ -19,6 +19,10 @@
 #include <string_view>
 #include <vector>
 
+namespace llvm {
+class Function;
+}
+
 namespace neverd {
 
 /// RTM builtins and LLVM instruction selection require the same CPU feature.
@@ -34,6 +38,10 @@ inline const char *x86SystemNativeTargetFeature(std::string_view Name) {
     return "clzero";
   return nullptr;
 }
+
+/// Retain native instruction-selection requirements in exported LLVM IR.
+/// Existing family features stay attached to the same function.
+void applyX86SystemNativeTargetFeatures(llvm::Function &Function);
 
 inline constexpr Intrinsic X86SystemStateNativeInventory[] = {
     Intrinsic::Xend,

@@ -32,6 +32,7 @@
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/backend/llvm/X86/X86RegistrationFrame.h"
+#include "neverd/backend/llvm/X86/X86SystemStateNative.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/loader/X86/X86GetPcThunk.h"
@@ -1168,6 +1169,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
       PrivateSlots.push_back(Slot);
     discardDeadMedLLVMSlots(PrivateSlots);
   }
+  if (TargetArch == Arch::X86 || TargetArch == Arch::X64)
+    applyX86SystemNativeTargetFeatures(*LLVMFunc);
   return LLVMFunc;
 }
 

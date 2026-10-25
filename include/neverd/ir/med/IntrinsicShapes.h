@@ -625,15 +625,16 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));
 }
 
-inline ApxAtomicIntrinsicShape apxAtomicMedShape(const MedOp &Op) {
-  Arch TargetArch = Arch::Unknown;
+inline ApxAtomicIntrinsicShape
+apxAtomicMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
+  bool SameArch = true;
   const auto ObserveArch = [&](const MedVar &Value) {
     if (Value.isConst() || Value.Size == 0 || Value.TheArch == Arch::Unknown)
       return;
-    if (Value.TheArch != Arch::X64)
+    if (TargetArch == Arch::Unknown)
       TargetArch = Value.TheArch;
-    else if (TargetArch == Arch::Unknown)
-      TargetArch = Arch::X64;
+    else if (TargetArch != Value.TheArch)
+      SameArch = false;
   };
   ObserveArch(Op.Output);
   for (uint8_t I = 1; I < Op.NumInputs && I < 5; ++I)
@@ -643,7 +644,8 @@ inline ApxAtomicIntrinsicShape apxAtomicMedShape(const MedOp &Op) {
       .TargetArch = TargetArch,
       .MemoryOrdering = Op.MemoryOrdering,
       .NumInputs = Op.NumInputs,
-      .IntrinsicIdIsConst = Op.NumInputs > 0 && Op.Inputs[0].isConst(),
+      .IntrinsicIdIsConst =
+          SameArch && Op.NumInputs > 0 && Op.Inputs[0].isConst(),
       .IntrinsicIdSize = Op.NumInputs > 0 ? Op.Inputs[0].Size : uint16_t{0},
       .OutputIsWritableScalar = isMedIntrinsicWritableScalar(Op.Output),
       .OutputSize = Op.Output.Size,
