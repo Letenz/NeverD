@@ -30,6 +30,32 @@ def named_path(value: str) -> tuple[str, Path]:
     return name, Path(path)
 
 
+def context_candidates(result: builder.FoldResult) -> list[builder.PatternLine]:
+    """Keep individually distinguishable required claims available for audit.
+
+    Byte folding drops an entire key when any two nominal claims conflict.
+    A third claim may still state mandatory references that distinguish it
+    from every raw counterclaim. Recover only that opportunity, not ordinary
+    byte claims or an alias set that different source variants overlap.
+    Evidence already merges all copies under identical names, retaining
+    missing fields and complete alternatives through common_refs().
+    """
+    lines = list(result.lines)
+    kept = {(line.key, line.names) for line in lines}
+    owners = defaultdict(set)
+    for line in result.evidence:
+        if not line.require_caller:
+            for name in line.names:
+                owners[line.key, name].add(line.names)
+    for line in result.evidence:
+        if line.require_references and line.refs and \
+                (line.key, line.names) not in kept and \
+                builder.Shape.of(line.key).fully_verified() and \
+                all(len(owners[line.key, name]) == 1 for name in line.names):
+            lines.append(line)
+    return lines
+
+
 def select(candidates: dict[str, builder.FoldResult],
            evidence: list[tuple[str, Path]], existing: Path
            ) -> dict[str, list[builder.PatternLine]]:
@@ -40,12 +66,13 @@ def select(candidates: dict[str, builder.FoldResult],
     ambiguities are essential evidence. This bounds memory by relevant claims,
     rather than by the size of the entire source collection.
     """
-    keys = {line.key for result in candidates.values() for line in result.lines}
+    candidate_lines = {name: context_candidates(result) for name, result in candidates.items()}
+    keys = {line.key for lines in candidate_lines.values() for line in lines}
     heads = {" ".join(key.split()[:4]) for key in keys}
     by_crc = defaultdict(list)
     by_prefix = defaultdict(list)
     short_prefixes = defaultdict(list)
-    byte_keys = {line.key for result in candidates.values() for line in result.lines
+    byte_keys = {line.key for lines in candidate_lines.values() for line in lines
                  if not line.require_caller}
     for key in byte_keys:
         shape = builder.Shape.of(key)
@@ -88,8 +115,8 @@ def select(candidates: dict[str, builder.FoldResult],
                 if line is not None:
                     grouped[name][line.text] = None
                     source_claims[name, line.key].update(line.names)
-    for name, result in candidates.items():
-        for line in result.lines:
+    for name, lines in candidate_lines.items():
+        for line in lines:
             if not set(line.names) & source_claims[name, line.key]:
                 raise builder.BuildError(f"{name}: candidate lacks raw source evidence: {line.names}")
 
@@ -115,9 +142,9 @@ def select(candidates: dict[str, builder.FoldResult],
     builder.settle_directory(results)
 
     selected = {}
-    for name, result in candidates.items():
+    for name, lines in candidate_lines.items():
         wanted = defaultdict(set)
-        for line in result.lines:
+        for line in lines:
             if not line.require_references and not line.require_caller:
                 wanted[line.key].update(line.names)
         selected[name] = [
@@ -145,9 +172,9 @@ def select(candidates: dict[str, builder.FoldResult],
     for line in claims.values():
         by_key[line.key].append(line)
     shapes = {key: builder.Shape.of(key) for key in by_key}
-    for name, result in candidates.items():
+    for name, lines in candidate_lines.items():
         retained = {line.text for line in selected[name]}
-        for line in result.lines:
+        for line in lines:
             if not line.require_references or not line.refs or \
                     set(line.names) & owned[line.key] or line.text in retained:
                 continue
@@ -171,7 +198,7 @@ def select(candidates: dict[str, builder.FoldResult],
         # names at one field remain alternatives, never a chosen callee.
         # An owned body is retained only when it adds a new unanimous field:
         # this is queried metadata, not another globally scanned byte claim.
-        for line in result.lines:
+        for line in lines:
             if not line.require_caller:
                 continue
             variants = [other for other in source_by_key[line.key]

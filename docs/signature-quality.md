@@ -118,7 +118,11 @@ records; evaluate the changed packs through the normal CLI before publication.
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,
 including short, ambiguous and previously discarded functions. No missing
-rival pack is treated as proof of uniqueness. Pack publication also requires
+rival pack is treated as proof of uniqueness. A mandatory-reference claim can
+survive even when two other claims with the same bytes remain ambiguous, but
+only if its own references distinguish it from every raw counterclaim.
+Missing common fields, overlapping alias uncertainty and ordinary optional
+references do not acquire this exception. Pack publication also requires
 held-out image checks and index/reference cost measurements.
 `neverd-sigmaker --collision-evidence` generates that offline evidence with
 complete bodies and without size/fixed-byte floors. Its `!evidence` records

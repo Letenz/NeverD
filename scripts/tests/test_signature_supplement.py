@@ -120,6 +120,34 @@ class SupplementTests(unittest.TestCase):
         same = b.replace("__imp_b", "__imp_a")
         self.assertEqual(self.select(a, [("runtime", a), ("another", same)]), [])
 
+    def test_unrelated_ambiguous_siblings_do_not_discard_distinct_required_context(self):
+        a = "AABBCCDD.... 00 0000 0006 !refs :0000 a ^0004 __imp_a\n"
+        b = "AABBCCDD.... 00 0000 0006 !refs :0000 b ^0004 __imp_shared\n"
+        c = b.replace(":0000 b", ":0000 c")
+        for candidates in [a + b + c, c + b + a]:
+            result = self.select(candidates, [("runtime", a + b + c)])
+            self.assertEqual([line.text for line in result], [a.strip()])
+        unknown = "AABBCCDD.... 00 0000 0006 :0000 unknown\n"
+        self.assertEqual(self.select(a + b + c, [("runtime", a + b + c + unknown)]), [])
+
+    def test_partial_recovery_does_not_promote_optional_or_missing_context(self):
+        a = "AABBCCDD.... 00 0000 0006 :0000 a ^0004 __imp_a\n"
+        b = "AABBCCDD.... 00 0000 0006 :0000 b ^0004 __imp_shared\n"
+        c = b.replace(":0000 b", ":0000 c")
+        self.assertEqual(self.select(a + b + c, [("runtime", a + b + c)]), [])
+        required = a.replace(" :", " !refs :")
+        missing = "AABBCCDD.... 00 0000 0006 :0000 a\n"
+        self.assertEqual(self.select(required + b + c + missing,
+                                     [("runtime", required + b + c + missing)]), [])
+
+    def test_partial_recovery_preserves_overlapping_alias_uncertainty(self):
+        a = "AABBCCDD.... 00 0000 0006 !refs :0000 a :0000 shared ^0004 __imp_a\n"
+        alias = a.replace(":0000 a :0000 shared", ":0000 other :0000 shared")
+        b = "AABBCCDD.... 00 0000 0006 !refs :0000 b ^0004 __imp_shared\n"
+        c = b.replace(":0000 b", ":0000 c")
+        source = a + alias + b + c
+        self.assertEqual(self.select(source, [("runtime", source)]), [])
+
     def test_context_requirement_survives_ordinary_raw_evidence(self):
         a = "E9........ 00 0000 0005 !refs :0000 a ^0001 target\n"
         raw = a.replace(" !refs", "")
