@@ -583,17 +583,19 @@ pathname and descriptor-exhaustion failures before reaching an opened file;
 the catalogue does not infer its backing filesystem's direct-I/O support.
 ARM64's directory/direct bits are `0x4000`/`0x10000`, while x64 uses
 `0x10000`/`0x4000`. These stable source-pinned rules do not require GKI selection.
-Unlisted flags, cwd-relative paths, internal repeated separators, `..`
-components, creation, symlink traversal and descriptor-control operations
-remain unsupported. `openat` additionally resolves canonical relative names
-and `.` against a live directory FD. Exec is unmodeled, so close-on-exec flags have
+Unlisted flags, cwd-relative paths, symlink traversal and unsupported
+descriptor-control operations stop explicitly. Repeated separators and
+interior `.` components use the live namespace. `openat` also walks `.` and
+`..` and resolves relative names from a live directory FD; file creation needs
+the separate policy below. Exec is unmodeled, so close-on-exec flags have
 no observable transition in this subset.
 
 Guest queries accept canonical absolute names followed by one or more `/`
 characters. Trailing separators require the final object to be a directory:
 queries of a regular file with a trailing slash return `ENOTDIR`, and missing
 names still return `ENOENT`. Paths consisting only of slashes name the root.
-Directory opens are modeled; directory stat metadata remains unknown. This parsing does
+Directory opens are modeled; directory stat metadata needs the explicit
+directory provider. This parsing does
 not relax the canonical keys required by the catalogue configuration. The
 directory requirement follows Linux
 [pathname lookup](https://www.kernel.org/doc/html/latest/filesystems/path-lookup.html).
@@ -656,7 +658,7 @@ status fields and fdinfo, including process/thread-self aliases.
 An entry's `write_limit` grants mutable content with that maximum extent.
 The full reservation counts against the 16 MiB file budget. The grant does
 not assert real DAC/SELinux permissions or disk capacity. `O_WRONLY`, `O_RDWR`,
-`O_TRUNC` and `O_APPEND` use one mutable object per catalogue path, shared by
+`O_TRUNC` and `O_APPEND` use one mutable object per file identity, shared by
 all opens; cursor and flags remain per open description. `dup` shares both.
 `write` overwrites, zero-fills holes, preserves readable-page prefixes on a
 partial input fault, and chooses the current object end for append. Kernel
@@ -665,21 +667,62 @@ EOF, following the [VFS write contract](https://github.com/torvalds/linux/blob/v
 Reads and newly opened descriptors observe the resulting bytes. Missing write
 grants and exhausted reservations stop explicitly; they are not fabricated
 EACCES/ENOSPC results. `O_CREAT` can open an existing entry; `O_EXCL` returns
-EEXIST before truncation. Creating absent objects remains unmodeled. `O_CREAT | O_DIRECTORY` also stops
+EEXIST before truncation. Creating absent objects requires the separate grant
+below. `O_CREAT | O_DIRECTORY` also stops
 explicitly because its behavior depends on the Linux release.
 
 Without an explicit `track_write_metadata` provider, any write or truncation
 invalidates captured stat observations. A later stat
 stops rather than returning stale size, block counts or timestamps. The known
 filesystem block size remains usable for stdio buffer selection. Vectored
-mutable-file writes, regular file mappings, truncate syscalls, unlink/rename,
-new objects and general permission changes remain unmodeled. An explicit
+mutable-file writes, regular file mappings, truncate syscalls and general
+permission changes remain unmodeled. An explicit
 [metadata provider](linux-live-proc.md#metadata-after-regular-file-writes) can
 maintain complete size, sparse allocation and virtual timestamps after writes.
 Captured stdout/stderr keep their existing bounded output semantics.
 
-Directory creation supports only failures already determined by pathname
-lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
+**Explicit file lifecycle**
+
+Three independent `linux_files` grants enable bounded namespace changes:
+
+| Field | Input and admitted operation |
+| --- | --- |
+| `file_creations` | Array of `{ "path": "/work/data", "write_limit": 8192, "count": 2 }`. `count` defaults to one; all counts together admit at most 64 future regular-file objects. |
+| `file_renames` | `{ "parents": ["/work"], "limit": 2 }`. Up to 64 parents and 64 successful same-directory moves from a single-link tracked file to an absent name. |
+| `file_unlinks` | `{ "parents": ["/work"], "limit": 2 }`. Up to 64 parents and 64 successful removals of closed, single-link tracked regular files. |
+
+Each parent needs the [explicit noatime tmpfs directory provider](android-directory-creation.md)
+and a realtime clock. Creation and unlink also require a persistent entry in
+`directories`. Creation applies the provider's umask and parent setgid group;
+it reserves every future object's name and maximum bytes against the common
+file budget. A failed operation consumes no grant. A successful creation does
+not regain its reservation after unlink or rename, and the original file's
+write grant never becomes a grant for a replacement.
+
+Names bind to stable objects. Rename retains open descriptions, bytes, cursors,
+write limits and inode identity. Recreating a retired name assigns a fresh
+object and inode. Status, directory enumeration, proc FD links and fdinfo use
+the same live namespace. Successful operations update the file and parent
+metadata using the supplied clock. An open parent-directory description,
+captured mapping identity, replacement destination, cross-directory rename,
+hard-link removal or exhausted grant stops explicitly before mutation.
+
+Raw x64/AArch64 calls, Bionic `rename`/`renameat` and `unlink`/`unlinkat`, and
+variadic `syscall` share this owner. Bionic alone translates negative Linux
+results into `-1` and thread errno. Absolute unlink with zero flags also models
+known missing/non-directory paths and shared pathname-import errors without a
+mutation grant. Relative rename/unlink, symlink traversal and other unlink
+flags remain unsupported.
+
+Interior `.` components preserve the same live pathname. Open also resolves
+`.` and `..` one visited directory at a time, including relative paths from an
+open directory FD. Missing, non-directory and known search-denied components
+cannot disappear through lexical normalization. A directory FD starts the
+walk at that object; relative `AT_FDCWD` paths and general link traversal
+remain unsupported. Final-dot handling outside open keeps its prior boundary.
+
+Without its explicit provider, directory creation supports failures already
+determined by pathname lookup. Raw x64 `mkdir` (83), x64/ARM64 `mkdirat` (258/34), and Android
 `mkdir`/`mkdirat` share the catalogue: a missing parent returns `ENOENT`, a file
 ancestor returns `ENOTDIR`, and an existing file or directory returns `EEXIST`.
 The final name's `EEXIST` result also applies to a regular file followed by

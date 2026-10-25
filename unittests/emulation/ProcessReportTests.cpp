@@ -15,6 +15,7 @@
 #include "DarwinTimestampMutationTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
+#include "os/linux/kernel/LinuxFiles.h"
 
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessReportFields.h"
@@ -1648,6 +1649,368 @@ TEST(ProcessReport, DirectoryCreationRequiresCompleteBoundedMetadata) {
   V = Good;
   (*V.getAsObject())["extra"] = 0;
   Refused(V);
+}
+
+TEST(ProcessReport, FileRenamesRequireSeparateBoundedDirectoryGrants) {
+  auto M = llvm::cantFail(llvm::json::parse(FileTestMetadataJSON));
+  auto &O = *M.getAsObject();
+  O["mode"] = 0040755;
+  O["inode"] = 91;
+  O["size"] = 40;
+  O["blocks"] = 0;
+  O["block_size"] = 4096;
+  O["link_count"] = 2;
+  llvm::json::Value Directory =
+      llvm::json::Object{{"umask", 18},
+                         {"limit", 2},
+                         {"parents", llvm::json::Array{llvm::json::Object{
+                                         {"path", "/work"}, {"metadata", M}}}}};
+  auto Parse = [&](const llvm::json::Value &V, bool Provider = true) {
+    return processOptionsFromJSON(
+        R"({"linux_files":{"files":[],"directories":["/work"],"file_renames":)" +
+        llvm::formatv("{0}", V).str() +
+        (Provider ? ",\"directory_creation\":" +
+                        llvm::formatv("{0}", Directory).str()
+                  : "") +
+        "}}");
+  };
+  llvm::json::Value Good =
+      llvm::json::Object{{"parents", llvm::json::Array{"/work"}}, {"limit", 2}};
+  auto Parsed = Parse(Good);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->LinuxFiles->FileRenames);
+  EXPECT_EQ(Parsed->LinuxFiles->FileRenames->Parents,
+            (std::set<std::string>{"/work"}));
+  EXPECT_EQ(Parsed->LinuxFiles->FileRenames->Limit, 2u);
+  auto reject = [&](llvm::json::Value V, bool Provider = true) {
+    auto R = Parse(V, Provider);
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  };
+  reject(Good, false);
+  for (const char *Key : {"parents", "limit"}) {
+    auto V = Good;
+    V.getAsObject()->erase(Key);
+    reject(V);
+    V = Good;
+    (*V.getAsObject())[Key] = nullptr;
+    reject(V);
+  }
+  for (int Limit : {-1, 0, 65}) {
+    auto V = Good;
+    (*V.getAsObject())["limit"] = Limit;
+    reject(V);
+  }
+  for (const char *Text : {"[]", "[12]", "[\"/work\",\"/work\"]",
+                           "[\"/absent\"]", "[\"/work/\"]", "[\"relative\"]"}) {
+    auto V = Good;
+    (*V.getAsObject())["parents"] = llvm::cantFail(llvm::json::parse(Text));
+    reject(V);
+  }
+  auto V = Good;
+  (*V.getAsObject())["extra"] = 0;
+  reject(V);
+  V = Good;
+  (*V.getAsObject())["limit"] = 1.5;
+  reject(V);
+  auto Typed = *Parsed->LinuxFiles;
+  Typed.FileRenames->Limit = 0;
+  auto E = linux_model::validateFileOptions(Typed);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
+TEST(ProcessReport, FileUnlinksRequireSeparateBoundedDirectoryGrants) {
+  auto M = llvm::cantFail(llvm::json::parse(FileTestMetadataJSON));
+  auto &O = *M.getAsObject();
+  O["mode"] = 0040755;
+  O["inode"] = 91;
+  O["size"] = 40;
+  O["blocks"] = 0;
+  O["block_size"] = 4096;
+  O["link_count"] = 2;
+  llvm::json::Value Directory =
+      llvm::json::Object{{"umask", 18},
+                         {"limit", 2},
+                         {"parents", llvm::json::Array{llvm::json::Object{
+                                         {"path", "/work"}, {"metadata", M}}}}};
+  auto Parse = [&](const llvm::json::Value &V, bool Provider = true) {
+    return processOptionsFromJSON(
+        R"({"linux_files":{"files":[],"directories":["/work"],"file_unlinks":)" +
+        llvm::formatv("{0}", V).str() +
+        (Provider ? ",\"directory_creation\":" +
+                        llvm::formatv("{0}", Directory).str()
+                  : "") +
+        "}}");
+  };
+  llvm::json::Value Good =
+      llvm::json::Object{{"parents", llvm::json::Array{"/work"}}, {"limit", 2}};
+  auto Parsed = Parse(Good);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->LinuxFiles->FileUnlinks);
+  EXPECT_EQ(Parsed->LinuxFiles->FileUnlinks->Parents,
+            (std::set<std::string>{"/work"}));
+  EXPECT_EQ(Parsed->LinuxFiles->FileUnlinks->Limit, 2u);
+  auto reject = [&](llvm::json::Value V, bool Provider = true) {
+    auto R = Parse(V, Provider);
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  };
+  reject(Good, false);
+  for (const char *Key : {"parents", "limit"}) {
+    auto V = Good;
+    V.getAsObject()->erase(Key);
+    reject(V);
+    V = Good;
+    (*V.getAsObject())[Key] = nullptr;
+    reject(V);
+  }
+  for (int Limit : {-1, 0, 65}) {
+    auto V = Good;
+    (*V.getAsObject())["limit"] = Limit;
+    reject(V);
+  }
+  for (const char *Text : {"[]", "[12]", "[\"/work\",\"/work\"]",
+                           "[\"/absent\"]", "[\"/work/\"]", "[\"relative\"]"}) {
+    auto V = Good;
+    (*V.getAsObject())["parents"] = llvm::cantFail(llvm::json::parse(Text));
+    reject(V);
+  }
+  auto V = Good;
+  (*V.getAsObject())["extra"] = 0;
+  reject(V);
+  V = Good;
+  (*V.getAsObject())["limit"] = 1.5;
+  reject(V);
+  auto Max = Good;
+  (*Max.getAsObject())["limit"] = 64u;
+  auto AtLimit = Parse(Max);
+  ASSERT_TRUE(bool(AtLimit)) << llvm::toString(AtLimit.takeError());
+  auto ImplicitOnly = *Parsed->LinuxFiles;
+  ImplicitOnly.Directories.clear();
+  ImplicitOnly.Files["/work/child"] = {};
+  ImplicitOnly.DirectoryCreation->Parents.at("/work").Size = 60;
+  auto MissingPersistent = linux_model::validateFileOptions(ImplicitOnly);
+  ASSERT_TRUE(bool(MissingPersistent));
+  EXPECT_NE(llvm::toString(std::move(MissingPersistent))
+                .find("declared non-proc parents"),
+            std::string::npos);
+  auto Wide = *Parsed->LinuxFiles;
+  Wide.Directories.clear();
+  Wide.DirectoryCreation->Parents.clear();
+  Wide.FileUnlinks->Parents.clear();
+  for (unsigned I = 0; I != 64u; ++I) {
+    auto Name = "/parent" + std::to_string(I);
+    auto Metadata = Parsed->LinuxFiles->DirectoryCreation->Parents.at("/work");
+    Metadata.Inode += I;
+    Wide.Directories.push_back(Name);
+    Wide.DirectoryCreation->Parents[Name] = Metadata;
+    Wide.FileUnlinks->Parents.insert(Name);
+  }
+  auto AcceptedWide = linux_model::validateFileOptions(Wide);
+  ASSERT_FALSE(bool(AcceptedWide)) << llvm::toString(std::move(AcceptedWide));
+  Wide.FileUnlinks->Parents.insert("/one-more");
+  auto TooWide = linux_model::validateFileOptions(Wide);
+  EXPECT_TRUE(bool(TooWide));
+  llvm::consumeError(std::move(TooWide));
+  auto Typed = *Parsed->LinuxFiles;
+  Typed.FileUnlinks->Limit = 0;
+  auto E = linux_model::validateFileOptions(Typed);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
+TEST(ProcessReport, FileCreationReservationsAreExplicitBoundedAndSeparate) {
+  auto M = llvm::cantFail(llvm::json::parse(FileTestMetadataJSON));
+  auto &O = *M.getAsObject();
+  O["mode"] = 0040755;
+  O["inode"] = 91;
+  O["size"] = 40;
+  O["blocks"] = 0;
+  O["block_size"] = 4096;
+  O["link_count"] = 2;
+  llvm::json::Value Directory =
+      llvm::json::Object{{"umask", 18},
+                         {"limit", 1},
+                         {"parents", llvm::json::Array{llvm::json::Object{
+                                         {"path", "/work"}, {"metadata", M}}}}};
+  auto Parse = [&](const llvm::json::Value &V, bool Provider = true) {
+    return processOptionsFromJSON(
+        R"({"linux_files":{"files":[],"directories":["/work"],"file_creations":)" +
+        llvm::formatv("{0}", V).str() +
+        (Provider ? ",\"directory_creation\":" +
+                        llvm::formatv("{0}", Directory).str()
+                  : "") +
+        "}}");
+  };
+  llvm::json::Value Row =
+      llvm::json::Object{{"path", "/work/data"}, {"write_limit", 8192}};
+  llvm::json::Value Good = llvm::json::Array{Row};
+  auto Parsed = Parse(Good);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  ASSERT_TRUE(Parsed->LinuxFiles->FileCreations);
+  ASSERT_EQ(Parsed->LinuxFiles->FileCreations->Files.size(), 1u);
+  const auto &Reservation =
+      Parsed->LinuxFiles->FileCreations->Files.at("/work/data");
+  EXPECT_EQ(Reservation.WriteLimit, 8192u);
+  EXPECT_EQ(Reservation.Count, 1u);
+  EXPECT_TRUE(Parsed->LinuxFiles->Files.empty());
+  EXPECT_TRUE(Parsed->LinuxFiles->WriteLimits.empty());
+  auto Reject = [&](const llvm::json::Value &V, bool Provider = true) {
+    auto R = Parse(V, Provider);
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  };
+  Reject(Good, false);
+  for (const char *Text : {"null", "{}", "[]", "[null]", "[12]"})
+    Reject(llvm::cantFail(llvm::json::parse(Text)));
+  Reject(llvm::json::Array{Row, Row});
+  for (const char *Key : {"path", "write_limit"}) {
+    auto Bad = Row;
+    Bad.getAsObject()->erase(Key);
+    Reject(llvm::json::Array{Bad});
+    Bad = Row;
+    (*Bad.getAsObject())[Key] = nullptr;
+    Reject(llvm::json::Array{Bad});
+  }
+  for (const char *Text : {"-1", "1.5", "true", "\"18446744073709551616\""}) {
+    auto Bad = Row;
+    (*Bad.getAsObject())["write_limit"] =
+        llvm::cantFail(llvm::json::parse(Text));
+    Reject(llvm::json::Array{Bad});
+  }
+  for (const char *Path : {"/", "/work", "relative", "/work/data/",
+                           "/work/../data", "/missing/data"}) {
+    auto Bad = Row;
+    (*Bad.getAsObject())["path"] = Path;
+    Reject(llvm::json::Array{Bad});
+  }
+  auto Extra = Row;
+  (*Extra.getAsObject())["extra"] = 0;
+  Reject(llvm::json::Array{Extra});
+  auto Zero = Row;
+  (*Zero.getAsObject())["write_limit"] = 0;
+  auto EmptyFileGrant = Parse(llvm::json::Array{Zero});
+  ASSERT_TRUE(bool(EmptyFileGrant))
+      << llvm::toString(EmptyFileGrant.takeError());
+  for (const char *Text : {"0", "-1", "1.5", "true", "null", "65", "4294967295",
+                           "\"4294967296\""}) {
+    auto Bad = Row;
+    (*Bad.getAsObject())["count"] = llvm::cantFail(llvm::json::parse(Text));
+    Reject(llvm::json::Array{Bad});
+  }
+  auto Twice = Row;
+  (*Twice.getAsObject())["count"] = "2";
+  auto ParsedTwice = Parse(llvm::json::Array{Twice});
+  ASSERT_TRUE(bool(ParsedTwice)) << llvm::toString(ParsedTwice.takeError());
+  EXPECT_EQ(
+      ParsedTwice->LinuxFiles->FileCreations->Files.at("/work/data").Count, 2u);
+  auto ExtraCount = Twice;
+  (*ExtraCount.getAsObject())["extra"] = 0;
+  Reject(llvm::json::Array{ExtraCount});
+  Reject(llvm::json::Array{Row, Twice});
+  auto AllSlots = Zero;
+  (*AllSlots.getAsObject())["count"] = 64u;
+  auto ParsedSlots = Parse(llvm::json::Array{AllSlots});
+  ASSERT_TRUE(bool(ParsedSlots)) << llvm::toString(ParsedSlots.takeError());
+  auto RejectTyped = [&](const LinuxFileOptions &F) {
+    auto E = linux_model::validateFileOptions(F);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  };
+  for (uint32_t Count : {0u, 64u + 1u, UINT32_MAX}) {
+    auto Bad = *Parsed->LinuxFiles;
+    Bad.FileCreations->Files.at("/work/data").Count = Count;
+    RejectTyped(Bad);
+  }
+  auto OneTooMany = *ParsedSlots->LinuxFiles;
+  OneTooMany.FileCreations->Files["/work/other"] = {0};
+  RejectTyped(OneTooMany);
+  auto Other = Zero;
+  (*Other.getAsObject())["path"] = "/work/other";
+  Reject(llvm::json::Array{AllSlots, Other});
+  auto HalfSlots = AllSlots;
+  (*HalfSlots.getAsObject())["count"] = 64u / 2;
+  (*Other.getAsObject())["count"] = 64u / 2;
+  auto SplitSlots = Parse(llvm::json::Array{HalfSlots, Other});
+  ASSERT_TRUE(bool(SplitSlots)) << llvm::toString(SplitSlots.takeError());
+  auto ObjectEdge = *ParsedSlots->LinuxFiles;
+  const auto DirectorySlots = linux_model::FileCountLimit - 64u - 1;
+  ObjectEdge.DirectoryCreation->Limit = DirectorySlots;
+  auto AtObjectBudget = linux_model::validateFileOptions(ObjectEdge);
+  ASSERT_FALSE(bool(AtObjectBudget))
+      << llvm::toString(std::move(AtObjectBudget));
+  ++ObjectEdge.DirectoryCreation->Limit;
+  RejectTyped(ObjectEdge);
+  (*Directory.getAsObject())["limit"] = DirectorySlots;
+  auto WireObjectEdge = Parse(llvm::json::Array{AllSlots});
+  ASSERT_TRUE(bool(WireObjectEdge))
+      << llvm::toString(WireObjectEdge.takeError());
+  (*Directory.getAsObject())["limit"] = DirectorySlots + 1;
+  Reject(llvm::json::Array{AllSlots});
+  (*Directory.getAsObject())["limit"] = 1;
+  const uint64_t PerGeneration =
+      (linux_model::FileByteLimit - (std::string("/work").size() + 1) -
+       linux_model::FilePathLimit) /
+          2 -
+      (std::string("/work/data").size() + 1);
+  auto ByteEdge = *Parsed->LinuxFiles;
+  ByteEdge.FileCreations->Files.at("/work/data") = {PerGeneration, 2};
+  auto AtRepeatedByteBudget = linux_model::validateFileOptions(ByteEdge);
+  ASSERT_FALSE(bool(AtRepeatedByteBudget))
+      << llvm::toString(std::move(AtRepeatedByteBudget));
+  ++ByteEdge.FileCreations->Files.at("/work/data").WriteLimit;
+  RejectTyped(ByteEdge);
+  ByteEdge.FileCreations->Files.at("/work/data").WriteLimit = UINT64_MAX;
+  RejectTyped(ByteEdge);
+  auto ByteRow = Twice;
+  (*ByteRow.getAsObject())["write_limit"] = PerGeneration;
+  auto WireByteEdge = Parse(llvm::json::Array{ByteRow});
+  ASSERT_TRUE(bool(WireByteEdge)) << llvm::toString(WireByteEdge.takeError());
+  (*ByteRow.getAsObject())["write_limit"] = PerGeneration + 1;
+  Reject(llvm::json::Array{ByteRow});
+  auto Wide = *Parsed->LinuxFiles;
+  Wide.FileCreations->Files.clear();
+  llvm::json::Array WireWide;
+  for (unsigned I = 0; I != 64u; ++I) {
+    const auto Path = "/work/f" + std::to_string(I);
+    Wide.FileCreations->Files[Path] = {0};
+    WireWide.push_back(llvm::json::Object{{"path", Path}, {"write_limit", 0}});
+  }
+  auto TypedWide = linux_model::validateFileOptions(Wide);
+  ASSERT_FALSE(bool(TypedWide)) << llvm::toString(std::move(TypedWide));
+  auto ParsedWide = Parse(llvm::json::Array(WireWide));
+  ASSERT_TRUE(bool(ParsedWide)) << llvm::toString(ParsedWide.takeError());
+  Wide.FileCreations->Files["/work/extra"] = {0};
+  auto TooWide = linux_model::validateFileOptions(Wide);
+  EXPECT_TRUE(bool(TooWide));
+  llvm::consumeError(std::move(TooWide));
+  WireWide.push_back(
+      llvm::json::Object{{"path", "/work/extra"}, {"write_limit", 0}});
+  Reject(llvm::json::Array(WireWide));
+  auto Exact = *Parsed->LinuxFiles;
+  const uint64_t Capacity =
+      linux_model::FileByteLimit - (std::string("/work").size() + 1) -
+      (std::string("/work/data").size() + 1) - linux_model::FilePathLimit;
+  Exact.FileCreations->Files.at("/work/data").WriteLimit = Capacity;
+  auto AtBudget = linux_model::validateFileOptions(Exact);
+  ASSERT_FALSE(bool(AtBudget)) << llvm::toString(std::move(AtBudget));
+  ++Exact.FileCreations->Files.at("/work/data").WriteLimit;
+  auto BeyondBudget = linux_model::validateFileOptions(Exact);
+  EXPECT_TRUE(bool(BeyondBudget));
+  llvm::consumeError(std::move(BeyondBudget));
+  auto Existing = *Parsed->LinuxFiles;
+  Existing.Files["/work/data"] = {'o', 'l', 'd'};
+  Existing.DirectoryCreation->Parents.at("/work").Size = 60;
+  auto FutureReplacement = linux_model::validateFileOptions(Existing);
+  ASSERT_FALSE(bool(FutureReplacement))
+      << llvm::toString(std::move(FutureReplacement));
+  Existing.Files.clear();
+  Existing.Files["/work/data/child"] = {};
+  Existing.DirectoryCreation->Parents.at("/work").LinkCount = 3;
+  auto ImplicitDirectory = linux_model::validateFileOptions(Existing);
+  EXPECT_TRUE(bool(ImplicitDirectory));
+  llvm::consumeError(std::move(ImplicitDirectory));
 }
 
 TEST(ProcessReport, GuestDirectoriesAreExplicitAndTyped) {
