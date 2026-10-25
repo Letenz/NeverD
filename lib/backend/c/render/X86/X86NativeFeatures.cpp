@@ -12,6 +12,7 @@
 
 #include "X86NativeFeatures.h"
 
+#include "X86APXAtomic.h"
 #include "X86AmxState.h"
 #include "X86BoundedLeaf.h"
 #include "X86RepState.h"
@@ -112,11 +113,13 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
 } // namespace
 
 std::string x86NativeFunctionPreamble(const HighFunc &Function) {
+  bool Atomic = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
   std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
     if (!E)
       return;
+    Atomic |= isApxAtomicIntrinsic(E->IntrinsicId);
     Sgx |= isX86SgxIntrinsic(E->IntrinsicId);
     if (isX86BoundedLeafIntrinsic(E->IntrinsicId)) {
       Bounded = true;
@@ -131,10 +134,12 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
       Visit(Operand);
   };
   walkStmts(Function.Body, [&](const HighStmt &S) { forEachExpr(S, Visit); });
-  return preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
+  return (Atomic ? X86APXAtomicCompilerDispatch : "") +
+         preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
                   BoundedEnclu);
 }
 std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
+  bool Atomic = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
   for (const auto &Block : Function)
@@ -142,6 +147,12 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
       const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction);
       if (!Call)
         continue;
+      if (const auto *F = Call->getCalledFunction())
+        Atomic |= bool(x86APXAtomicName(F->getName().str()));
+      if (const auto *Asm =
+              llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand()))
+        Atomic |= llvm::StringRef(Asm->getAsmString())
+                      .starts_with(X86APXAtomicAsmMarker);
       const auto *Result = llvm::dyn_cast<llvm::StructType>(Call->getType());
       const Arch RepArch = Result && Result->getNumElements() &&
                                    Result->getElementType(0)->isIntegerTy(64)
@@ -165,7 +176,8 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
         Sgx |= Mnemonic == "encls" || Mnemonic == "enclv";
       }
     }
-  return preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
+  return (Atomic ? X86APXAtomicCompilerDispatch : "") +
+         preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
                   BoundedEnclu);
 }
 } // namespace neverd

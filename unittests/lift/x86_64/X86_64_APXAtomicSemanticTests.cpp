@@ -588,6 +588,34 @@ TEST(X86APXAtomic, LiftUsesMemoryOwningAtomicIntrinsics) {
   }
 }
 
+TEST(X86APXAtomic, StackDefault64AddressNeedsExplicitFaultOwnership) {
+  for (unsigned Width : {4u, 8u})
+    for (unsigned Base : {4u, 5u}) {
+      for (uint8_t Prefix : {0, 0x26, 0x2e, 0x36, 0x3e}) {
+        auto Rao = encodeRao(RaoOperation::Add, Width, 26, Base);
+        auto Cmp = encodeCmpccXadd(4, Width, 26, 17, Base);
+        if (Prefix) {
+          Rao.insert(Rao.begin(), Prefix);
+          Cmp.insert(Cmp.begin(), Prefix);
+        }
+        expectDecodeOrLiftRejected(Rao);
+        expectDecodeOrLiftRejected(Cmp);
+      }
+      for (auto Segment :
+           {SegmentOverride::None, SegmentOverride::FS, SegmentOverride::GS})
+        for (bool Address32 : {false, true}) {
+          if (!Address32 && Segment == SegmentOverride::None)
+            continue;
+          const auto Rao = liftX64(encodeRao(RaoOperation::Add, Width, 26, Base,
+                                             14, Address32, Segment));
+          const auto Cmp = liftX64(
+              encodeCmpccXadd(4, Width, 26, 17, Base, 14, Address32, Segment));
+          EXPECT_NE(findIntrinsic(Rao.Ops, Intrinsic::ApxRaoAdd), nullptr);
+          EXPECT_NE(findIntrinsic(Cmp.Ops, Intrinsic::ApxCmpccXadd), nullptr);
+        }
+    }
+}
+
 TEST(X86APXAtomic, RawEncodingAndDecoderDetailMustAgreeExactly) {
   constexpr uint64_t CmpFlags = X86_EFLAGS_MODIFY_OF | X86_EFLAGS_MODIFY_SF |
                                 X86_EFLAGS_MODIFY_ZF | X86_EFLAGS_MODIFY_AF |

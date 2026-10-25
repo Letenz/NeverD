@@ -199,9 +199,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   if (isX86VP4DPIntrinsic(IC))
     llvm::report_fatal_error(
         "x86 VP4DP word dot-product lowering is not available");
-  if (IC == I::ApxRaoAdd || IC == I::ApxRaoAnd || IC == I::ApxRaoOr ||
-      IC == I::ApxRaoXor || IC == I::ApxCmpccXadd)
-    llvm::report_fatal_error("APX atomic LLVM lowering is not available");
+  if (isApxAtomicIntrinsic(IC))
+    return emitX86APXAtomic(Op, IC, Builder);
 
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
     if (TargetArch != Arch::X86 && TargetArch != Arch::X64)

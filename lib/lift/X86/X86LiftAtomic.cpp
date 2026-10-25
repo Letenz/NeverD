@@ -286,6 +286,16 @@ std::optional<ApxAtomicEncoding> decodeApxAtomicEncoding(const cs_insn *Insn,
   if (!validateApxAtomicMemory(Insn, X86, EvexOffset, SegmentPrefix, Address32,
                                P0, P1, ModRM, Width))
     return std::nullopt;
+  // A normalized offset loses the original stack-default base. In long mode
+  // RSP/RBP can fault with #SS for a noncanonical address, whereas the native
+  // DS-default carrier faults with #GP. CS/DS/ES/SS overrides are ignored and
+  // cannot restore that distinction. Addr32 is canonical before access;
+  // FS/GS explicitly select their own segment. Keep the remaining forms
+  // unsupported until the IR owns the original stack-address fault class.
+  const auto Base = X86.operands[0].mem.base;
+  if (!Address32 && SegmentPrefix != 0x64 && SegmentPrefix != 0x65 &&
+      (Base == X86_REG_RSP || Base == X86_REG_RBP))
+    return std::nullopt;
   return Result;
 }
 

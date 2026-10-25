@@ -15,6 +15,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86/X86APXAtomic.h"
 #include "../render/X86/X86AmxState.h"
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86RepState.h"
@@ -1982,6 +1983,10 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isApxAtomicIntrinsic(E.IntrinsicId))
+    return renderX86APXAtomicExpression(
+        Opts.TheArch, E,
+        [this](const HighExpr &V) { return intrinsicOperandStr(V); });
   if (isPortableX87Intrinsic(E.IntrinsicId))
     return renderPortableX87Call(E);
   if (x87ValueInfo(E.IntrinsicId) &&

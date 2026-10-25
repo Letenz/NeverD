@@ -312,6 +312,23 @@ standard integer declarations. The trailing-argument fixture uses real dynamic
 CPUID outputs, so scalar constant recovery cannot make its unknown-state
 assertions vacuous. PHI copies retain the explicit unknown marker.
 
+APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
+`NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,
+condition, flag and failure-commit checks, including refusal of unrepresented
+64-bit default-stack fault semantics. The latter validates MedIR, native LLVM,
+owned assembly and both C routes; it exports 360 live/dead/repeated wrappers
+and 504 decoded pipeline cases when `NEVERD_APX_ATOMIC_EXPORT_DIR` is set.
+`scripts/verify_x86_apx_atomic.py` takes those exports, the full fork's `llc`,
+NeverC and its independent `tests/verify-apx-atomic-completion.py` oracle.
+It checks production objects and LLVM/Clang/NeverC/GCC wrappers across supported
+formats and O0/O2. `--pipeline` additionally compiles both recovered C routes
+with Clang and NeverC, checking effective offsets, source operands, flags,
+return values and nonvolatile registers against the original instruction
+sequence. `--pipeline-only` reruns that stage without repeating the wrappers.
+These controlled completions do not qualify physical atomicity or hardware
+faults. `NeverDCodegenDiagnosticTests` requires an allocation error to reject
+an otherwise parseable object, retaining the caller's diagnostic handler.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
