@@ -264,10 +264,11 @@ public:
   }
 
 #ifdef Q_OS_MACOS
-  std::future<std::pair<bool, bool>> finishNativeResize(QPoint destination) {
-    // Cocoa tracks a system resize in an AppKit loop that does not service
-    // Qt timers. Deliver motion and release independently of that loop. Only
-    // copied screen coordinates cross threads; widgets stay on the GUI thread.
+  std::future<std::pair<bool, bool>> finishNativeDrag(QPoint destination) {
+    // Cocoa tracks a system move or resize in an AppKit loop that does not
+    // service Qt timers. Deliver motion and release independently of that loop.
+    // Only copied screen coordinates cross threads; widgets stay on the GUI
+    // thread.
     return std::async(std::launch::async, [destination] {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       const bool moved = nativeMouse(kCGEventLeftMouseDragged, destination);
@@ -543,6 +544,21 @@ private slots:
     QVERIFY(pointer.move(*source, start, false));
     QTest::qWait(50);
     QVERIFY(pointer.button(*source, start, true));
+#ifdef Q_OS_MACOS
+    QTimer observePreview;
+    connect(&observePreview, &QTimer::timeout, &desktop.Window,
+            [&] { preview |= area->dropIndicatorOverlay()->isVisible(); });
+    observePreview.start(50);
+    auto completion = pointer.finishNativeDrag(
+        desktop.Window.mapToGlobal(desktop.Window.rect().center()));
+    QTRY_VERIFY_WITH_TIMEOUT(completion.wait_for(std::chrono::milliseconds(
+                                 0)) == std::future_status::ready,
+                             5000);
+    const auto completed = completion.get();
+    moved = completed.first;
+    released = completed.second;
+    observePreview.stop();
+#else
     QTimer::singleShot(50, &desktop.Window, [&] {
       moved =
           pointer.move(desktop.Window, desktop.Window.rect().center(), true);
@@ -551,6 +567,7 @@ private slots:
       preview = area->dropIndicatorOverlay()->isVisible();
       released = pointer.button(desktop.Window, QPoint(), false);
     });
+#endif
     QTRY_VERIFY_WITH_TIMEOUT(released, 5000);
     QTest::qWait(150);
     QVERIFY(moved);
@@ -633,7 +650,7 @@ private slots:
             [&] { preview |= area->dropIndicatorOverlay()->isVisible(); });
     observePreview.start(50);
     auto completion =
-        pointer.finishNativeResize(floating->mapToGlobal(start + delta));
+        pointer.finishNativeDrag(floating->mapToGlobal(start + delta));
     QTRY_VERIFY_WITH_TIMEOUT(completion.wait_for(std::chrono::milliseconds(
                                  0)) == std::future_status::ready,
                              5000);
@@ -831,6 +848,12 @@ private slots:
     QVERIFY(pointer.move(*source, start, false));
     QTest::qWait(50);
     QVERIFY(pointer.button(*source, start, true));
+#ifdef Q_OS_WIN
+    // SendInput queues native input. Start motion only after Qt has received
+    // the press, rather than letting timer events overtake that dispatch.
+    QTRY_COMPARE(QGuiApplication::mouseButtons(),
+                 Qt::MouseButtons(Qt::LeftButton));
+#endif
     bool moved = false;
     bool preview = false;
     bool released = false;
@@ -846,6 +869,10 @@ private slots:
             << QCursor::pos() << "source" << floating->geometry() << "target"
             << desktop.Window.geometry() << "destination"
             << desktop.Window.mapToGlobal(destination);
+#ifdef Q_OS_WIN
+      state << "native button" << bool(GetKeyState(VK_LBUTTON) & 0x8000)
+            << "physical button" << bool(GetAsyncKeyState(VK_LBUTTON) & 0x8000);
+#endif
     };
     // Separate timers can run in Wayland's nested QDrag event loop.
     QTimer::singleShot(50, &desktop.Window, [&] {
