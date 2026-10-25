@@ -30,6 +30,7 @@
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include <iterator>
 #include <stdexcept>
 #include <vector>
 
@@ -922,6 +923,86 @@ int main(void) {
 )";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndCheck(Source, false, {}, Optimization, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, AtomicUpdatesKeepProgramOrderAcrossObservers) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("ordered-rmw-results", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> B(Context);
+  auto *Word = B.getInt32Ty();
+  auto Observe =
+      Module.getOrInsertFunction("observe_atomic_cell", Word, B.getPtrTy());
+  const llvm::AtomicRMWInst::BinOp Operations[] = {
+      llvm::AtomicRMWInst::Xchg, llvm::AtomicRMWInst::Add,
+      llvm::AtomicRMWInst::Sub,  llvm::AtomicRMWInst::And,
+      llvm::AtomicRMWInst::Or,   llvm::AtomicRMWInst::Xor,
+      llvm::AtomicRMWInst::Min,  llvm::AtomicRMWInst::Max,
+      llvm::AtomicRMWInst::UMin, llvm::AtomicRMWInst::UMax};
+  std::string Driver;
+  for (unsigned Kind = 0; Kind < std::size(Operations); ++Kind)
+    for (unsigned Uses = 0; Uses < 3; ++Uses) {
+      const auto Name =
+          "ordered_rmw_" + std::to_string(Kind) + "_" + std::to_string(Uses);
+      auto *Fn = llvm::Function::Create(
+          llvm::FunctionType::get(Word, {B.getPtrTy(), Word}, false),
+          llvm::GlobalValue::ExternalLinkage, Name, Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+      auto *Old = B.CreateAtomicRMW(
+          Operations[Kind], Fn->getArg(0), Fn->getArg(1), llvm::Align(4),
+          llvm::AtomicOrdering::SequentiallyConsistent);
+      // This load and callback both observe the completed write. The RMW
+      // must remain here even if its returned snapshot has only one user.
+      auto *After = B.CreateLoad(Word, Fn->getArg(0));
+      auto *Observed = B.CreateCall(Observe, {Fn->getArg(0)});
+      auto *Result = B.CreateAdd(After, Observed);
+      if (Uses)
+        Result = B.CreateXor(
+            Result, Uses == 1
+                        ? Old
+                        : B.CreateAdd(Old, B.CreateMul(Old, B.getInt32(3))));
+      B.CreateRet(Result);
+      Driver += "for(unsigned i=0;i<4;++i) for(unsigned j=0;j<4;++j) {\n"
+                "uint32_t old=values[i], desired=values[j], cell=old;\n";
+      Driver += "uint32_t expected=updated(" + std::to_string(Kind) +
+                ",old,desired); calls=0;\n";
+      Driver += "uint32_t result=" + Name + "(&cell,desired);\n";
+      Driver += "if(cell!=expected || calls!=1 || seen!=expected) return 1;\n";
+      Driver += "if(result!=((expected+expected) ^ " +
+                (Uses == 0   ? std::string("0u")
+                 : Uses == 1 ? "old"
+                             : "old*4u") +
+                ")) return 2;\n}\n";
+    }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  const auto Text = "#include <stdint.h>\n#include <stdbool.h>\n" +
+                    emit(Module) + R"(
+static unsigned calls;
+static uint32_t seen;
+uint32_t observe_atomic_cell(void *cell) {
+  ++calls;
+  seen = *(uint32_t *)cell;
+  return seen;
+}
+static uint32_t updated(unsigned kind, uint32_t a, uint32_t b) {
+  switch(kind) {
+  case 0: return b;
+  case 1: return a+b;
+  case 2: return a-b;
+  case 3: return a&b;
+  case 4: return a|b;
+  case 5: return a^b;
+  case 6: return (int32_t)a < (int32_t)b ? a : b;
+  case 7: return (int32_t)a > (int32_t)b ? a : b;
+  case 8: return a < b ? a : b;
+  default: return a > b ? a : b;
+  }
+}
+int main(void) {
+  const uint32_t values[] = {0, UINT32_MAX, 0x80000001u, 0x7fffffffu};
+)" + Driver + "return 0;\n}\n";
+  for (const char *Level : {"-O0", "-O2"})
+    compileAndCheck(Text, false, {}, Level, true);
 }
 
 TEST(LLVMCIntrinsicSemantics,

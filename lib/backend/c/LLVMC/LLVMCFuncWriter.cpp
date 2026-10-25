@@ -489,6 +489,13 @@ void LLVMCWriter::planExpressionMaterialization(llvm::Function &Fn) {
   // The bounded walk also keeps this planning linear in the instruction count.
   for (const auto &BB : Fn) {
     for (const auto &I : BB) {
+      // An RMW's result is the snapshot produced at this position. Expanding
+      // a single-use result at its consumer can move the write past a load
+      // or call, or give C permission to evaluate other operands first.
+      if (llvm::isa<llvm::AtomicRMWInst>(&I)) {
+        MaterializedExpressions.insert(&I);
+        continue;
+      }
       if (!Expandable(&I))
         continue;
       unsigned Work = ::neverd::limits::backend::

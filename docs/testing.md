@@ -578,6 +578,11 @@ and unaligned offsets for all four x64 widths. `LLVMCIntrinsicSemantics.NativeEx
 also compiles FS/GS forms, executes live/dead results and rejects changed
 owned assembly/type/effect contracts before normalization. These checks
 exercise completion and source projection, not contention or hardware faults.
+`AtomicUpdatesKeepProgramOrderAcrossObservers` covers all ten emitted integer
+LLVM RMW operations with dead, single-use and repeated results, checking the
+subsequent load and callback against an independent scalar oracle at O0/O2.
+`MemoryExchangePreservesTypedPointerMemberBits` checks that exchanging a typed
+pointer field still returns the machine integer bits expected by its consumer.
 
 APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 `NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,

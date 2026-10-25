@@ -37884,7 +37884,7 @@ TEST(LLVMCPointerAddresses, IntegerMembersKeepFrameAndRecordAddressBits) {
 #include <stdint.h>
 typedef struct FrameHolder { uint64_t first, second; } FrameHolder;
 )" + Source + R"(
-int32_t observe_holder(void *pointer) {
+uint32_t observe_holder(void *pointer) {
     FrameHolder *record = pointer;
     return record->second != (uintptr_t)&record->first ||
            *(uint64_t *)(uintptr_t)record->first != UINT64_C(0x123456789);
@@ -43849,6 +43849,40 @@ BinaryImage makeCodeFixture(va_t Entry, std::vector<uint8_t> Bytes) {
   Seg.Data = std::move(Bytes);
   Img.Segments.push_back(std::move(Seg));
   return Img;
+}
+
+TEST(HighCPointerAddresses, MemoryExchangePreservesTypedPointerMemberBits) {
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
+      llvm::Triple::x86_64)
+    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
+  auto Record = NdType::makeNamedRecord("CallbackHolder", 8);
+  Record->FieldDisplayNames = {"callback"};
+  Record->FieldDisplayOffsets = {0};
+  Record->FieldDisplayTypes = {NdType::makePtr(NdType::makeInt(1, false))};
+  const auto Pointer = NdType::makePtr(Record);
+  HighFunc Function;
+  Function.Name = "exchange_callback";
+  Function.ReturnType = NdType::makeInt(8, false);
+  Function.Params = {{"arg0", Pointer}};
+  auto Exchange = HighExpr::makeBinop(NdOp::ATOMIC_XCHG, parameter(0, Pointer),
+                                      HighExpr::makeConst(0, 8));
+  Exchange->Type = Function.ReturnType;
+  Exchange->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  returnValue(Function, Exchange);
+  const auto Source = emitFunctions({Function});
+  ASSERT_NE(Source.find("callback"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+typedef struct CallbackHolder { uint8_t *callback; } CallbackHolder;
+)" + Source + R"(
+int main(void) {
+  uint8_t value = 37;
+  CallbackHolder record = {&value};
+  uint64_t previous = exchange_callback(&record);
+  return previous != (uintptr_t)&value || record.callback != 0 || value != 37;
+}
+)",
+                            true);
 }
 
 TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {

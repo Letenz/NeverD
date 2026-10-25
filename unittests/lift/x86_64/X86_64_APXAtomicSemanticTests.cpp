@@ -569,6 +569,9 @@ TEST(X86ImplicitAtomic, MemoryExchangeKeepsOneTransactionAndTheOldValue) {
             BinaryImage Image =
                 makeImage(Address, Width,
                           SegmentFlags::Readable | SegmentFlags::Writable, Old);
+            Image.Arch = Architecture;
+            Image.Bits =
+                Architecture == Arch::X64 ? Bitness::Bits64 : Bitness::Bits32;
             NdOpEmulator Emulator(Image);
             Emulator.setStrictMode(true);
             Emulator.setLoadCollect(true);

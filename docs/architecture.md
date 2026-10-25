@@ -105,6 +105,10 @@ unaligned exchange through a library call changes the original transaction.
 The C renderer is shared by both routes; LLVMC validates owned assembly
 before normalization, including dead calls. This does not change generic
 LLVM atomics or non-x86 exchange emission.
+The x86 scalar concrete emulator commits memory before publishing the old
+exchange value; unsupported exchanges still stop explicitly. LLVMC
+materializes generic atomic RMW results at their original statement, so a
+single-use snapshot cannot delay the transaction across a later load or call.
 
 `X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
 condition/segment controls and exact assembly fallback. The existing
