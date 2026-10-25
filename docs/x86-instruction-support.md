@@ -1574,3 +1574,19 @@ completion values are not a complete guest exception context and do not
 implement AEX, VM exits, enclave entry/exit/resume, measured-environment
 transitions or other machine continuations. Release and production pinning
 remain deferred until the remaining instruction work is complete.
+
+## Unsigned immediate port transport
+
+The LLVM-to-C scalar-system recognizer now renders a validated 8-bit port
+immediate from its unsigned LLVM constant. Previously, the signed spelling
+of byte 0x80 could widen directly to the 16-bit value 0xff80. DX operands
+retain all 16 bits. The correction applies to both native-builtin and MSVC
+selection and the shared assembly fallback expression.
+
+`NeverDX86PortSourceTests` covers all 256 immediate ports and eight DX boundary
+values across the six byte/word/dword IN/OUT forms. Two SDK configurations
+each pass 20 compiled observer programs at O0/O2 with Clang, GCC and NeverC,
+for 63,360 controlled operand comparisons. The four exported observer sources
+are identical between SDKs. Restoring the signed-widening expression makes
+all four observers fail. These are C operand-transport checks; they do not
+execute privileged port I/O.

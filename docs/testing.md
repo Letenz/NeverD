@@ -4,6 +4,14 @@
 
 # Testing NeverD
 
+`NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
+port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
+Independent recorder functions check 1,584 operand cases per program through
+the native-builtin and MSVC selections at O0/O2. Clang and available GCC run
+i386 and x64 observers; `NEVERD_TEST_NEVERC` adds the x64 NeverC observers.
+These checks execute ordinary C operand transport, not privileged port I/O.
+`NEVERD_PORT_SOURCE_EXPORT_DIR` preserves the four complete observer sources.
+
 `NeverDPipelineOutcomeTests` checks LLVM intrinsic refusal on x86, x64, ARM
 and AArch64. Both void and value-producing unknown IDs must fail direct
 emission and all 64 combinations of architecture, serial/sharded emission,

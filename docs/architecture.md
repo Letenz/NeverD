@@ -45,6 +45,9 @@ ordered, potentially trapping reads even when the result is unused. Constant
 propagation does not turn a 16-bit DX port into an 8-bit port. C output selects
 qualified builtins, real MSVC intrinsics or owned assembly at compile time.
 LLVM-to-C validates types and full memory effects before recognizing a call.
+Its port recognizer zero-extends a validated 8-bit immediate from the LLVM
+constant before rendering C. DX operands retain their full 16-bit value;
+the signed spelling of an instruction byte cannot choose a different port.
 
 `X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
 LLVM/C API names. LLVM emission and both C projections share that contract.
