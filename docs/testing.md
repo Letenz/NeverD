@@ -5433,6 +5433,11 @@ truncation, changed buffers and parallel equivalence. The Release
 and repeated scans, with reproducible hashes and optional work counters.
 See [signature quality and performance](signature-quality.md) for the
 measurement contract, negative workloads and final-name truth checks.
+`SignatureMatcherIndex.SharedProloguesRetainExactAndWildcardDecisions` checks
+shared exact/wildcard columns, every final-byte value and truncated inputs.
+`CopiesRetainCandidatesAcrossRebuildAndMove` checks the immutable leaf storage's
+lifetime across copies, moves, rebuilding and destruction. Retain the existing
+single/parallel index equivalence tests when changing construction or storage.
 
 The feature repository retains the original compiler objects, truth, source
 profiles and digests. `NeverDLibraryRecognitionTests` consumes those archives
