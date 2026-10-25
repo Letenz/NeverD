@@ -24,6 +24,7 @@
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
+#include <QSpinBox>
 #include <QStandardItemModel>
 #include <QTableView>
 #include <QToolButton>
@@ -142,6 +143,14 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   Status = new QLabel(tr("Choose a collection to begin."), this);
   Status->setTextFormat(Qt::PlainText);
   makeStatusLine(*Status);
+  RowsPerPage = new QSpinBox(this);
+  RowsPerPage->setObjectName("lineagePageRows");
+  RowsPerPage->setAccessibleName(tr("Rows per page"));
+  RowsPerPage->setToolTip(tr("Rows per page"));
+  RowsPerPage->setPrefix(tr("Rows: "));
+  RowsPerPage->setRange(1, ::neverd::limits::diff::kMaxPageSize);
+  RowsPerPage->setValue(::neverd::limits::gui::kComparisonPageSize);
+  RowsPerPage->setKeyboardTracking(false);
   Previous = new QToolButton(this);
   Next = new QToolButton(this);
   Previous->setArrowType(Qt::LeftArrow);
@@ -155,16 +164,17 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   Retry->setAccessibleName(tr("Refresh page"));
   Retry->setToolTip(tr("Refresh page"));
   Navigation->addWidget(Status, 1);
+  Navigation->addWidget(RowsPerPage);
   Navigation->addWidget(Previous);
   Navigation->addWidget(Next);
   Navigation->addWidget(Retry);
   Root->addLayout(Navigation);
-  connect(Previous, &QToolButton::clicked, this, [this] {
-    page(std::max<qint64>(0,
-                          Offset - ::neverd::limits::gui::kComparisonPageSize));
-  });
+  connect(Previous, &QToolButton::clicked, this,
+          [this] { page(std::max<qint64>(0, Offset - RowsPerPage->value())); });
   connect(Next, &QToolButton::clicked, this, [this] { page(NextOffset); });
   connect(Retry, &QToolButton::clicked, this, &LineagePageView::refresh);
+  connect(RowsPerPage, &QSpinBox::valueChanged, this,
+          &LineagePageView::refresh);
   connect(&Session, &LineageSession::changed, this, &LineagePageView::buttons);
   connect(Table->selectionModel(), &QItemSelectionModel::currentRowChanged,
           this, [this] { emit selectionChanged(selected()); });
@@ -217,6 +227,7 @@ void LineagePageView::refresh() { page(Offset); }
 void LineagePageView::buttons() {
   const bool Available = Session.ready() && !Session.cancelRequested() &&
                          !Query.isEmpty() && !Pending;
+  RowsPerPage->setEnabled(Available);
   Previous->setEnabled(Available && Offset > 0);
   Next->setEnabled(Available && NextOffset >= 0);
   Retry->setEnabled(Available);
@@ -234,7 +245,7 @@ void LineagePageView::page(qint64 First) {
   auto Request = Query;
   Request["revision"] = Revision;
   Request["offset"] = First;
-  Request["limit"] = ::neverd::limits::gui::kComparisonPageSize;
+  Request["limit"] = RowsPerPage->value();
   Session.request(
       "lineage_query", {{"query", Request}}, this,
       [this, Current, Revision, Selection, First](const QJsonObject &Reply) {

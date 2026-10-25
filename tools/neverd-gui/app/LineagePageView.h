@@ -17,6 +17,7 @@
 #include <QWidget>
 
 class QLabel;
+class QSpinBox;
 class QToolButton;
 class QStandardItemModel;
 class QTableView;
@@ -47,6 +48,7 @@ private:
   QTableView *Table;
   QStandardItemModel *Model;
   QLabel *Status;
+  QSpinBox *RowsPerPage;
   QToolButton *Previous, *Next, *Retry;
   QStringList Keys;
   QString PreferredSelection;

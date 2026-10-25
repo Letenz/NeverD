@@ -2408,6 +2408,13 @@ the disposable compositor. The native gesture case explicitly skips with the
 offscreen platform. These tests do not qualify release chronology, fresh native
 authentication or automated patch presence.
 
+The lineage desktop regression also admits 200 snapshots with 48 KiB labels,
+then verifies the oversized default pages fail explicitly. Reducing each table's
+row allowance recovers the complete snapshot inventory and source evidence;
+changing it again preserves the current offset and uses the new backward step.
+The original labels and collection remain intact. Ordinary, narrow and large-font
+captures include the page-size control.
+
 `BinaryDiffSDK.ByteOverlaysBindDataOnlyChangesAndReopenedReports` checks that
 patching data outside decoded functions changes analysis identity, invalidates
 earlier saved binding, survives sidecar reload and recovers the original identity

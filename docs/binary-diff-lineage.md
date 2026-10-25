@@ -27,7 +27,11 @@ publication cannot roll back the file.
 The desktop opens an independent worker. Add comparisons, label snapshots and
 branches, filter functions, activate a function to trace it, inspect direct
 source evidence and conflicts, then save or reopen the collection. Tables retain
-one bounded page; Previous/Next visit the complete admitted inventory. The
+one bounded page. **Rows** chooses each table's page size; reduce it when large
+labels or evidence exceed the page's byte allowance, then continue with
+Previous/Next through the complete admitted inventory. Changing the page size
+retains its starting offset and retries the query without changing the collection.
+The
 diagram shows the current source-report page, not an entire unbounded graph.
 Keyboard activation and Copy copy original row evidence; context menus also copy
 full values. Long labels shorten only for display; headings and graph nodes use a single
