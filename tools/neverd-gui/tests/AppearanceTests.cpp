@@ -53,6 +53,7 @@
 #include <QToolButton>
 #include <QWheelEvent>
 #include <QWindow>
+#include <algorithm>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <memory>
@@ -288,16 +289,20 @@ private slots:
     }
     // Measure painted columns: Qt adds its icon column after item padding,
     // so checking the style-sheet literal alone misses a double reservation.
-    const auto bounds = [&](QAction *action, const QColor &color, int fromX) {
+    const auto colorDistance = [](const QColor &left, const QColor &right) {
+      return std::max({qAbs(left.red() - right.red()),
+                       qAbs(left.green() - right.green()),
+                       qAbs(left.blue() - right.blue())});
+    };
+    const auto bounds = [&](QAction *action, const QColor &color, int fromX,
+                            int tolerance = 12) {
       const QRect row = menu.actionGeometry(action);
       QRect ink;
       for (int y = qRound(row.top() * dpr);
            y < qRound((row.bottom() + 1) * dpr); ++y)
         for (int x = fromX; x < capture.width(); ++x) {
           const auto pixel = capture.pixelColor(x, y);
-          if (qAbs(pixel.red() - color.red()) < 12 &&
-              qAbs(pixel.green() - color.green()) < 12 &&
-              qAbs(pixel.blue() - color.blue()) < 12)
+          if (colorDistance(pixel, color) < tolerance)
             ink |= QRect(x, y, 1, 1);
         }
       return ink;
@@ -305,14 +310,21 @@ private slots:
     const QRect iconInk = bounds(withIcon, Qt::magenta, 0);
     QVERIFY(!iconInk.isEmpty());
     const auto foreground = Theme::instance().chrome("MenuText");
-    const QRect labelInk = bounds(withIcon, foreground, iconInk.right() + 1);
+    // Thin, vertically hinted glyphs need not contain a fully covered pixel.
+    // Count at least half foreground coverage while excluding the background;
+    // otherwise Linux FreeType can miss the M and measure a later letter.
+    const int textTolerance =
+        1 + colorDistance(foreground, Theme::instance().chrome("Menu")) / 2;
+    const QRect labelInk =
+        bounds(withIcon, foreground, iconInk.right() + 1, textTolerance);
     QVERIFY(!labelInk.isEmpty());
     const qreal gap = (labelInk.left() - iconInk.right() - 1) / dpr;
     qInfo() << "Menu icon-to-label gap" << gap << "DPR" << dpr
             << "icon physical bounds" << iconInk << "label bounds" << labelInk;
     QVERIFY(gap >= 6 && gap <= 10);
     for (auto *action : {plain, checked, checkedIcon, submenu->menuAction()}) {
-      const QRect label = bounds(action, foreground, iconInk.right() + 1);
+      const QRect label =
+          bounds(action, foreground, iconInk.right() + 1, textTolerance);
       QVERIFY(!label.isEmpty());
       QCOMPARE(label.left(), labelInk.left());
     }
