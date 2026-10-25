@@ -853,6 +853,74 @@ int main(void) {
     compileAndCheck(Source, false, {}, Optimization, true);
 }
 
+TEST(LLVMCIntrinsicSemantics, IntegerHelpersAndAtomicsTakeFrameAddressBits) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-frame-operands", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  auto *Integer = Builder.getInt64Ty();
+  auto Observe = Module.getOrInsertFunction("observe_frame", Integer, Integer);
+  const llvm::Intrinsic::ID Kinds[] = {
+      llvm::Intrinsic::uadd_sat, llvm::Intrinsic::usub_sat,
+      llvm::Intrinsic::umin, llvm::Intrinsic::umax};
+  for (unsigned Kind = 0; Kind != 5; ++Kind) {
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Integer, {Builder.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage,
+        "frame_integer_" + std::to_string(Kind), Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Frame = Builder.CreateAlloca(
+        llvm::ArrayType::get(Builder.getInt8Ty(), 64), nullptr, "frame");
+    auto *End = Builder.CreateGEP(Builder.getInt8Ty(), Frame,
+                                  Builder.getInt64(40), "frame_end");
+    auto *Address = Builder.CreateSub(Builder.CreatePtrToInt(End, Integer),
+                                      Builder.getInt64(16), "address");
+    auto *Pointer = Builder.CreateIntToPtr(Address, Builder.getPtrTy());
+    Builder.CreateStore(Builder.getInt64(0x123456789), Pointer);
+    llvm::Value *Result;
+    if (Kind != 4) {
+      auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, Kinds[Kind], {Integer});
+      auto *Bound = Builder.getInt64(Kind == 2 ? UINT64_MAX : 0);
+      llvm::Value *Left = Kind == 2 ? Bound : Address;
+      llvm::Value *Right = Kind == 2 ? Address : Bound;
+      Result = Builder.CreateCall(Intrinsic, {Left, Right});
+      Builder.CreateRet(Builder.CreateCall(Observe, {Result}));
+    } else {
+      Result = Builder.CreateAtomicRMW(
+          llvm::AtomicRMWInst::Xchg, Function->getArg(0), Address,
+          llvm::Align(8), llvm::AtomicOrdering::SequentiallyConsistent);
+      auto *Stored = Builder.CreateLoad(Integer, Function->getArg(0));
+      auto *Observed = Builder.CreateCall(Observe, {Stored});
+      Builder.CreateRet(Builder.CreateXor(Result, Observed));
+    }
+  }
+  const std::string Text = emit(Module);
+  const std::string Source = R"(
+#include <stdint.h>
+#include <stdbool.h>
+)" + Text + R"(
+static unsigned visits;
+uint64_t observe_frame(uint64_t address) {
+    ++visits;
+    return *(uint64_t *)(uintptr_t)address;
+}
+int main(void) {
+    uint64_t cell = 0xfeedface;
+    if (frame_integer_0(&cell) != UINT64_C(0x123456789)) return 1;
+    if (frame_integer_1(&cell) != UINT64_C(0x123456789)) return 2;
+    if (frame_integer_2(&cell) != UINT64_C(0x123456789)) return 3;
+    if (frame_integer_3(&cell) != UINT64_C(0x123456789)) return 4;
+    if (frame_integer_4(&cell) != (UINT64_C(0xfeedface) ^
+                                    UINT64_C(0x123456789))) return 5;
+    return visits != 5;
+}
+)";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Optimization, true);
+}
+
 TEST(LLVMCIntrinsicSemantics,
      UnsignedSaturationRejectsUnsupportedScalarWidths) {
   for (unsigned Bits : {2u, 7u, 24u, 65u, 129u}) {

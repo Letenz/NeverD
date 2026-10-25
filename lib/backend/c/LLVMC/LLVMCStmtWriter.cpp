@@ -2194,7 +2194,9 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
           std::string Value =
               ParamName != ValNames.end()
                   ? ParamName->second
-                  : integerCallStoredText(SI->getValueOperand());
+                  : integerCallStoredText(SI->getValueOperand(),
+                                          Member->Type && Member->Type->Kind ==
+                                                              NdTypeKind::Int);
           // A constant stored to an enumeration names its enumerator.
           if (const auto *Constant =
                   llvm::dyn_cast<llvm::ConstantInt>(SI->getValueOperand());
@@ -2300,8 +2302,9 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         if (llvm::StringRef(Member->Text).ends_with(".m_pszData") &&
             isResultParamValue(Stored))
           return;
-        std::string StoredText =
-            integerCallStoredText(Stored, /*AsInteger=*/FrameRecord);
+        std::string StoredText = integerCallStoredText(
+            Stored, FrameRecord || (Member->Type &&
+                                    Member->Type->Kind == NdTypeKind::Int));
         if (Size >= 16 && Member->Type &&
             Member->Type->Kind == NdTypeKind::Struct &&
             !Member->Type->SourceName.empty()) {
@@ -3105,8 +3108,11 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
               AllocaImmediates.clear();
               AllocaLastValues.clear();
             }
-            if (ReferencedBlocks.count(&RegionBB))
-              OS << blockLabel(&RegionBB) << ":\n";
+            // This block still owns incoming edges when its final jump is
+            // replaced by the structured region's fallthrough. Later nested
+            // regions can discover a goto that the reference scan predicted
+            // would inline, so retain its position just like a full block.
+            writeBlockLabel(RegionBB);
             for (llvm::Instruction &RegionInst :
                  *const_cast<llvm::BasicBlock *>(&RegionBB)) {
               if (&RegionInst == RegionBB.getTerminator() ||
@@ -4354,6 +4360,11 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return true;
   }
   if (IID == llvm::Intrinsic::localaddress) {
+    if (!SEHParentFrameName.empty()) {
+      emitIndent(Indent);
+      OS << getName(&Call) << " = " << SEHParentFrameName << ";\n";
+      return true;
+    }
     // Keep the target-specific LLVM intrinsic: it can select SP, FP, or a base
     // pointer depending on stack realignment. __builtin_frame_address differs.
     const std::string IntrinsicName = freshVar("llvm_localaddress");
@@ -5720,10 +5731,10 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   if (scalarIntegerMinMax(Call) || scalarIntegerSaturation(Call)) {
     // An actual function captures each argument once, including when the
     // intrinsic itself is inlined into another rendered expression.
-    const std::string Expr = functionIdentifier(*Call.getCalledFunction()) +
-                             "(" + callArgStr(Call.getArgOperand(0), Call, 0) +
-                             ", " + callArgStr(Call.getArgOperand(1), Call, 1) +
-                             ")";
+    const std::string Expr =
+        functionIdentifier(*Call.getCalledFunction()) + "(" +
+        integerPointerOperandStr(Call.getArgOperand(0), &Call, 0) + ", " +
+        integerPointerOperandStr(Call.getArgOperand(1), &Call, 1) + ")";
     RenderingCalls.pop_back();
     return Expr;
   }
@@ -7071,8 +7082,7 @@ void LLVMCWriter::writeInvertedFalseSkip(const llvm::BasicBlock *From,
     }
     emitIndent(Indent);
     OS << "} else {\n";
-    if (ReferencedBlocks.count(SelDef))
-      OS << blockLabel(SelDef) << ":\n";
+    writeBlockLabel(*SelDef);
     WriteArm(SelDef, Indent + 1);
     emitIndent(Indent);
     OS << "}\n";
@@ -7789,9 +7799,9 @@ std::string LLVMCWriter::windowsEHFilterExpr(const llvm::CatchSwitchInst &CS) {
     std::string Args = "GetExceptionInformation()";
     if (Fn->arg_size() == 2 && Fn->getArg(0)->getType()->isPointerTy() &&
         Fn->getArg(1)->getType()->isPointerTy()) {
-      if (SEHFilterFrameName.empty())
-        SEHFilterFrameName = freshVar("seh_parent_frame");
-      Args += ", " + SEHFilterFrameName;
+      if (SEHParentFrameName.empty())
+        SEHParentFrameName = freshVar("seh_parent_frame");
+      Args += ", " + SEHParentFrameName;
     } else if (Fn->arg_size() != 1 ||
                !Fn->getArg(0)->getType()->isPointerTy()) {
       throw std::runtime_error("unsupported Windows SEH filter source ABI");

@@ -1264,6 +1264,13 @@ void LLVMCWriter::writeEHWrapOpen(const EHWrapClause &Clause, int Indent) {
   }
 }
 
+void LLVMCWriter::writeBlockLabel(const llvm::BasicBlock &BB) {
+  if (ReferencedBlocks.count(&BB))
+    OS << blockLabel(&BB) << ":\n";
+  else
+    DeferredBlockLabels.try_emplace(&BB, OS.stream().tell());
+}
+
 void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
   if (FoldedJoinArms.count(&BB) || InlinedFallthroughBlocks.count(&BB) ||
       ConditionChainBodies.count(&BB) || DuplicatedAssignBlocks.count(&BB))
@@ -1300,10 +1307,7 @@ void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
     AllocaImmediates.clear();
     AllocaLastValues.clear();
   }
-  if (ReferencedBlocks.count(&BB))
-    OS << blockLabel(&BB) << ":\n";
-  else
-    DeferredBlockLabels.try_emplace(&BB, OS.stream().tell());
+  writeBlockLabel(BB);
   for (const llvm::Instruction &Inst : BB) {
     if (llvm::isa<llvm::AllocaInst>(&Inst))
       continue;
@@ -2479,7 +2483,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   ValNames.clear();
   UsedNames.clear();
   CapturedX87StatusCalls.clear();
-  SEHFilterFrameName.clear();
+  SEHParentFrameName.clear();
   BlockLabels.clear();
   DeferredBlockLabels.clear();
   ReferencedBlocks.clear();
@@ -9713,17 +9717,26 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   EHWrapIsCxx = functionIsCxxEH(Fn);
   EHTryDepth = 0;
 
-  if (!SEHFilterFrameName.empty()) {
-    // Capture in the parent, before Clang outlines the __except expression.
-    // Evaluating localaddress inside that expression would name the filter's
-    // frame instead. Keep the same target intrinsic used by native finally
-    // callbacks; frameaddress(0) can name a different base after realignment.
+  if (SEHParentFrameName.empty() && !EHWraps.empty())
+    for (const llvm::BasicBlock &BB : Fn)
+      for (const llvm::Instruction &Inst : BB)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst);
+            SEHParentFrameName.empty() && Call &&
+            Call->getIntrinsicID() == llvm::Intrinsic::localaddress) {
+          SEHParentFrameName = freshVar("seh_parent_frame");
+          break;
+        }
+  if (!SEHParentFrameName.empty()) {
+    // The source compiler outlines both __except filters and __finally bodies.
+    // Every localaddress in this LLVM function names its parent's local area,
+    // not a newly outlined C helper's frame. Capture it once before outlining;
+    // frameaddress(0) can name a different base after stack realignment.
     const std::string LocalAddress = freshVar("llvm_localaddress");
     emitIndent(1);
     OS << "extern void *" << LocalAddress
        << "(void) __asm__(\"llvm.localaddress\");\n";
     emitIndent(1);
-    OS << "void *" << SEHFilterFrameName << " = " << LocalAddress << "();\n";
+    OS << "void *" << SEHParentFrameName << " = " << LocalAddress << "();\n";
   }
 
   llvm::SmallPtrSet<const llvm::BasicBlock *, 16> SkipInTry;
