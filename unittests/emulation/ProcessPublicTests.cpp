@@ -3460,6 +3460,71 @@ TEST_F(ProcessPublic, AndroidLibcCompatibilityMatchesSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidErrorTextMatchesSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  struct Case {
+    const char *Fixture, *Entry, *Arguments, *Stop;
+  };
+  const Case Cases[] = {
+      {"errors", "error_query", "[536870912,2,0]", "returned"},
+      {"errors", "error_query", "[536870912,101,1]", "returned"},
+      {"errors", "error_query", "[536870912,\"0xffffffffffffffff\",1]",
+       "returned"},
+      {"errors", "error_query", "[536870912,\"0xffffffff00000002\",0]",
+       "returned"},
+      {"errors", "error_query", "[536870912,2,2]", "unsupported_service"},
+      {"errors", "error_known_unmapped", "[]", "returned"},
+      {"errors", "error_lifetime", "[536870912]", "returned"},
+      {"errors", "error_threads", "[536870912]", "returned"},
+      {"errors", "error_readonly_tls", "[]", "runtime_failure"},
+      {"errors", "error_write_known", "[]", "cpu_failure"},
+      {"errors", "error_reentrant_not_admitted", "[536870912]",
+       "unsupported_service"},
+      {"errors_dynamic", "error_query", "[536870912,2,1]", "returned"}};
+  for (const char *Variant : {"O0-none", "O2-relr"}) {
+    for (const auto &C : Cases) {
+      SCOPED_TRACE(testing::Message()
+                   << Variant << ':' << C.Entry << ':' << C.Arguments);
+      Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+              (std::string(C.Fixture) + '-' + Variant + ".so"))
+                 .string();
+      auto Request = llvm::cantFail(llvm::json::parse(R"({
+        "backend":"unicorn", "instruction_quantum":7,
+        "android":{"initialize":false,"thread_limit":3,
+          "observe_memory_on_failure":true,
+          "libraries":{"liberrors.so":["strerror"]},
+          "read_memory":[{"address":"0x20000000","size":8192}]}})"));
+      auto &Android = *Request.getAsObject()->getObject("android");
+      Android["entry_symbol"] = C.Entry;
+      Android["arguments"] = llvm::cantFail(llvm::json::parse(C.Arguments));
+      Android["memory"] = llvm::json::Array{llvm::json::Object{
+          {"address", "0x20000000"},
+          {"size", 8192},
+          {"bytes_hex", llvm::toHex(std::vector<uint8_t>(8192, 0xa5))}}};
+      const auto Options = jsonText(std::move(*Request.getAsObject()));
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      EXPECT_EQ(Report.getAsObject()->getString(field::Stop), C.Stop) << Text;
+      const bool Returned = llvm::StringRef(C.Stop) == "returned";
+      if (Returned)
+        EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                Returned ? process_cli::Success : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidJNIObjectsAndThreadsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android fixtures unavailable";

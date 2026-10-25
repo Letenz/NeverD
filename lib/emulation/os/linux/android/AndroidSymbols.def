@@ -67,6 +67,7 @@ NEVERD_ANDROID_PREFIX(PthreadMutexAttrPrefix, "pthread_mutexattr_",
                       mutexAttributes)
 NEVERD_ANDROID_PREFIX(PthreadMutexPrefix, "pthread_mutex", mutex)
 NEVERD_ANDROID_CALL(Errno, "__errno", getErrno)
+NEVERD_ANDROID_CALL(Strerror, "strerror", errorString)
 NEVERD_ANDROID_CALL(GetPageSize, "getpagesize", getPageSize)
 NEVERD_ANDROID_CALL(Sysconf, "sysconf", queryConfiguration)
 NEVERD_ANDROID_CALL(GetAuxVal, "getauxval", queryAuxiliaryVector)
