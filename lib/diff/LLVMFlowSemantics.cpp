@@ -140,7 +140,11 @@ validateFiniteLLVMFlow(const DataFlowGraph &G, llvm::StringRef Contract,
     }
     auto Shape = integerFlowShape(N.Opcode);
     if (Shape == LLVMFlowShape::Unsupported) {
-      const auto ID = llvm::Intrinsic::lookupIntrinsicID(N.Opcode);
+      // Saved graph opcodes are untrusted. LLVM's intrinsic lookup requires
+      // the namespace prefix even when it finds no matching intrinsic.
+      const auto ID = llvm::StringRef(N.Opcode).starts_with("llvm.")
+                          ? llvm::Intrinsic::lookupIntrinsicID(N.Opcode)
+                          : llvm::Intrinsic::not_intrinsic;
       Shape = intrinsicFlowShape(ID);
       if (Shape == LLVMFlowShape::Unsupported ||
           N.Opcode !=

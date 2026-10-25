@@ -2065,6 +2065,7 @@ TEST_F(BinaryDiffSDK, NativeRegionPagesPersistWithoutChangingAcceptedPairs) {
   EXPECT_EQ(neverd_comparison_restore_json(C, SavedText.c_str()), 1);
   EXPECT_EQ(take(neverd_comparison_export_json(C)), SavedText);
   auto Forged = llvm::json::parse(SavedText);
+  ASSERT_TRUE(static_cast<bool>(Forged)) << llvm::toString(Forged.takeError());
   auto *Span =
       (*Forged->getAsObject()->getObject("regions")->getArray("anchors"))[0]
           .getAsObject()
@@ -2132,6 +2133,7 @@ TEST_F(BinaryDiffSDK, NativeDataFlowPagesSlicesAndSavedFactsOutliveSessions) {
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
   EXPECT_EQ(neverd_comparison_validate_inputs(C, A, B), 1);
   auto Forged = llvm::json::parse(Saved);
+  ASSERT_TRUE(static_cast<bool>(Forged)) << llvm::toString(Forged.takeError());
   auto *SavedGraph = Forged->getAsObject()
                          ->getObject("dataflow")
                          ->getObject("primary")
@@ -2260,6 +2262,7 @@ TEST_F(BinaryDiffSDK,
                 Reopened, render(llvm::json::Object(Query)).c_str()))),
             render(Nodes));
   auto Forged = llvm::json::parse(Saved);
+  ASSERT_TRUE(static_cast<bool>(Forged)) << llvm::toString(Forged.takeError());
   (*Forged->getAsObject()->getObject("flow_regions")->getArray("anchors"))[0]
       .getAsObject()
       ->operator[]("primary_root") = 99999;
@@ -2335,6 +2338,8 @@ TEST_F(BinaryDiffSDK, OptimizedSSAOriginsSlicesAndTamperRefusal) {
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
   for (unsigned Kind = 0; Kind < 4; ++Kind) {
     auto Forged = llvm::json::parse(Saved);
+    ASSERT_TRUE(static_cast<bool>(Forged))
+        << llvm::toString(Forged.takeError());
     auto *Root = Forged->getAsObject();
     auto *Graph = Root->getObject("dataflow")
                       ->getObject("primary")
@@ -2373,6 +2378,7 @@ TEST_F(BinaryDiffSDK, OptimizedSSAUnsupportedMemoryAndBudgetsRemainVisible) {
       "llvm-neighborhoods-v1");
   const auto Saved = take(neverd_comparison_export_json(C));
   auto Forged = llvm::json::parse(Saved);
+  ASSERT_TRUE(static_cast<bool>(Forged)) << llvm::toString(Forged.takeError());
   (*Forged->getAsObject()->getObject("flow_regions"))["profile"] =
       "med-neighborhoods-v1";
   EXPECT_EQ(neverd_comparison_restore_json(C, render(*Forged).c_str()), 0);
@@ -2451,6 +2457,8 @@ TEST_F(BinaryDiffSDK, SharedFragmentsPageUncomparedInputsAndReopenExactly) {
                   Reopened, render(llvm::json::Object(Query)).c_str()))),
               render(Frontier));
     auto Forged = llvm::json::parse(Saved);
+    ASSERT_TRUE(static_cast<bool>(Forged))
+        << llvm::toString(Forged.takeError());
     (*Forged->getAsObject()->getObject("flow_regions")->getArray("anchors"))[0]
         .getAsObject()
         ->operator[]("frontier") = llvm::json::Array{};
@@ -2564,6 +2572,8 @@ TEST_F(BinaryDiffSDK, ParameterViewsPageAndBindTheOriginalSourceSignature) {
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
   for (unsigned Kind = 0; Kind < 3; ++Kind) {
     auto Forged = llvm::json::parse(Saved);
+    ASSERT_TRUE(static_cast<bool>(Forged))
+        << llvm::toString(Forged.takeError());
     auto *Graph = Forged->getAsObject()
                       ->getObject("dataflow")
                       ->getObject("secondary")
@@ -2738,6 +2748,7 @@ TEST_F(BinaryDiffSDK, LoopProgressPagesBindWitnessesAndOriginalContracts) {
       << take(neverd_comparison_last_error(Reopened));
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
   auto Forged = llvm::json::parse(Saved);
+  ASSERT_TRUE(static_cast<bool>(Forged)) << llvm::toString(Forged.takeError());
   auto *Graph = Forged->getAsObject()
                     ->getObject("dataflow")
                     ->getObject("primary")
@@ -2815,6 +2826,7 @@ TEST_F(BinaryDiffSDK, MultiBlockProgressBindsPagedHeadersAndFreshSource) {
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
   for (const auto Header : {false, true}) {
     auto V = llvm::json::parse(Saved);
+    ASSERT_TRUE(static_cast<bool>(V)) << llvm::toString(V.takeError());
     auto *Proof = V->getAsObject()
                       ->getObject("dataflow")
                       ->getObject("primary")
@@ -2893,6 +2905,7 @@ TEST_F(BinaryDiffSDK, NestedProgressPagesEveryLayerAndRechecksFreshSource) {
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
   for (unsigned Forgery = 0; Forgery < 3; ++Forgery) {
     auto V = llvm::json::parse(Saved);
+    ASSERT_TRUE(static_cast<bool>(V)) << llvm::toString(V.takeError());
     auto *Proof = V->getAsObject()
                       ->getObject("dataflow")
                       ->getObject("primary")
@@ -2985,6 +2998,7 @@ void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex, unsigned Version,
   for (unsigned Forgery = 0;
        Forgery < 2 * GuardCount + 4 + (Version == 5 ? 4 : 0); ++Forgery) {
     auto V = llvm::json::parse(Saved);
+    ASSERT_TRUE(static_cast<bool>(V)) << llvm::toString(V.takeError());
     auto *Proof = V->getAsObject()
                       ->getObject("dataflow")
                       ->getObject("primary")
