@@ -82,6 +82,9 @@ struct PatternModule {
   /// the four-byte field of unprefixed FF 15/FF 25 import calls/jumps, named
   /// `__imp_<export>`. Only an exact name at the addressed, mapped IAT slot
   /// confirms that reference; absent or different spellings are unknown.
+  /// A COFF x64 RIP-relative LEA can reference a primary MSVC vftable by its
+  /// exact `??_7...6B@` linkage name. The loader validates RTTI to compare
+  /// the mangled type; unsupported or incomplete metadata remains unknown.
   std::vector<FuncRef> References;
 
   std::vector<PatternByte> TailBytes;

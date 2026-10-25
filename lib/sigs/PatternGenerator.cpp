@@ -8,8 +8,10 @@
 
 #include "X86/X86ImportReference.h"
 
+#include "neverd/loader/COFF/RTTI.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/sigs/SignatureMatcher.h"
+#include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -1123,10 +1125,17 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       markWildcard(Wildcard, Rel.Offset - Fn.Offset, *Rel.Width);
       if (!Opts.EmitReferences)
         continue;
-      const std::optional<uint64_t> At = coffBranchReferenceOffset(
+      std::optional<uint64_t> At = coffBranchReferenceOffset(
           Machine, Rel.Type, Sec.Contents.take_front(End), Rel.Offset,
           Fn.Offset);
-      if (!At)
+      const uint64_t Field = Rel.Offset - Fn.Offset;
+      const bool AddressReference =
+          !At && Machine == COFF::IMAGE_FILE_MACHINE_AMD64 &&
+          Rel.Type == COFF::IMAGE_REL_AMD64_REL32 &&
+          isX64AddressReferenceField(Sec.Contents.slice(Fn.Offset, Size),
+                                     Field) &&
+          readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) == 0;
+      if (!At && !AddressReference)
         continue;
       Expected<COFFSymbolRef> TargetOrErr = Obj.getSymbol(Rel.Symbol);
       if (!TargetOrErr) {
@@ -1137,6 +1146,11 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       if (!TargetName) {
         consumeError(TargetName.takeError());
         continue;
+      }
+      if (AddressReference) {
+        if (!coff_loader::primaryVTableTypeName(*TargetName))
+          continue;
+        At = Field;
       }
       // Only a pointer symbol supplied by a COFF import can name the slot
       // of a memory-indirect call. A global function pointer is not an

@@ -660,6 +660,87 @@ TEST(PatternGeneratorCOFF, PrefixedOrTruncatedImportFieldsAreNotGuessed) {
               std::nullopt);
 }
 
+TEST(PatternGeneratorCOFF, PrimaryVTableAddressesRetainExactTypeReferences) {
+  for (const uint8_t Rex : {0x48, 0x4c}) {
+    std::vector<uint8_t> Code(32, 0x90);
+    Code[4] = Rex;
+    Code[5] = 0x8d;
+    Code[6] = 0x05;
+    std::fill(Code.begin() + 7, Code.begin() + 11, 0);
+    COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+    Builder.addFunction("constructor", 0);
+    Builder.addRelocation(7, COFF::IMAGE_REL_AMD64_REL32);
+    Builder.setRelocationTarget("??_7Widget@@6B@");
+    PatternGeneratorOptions Opts;
+    Opts.EmitReferences = true;
+    Generated Out = generate(Builder.build(), Opts);
+    ASSERT_EQ(Out.Lines.size(), 1u);
+    auto Mod = PatternParser::parseLine(Out.Lines.front());
+    ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+    ASSERT_EQ(Mod->References.size(), 1u);
+    EXPECT_EQ(Mod->References.front().Name, "??_7Widget@@6B@");
+    EXPECT_EQ(Mod->References.front().Offset, 7u);
+    EXPECT_TRUE(SignatureMatcher::isFullyVerified(*Mod));
+    for (const char *Name : {"global", "??_7Widget@@6BBase@@@", "??_7@@6B@"}) {
+      Builder.setRelocationTarget(Name);
+      Out = generate(Builder.build(), Opts);
+      Mod = PatternParser::parseLine(Out.Lines.front());
+      ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+      EXPECT_TRUE(Mod->References.empty()) << Name;
+    }
+  }
+}
+
+TEST(PatternGeneratorCOFF, VTableReferencesRequireCanonicalZeroAddendFields) {
+  for (unsigned Variant = 0; Variant != 8; ++Variant) {
+    std::vector<uint8_t> Code(32, 0x90);
+    Code[4] = 0x48;
+    Code[5] = 0x8d;
+    Code[6] = 0x05;
+    std::fill(Code.begin() + 7, Code.begin() + 11, 0);
+    uint16_t Machine = COFF::IMAGE_FILE_MACHINE_AMD64;
+    uint16_t Relocation = COFF::IMAGE_REL_AMD64_REL32;
+    switch (Variant) {
+    case 0:
+      Code[3] = 0x67;
+      break;
+    case 1:
+      Code[3] = 0x65;
+      break;
+    case 2:
+      Code[4] = 0x40;
+      break;
+    case 3:
+      Code[5] = 0x8b;
+      break;
+    case 4:
+      Code[6] = 0x04;
+      break;
+    case 5:
+      Code[7] = 8;
+      break;
+    case 6:
+      Relocation = COFF::IMAGE_REL_AMD64_REL32_1;
+      break;
+    case 7:
+      Machine = COFF::IMAGE_FILE_MACHINE_I386;
+      Relocation = COFF::IMAGE_REL_I386_REL32;
+      break;
+    }
+    COFFObjectBuilder Builder(Machine, Code);
+    Builder.addFunction("constructor", 0);
+    Builder.addRelocation(7, Relocation);
+    Builder.setRelocationTarget("??_7Widget@@6B@");
+    PatternGeneratorOptions Opts;
+    Opts.EmitReferences = true;
+    Generated Out = generate(Builder.build(), Opts);
+    ASSERT_EQ(Out.Lines.size(), 1u);
+    auto Mod = PatternParser::parseLine(Out.Lines.front());
+    ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+    EXPECT_TRUE(Mod->References.empty()) << Variant;
+  }
+}
+
 TEST(PatternGeneratorCOFF, IdenticalCodeAtDifferentAddressesIsNotAliased) {
   const std::vector<uint8_t> Body = sequentialCode(32);
   std::vector<uint8_t> Code = Body;

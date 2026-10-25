@@ -5851,6 +5851,9 @@ different addresses, recursion through aliases, canonical indirect import
 relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
 checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
 or absent metadata, evidence withdrawal, and the separate identity gate.
+The COFF cases also check primary x64 vftable references: exact RTTI types,
+locator and hierarchy consistency, bounded strings, unsupported secondary
+layouts, malformed data, instruction prefixes and negative displacements.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,

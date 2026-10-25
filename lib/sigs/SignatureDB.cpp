@@ -9,6 +9,7 @@
 #include "X86/X86ImportReference.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/RTTI.h"
 #include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/ImageProfile.h"
@@ -1000,6 +1001,24 @@ std::optional<uint64_t> importReferenceSlot(const BinaryImage &Img,
   return Start + Size + static_cast<int64_t>(static_cast<int32_t>(Field));
 }
 
+/// The address materialized by an x64 RIP-relative LEA. A vftable's metadata
+/// is read by the COFF loader; this only locates the relocation field.
+std::optional<uint64_t> addressReferenceTarget(const BinaryImage &Img,
+                                               uint64_t Start,
+                                               uint32_t Offset) {
+  if (!Img.isCOFF() || Img.Arch != Arch::X64)
+    return std::nullopt;
+  const uint64_t Size = uint64_t(Offset) + sizeof(uint32_t);
+  if (Size > std::numeric_limits<size_t>::max() ||
+      Start > std::numeric_limits<uint64_t>::max() - Size)
+    return std::nullopt;
+  const uint8_t *Bytes = Img.readVA(Start, static_cast<size_t>(Size));
+  if (!Bytes ||
+      !isX64AddressReferenceField({Bytes, static_cast<size_t>(Size)}, Offset))
+    return std::nullopt;
+  return Start + Size + static_cast<int64_t>(readLE<int32_t>(Bytes + Offset));
+}
+
 /// Where the thunk the branch \p To enters jumps to, when all the thunk does
 /// is jump on: an incremental-linking thunk, a branch island, or a linker's
 /// long-branch or interworking thunk.  On 32-bit ARM the thunk runs in the
@@ -1068,10 +1087,13 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   std::vector<Site> Sites;
   std::vector<size_t> FirstSite(Matches.size() + 1, 0);
   std::vector<uint32_t> Branches(Matches.size(), 0);
-  // Import identity is immutable within one application, unlike provisional
-  // function candidates. Confirm it once without adding data slots to the
-  // branch graph or growing its hot Site records. Old packs pay no allocation.
-  std::vector<uint32_t> ConfirmedImports;
+  // Import and RTTI evidence is immutable within one application, unlike
+  // provisional function candidates. Confirm it once without adding data slots
+  // to the branch graph or growing its hot Site records. Old packs pay no
+  // allocation.
+  std::vector<uint32_t> ConfirmedMetadata;
+  llvm::DenseSet<size_t> ContradictedMetadata;
+  llvm::DenseMap<uint64_t, std::optional<llvm::StringRef>> VTableTypes;
   for (size_t I = 0; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
     llvm::SmallVector<StoredName, 8> References(ReferencesOf(I).begin(),
@@ -1120,9 +1142,38 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
                                         COFFImportPointerPrefix) &&
                                     Name == Imp->Name;
                            })) {
-            if (ConfirmedImports.empty())
-              ConfirmedImports.resize(Matches.size(), 0);
-            ++ConfirmedImports[I];
+            if (ConfirmedMetadata.empty())
+              ConfirmedMetadata.resize(Matches.size(), 0);
+            ++ConfirmedMetadata[I];
+          }
+        }
+      } else if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
+                              [](const StoredName &Name) {
+                                return coff_loader::primaryVTableTypeName(
+                                           Name.Name)
+                                    .has_value();
+                              })) {
+        if (const auto Target =
+                addressReferenceTarget(Img, Start, References[R].Offset)) {
+          auto [At, Fresh] = VTableTypes.try_emplace(*Target);
+          if (Fresh)
+            At->second = coff_loader::readPrimaryVTableTypeName(Img, *Target);
+          if (At->second) {
+            bool Confirmed = false;
+            bool AllTypes = true;
+            for (size_t Alternative = R; Alternative < End; ++Alternative) {
+              const auto Type = coff_loader::primaryVTableTypeName(
+                  References[Alternative].Name);
+              AllTypes &= Type.has_value();
+              Confirmed |= Type && *Type == *At->second;
+            }
+            if (Confirmed) {
+              if (ConfirmedMetadata.empty())
+                ConfirmedMetadata.resize(Matches.size(), 0);
+              ++ConfirmedMetadata[I];
+            } else if (AllTypes) {
+              ContradictedMetadata.insert(I);
+            }
           }
         }
       }
@@ -1252,7 +1303,9 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // branches is confirmed.
   enum class Outcome : uint8_t { Unconfirmed, Confirmed, Contradicted };
   auto Check = [&](size_t I) {
-    size_t Confirmed = ConfirmedImports.empty() ? 0 : ConfirmedImports[I];
+    if (ContradictedMetadata.contains(I))
+      return Outcome::Contradicted;
+    size_t Confirmed = ConfirmedMetadata.empty() ? 0 : ConfirmedMetadata[I];
     for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
       const Site &Where = Sites[S];
       // Any routine the branch may reach confirms it; it contradicts the

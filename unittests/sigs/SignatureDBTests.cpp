@@ -7,7 +7,9 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/RTTI.h"
 #include "neverd/sigs/SignatureDB.h"
+#include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -805,6 +807,174 @@ TEST(SignatureDBReferences, COFFImportPrefixesRemainUnconfirmed) {
     EXPECT_FALSE(Database.matches().front().Confirmed);
     EXPECT_TRUE(Database.buildNameMap().empty());
   }
+}
+
+namespace {
+
+std::string vtableCallerLine(llvm::StringRef Name, llvm::StringRef Reference) {
+  return ("90909090488D05........909090909090909090909090909090909090909090"
+          " 00 0000 0020 :0000 " +
+          Name + " ^0007 " + Reference + "\n")
+      .str();
+}
+
+neverd::BinaryImage makeVTableImage() {
+  auto Image = makeIndirectImportImage(neverd::Arch::X64);
+  Image.Imports.clear();
+  Image.Base = 0x1000;
+  auto &Code = Image.Segments.front().Data;
+  Code[4] = 0x48;
+  Code[5] = 0x8d;
+  Code[6] = 0x05;
+  neverd::writeLE<uint32_t>(Code.data() + 7, 0x2108 - 0x100b);
+  auto &Data = Image.Segments.back();
+  Data.Size = Data.FileSz = 0x300;
+  Data.Data.assign(Data.Size, 0);
+  auto Put = [&](size_t At, uint32_t Value) {
+    neverd::writeLE<uint32_t>(Data.Data.data() + At, Value);
+  };
+  neverd::writeLE<uint64_t>(Data.Data.data() + 0x100, 0x2140);
+  neverd::writeLE<uint64_t>(Data.Data.data() + 0x108, 0x1000);
+  Put(0x140, 1); // Locator version, zero offset and construction displacement.
+  Put(0x14c, 0x1200);     // Type descriptor.
+  Put(0x150, 0x1180);     // Class hierarchy.
+  Put(0x154, 0x1140);     // Locator self RVA.
+  Put(0x188, 1);          // One base: the complete class itself.
+  Put(0x18c, 0x11a0);     // Base array.
+  Put(0x1a0, 0x11c0);     // Self base descriptor.
+  Put(0x1c0, 0x1200);     // Same type descriptor.
+  Put(0x1cc, 0xffffffff); // No virtual base displacement.
+  Put(0x1d4, 0x40);       // HASPCHD.
+  Put(0x1d8, 0x1180);     // Same hierarchy.
+  constexpr char Name[] = ".?AVWidget@@";
+  std::memcpy(Data.Data.data() + 0x210, Name, sizeof(Name));
+  return Image;
+}
+
+} // namespace
+
+TEST(SignatureDBReferences, VTableTypeDisambiguatesCandidatesNotIdentity) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      vtableCallerLine("widget_ctor", "??_7Widget@@6B@") +
+          vtableCallerLine("other_ctor", "??_7Other@@6B@"),
+      "constructors"));
+  auto Image = makeVTableImage();
+  const auto Type =
+      neverd::coff_loader::readPrimaryVTableTypeName(Image, 0x2108);
+  ASSERT_TRUE(Type);
+  EXPECT_EQ(*Type, "Widget@@");
+  Database.apply(Image, {0x1000});
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_EQ(Database.matches().front().Name, "widget_ctor");
+  EXPECT_TRUE(Database.matches().front().Confirmed);
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "widget_ctor");
+  EXPECT_TRUE(Database.buildNameMap().empty());
+  // Reapplication must not reuse metadata from the preceding image.
+  Image.Segments.back().Data[0x140] = 0;
+  Database.apply(Image, {0x1000});
+  EXPECT_EQ(Database.matches().size(), 2u);
+  EXPECT_TRUE(Database.buildCandidateNameMap().empty());
+  EXPECT_TRUE(Database.buildNameMap().empty());
+}
+
+TEST(SignatureDBReferences, VTableMalformedMetadataCannotConfirmOrContradict) {
+  const std::vector<std::pair<size_t, uint32_t>> Corruptions = {
+      {0x100, 0x9000},     {0x108, 0x2000}, {0x140, 0},
+      {0x144, 8},          {0x148, 4},      {0x14c, 0},
+      {0x14c, 0xffffffff}, {0x150, 0},      {0x154, 0x1144},
+      {0x180, 1},          {0x188, 0},      {0x188, 0xffffffff},
+      {0x18c, 0x12ff},     {0x1a0, 0x12ff}, {0x1c0, 0x1204},
+      {0x1c4, 1},          {0x1c8, 4},      {0x1cc, 0},
+      {0x1d0, 4},          {0x1d4, 0},      {0x1d8, 0x1184},
+      {0x210, 0}};
+  for (const auto &[Offset, Value] : Corruptions) {
+    auto Image = makeVTableImage();
+    neverd::writeLE<uint32_t>(Image.Segments.back().Data.data() + Offset,
+                              Value);
+    EXPECT_FALSE(neverd::coff_loader::readPrimaryVTableTypeName(Image, 0x2108))
+        << Offset;
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(
+        vtableCallerLine("widget_ctor", "??_7Widget@@6B@") +
+            vtableCallerLine("other_ctor", "??_7Other@@6B@"),
+        "constructors"));
+    Database.apply(Image, {0x1000});
+    ASSERT_EQ(Database.matches().size(), 2u) << Offset;
+    for (const auto &Match : Database.matches())
+      EXPECT_FALSE(Match.Confirmed) << Offset;
+    EXPECT_TRUE(Database.buildCandidateNameMap().empty()) << Offset;
+  }
+}
+
+TEST(SignatureDBReferences, VTableEvidenceRequiresCompleteSupportedData) {
+  for (unsigned Variant = 0; Variant != 10; ++Variant) {
+    auto Image = makeVTableImage();
+    auto &Data = Image.Segments.back();
+    switch (Variant) {
+    case 0:
+      Image.Format = neverd::BinaryFormat::ELF;
+      break;
+    case 1:
+      Image.Arch = neverd::Arch::X86;
+      break;
+    case 2:
+      Image.Bits = neverd::Bitness::Bits32;
+      break;
+    case 3:
+      Data.Flags = Data.Flags | neverd::SegmentFlags::Writable;
+      break;
+    case 4:
+      Data.Flags = Data.Flags | neverd::SegmentFlags::Executable;
+      break;
+    case 5:
+      Data.Data.resize(0x21b);
+      break; // No string terminator.
+    case 6:
+      Data.Size = 0x21b;
+      break;
+    case 7:
+      std::fill(Data.Data.begin() + 0x21b, Data.Data.end(), 'x');
+      break;
+    case 8:
+      Data.Data[0x214] = ' ';
+      break;
+    case 9:
+      Image.Base = std::numeric_limits<uint64_t>::max() - 0x1000;
+      break;
+    }
+    EXPECT_FALSE(neverd::coff_loader::readPrimaryVTableTypeName(Image, 0x2108))
+        << Variant;
+  }
+  auto Image = makeVTableImage();
+  Image.Segments.back().Data[0x213] = 'U'; // Struct type spelling.
+  EXPECT_EQ(*neverd::coff_loader::readPrimaryVTableTypeName(Image, 0x2108),
+            "Widget@@");
+}
+
+TEST(SignatureDBReferences, VTableAddressRequiresCanonicalInstruction) {
+  for (uint8_t Prefix : {0x65, 0x67, 0x48}) {
+    auto Image = makeVTableImage();
+    Image.Segments.front().Data[3] = Prefix;
+    std::string Pattern = vtableCallerLine("ctor", "??_7Widget@@6B@");
+    Pattern[6] = Pattern[7] = '.';
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(Pattern, "constructors"));
+    Database.apply(Image, {0x1000});
+    ASSERT_EQ(Database.matches().size(), 1u);
+    EXPECT_FALSE(Database.matches().front().Confirmed);
+  }
+  auto Image = makeVTableImage();
+  Image.Segments.front().VA = 0x3000;
+  neverd::writeLE<uint32_t>(Image.Segments.front().Data.data() + 7,
+                            uint32_t(0x2108 - 0x300b));
+  neverd::writeLE<uint64_t>(Image.Segments.back().Data.data() + 0x108, 0x3000);
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      vtableCallerLine("ctor", "??_7Widget@@6B@"), "constructors"));
+  Database.apply(Image, {0x3000});
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_TRUE(Database.matches().front().Confirmed);
 }
 
 TEST(SignatureDBReferences, EveryImportReferenceMustBeConfirmed) {
