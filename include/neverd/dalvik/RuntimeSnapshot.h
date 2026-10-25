@@ -8,8 +8,27 @@
 #include "neverd/dalvik/AndroidApplication.h"
 
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace neverd::mobile::dalvik {
+struct AndroidMessageState {
+  uint32_t identity = 0;
+  uint64_t target = 0, callback = 0, next = 0;
+  int64_t when = 0;
+  uint32_t flags = 0;
+  bool operator==(const AndroidMessageState &) const = default;
+};
+struct AndroidMessageQueueState {
+  uint32_t identity = 0;
+  bool blocked = false;
+  // False means a guest mutation made the finite linked-list view incomplete.
+  // No message dispatch is inferred from any queue snapshot.
+  bool complete = true;
+  std::vector<AndroidMessageState> messages;
+  bool operator==(const AndroidMessageQueueState &) const = default;
+};
 // These are model heap identities, not JNI references or guest addresses.
 // Zero means not materialized. The declared phase is separate from lazy
 // materialization and does not certify execution of an Application constructor.
@@ -20,6 +39,8 @@ struct AndroidFrameworkState {
   uint32_t boot_loader = 0, system_loader = 0, application_loader = 0;
   // Unknown/unread is distinct from a guest-written or declared null value.
   std::optional<uint64_t> instrumentation;
+  // Present only for a materialized queue with explicitly known initial state.
+  std::optional<AndroidMessageQueueState> main_message_queue;
   bool operator==(const AndroidFrameworkState &) const = default;
 };
 

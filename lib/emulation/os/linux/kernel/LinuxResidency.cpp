@@ -19,34 +19,6 @@
 #include <vector>
 
 namespace neverd::emulation::linux_model {
-void LinuxMemory::setResidencyOwnership(uint64_t Address, uint64_t Size,
-                                        bool Owned) {
-  const uint64_t End = Address + Size;
-  std::vector<std::pair<uint64_t, uint64_t>> Updated;
-  for (const auto &[Begin, Limit] : AnonymousResidencyRanges) {
-    if (Limit <= Address || Begin >= End) {
-      Updated.emplace_back(Begin, Limit);
-      continue;
-    }
-    if (Begin < Address)
-      Updated.emplace_back(Begin, Address);
-    if (Limit > End)
-      Updated.emplace_back(End, Limit);
-  }
-  if (Owned)
-    Updated.emplace_back(Address, End);
-  std::sort(Updated.begin(), Updated.end());
-  AnonymousResidencyRanges.clear();
-  for (const auto &Range : Updated) {
-    if (!AnonymousResidencyRanges.empty() &&
-        AnonymousResidencyRanges.back().second >= Range.first)
-      AnonymousResidencyRanges.back().second =
-          std::max(AnonymousResidencyRanges.back().second, Range.second);
-    else
-      AnonymousResidencyRanges.push_back(Range);
-  }
-}
-
 llvm::Expected<std::optional<uint64_t>>
 LinuxMemory::residency(const ProcessServiceEvent &Event,
                        ProcessResult &Result) {
@@ -93,7 +65,7 @@ LinuxMemory::residency(const ProcessServiceEvent &Event,
   if (!VMAs)
     return VMAs.takeError();
   auto VMA = VMAs->begin();
-  auto Owner = AnonymousResidencyRanges.begin();
+  auto Owner = AnonymousAllocationRanges.begin();
   auto OutputMapping = Mappings->begin();
   uint64_t Done = 0;
   bool Consumed = false;
@@ -105,9 +77,9 @@ LinuxMemory::residency(const ProcessServiceEvent &Event,
       return Reply(uint64_t(0) - NoMemory);
     const uint64_t Count = std::min(
         {Pages - Done, PageSize, (VMA->Address + VMA->Size - At) / PageSize});
-    while (Owner != AnonymousResidencyRanges.end() && Owner->second <= At)
+    while (Owner != AnonymousAllocationRanges.end() && Owner->second <= At)
       ++Owner;
-    if (!Count || VMA->IsMMIO || Owner == AnonymousResidencyRanges.end() ||
+    if (!Count || VMA->IsMMIO || Owner == AnonymousAllocationRanges.end() ||
         Owner->first > At || Count * PageSize > Owner->second - At)
       return Unsupported(ResidencyBacking);
     if (!Consumed) {

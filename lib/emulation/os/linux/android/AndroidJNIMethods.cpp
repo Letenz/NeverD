@@ -173,8 +173,13 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
             "JNI nonvirtual intrinsic ID does not match class lookup");
     }
     // An inherited ID cannot select a different override in the named class.
-    if (M.Op == IdentityEquals && (*Class)->ClassName == "java/lang/String")
-      return failure("JNI nonvirtual method ID does not match class lookup");
+    if (M.Op == IdentityEquals && (*Class)->ClassName != M.Class) {
+      auto [Params, ResultType] = prototype(M.Signature);
+      if (libraryMethod({"L" + (*Class)->ClassName + ";", M.Name,
+                         std::move(Params), std::move(ResultType)},
+                        false))
+        return failure("JNI nonvirtual method ID does not match class lookup");
+    }
   }
   const auto Types = parameters(Signature);
   if (Return == 'F' || Return == 'D' ||

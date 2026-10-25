@@ -294,7 +294,8 @@ The supported Bionic subset is:
 - `snprintf`, `vsnprintf`, `sprintf`, `vsprintf` and their four `__*_chk`
   fortify forms, for the bounded integer and byte-string formatting subset
   described below.
-- `sscanf`, `vsscanf`, for bounded integer scanning as described below.
+- `sscanf`, `vsscanf`, for bounded integer and narrow byte scanning as described below.
+
 - `kill`, sharing the [Linux signal contract](process-emulation.md) with raw
   SVC and variadic `syscall`: self signal-zero probes, process-wide SIGKILL and
   bounded ordinary self-process signals,
@@ -757,14 +758,22 @@ Scandir, reentrant directory APIs, general symlink traversal and a public DIR
 layout remain unmodeled. Enumeration order and unspecified inode identities
 belong to the virtual workload, not to the host filesystem.
 
-### Integer scanning
+### Integer and byte scanning
 
 `sscanf` and `vsscanf` share the formatting model's GP argument reader and
-Android LP64 `va_list` rules. The scanner accepts `d i o u x X p n`, literal
+Android LP64 `va_list` rules. The scanner accepts `d i o u x X p n c s`, literal
 characters, `%%`, ASCII whitespace, assignment suppression, decimal field
 widths, and `hh h l ll j z t q` integer lengths. Android's `D` and `O` aliases
 use `long`. `%n` records consumed input bytes without increasing the assignment
-count. Suppression and widths on `%n`, and lengths on `%p`, are unsupported.
+count. Suppression and widths on `%n`, and lengths on `%p`, `%c` or `%s`, are
+unsupported.
+
+Narrow `%c` consumes bytes without skipping whitespace or adding a NUL, with
+default width one. A nonempty field shorter than its width still assigns the
+available bytes. Narrow `%s` skips ASCII whitespace, consumes non-whitespace
+bytes up to its optional width and adds a terminating NUL. Suppressed character
+and string fields consume input without reading a destination argument. Their
+pending output storage is charged to the same memory budget as integer fields.
 
 The input is a bounded NUL-terminated guest byte string. A numeric field consumes
 at most 512 bytes, including its sign and radix prefix. An incomplete `0x`
@@ -773,7 +782,7 @@ assignment count; input exhaustion returns EOF when no assignment has occurred.
 Earlier assignments survive either normal failure. Destination widths and
 truncation follow Android LP64, and successful conversions preserve thread errno.
 
-Floating-point, character/string/scanset conversions, allocation, positional
+Floating-point, wide-character/string and scanset conversions, allocation, positional
 arguments, malformed formats, and 64-bit conversion overflow stop explicitly.
 Output that aliases input, format, or consumed argument storage also stops;
 destinations may alias each other and are written in conversion order. All

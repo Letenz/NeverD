@@ -2179,6 +2179,21 @@ private slots:
           foundUnassigned = item->text(1) == "Unassigned";
       }
       QVERIFY(foundUnassigned);
+      for (const auto &query : {QStringLiteral(";"), QStringLiteral("/")}) {
+        filter->setText(query);
+        int matches = 0;
+        for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+          auto *item = tree->topLevelItem(row);
+          if (item->isHidden())
+            continue;
+          ++matches;
+          QCOMPARE(item->data(0, Qt::UserRole).toString(),
+                   QStringLiteral("EditRepeatableComment"));
+          QCOMPARE(item->text(1), QStringLiteral(";, /"));
+          QCOMPARE(item->text(2), QStringLiteral("Analysis views"));
+        }
+        QCOMPARE(matches, 1);
+      }
       filter->clear();
       const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
       if (!captures.isEmpty()) {
@@ -5170,7 +5185,7 @@ private slots:
       });
       filler.start(10);
       if (comment)
-        bench.action(ActionId::EditComment)->trigger();
+        QTest::keyClick(code->window()->windowHandle(), Qt::Key_Slash);
       else
         QTest::keyClick(code, Qt::Key_N);
       return QTest::qWaitFor([&] { return accepted; }, OpenTimeoutMs);

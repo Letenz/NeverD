@@ -521,7 +521,7 @@ TEST_P(AndroidNative, MemoryAdviceSharesRawAndBionicRangeErrors) {
     }
   }
 }
-TEST_P(AndroidNative, MemoryAdviceRejectsUnmodeledContentChanges) {
+TEST_P(AndroidNative, MemoryAdviceRejectsUnknownBackingContentChanges) {
   for (uint64_t Route = 0; Route < 3; ++Route) {
     auto R = run("memory_advice", {Buffer, Buffer, 4096, 4, Route});
     EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
@@ -538,6 +538,78 @@ TEST_P(AndroidNative, MemoryAdviceRejectsUnmodeledContentChanges) {
     ASSERT_EQ(R.MemorySnapshots.size(), 1u);
     EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(64));
   }
+}
+TEST_P(AndroidNative, DiscardPagesSharesRawBionicAndDynamicEffects) {
+  Options.OutputLimit = 4 * 1024 * 1024;
+  Options.Android->Initialize = false;
+  Options.Android->Memory[0].Size = 16384;
+  Options.Android->ReadMemory = {{Buffer, 16384}};
+  Options.Android->Libraries["libadvice.so"] = {"madvise"};
+  Options.Android->TraceLimit = 500000;
+  Options.Limits.Instructions = 500000;
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  for (uint64_t Route = 0; Route != 4; ++Route) {
+    for (uint64_t Mode = 0; Mode != 7; ++Mode) {
+      SCOPED_TRACE(Route);
+      SCOPED_TRACE(Mode);
+      std::vector<uint8_t> Expected(16384, 0xa5);
+      Options.Android->Memory[0].Bytes = Expected;
+      const uint64_t Error = Mode == 2 ? 12 : Mode == 3 || Mode == 4 ? 22 : 0;
+      const uint64_t Value = Error ? (Route == 1 ? 0 - Error : UINT64_MAX) : 0;
+      const uint64_t Errno = Error && Route != 1 ? Error : 733;
+      auto R = run("discard_pages", {Buffer, Route, Mode});
+      returned(R, Value);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      const uint64_t Header[] = {73, 0x100000000, Value, Errno, 0};
+      for (size_t I = 0; I != 5; ++I)
+        llvm::support::endian::write64le(Expected.data() + I * 8, Header[I]);
+      for (size_t I = 0; I != 12288; ++I) {
+        uint8_t Byte = uint8_t(0x31 + I / 4096);
+        if (Mode == 1 || (Mode == 2 && (I < 4096 || I >= 8192)) ||
+            ((Mode == 0 || Mode == 6) && I >= 4096 && I < 8192))
+          Byte = 0;
+        if (Mode == 2 && I >= 4096 && I < 8192)
+          Byte = 0xcc;
+        Expected[256 + I] = Byte;
+      }
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      if (Route == 1) {
+        ASSERT_EQ(R.Services.size(), 1u);
+        EXPECT_EQ(R.Services[0].Number, 233u);
+        EXPECT_EQ(R.Services[0].Result, Value);
+      } else {
+        auto C = llvm::find_if(R.NativeCalls, [&](const auto &Call) {
+          return Call.Name == (Route == 2 ? "syscall" : "madvise");
+        });
+        ASSERT_NE(C, R.NativeCalls.end());
+        EXPECT_EQ(C->Result, Value);
+        EXPECT_EQ(C->Library, Route == 3 ? "libadvice.so" : "");
+      }
+    }
+  }
+}
+TEST_P(AndroidNative, DiscardClosedProviderPreservesCallerOutput) {
+  Options.OutputLimit = 4 * 1024 * 1024;
+  Options.Android->Initialize = false;
+  Options.Android->Memory[0].Size = 16384;
+  Options.Android->ReadMemory = {{Buffer, 16384}};
+  Options.Android->Libraries["libadvice.so"] = {"madvise"};
+  Options.Android->TraceLimit = 500000;
+  std::vector<uint8_t> Bytes(16384, 0xa5);
+  Options.Android->Memory[0].Bytes = Bytes;
+  auto R = run("discard_pages", {Buffer, 4, 0});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  EXPECT_FALSE(R.ReturnValue);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  llvm::support::endian::write64le(Bytes.data(), 73);
+  llvm::support::endian::write64le(Bytes.data() + 8, 0x100000000);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+  // Dynamically allocated pages are not entry-valid ReadMemory snapshots.
+  // The stopped call cannot reach the fixture's post-call copy.
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "madvise");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
 }
 TEST_P(AndroidNative, DynamicMemoryAdviceRetainsProviderLifetimeAndNames) {
   returned(run("dynamic_memory_advice", {Buffer, 4096, 12, 0}), 100);
