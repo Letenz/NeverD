@@ -499,9 +499,12 @@ The source suite carries those flags through LAHF/SETO and compiles native LLVM,
 HighC and LLVM-to-C across ELF/COFF/Mach-O at O0/O2, including NeverC on x64.
 XABORT tests cover every encoded byte on x86/x64 through full, lightweight and
 lift decoding, including ignored prefixes and Capstone's signed immediates.
+XEND/XTEST share the prefix checks and reject inconsistent decoder details.
 Forged decoder records and malformed LowIR/MedIR/HighIR operands fail before
 effects. Native and legacy LLVM C contracts reject variable immediates and
-lost memory effects. The source suite compiles 0/127/128/255 through native
+lost memory effects, including argument-only/inaccessible-memory annotations
+and speculative execution. Store/abort/reload fixtures retain the surrounding
+ordinary-memory order. The source suite compiles 0/127/128/255 through native
 LLVM, HighC and LLVM-to-C across both code modes and all three formats, with
 NeverC for x64; compilation does not qualify hardware rollback.
 The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms

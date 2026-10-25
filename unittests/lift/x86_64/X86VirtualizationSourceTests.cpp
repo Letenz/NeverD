@@ -2348,9 +2348,10 @@ TEST(X86SystemStateSource, SmapPreservesMemoryAccessOrderAcrossBothControls) {
       }
 }
 
-TEST(X86SystemStateSource, TransactionCommitRetainsSurroundingMemory) {
-  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
-    GTEST_SKIP() << "requires the qualified native system SDK";
+void checkTransactionMemory(bool Abort) {
+  const char *Mnemonic = Abort ? "xabort" : "xend";
+  const char *Native =
+      Abort ? "call void @llvm.x86.xabort(i8" : "call void @llvm.x86.xend()";
   for (const auto A : {Arch::X86, Arch::X64})
     for (const auto Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
@@ -2365,27 +2366,40 @@ TEST(X86SystemStateSource, TransactionCommitRetainsSurroundingMemory) {
           Bytes = {0x48, 0x89, 0xf9}; // mov rcx, rdi
         Bytes.insert(Bytes.end(), {0xc7, 0x01, 7, 0, 0, 0});
         const auto Offset = Bytes.size();
-        const std::vector<uint8_t> Instruction = {0x0f, 0x01, 0xd5};
+        const std::vector<uint8_t> Instruction =
+            Abort ? std::vector<uint8_t>{0xc6, 0xf8, 0x80}
+                  : std::vector<uint8_t>{0x0f, 0x01, 0xd5};
         Bytes.insert(Bytes.end(), Instruction.begin(), Instruction.end());
         Bytes.insert(Bytes.end(), {0x8b, 0x01, 0xc3}); // mov eax, [rcx]; ret
         auto Image = image(A, Format, std::move(Bytes));
         std::string IR;
-        sourceRoutes(Image, NoOpt, Entry + Offset, "xend", nullptr, nullptr, {},
-                     {}, &IR);
+        sourceRoutes(Image, NoOpt, Entry + Offset, Mnemonic, nullptr, nullptr,
+                     {}, {}, &IR);
         if (::testing::Test::HasFailure())
           return;
         const auto Store = IR.find("store i32 7,");
-        const auto Commit = IR.find("call void @llvm.x86.xend()");
-        const auto Load = IR.find("load i32");
+        const auto Boundary = IR.find(Native);
+        ASSERT_NE(Boundary, std::string::npos) << IR;
+        const auto Load = IR.find("load i32", Boundary);
         ASSERT_NE(Load, std::string::npos) << IR;
-        EXPECT_LT(Store, Commit) << IR;
-        EXPECT_LT(Commit, Load) << IR;
-        if (Format == BinaryFormat::ELF)
-          compileRoutes(Image, NoOpt, Entry + Offset, "xend", std::nullopt,
-                        false, false, {}, Instruction);
+        EXPECT_LT(Store, Boundary) << IR;
+        EXPECT_LT(Boundary, Load) << IR;
+        if (Abort || Format == BinaryFormat::ELF)
+          compileRoutes(Image, NoOpt, Entry + Offset, Mnemonic, std::nullopt,
+                        false, false, {}, Instruction, 4, Abort);
         if (::testing::Test::HasFailure())
           return;
       }
+}
+
+TEST(X86SystemStateSource, TransactionCommitRetainsSurroundingMemory) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
+    GTEST_SKIP() << "requires the qualified native system SDK";
+  checkTransactionMemory(false);
+}
+
+TEST(X86SystemStateSource, TransactionAbortRetainsSurroundingMemory) {
+  checkTransactionMemory(true);
 }
 
 TEST(X86SystemStateSource, TransactionAbortUsesNativeByteAcrossEveryRoute) {
@@ -2533,11 +2547,16 @@ TEST(X86SystemStateSource, TransactionAbortRequiresConstantTypedEffects) {
       Call->setArgOperand(0, Builder.getInt8(128));
       for (const auto Effects :
            {llvm::MemoryEffects::none(), llvm::MemoryEffects::readOnly(),
-            llvm::MemoryEffects::writeOnly()}) {
+            llvm::MemoryEffects::writeOnly(), llvm::MemoryEffects::argMemOnly(),
+            llvm::MemoryEffects::inaccessibleMemOnly(),
+            llvm::MemoryEffects::inaccessibleOrArgMemOnly()}) {
         Call->setMemoryEffects(Effects);
         EXPECT_THROW(Render(), std::invalid_argument);
       }
       Call->setMemoryEffects(llvm::MemoryEffects::unknown());
+      Call->addFnAttr(llvm::Attribute::Speculatable);
+      EXPECT_THROW(Render(), std::invalid_argument);
+      Call->removeFnAttr(llvm::Attribute::Speculatable);
       Call->setDoesNotReturn();
       EXPECT_THROW(Render(), std::invalid_argument);
     }

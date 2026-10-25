@@ -12,15 +12,24 @@
 
 #include "neverd/ir/high/HighIR.h"
 
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/ModRef.h"
 
 #include <stdexcept>
 
 namespace neverd {
 namespace {
+
+bool hasTransactionEffects(const llvm::CallBase &Call) {
+  // Abort can roll back ordinary memory even though its only argument is an
+  // integer byte. Argument-only or inaccessible-memory effects lose that fact.
+  return Call.getMemoryEffects() == llvm::MemoryEffects::unknown() &&
+         !Call.hasFnAttr(llvm::Attribute::Speculatable);
+}
 
 std::string unsignedType(uint16_t Bytes) {
   return Bytes == 16 ? "__uint128_t"
@@ -434,7 +443,7 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
         if (Id == Intrinsic::Xabort) {
           const auto *Code =
               llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(0));
-          if (!Types || !Code)
+          if (!Types || !Code || !hasTransactionEffects(Call))
             continue;
           return "_xabort(" + std::to_string(Code->getZExtValue()) + ");\n";
         }
@@ -528,7 +537,7 @@ renderX86SystemStateNativeCall(Arch TargetArch, const llvm::CallBase &Call,
       if (Id == Intrinsic::Xabort) {
         const auto *Code =
             llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(0));
-        if (!Valid || !Code)
+        if (!Valid || !Code || !hasTransactionEffects(Call))
           continue;
         return "_xabort(" + std::to_string(Code->getZExtValue()) + ");\n";
       }

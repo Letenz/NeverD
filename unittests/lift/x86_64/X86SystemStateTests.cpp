@@ -43,6 +43,14 @@ std::vector<LowOp> lift(Arch A, const std::vector<uint8_t> &Bytes) {
   return Ops;
 }
 
+std::vector<std::vector<uint8_t>> transactionPrefixes(Arch A) {
+  std::vector<std::vector<uint8_t>> Prefixes = {
+      {}, {0x66}, {0x67}, {0x64}, {0x2e}, {0x66, 0x67}, {0xf2}, {0xf3}};
+  if (A == Arch::X64)
+    Prefixes.insert(Prefixes.end(), {{0x40}, {0x48}, {0x66, 0x48}});
+  return Prefixes;
+}
+
 TEST(X86SystemState, InstructionsHaveValidatedEffectsAndNoInventedResult) {
   for (const auto A : {Arch::X86, Arch::X64})
     for (const auto &E : test::systemEncodings(A)) {
@@ -82,14 +90,11 @@ TEST(X86SystemState, TransactionAbortRetainsEveryEncodedByte) {
     Decoder D;
     ASSERT_TRUE(D.init(A));
     D.setStrict(true);
-    std::vector<std::vector<uint8_t>> Prefixes = {
-        {}, {0x66}, {0x67}, {0x64}, {0x2e}, {0x66, 0x67}, {0xf2}, {0xf3}};
-    if (A == Arch::X64)
-      Prefixes.insert(Prefixes.end(), {{0x40}, {0x48}, {0x66, 0x48}});
-    for (const auto &Prefix : Prefixes)
+    for (const auto &Prefix : transactionPrefixes(A))
       for (unsigned Code = 0; Code != 256; ++Code)
         for (unsigned Route : {0u, 1u, 2u}) {
           SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(testing::PrintToString(Prefix));
           SCOPED_TRACE(Code);
           SCOPED_TRACE(Route);
           auto Bytes = Prefix;
@@ -118,6 +123,95 @@ TEST(X86SystemState, TransactionAbortRetainsEveryEncodedByte) {
           EXPECT_TRUE(x86SystemStateShapeIsValid(Intrinsic::Xabort, Shape));
           EXPECT_EQ(Shape.TransactionAbortCode, Code);
         }
+  }
+}
+
+TEST(X86SystemState, TransactionCompletionEncodingsAreValidated) {
+  for (Arch A : {Arch::X86, Arch::X64}) {
+    Decoder D;
+    ASSERT_TRUE(D.init(A));
+    D.setStrict(true);
+    for (uint8_t ModRM : {0xd5, 0xd6}) {
+      const auto Id = ModRM == 0xd5 ? Intrinsic::Xend : Intrinsic::Xtest;
+      for (const auto &Prefix : transactionPrefixes(A))
+        for (unsigned Route : {0u, 1u, 2u}) {
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(ModRM);
+          SCOPED_TRACE(testing::PrintToString(Prefix));
+          SCOPED_TRACE(Route);
+          auto Bytes = Prefix;
+          Bytes.insert(Bytes.end(), {0x0f, 0x01, ModRM});
+          DecodedInsn Instruction{};
+          const int Size =
+              Route == 0
+                  ? D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, Instruction)
+              : Route == 1 ? D.decodeOneLight(Bytes.data(), Bytes.size(),
+                                              0x1000, Instruction)
+                           : D.decodeOneForLift(Bytes.data(), Bytes.size(),
+                                                0x1000, Instruction);
+          ASSERT_EQ(Size, Bytes.size());
+          std::vector<LowOp> Ops;
+          ASSERT_NO_THROW(D.liftToLow(Instruction, Ops));
+          ASSERT_FALSE(Ops.empty());
+          EXPECT_EQ(Ops.front().Inputs[0].Offset, static_cast<uint64_t>(Id));
+        }
+      const std::vector<uint8_t> Bytes{0x0f, 0x01, ModRM};
+      DecodedInsn Instruction{};
+      ASSERT_EQ(
+          D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, Instruction),
+          Bytes.size());
+      for (bool Strict : {false, true})
+        for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+          SCOPED_TRACE(ModRM);
+          SCOPED_TRACE(Mutation);
+          auto Raw = *Instruction.Raw;
+          auto Detail = *Raw.detail;
+          Raw.detail = &Detail;
+          switch (Mutation) {
+          case 0:
+            Detail.x86.op_count = 1;
+            break;
+          case 1:
+            Detail.x86.encoding.imm_size = 1;
+            break;
+          case 2:
+            Detail.x86.encoding.imm_offset = 2;
+            break;
+          case 3:
+            Detail.x86.encoding.modrm_offset = 1;
+            break;
+          case 4:
+            Detail.x86.modrm ^= 1;
+            break;
+          case 5:
+            Detail.x86.opcode[1] = 0;
+            break;
+          case 6:
+            Raw.bytes[2] ^= 1;
+            break;
+          case 7:
+            Raw.size = 2;
+            break;
+          case 8:
+            Detail.x86.encoding.disp_size = 1;
+            break;
+          case 9:
+            Raw.size = 4;
+            Raw.bytes[0] = 0xf0;
+            Raw.bytes[1] = 0x0f;
+            Raw.bytes[2] = 0x01;
+            Raw.bytes[3] = ModRM;
+            Detail.x86.prefix[0] = 0xf0;
+            Detail.x86.encoding.modrm_offset = 3;
+            break;
+          }
+          X86Lifter L(A);
+          L.setStrict(Strict);
+          std::vector<LowOp> Ops;
+          EXPECT_THROW(L.lift(&Raw, Ops), UnliftedInstruction);
+          EXPECT_TRUE(Ops.empty());
+        }
+    }
   }
 }
 

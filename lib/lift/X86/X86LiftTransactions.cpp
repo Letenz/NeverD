@@ -10,8 +10,10 @@
 
 #include "X86LiftDetail.h"
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/support/ISAEncoding.h"
 
 #include <cstdint>
 
