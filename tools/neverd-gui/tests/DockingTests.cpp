@@ -142,16 +142,19 @@ public:
               .arg(qRound(local.y() * scale)));
     }
     const QPoint global = widget.mapToGlobal(point);
+#ifdef Q_OS_MACOS
+    // Cocoa's QCursor::setPos posts its own button-up mouse-moved event. In a
+    // held drag it would arrive ahead of the dragged motion and interrupt it.
+    if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+      return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
+                         global);
+#endif
     QCursor::setPos(global);
     if (QGuiApplication::platformName() == QLatin1String("xcb"))
       return true;
 #ifdef Q_OS_WIN
     if (QGuiApplication::platformName() == QLatin1String("windows"))
       return true; // Native buttons also drive the system move loop.
-#elif defined(Q_OS_MACOS)
-    if (QGuiApplication::platformName() == QLatin1String("cocoa"))
-      return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
-                         global);
 #endif
     QWidget *receiver = Pressed ? Pressed.data() : &widget;
     QMouseEvent event(QEvent::MouseMove, receiver->mapFromGlobal(global),
