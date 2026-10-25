@@ -349,7 +349,17 @@ private slots:
              QString("Second-page release"));
   }
 
+  void longMetadataKeepsFunctionControlsReachable_data() {
+    QTest::addColumn<QString>("Long");
+    QTest::newRow("wide") << QString("Long release label ").repeated(1024);
+    QTest::newRow("multiple-lines")
+        << QString("Release") + QString(256, '\r') + QString(256, '\n') +
+               QString(256, QChar::LineSeparator) +
+               QString(256, QChar::ParagraphSeparator) + "candidate";
+  }
+
   void longMetadataKeepsFunctionControlsReachable() {
+    QFETCH(QString, Long);
     LineageDialog View(TEST_LINEAGE_WORKER);
     View.setAttribute(Qt::WA_DeleteOnClose, false);
     auto &Session = View.session();
@@ -363,7 +373,6 @@ private slots:
                              Timeout);
     const auto Before = View.size();
     const auto ID = Versions->selected().value("id");
-    const auto Long = QString("Long release label ").repeated(1024);
     Session.load({{"append", true},
                   {"version_updates",
                    QJsonArray{QJsonObject{

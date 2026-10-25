@@ -11,12 +11,14 @@
 #ifndef NEVERD_GUI_APP_ELIDEDLABEL_H
 #define NEVERD_GUI_APP_ELIDEDLABEL_H
 
+#include <QChar>
 #include <QEvent>
 #include <QFontMetrics>
 #include <QLabel>
 #include <QResizeEvent>
 #include <QSizePolicy>
 #include <QString>
+#include <initializer_list>
 
 namespace neverd::gui {
 class ElidedLabel final : public QLabel {
@@ -47,7 +49,15 @@ protected:
 private:
   QString FullText;
   void updateText() {
-    setText(fontMetrics().elidedText(FullText, Qt::ElideMiddle,
+    // Width elision alone leaves explicit line/paragraph breaks intact.
+    // Normalize only the displayed copy; metadata and accessible text stay
+    // exact.
+    auto Display = FullText;
+    for (const auto Break :
+         {QChar('\r'), QChar('\n'), QChar(QChar::LineSeparator),
+          QChar(QChar::ParagraphSeparator)})
+      Display.replace(Break, QLatin1Char(' '));
+    setText(fontMetrics().elidedText(Display, Qt::ElideMiddle,
                                      contentsRect().width()));
   }
 };
