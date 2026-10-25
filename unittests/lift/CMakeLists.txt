@@ -1541,6 +1541,13 @@ add_neverd_unittest(NeverDWin64CallContractTests
 target_include_directories(NeverDWin64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
+add_neverd_unittest(NeverDIncomingHomeSourceTests
+  x86_64/IncomingHomeSourceTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDIncomingHomeSourceTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+
 add_neverd_unittest(NeverDI386CallContractTests
   core/I386CallContractTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
