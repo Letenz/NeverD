@@ -242,8 +242,9 @@ private slots:
 #ifdef Q_OS_WIN
     if (QGuiApplication::platformName() == QStringLiteral("windows")) {
       QVERIFY(IsWindow(reinterpret_cast<HWND>(dialog->winId())));
-      QCOMPARE(GetWindow(reinterpret_cast<HWND>(dialog->winId()), GW_OWNER),
-               reinterpret_cast<HWND>(destination.winId()));
+      // Qt can publish its logical parent before the queued native update.
+      QTRY_COMPARE(GetWindow(reinterpret_cast<HWND>(dialog->winId()), GW_OWNER),
+                   reinterpret_cast<HWND>(destination.winId()));
     }
 #endif
     dialog->close();
