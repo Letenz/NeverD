@@ -1203,3 +1203,8 @@ traces function associations across branches and cycles, exposes conflicting
 paths and keeps manual assessments attached to their original evidence. CLI,
 C ABI, Python, worker and desktop share this model and exact source persistence.
 This first profile makes no chronology or automatic patch-presence inference.
+
+Restoring a saved comparison through the worker reads its settings under the
+saved-file byte allowance, not the smaller backend-reply allowance. Reports
+larger than 32 MiB remain local during both restore and start-with-restore;
+interactive responses keep their ordinary bounded pages.

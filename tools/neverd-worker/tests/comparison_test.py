@@ -106,6 +106,13 @@ def cancellable_restore(client, root, start):
         assert after["can_redo"] and after["counts"] == summary["counts"]
     ok(client, "comparison_redo")
     assert ok(client, "comparison_export") == document
+    # Full file restore also works beyond the backend reply limit. Starting a
+    # new comparison reads settings locally before binding the same large report.
+    for operation, payload in (("comparison_restore", {"path": str(saved)}),
+                               ("comparison_start", {**start, "restore_path": str(saved)})):
+        restored = ok(client, operation, payload)
+        assert restored["restore_completed"], restored
+        assert ok(client, "comparison_export") == document
     # Old result state describes the saved computation, not this new restore.
     for state in ("complete", "cancelled", "timed_out", "resource_limited"):
         historical = {**document, "state": state, "stopped_phase": "" if state == "complete" else "measure"}

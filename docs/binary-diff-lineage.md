@@ -48,7 +48,9 @@ the original comparison direction remains in its evidence. Direct, indirect,
 reverse, cyclic and parallel report paths remain visible. A shortest predecessor
 witness is supplied without discarding the other edges. Conflicting counterparts
 in the same snapshot, and an effective report-local Unmatch reached through
-other reports, produce explicit conflict groups. No winner is selected.
+other reports, produce explicit conflict groups. No winner is selected. Historical decisions referencing an absent function stay
+visible with inventory flags, a warning page entry and a summary warning count;
+they never create function nodes.
 
 Ambiguities, decision histories and native/SSA region hypotheses remain separate
 from accepted edges. Native region anchors contain original snapshot **indices**,
@@ -92,7 +94,10 @@ source export. `--history` selects superseded review history.
 Admission options are `max_source_bytes`, `max_nodes`, `max_edges`, `max_work`
 and `timeout_ms`. Defaults are 256 MiB retained report/label text, 1,048,576
 function records, 4,194,304 association records and 2,147,483,648 work units.
-A zero deadline means no deadline. Admission accounts for the old collection,
+A zero deadline means no deadline. The deadline begins inside the native engine
+operation; preceding CLI/worker file reading and bundle preparation are
+cancellable but are outside that deadline. It is not a whole-command wall-clock
+timeout. Admission accounts for the old collection,
 candidate and retained trace during replacement. Exact validated source records
 may be reused, but cache hits are charged against current allowances. One complete
 trace is cached by collection revision and source node, independently of page
@@ -117,13 +122,16 @@ stdout or replacement file. Late cancellation does not undo publication.
 from pathlib import Path
 from neverd_plugin import Lineage
 
-with Lineage() as graph:  # Uses the configured native host library.
+with Lineage() as graph:  # Inside a Python-enabled NeverD plugin.
     graph.load_reports([Path("a-b.nddiff").read_bytes().decode("utf-8"),
                         Path("b-c.nddiff").read_bytes().decode("utf-8")])
     for page in graph.pages("versions", limit=100):
         print(page["items"])
     Path("releases.ndlineage").write_text(graph.export())
 ```
+
+Outside the plugin host, pass `host=HostAPI(ctypes.CDLL(library_path))` using
+`HostAPI` from `neverd_plugin.ffi` and the matching native library.
 
 Use binary-preserving UTF-8 reads (`read_bytes().decode("utf-8")`) when exact
 source line endings matter; ordinary text-mode reads may normalize them before

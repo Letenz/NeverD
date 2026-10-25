@@ -63,10 +63,8 @@ LineagePageView *page(LineageSession &Session, const QStringList &Titles,
   auto *P = new LineagePageView(Session, Titles, Keys, Parent);
   P->setObjectName(Name);
   P->table()->setObjectName(QString::fromLatin1(Name) + "Table");
-  P->table()->setAccessibleName(QString::fromLatin1(Name));
+  P->table()->setAccessibleName(Titles.join(", "));
   P->table()->setShowGrid(false);
-  P->table()->verticalHeader()->setDefaultSectionSize(
-      P->fontMetrics().height() + 8);
   return P;
 }
 } // namespace
@@ -197,6 +195,7 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   SL->addWidget(SourceSplit, 1);
   Graph = new LineageGraph(SourceSplit);
   Graph->setObjectName("lineageGraph");
+  Graph->setMinimumHeight(limits::kLineageGraphMinimumHeight);
   Sources =
       page(Session,
            {tr("Report"), tr("Primary snapshot"), tr("Secondary snapshot"),
@@ -204,6 +203,10 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
            {"id", "primary_label", "secondary_label", "state", "matches",
             "incomplete"},
            "lineageSources", SourceSplit);
+  SourceSplit->setStretchFactor(0, 1);
+  SourceSplit->setStretchFactor(1, 1);
+  SourceSplit->setSizes({limits::kLineageGraphInitialHeight,
+                         limits::kLineageSourceInitialHeight});
   auto *SourceActions = new QHBoxLayout;
   Inspect = button(tr("Inspect source &evidence…"), "lineageInspectSource",
                    SourcesPane);
@@ -213,7 +216,7 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   SourceActions->addWidget(Export);
   SourceActions->addStretch();
   SL->addLayout(SourceActions);
-  Tabs->addTab(SourcesPane, tr("Comparison graph & sources"));
+  Tabs->addTab(SourcesPane, tr("Graph / sources"));
   auto *ConflictPane = new QWidget(Tabs);
   auto *CL = new QVBoxLayout(ConflictPane);
   CL->addWidget(label(tr("Multiple functions from one snapshot, or an "
@@ -250,6 +253,8 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   Tabs->addTab(ReviewPane, tr("Assessments"));
   Split->setStretchFactor(0, 1);
   Split->setStretchFactor(1, 3);
+  Split->setSizes(
+      {limits::kLineageInitialWidth / 4, limits::kLineageInitialWidth * 3 / 4});
   auto *Bottom = new QHBoxLayout;
   Status = label(tr("Starting version graph worker…"), this);
   Status->setObjectName("lineageStatus");
@@ -358,10 +363,7 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
               Labels[V["id"].toString()] = V["label"].toString();
             }
             Graph->setLabels(Labels);
-            if (!CurrentVersion.isEmpty())
-              FunctionTitle->setText(
-                  tr("Functions in %1")
-                      .arg(Labels.value(CurrentVersion, CurrentVersion)));
+            updateTitles();
           });
   connect(Functions, &LineagePageView::selectionChanged, this,
           [this] { update(); });
@@ -370,8 +372,11 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   connect(Functions, &LineagePageView::activated, this, &LineageDialog::trace);
   connect(Sources, &LineagePageView::selectionChanged, this,
           [this] { update(); });
-  connect(Sources, &LineagePageView::pageChanged, Graph,
-          &LineageGraph::setReports);
+  connect(Sources, &LineagePageView::pageChanged, this,
+          [this](const QJsonArray &Rows) {
+            Graph->setReports(Rows);
+            updateTitles();
+          });
   connect(Sources, &LineagePageView::activated, this,
           [this](const QJsonObject &R) { source(R["id"].toString()); });
   connect(Inspect, &QPushButton::clicked, this,
@@ -407,7 +412,21 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
           });
   connect(Graph, &LineageGraph::versionActivated, this,
           [this](const QString &ID) {
-            selectVersion(ID);
+            bool Selected = false;
+            const auto &Rows = Versions->rows();
+            for (int I = 0; I < Rows.size(); ++I)
+              if (Rows[I].toObject()["id"].toString() == ID) {
+                if (Versions->selected()["id"].toString() == ID)
+                  selectVersion(ID);
+                else
+                  Versions->table()->selectRow(I);
+                Selected = true;
+                break;
+              }
+            if (!Selected) {
+              Versions->table()->setCurrentIndex({});
+              selectVersion(ID);
+            }
             Tabs->setCurrentIndex(0);
           });
   connect(Graph, &LineageGraph::reportActivated, this, &LineageDialog::source);
@@ -451,6 +470,12 @@ void LineageDialog::update() {
   }
 }
 void LineageDialog::loaded() {
+  const auto SelectedTab = Tabs->currentIndex();
+  const auto SelectedVersion = Versions->selected().value("id").toString();
+  const auto VersionOffset =
+      Versions->offset() < Session.summary()["versions"].toInteger()
+          ? Versions->offset()
+          : 0;
   Dirty = OpeningPath.isEmpty();
   if (!OpeningPath.isEmpty())
     SavedPath = OpeningPath;
@@ -461,19 +486,47 @@ void LineageDialog::loaded() {
     P->clear();
   Graph->setReports({});
   Details->clear();
-  Versions->setQuery({{"kind", "versions"}});
+  Versions->setQuery({{"kind", "versions"}}, SelectedVersion, VersionOffset);
   Sources->setQuery({{"kind", "reports"}});
   Conflicts->setQuery({{"kind", "conflicts"}});
   Reviews->setQuery({{"kind", "reviews"}});
-  if (!TraceVersion.isEmpty())
+  if (Session.summary()["versions"].toInteger() == 0) {
+    CurrentVersion.clear();
+    TraceVersion.clear();
+    TraceAddress.clear();
+    FunctionTitle->setText(
+        tr("Add a comparison to browse retained functions."));
+    TraceTitle->setText(tr("Trace a function to inspect its associations."));
+  } else if (!TraceVersion.isEmpty())
     trace({{"version", TraceVersion}, {"address", TraceAddress}});
+  Tabs->setCurrentIndex(SelectedTab);
   update();
+}
+QString LineageDialog::versionLabel(const QString &ID) const {
+  if (Labels.contains(ID))
+    return Labels[ID];
+  for (const auto &Value : Sources->rows()) {
+    const auto Row = Value.toObject();
+    for (const auto &Side :
+         {QStringLiteral("primary"), QStringLiteral("secondary")})
+      if (Row[Side + "_version"].toString() == ID)
+        return Row[Side + "_label"].toString(ID);
+  }
+  return ID;
+}
+void LineageDialog::updateTitles() {
+  if (!CurrentVersion.isEmpty())
+    FunctionTitle->setText(
+        tr("Functions in %1").arg(versionLabel(CurrentVersion)));
+  if (!TraceVersion.isEmpty())
+    TraceTitle->setText(tr("Trace from %1 in %2")
+                            .arg(TraceAddress, versionLabel(TraceVersion)));
 }
 void LineageDialog::selectVersion(const QString &ID) {
   if (ID.isEmpty())
     return;
   CurrentVersion = ID;
-  FunctionTitle->setText(tr("Functions in %1").arg(Labels.value(ID, ID)));
+  updateTitles();
   FunctionTitle->setToolTip(ID);
   Functions->setQuery(
       {{"kind", "functions"}, {"version", ID}, {"search", Search->text()}});
@@ -484,9 +537,7 @@ void LineageDialog::trace(const QJsonObject &Row) {
     return;
   TraceVersion = Row["version"].toString();
   TraceAddress = Row["address"].toString();
-  TraceTitle->setText(
-      tr("Trace from %1 in %2")
-          .arg(TraceAddress, Labels.value(TraceVersion, TraceVersion)));
+  updateTitles();
   for (const auto &[View, Kind] : {std::pair{TraceNodes, "trace_nodes"},
                                    {TraceEdges, "trace_edges"},
                                    {TraceConflicts, "trace_conflicts"}})
@@ -563,7 +614,8 @@ void LineageDialog::source(const QString &Report) {
   AddOther(tr("Decision history"), "decisions",
            {tr("Event"), tr("Decision"), tr("Primary"), tr("Secondary")},
            {"index", "kind", "primary", "secondary"});
-  AddOther(tr("Warnings"), "warnings", {tr("Original warning")}, {"warning"});
+  AddOther(tr("Warnings"), "warnings", {tr("Report and history warnings")},
+           {"warning"});
   for (const auto &[Title, Kind, AnchorKind] :
        {std::tuple{tr("Native regions"), "native_regions",
                    "native_region_anchors"},

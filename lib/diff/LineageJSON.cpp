@@ -80,6 +80,12 @@ bool incomplete(const SavedComparison &R) {
          R.PrimaryCoverage.Incomplete || R.SecondaryCoverage.Incomplete;
 }
 
+std::pair<bool, bool>
+decisionInventory(const Lineage &L, const LineageReport &R, const Override &O) {
+  return {L.node(R.PrimaryVersion, O.Primary).has_value(),
+          L.node(R.SecondaryVersion, O.Secondary).has_value()};
+}
+
 llvm::json::Object function(const Lineage &L, uint32_t N) {
   const auto &Node = L.nodes()[N];
   const auto &V = L.versions()[Node.Version];
@@ -157,6 +163,27 @@ struct PageBuilder {
     if (Position < Query.Offset || Rows.size() >= Query.Limit)
       return;
     llvm::json::Value Row = Make();
+    if (!Query.Report.empty()) {
+      if (Row.getAsString())
+        Row = llvm::json::Object{{"warning", Row.getAsString()->str()}};
+      if (auto *O = Row.getAsObject()) {
+        (*O)["report"] = Query.Report;
+        (*O)["evidence_kind"] = Query.Kind;
+        if (Query.Kind == "native_region_anchors" ||
+            Query.Kind == "flow_region_anchors")
+          (*O)["hypothesis_index"] = Query.Index;
+        if (Query.Kind == "ambiguity_primary" ||
+            Query.Kind == "ambiguity_secondary")
+          (*O)["ambiguity_index"] = Query.Index;
+      }
+    }
+    if (auto *O = Row.getAsObject()) {
+      (*O)["lineage_revision"] = Query.Revision;
+      if (llvm::StringRef(Query.Kind).starts_with("trace_")) {
+        (*O)["trace_source_version"] = Query.Version;
+        (*O)["trace_source_address"] = hex(Query.Address);
+      }
+    }
     std::string Text;
     llvm::raw_string_ostream OS(Text);
     OS << Row;
@@ -246,7 +273,8 @@ LineageQuery readLineageQuery(const llvm::json::Object &O) {
 
 llvm::json::Object lineageSummary(const Lineage &L,
                                   const ComparisonControl &Control) {
-  uint64_t Incomplete = 0, Reviews = 0, Ambiguities = 0, Regions = 0;
+  uint64_t Incomplete = 0, Reviews = 0, Ambiguities = 0, Regions = 0,
+           HistoricalWarnings = 0;
   for (const auto &R : L.reports()) {
     Control.check();
     const auto &S = R.Evidence->Saved;
@@ -254,23 +282,30 @@ llvm::json::Object lineageSummary(const Lineage &L,
     Reviews += S.Reviews.Records.size();
     Ambiguities += S.Ambiguities.size();
     Regions += S.Regions.Hypotheses.size() + S.FlowRegions.Hypotheses.size();
+    for (const auto &O : S.Overrides) {
+      Control.check();
+      const auto [Primary, Secondary] = decisionInventory(L, R, O);
+      HistoricalWarnings += !Primary || !Secondary;
+    }
   }
-  return llvm::json::Object{{"schema", "neverd.bindiff.lineage.summary"},
-                            {"schema_version", LineageSchemaVersion},
-                            {"revision", L.revision()},
-                            {"provenance", "retained_reports"},
-                            {"native_authenticated", false},
-                            {"versions", L.versions().size()},
-                            {"reports", L.reports().size()},
-                            {"nodes", L.nodes().size()},
-                            {"edges", L.edges().size()},
-                            {"conflicts", L.conflicts().size()},
-                            {"incomplete_reports", Incomplete},
-                            {"reviews", Reviews},
-                            {"ambiguities", Ambiguities},
-                            {"region_hypotheses", Regions},
-                            {"source_bytes", L.sourceBytes()},
-                            {"admission_work", L.work()}};
+  return llvm::json::Object{
+      {"schema", "neverd.bindiff.lineage.summary"},
+      {"schema_version", LineageSchemaVersion},
+      {"revision", L.revision()},
+      {"provenance", "retained_reports"},
+      {"native_authenticated", false},
+      {"versions", L.versions().size()},
+      {"reports", L.reports().size()},
+      {"nodes", L.nodes().size()},
+      {"edges", L.edges().size()},
+      {"conflicts", L.conflicts().size()},
+      {"incomplete_reports", Incomplete},
+      {"reviews", Reviews},
+      {"ambiguities", Ambiguities},
+      {"region_hypotheses", Regions},
+      {"historical_decision_warnings", HistoricalWarnings},
+      {"source_bytes", L.sourceBytes()},
+      {"admission_work", L.work()}};
 }
 
 LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
@@ -316,6 +351,7 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
             {"label", V.Label},
             {"branch", V.Branch},
             {"sha256", V.Identity.SHA256},
+            {"input_path", V.Identity.Path},
             {"analysis_revision", V.Identity.Revision},
             {"architecture", V.Identity.Architecture},
             {"format", V.Identity.Format},
@@ -409,7 +445,10 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
         for (uint32_t I = 0; I < S.Overrides.size(); ++I)
           B.append([&] {
             const auto &O = S.Overrides[I];
+            const auto [Primary, Secondary] = decisionInventory(L, R, O);
             return llvm::json::Object{
+                {"primary_in_inventory", Primary},
+                {"secondary_in_inventory", Secondary},
                 {"index", I},
                 {"primary", hex(O.Primary)},
                 {"secondary", hex(O.Secondary)},
@@ -453,6 +492,7 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
             // VAs.
             return llvm::json::Object{
                 {"index", I},
+                {"hypothesis_id", S.Regions.Hypotheses[Q.Index].Id},
                 {"primary_function_index", A.Primary.Function},
                 {"secondary_function_index", A.Secondary.Function},
                 {"primary_block_index", A.Primary.Block},
@@ -481,11 +521,29 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
                     "saved SSA region anchor is outside its inventory");
             auto Row = flowRegionAnchorJSON(S.FlowRegions.Anchors[I]);
             Row["index"] = I;
+            Row["hypothesis_id"] = S.FlowRegions.Hypotheses[Q.Index].Id;
             return Row;
           });
       } else if (Q.Kind == "warnings") {
         for (const auto &W : S.Warnings)
           B.append([&] { return llvm::json::Value(W); });
+        for (uint32_t I = 0; I < S.Overrides.size(); ++I) {
+          B.charge();
+          const auto &O = S.Overrides[I];
+          const auto [Primary, Secondary] = decisionInventory(L, R, O);
+          if (!Primary || !Secondary)
+            B.append([&] {
+              return llvm::json::Object{
+                  {"warning", "Historical decision refers to a function absent "
+                              "from the saved inventory"},
+                  {"source", "decision_history"},
+                  {"decision_index", I},
+                  {"primary", hex(O.Primary)},
+                  {"secondary", hex(O.Secondary)},
+                  {"primary_in_inventory", Primary},
+                  {"secondary_in_inventory", Secondary}};
+            });
+        }
       } else if (Q.Kind == "ambiguities") {
         for (uint32_t I = 0; I < S.Ambiguities.size(); ++I)
           B.append([&] {

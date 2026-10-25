@@ -725,3 +725,149 @@ TEST(BinaryDiffLineage, SourceRegionPagesDoNotBecomeAcceptedAssociations) {
   Query.Index = 0;
   EXPECT_THROW((void)lineagePage(*Invalid, Query, {}), std::invalid_argument);
 }
+
+TEST(BinaryDiffLineage, HistoricalDecisionsOutsideInventoryRemainWarnings) {
+  const auto A = program(0), B = program(1);
+  auto Value = llvm::json::parse(report(A, B, {{0, 0}}));
+  ASSERT_TRUE(bool(Value));
+  auto *Overrides = Value->getAsObject()->getArray("overrides");
+  ASSERT_TRUE(Overrides);
+  Overrides->push_back(llvm::json::Object{
+      {"kind", "unmatch"}, {"primary", "0xdead"}, {"secondary", "0x2000"}});
+  const auto L = load({render(std::move(*Value))});
+  ASSERT_TRUE(L);
+  EXPECT_EQ(L->nodes().size(), 4);
+  EXPECT_EQ(L->edges().size(), 1);
+  EXPECT_EQ(lineageSummary(*L).getInteger("historical_decision_warnings"), 1);
+  auto Q = readLineageQuery(
+      llvm::json::Object{{"kind", "decisions"},
+                         {"revision", L->revision()},
+                         {"report", L->reports()[0].Evidence->ID}});
+  const auto Decisions = lineagePage(*L, Q, {}).JSON;
+  const auto &D = *Decisions.getArray("items")->back().getAsObject();
+  EXPECT_EQ(D.getBoolean("primary_in_inventory"), false);
+  EXPECT_EQ(D.getBoolean("secondary_in_inventory"), true);
+  Q.Kind = "warnings";
+  const auto Warnings = lineagePage(*L, Q, {}).JSON;
+  const auto &W = *Warnings.getArray("items")->back().getAsObject();
+  EXPECT_EQ(W.getString("source"), "decision_history");
+  EXPECT_EQ(W.getString("primary"), "0xdead");
+  EXPECT_EQ(W.getInteger("decision_index"), 0);
+}
+
+TEST(BinaryDiffLineage, SSARegionPagesKeepOriginalAnchorsAndRespectStops) {
+  auto A = program(0), B = program(1);
+  // Authored retained SSA observations; lineage deliberately does not bind
+  // these reports to a fresh native analysis or derive new region semantics.
+  for (auto *P : {&A, &B}) {
+    P->Identity.ABI = "owned-lineage-abi";
+    auto Evidence = std::make_shared<DataFlowEvidence>();
+    Evidence->Recipe = "owned-lineage-ssa";
+    Evidence->EligibleFunctions = P->Functions.size();
+    for (const auto &F : P->Functions) {
+      DataFlowGraph G;
+      G.Revision = P->Identity.Revision;
+      G.ABI = P->Identity.ABI;
+      G.Function = F.Address;
+      G.EntryBlock = 0;
+      G.Blocks.push_back({F.Address, F.Address + 1});
+      for (uint32_t I = 0; I < 4; ++I) {
+        FlowNode N;
+        N.Opcode = "INT_ADD";
+        N.ResultBytes = 8;
+        N.Block = 0;
+        N.Address = F.Address;
+        N.OriginSequence = 0;
+        FlowOperand Input;
+        Input.Type = I ? FlowOperand::Kind::Node : FlowOperand::Kind::Parameter;
+        Input.Node = I ? I - 1 : NoIndex;
+        Input.Bytes = 8;
+        N.Inputs.push_back(Input);
+        Input.Type = FlowOperand::Kind::Constant;
+        Input.Node = NoIndex;
+        Input.Value = I + 3;
+        N.Inputs.push_back(Input);
+        G.Nodes.push_back(std::move(N));
+      }
+      Evidence->Entries.push_back(
+          {F.Address, FlowAvailability::Available, {}, std::move(G)});
+    }
+    P->DataFlow = std::move(Evidence);
+  }
+  ComparisonSettings Settings;
+  Settings.DataFlow.Enabled = true;
+  auto R = compare(A, B, Settings);
+  R.Settings.FlowRegions.Enabled = true;
+  R.FlowRegions.State = ComparisonState::Complete;
+  FlowRegionAnchor Anchor;
+  Anchor.PrimaryFunction = 0x1000;
+  Anchor.SecondaryFunction = 0x2010;
+  Anchor.PrimaryRoot = 0;
+  Anchor.SecondaryRoot = 2;
+  Anchor.Nodes = {{0, 2}};
+  Anchor.PrimaryOrigins = Anchor.SecondaryOrigins = 1;
+  Anchor.OpenControlFrontier = true;
+  R.FlowRegions.Anchors.push_back(Anchor);
+  Anchor.PrimaryRoot = 1;
+  Anchor.SecondaryRoot = 3;
+  Anchor.Nodes = {{1, 3}};
+  R.FlowRegions.Anchors.push_back(Anchor);
+  FlowRegionHypothesis H;
+  H.Id = "owned-ssa-region";
+  H.Anchors = {0, 1};
+  H.PrimaryFunctions = {0x1000};
+  H.SecondaryFunctions = {0x2010};
+  H.Explanations = {RegionKind::Shared};
+  H.PrimaryNodes = H.SecondaryNodes = 2;
+  H.OpenControlFrontier = true;
+  R.FlowRegions.Hypotheses.push_back(H);
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  writeComparison(OS, R, A, B);
+  const auto L = load({Text});
+  ASSERT_TRUE(L);
+  const auto Edges = L->edges().size();
+  auto Q = readLineageQuery(
+      llvm::json::Object{{"kind", "flow_regions"},
+                         {"revision", L->revision()},
+                         {"report", L->reports()[0].Evidence->ID}});
+  auto Page = lineagePage(*L, Q, {}).JSON;
+  ASSERT_EQ(Page.getArray("items")->size(), 1);
+  const auto &Region = *Page.getArray("items")->front().getAsObject();
+  EXPECT_EQ(Region.getInteger("anchor_count"), 2);
+  EXPECT_EQ(Region.getBoolean("native_authenticated"), false);
+  Q = readLineageQuery(
+      llvm::json::Object{{"kind", "flow_region_anchors"},
+                         {"revision", L->revision()},
+                         {"report", L->reports()[0].Evidence->ID},
+                         {"index", 0},
+                         {"limit", 1}});
+  Page = lineagePage(*L, Q, {}).JSON;
+  EXPECT_EQ(Page.getInteger("total"), 2);
+  EXPECT_EQ(Page.getArray("items")->front().getAsObject()->getString("report"),
+            L->reports()[0].Evidence->ID);
+  EXPECT_EQ(
+      Page.getArray("items")->front().getAsObject()->getString("hypothesis_id"),
+      "owned-ssa-region");
+  EXPECT_EQ(Page.getInteger("next_offset"), 1);
+  EXPECT_EQ(
+      Page.getArray("items")->front().getAsObject()->getInteger("primary_root"),
+      0);
+  Q.Offset = 1;
+  Page = lineagePage(*L, Q, {}).JSON;
+  EXPECT_EQ(
+      Page.getArray("items")->front().getAsObject()->getInteger("primary_root"),
+      1);
+  EXPECT_TRUE(Page.get("next_offset")->getAsNull());
+  Q.MaxWork = 1;
+  expectStop(ComparisonState::ResourceLimited,
+             [&] { (void)lineagePage(*L, Q, {}); });
+  Q.MaxWork = 10000;
+  std::atomic<bool> Stop{true};
+  ComparisonControl Control;
+  Control.Cancel = &Stop;
+  expectStop(ComparisonState::Cancelled,
+             [&] { (void)lineagePage(*L, Q, Control); });
+  EXPECT_EQ(L->edges().size(), Edges);
+  EXPECT_EQ(L->reports()[0].Evidence->Text, Text);
+}

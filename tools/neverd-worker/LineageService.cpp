@@ -143,7 +143,13 @@ std::string read(const std::string &Name, uint64_t &Aggregate,
                  const LineageService::Progress &Notify,
                  const LineageService::Cancellation &Cancelled) {
   check(Cancelled);
-  std::ifstream File(path(Name), std::ios::binary);
+  const auto Path = path(Name);
+  std::error_code SizeError;
+  const auto Size = std::filesystem::file_size(Path, SizeError);
+  if (!SizeError && Size > limits::kMaxSavedComparisonBytes - Aggregate)
+    throw Error("resource_limited",
+                "Lineage inputs exceed the aggregate file allowance");
+  std::ifstream File(Path, std::ios::binary);
   if (!File)
     throw Error("load_failed", "Cannot read lineage source: " + Name);
   std::string Text;

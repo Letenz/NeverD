@@ -10,18 +10,23 @@
 
 #include "ComparisonSession.h"
 #include "LineageDialog.h"
+#include "LineageGraph.h"
 #include "LineagePageView.h"
 #include "Theme.h"
+#include "WindowFrame.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QFontInfo>
+#include <QGraphicsItem>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QProcess>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
@@ -30,10 +35,19 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 
 using namespace neverd::gui;
 namespace {
 constexpr int Timeout = 30000;
+bool privateShell(const QString &Script) {
+  QProcess P;
+  P.start("gdbus",
+          {"call", "--session", "--dest", "org.gnome.Shell", "--object-path",
+           "/org/gnome/Shell", "--method", "org.gnome.Shell.Eval", Script});
+  return P.waitForFinished() && P.exitCode() == 0 &&
+         P.readAllStandardOutput().startsWith("(true,");
+}
 bool write(const QString &Path, const QByteArray &Bytes) {
   QFile F(Path);
   return F.open(QIODevice::WriteOnly) && F.write(Bytes) == Bytes.size();
@@ -50,6 +64,29 @@ class LineageTests final : public QObject {
   QJsonArray Reports;
 private slots:
   void initTestCase() {
+    if (QGuiApplication::platformName().startsWith("wayland") &&
+        qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER")) {
+      // The socket precedes desktop readiness. Park the trusted pointer away
+      // from (0, 0), whose hot corner otherwise reopens the startup overview.
+      QTRY_VERIFY_WITH_TIMEOUT(
+          privateShell("if (Main.layoutManager._startingUp) throw "
+                       "Error('desktop starting');"),
+          Timeout);
+      QVERIFY(privateShell("global.neverdLineagePointer = "
+                           "imports.gi.Clutter.get_default_backend()"
+                           ".get_default_seat().create_virtual_device(imports."
+                           "gi.Clutter.InputDeviceType.POINTER_DEVICE); "
+                           "global.neverdLineagePointer.notify_absolute_motion("
+                           "imports.gi.GLib.get_monotonic_time(), "
+                           "global.stage.width / 2, global.stage.height / 2); "
+                           "Main.overview.hide();"));
+      QTest::qWait(750);
+      QTRY_VERIFY_WITH_TIMEOUT(
+          privateShell(
+              "Main.overview.hide(); "
+              "if (Main.overview.visible) throw Error('overview closing');"),
+          Timeout);
+    }
     QCoreApplication::setOrganizationName("NeverDLineageTests");
     QCoreApplication::setApplicationName("LineageTests");
     QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -106,7 +143,9 @@ private slots:
                              Timeout);
     QCOMPARE(Session.summary()["edges"].toInt(), 3);
     QCOMPARE(Errors.size(), 0);
-    const auto ID = Versions->selected()["id"];
+    Versions->table()->selectRow(1);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    const auto ID = Versions->selected().value("id");
     Session.load(
         {{"append", true},
          {"version_updates",
@@ -124,14 +163,34 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Trace->rows().size() == 3,
                              Timeout);
     QCOMPARE(Tabs->currentIndex(), 1);
+    View.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&View));
     Trace->table()->setFocus();
     Trace->table()->selectRow(0);
     QTest::keyClick(Trace->table(), Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QJsonDocument::fromJson(QApplication::clipboard()->text().toUtf8())
+            .object(),
+        Trace->selected(), Timeout);
     const auto Copied =
         QJsonDocument::fromJson(QApplication::clipboard()->text().toUtf8())
             .object();
-    QCOMPARE(Copied, Trace->selected());
     QVERIFY(Copied.contains("witness_edge") && Copied.contains("version"));
+    Tabs->setCurrentIndex(2);
+    auto *Graph = View.findChild<LineageGraph *>("lineageGraph");
+    const auto Target = Versions->rows()[0].toObject()["id"].toString();
+    QTest::qWait(60);
+    QGraphicsItem *Node = nullptr;
+    for (auto *Item : Graph->scene()->items())
+      if (Item->data(0) == "version" && Item->data(1).toString() == Target)
+        Node = Item;
+    QVERIFY(Node);
+    QTest::mouseDClick(Graph->viewport(), Qt::LeftButton, Qt::NoModifier,
+                       Graph->mapFromScene(Node->sceneBoundingRect().center()));
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Tabs->currentIndex() == 0,
+                             Timeout);
+    QCOMPARE(Versions->selected()["id"].toString(), Target);
+    QCOMPARE(Functions->selected()["version"].toString(), Target);
     const auto OriginalRevision = Session.revision();
     const auto Selection = Functions->selected();
     const auto Malformed = Directory.filePath("malformed.ndlineage");
@@ -154,7 +213,9 @@ private slots:
     const auto Captures = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
     if (!Captures.isEmpty()) {
       QVERIFY(QDir().mkpath(Captures));
-      const auto OriginalFont = View.font();
+      const auto OriginalStyle = View.styleSheet();
+      const auto OriginalPixels =
+          QFontInfo(Functions->table()->font()).pixelSize();
       for (auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
         Theme::instance().setMode(Mode);
         const auto Name = Mode == Theme::Mode::Light ? "light" : "dark";
@@ -162,6 +223,11 @@ private slots:
         for (int Tab : {0, 1, 2}) {
           Tabs->setCurrentIndex(Tab);
           QTest::qWait(60);
+          if (Tab == 2) {
+            auto *Graph = View.findChild<LineageGraph *>("lineageGraph");
+            QVERIFY(Graph && Graph->height() >= 180 &&
+                    Graph->transform().m11() > 0.4);
+          }
           QVERIFY(View.grab().save(
               Captures + QString("/%1-tab%2.png").arg(Name).arg(Tab)));
         }
@@ -170,14 +236,18 @@ private slots:
         QTest::qWait(60);
         QVERIFY(
             View.grab().save(Captures + QString("/%1-narrow.png").arg(Name)));
-        auto Large = OriginalFont;
-        Large.setPointSizeF(OriginalFont.pointSizeF() * 1.5);
-        View.setFont(Large);
+        View.setStyleSheet(OriginalStyle +
+                           QString("\nQWidget { font-size: %1px; }")
+                               .arg(qRound(OriginalPixels * 1.5)));
         View.resize(1180, 780);
         QTest::qWait(60);
         QVERIFY(View.grab().save(Captures +
                                  QString("/%1-large-font.png").arg(Name)));
-        View.setFont(OriginalFont);
+        QVERIFY(QFontInfo(Functions->table()->font()).pixelSize() >
+                OriginalPixels);
+        QVERIFY(Functions->table()->rowHeight(0) >=
+                Functions->table()->fontMetrics().height());
+        View.setStyleSheet(OriginalStyle);
       }
     }
     const auto Saved = Directory.filePath("workspace.ndlineage");
@@ -228,6 +298,127 @@ private slots:
     QCOMPARE(Session.summary()["reports"].toInt(), 3);
   }
 
+  void nextPageAndMetadataKeepTheSelectedSnapshot() {
+    // Authored report-only identities exercise paging; these copies do not
+    // claim fresh native authentication of synthetic release hashes.
+    const auto Original =
+        QJsonDocument::fromJson(read(Reports[0].toString())).object();
+    QJsonArray Many;
+    for (int I = 0; I < 202; ++I) {
+      auto Document = Original;
+      auto Secondary = Document["secondary"].toObject();
+      Secondary["sha256"] =
+          QString::number(I + 1000, 16).rightJustified(64, '0');
+      Secondary["path"] = QString("fixture-release-%1.raw").arg(I);
+      Document["secondary"] = Secondary;
+      const auto Path = Directory.filePath(QString("paging-%1.nddiff").arg(I));
+      QVERIFY(
+          write(Path, QJsonDocument(Document).toJson(QJsonDocument::Compact)));
+      Many.append(Path);
+    }
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    auto &Session = View.session();
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Many}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 200,
+                             Timeout);
+    QToolButton *Next = nullptr;
+    for (auto *B : Versions->findChildren<QToolButton *>())
+      if (B->arrowType() == Qt::RightArrow)
+        Next = B;
+    QVERIFY(Next && Next->isEnabled());
+    QTest::mouseClick(Next, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 3,
+                             Timeout);
+    QVERIFY(!Next->isEnabled());
+    Versions->table()->selectRow(1);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    const auto ID = Versions->selected().value("id");
+    Session.load({{"append", true},
+                  {"version_updates",
+                   QJsonArray{QJsonObject{{"id", ID},
+                                          {"label", "Second-page release"},
+                                          {"branch", "stable"}}}}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Versions->offset(), 200);
+    QCOMPARE(Versions->selected().value("id"), ID);
+    QCOMPARE(Versions->selected().value("label").toString(),
+             QString("Second-page release"));
+  }
+
+  void privateCompositorResizeAndReopen() {
+    if (!QGuiApplication::platformName().startsWith("wayland") ||
+        !qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER"))
+      QSKIP("Requires the isolated GNOME compositor's trusted pointer.");
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.setWindowTitle("NeverD lineage resize test");
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(View.session().ready(), Timeout);
+    QVERIFY(QTest::qWaitForWindowExposed(&View));
+    QVERIFY(privateShell(
+        QString("Main.overview.hide(); global.neverdLineageWindow = "
+                "global.get_window_actors().map(a => a.meta_window).find(w => "
+                "w.get_pid() === %1 && w.get_title() === 'NeverD lineage "
+                "resize test'); "
+                "global.neverdLineageWindow.move_frame(true, 200, 150); "
+                "Main.activateWindow(global.neverdLineageWindow);")
+            .arg(QCoreApplication::applicationPid())));
+    QTest::qWait(750);
+    // Finish any overview animation before sending real input.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        privateShell(
+            "Main.overview.hide(); "
+            "if (Main.overview.visible) throw Error('overview closing');"),
+        Timeout);
+    QVERIFY(
+        privateShell("global.neverdLineageWindow.move_frame(true, 200, 150); "
+                     "Main.activateWindow(global.neverdLineageWindow);"));
+    QTest::qWait(100);
+    const QSize Before = View.size();
+    // The compositor frame excludes the transparent shadow band. Its visible
+    // corner receives input; the outer buffer corner deliberately does not.
+    QVERIFY(privateShell(
+        "(() => { const r = global.neverdLineageWindow.get_frame_rect(); "
+        "global.neverdLineageCorner = [r.x + r.width - 3, r.y + r.height "
+        "- 3]; })()"));
+    const auto Motion = [&](QPoint Delta) {
+      return privateShell(
+          QString("global.neverdLineagePointer.notify_absolute_motion("
+                  "imports.gi.GLib.get_monotonic_time(), "
+                  "global.neverdLineageCorner[0] + %1, "
+                  "global.neverdLineageCorner[1] + %2)")
+              .arg(qRound(Delta.x() * View.devicePixelRatioF()))
+              .arg(qRound(Delta.y() * View.devicePixelRatioF())));
+    };
+    const auto Button = [&](const QString &State) {
+      return privateShell(QString("global.neverdLineagePointer.notify_button("
+                                  "imports.gi.GLib.get_monotonic_time(), 1, "
+                                  "imports.gi.Clutter.ButtonState.%1)")
+                              .arg(State));
+    };
+    QVERIFY(Motion({}));
+    QTest::qWait(50);
+    QVERIFY(Button("PRESSED"));
+    QTest::qWait(50);
+    QVERIFY(Motion(QPoint(80, 60)));
+    QTest::qWait(100);
+    QVERIFY(Button("RELEASED"));
+    QTRY_VERIFY_WITH_TIMEOUT(View.width() > Before.width() &&
+                                 View.height() > Before.height(),
+                             Timeout);
+    const auto Chosen = View.size();
+    QVERIFY(View.close());
+    LineageDialog Reopened(TEST_LINEAGE_WORKER);
+    Reopened.setAttribute(Qt::WA_DeleteOnClose, false);
+    Reopened.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&Reopened));
+    QTRY_COMPARE_WITH_TIMEOUT(Reopened.size(), Chosen, Timeout);
+  }
+
   void invalidResourceSettingsKeepTheDialogAndInput() {
     LineageDialog View(TEST_LINEAGE_WORKER);
     View.setAttribute(Qt::WA_DeleteOnClose, false);
@@ -257,5 +448,11 @@ private slots:
     QVERIFY(Checked);
   }
 };
-QTEST_MAIN(LineageTests)
+int main(int argc, char **argv) {
+  WindowFrame::prepareNativeWindows();
+  QApplication App(argc, argv);
+  WindowFrame::frameDialogs(App);
+  LineageTests Tests;
+  return QTest::qExec(&Tests, argc, argv);
+}
 #include "LineageTests.moc"

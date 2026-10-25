@@ -57,6 +57,8 @@ private:
        SavingSource = false;
   void update();
   void loaded();
+  QString versionLabel(const QString &ID) const;
+  void updateTitles();
   void selectVersion(const QString &ID);
   void trace(const QJsonObject &Row);
   void source(const QString &Report);

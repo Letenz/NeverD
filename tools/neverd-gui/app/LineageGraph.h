@@ -32,8 +32,11 @@ signals:
 protected:
   void mouseDoubleClickEvent(QMouseEvent *Event) override;
   void wheelEvent(QWheelEvent *Event) override;
+  void resizeEvent(QResizeEvent *Event) override;
+  void changeEvent(QEvent *Event) override;
 
 private:
+  bool AutoFit = true;
   QJsonArray Reports;
   QMap<QString, QString> Labels;
   void rebuild();

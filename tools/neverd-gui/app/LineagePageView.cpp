@@ -11,6 +11,7 @@
 #include "LineagePageView.h"
 
 #include "../ResourceLimits.h"
+#include "Icons.h"
 #include "LineageSession.h"
 #include "ShrinkableRow.h"
 
@@ -23,9 +24,9 @@
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
-#include <QPushButton>
 #include <QStandardItemModel>
 #include <QTableView>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
 
@@ -117,8 +118,15 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   Table->setEditTriggers(QAbstractItemView::NoEditTriggers);
   Table->setAlternatingRowColors(true);
   Table->setWordWrap(false);
+  Table->setTextElideMode(Qt::ElideMiddle);
   Table->verticalHeader()->hide();
+  Table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
   Table->horizontalHeader()->setStretchLastSection(true);
+  const auto Metrics = Table->horizontalHeader()->fontMetrics();
+  for (int I = 0; I < Headers.size(); ++I)
+    Table->setColumnWidth(I, std::max(Table->columnWidth(I),
+                                      Metrics.horizontalAdvance(Headers[I]) +
+                                          Metrics.height() * 2));
   Table->setContextMenuPolicy(Qt::CustomContextMenu);
   auto *Copy = new QAction(tr("Copy row evidence"), Table);
   Copy->setShortcut(QKeySequence::Copy);
@@ -134,22 +142,29 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   Status = new QLabel(tr("Choose a collection to begin."), this);
   Status->setTextFormat(Qt::PlainText);
   makeStatusLine(*Status);
-  Previous = new QPushButton(tr("Previous"), this);
-  Next = new QPushButton(tr("Next"), this);
-  Retry = new QPushButton(tr("Refresh"), this);
-  for (auto *Button : {Previous, Next, Retry})
-    Button->setAutoDefault(false);
+  Previous = new QToolButton(this);
+  Next = new QToolButton(this);
+  Previous->setArrowType(Qt::LeftArrow);
+  Next->setArrowType(Qt::RightArrow);
+  Previous->setAccessibleName(tr("Previous page"));
+  Previous->setToolTip(tr("Previous page"));
+  Next->setAccessibleName(tr("Next page"));
+  Next->setToolTip(tr("Next page"));
+  Retry = new QToolButton(this);
+  Retry->setIcon(icon("refresh"));
+  Retry->setAccessibleName(tr("Refresh page"));
+  Retry->setToolTip(tr("Refresh page"));
   Navigation->addWidget(Status, 1);
   Navigation->addWidget(Previous);
   Navigation->addWidget(Next);
   Navigation->addWidget(Retry);
   Root->addLayout(Navigation);
-  connect(Previous, &QPushButton::clicked, this, [this] {
+  connect(Previous, &QToolButton::clicked, this, [this] {
     page(std::max<qint64>(0,
                           Offset - ::neverd::limits::gui::kComparisonPageSize));
   });
-  connect(Next, &QPushButton::clicked, this, [this] { page(NextOffset); });
-  connect(Retry, &QPushButton::clicked, this, &LineagePageView::refresh);
+  connect(Next, &QToolButton::clicked, this, [this] { page(NextOffset); });
+  connect(Retry, &QToolButton::clicked, this, &LineagePageView::refresh);
   connect(&Session, &LineageSession::changed, this, &LineagePageView::buttons);
   connect(Table->selectionModel(), &QItemSelectionModel::currentRowChanged,
           this, [this] { emit selectionChanged(selected()); });
@@ -179,15 +194,18 @@ QJsonObject LineagePageView::selected() const {
   const auto Row = Table->currentIndex().row();
   return Row >= 0 && Row < Rows.size() ? Rows[Row].toObject() : QJsonObject{};
 }
-void LineagePageView::setQuery(QJsonObject NextQuery) {
+void LineagePageView::setQuery(QJsonObject NextQuery, const QString &SelectedID,
+                               qint64 First) {
   const bool Same = Query == NextQuery;
   Query = std::move(NextQuery);
-  page(Same ? Offset : 0);
+  PreferredSelection = SelectedID.isEmpty() ? QString() : "id:" + SelectedID;
+  page(Same ? Offset : First);
 }
 void LineagePageView::clear() {
   ++Generation;
   Pending = false;
   Query = {};
+  PreferredSelection.clear();
   Rows = {};
   Offset = 0;
   NextOffset = -1;
@@ -208,7 +226,8 @@ void LineagePageView::page(qint64 First) {
     return;
   const auto Current = ++Generation;
   const auto Revision = Session.revision();
-  const auto Selection = identity(selected());
+  const auto Selection =
+      PreferredSelection.isEmpty() ? identity(selected()) : PreferredSelection;
   Pending = true;
   buttons();
   Status->setText(tr("Loading evidence…"));
@@ -241,6 +260,7 @@ void LineagePageView::page(qint64 First) {
           buttons();
           return;
         }
+        PreferredSelection.clear();
         Rows = Page["items"].toArray();
         Offset = First;
         NextOffset = Page["next_offset"].isDouble()

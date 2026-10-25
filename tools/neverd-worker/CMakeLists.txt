@@ -346,7 +346,8 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         set_tests_properties(NeverDWorkerComparison PROPERTIES TIMEOUT 120 LABELS "NeverDBinaryDiff")
         add_test(NAME NeverDWorkerLineage
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lineage_test.py"
-            $<TARGET_FILE:neverd-worker> --neverd "${_neverd_worker_test_cli}")
+            $<TARGET_FILE:neverd-worker> --neverd "${_neverd_worker_test_cli}"
+            --cc "${_neverd_worker_source_cc}")
         set_tests_properties(NeverDWorkerLineage PROPERTIES TIMEOUT 240 LABELS "NeverDBinaryDiff")
         add_test(NAME NeverDWorkerCLIInstructionFlow
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/instruction_flow_cli_test.py"

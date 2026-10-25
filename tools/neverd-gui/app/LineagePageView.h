@@ -17,7 +17,7 @@
 #include <QWidget>
 
 class QLabel;
-class QPushButton;
+class QToolButton;
 class QStandardItemModel;
 class QTableView;
 
@@ -28,7 +28,9 @@ class LineagePageView final : public QWidget {
 public:
   LineagePageView(LineageSession &Session, const QStringList &Headers,
                   const QStringList &Keys, QWidget *Parent = nullptr);
-  void setQuery(QJsonObject Query);
+  void setQuery(QJsonObject Query, const QString &SelectedID = {},
+                qint64 First = 0);
+  qint64 offset() const { return Offset; }
   void clear();
   void refresh();
   QJsonObject selected() const;
@@ -45,8 +47,9 @@ private:
   QTableView *Table;
   QStandardItemModel *Model;
   QLabel *Status;
-  QPushButton *Previous, *Next, *Retry;
+  QToolButton *Previous, *Next, *Retry;
   QStringList Keys;
+  QString PreferredSelection;
   QJsonObject Query;
   QJsonArray Rows;
   qint64 Offset = 0, NextOffset = -1;

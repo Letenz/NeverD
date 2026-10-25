@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 from transport_test import Client
@@ -81,7 +82,8 @@ def run(args, root):
         for options in (("--offset", "1"), ("--limit", "1"), ("--history=false",),
                         ("--export-report", sources[0]["id"], "--source", sources[0]["id"]),
                         ("--list", "versions", "--snapshot", version),
-                        ("--query", '{"kind":"versions","revision":"stale"}')):
+                        ("--query", '{"kind":"versions","revision":"stale"}'),
+                        ("--query=",), ("--list=",), ("--address=",), ("--export-report=",)):
             assert cli(args, "--reopen", saved, *options, code=1) == b""
         # Failure must not publish a replacement, a partial stdout or a temp file.
         target = root / "protected.ndlineage"
@@ -95,6 +97,40 @@ def run(args, root):
                         {"path": str(saved), "unknown": True}):
             assert reply(client, "lineage_load", payload)["status"] != "ok"
             assert ok(client, "lineage_summary")["revision"] == revision
+        oversized = root / "oversized.nddiff"
+        with oversized.open("wb") as out:
+            out.truncate(2 * 1024 * 1024 * 1024 + 1)
+        assert cli(args, "--report", oversized, "--save", target, code=4) == b""
+        assert target.read_bytes() == b"original target"
+        refused = reply(client, "lineage_load", {"reports": [str(oversized)]})
+        assert refused["error"]["code"] == "resource_limited", refused
+        assert ok(client, "lineage_summary")["revision"] == revision
+        oversized.unlink()
+        if sys.platform.startswith("linux"):
+            # A signal immediately after rename cannot relabel an already saved
+            # file as cancelled when a separate stdout I/O error then occurs.
+            preload = root / "late-cancel.so"
+            subprocess.run([args.cc, "-shared", "-fPIC", "-x", "c", "-", "-o", str(preload), "-ldl"],
+                           input=b"""#include <dlfcn.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+int rename(const char *from, const char *to) {
+  int (*real_rename)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+  int result = real_rename(from, to);
+  const char *target = getenv("NEVERD_TEST_LINEAGE_TARGET");
+  if (!result && target && !strcmp(to, target)) raise(SIGINT);
+  return result;
+}
+""", capture_output=True, check=True)
+            published = root / "late-signal.ndlineage"
+            env = dict(os.environ, LD_PRELOAD=str(preload), NEVERD_TEST_LINEAGE_TARGET=str(published))
+            with open("/dev/full", "wb") as full:
+                result = subprocess.run([args.neverd, "lineage", "--reopen", str(saved),
+                                         "--save", str(published)], stdout=full, stderr=subprocess.PIPE,
+                                        env=env, timeout=30)
+            assert result.returncode == 1 and b"cannot write lineage stdout" in result.stderr, result
+            assert json.loads(published.read_text()) == bundle
         # Partial metadata edits retain labels from other snapshots.
         rows = ok(client, "lineage_query", {"query": {"kind": "versions"}})["items"]
         for index, row in enumerate(rows[:2]):
@@ -148,6 +184,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("worker")
     parser.add_argument("--neverd", required=True)
+    parser.add_argument("--cc", default="cc")
     parser.add_argument("--artifacts", type=Path)
     args = parser.parse_args()
     if args.artifacts:

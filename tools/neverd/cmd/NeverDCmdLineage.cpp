@@ -92,9 +92,14 @@ cl::opt<bool> Json("json", cl::desc("Output machine-readable JSON"),
 static_assert(std::atomic<bool>::is_always_lock_free);
 std::atomic<bool> Interrupted{false};
 void interrupt(int) { Interrupted.store(true, std::memory_order_relaxed); }
+struct Failure : std::runtime_error {
+  int ExitCode;
+  Failure(int Code, const std::string &Message)
+      : std::runtime_error(Message), ExitCode(Code) {}
+};
 void check() {
   if (Interrupted.load(std::memory_order_relaxed))
-    throw std::runtime_error("lineage operation cancelled");
+    throw Failure(130, "lineage operation cancelled");
 }
 std::string take(const char *Text) {
   const std::unique_ptr<const char, decltype(&neverd_free_string)> Owned(
@@ -115,6 +120,11 @@ std::string render(llvm::json::Value V) {
 }
 std::string read(llvm::StringRef Name, uint64_t &Aggregate) {
   const auto Path = std::filesystem::u8path(Name.begin(), Name.end());
+  check();
+  std::error_code SizeError;
+  const auto Size = std::filesystem::file_size(Path, SizeError);
+  if (!SizeError && Size > limits::kMaxSavedComparisonBytes - Aggregate)
+    throw Failure(4, "lineage input exceeds the aggregate file byte allowance");
   std::ifstream File(Path, std::ios::binary);
   if (!File)
     throw std::runtime_error("cannot read lineage input: " + Name.str());
@@ -125,8 +135,8 @@ std::string read(llvm::StringRef Name, uint64_t &Aggregate) {
     File.read(Buffer.data(), Buffer.size());
     const auto Bytes = uint64_t(File.gcount());
     if (Bytes > limits::kMaxSavedComparisonBytes - Aggregate)
-      throw std::runtime_error(
-          "lineage input exceeds the aggregate file byte allowance");
+      throw Failure(4,
+                    "lineage input exceeds the aggregate file byte allowance");
     Aggregate += Bytes;
     Out.append(Buffer.data(), Bytes);
   }
@@ -229,6 +239,9 @@ int runLineage() {
     if (!Handle)
       throw std::runtime_error("cannot allocate lineage handle");
     Monitor Stop(Handle.get());
+    for (const auto *Option : {&Query, &List, &Address, &ExportReport, &Reopen})
+      if (Option->getNumOccurrences() && Option->empty())
+        throw std::runtime_error("explicit lineage selectors cannot be empty");
     if (Reports.empty() && Reopen.empty())
       throw std::runtime_error("provide --report or --reopen");
     const bool PageFields =
@@ -328,16 +341,18 @@ int runLineage() {
     // No cancellation check after rename: publication is the final commit.
     llvm::outs() << Output;
     llvm::outs().flush();
-    if (llvm::outs().has_error())
+    if (llvm::outs().has_error()) {
+      llvm::outs().clear_error();
       throw std::runtime_error(
           "cannot write lineage stdout; a saved file remains published");
+    }
     return *S.getInteger("incomplete_reports") ? 3
            : *S.getInteger("conflicts")        ? 2
                                                : 0;
   } catch (const std::exception &E) {
     llvm::errs() << "lineage: " << E.what() << '\n';
-    if (Interrupted)
-      return 130;
+    if (const auto *Typed = dynamic_cast<const Failure *>(&E))
+      return Typed->ExitCode;
     if (Handle) {
       auto Status =
           llvm::json::parse(take(neverd_lineage_status_json(Handle.get())));

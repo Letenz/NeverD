@@ -27,6 +27,16 @@
 
 namespace neverd::diff {
 namespace {
+std::string defaultLabel(const ProgramIdentity &Identity) {
+  const llvm::StringRef Path(Identity.Path);
+  if (Path.empty())
+    return Identity.SHA256;
+  const auto Separator = Path.find_last_of("/\\");
+  const auto Name = Separator == llvm::StringRef::npos
+                        ? Path
+                        : Path.drop_front(Separator + 1);
+  return Name.empty() ? Path.str() : Name.str();
+}
 
 void require(bool Condition, llvm::StringRef Error) {
   if (!Condition)
@@ -227,7 +237,7 @@ std::shared_ptr<const Lineage> readLineage(llvm::StringRef Text,
           auto &V = It->second;
           V.ID = VersionID;
           V.Identity = Identity;
-          V.Label = Identity.Path.empty() ? Identity.SHA256 : Identity.Path;
+          V.Label = defaultLabel(Identity);
           V.Report = Report;
           V.Secondary = Secondary;
         } else {
@@ -238,8 +248,11 @@ std::shared_ptr<const Lineage> readLineage(llvm::StringRef Text,
           require(programAnalysisIdentity(V.Identity) == Key &&
                       sameInventory(OldInventory, Inventory, B),
                   "reports disagree about one lineage snapshot inventory");
-          if (!Identity.Path.empty() && Identity.Path < V.Label)
-            V.Label = Identity.Path;
+          if (!Identity.Path.empty() &&
+              (V.Identity.Path.empty() || defaultLabel(Identity) < V.Label)) {
+            V.Label = defaultLabel(Identity);
+            V.Identity.Path = Identity.Path;
+          }
         }
       }
     }

@@ -1,5 +1,4 @@
-//===- NeverDCAPILineage.cpp - Transactional offline evidence handle
-//-------===//
+//===- NeverDCAPILineage.cpp - Offline evidence handles -------------------===//
 //
 // NeverD Decompiler
 //

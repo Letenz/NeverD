@@ -20,6 +20,7 @@
 #include <QJsonObject>
 #include <QMouseEvent>
 #include <QPainterPath>
+#include <QResizeEvent>
 #include <QWheelEvent>
 #include <cmath>
 #include <numbers>
@@ -44,13 +45,15 @@ void LineageGraph::setLabels(const QMap<QString, QString> &Names) {
   rebuild();
 }
 void LineageGraph::fit() {
+  AutoFit = true;
   if (scene()->items().isEmpty())
     return;
-  fitInView(scene()->itemsBoundingRect(), Qt::KeepAspectRatio);
+  fitInView(scene()->sceneRect(), Qt::KeepAspectRatio);
   if (transform().m11() > 1)
     resetTransform();
 }
 void LineageGraph::zoom(bool In) {
+  AutoFit = false;
   const auto Step = ::neverd::limits::gui::kComparisonZoomStep;
   const auto Factor = In ? Step : 1 / Step;
   const auto Scale = transform().m11() * Factor;
@@ -61,17 +64,22 @@ void LineageGraph::zoom(bool In) {
 void LineageGraph::rebuild() {
   scene()->clear();
   QMap<QString, QPointF> Positions;
+  QMap<QString, QString> Names = Labels;
   for (const auto &Value : Reports) {
     const auto R = Value.toObject();
     Positions[R["primary_version"].toString()] = {};
     Positions[R["secondary_version"].toString()] = {};
+    for (const auto &Side :
+         {QStringLiteral("primary"), QStringLiteral("secondary")})
+      if (!R[Side + "_label"].toString().isEmpty())
+        Names[R[Side + "_version"].toString()] = R[Side + "_label"].toString();
   }
   Positions.remove(QString());
   const QFontMetricsF Metrics(font());
   const auto Height = Metrics.height() * 3;
   const auto Width = Metrics.horizontalAdvance(QString(24, 'M'));
   const auto Radius =
-      std::max(Width, Positions.size() * Height / std::numbers::pi);
+      std::max(Width / 2, Positions.size() * Width / (2 * std::numbers::pi));
   int N = 0;
   for (auto It = Positions.begin(); It != Positions.end(); ++It, ++N) {
     const auto Angle = 2 * std::numbers::pi * N / Positions.size();
@@ -116,12 +124,12 @@ void LineageGraph::rebuild() {
     Node->setPos(It.value());
     Node->setData(0, "version");
     Node->setData(1, It.key());
-    Node->setToolTip(Labels.value(It.key(), It.key()) + '\n' + It.key());
+    Node->setToolTip(Names.value(It.key(), It.key()) + '\n' + It.key());
     auto *Text = new QGraphicsTextItem(Node);
     Text->setFont(font());
     Text->setDefaultTextColor(Theme.chrome("Text"));
     const auto Label =
-        Metrics.elidedText(Labels.value(It.key(), It.key()), Qt::ElideMiddle,
+        Metrics.elidedText(Names.value(It.key(), It.key()), Qt::ElideMiddle,
                            Width - Metrics.height());
     Text->setPlainText(Label + '\n' + It.key().left(16));
     Text->setPos(-Width / 2 + Metrics.height() / 3, -Height / 2);
@@ -142,6 +150,19 @@ void LineageGraph::mouseDoubleClickEvent(QMouseEvent *Event) {
     return;
   }
   QGraphicsView::mouseDoubleClickEvent(Event);
+}
+void LineageGraph::changeEvent(QEvent *Event) {
+  QGraphicsView::changeEvent(Event);
+  if (Event->type() == QEvent::FontChange) {
+    rebuild();
+    if (AutoFit)
+      fit();
+  }
+}
+void LineageGraph::resizeEvent(QResizeEvent *Event) {
+  QGraphicsView::resizeEvent(Event);
+  if (AutoFit)
+    fit();
 }
 void LineageGraph::wheelEvent(QWheelEvent *Event) {
   if (Event->modifiers().testFlag(Qt::ControlModifier)) {
