@@ -306,9 +306,10 @@ private:
   /// of \p Entries, the addresses the matches were looked for at.
   void applyCallerContext(const BinaryImage &Img,
                           llvm::ArrayRef<uint64_t> Entries);
-  void applyCallerContextRound(const BinaryImage &Img,
-                               llvm::ArrayRef<uint64_t> Entries,
-                               size_t FrozenMatches, size_t FirstParent);
+  void applyCallerContextRound(
+      const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
+      const std::unordered_map<uint64_t, std::string> &Names,
+      size_t FrozenMatches, size_t FirstParent);
   /// A nonzero FrozenMatches validates only later incoming candidates, against
   /// the frozen prefix. Their outcomes cannot change anchors or feed another
   /// candidate: the same resolver performs one validation pass. FirstChecked

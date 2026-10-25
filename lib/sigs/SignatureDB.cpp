@@ -1069,28 +1069,43 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
                                      llvm::ArrayRef<uint64_t> Entries) {
   if (!index().hasCallerModules() || Matches.empty())
     return;
+  auto Names = buildCandidateNameMap();
+  std::vector<uint64_t> Requested(Entries.begin(), Entries.end());
+  llvm::sort(Requested);
   const size_t FrozenMatches = Matches.size();
   size_t FirstParent = 0;
   for (size_t Round = 0; Round < MaxIncomingRounds; ++Round) {
     const size_t Before = Matches.size();
-    applyCallerContextRound(Img, Entries, FrozenMatches, FirstParent);
+    applyCallerContextRound(Img, Requested, Names, FrozenMatches, FirstParent);
     if (Matches.size() == Before)
       break;
+    // Earlier rows are immutable and every new row is incoming evidence at a
+    // previously unsettled target. Settlement prefers the union of these
+    // requested names over its old byte alternatives. Extend that map without
+    // sorting and settling every original candidate again in each round.
+    for (size_t I = Before; I < Matches.size(); ++I) {
+      const SigMatch &Match = Matches[I];
+      auto [At, Fresh] = Names.try_emplace(Match.Address, Match.Name);
+      if (!Fresh && preferredAliasOrder(Match.Name, At->second))
+        At->second = Match.Name;
+      for (const std::string &Alias : Match.Aliases)
+        if (preferredAliasOrder(Alias, At->second))
+          At->second = Alias;
+    }
     FirstParent = Before;
   }
 }
 
-void SignatureDB::applyCallerContextRound(const BinaryImage &Img,
-                                          llvm::ArrayRef<uint64_t> Entries,
-                                          size_t FrozenMatches,
-                                          size_t FirstParent) {
+void SignatureDB::applyCallerContextRound(
+    const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
+    const std::unordered_map<uint64_t, std::string> &Names,
+    size_t FrozenMatches, size_t FirstParent) {
   const auto &Idx = index();
 
   // Extend only the latest supported frontier. All rounds validate their
   // outgoing constraints against the same original result, so descendants
   // cannot confirm or change the proof of an ancestor. A target already
   // named by a preceding round is never a new request, including cycle edges.
-  const auto Names = buildCandidateNameMap();
   const size_t OriginalMatches = Matches.size();
   std::map<uint64_t, std::vector<size_t>> At;
   for (size_t I = FirstParent; I < OriginalMatches; ++I) {
@@ -1149,8 +1164,6 @@ void SignatureDB::applyCallerContextRound(const BinaryImage &Img,
       Refined[Address].push_back(Candidate.Module);
     }
   }
-  std::vector<uint64_t> Requested(Entries.begin(), Entries.end());
-  llvm::sort(Requested);
   using CandidateKey = std::pair<uint64_t, size_t>;
   struct Support {
     CandidateKey Candidate;
@@ -1246,7 +1259,7 @@ void SignatureDB::applyCallerContextRound(const BinaryImage &Img,
         if (const auto Target = addressReferenceTarget(Img, Start, Offset))
           To = Branch{*Target, false};
       if (!To || !Img.isCodeAddress(To->Target) ||
-          !std::binary_search(Requested.begin(), Requested.end(), To->Target))
+          !std::binary_search(Entries.begin(), Entries.end(), To->Target))
         continue;
       // Existing settled candidates already have a result. Do not duplicate
       // their work or modify the evidence used as a frozen anchor.
