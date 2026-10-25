@@ -360,6 +360,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCPropertyTests.cpp
   core/ReturnContractTests.cpp
   core/RegisterPairReturnTests.cpp
+  core/IncomingHomeSourceTests.cpp
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
   core/MedConstantPropagationTests.cpp
@@ -1542,7 +1543,7 @@ target_include_directories(NeverDWin64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
 add_neverd_unittest(NeverDIncomingHomeSourceTests
-  x86_64/IncomingHomeSourceTests.cpp
+  core/IncomingHomeSourceTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
 )
 target_include_directories(NeverDIncomingHomeSourceTests PRIVATE
