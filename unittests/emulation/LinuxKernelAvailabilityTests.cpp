@@ -13,6 +13,65 @@
 namespace neverd::emulation {
 namespace {
 using namespace linux_model;
+TEST(LinuxKernelAvailability,
+     ResidencyObservationsAreExplicitStrictAndBounded) {
+  auto O = processOptionsFromJSON(
+      R"({"linux_kernel":{"residency_observations":[{"address":"4294967296","pages":[0,1,0]}]}})");
+  ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+  ASSERT_TRUE(O->LinuxKernel->ResidencyObservations);
+  EXPECT_EQ(O->LinuxKernel->ResidencyObservations->at(0).Address, 0x100000000u);
+  EXPECT_EQ(O->LinuxKernel->ResidencyObservations->at(0).Pages,
+            (std::vector<uint8_t>{0, 1, 0}));
+  for (const char *Value :
+       {"null", "true", "{}", "0", "[null]", "[{}]",
+        R"([{"address":4097,"pages":[1]}])", R"([{"address":4096,"pages":[]}])",
+        R"([{"address":4096,"pages":[true]}])",
+        R"([{"address":4096,"pages":[2]}])",
+        R"([{"address":4096,"pages":[-1]}])",
+        R"([{"address":4096,"pages":["1"]}])",
+        R"([{"address":4096,"pages":[0],"extra":0}])",
+        R"([{"address":"0xfffffffffffff000","pages":[0]}])",
+        R"([{"address":"18446744073709547520","pages":[0]}])",
+        R"([{"address":9007199254740992,"pages":[0]}])"}) {
+    auto Bad = processOptionsFromJSON(
+        std::string("{\"linux_kernel\":{\"residency_observations\":") + Value +
+        "}}");
+    ASSERT_FALSE(bool(Bad)) << Value;
+    llvm::consumeError(Bad.takeError());
+  }
+  auto Empty = processOptionsFromJSON(
+      R"({"linux_kernel":{"residency_observations":[]}})");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  EXPECT_TRUE(Empty->LinuxKernel->ResidencyObservations->empty());
+  auto Wide = processOptionsFromJSON(
+      R"({"linux_kernel":{"residency_observations":[{"address":"18014398509481984","pages":[1]}]}})");
+  ASSERT_TRUE(bool(Wide)) << llvm::toString(Wide.takeError());
+  EXPECT_EQ(Wide->LinuxKernel->ResidencyObservations->at(0).Address, uint64_t(1)
+                                                                         << 54);
+  auto &V = *O->LinuxKernel->ResidencyObservations;
+  for (auto Observation : std::vector<LinuxResidencyObservation>{
+           {0, {}},
+           {1, {0}},
+           {0, {2}},
+           {UINT64_MAX - 4095, {0}},
+           {0, std::vector<uint8_t>(65537)}}) {
+    V = {Observation};
+    auto E = validateKernelOptions(*O->LinuxKernel);
+    EXPECT_TRUE(bool(E));
+    llvm::consumeError(std::move(E));
+  }
+  V.assign(1025, {0, {0}});
+  auto E = validateKernelOptions(*O->LinuxKernel);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  V.assign(16, {0, std::vector<uint8_t>(65536, 1)});
+  EXPECT_FALSE(bool(validateKernelOptions(*O->LinuxKernel)));
+  V.push_back({0, {0}});
+  E = validateKernelOptions(*O->LinuxKernel);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+}
+
 TEST(LinuxKernelAvailability, AbsenceAppliesOnlyToDeclaredInterfaces) {
   std::optional<LinuxKernelOptions> Options;
   EXPECT_FALSE(unavailableKernelService(ServiceKind::PidFDOpen, Options));

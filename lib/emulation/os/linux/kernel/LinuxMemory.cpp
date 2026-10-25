@@ -112,6 +112,8 @@ llvm::Expected<bool> LinuxMemory::mapPages(uint64_t Address, uint64_t Size,
     }
     Mapped += PageSize;
   }
+  if (Options.LinuxKernel && Options.LinuxKernel->ResidencyObservations)
+    setResidencyOwnership(Address, Size, true);
   return true;
 }
 llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
@@ -128,6 +130,7 @@ llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
       return failure(MemoryState);
     if (auto E = Space.unmap(Begin, End - Begin))
       return std::move(E);
+    setResidencyOwnership(Begin, End - Begin, false);
     setMergeable(Begin, End - Begin, false);
     retireDeviceRanges(Begin, End - Begin);
     retireProcMappings(Begin, End - Begin);

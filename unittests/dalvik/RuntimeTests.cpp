@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "gtest/gtest.h"
 
+#include "neverd/dalvik/Library.h"
 #include "neverd/dalvik/Runtime.h"
 
 #include <tuple>
@@ -46,6 +47,35 @@ ExecutionResult run(Class c, uint64_t budget = 32, uint64_t stack = 65536) {
         return ExecutionStop::Returned;
       },
       stack);
+}
+TEST(DalvikRuntime, LibraryCatalogKeepsPublishedMethodPositions) {
+  // JNI library method identities retain these published catalog positions.
+  const auto methods = libraryMethods();
+  ASSERT_GE(methods.size(), 91u);
+  struct Expected {
+    size_t index;
+    const char *owner, *name, *signature;
+    bool is_static;
+  };
+  const Expected expected[] = {
+      {0, "java/lang/String", "intern", "()Ljava/lang/String;", false},
+      {7, "java/lang/String", "length", "()I", false},
+      {28, "java/lang/String", "valueOf", "(I)Ljava/lang/String;", true},
+      {67, "java/lang/ClassNotFoundException", "<init>", "()V", false},
+      {69, "java/lang/NoClassDefFoundError", "<init>", "()V", false},
+      {81, "java/lang/ClassLoader", "getSystemClassLoader",
+       "()Ljava/lang/ClassLoader;", true},
+      {89, "java/io/File", "isAbsolute", "()Z", false},
+      {90, "android/app/ActivityThread", "getInstrumentation",
+       "()Landroid/app/Instrumentation;", false},
+  };
+  for (const auto &entry : expected) {
+    SCOPED_TRACE(entry.index);
+    EXPECT_STREQ(methods[entry.index].Class, entry.owner);
+    EXPECT_STREQ(methods[entry.index].Name, entry.name);
+    EXPECT_STREQ(methods[entry.index].Signature, entry.signature);
+    EXPECT_EQ(methods[entry.index].Static, entry.is_static);
+  }
 }
 TEST(DalvikRuntime, UninitializedNarrowAndWideRegistersAreNotZero) {
   EXPECT_EQ(run(fixture({insn(0, "return", {0})})).stop,
@@ -576,6 +606,148 @@ TEST(DalvikRuntime, FinitePlatformMarkerInterfacesPreserveAssignability) {
   c.superclass = "Ljava/lang/RuntimeException;";
   Program program({c});
   EXPECT_TRUE(program.assignable(c.name, "Ljava/io/Serializable;"));
+}
+class StringBuilderTest : public testing::Test {
+protected:
+  Program program{{}, std::map<std::string, std::string>{}};
+  std::shared_ptr<Heap> heap = std::make_shared<Heap>();
+  Runtime runtime{program, heap};
+  const AdmitInstruction admit = [] { return ExecutionStop::Returned; };
+  const LibraryMethod &method(const char *name, const char *signature) {
+    auto [args, result] = prototype(signature);
+    auto m =
+        libraryMethod({"Ljava/lang/StringBuilder;", name, args, result}, false);
+    if (!m)
+      std::abort();
+    return *m;
+  }
+  uint64_t create() {
+    auto r = runtime.library(method("<init>", "()V"), 0, {}, admit);
+    EXPECT_EQ(r.stop, ExecutionStop::Returned) << r.diagnostic;
+    return r.value;
+  }
+  ExecutionResult append(uint64_t builder, uint64_t unit,
+                         const AdmitInstruction &budget) {
+    const uint64_t args[]{unit};
+    return runtime.library(method("append", "(C)Ljava/lang/StringBuilder;"),
+                           builder, args, budget);
+  }
+  ExecutionResult string(uint64_t builder) {
+    return runtime.library(method("toString", "()Ljava/lang/String;"), builder,
+                           {}, admit);
+  }
+};
+TEST_F(StringBuilderTest, UTF16MutationRetainsIdentityAndIndependentStrings) {
+  auto builder = create();
+  EXPECT_EQ(string(builder).value, heap->literal("")->Identity);
+  const std::vector<uint8_t> expected{0, 0, 0, 0xd8, 0, 0xdc, 0x2d, 0x4e};
+  for (uint64_t unit : {0, 0xd800, 0xdc00, 0x4e2d}) {
+    auto r = append(builder, unit, admit);
+    ASSERT_EQ(r.stop, ExecutionStop::Returned) << r.diagnostic;
+    EXPECT_EQ(r.value, builder);
+  }
+  auto a = string(builder), b = string(builder);
+  ASSERT_EQ(a.stop, ExecutionStop::Returned);
+  ASSERT_EQ(b.stop, ExecutionStop::Returned);
+  EXPECT_NE(a.value, b.value);
+  EXPECT_NE(a.value, builder);
+  EXPECT_EQ(heap->get(a.value)->Type, Object::String);
+  EXPECT_EQ(heap->get(a.value)->Bytes, expected);
+  ASSERT_EQ(append(builder, 'X', admit).stop, ExecutionStop::Returned);
+  EXPECT_EQ(heap->get(a.value)->Bytes, expected);
+  EXPECT_EQ(heap->get(b.value)->Bytes, expected);
+  EXPECT_EQ(heap->get(builder)->Length, 5u);
+  auto other = create();
+  EXPECT_NE(other, builder);
+  EXPECT_TRUE(heap->get(other)->Bytes.empty());
+}
+TEST_F(StringBuilderTest, ExhaustedWorkDoesNotPublishAPartialAppend) {
+  for (unsigned available : {0u, 1u, 2u}) {
+    auto storage = std::make_shared<Heap>();
+    Runtime state(program, storage);
+    auto builder = state.library(method("<init>", "()V"), 0, {}, admit).value;
+    const uint64_t a[]{'A'}, b[]{'B'};
+    auto &add = method("append", "(C)Ljava/lang/StringBuilder;");
+    ASSERT_EQ(state.library(add, builder, a, admit).stop,
+              ExecutionStop::Returned);
+    auto before = storage->get(builder)->Bytes;
+    auto r = state.library(add, builder, b, [&] {
+      if (!available)
+        return ExecutionStop::InstructionLimit;
+      --available;
+      return ExecutionStop::Returned;
+    });
+    EXPECT_EQ(r.stop, ExecutionStop::InstructionLimit);
+    EXPECT_EQ(storage->get(builder)->Bytes, before);
+    EXPECT_EQ(state.library(add, builder, b, admit).stop, r.stop);
+  }
+}
+TEST_F(StringBuilderTest, AllocationLimitPreservesMutableAndImmutableState) {
+  auto storage = std::make_shared<Heap>(65536, 1);
+  Runtime state(program, storage);
+  auto builder = state.library(method("<init>", "()V"), 0, {}, admit);
+  ASSERT_EQ(builder.stop, ExecutionStop::Returned);
+  const uint64_t unit[]{0xdfff};
+  ASSERT_EQ(state
+                .library(method("append", "(C)Ljava/lang/StringBuilder;"),
+                         builder.value, unit, admit)
+                .stop,
+            ExecutionStop::Returned);
+  auto r = state.library(method("toString", "()Ljava/lang/String;"),
+                         builder.value, {}, admit);
+  EXPECT_EQ(r.stop, ExecutionStop::HeapLimit);
+  EXPECT_EQ(storage->get(builder.value)->Bytes,
+            (std::vector<uint8_t>{0xff, 0xdf}));
+  EXPECT_TRUE(state.snapshot().terminal);
+}
+TEST_F(StringBuilderTest, ReceiverAndUnimplementedOperationsFailClearly) {
+  auto null = append(0, 'A', admit);
+  EXPECT_EQ(null.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(null.exception, "java/lang/NullPointerException");
+  EXPECT_FALSE(
+      libraryMethod({"Ljava/lang/StringBuilder;", "capacity", {}, "I"}, false));
+  auto wrong = heap->literal("value");
+  EXPECT_EQ(append(wrong->Identity, 'B', admit).stop, ExecutionStop::Invalid);
+  Runtime fresh(program, heap);
+  auto raw = heap->allocate(Object::Instance, "java/lang/StringBuilder", 0);
+  raw->Initialized = false;
+  EXPECT_EQ(fresh
+                .library(method("toString", "()Ljava/lang/String;"),
+                         raw->Identity, {}, admit)
+                .stop,
+            ExecutionStop::Invalid);
+}
+TEST_F(StringBuilderTest, DexConstructionAndAppendShareTheValueOwner) {
+  auto allocation = insn(0, "new-instance", {0});
+  allocation.reference = std::string("Ljava/lang/StringBuilder;");
+  auto constructor = insn(2, "invoke-direct", {0});
+  constructor.reference =
+      MethodRef{"Ljava/lang/StringBuilder;", "<init>", {}, "V"};
+  auto unit = insn(5, "const", {1});
+  unit.literal = int64_t(0xd800);
+  auto add = insn(8, "invoke-virtual", {0, 1});
+  add.reference = MethodRef{"Ljava/lang/StringBuilder;",
+                            "append",
+                            {"C"},
+                            "Ljava/lang/StringBuilder;"};
+  auto text = insn(12, "invoke-virtual", {2});
+  text.reference = MethodRef{
+      "Ljava/lang/StringBuilder;", "toString", {}, "Ljava/lang/String;"};
+  auto c = fixture({allocation, constructor, unit, add,
+                    insn(11, "move-result-object", {2}), text,
+                    insn(15, "move-result-object", {1}),
+                    insn(16, "return-object", {1})},
+                   3, "Ljava/lang/String;");
+  Program code({c}, std::map<std::string, std::string>{});
+  Runtime state(code, heap);
+  auto result =
+      state.execute(*code.findStatic(c.methods[0].reference), {}, admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(heap->get(result.value)->Bytes, (std::vector<uint8_t>{0, 0xd8}));
+  for (auto parent :
+       {"Ljava/io/Serializable;", "Ljava/lang/Appendable;",
+        "Ljava/lang/CharSequence;", "Ljava/lang/AbstractStringBuilder;"})
+    EXPECT_TRUE(code.assignable("Ljava/lang/StringBuilder;", parent));
 }
 } // namespace
 } // namespace neverd::mobile::dalvik

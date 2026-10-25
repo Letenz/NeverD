@@ -85,10 +85,18 @@ uint16_t networkAddressFamily(llvm::ArrayRef<uint8_t> Address) {
   return 0;
 }
 llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
-  if (Options.Connections.size() + Options.DatagramConnections.size() >
-      ::neverd::limits::emulation::
-          kLinuxNetworkValidateNetworkOptionsConnectionsSizeOptionsDatagramConnectionsSizeLimit)
+  using ::neverd::limits::emulation::kMaxNetworkConnections;
+  const auto Streams = Options.Connections.size();
+  const auto Datagrams = Options.DatagramConnections.size();
+  if (Streams > kMaxNetworkConnections ||
+      Datagrams > kMaxNetworkConnections - Streams)
     return failure("offline network has too many connection attempts");
+  if (const auto &F = Options.TCPConnectFailures) {
+    if (!F->Count || !F->Error || !connectError(F->Error))
+      return failure("invalid offline TCP connection failure contract");
+    if (F->Count > kMaxNetworkConnections - Streams - Datagrams)
+      return failure("offline network has too many connection attempts");
+  }
   uint64_t Bytes = 0;
   for (const auto &C : Options.Connections) {
     if (!networkAddressFamily(C.Peer) || !connectError(C.ConnectErrno) ||
@@ -295,6 +303,15 @@ LinuxFiles::network(ServiceKind Kind, const ProcessServiceEvent &Event,
       }
       Socket->Datagram = &C;
       return Reply(0);
+    }
+    if (NextConnection == Network->Connections.size() &&
+        Network->TCPConnectFailures) {
+      const auto &F = *Network->TCPConnectFailures;
+      if (TCPConnectFailuresConsumed == F.Count)
+        return unsupported(Result, "TCP connection failure contract exhausted");
+      ++TCPConnectFailuresConsumed;
+      Socket->Failed = true;
+      return Reply(uint64_t(0) - F.Error);
     }
     if (NextConnection == Network->Connections.size() ||
         Network->Connections[NextConnection].Peer != Peer)

@@ -18,6 +18,7 @@ protected:
   std::shared_ptr<PhysicalMemory> RAM;
   std::shared_ptr<AddressSpace> Space;
   std::unique_ptr<linux_model::LinuxMemory> Memory;
+  ProcessOptions Options;
   ProcessResult Report{ProcessProfile::LinuxELF64,
                        GuestArchitecture::X64,
                        ExecutionBackendKind::Unicorn,
@@ -25,7 +26,6 @@ protected:
   void SetUp() override {
     RAM = llvm::cantFail(PhysicalMemory::create(UnitLimit));
     Space = llvm::cantFail(AddressSpace::create(RAM, UnitLimit));
-    ProcessOptions Options;
     Options.MemoryLimit = UnitLimit;
     Options.StackSize = PageSize;
     const linux_model::MemoryLayout Layout{UserLimit, PageSize};
@@ -38,6 +38,11 @@ protected:
                                uint64_t A5 = 0) {
     return llvm::cantFail(
         Memory->handle(Kind, {0, 0, {A0, A1, A2, A3, A4, A5}, {}}, Report));
+  }
+  std::vector<uint8_t> readBytes(uint64_t Address, size_t Size) {
+    std::vector<uint8_t> Bytes(Size);
+    llvm::cantFail(Space->read(Address, Bytes));
+    return Bytes;
   }
   uint64_t map(uint64_t Size, uint64_t Hint = UnitHint) {
     return *call(ServiceKind::Mmap, Hint, Size, ProtRead | ProtWrite,
@@ -81,6 +86,231 @@ TEST_F(LinuxMemory,
   ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
   EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, 0),
             uint64_t(0) - 12);
+}
+
+TEST_F(LinuxMemory, ResidencyObservationsPreserveBitsGuardsAndPermissions) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, {0, 1, 0}},
+                                             {UnitHint, {1, 0, 1}}};
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  const uint64_t Out = UnitHint + 4 * PageSize;
+  ASSERT_EQ(map(PageSize, Out), Out);
+  std::vector<uint8_t> Expected(PageSize, 0xa5);
+  llvm::cantFail(Space->write(Out, Expected));
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, PageSize, 0), 0u);
+  ASSERT_EQ(
+      call(ServiceKind::Mprotect, UnitHint + PageSize, PageSize, ProtRead), 0u);
+  const auto Generation = Space->mappingGeneration();
+  const auto Allocated = RAM->allocatedBytes();
+  ASSERT_EQ(call(ServiceKind::Mincore, UnitHint, 2 * PageSize + 1, Out + 7),
+            0u);
+  Expected[7] = 0;
+  Expected[8] = 1;
+  Expected[9] = 0;
+  EXPECT_EQ(readBytes(Out, PageSize), Expected);
+  ASSERT_EQ(call(ServiceKind::Mincore, UnitHint, 3 * PageSize, Out + 7), 0u);
+  Expected[7] = 1;
+  Expected[8] = 0;
+  Expected[9] = 1;
+  EXPECT_EQ(readBytes(Out, PageSize), Expected);
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, 3 * PageSize, Out));
+  EXPECT_NE(Report.Diagnostic.find("exhausted"), std::string::npos);
+  EXPECT_EQ(Space->mappingGeneration(), Generation);
+  EXPECT_EQ(RAM->allocatedBytes(), Allocated);
+}
+TEST_F(LinuxMemory, ResidencyEarlyErrorsDoNotConsumeButCopyFaultDoes) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, {0}}, {UnitHint, {1}}};
+  ASSERT_EQ(map(PageSize), UnitHint);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint + 1, PageSize, 0),
+            uint64_t(-22));
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, UINT64_MAX, 0), uint64_t(-12));
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, UINT64_MAX),
+            uint64_t(-14));
+  EXPECT_EQ(call(ServiceKind::Mincore, 0, PageSize, 0), uint64_t(-12));
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, 0, UnitHint), 0u);
+  // The first observed query reaches copy_to_user, so even EFAULT consumes it.
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, 0), uint64_t(-14));
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint), 0u);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 1u);
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint));
+}
+TEST_F(LinuxMemory, ResidencyMismatchAndUnknownBackingDoNotConsumeInput) {
+  ASSERT_EQ(map(PageSize),
+            UnitHint); // No provenance capture was requested yet.
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, {1}}};
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint));
+  EXPECT_NE(Report.Diagnostic.find("backing"), std::string::npos);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  ASSERT_EQ(map(2 * PageSize), UnitHint);
+  EXPECT_FALSE(
+      call(ServiceKind::Mincore, UnitHint + PageSize, PageSize, UnitHint));
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, 2 * PageSize, UnitHint));
+  EXPECT_NE(Report.Diagnostic.find("match"), std::string::npos);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint), 0u);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 1u);
+}
+TEST_F(LinuxMemory, ResidencyHoleKeepsCompletedPrefixAndCannotResurrectPages) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, {1, 0, 1}},
+                                             {UnitHint, {0, 1, 0}}};
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  const uint64_t Out = UnitHint + 4 * PageSize;
+  ASSERT_EQ(map(PageSize, Out), Out);
+  llvm::cantFail(Space->writeInteger(Out, 0xa5a5a5a5, 4));
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint + PageSize, PageSize), 0u);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, 3 * PageSize, Out),
+            uint64_t(-12));
+  EXPECT_EQ(*Space->readInteger(Out, 4), 0xa5a5a501u);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, 3 * PageSize, Out),
+            uint64_t(-12));
+  ASSERT_EQ(map(2 * PageSize), UnitHint);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, 3 * PageSize, Out), 0u);
+  EXPECT_EQ(*Space->readInteger(Out, 4), 0xa5000100u);
+}
+TEST_F(LinuxMemory, ResidencySplitCopyFaultPreservesOnlyCompletedChunks) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, {1, 0, 1}}};
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, PageSize, ProtRead), 0u);
+  const uint64_t Out = UnitHint + 4 * PageSize;
+  ASSERT_EQ(map(PageSize, Out), Out);
+  llvm::cantFail(Space->writeInteger(Out + PageSize - 1, 0xa5, 1));
+  EXPECT_EQ(
+      call(ServiceKind::Mincore, UnitHint, 3 * PageSize, Out + PageSize - 1),
+      uint64_t(-14));
+  EXPECT_EQ(*Space->readInteger(Out + PageSize - 1, 1), 1u);
+}
+TEST_F(LinuxMemory, ResidencyPartialChunkIsExplicitlyUnsupported) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, {1, 0, 1}}};
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  const uint64_t Out = UnitHint + 4 * PageSize;
+  ASSERT_EQ(map(PageSize, Out), Out);
+  llvm::cantFail(Space->writeInteger(Out + PageSize - 1, 0xa5, 1));
+  EXPECT_FALSE(
+      call(ServiceKind::Mincore, UnitHint, 3 * PageSize, Out + PageSize - 1));
+  EXPECT_NE(Report.Diagnostic.find("partial"), std::string::npos);
+  EXPECT_EQ(*Space->readInteger(Out + PageSize - 1, 1), 0xa5u);
+}
+TEST_F(LinuxMemory, ResidencyPageSizedChunksKeepFullPrefixBeforeCopyFault) {
+  Memory.reset();
+  Space.reset();
+  RAM.reset();
+  Options.MemoryLimit = 8192 * PageSize;
+  RAM = llvm::cantFail(PhysicalMemory::create(Options.MemoryLimit));
+  Space = llvm::cantFail(AddressSpace::create(RAM, Options.MemoryLimit));
+  std::vector<uint8_t> Bits(4097);
+  for (size_t I = 0; I < Bits.size(); ++I)
+    Bits[I] = I % 2;
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, Bits}};
+  Memory = std::make_unique<linux_model::LinuxMemory>(
+      *Space, linux_model::MemoryLayout{UserLimit, PageSize}, UnitHeap,
+      Options);
+  ASSERT_EQ(map(Bits.size() * PageSize), UnitHint);
+  const uint64_t Out = UnitHint + 8191 * PageSize;
+  ASSERT_EQ(map(PageSize, Out), Out);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, Bits.size() * PageSize, Out),
+            uint64_t(-14));
+  Bits.resize(4096);
+  EXPECT_EQ(readBytes(Out, 4096), Bits);
+}
+
+TEST_F(LinuxMemory, ResidencyHeapGrowthSharesObservationOwnership) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHeap, {0, 1}}};
+  ASSERT_EQ(call(ServiceKind::Brk, UnitHeap + 2 * PageSize),
+            UnitHeap + 2 * PageSize);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHeap, 2 * PageSize, UnitHeap + 9),
+            0u);
+  EXPECT_EQ(*Space->readInteger(UnitHeap + 9, 2), 0x100u);
+}
+
+TEST_F(LinuxMemory, ResidencyNamesCannotGrantOwnershipAndUnmapRetiresIt) {
+  auto &Kernel = Options.LinuxKernel.emplace();
+  Kernel.AnonymousVMANames = LinuxAnonymousVMANames::AndroidUserPointer;
+  Kernel.ResidencyObservations = std::vector<LinuxResidencyObservation>{
+      {UnitHint, {1}}, {UnitHint, {0}}, {UnitHint, {1}}};
+  ASSERT_EQ(llvm::toString(
+                Space->map(UnitHint, PageSize, Read | Write | UserAccessible)),
+            "");
+  llvm::cantFail(Space->writeInteger(UnitHint + 32, 0, 1));
+  ASSERT_EQ(call(ServiceKind::Prctl, 0x53564d41, 0, UnitHint, PageSize,
+                 UnitHint + 32),
+            0u);
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint));
+  EXPECT_NE(Report.Diagnostic.find("backing"), std::string::npos);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  ASSERT_EQ(map(PageSize), UnitHint);
+  ASSERT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint), 0u);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 1u);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  ASSERT_EQ(llvm::toString(
+                Space->map(UnitHint, PageSize, Read | Write | UserAccessible)),
+            "");
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint));
+  EXPECT_NE(Report.Diagnostic.find("backing"), std::string::npos);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  ASSERT_EQ(map(PageSize), UnitHint);
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint), 0u);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 0u);
+}
+TEST_F(LinuxMemory, ResidencyUnknownAdjacentBackingKeepsTheKnownPrefix) {
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{{UnitHint, {1, 0}}};
+  ASSERT_EQ(map(PageSize), UnitHint);
+  ASSERT_EQ(llvm::toString(Space->map(UnitHint + PageSize, PageSize,
+                                      Read | Write | UserAccessible)),
+            "");
+  llvm::cantFail(Space->writeInteger(UnitHint + 32, 0xa5a5, 2));
+  EXPECT_FALSE(
+      call(ServiceKind::Mincore, UnitHint, 2 * PageSize, UnitHint + 32));
+  EXPECT_NE(Report.Diagnostic.find("backing"), std::string::npos);
+  EXPECT_EQ(*Space->readInteger(UnitHint + 32, 2), 0xa501u);
+  EXPECT_FALSE(
+      call(ServiceKind::Mincore, UnitHint, 2 * PageSize, UnitHint + 32));
+  EXPECT_NE(Report.Diagnostic.find("exhausted"), std::string::npos);
+}
+
+TEST_F(LinuxMemory, ResidencyMMIOBoundariesDoNotReadOrWriteDevices) {
+  const uint64_t DeviceAddress = UnitHint + 4 * PageSize;
+  unsigned Transactions = 0;
+  GuestMMIOCallbacks Device;
+  Device.Validate = [&](uint64_t, uint64_t, bool) {
+    ++Transactions;
+    return llvm::Error::success();
+  };
+  Device.Read = [&](uint64_t, unsigned) -> llvm::Expected<uint64_t> {
+    ++Transactions;
+    return 0;
+  };
+  Device.Write = [&](uint64_t, unsigned, uint64_t) {
+    ++Transactions;
+    return llvm::Error::success();
+  };
+  ASSERT_EQ(llvm::toString(
+                Space->mapMMIO(DeviceAddress, PageSize, std::move(Device))),
+            "");
+  Options.LinuxKernel.emplace().ResidencyObservations =
+      std::vector<LinuxResidencyObservation>{
+          {UnitHint, {1}}, {UnitHint, {0}}, {DeviceAddress, {1}}};
+  ASSERT_EQ(map(PageSize), UnitHint);
+  // An unrelated device does not prevent an ordinary RAM query or affect proc's
+  // separate refusal to render unmodeled device mappings.
+  EXPECT_EQ(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint), 0u);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 1u);
+  auto Proc = Memory->procMappings();
+  ASSERT_FALSE(bool(Proc));
+  llvm::consumeError(Proc.takeError());
+  EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, DeviceAddress));
+  EXPECT_NE(Report.Diagnostic.find("device memory"), std::string::npos);
+  EXPECT_FALSE(call(ServiceKind::Mincore, DeviceAddress, PageSize, UnitHint));
+  EXPECT_NE(Report.Diagnostic.find("backing"), std::string::npos);
+  EXPECT_EQ(*Space->readInteger(UnitHint, 1), 1u);
+  EXPECT_EQ(Transactions, 0u);
 }
 
 TEST_F(LinuxMemory, RoundedPagesAreZeroAndPartialUnmapReclaimsTheirOwners) {

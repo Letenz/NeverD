@@ -657,6 +657,22 @@ def main():
             ok(client, "comparison_save", {"path": str(saved)})
             document = ok(client, "comparison_export")
             assert json.loads(saved.read_text()) == document
+            contradictory = json.loads(json.dumps(document))
+            contradictory["overrides"].append({"kind": "unmatch", "primary": address, "secondary": other})
+            invalid = root / "contradictory.nddiff"
+            invalid.write_text(json.dumps(contradictory))
+            before_failed_restore = ok(client, "comparison_summary")
+            refused = client.call("comparison_restore", {"path": str(invalid)})
+            assert refused["status"] == "error" and "effective unmatch" in str(refused), refused
+            assert ok(client, "comparison_export") == document
+            after_failed_restore = ok(client, "comparison_summary")
+            assert after_failed_restore["job"]["restore_state"] == "failed"
+            assert after_failed_restore["job"]["previous_result_retained"]
+            assert {k: v for k, v in after_failed_restore.items() if k != "job"} == {
+                k: v for k, v in before_failed_restore.items() if k != "job"}
+            refused = client.call("comparison_start", {**start, "restore_path": str(invalid)})
+            assert refused["status"] == "error" and "effective unmatch" in str(refused), refused
+            assert ok(client, "comparison_export") == document
             ok(client, "comparison_override", {"kind": "unmatch", "primary": address, "secondary": other})
             inactive = ok(client, "comparison_reviews", {"address": address})
             assert not inactive["rows"][0]["pair_active"] and inactive["head"] == history["head"]

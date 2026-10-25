@@ -66,6 +66,16 @@ judge each change in the real window.
   round docks or views. A combo box's list drops below it and reads as a menu
   (`combobox-popup: 0`, and the styled item delegate `WorkbenchStyle` gives
   every combo box so the style sheet's item rules apply).
+- Keep a menu icon close to its label: NeverD's 16-pixel icon column uses
+  about 8 logical pixels of separation, with text aligned across icon,
+  checkmark and plain items. Qt already reserves the widest icon/check
+  column; do not add another column in `QMenu::item` padding. Position the
+  icon and checkmark in that same column, and reserve an icon's checked
+  border while unchecked so toggling it does not shift the glyph. Check
+  actual renders with shortcuts and submenus in both themes. This follows
+  [Fluent's proximity and spacing guidance](https://fluent2.microsoft.design/layout)
+  and [VS Code's aligned menu columns](https://github.com/microsoft/vscode/blob/main/src/vs/base/browser/ui/menu/menu.ts),
+  while retaining NeverD's desktop density and colored icons.
 - Open the command palette where it was asked for. A click on the title bar's
   command center drops it from the bar's bottom edge, centered under the field
   and at least as wide (`TitleBar::clickedCommandCenter`), as in Visual Studio

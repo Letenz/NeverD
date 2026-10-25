@@ -30,6 +30,7 @@
 #include "neverd/types/TypeParse.h"
 
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -934,9 +935,34 @@ int main(void) {
           NativeOracle += Source.find("record_probe(void*") == std::string::npos
                               ? "(uintptr_t)&output[1], "
                               : "(void*)&output[1], ";
-          NativeOracle +=
-              LLVM ? "vectors[0], vectors[1], vectors[2], vectors[3]"
-                   : "scalars[0], scalars[1], scalars[2], scalars[3]";
+          // Source projection can expose an HFA lane as a scalar double or
+          // retain its machine vector carrier. Invoke the generated function
+          // with its actual IR argument types; the independent bit oracle
+          // below remains identical for both representations.
+          const auto *Entry =
+              LLVM ? Result.LlvmModule->getFunction("record_probe") : nullptr;
+          if (LLVM) {
+            ASSERT_NE(Entry, nullptr);
+            ASSERT_EQ(Entry->arg_size(), 5u);
+          }
+          for (unsigned I = 0; I < 4; ++I) {
+            if (I)
+              NativeOracle += ", ";
+            bool Vector = false;
+            if (Entry) {
+              const auto *Type = Entry->getFunctionType()->getParamType(I + 1);
+              if (!Type->isDoubleTy()) {
+                const auto *Carrier =
+                    llvm::dyn_cast<llvm::FixedVectorType>(Type);
+                ASSERT_NE(Carrier, nullptr);
+                ASSERT_EQ(Carrier->getNumElements(), 2u);
+                ASSERT_TRUE(Carrier->getElementType()->isIntegerTy(64));
+                Vector = true;
+              }
+            }
+            NativeOracle +=
+                (Vector ? "vectors[" : "scalars[") + std::to_string(I) + "]";
+          }
           NativeOracle += R"();
   return calls != EXPECTED_CALLS || output[1] != 0xFEDCBA9876543210ULL ||
          output[2] != 0x0123456789ABCDEFULL ||
