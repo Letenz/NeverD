@@ -128,6 +128,14 @@ struct RawByteOracle {
         case NdOp::INT_MULT:
           write(Op.Output, read(Op.Inputs[0]) * read(Op.Inputs[1]));
           break;
+        case NdOp::INT_LEFT: {
+          const uint64_t Value = read(Op.Inputs[0]);
+          const uint64_t Count = read(Op.Inputs[1]);
+          if (!Valid)
+            return false;
+          write(Op.Output, Count < Op.Inputs[0].Size * 8 ? Value << Count : 0);
+          break;
+        }
         case NdOp::INT_AND:
           write(Op.Output, read(Op.Inputs[0]) & read(Op.Inputs[1]));
           break;
