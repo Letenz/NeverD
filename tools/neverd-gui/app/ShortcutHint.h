@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Show a button's actual key beside its icon or label without registering
+/// Show actual keys beside icons or labels without registering
 /// another shortcut or changing the scope of the existing binding.
 ///
 //===----------------------------------------------------------------------===//
@@ -15,9 +15,21 @@
 
 #include <QAbstractButton>
 #include <QKeySequence>
+#include <QList>
+#include <QStringList>
 #include <QToolButton>
 
 namespace neverd::gui {
+
+inline QString
+shortcutHint(const QList<QKeySequence> &keys,
+             QKeySequence::SequenceFormat format = QKeySequence::NativeText) {
+  QStringList hints;
+  for (const auto &key : keys)
+    if (!key.isEmpty())
+      hints.append(key.toString(format));
+  return hints.join(QStringLiteral(", "));
+}
 
 inline void setShortcutHint(QAbstractButton &button, const QKeySequence &key) {
   const QString hint = key.toString(QKeySequence::NativeText);
