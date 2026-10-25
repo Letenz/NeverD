@@ -25,6 +25,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace neverd::diff {
@@ -263,6 +264,22 @@ void readFunctions(Reader &In, const llvm::json::Array &A,
       return;
     Out.push_back(std::move(F));
   }
+}
+
+std::optional<std::string> decisionConflict(const SavedComparison &Saved,
+                                            const ComparisonControl &Control) {
+  Control.report("decisions");
+  const auto Rejected = rejectedPairs(Saved.Overrides, Control);
+  if (Rejected.empty())
+    return std::nullopt;
+  for (const auto &M : Saved.Matches) {
+    Control.check();
+    if (std::binary_search(Rejected.begin(), Rejected.end(),
+                           std::pair{M.Primary, M.Secondary}))
+      return "a saved match contradicts an effective unmatch decision: " +
+             hex(M.Primary) + " <-> " + hex(M.Secondary);
+  }
+  return std::nullopt;
 }
 
 } // namespace
@@ -766,6 +783,10 @@ readComparison(llvm::StringRef Text, std::string &Error,
   }
   if (In.failed())
     return std::nullopt;
+  if (const auto Conflict = decisionConflict(C, Control)) {
+    In.fail(*Conflict);
+    return std::nullopt;
+  }
   Control.check();
   return C;
 }
@@ -824,6 +845,8 @@ bindComparison(const SavedComparison &Saved, const Program &Primary,
                       Now->Analysis + "\", the comparison used \"" +
                       Was->Analysis + "\"");
   }
+  if (const auto Conflict = decisionConflict(Saved, Control))
+    return Fail(BindFailure::InvalidEvidence, *Conflict);
   const auto InventoryAgrees = [&](const std::vector<SavedFunction> &Was,
                                    const Program &Now) {
     if (Was.size() != Now.Functions.size())
