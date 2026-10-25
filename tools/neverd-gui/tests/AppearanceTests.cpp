@@ -241,7 +241,7 @@ private slots:
     }
   }
 
-  void tabCloseIconKeepsItsLogicalSize_data() {
+  void tabCloseIconKeepsItsSizeAndInset_data() {
     QTest::addColumn<bool>("docked");
     QTest::addColumn<bool>("dark");
     for (const bool docked : {false, true})
@@ -251,7 +251,7 @@ private slots:
             << docked << dark;
   }
 
-  void tabCloseIconKeepsItsLogicalSize() {
+  void tabCloseIconKeepsItsSizeAndInset() {
     QFETCH(bool, docked);
     QFETCH(bool, dark);
     Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
@@ -290,8 +290,11 @@ private slots:
           ink |= QRect(x, y, 1, 1);
       }
     const qreal dpr = capture.devicePixelRatio();
+    const qreal rightInset =
+        tabs->tabRect(0).right() + 1 - button->x() - (ink.right() + 1) / dpr;
     qInfo() << "Tab close button" << button->size() << "DPR" << dpr
-            << "glyph physical bounds" << ink;
+            << "glyph physical bounds" << ink << "logical right inset"
+            << rightInset;
     const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
     if (!captures.isEmpty()) {
       QDir().mkpath(captures);
@@ -302,6 +305,9 @@ private slots:
     // threshold. Allow one physical pixel, not a fraction of the logical size.
     QVERIFY((ink.width() + 1) / dpr >= 8);
     QVERIFY((ink.height() + 1) / dpr >= 8);
+    // A correctly sized glyph must also have room before the tab's outer edge.
+    // Tab text padding alone does not inset Qt's separate close-button widget.
+    QVERIFY(rightInset >= 8);
     if (docked) {
       // Preserve the docking library's workaround for closing a moving tab.
       QCOMPARE(tabs->style()->styleHint(QStyle::SH_Widget_Animation_Duration,
