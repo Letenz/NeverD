@@ -234,8 +234,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   }
   linux_model::LinuxServices Kernel(CPU, Layout, Linked->InitialBreak, Options,
                                     Result);
-  GuestThreads Threads(CPU, *Calls, Options, Result, Kernel.clock(),
-                       Kernel.priority(), Kernel.signals());
+  GuestThreads Threads(CPU, *Calls, Options, Result, Kernel);
   if (auto E = Threads.initialize(StackBase))
     return std::move(E);
   if (auto E = Kernel.initializeProc())

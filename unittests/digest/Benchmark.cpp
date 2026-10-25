@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Measures the real digest owner against a separately linked portable build.
-/// Timing excludes setup, one warmup and independent output verification.
+/// Measures the first call and warmed throughput of separately linked owners.
+/// Timing excludes setup and independent output verification.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -18,6 +18,7 @@
 #include "llvm/Support/Process.h"
 #include "llvm/Support/SHA256.h"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -35,7 +36,10 @@ int main(int Argc, char **Argv) {
   for (size_t I = 0; I < Size; ++I)
     Bytes[I] = static_cast<uint8_t>(I * 37 + I / 7);
   const auto Expected = llvm::SHA256::hash(Bytes);
-  if (neverd::sha256(Bytes) != Expected)
+  const auto FirstStart = std::chrono::steady_clock::now();
+  const auto FirstDigest = neverd::sha256(Bytes);
+  const auto FirstWall = std::chrono::steady_clock::now() - FirstStart;
+  if (FirstDigest != Expected)
     return 1;
 
   llvm::sys::TimePoint<> Elapsed;
@@ -56,6 +60,8 @@ int main(int Argc, char **Argv) {
       << "{\"hardware\":"
       << (neverd::detail::sha256UsesHardware() ? "true" : "false")
       << ",\"bytes\":" << Size << ",\"iterations\":" << Iterations
+      << ",\"first_wall_ns\":"
+      << std::chrono::duration_cast<std::chrono::nanoseconds>(FirstWall).count()
       << ",\"wall_ns\":"
       << std::chrono::duration_cast<std::chrono::nanoseconds>(Wall).count()
       << ",\"cpu_ns\":"

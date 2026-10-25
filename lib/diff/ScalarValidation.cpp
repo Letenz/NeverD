@@ -272,7 +272,7 @@ std::unique_ptr<llvm::Module> project(const ScalarValidationLift &Lift,
     Map[&A] = Copy->getArg(A.getArgNo());
   llvm::SmallVector<llvm::ReturnInst *, 4> Returns;
   llvm::CloneFunctionInto(
-      Copy, &F, Map, llvm::CloneFunctionChangeType::LocalChangesOnly, Returns);
+      Copy, &F, Map, llvm::CloneFunctionChangeType::DifferentModule, Returns);
   Copy->setMetadata(rewrite_source::FunctionAttachment, nullptr);
   Copy->setMetadata(parameter_sites::FunctionAttachment, nullptr);
   Copy->setMetadata(exception_rewrite::FunctionAttachment, nullptr);

@@ -40,6 +40,7 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/ir/med/X86/X86CompactShape.h"
+#include "neverd/ir/med/X86/X86FourSourceShape.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
@@ -791,6 +792,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
               "intrinsic has an invalid intrinsic ID shape");
         if (Op.Opcode == NdOp::INTRINSIC) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (Id == Intrinsic::X86FourSourceMemory &&
+              ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
+               !x86FourSourceShapeIsValid(x86FourSourceMedShape(Op, TheArch))))
+            throw std::invalid_argument(X86FourSourceMalformed);
           if (isX86CompactMemory(Id) &&
               ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
                !x86CompactShapeIsValid(Id, x86CompactMedShape(Op, TheArch))))
@@ -1398,7 +1403,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     if (Func.Name.empty())
       continue;
     ActiveCxxContinuationPlan = I;
-    if (!tryEmitX86CompactFunction(Func))
+    if (!tryEmitX86NativeMemoryFunction(Func))
       emitFunc(Func);
     ActiveCxxContinuationPlan.reset();
   }

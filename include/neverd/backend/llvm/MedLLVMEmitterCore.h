@@ -291,7 +291,8 @@ private:
   llvm::Value *emitX86AmxState(const MedOp &Op, llvm::IRBuilder<> &Builder);
   llvm::Value *emitX86CompressExpand(const MedOp &Op, Intrinsic Id,
                                      llvm::IRBuilder<> &Builder);
-  bool tryEmitX86CompactFunction(const MedFunc &Function);
+  llvm::Value *emitX86FourSource(const MedOp &Op, llvm::IRBuilder<> &B);
+  bool tryEmitX86NativeMemoryFunction(const MedFunc &Function);
   llvm::Value *emitX86APXAtomic(const MedOp &Op, Intrinsic Id,
                                 llvm::IRBuilder<> &Builder);
   llvm::Value *emitX86RepState(const MedOp &Op, Intrinsic Id,

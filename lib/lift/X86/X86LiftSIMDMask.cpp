@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86LiftDetail.h"
+#include "X86NativeMemory.h"
 
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 
@@ -221,18 +222,7 @@ bool liftEvexCompressExpandRegister(X86Lifter &L, X86Lifter::LiftState &S,
         return false;
     const NdMemoryAddressSpace AddressSpace =
         X86Lifter::LiftState::memoryAddressSpace(MemoryOperand);
-    // Normalized addresses cannot yet retain SS-default fault provenance.
-    // Long-mode SS overrides do not restore it on a DS-default native base.
-    const auto Base = MemoryOperand.mem.base;
-    const bool StackBase = Base == X86_REG_RSP || Base == X86_REG_RBP ||
-                           Base == X86_REG_ESP || Base == X86_REG_EBP ||
-                           Base == X86_REG_BP;
-    const auto Segment = MemoryOperand.mem.segment;
-    if (AddressSpace == NdMemoryAddressSpace::Default &&
-        ((L.targetArch() == Arch::X64 && X86.addr_size == 8 && StackBase) ||
-         (L.targetArch() == Arch::X86 &&
-          ((StackBase && Segment == X86_REG_INVALID) ||
-           (Segment != X86_REG_INVALID && Segment != X86_REG_DS)))))
+    if (!x86NativeDsAddressIsValid(L.targetArch(), X86, MemoryOperand))
       return false;
     const NdVar Address = S.computeEA(MemoryOperand);
     const unsigned Kind =

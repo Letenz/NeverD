@@ -49,6 +49,18 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`NeverDX86FourSourceSourceTests` verifies all six four-source arithmetic
+families, malformed native/assembly contracts, unknown operand suppression and
+observable raw-pipeline inputs/results. `NEVERD_FOUR_SOURCE_EXPORT_DIR` exports
+IR, both C routes and native objects for `scripts/verify_x86_four_source.py`.
+That script checks O0/O2 object encodings and executes independent operand
+recorders. `scripts/verify_x86_four_source_registers.py` separately checks LLVM
+and NeverC compiler-probe register/stack transport without executing native
+four-source arithmetic. Pair these with `NeverDX86FourFMAExactTests`,
+`NeverDX86VP4DPWTests` and `NeverDNdOpEmulatorTests` for numerical and
+unknown-value regressions. Hardware AVX512_4FMAPS/AVX512_4VNNIW behavior remains
+unqualified on hosts without those capabilities.
+
 `NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
 port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
 Independent recorder functions check 1,584 operand cases per program through
@@ -1743,7 +1755,10 @@ next to an inaccessible page, bounded progress, cancellation and retry.
 `NeverDPortableDigestTests` runs the same cases with the actual SHA owner compiled
 with its private `NEVERD_SHA256_PORTABLE` test definition. No product build disables
 runtime dispatch. `NEVERD_TEST_SHA256_HARDWARE=1` requires the hardware path to be
-selected; `=0` requires fallback, and an unset variable only records selection.
+selected; `=0` requires fallback, and an unset variable allows either selection.
+On x86-64 and Windows ARM64, the selected path must independently agree with
+LLVM's host feature detector. `DigestFeatures.*` checks all combinations of the
+required x86 feature bits, unavailable CPUID leaves and reuse of a queried leaf.
 
 The digest tests can build independently with the recorded LLVM fork's Support
 and TargetParser targets, or an explicit matching `LLVM_DIR`:
@@ -1754,8 +1769,11 @@ python scripts/build.py build-digest --target NeverDDigestTests NeverDPortableDi
 ctest --test-dir build-digest --output-on-failure --no-tests=error
 ```
 
-`digest.yml` requires native ARM64 compilation and hardware selection on Linux
-(Clang/GCC), macOS and Windows (MSVC/clang-cl). Both backends must pass every case.
+`digest.yml` covers native x86-64 and ARM64 compilation on Linux (Clang/GCC),
+macOS and Windows (MSVC/clang-cl). ARM64 jobs require hardware selection;
+x86-64 jobs also qualify hosts without SHA extensions. Every job must run all
+18 cases, including the portable control, without skips. The architecture
+definitions reject an accidentally selected compiler target.
 Its CMake argument array always contains the required profile and architecture
 checks, so macOS's Bash 3.2 can expand it with `nounset` enabled.
 `NeverDGoogleTest.cmake` handles GoogleTest 1.17's character-conversion warning
@@ -1766,15 +1784,19 @@ The optional `NeverDDigestTestsBench` and `NeverDPortableDigestTestsBench` targe
 feed `unittests/digest/benchmark.py`; it alternates process order, excludes an
 initial pair, compares complete digest/consumption results, and retains seven
 paired wall/process CPU observations plus binary hashes. Run after builds and
-tests finish. These are primitive measurements, not CLI/worker/GUI latency or
+tests finish. `first_wall_ns` separately records the first digest invocation in
+each fresh process, including capability selection; buffer setup and the LLVM
+reference digest precede that timer. The warmed measurements exclude it.
+These are primitive measurements, not process startup, CLI/worker/GUI latency or
 cross-host rankings. Native runner contention and unavailable hosts remain
 qualification limits.
 
 For before/after native comparisons, dispatch `digest.yml` with the full
 `baseline_commit` SHA. It exports that commit's digest owner and headers, builds
 `NeverDBaselineDigestTests` and its `Bench` target with the candidate's compiler,
-LLVM, allocator and freshly refreshed dependency snapshot, and runs all 24 cases
-before timing. Both native owners must select hardware; `baseline-timings.json`
+LLVM, allocator and freshly refreshed dependency snapshot, and runs all 26 cases
+before timing. Both native owners must select the same implementation, with
+hardware required on ARM64; `baseline-timings.json`
 retains alternating pairs and `baseline-source.txt` binds the source commit.
 Locally, set `NEVERD_DIGEST_BASELINE_ROOT` to the exported source tree and pass
 `--baseline` to `benchmark.py`. This option only adds test targets; it does not
@@ -1783,7 +1805,12 @@ select an older dependency revision or replace the product's digest owner.
 The ARM64 compression follows the [Arm ACLE SHA256 intrinsics](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#sha256).
 Linux detection uses the [kernel HWCAP contract](https://docs.kernel.org/arch/arm64/elf_hwcaps.html).
 Darwin detection uses Apple's [instruction-set capability query](https://developer.apple.com/documentation/kernel/1387446-sysctlbyname/determining_instruction_set_characteristics);
-Windows detection uses LLVM's mapping of [processor feature availability](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent).
+Windows ARM64 detection queries [processor feature availability](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent)
+directly, retaining LLVM's SHA2 mapping. x86-64 checks only the required
+[CPUID](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex) leaves,
+after querying the maximum supported basic leaf. The compiler target string,
+CPUID requirements and 32-bit x86 LLVM fallback share `SHA256.def`'s feature
+inventory. These cached admission queries do not change the compression loops.
 
 `SessionCAPITest.Exports*` checks complete export JSON spelling, row order and
 duplicates, zero and high addresses, the full ordinal width, escaped and invalid
@@ -2383,6 +2410,14 @@ All desktop windows use the application frame and shadow; native APIs still
 provide movement and window states. Cocoa resizing uses the same drawn edges
 with a mouse grab when Qt cannot start a native resize.
 
+`NeverDGuiUnits::returnOnAListOfChoicesPressesTheDefaultButton` presses Return
+on a dialog's combo box as Qt's GNOME theme handles it: a list of choices
+accepts the dialog, while a combo box that takes typing keeps the key.
+`NeverDGuiController::outputLogFollowsTheTheme` recolors lines written before a
+theme change, in both directions. `narrowHexViewScrollsToItsText` narrows the
+hex view below a row's width, then checks that arrow keys keep the byte in view
+and that a click on the last text cell, scrolled sideways, takes its byte.
+
 `NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
 and shortcut tooltips through action changes, translation and disabled actions.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
@@ -2419,7 +2454,8 @@ its dock button and the tab context menu in both themes. Direct dock actions
 work with the floating lock enabled; title-bar docking first unlocks it.
 `NeverDGuiDocking` checks the drawn floating caption with both values of the
 retired native-caption preference, including visible minimize and maximize
-controls and full-size close targets. `doubleClickDetachStartsLocked` and
+controls, full-size close targets, and a padlock that opens and closes with the
+lock over the caption's own color. `doubleClickDetachStartsLocked` and
 `lockedDragsStayFloating` check the default lock, caption movement and rejected
 tab docking. `explicitDockIgnoresLock` clicks the dock button while locked.
 `floatingEdgesResizeWithoutDocking` resizes all four edges and all four corners
@@ -2522,7 +2558,10 @@ project as appropriate. `auxiliaryChoosersStayInteractive` checks Pathfinder
 and type-library choices, including invalidation by a project edit.
 `jumpBrowserKeepsItsOpeningAddress` evaluates relative expressions after
 background navigation. `commandPaletteReturnsToItsSource` checks cancellation
-and dispatch into the original docked or floating pane. Ordinary source xrefs
+and dispatch into the original docked or floating pane.
+`commandPaletteDropsFromTheCommandCenter` clicks the title bar's command center
+and checks that the palette drops from it, while its key still opens the
+palette over the focused pane. Ordinary source xrefs
 also accept into their original code view after another code view gains focus.
 `changedSourceDismissesReferenceBrowsers` closes an already open ordinary xref
 browser when its source reloads, changes function or changes representation.
@@ -5443,6 +5482,11 @@ truncation, changed buffers and parallel equivalence. The Release
 and repeated scans, with reproducible hashes and optional work counters.
 See [signature quality and performance](signature-quality.md) for the
 measurement contract, negative workloads and final-name truth checks.
+`SignatureMatcherIndex.SharedProloguesRetainExactAndWildcardDecisions` checks
+shared exact/wildcard columns, every final-byte value and truncated inputs.
+`CopiesRetainCandidatesAcrossRebuildAndMove` checks the immutable leaf storage's
+lifetime across copies, moves, rebuilding and destruction. Retain the existing
+single/parallel index equivalence tests when changing construction or storage.
 
 The feature repository retains the original compiler objects, truth, source
 profiles and digests. `NeverDLibraryRecognitionTests` consumes those archives
@@ -10561,6 +10605,18 @@ is useful for local comparisons, not a portable throughput guarantee.
 
 ### Android native workloads
 
+`AndroidEnvironmentTests` exercises imported and named `getenv` at O0/O2
+with ordinary, Android-packed and RELR relocations on available ARM64
+transports. Independent guest buffers cover absent/null/empty environments,
+duplicate and empty names, API 28 `=` truncation, borrowed pointer identity,
+live vector/value mutation, constructor and thread sharing, preserved errno,
+closed providers and required-read faults. Page-tail queries and values prove
+that irrelevant tails are not read. Direct model checks bound cumulative scan
+work and reject expired deadlines while preserving read-only input bytes.
+Strict JSON tests retain full-width addresses. The process-public suite
+compares complete C SDK and CLI reports for successful and refused queries.
+No test inherits the host environment.
+
 `AndroidAuxvTests` compares imported and named `getauxval` calls at O0/O2 with
 ordinary, Android-packed and RELR relocations on each available checked ARM64
 transport. It covers complete output buffers and canaries, 64-bit type/value
@@ -10648,6 +10704,18 @@ errno and mapped-page refusal. `LinuxMemoryTests.cpp` checks precise user-range
 boundaries, PROT_NONE and a mapped prefix before a hole without changing bytes,
 mapping generation or allocation counts. `LinuxProcessTests.cpp` executes the
 corresponding x64/ARM64 raw syscall callers and verifies the full output vector.
+
+`LinuxProc.Prctl*` checks the opt-in legacy anonymous VMA name contract through
+both LP64 syscall numbers: argument widths and error order, borrowed-pointer
+updates, pointer-identity splits/merges, holes, page faults, NAME_MAX truncation,
+proc buffer ownership and unmap/address reuse. `LinuxKernelAvailability` checks
+strict typed/JSON admission. `AndroidProc.Prctl*` executes O0/O2 callers with
+ordinary, APS2 and RELR relocations through Bionic, variadic syscall and raw SVC;
+it also names a real guest thread stack and verifies metadata retirement after
+join. `ProcessPublic.AndroidPrctlNamesAndThreadRetirementMatchSDKAndCLI`
+compares complete public reports. Run NeverDLinuxProcessTests, the Android proc,
+memory and thread tests, and NeverDProcessPublicTests when changing this owner;
+report unavailable CPU backends separately.
 
 `AndroidSnapshotTests.cpp` uses independent O0/O2 C fixtures with all three
 relocation packings to allocate and fill memory during a native call. It checks

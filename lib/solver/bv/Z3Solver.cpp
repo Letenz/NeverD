@@ -201,6 +201,19 @@ public:
     case SymOp::Or:
     case SymOp::Xor:
     case SymOp::Concat: {
+      if (N.Op == SymOp::Mul && Ctx.isConst(Ctx.operand(R, 0))) {
+        const unsigned Zeros = Ctx.constValue(Ctx.operand(R, 0)).countr_zero();
+        if (Zeros && Zeros < N.Width) {
+          // In Z/(2^W), multiplying by 2^K observes only W-K low bits of
+          // every other factor. Encode that exact quotient before restoring
+          // the complete word, avoiding unused full-width multiplier gates.
+          const unsigned Observed = N.Width - Zeros;
+          z3::expr Value = arg(0).extract(N.Width - 1, Zeros);
+          for (unsigned I = 1; I < N.NumOperands; ++I)
+            Value = Value * arg(I).extract(Observed - 1, 0);
+          return z3::concat(Value, ZCtx.bv_val(0, Zeros));
+        }
+      }
       z3::expr Value = arg(0);
       for (unsigned I = 1; I < N.NumOperands; ++I) {
         switch (N.Op) {

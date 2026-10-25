@@ -64,6 +64,9 @@ xattrQueryImport(const LinuxKernelOptions &Options) {
   return std::nullopt;
 }
 llvm::Error validateKernelOptions(const LinuxKernelOptions &Options) {
+  if (Options.AnonymousVMANames &&
+      *Options.AnonymousVMANames != LinuxAnonymousVMANames::AndroidUserPointer)
+    return failure(KernelOptions);
   if (Options.XAttrQueryImport && !xattrQueryImport(Options))
     return failure(KernelOptions);
   if (Options.GKI &&

@@ -39,6 +39,7 @@
 #include "neverd/ir/high/X86/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
+#include "neverd/ir/intrinsics/X86/X86FourSource.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
@@ -700,6 +701,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
            isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
            isApxAtomicIntrinsic(E.IntrinsicId) ||
            isX86CompactMemory(E.IntrinsicId) ||
+           E.IntrinsicId == Intrinsic::X86FourSourceMemory ||
            E.IntrinsicId == Intrinsic::X86AMXState);
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
       if (!MsvcSegmentedScalar && !InstructionMemory)
@@ -1630,6 +1632,11 @@ void HighCWriter::collectCallTargets(const std::vector<HighStmt> &Stmts,
       if (Ex)
         collectCallTargetsExpr(*Ex, Targets);
     });
+    if (S.Kind == StmtKind::SEHTry && S.EHIsReducible &&
+        S.EHClauses.size() == 1 && S.EHClauseBodies.size() == 1)
+      if (const std::string Filter = sehFilterName(S.EHClauses.front());
+          !Filter.empty())
+        Targets.insert(Filter);
     collectCallTargets(S.Body, Targets);
     collectCallTargets(S.ElseBody, Targets);
     for (auto &C : S.Cases)
@@ -1748,6 +1755,14 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
 
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
+  // SEH filters and handler captures use the platform's exception constants
+  // and compiler-intrinsic aliases, just as the LLVM C projection does.
+  if (Opts.Format == BinaryFormat::COFF)
+    for (const HighFunc &Function : Funcs)
+      walkStmts(Function.Body, [&](const HighStmt &Statement) {
+        if (Statement.Kind == StmtKind::SEHTry)
+          Headers.insert("excpt.h");
+      });
   // char16_t and char32_t strings.
   for (const auto &[Addr, Obj] : ImageObjects)
     for (const auto &String : {Obj.String, Obj.PointsTo})

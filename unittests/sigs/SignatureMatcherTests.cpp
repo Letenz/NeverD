@@ -293,6 +293,80 @@ TEST(SignatureMatcherIndex, ParallelBuildMatchesTheSingleThreadedOne) {
   }
 }
 
+TEST(SignatureMatcherIndex, SharedProloguesRetainExactAndWildcardDecisions) {
+  // Two versions of each suffix share a long prologue, but only one states
+  // byte 15. Uniform wildcard columns occur on both sides of that decision.
+  std::string Text;
+  for (unsigned Suffix = 0; Suffix < 256; ++Suffix) {
+    for (bool Wild : {false, true}) {
+      for (unsigned Byte = 0; Byte < 32; ++Byte)
+        Text += Byte == 3 || Byte == 20 || (Wild && Byte == 15)
+                    ? ".."
+                    : hexByte(Byte == 31 ? Suffix : 0x90);
+      Text += " 00 0000 0020 :0000 routine_" + std::to_string(Suffix) +
+              (Wild ? "_wild\n" : "_exact\n");
+    }
+  }
+  PackedText Packed(Text);
+  ASSERT_EQ(Packed.Modules.size(), 512u);
+  SignatureMatcher::HashIndex Index;
+  Index.build(Packed.Modules);
+  std::array<uint8_t, 32> Code;
+  Code.fill(0x90);
+  const auto Matched = [&](size_t Available) {
+    std::vector<size_t> Result;
+    for (const auto &Hit : SignatureMatcher::findAtAddresses(
+             Code.data(), Available, 0, {0}, Packed.Modules, Index))
+      Result.push_back(Hit.Module);
+    return Result;
+  };
+  for (unsigned Suffix = 0; Suffix < 256; ++Suffix) {
+    Code[31] = Suffix;
+    // Unstated bytes never become common-prefix requirements.
+    Code[3] = Suffix;
+    Code[20] = Suffix ^ 0xff;
+    Code[15] = 0x90;
+    EXPECT_EQ(Matched(Code.size()),
+              (std::vector<size_t>{2 * Suffix + 1, 2 * Suffix}));
+    EXPECT_EQ(Index.candidateCount(Code.data(), Code.size()), 2u);
+    Code[15] = 0xcc;
+    EXPECT_EQ(Matched(Code.size()), (std::vector<size_t>{2 * Suffix + 1}));
+    EXPECT_EQ(Index.candidateCount(Code.data(), Code.size()), 1u);
+  }
+  for (size_t Available = 0; Available < Code.size(); ++Available)
+    EXPECT_TRUE(Matched(Available).empty()) << Available;
+  Code[2] = 0xcc;
+  EXPECT_TRUE(Matched(Code.size()).empty());
+  EXPECT_EQ(Index.candidateCount(Code.data(), Code.size()), 0u);
+}
+
+TEST(SignatureMatcherIndex, CopiesRetainCandidatesAcrossRebuildAndMove) {
+  std::string Text;
+  for (unsigned I = 0; I < 128; ++I)
+    Text += hexByte(I) + "0102030405 00 0000 0006 :0000 routine_" +
+            std::to_string(I) + "\n";
+  PackedText Packed(Text);
+  SignatureMatcher::HashIndex Copy;
+  {
+    SignatureMatcher::HashIndex Original;
+    Original.build(Packed.Modules);
+    Copy = Original;
+    Original.build(llvm::ArrayRef<StoredModule>{});
+  }
+  SignatureMatcher::HashIndex Moved(std::move(Copy));
+  Copy.build(llvm::ArrayRef<StoredModule>{});
+  const SignatureMatcher::HashIndex Retained(Moved);
+  Moved.build(llvm::ArrayRef<StoredModule>{});
+  for (unsigned I = 0; I < 128; ++I) {
+    const uint8_t Code[] = {static_cast<uint8_t>(I), 1, 2, 3, 4, 5};
+    const auto Hits = SignatureMatcher::findAtAddresses(
+        Code, sizeof(Code), 0, {0}, Packed.Modules, Retained);
+    ASSERT_EQ(Hits.size(), 1u) << I;
+    EXPECT_EQ(Hits.front().Module, I);
+    EXPECT_EQ(Retained.candidateCount(Code, sizeof(Code)), 1u);
+  }
+}
+
 namespace {
 
 using HitPair = std::pair<uint64_t, size_t>;
