@@ -11,6 +11,7 @@
 
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 
 #include "llvm/Support/MathExtras.h"
