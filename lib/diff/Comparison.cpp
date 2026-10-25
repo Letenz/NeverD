@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 
@@ -110,6 +111,20 @@ void measure(FunctionMatch &M, const FunctionDelta &D) {
 }
 
 namespace {
+
+template <typename Set, typename Key>
+void recordRejection(Set &Rejected, const Key &Pair, OverrideKind Kind) {
+  switch (Kind) {
+  case OverrideKind::Match:
+    Rejected.erase(Pair);
+    break;
+  case OverrideKind::Unmatch:
+    Rejected.insert(Pair);
+    break;
+  case OverrideKind::Confirm:
+    break;
+  }
+}
 
 using Clock = std::chrono::steady_clock;
 
@@ -890,6 +905,7 @@ void Matcher::run(llvm::ArrayRef<Override> Overrides) {
       continue;
     }
     const uint64_t K = pairKey(*A, *B);
+    recordRejection(Rejected, K, O.Kind);
     switch (O.Kind) {
     case OverrideKind::Match:
       // A new pairing replaces whatever either function was forced into.
@@ -900,14 +916,12 @@ void Matcher::run(llvm::ArrayRef<Override> Overrides) {
         else
           ++It;
       ForcedByPrimary[*A] = *B;
-      Rejected.erase(K);
       break;
     case OverrideKind::Unmatch:
       if (auto It = ForcedByPrimary.find(*A);
           It != ForcedByPrimary.end() && It->second == *B)
         ForcedByPrimary.erase(It);
       Confirmed.erase(K);
-      Rejected.insert(K);
       break;
     case OverrideKind::Confirm:
       Confirmed.insert(K);
@@ -970,6 +984,18 @@ void Matcher::run(llvm::ArrayRef<Override> Overrides) {
 }
 
 } // namespace
+
+std::vector<std::pair<uint64_t, uint64_t>>
+rejectedPairs(llvm::ArrayRef<Override> Overrides,
+              const ComparisonControl &Control) {
+  std::set<std::pair<uint64_t, uint64_t>> Rejected;
+  for (const auto &O : Overrides) {
+    Control.check();
+    recordRejection(Rejected, std::pair{O.Primary, O.Secondary}, O.Kind);
+  }
+  Control.check();
+  return {Rejected.begin(), Rejected.end()};
+}
 
 ComparisonResult compare(const Program &Primary, const Program &Secondary,
                          const ComparisonSettings &Settings,

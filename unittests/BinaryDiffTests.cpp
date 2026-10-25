@@ -704,6 +704,124 @@ TEST(BinaryDiff, StoppedComparisonsKeepWhatTheyHave) {
   EXPECT_FALSE(Phases.empty());
 }
 
+TEST(BinaryDiff, SavedMatchesCannotContradictEffectiveUnmatches) {
+  const auto P = build({leaf("a", 1, 3), leaf("b", 2, 4)}, 0x400000);
+  const auto S = build({leaf("a", 1, 3), leaf("b", 2, 4)}, 0x800000);
+  auto Original = compare(P, S, {});
+  const auto Before = saved(Original, P, S);
+  std::string Error;
+  const auto Read = readComparison(Before, Error);
+  ASSERT_TRUE(Read) << Error;
+  const auto A = named(P, "a").Address, B = named(S, "a").Address;
+  for (const auto History :
+       {std::vector<Override>{{OverrideKind::Unmatch, A, B}},
+        std::vector<Override>{{OverrideKind::Unmatch, A, B},
+                              {OverrideKind::Confirm, A, B}},
+        std::vector<Override>{{OverrideKind::Match, A, B},
+                              {OverrideKind::Unmatch, A, B}}}) {
+    for (const auto State :
+         {ComparisonState::Complete, ComparisonState::Cancelled,
+          ComparisonState::TimedOut, ComparisonState::ResourceLimited}) {
+      auto Forged = Original;
+      Forged.Overrides = History;
+      Forged.State = State;
+      EXPECT_FALSE(readComparison(saved(Forged, P, S), Error));
+      EXPECT_NE(Error.find("effective unmatch"), std::string::npos) << Error;
+
+      auto Detached = *Read;
+      Detached.Overrides = History;
+      Detached.State = State;
+      BindFailure Why;
+      const auto Failure = bindComparison(Detached, P, S, Original, &Why);
+      ASSERT_TRUE(Failure);
+      EXPECT_NE(Failure->find("effective unmatch"), std::string::npos);
+      EXPECT_EQ(Why, BindFailure::InvalidEvidence);
+      EXPECT_EQ(saved(Original, P, S), Before);
+    }
+  }
+}
+
+TEST(BinaryDiff, SavedDecisionsRetainRemappingAndUndoSemantics) {
+  const auto P = build({leaf("a", 1, 3), leaf("b", 2, 4)}, 0x400000);
+  const auto S = build({leaf("a", 1, 3), leaf("b", 2, 4)}, 0x800000);
+  const auto A = named(P, "a").Address, D = named(P, "b").Address;
+  const auto B = named(S, "a").Address, C = named(S, "b").Address;
+  const auto RoundTrip = [&](const ComparisonResult &Result) {
+    const auto Text = saved(Result, P, S);
+    std::string Error;
+    const auto Read = readComparison(Text, Error);
+    ASSERT_TRUE(Read) << Error;
+    ComparisonResult Bound;
+    ASSERT_FALSE(bindComparison(*Read, P, S, Bound));
+    EXPECT_EQ(saved(Bound, P, S), Text);
+  };
+  for (const auto History :
+       {std::vector<Override>{{OverrideKind::Unmatch, A, B},
+                              {OverrideKind::Match, A, C},
+                              {OverrideKind::Match, D, B}},
+        std::vector<Override>{{OverrideKind::Unmatch, A, B},
+                              {OverrideKind::Confirm, A, B}},
+        std::vector<Override>{{OverrideKind::Unmatch, A, B},
+                              {OverrideKind::Match, A, B},
+                              {OverrideKind::Match, A, C}},
+        std::vector<Override>{{OverrideKind::Unmatch, A, B},
+                              {OverrideKind::Match, A, C},
+                              {OverrideKind::Match, D, B},
+                              {OverrideKind::Match, A, B}}}) {
+    RoundTrip(compare(P, S, {}, History));
+  }
+  auto Result = compare(P, S, {});
+  const auto Before = saved(Result, P, S);
+  std::vector<OverrideEffect> Effects;
+  for (const auto Decision : {Override{OverrideKind::Unmatch, A, B},
+                              Override{OverrideKind::Match, A, B},
+                              Override{OverrideKind::Match, A, C}}) {
+    Effects.emplace_back();
+    ASSERT_FALSE(applyOverride(Result, P, S, Decision, &Effects.back()));
+    RoundTrip(Result);
+  }
+  while (!Effects.empty()) {
+    revertOverride(Result, P, S, Effects.back());
+    Effects.pop_back();
+    RoundTrip(Result);
+  }
+  EXPECT_EQ(saved(Result, P, S), Before);
+}
+
+TEST(BinaryDiff, EffectiveRejectionsAgreeWithReverseHistoryOracle) {
+  // Every sequence of five decisions on two pairs, including shared endpoints.
+  constexpr unsigned Sequences = 6 * 6 * 6 * 6 * 6;
+  const std::pair<uint64_t, uint64_t> Pairs[] = {{10, 20}, {10, 30}};
+  for (unsigned Sequence = 0; Sequence < Sequences; ++Sequence) {
+    unsigned Code = Sequence;
+    std::vector<Override> History;
+    for (unsigned I = 0; I < 5; ++I, Code /= 6) {
+      const auto &Pair = Pairs[Code % 2];
+      History.push_back(
+          {static_cast<OverrideKind>((Code % 6) / 2), Pair.first, Pair.second});
+    }
+    std::vector<std::pair<uint64_t, uint64_t>> Expected;
+    for (const auto &Pair : Pairs) {
+      for (auto It = History.rbegin(); It != History.rend(); ++It) {
+        if (It->Primary != Pair.first || It->Secondary != Pair.second ||
+            It->Kind == OverrideKind::Confirm)
+          continue;
+        if (It->Kind == OverrideKind::Unmatch)
+          Expected.push_back(Pair);
+        break;
+      }
+    }
+    EXPECT_EQ(rejectedPairs(History), Expected) << Sequence;
+  }
+  std::atomic<bool> Cancel = true;
+  ComparisonControl Control;
+  Control.Cancel = &Cancel;
+  EXPECT_THROW(rejectedPairs({}, Control), ComparisonInterrupted);
+  Cancel = false;
+  Control.Deadline = std::chrono::steady_clock::now();
+  EXPECT_THROW(rejectedPairs({}, Control), ComparisonInterrupted);
+}
+
 TEST(BinaryDiff, LibraryCodeDoesNotDecideTheProgramScore) {
   std::vector<Fn> Old = sample(), New = sample();
   Fn Big = leaf("runtime_init", 5000, 400),
@@ -1164,8 +1282,8 @@ TEST(BinaryDiff, SavedRestoreStopsTransactionallyAndKeepsHistoricalStates) {
   Control.Deadline.reset();
   const auto Caller = std::this_thread::get_id();
   for (const auto *Stage :
-       {"parse", "records", "identity", "dataflow", "reviews", "regions",
-        "flow_regions", "measure", "publish"}) {
+       {"parse", "records", "identity", "decisions", "dataflow", "reviews",
+        "regions", "flow_regions", "measure", "publish"}) {
     SCOPED_TRACE(Stage);
     Cancel = false;
     bool Seen = false;

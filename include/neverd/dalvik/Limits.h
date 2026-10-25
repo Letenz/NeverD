@@ -22,6 +22,13 @@ namespace neverd::limits::dalvik {
 inline constexpr uint64_t kHeapByteLimit = 8 * 1024 * 1024;
 inline constexpr uint32_t kHeapObjectLimit = 4096;
 
+// Explicit framework observations; independent limits for distinct providers.
+inline constexpr int kMaxAndroidSettingsValueBytes = 4096;
+inline constexpr int kMaxAndroidApplicationInfoFieldBytes = 4096;
+inline constexpr int kMaxAndroidApplicationInfoQueries = 64;
+// Conservative per-entry bookkeeping in addition to the retained state value.
+inline constexpr uint64_t kAndroidApplicationInfoStateOverheadBytes = 64;
+
 // lib/dalvik/AndroidFramework.cpp
 inline constexpr int kMaxAndroidApplicationClassLookupFailures = 256;
 inline constexpr int kMaxAndroidClassNameBytes = 1024;

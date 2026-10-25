@@ -130,6 +130,36 @@ TEST_P(AndroidNetwork,
   EXPECT_EQ(word(R, 1), 97u);
 }
 
+TEST_P(AndroidNetwork, TCPConnectFailuresShareRawNamedDynamicAndVariadicCalls) {
+  Options.Android->Libraries["libc.so"] = {"connect"};
+  Options.LinuxNetwork->TCPConnectFailures = LinuxTCPConnectFailures{101, 4};
+  for (uint64_t Mode : {0, 1, 2}) {
+    SCOPED_TRACE(Mode);
+    const auto R = run("network_connect_failures", Mode);
+    if (!Mode)
+      returned(R);
+    else {
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_FALSE(R.ReturnValue);
+      EXPECT_NE(R.Diagnostic.find(Mode == 1 ? "failure contract exhausted"
+                                            : "closed before reuse"),
+                std::string::npos);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_EQ(R.NativeCalls.back().Name, "connect");
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+      EXPECT_EQ(word(R, 10), 0xa5a5a5a5a5a5a5a5ULL);
+    }
+    EXPECT_EQ(word(R, 0), 0u);
+    for (unsigned I = 0; I != (Mode == 2 ? 1u : 4u); ++I) {
+      EXPECT_EQ(word(R, 1 + 2 * I), I == 3 ? uint64_t(-101) : UINT64_MAX);
+      EXPECT_EQ(word(R, 2 + 2 * I), I == 3 ? 73u : 101u);
+    }
+    EXPECT_TRUE(std::all_of(R.MemorySnapshots[0].Bytes.begin() + 88,
+                            R.MemorySnapshots[0].Bytes.end(),
+                            [](uint8_t V) { return V == 0xa5; }));
+  }
+}
+
 TEST_P(AndroidNetwork, DatagramFallbackRetainsPacketsSourcesAndExplicitErrors) {
   Options.Android->Libraries["libc.so"] = {"recv"};
   for (uint64_t Mode : {0, 1, 2, 3}) {

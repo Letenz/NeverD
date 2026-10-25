@@ -39,18 +39,19 @@ if(DEFINED NEVERD_TEST_EXPECT_ACCELERATION)
   endforeach()
 endif()
 neverd_add_text_acceleration()
+neverd_add_sorted_search()
 neverd_add_task_scheduler()
 if(NOT TARGET neverd_tool_json)
   add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../tools/common/transport" transport)
 endif()
 
-add_executable(NeverDAccelerationTests ByteScanTests.cpp SchedulerTests.cpp JsonTests.cpp AllocatorTests.cpp)
+add_executable(NeverDAccelerationTests ByteScanTests.cpp SortedSearchTests.cpp SchedulerTests.cpp JsonTests.cpp AllocatorTests.cpp)
 if(TARGET NeverDUnitTests)
   add_dependencies(NeverDUnitTests NeverDAccelerationTests)
 endif()
 target_compile_features(NeverDAccelerationTests PRIVATE cxx_std_20)
 target_link_libraries(NeverDAccelerationTests PRIVATE
-  neverd_text_acceleration neverd_task_scheduler neverd_tool_json GTest::gtest_main)
+  neverd_text_acceleration neverd_sorted_search neverd_task_scheduler neverd_tool_json GTest::gtest_main)
 neverd_link_mimalloc(NeverDAccelerationTests)
 target_compile_definitions(NeverDAccelerationTests PRIVATE
   NEVERD_USE_TBB=$<BOOL:${NEVERD_ENABLE_TBB}>
@@ -73,6 +74,19 @@ endif()
 include(GoogleTest)
 gtest_discover_tests(NeverDAccelerationTests DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 45 LABELS NeverDAccelerationTests)
+
+add_executable(neverd-sorted-search-bench EXCLUDE_FROM_ALL SortedSearchBenchmark.cpp)
+target_compile_features(neverd-sorted-search-bench PRIVATE cxx_std_20)
+target_link_libraries(neverd-sorted-search-bench PRIVATE neverd_sorted_search)
+neverd_link_mimalloc(neverd-sorted-search-bench)
+if(NEVERD_ENABLE_HIGHWAY)
+  target_compile_definitions(neverd-sorted-search-bench PRIVATE NEVERD_BENCH_HIGHWAY=1)
+  target_link_libraries(neverd-sorted-search-bench PRIVATE hwy)
+endif()
+if(TARGET NeverDLoader)
+  target_compile_definitions(neverd-sorted-search-bench PRIVATE NEVERD_BENCH_CODE_OWNER=1)
+  target_link_libraries(neverd-sorted-search-bench PRIVATE NeverDLoader)
+endif()
 
 # Reproduce the product graph: a shared core owns the runtime, while a CLI
 # and plugin also consume component archives that require the task facade.

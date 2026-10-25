@@ -993,6 +993,14 @@ before replacing the current comparison.
 
 ## Interpretation and persistence
 
+Saved matches must agree with the final ordered mapping decisions. An effective
+`unmatch` cannot coexist with the same accepted pair, including in a historical
+cancelled, timed-out or resource-limited report. A later `match` of that pair
+clears its rejection; `confirm` does not. Later remapping may replace earlier
+matches, so historical match entries are not all required to remain active.
+Contradictory reports fail before replacing the current comparison, preserving
+its edits, undo/redo and inspection state.
+
 Scores describe heuristic structural correspondence. They do not prove semantic
 equivalence, vulnerability removal or patch presence. Identical normalized code
 with incomplete decoding is never reported as normalized unchanged. Ordinary
@@ -1152,8 +1160,8 @@ API finish loading before observing a comparison stop.
 ## Current boundaries and verification
 
 Owned x64 and AArch64 pipeline fixtures exercise SSA projection, native origins,
-entry live-ins and deep constant dependencies. Public comparison admission still
-requires the native x86 profile; the AArch64 projection test does not qualify a
+entry live-ins and deep constant dependencies. Public comparison admission
+supports the same-ISA profiles described above; these fixtures do not qualify a
 cross-ISA comparison profile. SDK coverage exercises dependency lifetime after
 closing inputs, slices, resource refusals and saved-fact tamper rejection.
 An owned unsigned-expression regression also retains regions across Clang/GCC
@@ -1175,6 +1183,8 @@ broader semantic validation beyond the pure scalar-return profile, branch-aware
 multi-version lineage, native/game package
 adapters and competitive qualification remain outstanding. No comparative
 performance superiority is established.
+The [advanced acceptance map](binary-diff-acceptance.md) tracks the required
+end-state areas separately from individual completed increments.
 Observed native caller/callee reachability is available as review context;
 parameter/return/alias propagation remains separate unfinished work.
 
