@@ -577,16 +577,27 @@ protected:
     return Path;
   }
 
-  /// Build the C files \p Texts as one position-independent executable
-  /// named \p Name with the host compiler; empty if it does not build.
+  /// Build the C files \p Texts as one native executable named \p Name with
+  /// the host compiler, retaining its symbol names; empty if it does not build.
   std::string buildProgramFrom(const std::string &Name,
                                const std::vector<std::string_view> &Texts) {
     std::vector<std::string> Sources;
     for (size_t I = 0; I < Texts.size(); ++I)
       Sources.push_back(write(Name + std::to_string(I) + ".c", Texts[I]));
-    const std::string Binary = (Directory / Name).string();
+    std::string Binary = (Directory / Name).string();
     std::vector<llvm::StringRef> Arguments = {NEVERD_RUNTIME_FIXTURE_COMPILER,
-                                              "-O1", "-fPIE", "-pie"};
+                                              "-O1"};
+#ifdef _WIN32
+    Binary += ".exe";
+    // The MSVC target does not accept ELF PIE options. A matching linker MAP
+    // supplies the function and data names a PE executable otherwise omits,
+    // without introducing debug types into these signature-inference tests.
+    const std::string Map =
+        "-Wl,/map:" + (Directory / (Name + ".map")).string();
+    Arguments.push_back(Map);
+#else
+    Arguments.insert(Arguments.end(), {"-fPIE", "-pie"});
+#endif
     Arguments.insert(Arguments.end(), Sources.begin(), Sources.end());
     Arguments.insert(Arguments.end(), {"-o", Binary});
     std::string Message;
@@ -597,19 +608,9 @@ protected:
     return Built == 0 ? Binary : std::string();
   }
 
-  /// Build the C program \p Text as a position-independent executable named
-  /// \p Name with the host compiler; empty if it does not build.
+  /// Build one source through the same host-format contract as multiple files.
   std::string buildProgram(const std::string &Name, std::string_view Text) {
-    const auto Source = write(Name + ".c", Text);
-    const std::string Binary = (Directory / Name).string();
-    std::string Message;
-    const int Built =
-        llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
-                                  {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O1",
-                                   "-fPIE", "-pie", Source, "-o", Binary},
-                                  std::nullopt, {}, 60, 0, &Message);
-    EXPECT_EQ(Built, 0) << Message;
-    return Built == 0 ? Binary : std::string();
+    return buildProgramFrom(Name, {Text});
   }
 
   void expectSignatureJSONName(const std::string &Name,
@@ -10924,8 +10925,7 @@ TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
                    "puts(\"big\"); }\n"
                    "int main(int argc, char **argv) { (void)argv; stop(argc); "
                    "return 7; }\n");
-  if (Binary.empty())
-    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_FALSE(Binary.empty());
   ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
 #if defined(__APPLE__)
   // The host linker exports C symbols with Mach-O's leading underscore.
@@ -10987,8 +10987,7 @@ TEST_F(SessionCAPITest, AStatedNoReturnReachesTheCallersOfItsCallers) {
       "  puts(\"after\");\n"
       "  return 7;\n"
       "}\n");
-  if (Binary.empty())
-    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_FALSE(Binary.empty());
   ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
 #if defined(__APPLE__)
   const std::string Prefix = "_";
@@ -11048,8 +11047,7 @@ TEST_F(SessionCAPITest, ANameLeadsToOneAddress) {
                "return counter; }\n"
                "int main(int argc, char **argv) { (void)argv; puts(\"x\"); "
                "return bump(argc); }\n");
-  if (Binary.empty())
-    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_FALSE(Binary.empty());
   ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
 #if defined(__APPLE__)
   const std::string Prefix = "_";
