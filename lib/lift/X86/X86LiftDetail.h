@@ -160,6 +160,10 @@ bool parseCanonicalVex3EncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
                                     Arch TargetArch,
                                     CanonicalVex3EncodingInfo &Encoding);
 
+bool parseCanonicalXopEncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
+                                   Arch TargetArch,
+                                   CanonicalVex3EncodingInfo &Encoding);
+
 /// Prove that an EVEX memory tail and Capstone's structured address detail are
 /// identical. TupleScale applies the architectural disp8*N compression;
 /// TrailingBytes reserves family-owned immediate bytes at the end.

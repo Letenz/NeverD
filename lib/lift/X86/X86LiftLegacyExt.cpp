@@ -15,6 +15,7 @@
 
 #include "X86FPEncoding.h"
 #include "X86LiftDetail.h"
+#include "X86LiftTBM.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -388,7 +389,7 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
 
   // ========================================================================
-  // TBM — trailing bit manipulation (AMD). INT_AND/OR/XOR approximations.
+  // TBM — encoding, results and flags have one family owner.
   // ========================================================================
   case X86_INS_BLCFILL:
   case X86_INS_BLCI:
@@ -398,92 +399,8 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_BLSFILL:
   case X86_INS_BLSIC:
   case X86_INS_T1MSKC:
-  case X86_INS_TZMSK: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    // All TBM ops are of the form: Dst = f(Src, Src±1). Approximate as
-    // the dominant operation pattern (AND/OR with adjacents).
-    switch (InsnId) {
-    case X86_INS_BLCFILL: {
-      // Dst = Src & (Src + 1)
-      NdVar Inc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ADD, Inc, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_AND, Dst, {Src, Inc});
-      break;
-    }
-    case X86_INS_BLCI: {
-      // Dst = Src | ~(Src + 1)
-      NdVar Inc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ADD, Inc, {Src, NdVar::cst(1, Dst.Size)});
-      NdVar NotInc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_NOT, NotInc, {Inc});
-      S.emit(NdOp::INT_OR, Dst, {Src, NotInc});
-      break;
-    }
-    case X86_INS_BLCIC: {
-      // Dst = ~Src & (Src + 1)
-      NdVar NotSrc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_NOT, NotSrc, {Src});
-      NdVar Inc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ADD, Inc, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_AND, Dst, {NotSrc, Inc});
-      break;
-    }
-    case X86_INS_BLCMSK: {
-      // Dst = Src ^ (Src + 1)
-      NdVar Inc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ADD, Inc, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_XOR, Dst, {Src, Inc});
-      break;
-    }
-    case X86_INS_BLCS: {
-      // Dst = Src | (Src + 1)
-      NdVar Inc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ADD, Inc, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_OR, Dst, {Src, Inc});
-      break;
-    }
-    case X86_INS_BLSFILL: {
-      // Dst = Src | (Src - 1)
-      NdVar Dec = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_SUB, Dec, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_OR, Dst, {Src, Dec});
-      break;
-    }
-    case X86_INS_BLSIC: {
-      // Dst = ~Src | (Src - 1)
-      NdVar NotSrc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_NOT, NotSrc, {Src});
-      NdVar Dec = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_SUB, Dec, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_OR, Dst, {NotSrc, Dec});
-      break;
-    }
-    case X86_INS_T1MSKC: {
-      // Dst = ~Src | (Src + 1)
-      NdVar NotSrc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_NOT, NotSrc, {Src});
-      NdVar Inc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ADD, Inc, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_OR, Dst, {NotSrc, Inc});
-      break;
-    }
-    case X86_INS_TZMSK: {
-      // Dst = ~Src & (Src - 1)
-      NdVar NotSrc = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_NOT, NotSrc, {Src});
-      NdVar Dec = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_SUB, Dec, {Src, NdVar::cst(1, Dst.Size)});
-      S.emit(NdOp::INT_AND, Dst, {NotSrc, Dec});
-      break;
-    }
-    default:
-      break;
-    }
-    break;
-  }
+  case X86_INS_TZMSK:
+    return tbm::lift(L, S, Insn);
 
   // ========================================================================
   // CET — Control-flow Enforcement (ENDBR, shadow stack, etc.).

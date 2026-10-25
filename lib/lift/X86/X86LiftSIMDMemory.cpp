@@ -280,15 +280,17 @@ bool parseCanonicalEvexEncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
   return true;
 }
 
-bool parseCanonicalVex3EncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
-                                    Arch TargetArch,
-                                    CanonicalVex3EncodingInfo &Encoding) {
+static bool parseCanonicalThreeBytePrefix(const cs_insn *Insn,
+                                          const cs_x86 &X86, Arch TargetArch,
+                                          uint8_t Escape,
+                                          CanonicalVex3EncodingInfo &Encoding) {
   Encoding = {};
   if (!Insn || Insn->size == 0 || Insn->size > 15 ||
       (TargetArch != Arch::X64 && TargetArch != Arch::X86))
     return false;
   Encoding.Is64Bit = TargetArch == Arch::X64;
-  while (Encoding.Offset < Insn->size && Insn->bytes[Encoding.Offset] != 0xc4) {
+  while (Encoding.Offset < Insn->size &&
+         Insn->bytes[Encoding.Offset] != Escape) {
     const uint8_t Prefix = Insn->bytes[Encoding.Offset++];
     if (isSegmentPrefix(Prefix)) {
       if (Encoding.SegmentPrefix != 0)
@@ -302,7 +304,8 @@ bool parseCanonicalVex3EncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
       return false;
     }
   }
-  if (Encoding.Offset + 5 > Insn->size || Insn->bytes[Encoding.Offset] != 0xc4)
+  if (Encoding.Offset + 5 > Insn->size ||
+      Insn->bytes[Encoding.Offset] != Escape)
     return false;
   Encoding.P0 = Insn->bytes[Encoding.Offset + 1];
   Encoding.P1 = Insn->bytes[Encoding.Offset + 2];
@@ -326,11 +329,23 @@ bool parseCanonicalVex3EncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
       X86.prefix[3] != (Encoding.AddressOverride ? 0x67 : 0) ||
       X86.rex != ExpectedRex || X86.addr_size != Encoding.AddressSize ||
       X86.encoding.modrm_offset != Encoding.Offset + 4 ||
-      X86.modrm != Encoding.ModRM || X86.opcode[0] != 0xc4 ||
+      X86.modrm != Encoding.ModRM || X86.opcode[0] != Escape ||
       X86.opcode[1] != Encoding.P0 || X86.opcode[2] != Encoding.P1 ||
       X86.opcode[3] != 0)
     return false;
   return true;
+}
+
+bool parseCanonicalVex3EncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
+                                    Arch TargetArch,
+                                    CanonicalVex3EncodingInfo &Encoding) {
+  return parseCanonicalThreeBytePrefix(Insn, X86, TargetArch, 0xc4, Encoding);
+}
+
+bool parseCanonicalXopEncodingInfo(const cs_insn *Insn, const cs_x86 &X86,
+                                   Arch TargetArch,
+                                   CanonicalVex3EncodingInfo &Encoding) {
+  return parseCanonicalThreeBytePrefix(Insn, X86, TargetArch, 0x8f, Encoding);
 }
 
 bool validateCanonicalEvexMemoryTail(const cs_insn *Insn, const cs_x86 &X86,

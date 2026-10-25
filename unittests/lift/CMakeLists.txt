@@ -681,6 +681,10 @@ add_neverd_unittest(NeverDX86NonlocalControlTests
   x86/X86NonlocalControlTests.cpp
   LINK_COMPONENTS Pipeline BackendC)
 
+add_neverd_unittest(NeverDX86TBMTests
+  x86/X86TBMTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
 add_neverd_unittest(NeverDX86LegacyAdmissionTests
   x86/X86LegacyAdmissionTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
