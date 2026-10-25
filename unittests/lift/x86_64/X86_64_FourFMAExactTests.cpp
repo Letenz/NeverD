@@ -128,6 +128,48 @@ TEST(X86FourFMAExact, MissingPackedSourceCannotBecomeZeroWhilePacking) {
   }
 }
 
+TEST(X86FourFMAExact, EveryOverlappingDestinationReadsTheOriginalSourceBlock) {
+  for (bool Scalar : {false, true})
+    for (bool Negative : {false, true})
+      for (unsigned Alias = 0; Alias < 4; ++Alias) {
+        // Encoding source 7 still selects the aligned register block 4..7.
+        const auto Ops =
+            lift({0x62, 0xf2, 0x47, uint8_t(Scalar ? 0x08 : 0x48),
+                  uint8_t((Negative ? 0xaa : 0x9a) + unsigned(Scalar)),
+                  uint8_t((4 + Alias) << 3)});
+        auto Image = image(floats({2, 3, 4, 5}, 4));
+        NdOpEmulator E(Image);
+        E.setStrictMode(true);
+        E.setRegister(mapCapstoneReg(X86_REG_RAX).Offset, 0x4000);
+        std::array<std::vector<uint8_t>, 4> Before;
+        for (unsigned I = 0; I < 4; ++I) {
+          Before[I].resize(64);
+          for (unsigned Lane = 0; Lane < 16; ++Lane) {
+            const float Value = float(I + 1) + float(Lane) / 32;
+            std::memcpy(Before[I].data() + Lane * 4, &Value, 4);
+          }
+          E.setRegisterBytes(
+              mapCapstoneReg(static_cast<x86_reg>(X86_REG_ZMM4 + I)).Offset,
+              Before[I]);
+        }
+        auto Expected = Before[Alias];
+        for (unsigned Lane = 0; Lane < (Scalar ? 1u : 16u); ++Lane) {
+          float Value = getf(Before[Alias], Lane);
+          for (unsigned I = 0; I < 4; ++I)
+            Value = std::fma((Negative ? -1 : 1) * getf(Before[I], Lane),
+                             float(I + 2), Value);
+          std::memcpy(Expected.data() + Lane * 4, &Value, 4);
+        }
+        if (Scalar)
+          std::fill(Expected.begin() + 16, Expected.end(), 0);
+        ASSERT_EQ(E.run(Ops), Ops.size());
+        EXPECT_EQ(E.getRegisterBytes(
+                      mapCapstoneReg(static_cast<x86_reg>(X86_REG_ZMM4 + Alias))
+                          .Offset),
+                  Expected);
+      }
+}
+
 TEST(X86FourFMAExact, PackedPositiveAndHighGroupNegativeAreSequentiallyFused) {
   EXPECT_TRUE(isSideeffectIntrinsic(Intrinsic::X86FourFMA));
   const std::vector<uint8_t> Memory = floats({2, 3, 4, 5}, 4);

@@ -1752,7 +1752,7 @@ group. The three unencoded members remain explicit machine-register uses.
 Native instructions own the four sequential rounding/saturation steps, MXCSR,
 full m128 access and hardware faults. The older SDK uses an exact checked
 assembly contract with the same complete register group. NeverC exposes six
-corresponding builtins and `__NEVERC_X86_FOUR_SOURCE__`; C output selects them
+corresponding builtins in `336a54b88` and `__NEVERC_X86_FOUR_SOURCE__`; C output selects them
 when available and otherwise uses the owned ATT/Intel assembly form.
 
 The native pointer carrier is RBX/EBX, so the remaining default-stack and i386
@@ -1779,3 +1779,20 @@ transport and preserved registers. NeverC probes can select the ordinary C
 stack ABI for wide vectors with `--stack-wide-args`; LLVM probes use vector
 register arguments. Unrecognized instructions fail. These bounded transport
 checks do not simulate native arithmetic or qualify Xeon Phi hardware faults.
+
+The pinned and native SDKs each pass 414 object checks covering 6,804 native
+encodings and sixteen executable C operand recorders, eight under Clang UBSan.
+Together, these qualify 828 objects, 13,608 instruction encodings and 32
+recorders. NeverC passes all 83 focused x86 tests; both its default stack ABI
+and AVX512F vector-register ABI pass separate O0/O2 transport probes. The
+integrated NeverD matrix registers 931 cases per SDK with zero failures:
+the pinned SDK skips three unavailable native descriptor/virtualization APIs,
+and both SDKs skip the Windows-only CPUID observer.
+
+The shared scalar C carrier limit is 256 bytes, sufficient for all four ZMM
+sources; the ordinary C vector limit remains 64 bytes. LLVM-to-C uses exact
+byte transfers throughout that scalar range. Executable O0/O2 UBSan tests cover
+513-, 1024-, 2047- and 2048-bit constants and copies, unaligned storage,
+little/big-endian layouts, surrounding guard bytes and rejection above the
+shared limit. Four-source and compact-memory exports remain byte-identical
+after this memory-path correction, retaining their prior object evidence.

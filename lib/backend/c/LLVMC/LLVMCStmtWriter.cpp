@@ -3820,9 +3820,9 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   // carriers can contain padding: transfer the LLVM store size and byte
   // order, never the C object's representation. The x87 memory image has
   // its own exact-byte path.
-  const bool WideInteger = Type->isIntegerTy() &&
-                           Type->getIntegerBitWidth() > 128 &&
-                           Type->getIntegerBitWidth() <= 512;
+  const bool WideInteger =
+      Type->isIntegerTy() && Type->getIntegerBitWidth() > 128 &&
+      Type->getIntegerBitWidth() <= limits::kMaxCSourceIntegerBytes * 8;
   const bool Integer = Type->isIntegerTy(8) || Type->isIntegerTy(16) ||
                        Type->isIntegerTy(32) || Type->isIntegerTy(64) ||
                        Type->isIntegerTy(128) || WideInteger;

@@ -199,9 +199,12 @@ def main():
             cmd = [compiler, '-' + opt, '-march=x86-64', '-Wno-psabi', '-fno-lto', source, '-o', exe]
             if compiler == args.neverc:
                 cmd += ['-fno-builtin-mimalloc']
+            else:
+                cmd += ['-fsanitize=undefined', '-fno-sanitize-recover=undefined']
             run(cmd)
             run([exe])
-            recorders.append({'source': str(source), 'compiler': str(compiler), 'optimization': opt})
+            recorders.append({'source': str(source), 'compiler': str(compiler), 'optimization': opt,
+                              'undefined_behavior_sanitizer': compiler != args.neverc})
             print({'recorder': str(source), 'compiler': str(compiler), 'optimization': opt}, flush=True)
     for i, case in enumerate(cases()):
         reports.append(audit(args.exports / 'pipeline' / f'{i}.o', [case], pipeline=True))

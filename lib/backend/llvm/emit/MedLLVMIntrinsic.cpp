@@ -193,12 +193,9 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
       llvm::report_fatal_error("VDBPSADBW intrinsic requires an x86 target");
     return emitVdbpsadbwIntrinsic(Op, IC, Builder);
   }
-  if (IC == I::X86FourFMA)
+  if (IC == I::X86FourFMA || isX86VP4DPIntrinsic(IC))
     llvm::report_fatal_error(
-        "x86 four-iteration FMA lowering is not available");
-  if (isX86VP4DPIntrinsic(IC))
-    llvm::report_fatal_error(
-        "x86 VP4DP word dot-product lowering is not available");
+        "legacy x86 four-source lowering requires explicit source SSA values");
   if (isApxAtomicIntrinsic(IC))
     return emitX86APXAtomic(Op, IC, Builder);
 

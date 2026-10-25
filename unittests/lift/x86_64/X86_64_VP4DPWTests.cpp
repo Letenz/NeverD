@@ -116,6 +116,55 @@ TEST(X86VP4DPW, CanonicalLiftOwnsMemoryAndFourRegisterSourceBlock) {
   EXPECT_EQ(IntrinsicOp->Inputs[5].Offset, 0x84u);
 }
 
+TEST(X86VP4DPW, LiftedOverlappingSourcesRetainMaskedSequentialArithmetic) {
+  std::vector<uint8_t> Memory(16);
+  for (unsigned I = 0; I < 4; ++I)
+    putDword(Memory, I * 4, (I + 3) | ((I + 4) << 16));
+  for (bool Saturating : {false, true})
+    for (bool Zero : {false, true})
+      for (unsigned Alias = 0; Alias < 4; ++Alias) {
+        const auto Ops = lift({0x62, 0xf2, 0x47, uint8_t(Zero ? 0xca : 0x4a),
+                               uint8_t(Saturating ? 0x53 : 0x52),
+                               uint8_t((4 + Alias) << 3)});
+        const auto Image = image(Memory);
+        NdOpEmulator E(Image);
+        E.setStrictMode(true);
+        E.setRegister(mapCapstoneReg(X86_REG_RAX).Offset, 0x4000);
+        E.setRegister(mapCapstoneReg(X86_REG_K2).Offset, 0xa55a);
+        std::array<std::vector<uint8_t>, 4> Before;
+        for (unsigned I = 0; I < 4; ++I) {
+          Before[I].resize(64);
+          for (unsigned Lane = 0; Lane < 16; ++Lane)
+            putDword(Before[I], Lane * 4,
+                     (I + Lane + 1) | (uint32_t(uint16_t(-int(I + 2))) << 16));
+          E.setRegisterBytes(
+              mapCapstoneReg(static_cast<x86_reg>(X86_REG_ZMM4 + I)).Offset,
+              Before[I]);
+        }
+        auto Expected = Before[Alias];
+        for (unsigned Lane = 0; Lane < 16; ++Lane) {
+          uint32_t Value = getDword(Expected, Lane * 4);
+          if ((0xa55a >> Lane) & 1) {
+            for (unsigned I = 0; I < 4; ++I) {
+              const int64_t Sum = int64_t(int32_t(Value)) +
+                                  int64_t(I + Lane + 1) * (I + 3) -
+                                  int64_t(I + 2) * (I + 4);
+              Value = uint32_t(
+                  Saturating ? std::clamp<int64_t>(Sum, INT32_MIN, INT32_MAX)
+                             : Sum);
+            }
+          } else if (Zero)
+            Value = 0;
+          putDword(Expected, Lane * 4, Value);
+        }
+        ASSERT_EQ(E.run(Ops), Ops.size());
+        EXPECT_EQ(E.getRegisterBytes(
+                      mapCapstoneReg(static_cast<x86_reg>(X86_REG_ZMM4 + Alias))
+                          .Offset),
+                  Expected);
+      }
+}
+
 TEST(X86VP4DPW, SideeffectIDsAndFourSequentialWrapOrSaturateRounds) {
   EXPECT_TRUE(isSideeffectIntrinsic(Intrinsic::X86VP4DPWSSD));
   EXPECT_TRUE(isSideeffectIntrinsic(Intrinsic::X86VP4DPWSSDS));
