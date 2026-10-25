@@ -4306,7 +4306,9 @@ int main(void) {
 }
 
 TEST(HighCSourceCalls, PartialIntegerAtomicsRejectWidenedMemoryAccess) {
-  EXPECT_NO_THROW(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes)));
+  EXPECT_EQ(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes)),
+            "_BitInt(" + std::to_string(limits::kMaxCSourceIntegerBytes * 8) +
+                ")");
   EXPECT_THROW(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes + 1)),
                std::invalid_argument);
   const auto Partial = NdType::makeInt(3, false);

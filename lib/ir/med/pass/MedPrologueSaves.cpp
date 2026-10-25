@@ -9,7 +9,9 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -390,7 +392,8 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
       return true;
     // Return and preserved registers have implicit exit observers. A call's
     // arguments may also be completed later: lack of an SSA reader alone
-    // cannot prove a physical scratch register dead before that call.
+    // cannot prove a physical scratch register dead before that call. Only
+    // the separately checked input-observation proof can cross it.
     if (Value.Kind != MedVar::Reg || !TRI.isGeneralReg(Value.RegOff) ||
         TRI.isReturnReg(Value.RegOff) || TRI.isReturnControlReg(Value.RegOff) ||
         llvm::is_contained(TRI.IntReturnRegs, Value.RegOff) ||
@@ -428,7 +431,21 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
             return false;
         if (Op.Opcode == NdOp::RETURN)
           return true;
-        if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
+        if (Op.Opcode == NdOp::CALL) {
+          const auto Proof = Func.CallUnreadRegisters.find(Op.CallSiteId);
+          if (Proof == Func.CallUnreadRegisters.end() ||
+              Architecture != Arch::X64 || !Op.CallSiteId || !Op.NumInputs ||
+              !Op.Inputs[0].isConst() || Op.SourceCallHint ||
+              Op.Addr != Proof->second.Instruction ||
+              Op.OriginSeq != Proof->second.OriginSeq ||
+              Op.Inputs[0].ConstVal != Proof->second.Target ||
+              !callPreservesRegisterBytes(Architecture, Proof->second.Families,
+                                          Value.RegOff, Value.Size))
+            return false;
+          if (Op.DoesNotReturn ||
+              callClobbersRegister(Op, Value.RegOff, Value.Size, TRI, Format))
+            return true;
+        } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
           if (!Op.NumInputs || !Op.Inputs[0].isConst() ||
               !BlockEntries.count(Op.Inputs[0].ConstVal))
             return false;

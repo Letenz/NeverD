@@ -370,6 +370,7 @@ private slots:
     QTest::newRow("nowrap-proof-v5") << 5 << 6;
     QTest::newRow("modular-proof-v5") << 5 << 7;
     QTest::newRow("parameter-bound-proof-v6") << 6 << 8;
+    QTest::newRow("invariant-bound-proof-v7") << 7 << 9;
   }
   void loopProgressExplainsProofAndRestoresSelection() {
     QFETCH(int, Version);
@@ -464,6 +465,17 @@ private slots:
                               "31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483"
                               "c0038945f48b45f48b4df8"
                               "83c10039c8759f8b45fc3345f883c0035dc3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
+    if (Family == 9) {
+      // Owned invariant_bound_progress_fixture.c, x64 O0; never executed.
+      const auto Bytes = QByteArray::fromHex(
+          "554889e5897dfc8975f88b45f88b4df8c1e90331c88b4dfc81e1ff00000001c88945"
+          "f48b45fc8945f08b45fc83e00183f80074228b45fc83f0176bc00783c0098945fc8b"
+          "45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b4df00d31c88945fc8b"
+          "45fcc1e0070345f83345fc8945fc8b45f083c0038945f08b45f08b4df483c10039c8"
+          "759f8b45fc3345f883c0035dc3");
       QVERIFY(write(A, Bytes));
       QVERIFY(write(B, Bytes));
     }
@@ -566,12 +578,18 @@ private slots:
                                             .arg(Witness["block"].toInt())));
         if (Version >= 5) {
           QCOMPARE(Witness["proof"].toString(),
-                   QString(Family == 8   ? "parameter_modular"
+                   QString(Family == 9   ? "invariant_modular"
+                           : Family == 8 ? "parameter_modular"
                            : Family == 7 ? "modular"
                                          : "nowrap"));
           QVERIFY(LoopStatus->text().contains(
               Family >= 7 ? "every counter cycle reaches a shared exit"
                           : "monotone counter with a no-overflow contract"));
+          if (Family == 9) {
+            QVERIFY(LoopStatus->text().contains("input-derived expression"));
+            QVERIFY(
+                LoopStatus->text().contains("Undefined behavior may occur"));
+          }
           if (Family == 8) {
             QVERIFY(
                 LoopStatus->text().contains("relative to an input parameter"));
@@ -596,7 +614,8 @@ private slots:
         Dialog->resize(1280, 800);
         QTest::qWait(40);
         QVERIFY(Dialog->grab().save(Captures +
-                                    (Family == 8    ? "/parameter-bound-proof"
+                                    (Family == 9    ? "/invariant-bound-proof"
+                                     : Family == 8  ? "/parameter-bound-proof"
                                      : Family == 7  ? "/modular-proof"
                                      : Version == 5 ? "/nowrap-proof"
                                      : Family == 6  ? "/common-update"

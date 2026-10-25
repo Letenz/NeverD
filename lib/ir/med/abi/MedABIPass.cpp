@@ -268,7 +268,8 @@ struct ReachingStackPtrResult {
 ReachingStackPtrResult
 findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
                      int BeforeIdx, MedDefSiteIndex *Defs = nullptr,
-                     const MedBlockIdIndex *Index = nullptr) {
+                     const MedBlockIdIndex *Index = nullptr,
+                     size_t *Remaining = nullptr, bool ComputeDelta = true) {
   // Walk transparent predecessors once and collect every boundary at which the
   // reaching SP becomes concrete: a local SP definition, an SP PHI, or a
   // function-entry block.  The former recursive walk only marked the current
@@ -313,7 +314,8 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
   };
   auto MergeBoundary = [&](const MedVar &Value) {
     MergeBasis(Value);
-    MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs));
+    if (ComputeDelta)
+      MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs));
   };
 
   while (!Worklist.empty()) {
@@ -326,6 +328,16 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
     if (!Found)
       return {};
     const MedBlock &Block = *Found;
+    if (Remaining) {
+      for (size_t Work : {size_t{1}, Block.Ops.size(), Block.Phis.size(),
+                          Block.Preds.size(), Block.ExceptionalPreds.size()}) {
+        if (*Remaining < Work) {
+          *Remaining = 0;
+          return {};
+        }
+        *Remaining -= Work;
+      }
+    }
     const int Boundary =
         std::clamp(Current.second, 0, static_cast<int>(Block.Ops.size()));
 
@@ -393,6 +405,44 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
 
 extern const AbiCallPolicy Win64AbiCallPolicy;
 extern const AbiCallPolicy I386AbiCallPolicy;
+
+std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
+                                                        Arch Architecture,
+                                                        size_t &Remaining) {
+  std::map<const MedOp *, MedVar> Result;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if (Func.SkippedSSA || Func.Blocks.empty())
+    return Result;
+  const MedBlockIdIndex Blocks(Func);
+  for (const auto &Block : Func.Blocks) {
+    std::optional<MedVar> LocalStack;
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      if (!Remaining)
+        return Result;
+      --Remaining;
+      const auto &Op = Block.Ops[I];
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          !Op.Dead) {
+        if (LocalStack) {
+          if (LocalStack->Size == TRI.PointerSize)
+            Result.emplace(&Op, *LocalStack);
+        } else {
+          const auto Stack =
+              findReachingStackPtr(Func, TRI, Block.Id, static_cast<int>(I),
+                                   nullptr, &Blocks, &Remaining, false);
+          if (Stack.Basis && Stack.Basis->Size == TRI.PointerSize)
+            Result.emplace(&Op, *Stack.Basis);
+        }
+      }
+      // Cache the same most recent definition used by the backward ABI walk.
+      // A call's own output, if any, belongs only to subsequent occurrences.
+      if (Op.Output.Kind == MedVar::Reg && Op.Output.Size &&
+          Op.Output.RegOff == TRI.StackPointer)
+        LocalStack = Op.Output;
+    }
+  }
+  return Result;
+}
 
 bool hasBoundIntegerCallArguments(const MedOp &Op) {
   if (!Op.IntegerCallSignature || Op.ScalarCallSignature || Op.SourceCallHint ||

@@ -10,6 +10,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
+#include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -43632,7 +43633,12 @@ TEST(HighCPointerAddresses, OddWideIntegerSlicePrintsBitInt) {
   // A YMM value shifted by one 32-bit lane leaves a 224-bit slice.
   EXPECT_EQ(typeToC(NdType::makeInt(28, false)), "unsigned _BitInt(224)");
   EXPECT_EQ(typeToC(NdType::makeInt(32, false)), "uint256_t");
-  EXPECT_THROW(typeToC(NdType::makeInt(65, false)), std::invalid_argument);
+  EXPECT_EQ(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes, false)),
+            "unsigned _BitInt(" +
+                std::to_string(limits::kMaxCSourceIntegerBytes * 8) + ")");
+  EXPECT_THROW(
+      typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes + 1, false)),
+      std::invalid_argument);
 }
 
 // Caller keeps RDX live across a direct call, as MSVC /LTCG does when the

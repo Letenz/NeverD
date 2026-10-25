@@ -18,6 +18,11 @@ The latter does not execute privileged or tile-state instructions.
 transport and original-image byte-storage identity. The image test preserves
 mutable pointer slots and overlapping fields across COFF/ELF/Mach-O; native
 and relocatable output retain their stricter address rules.
+`Win64CallContract.RelocatedCallbacksBindTheFinalExternalIdentifier` executes
+direct calls, relocated callback loads and address-taking through both C
+routes at O0/O2 with UBSan. An omitted provider and colliding data/function
+spellings require the generated source to link to the actual function label;
+syntax-only compilation cannot validate this contract.
 `Win64CallContract.MissingInteriorStackSlotCannotDiscardLaterArguments`
 checks whole-module and selected-function recovery through both C routes.
 Missing fixed stack positions remain unavailable while later arguments survive;
@@ -701,6 +706,10 @@ selected functions execute against an independent provider observing every
 record field and following parameter; whole modules are syntax-checked with
 their original import-slot aliases. Those aliases need the SDK's image linker
 for runtime binding. Other hosts explicitly skip the native glibc test.
+`RecordCallContract.LLVMOperandsKeepPhysicalStackPieceLocations` checks that
+record pieces follow the LLVM call's recorded stack byte offsets after unused
+register operands are removed. Reordered offsets retain their values; missing
+or repeated offsets, incomplete carriers and mismatched slot widths fail.
 An original linked Windows x64 record fixture also exercises hidden result
 storage through both C emitters at O0/O2. Its independent Linux host provider
 checks every argument bit, one call, the returned buffer address and surrounding
@@ -1971,6 +1980,27 @@ proof, retained parameter provenance, pages/slices, translated explanation and
 saved restore. Earlier profiles and frozen historical reports remain separate
 compatibility checks. These fixtures qualify the stated shapes, not arbitrary
 parameter relationships or semantic equivalence.
+
+`BinaryDiffInvariantBoundProgress` checks opt-in v7 input-derived expressions
+at widths 1 through 64, supported integer operations/intrinsics, affine chains,
+select poison masking and undef leaves. Hidden PHI/freeze dependencies, cycles,
+unrelated bases, incompatible exits and residual infinite loops refuse. The
+independent concrete oracle evaluates the original expression and every seed's
+orbit; it does not reuse basis normalization. Poison-only cases are not used as
+an exact completeness oracle. Shared/deep DAGs check linear work and memoized
+rejection. Two-candidate tests require identical v6/v7 charge sequences and
+allowances for preferred old proofs. Exact storage/work limits, cancellation,
+deadlines, retry and schema/marker isolation remain covered.
+
+`invariant_bound_progress_fixture.c` supplies x64/AArch64 ELF/COFF/Mach-O
+O0/O2 compile-and-inspect cases, never native execution of possibly infinite
+loops. O0 demonstrates v6-unproven to v7-invariant progress; O2 retains its
+preferred modular proof. Output, body, mask, recurrence-step and exit-offset
+changes remain visible; even-step negative controls retain the source contract.
+SDK, worker, Python and Qt inspect bounded pages, slices, proof text and saved
+restore. Altering the mask can leave a valid mathematical proof but must still
+fail fresh native binding. Frozen v1-v6 reports provide a separate byte-exact
+compatibility check; these cases do not establish arbitrary invariant analysis.
 
 The region suite includes owned x86 assembly with exact split boundaries, native
 SDK span paging, persistence/tamper rejection, worker parity and a real paged Qt
@@ -3552,7 +3582,12 @@ unit compiles on that system, which declares them.
 With `NEVERD_TYPES_NTOSKRNL` and `NEVERD_TYPES_NTKRNLMP` pointing at
 ntoskrnl.exe and its PDB,
 `SessionCAPIKernelInputs.TheKernelsTypesJoinTheHeadersOfItsDrivers` loads the kernel
-and checks that the headers join its PDB without conflicts.
+and checks that headers join its PDB without replacing the program's records.
+Version-dependent layout conflicts retain opaque declarations or omit dependent
+aliases. `HeaderLibrary.ExecutivePointerAliasesUseTheProgramsPDBRecords` checks
+the official `ntifs.h` opaque process/thread aliases against complete PDB
+executive records for x86, x64 and ARM64. Missing records, wrong prefixes,
+nonzero prefix offsets, user aliases and unrelated providers remain controls.
 `SessionCAPIKernelInputs.KernelFunctionsDecompileWithTheirPrototypes` decompiles
 `NtCreateFile`, `IoAllocateIrp`, `PsCreateSystemThread` and
 `IofCompleteRequest` and checks the signatures the headers give them; also
@@ -5834,6 +5869,13 @@ handler and landing-pad cases retain the exception-boundary coverage.
 
 `HighCIntegerConversion.*` in `NeverDHighControlFlowTests` checks the integer conversions the HighC writer leaves to C. A conversion inside an operand that keeps the bytes an outer conversion keeps prints no cast of its own; an assignment to a declared integer local and a return convert implicitly, and a literal is spelled as the value it converts to, while a pointer keeps its explicit conversion. Stores convert like assignments, and a zero-extended argument to a typed wider parameter keeps its extension. A callee whose debug symbol has no type, or that nothing declares while the code reads more than an int of its result, returns its whole register, so a 64-bit pointer keeps its upper half. Each case runs at `-O0` and `-O2` with undefined-behavior traps against reference arithmetic.
 
+`HighCIntegerConversion.FloatingCallKeepsAConstantBitCast` executes typed local
+float/double calls for x86, x64, ARM32 and ARM64 at O0/O2. The call must retain
+the floating expression before immediate cleanup can expose its integer bits.
+The ARM32 VFP call regression also runs its recovered recurrence against the
+source. The softfp external-call oracle compares R0 result bits: its tail-call
+bytes cannot distinguish a source float from an integer view of that float.
+
 `HighCIntegerConversion.NarrowCopyKeepsLowBytesThroughSourceProjection` starts
 from MedIR and checks narrowing copies followed by zero extension for i386,
 x86-64 and AArch64. The emitted C executes at O0/O2 with undefined-behavior
@@ -6089,7 +6131,13 @@ must compile and execute the same selection at `-O0` and `-O2` with undefined
 behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
 reached backedges, mutated table storage and exhausted evidence must prevent
 unsupported source publication. Clang and the existing lift fixture tools
-are required; unavailable fixtures remain skips.
+are required; unavailable fixtures remain skips. Finite-selector and shared
+absolute-table source controls compile the unchanged generated C for the input
+architecture, retaining native memory instructions beside the recovered switch.
+They run as freestanding Linux x64/AArch64 programs, directly on matching Linux
+hosts or with `qemu-x86_64` / `qemu-aarch64` from `PATH`; a missing execution
+transport is an explicit skip. The same selection oracle also executes the
+original assembly objects. This does not qualify native Windows execution.
 The independent ARM64 frame fixture also distinguishes restored native tail
 calls from live or unknown SP values, changed link words, full/partial return
 slot writes, unknown aliases, borrowed frame pointers, independent roots and
@@ -6949,6 +6997,18 @@ values and exact signed/unsigned bounds through 128 bits. Bit-reversal checks
 include non-byte widths and every one-hot input bit. Unsupported shapes fail
 before source emission.
 
+`IntegerToFloatUsesOpcodeSignednessAndWidth` and
+`FloatToIntegerPreservesSignedResultBits` execute ordinary LLVM numeric casts
+at O0/O2 with undefined-behavior traps. The matrix covers i1, rounded narrow
+carriers, native widths and exact `_BitInt` carriers through 512 bits. It checks
+negative values, the sign bit, unsigned high bits and fractional truncation;
+all inputs remain in the LLVM operation's defined domain. These conversions
+must use the opcode's signedness even when the C variable stores unsigned bits.
+`PackedIntegerNumericCastsKeepEveryLimb` also checks finite signed/unsigned
+values through the complete 1024-, 1984- and 2048-bit packed-source carriers.
+Small negative values must preserve all upper integer limbs; unsigned inputs
+remain nonnegative and the floating oracle stays finite.
+
 ## Structured C control and call checks
 
 `NeverDX86NonlocalControlTests` checks privileged return and SMM transition
@@ -6966,7 +7026,14 @@ COFF/ELF/Mach-O frame models. Explicit x86 flags transfers keep their effects
 without observing unrelated lifted-frame bytes. Malformed transfers, exceptional
 edges, observed restores, ABI-preserved/result registers and later implicit call
 readers retain the spill. A restored scratch register must be killed before a
-later call, including across a straight continuation. Run it with `NeverDMedStackAlignmentTests`,
+later call or have a matching proof that the callee cannot observe it, including
+across a straight continuation. `NeverDCallRegisterUnreadTests` distinguishes
+that proof from argument inference: nested may-writes, opaque and hinted calls,
+partial writes, bypasses, cycles, exceptional roots and work exhaustion remain
+conservative. Call-target/occurrence changes invalidate the source proof.
+`OverwrittenCallClobberSpills` executes the preserving-but-unread callee through
+both C routes at O0/O2 on COFF/ELF/Mach-O; its observing callee remains a negative
+control. Run these with `NeverDMedStackAlignmentTests`,
 `NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
 `NeverDPipelineOutcomeTests` after changing source stack-access analysis.
 `PipelineSourceStackAccesses` checks source, LLVM source projection, machine
@@ -13097,3 +13164,28 @@ assembly inventories. Run `llc -O2 -stop-after=finalize-isel` on each exported
 `NeverDLLVMCIntrinsicSemanticTests` owners when changing these shared assembly
 contracts. Export/machine-effect checks do not establish successful privileged
 execution or a full guest exception-state contract.
+
+`SourceCallReturnReads.*` in `NeverDMedPrologueSavesTests` covers old constant
+contents, complete and partial later stores, separated slots, earlier loads,
+physical calls versus synthetic tail calls, joins, loop-carried observations,
+missing SPs, malformed graphs and exhausted budgets. `SourceStackSpills`
+variants 4 and 7 in `NeverDWin64CallContractTests` require the same explicit
+return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
+optimization on and off. Variant 8 supplies a complete later store and executes
+both generated C routes at O0/O2 with an independent provider. Native CALL
+continuation materialization remains a separate source-ABI requirement.
+
+`I386CallContract.PhysicalCallReturnSlotsDoNotKeepOldSourceConstants` checks
+four-byte CALL slots across the same three formats, both source routes and
+source optimization settings. A complete later DWORD store permits host C
+execution at O0/O2; a reaching physical CALL write requires a diagnostic.
+The generated C is checked for the i686 Windows target and executes with
+`-m32` on Linux x86 hosts. Other hosts record the missing native execution
+while retaining the source checks. This does not qualify native calls on each
+OS.
+
+`MedStackAlignment.Native32BitMemoryAddressContainersKeepTheirFrameOrigin`
+checks exact zero-extended x86/ARM32 frame addresses across all three formats.
+Signed extensions, mixed-width copies and duplicate definitions are rejected;
+`WiderSeedsAndTruncatedPointersAreNotNativeAddresses` protects the entry-SP
+and native pointer-width boundaries.

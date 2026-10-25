@@ -1634,9 +1634,18 @@ public:
   /// writer's own, read at the first address it asks about.
   const HighCImageFunctionSymbols *SharedFunctionSymbols;
   std::optional<HighCImageFunctionSymbols> OwnFunctionSymbols;
-  /// Functions the code takes the address of, by entry: the C name the
-  /// address prints as.
-  std::map<va_t, std::string> FunctionAddressNames;
+  /// Keep the source identity until declarations have allocated their final
+  /// C identifiers. An earlier spelling can later belong to an image object.
+  struct FunctionAddressTarget {
+    std::string Symbol;
+    const HighFunc *Definition = nullptr;
+  };
+  std::map<va_t, FunctionAddressTarget> FunctionAddressNames;
+  std::string
+  functionAddressIdentifier(const FunctionAddressTarget &Target) const;
+  /// Linker function names cannot also name definitions of reconstructed data.
+  std::optional<std::set<std::string>> ImageFunctionLinkNames;
+  bool imageFunctionOwnsLinkIdentifier(llvm::StringRef Name);
   /// The symbols of those functions this output does not define, declared as
   /// the functions it calls are.
   std::set<std::string> AddressTakenFunctions;

@@ -509,6 +509,31 @@ count or equivalence. Recipes are `llvm-progress-neighborhoods-v6` and
 saved encodings. General invariant expressions and seed/bound relationships
 remain outside this version's proof.
 
+**Optimized SSA with expression-bound loop analysis**
+(`--dataflow-profile=llvm-progress-ssa-v7`) also handles a shared bound computed
+from inputs. For example, a counter advancing by 3 can reach
+`(limit ^ (limit >> 3)) + (start & 255)` from any initial 32-bit counter value.
+The expression may use supported integer arithmetic, masks, shifts, casts,
+comparisons, selects and finite integer intrinsics. Several guards can use the
+same expression with constant additions or subtractions; all must have a common
+exit in every counter cycle.
+
+The analysis traces the complete expression back to inputs and constants.
+Changing PHIs, freezes and dependency cycles remain unproven, including a hidden
+select arm. Independently computed expressions are not assumed equal merely
+because they look alike. Prior proofs take priority, and every residual loop
+must still be discharged. General invariant PHIs, frozen bounds and seed/bound
+relationships remain outside this version's proof.
+
+The interface explains the expression-relative proof and its undefined-behavior
+limit beside the selected guard. Schema 11 records `invariant_modular`, with
+recipes `llvm-progress-neighborhoods-v7` and `llvm-progress-fragments-v7`.
+Paging, slicing and saved restore retain complete witness identities and source
+provenance. Restore both rederives the proof and authenticates the expression
+against the original binary. This remains a finite-execution contract, not a
+normal-return guarantee or whole-function equivalence.
+
+
 Reopening LLVM reports also tolerates changes in PHI numbering when every
 operation, input, source observation and proof still matches exactly after an
 authenticated node mapping. The saved IDs and report contents stay intact.

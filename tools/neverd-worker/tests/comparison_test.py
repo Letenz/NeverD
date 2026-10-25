@@ -338,8 +338,9 @@ def parameter_views(client, args, root, fixture):
 def loop_progress(client, args, root, fixture):
     source = fixture.with_name("control_regions_fixture.c")
     for family, version in ((2, 1), (3, 2), (4, 3), (5, 4), (6, 4),
-                            (5, 5), (6, 5), (7, 5), (8, 6)):
-        source = fixture.with_name("parameter_bound_progress_fixture.c" if family == 8
+                            (5, 5), (6, 5), (7, 5), (8, 6), (9, 7)):
+        source = fixture.with_name("invariant_bound_progress_fixture.c" if family == 9
+                                   else "parameter_bound_progress_fixture.c" if family == 8
                                    else "modular_progress_fixture.c" if family == 7
                                    else "branch_progress_fixture.c" if family >= 5
                                    else "control_regions_fixture.c")
@@ -386,6 +387,7 @@ def loop_progress(client, args, root, fixture):
                 assert len({proof["block"] for proof in witnesses}) == guard_count
                 if version >= 5:
                     assert {proof["proof"] for proof in witnesses} == {
+                        "invariant_modular" if family == 9 else
                         "parameter_modular" if family == 8 else
                         "modular" if family == 7 else "nowrap"}
                 for proof in {w["block"]: w for w in witnesses}.values():

@@ -256,6 +256,15 @@ class ComparisonIntegrationTests(unittest.TestCase):
             "31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f48b45f48b4df8"
             "83c10039c8759f8b45fc3345f883c0035dc3", 6, 1, "parameter_modular")
 
+    def test_invariant_bound_progress_pages_slices_and_reopens(self) -> None:
+        # Owned invariant_bound_progress_fixture.c, x64 O0. Inspect only.
+        self._check_counter_progress(
+            "554889e5897dfc8975f88b45f88b4df8c1e90331c88b4dfc81e1ff00000001c88945"
+            "f48b45fc8945f08b45fc83e00183f80074228b45fc83f0176bc00783c0098945fc8b"
+            "45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b4df00d31c88945fc8b"
+            "45fcc1e0070345f83345fc8945fc8b45f083c0038945f08b45f08b4df483c10039c8"
+            "759f8b45fc3345f883c0035dc3", 7, 1, "invariant_modular")
+
     def _check_counter_progress(self, code, version, guard_count, proof_kind=None):
         from neverd_plugin import abi
 

@@ -118,6 +118,7 @@ add_neverd_component_library(NeverDBackendLLVM
 
   LINK_COMPONENTS
   LLVMFloatConvertLowering
+  LLVMCallContract
   IR
   IRLow
   WindowsEHMetadata

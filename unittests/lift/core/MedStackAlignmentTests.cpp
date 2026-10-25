@@ -69,6 +69,46 @@ MedFunc frameWithEntrySP(Arch Architecture = Arch::ARM) {
   return Func;
 }
 
+TEST(MedStackAlignment,
+     Native32BitMemoryAddressContainersKeepTheirFrameOrigin) {
+  for (Arch Architecture : {Arch::X86, Arch::ARM})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      auto Func = frameWithEntrySP(Architecture);
+      auto &Ops = Func.Blocks[0].Ops;
+      const auto Address = temp(2, Architecture);
+      auto Wide = temp(3, Architecture);
+      Wide.Size = 8;
+      Ops.push_back(op(NdOp::INT_SUB, Address, reg(0, Architecture),
+                       MedVar::makeConst(20, 4)));
+      Ops.push_back(op(NdOp::INT_ZEXT, Wide, Address));
+      EXPECT_EQ(entryStackOffset(Func, Wide, Architecture, Format), -20);
+      Ops.back().Opcode = NdOp::INT_SEXT;
+      EXPECT_FALSE(entryStackOffset(Func, Wide, Architecture, Format));
+      Ops.back().Opcode = NdOp::COPY;
+      EXPECT_FALSE(entryStackOffset(Func, Wide, Architecture, Format));
+      Ops.back().Opcode = NdOp::INT_ZEXT;
+      Ops.push_back(Ops.back());
+      EXPECT_FALSE(entryStackOffset(Func, Wide, Architecture, Format));
+    }
+}
+
+TEST(MedStackAlignment, WiderSeedsAndTruncatedPointersAreNotNativeAddresses) {
+  auto Func = frameWithEntrySP(Arch::X86);
+  auto Wide = reg(0, Arch::X86);
+  Wide.Size = 8;
+  Func.Blocks[0].Ops = {op(NdOp::COPY, Wide, Wide)};
+  EXPECT_FALSE(entryStackOffset(Func, Wide, Arch::X86, BinaryFormat::ELF));
+  Func = frameWithEntrySP(Arch::X64);
+  auto Narrow = temp(2, Arch::X64);
+  Narrow.Size = 4;
+  Wide = temp(3, Arch::X64);
+  Func.Blocks[0].Ops.push_back(
+      op(NdOp::SUBBYTES, Narrow, reg(0, Arch::X64), MedVar::makeConst(0, 4)));
+  Func.Blocks[0].Ops.push_back(op(NdOp::INT_ZEXT, Wide, Narrow));
+  EXPECT_FALSE(entryStackOffset(Func, Wide, Arch::X64, BinaryFormat::ELF));
+}
+
 TEST(MedStackAlignment, PreservesExactAndRoundedARMFrameOffsets) {
   MedFunc Func = frameWithEntrySP();
   auto &Ops = Func.Blocks[0].Ops;
