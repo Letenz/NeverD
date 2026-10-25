@@ -363,6 +363,13 @@ TEST(ImageProfile, RealMachOHeadersRetainBuildPlatformAndKernelType) {
   EXPECT_EQ(identifyImageProfile(*Image).Domain, ImageDomain::Kernel);
   nativePut(Bytes, 12, llvm::MachO::MH_DYLIB, 4);
   nativePut(Bytes, 192, llvm::MachO::PLATFORM_IOS, 4);
+  // A dynamic library must also declare its own install name.
+  nativePut(Bytes, 16, 3, 4);
+  nativePut(Bytes, 20, 208, 4);
+  nativePut(Bytes, 208, llvm::MachO::LC_ID_DYLIB, 4);
+  nativePut(Bytes, 212, 32, 4);
+  nativePut(Bytes, 216, 24, 4);
+  Bytes.replace(232, 7, "fixture");
   Image = Loader.loadBuffer(llvm::MemoryBufferRef(Bytes, "renamed.bin"));
   ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
   EXPECT_EQ(identifyImageProfile(*Image).System, ImageSystem::IOS);
