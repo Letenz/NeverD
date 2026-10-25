@@ -47,6 +47,11 @@ public:
   /// both edges.
   static Qt::Edges edgesAt(QPoint at, QSize size, QMargins shadow);
 
+  /// Toggle full screen while retaining the preceding normal/maximized state.
+  /// Cocoa reports full screen alone and exposes the desktop after its exit
+  /// animation; reapply maximization only when that desktop is available.
+  void toggleFullScreen();
+
   ~WindowFrame() override;
 
 protected:
@@ -79,6 +84,8 @@ private:
   QMargins margins_;
   /// The window states the window system last applied.
   Qt::WindowStates states_;
+  Qt::WindowStates beforeFullScreen_ = Qt::WindowNoState;
+  bool restoreAfterFullScreen_ = false;
   Qt::Edges shown_;
   Qt::Edges resizing_;
   QPoint resizeOrigin_;

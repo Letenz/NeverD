@@ -48,7 +48,21 @@ jobs:
           echo "$RUNNER_TEMP/Qt/6.8.3/${{ matrix.qt_dir }}/bin" >> "$GITHUB_PATH"
           if [ '${{ runner.os }}' = Linux ]; then
             sudo apt-get update
-            sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 xvfb xauth openbox xdotool
+            sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+              libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+              xvfb xauth openbox xdotool
+            # Qt's generic xcb startup error can name cursor support even when
+            # another shared library is missing. Check the actual plugin before
+            # spending a build on native tests that cannot start.
+            ldd "$RUNNER_TEMP/Qt/6.8.3/gcc_64/plugins/platforms/libqxcb.so"
+            python - <<'PY'
+          import ctypes
+          import os
+          from pathlib import Path
+
+          plugin = Path(os.environ["RUNNER_TEMP"]) / "Qt/6.8.3/gcc_64/plugins/platforms/libqxcb.so"
+          ctypes.CDLL(str(plugin), mode=os.RTLD_NOW)
+          PY
           fi
       - name: Configure Windows offscreen fonts
         if: runner.os == 'Windows'
@@ -78,7 +92,7 @@ jobs:
             -DNEVERD_WORKER_REAL_ENGINE_TESTS=OFF
           python scripts/build.py build-gui --parallel 3
           cp "build-fixture/bin/${{ matrix.library }}" build-gui/bin/
-      - name: Verify native appearance and frames before controller regressions
+      - name: Verify native appearance and window gestures before controller regressions
         if: runner.os != 'Linux'
         shell: bash
         run: |
@@ -88,6 +102,11 @@ jobs:
             build-gui/bin/neverd-gui-appearance-tests \
             -o build-gui/ci-diagnostics/native-appearance.txt,txt
           appearance_status=$?
+          QT_SCALE_FACTOR=1.5 \
+            NEVERD_APPEARANCE_CAPTURES=build-gui/ci-diagnostics/appearance-150 \
+            build-gui/bin/neverd-gui-appearance-tests \
+            -o build-gui/ci-diagnostics/native-appearance-150.txt,txt
+          scaled_appearance_status=$?
           build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
             toolbarButtonsKeepKeysInTooltips \
             -o build-gui/ci-diagnostics/native-frame.txt,txt
@@ -97,9 +116,21 @@ jobs:
               build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
               -o build-gui/ci-diagnostics/native-frame-trace.txt,txt
           fi
+          # Check representative drops before the full state/drag sequence too,
+          # so a failed native transition cannot hide an independent drag bug.
+          NEVERD_SHORTCUT_CAPTURES=build-gui/ci-diagnostics/docking-samples \
+            build-gui/bin/neverd-gui-docking-tests \
+            dragIntoWorkbench:light-caption-4-separate \
+            dragIntoWorkbench:dark-tab-8-overlap \
+            -o build-gui/ci-diagnostics/native-docking-samples.txt,txt
+          drag_sample_status=$?
           cat build-gui/ci-diagnostics/native-appearance.txt
+          cat build-gui/ci-diagnostics/native-appearance-150.txt
           cat build-gui/ci-diagnostics/native-frame.txt
+          cat build-gui/ci-diagnostics/native-docking-samples.txt
           if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
+          if [ "$drag_sample_status" -ne 0 ]; then exit "$drag_sample_status"; fi
+          if [ "$scaled_appearance_status" -ne 0 ]; then exit "$scaled_appearance_status"; fi
           exit "$appearance_status"
       - name: Retain native appearance diagnostics
         if: ${{ always() && runner.os != 'Linux' }}
@@ -108,9 +139,13 @@ jobs:
           name: desktop-gui-${{ runner.os }}-appearance-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build-gui/ci-diagnostics/native-appearance.txt
+            build-gui/ci-diagnostics/native-appearance-150.txt
             build-gui/ci-diagnostics/native-frame.txt
             build-gui/ci-diagnostics/native-frame-trace.txt
+            build-gui/ci-diagnostics/native-docking-samples.txt
             build-gui/ci-diagnostics/appearance/
+            build-gui/ci-diagnostics/appearance-150/
+            build-gui/ci-diagnostics/docking-samples/
           if-no-files-found: warn
           retention-days: 7
       - name: Verify GUI, IPC, MCP and translation contracts
@@ -149,12 +184,23 @@ jobs:
                 -o build-gui/ci-diagnostics/native-docking.txt,txt
             '
           else
-            build-gui/bin/neverd-gui-docking-tests \
+            NEVERD_SHORTCUT_CAPTURES=build-gui/ci-diagnostics/docking \
+              build-gui/bin/neverd-gui-docking-tests \
               -o build-gui/ci-diagnostics/native-docking.txt,txt
           fi
           docking_status=$?
           cat build-gui/ci-diagnostics/native-docking.txt
           exit "$docking_status"
+      - name: Retain native docking captures
+        if: ${{ always() && runner.os != 'Linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-gui-${{ runner.os }}-docking-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build-gui/ci-diagnostics/native-docking.txt
+            build-gui/ci-diagnostics/docking/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify native windows, floating panes and shortcuts
         timeout-minutes: 10
         # Exercise native ownership and focus as well as the offscreen
@@ -226,6 +272,7 @@ jobs:
               "ctest-exit-code.txt": "ci-diagnostics/ctest-exit-code.txt",
               "native-frame.txt": "ci-diagnostics/native-frame.txt",
               "native-appearance.txt": "ci-diagnostics/native-appearance.txt",
+              "native-appearance-150.txt": "ci-diagnostics/native-appearance-150.txt",
               "native-docking.txt": "ci-diagnostics/native-docking.txt",
               "native-interactions.txt": "ci-diagnostics/native-interactions.txt",
               "native-interactions.xml": "ci-diagnostics/native-interactions.xml",
