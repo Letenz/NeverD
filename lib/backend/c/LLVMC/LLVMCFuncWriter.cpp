@@ -9178,13 +9178,15 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
       return;
     }
   }
+  // Analysis-only EH still emits the same native instruction expressions.
+  // Their fallback macros and target attributes belong to every definition.
+  if (EmitFunctionWrapper)
+    OS << x86NativeFunctionPreamble(Fn);
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn) &&
       (functionHasWindowsEHPads(Fn) || functionNeedsAnalysisOnlyEHWrap(Fn))) {
     writeAnalysisOnlyFunction(Fn);
     return;
   }
-  if (EmitFunctionWrapper)
-    OS << x86NativeFunctionPreamble(Fn);
   writeFunctionProjection(Fn);
 }
 

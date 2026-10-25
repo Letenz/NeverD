@@ -36498,8 +36498,9 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   const size_t Catch = Source.find("catch (const ProbeError &e)");
   ASSERT_NE(Catch, std::string::npos) << Source;
   const auto Load = sourceLineContaining(Source, "__builtin_memcpy(&", Catch);
-  // The buffer clear, a forward REP STOSQ of zero, is memset of its bytes.
-  const auto Clear = sourceLineContaining(Source, "__builtin_memset(");
+  // The explicit REP clear and the handler access the same parent frame.
+  const auto Clear =
+      sourceLineContaining(Source, "__builtin_ia32_rep_stos_state(");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Load.empty()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
@@ -36551,8 +36552,9 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   const auto Store = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint8_t" && S.Value == "3";
   });
-  // The buffer clear, a forward REP STOSQ of zero, is memset of its bytes.
-  const auto Clear = sourceLineContaining(Source, "__builtin_memset(");
+  // The explicit REP clear and the handler access the same parent frame.
+  const auto Clear =
+      sourceLineContaining(Source, "__builtin_ia32_rep_stos_state(");
   // The update can remain compound C or be rendered as a load, add and store
   // of the member when the value passes through the SEH clause boundary.
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
@@ -41841,9 +41843,12 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
     ASSERT_FALSE(Source.empty()) << Source;
     EXPECT_EQ(Source.find("__asm { test"), std::string::npos) << Source;
     EXPECT_EQ(Source.find("struct anon_"), std::string::npos) << Source;
-    // The buffer clear, a forward REP STOS of zero, is memset of its bytes,
-    // as HighC prints it.
-    EXPECT_NE(Source.find("__builtin_memset("), std::string::npos) << Source;
+    // Analysis-only EH must keep the REP interface and its fallback macro.
+    EXPECT_NE(Source.find("__builtin_ia32_rep_stos_state("), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("#define NEVERD_X86_REP(native, ...)"),
+              std::string::npos)
+        << Source;
     EXPECT_NE(Source.find("__asm__(\"llvm.localaddress\")"), std::string::npos)
         << Source;
     // Function selection retains the emitter's exact dependency declarations.
@@ -44736,79 +44741,120 @@ TEST(HighCPointerAddresses, InterruptFlagChangesDoNotClobberRax) {
 }
 
 TEST(HighCPointerAddresses, DirectionFlagIsClearOnEntry) {
-  // Both x86 ABIs enter with DF clear, so REP MOVSB copies forward only; on
-  // Windows that is the <intrin.h> forward copy.
+  // The entry ABI supplies DF=0. Execute both source routes, including an
+  // overlapping forward copy whose repeated byte differs from memmove.
   constexpr va_t Entry = 0x140001000;
   const std::vector<uint8_t> Code = {0x48, 0x8b, 0xf9, // mov rdi, rcx
                                      0x48, 0x8b, 0xf2, // mov rsi, rdx
                                      0x49, 0x8b, 0xc8, // mov rcx, r8
                                      0xf3, 0xa4,       // rep movsb
                                      0xc3};
-  const std::string HighC =
-      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("__movsb((unsigned char *)neverd_di, "
-                       "(const unsigned char *)neverd_si, neverd_cx)"),
-            std::string::npos)
-      << HighC;
-  EXPECT_EQ(HighC.find("std"), std::string::npos) << HighC;
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    const auto Image = makeCodeFixture(Entry, Code);
+    const auto Source = LLVM ? llvmcOnlyFunction(Image, Entry, false)
+                             : highcOnlyFunction(Image, Entry);
+    EXPECT_NE(Source.find("__builtin_ia32_rep_movs_state("), std::string::npos)
+        << Source;
+    const std::string Oracle = R"(
+int main(void) {
+  unsigned char src[64], dst[64];
+  for (unsigned n = 0; n <= 32; ++n) {
+    for (unsigned i = 0; i < 64; ++i) { src[i] = i * 7 + 5; dst[i] = 0xCC; }
+    sub_140001000((uintptr_t)dst, (uintptr_t)src, n);
+    for (unsigned i = 0; i < 64; ++i)
+      if (dst[i] != (i < n ? src[i] : 0xCC)) return 1;
+    sub_140001000((uintptr_t)(src + 1), (uintptr_t)src, n);
+    for (unsigned i = 1; i <= n; ++i) if (src[i] != 5) return 2;
+    uintptr_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+    if (flags & 0x400) return 3;
+  }
+  return 0;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      source_call_execution_test::compileAndRun(
+          "#include <stdint.h>\n" + Source + Oracle,
+          {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+  }
 }
 
-TEST(HighCPointerAddresses, FlatFillsAndCopiesAreTheLibraryRoutines) {
-  // With DF clear, REP STOS of a value whose bytes are alike is memset of
-  // those bytes, and REP MOVS between frame ranges that cannot overlap is
-  // memcpy, on every target.  An overlapping forward copy repeats what it
-  // already wrote, which memcpy need not, and keeps the instruction.
+TEST(HighCPointerAddresses, FlatRepeatedFillsAndCopiesRetainMachineCompletion) {
+  // Initializing the source makes the result independent of the host stack.
+  // An overlapping forward copy must read bytes that earlier iterations wrote.
   constexpr va_t Entry = 0x140001000;
-  const std::vector<uint8_t> Fill = {
-      0x48, 0x83, 0xec, 0x48,       // sub rsp, 0x48
-      0x31, 0xc0,                   // xor eax, eax
-      0xb9, 0x08, 0x00, 0x00, 0x00, // mov ecx, 8
-      0x48, 0x89, 0xe7,             // mov rdi, rsp
-      0xf3, 0x48, 0xab,             // rep stosq
-      0x48, 0x8b, 0x44, 0x24, 0x08, // mov rax, [rsp + 8]
-      0x48, 0x83, 0xc4, 0x48,       // add rsp, 0x48
-      0xc3};                        // ret
+  const std::vector<uint8_t> Fill = {0x48, 0x83, 0xec, 0x48, 0x31, 0xc0, 0xb9,
+                                     0x08, 0x00, 0x00, 0x00, 0x48, 0x89, 0xe7,
+                                     0xf3, 0x48, 0xab, 0x48, 0x8b, 0x44, 0x24,
+                                     0x08, 0x48, 0x83, 0xc4, 0x48, 0xc3};
   const auto Copy = [](uint8_t Source, uint8_t Destination) {
-    std::vector<uint8_t> Code = {
-        0x48, 0x81, 0xec, 0x88, 0x00, 0x00, 0x00, // sub rsp, 0x88
-        0x48, 0x8d, 0x74, 0x24, 0x00,             // lea rsi, [rsp + Source]
-        0x48, 0x8d, 0x7c, 0x24, 0x00,             // lea rdi, [rsp + Dest]
-        0xb9, 0x08, 0x00, 0x00, 0x00,             // mov ecx, 8
-        0xf3, 0x48, 0xa5,                         // rep movsq
-        0x48, 0x8b, 0x44, 0x24, 0x10,             // mov rax, [rsp + 0x10]
-        0x48, 0x81, 0xc4, 0x88, 0x00, 0x00, 0x00, // add rsp, 0x88
-        0xc3};                                    // ret
-    Code[11] = Source;
-    Code[16] = Destination;
+    std::vector<uint8_t> Code = {0x48, 0x81, 0xec, 0x88, 0x00, 0x00, 0x00};
+    for (uint8_t I = 0; I != 8; ++I) {
+      const std::vector<uint8_t> Store = {
+          0x48,           0xc7, 0x84, 0x24, uint8_t(Source + I * 8), 0, 0, 0,
+          uint8_t(I + 1), 0,    0,    0};
+      Code.insert(Code.end(), Store.begin(), Store.end());
+    }
+    const std::vector<uint8_t> Tail = {0x48,
+                                       0x8d,
+                                       0x74,
+                                       0x24,
+                                       Source,
+                                       0x48,
+                                       0x8d,
+                                       0x7c,
+                                       0x24,
+                                       Destination,
+                                       0xb9,
+                                       0x08,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0xf3,
+                                       0x48,
+                                       0xa5,
+                                       0x48,
+                                       0x8b,
+                                       0x44,
+                                       0x24,
+                                       uint8_t(Destination + 8),
+                                       0x48,
+                                       0x81,
+                                       0xc4,
+                                       0x88,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0xc3};
+    Code.insert(Code.end(), Tail.begin(), Tail.end());
     return Code;
   };
-  // LLVM-C prints them alike, from the IR the optimizer folds the counts in.
-  for (const bool LLVMC : {false, true})
-    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
-      SCOPED_TRACE(static_cast<int>(Format));
-      SCOPED_TRACE(LLVMC);
-      const auto Render = [&](std::vector<uint8_t> Code) {
-        BinaryImage Img = makeCodeFixture(Entry, std::move(Code));
-        Img.Format = Format;
-        return LLVMC ? llvmcOnlyFunction(std::move(Img), Entry, /*NoOpt=*/false)
-                     : highcOnlyFunction(std::move(Img), Entry);
-      };
-      const std::string Filled = Render(Fill);
-      EXPECT_NE(Filled.find("__builtin_memset("), std::string::npos) << Filled;
-      EXPECT_NE(Filled.find(", 0, 0x40);"), std::string::npos) << Filled;
-      EXPECT_EQ(Filled.find("stos"), std::string::npos) << Filled;
-      // 0x40 bytes from rsp + 0x48 to rsp + 0x8: adjacent, apart.
-      const std::string Copied = Render(Copy(0x48, 0x08));
-      EXPECT_NE(Copied.find("__builtin_memcpy("), std::string::npos) << Copied;
-      EXPECT_NE(Copied.find(", 0x40);"), std::string::npos) << Copied;
-      EXPECT_EQ(Copied.find("movs"), std::string::npos) << Copied;
-      // From rsp + 0x10 to rsp + 0x18: the copy reads what it wrote.
-      const std::string Smeared = Render(Copy(0x10, 0x18));
-      EXPECT_NE(Smeared.find(LLVMC ? "movs_count" : "movsq"), std::string::npos)
-          << Smeared;
-      EXPECT_EQ(Smeared.find("__builtin_memcpy((void *)"), std::string::npos)
-          << Smeared;
-    }
+  for (bool LLVM : {false, true})
+    for (auto Format : {BinaryFormat::COFF, BinaryFormat::ELF})
+      for (unsigned Case = 0; Case != 3; ++Case) {
+        SCOPED_TRACE(testing::Message()
+                     << LLVM << ':' << unsigned(Format) << ':' << Case);
+        auto Image =
+            makeCodeFixture(Entry, Case == 0 ? Fill
+                                             : Copy(Case == 1 ? 0x48 : 0x10,
+                                                    Case == 1 ? 0x08 : 0x18));
+        Image.Format = Format;
+        const auto Source = LLVM ? llvmcOnlyFunction(Image, Entry, false)
+                                 : highcOnlyFunction(Image, Entry);
+        EXPECT_NE(Source.find(Case == 0 ? "__builtin_ia32_rep_stos_state("
+                                        : "__builtin_ia32_rep_movs_state("),
+                  std::string::npos)
+            << Source;
+        const auto Expected = Case == 0 ? 0 : Case == 1 ? 2 : 1;
+        const auto Oracle =
+            "\nint main(void) { return (uint64_t)sub_140001000() != " +
+            std::to_string(Expected) + "; }\n";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              "#include <stdint.h>\n" + Source + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
 }
 
 TEST(HighCPointerAddresses, StackProbesLeaveNoSelfAssignment) {
