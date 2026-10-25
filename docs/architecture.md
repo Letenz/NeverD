@@ -1408,6 +1408,12 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
+`IntegerCallArguments` adapts those placements to physical integer and stack
+positions. The LLVM call-contract owner maps them to actual operands using
+the call's recorded register-bank sizes and stack byte offsets. LLVMC shares
+that binding for record construction, scalar types and argument limits, so
+omitting unused register operands cannot shift a record's stack fields.
+Missing or ambiguous carriers fail before source emission.
 Independent declaration providers use `types::importPrototypes` at generation
 time, through `neverd_types_convert` and the standalone CLI. It imports missing
 prototypes with their dependency closure, shares structurally identical types,

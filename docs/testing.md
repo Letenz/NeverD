@@ -681,6 +681,10 @@ selected functions execute against an independent provider observing every
 record field and following parameter; whole modules are syntax-checked with
 their original import-slot aliases. Those aliases need the SDK's image linker
 for runtime binding. Other hosts explicitly skip the native glibc test.
+`RecordCallContract.LLVMOperandsKeepPhysicalStackPieceLocations` checks that
+record pieces follow the LLVM call's recorded stack byte offsets after unused
+register operands are removed. Reordered offsets retain their values; missing
+or repeated offsets, incomplete carriers and mismatched slot widths fail.
 An original linked Windows x64 record fixture also exercises hidden result
 storage through both C emitters at O0/O2. Its independent Linux host provider
 checks every argument bit, one call, the returned buffer address and surrounding

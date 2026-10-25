@@ -28,6 +28,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
 #include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
@@ -3246,8 +3247,7 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
       return Have;
     if (const auto Library = libraryCallee(Call);
         Library && Library.Name == FS->Name)
-      if (const auto Layout = libc::recordCallArguments(
-              *FS, Opts.TheArch, Opts.Format, libcVariant()))
+      if (const auto Layout = recordCallArguments(Call, *FS))
         return Clamp(Layout->Positions);
     // A pointer-encoded class return may be a real RAX pointer rather than
     // an indirect result. With no debug parameters, live integer machine
@@ -3351,11 +3351,31 @@ bool LLVMCWriter::groupedFloatingCall(const llvm::CallBase &Call,
              floatingCallType(Call.getContext(), *Floating);
 }
 
+std::optional<libc::RecordCallArguments>
+LLVMCWriter::recordCallArguments(const llvm::CallBase &Call,
+                                 const FunctionSym &Function) const {
+  auto Layout = libc::recordCallArguments(Function, Opts.TheArch, Opts.Format,
+                                          libcVariant());
+  if (!Layout || Layout->FloatingResult || groupedFloatingCall(Call, Function))
+    return Layout;
+  for (const auto &Parameter : Layout->Parameters)
+    for (const auto &Piece : Parameter.Pieces)
+      if (Piece.Floating)
+        return Layout;
+  auto Bound =
+      bindLLVMIntegerCallArguments(Call, *Layout, Opts.TheArch, Opts.Format);
+  if (!Bound)
+    throw std::runtime_error("The record call operands do not cover the "
+                             "declared locations for " +
+                             Function.Name);
+  static_cast<IntegerCallArguments &>(*Layout) = std::move(*Bound);
+  return Layout;
+}
+
 TypeRef LLVMCWriter::expectedCallArgType(const llvm::CallBase &Call,
                                          unsigned Index) const {
   if (auto FS = debugCallee(Call)) {
-    if (const auto Layout = libc::recordCallArguments(
-            *FS, Opts.TheArch, Opts.Format, libcVariant());
+    if (const auto Layout = recordCallArguments(Call, *FS);
         Layout && !groupedFloatingCall(Call, *FS)) {
       const auto Scalar =
           libc::recordCallScalarParameter(*FS, *Layout, Index, libcVariant());

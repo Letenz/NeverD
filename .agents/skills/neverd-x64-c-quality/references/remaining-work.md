@@ -571,6 +571,11 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## Established rules
 
+- Integer record calls in LLVMC bind physical ABI pieces through the shared
+  LLVM call-contract metadata. Compacted register banks and reordered stack
+  operands retain their byte locations; incomplete or ambiguous carriers
+  fail. This does not extend unsupported mixed floating record conventions.
+
 - HighC owns structured `__try` / `__except` / `__finally` and source-like
   statements. LLVMC preserves a goto projection when structure is uncertain.
 - Win64 call arguments use Microsoft register and stack rules. Debug types can
