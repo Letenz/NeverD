@@ -1739,6 +1739,133 @@ int main(void) {
 )");
 }
 
+TEST(LLVMCIntrinsicSemantics, IntegerToFloatUsesOpcodeSignednessAndWidth) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-to-floating-values", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  std::string Main = "int main(void) {\n";
+  for (unsigned FloatBits : {32U, 64U}) {
+    auto *Float =
+        FloatBits == 32 ? Builder.getFloatTy() : Builder.getDoubleTy();
+    const std::string FloatType = FloatBits == 32 ? "float" : "double";
+    for (unsigned Bits : {1U, 7U, 8U, 15U, 16U, 24U, 32U, 40U, 64U, 80U, 128U,
+                          129U, 256U, 512U}) {
+      // Keep every oracle value finite in its floating destination.
+      if (FloatBits == 32 && Bits > 64)
+        continue;
+      auto *Integer = Builder.getIntNTy(Bits);
+      const std::string Suffix =
+          std::to_string(Bits) + "_" + std::to_string(FloatBits);
+      for (bool Signed : {false, true}) {
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Float, {Integer}, false),
+            llvm::GlobalValue::ExternalLinkage,
+            (Signed ? "signed_to_float_" : "unsigned_to_float_") + Suffix,
+            Module);
+        Builder.SetInsertPoint(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        Builder.CreateRet(Builder.CreateCast(Signed ? llvm::Instruction::SIToFP
+                                                    : llvm::Instruction::UIToFP,
+                                             Function->getArg(0), Float));
+      }
+      const std::string SignValue = "0x1p" + std::to_string(Bits - 1);
+      Main += "{ typedef unsigned _BitInt(" + std::to_string(Bits) +
+              ") bits; const bits sign = (bits)1 << " +
+              std::to_string(Bits - 1) +
+              ";\n"
+              "const bits values[] = {0, 1, sign - 1, sign, ~(bits)0};\n"
+              "const " +
+              FloatType + " signed_values[] = {0, " + (Bits == 1 ? "-1" : "1") +
+              ", (" + FloatType + ")(" + SignValue + " - 1.0), -" + SignValue +
+              ", -1};\n"
+              "const " +
+              FloatType + " unsigned_values[] = {0, 1, (" + FloatType + ")(" +
+              SignValue + " - 1.0), " + SignValue + ", (" + FloatType +
+              ")(0x1p" + std::to_string(Bits) +
+              " - 1.0)};\n"
+              "for (unsigned i = 0; i != 5; ++i) {\n"
+              "if (signed_to_float_" +
+              Suffix +
+              "(values[i]) != signed_values[i]) return 1;\n"
+              "if (unsigned_to_float_" +
+              Suffix +
+              "(values[i]) != unsigned_values[i]) return 2;\n"
+              "}}\n";
+    }
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  const auto Source = "#include <stdint.h>\n" + emit(Module) + Main;
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Level, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, FloatToIntegerPreservesSignedResultBits) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("floating-to-integer-values", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  std::string Main = "int main(void) {\n";
+  for (unsigned FloatBits : {32U, 64U}) {
+    auto *Float =
+        FloatBits == 32 ? Builder.getFloatTy() : Builder.getDoubleTy();
+    const std::string FloatType = FloatBits == 32 ? "float" : "double";
+    for (unsigned Bits : {1U, 7U, 8U, 15U, 16U, 24U, 32U, 40U, 64U, 80U, 128U,
+                          129U, 256U, 512U}) {
+      if (FloatBits == 32 && Bits > 64)
+        continue;
+      auto *Integer = Builder.getIntNTy(Bits);
+      const std::string Suffix =
+          std::to_string(Bits) + "_" + std::to_string(FloatBits);
+      for (bool Signed : {false, true}) {
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Integer, {Float}, false),
+            llvm::GlobalValue::ExternalLinkage,
+            (Signed ? "float_to_signed_" : "float_to_unsigned_") + Suffix,
+            Module);
+        Builder.SetInsertPoint(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        Builder.CreateRet(Builder.CreateCast(Signed ? llvm::Instruction::FPToSI
+                                                    : llvm::Instruction::FPToUI,
+                                             Function->getArg(0), Integer));
+      }
+      const std::string SignValue = "0x1p" + std::to_string(Bits - 1);
+      Main += "{ typedef unsigned _BitInt(" + std::to_string(Bits) +
+              ") bits; const bits sign = (bits)1 << " +
+              std::to_string(Bits - 1) +
+              ";\n"
+              "const " +
+              FloatType + " signed_values[] = {-" + SignValue +
+              ", -1.75, -0.75, 0, 0.75, " + (Bits == 1 ? "0" : "1.75") + ", " +
+              SignValue +
+              " / 2};\n"
+              "const bits signed_bits[] = {sign, ~(bits)0, 0, 0, 0, " +
+              (Bits == 1 ? "0" : "1") +
+              ", sign >> 1};\n"
+              "const " +
+              FloatType + " unsigned_values[] = {-0.75, 0, 0.75, 1.75, " +
+              SignValue +
+              "};\n"
+              "const bits unsigned_bits[] = {0, 0, 0, 1, sign};\n"
+              "for (unsigned i = 0; i != 7; ++i)\n"
+              "if (float_to_signed_" +
+              Suffix +
+              "(signed_values[i]) != signed_bits[i]) return 1;\n"
+              "for (unsigned i = 0; i != 5; ++i)\n"
+              "if (float_to_unsigned_" +
+              Suffix +
+              "(unsigned_values[i]) != unsigned_bits[i]) return 2;\n"
+              "}\n";
+    }
+  }
+  Main += "return 0; }\n";
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  const auto Source = "#include <stdint.h>\n" + emit(Module) + Main;
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Level, true);
+}
+
 TEST(LLVMCIntrinsicSemantics, FloatingComparisonsReadBitcastValue) {
   llvm::LLVMContext Context;
   llvm::Module Module("floating-bitcast-comparison", Context);
