@@ -144,6 +144,9 @@ inline constexpr int kMainWindowOverviewHeight = 170;
 // Input dialogs leave room for a full name, comment or expression.
 inline constexpr int kMainWindowInputDialogWidth = 420;
 inline constexpr QSize kLocationChooserDialogSize{720, 480};
+/// The command palette; dropped from the command center, it is at least as
+/// wide as the field.
+inline constexpr QSize kCommandPaletteSize{560, 420};
 inline constexpr QSize kShortcutsDialogSize{800, 560};
 inline constexpr QSize kExportDataDialogSize{760, 520};
 

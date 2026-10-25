@@ -64,6 +64,9 @@ llvm::cl::opt<uint64_t>
 llvm::cl::opt<unsigned>
     Repetitions("repetitions", llvm::cl::init(bench::kSignatureRepetitions),
                 llvm::cl::desc("Measured scans after one discarded warmup"));
+llvm::cl::opt<unsigned> IndexRepetitions(
+    "index-repetitions", llvm::cl::init(bench::kSignatureIndexRepetitions),
+    llvm::cl::desc("Fresh index builds, including the first, before scanning"));
 llvm::cl::opt<unsigned> Threads(
     "threads", llvm::cl::init(bench::kSignatureThreads),
     llvm::cl::desc("Worker threads for parsing, indexing and scanning"));
@@ -128,6 +131,32 @@ struct ScanResult {
   std::string Digest;
   SignatureMatcher::ScanStatistics Statistics;
 };
+
+/// Fingerprint the decisions and candidate order independently of their
+/// storage layout. Hashing is outside the measured index construction.
+std::string indexDigest(const SignatureMatcher::HashIndex &Index) {
+  llvm::SHA256 Hash;
+  const auto Add = [&](uint64_t Value) {
+    std::array<uint8_t, sizeof(Value)> Bytes;
+    llvm::support::endian::write64le(Bytes.data(), Value);
+    Hash.update(Bytes);
+  };
+  Add(Index.Root);
+  Add(Index.Nodes.size());
+  for (const auto &Node : Index.Nodes) {
+    Add(Node.Offset);
+    Add(Node.WildcardChild);
+    Add(Node.ExactChildren.size());
+    for (const auto &Edge : Node.ExactChildren) {
+      Add(Edge.Value);
+      Add(Edge.Child);
+    }
+    Add(Node.Candidates.size());
+    for (size_t Candidate : Node.Candidates)
+      Add(Candidate);
+  }
+  return llvm::toHex(Hash.final(), true);
+}
 
 ScanResult scan(const BinaryImage &Image, llvm::ArrayRef<uint64_t> Entries,
                 llvm::ArrayRef<StoredModule> Modules,
@@ -228,10 +257,34 @@ llvm::Expected<llvm::json::Object> benchmark() {
                            {"bytes", int64_t(Texts[I]->getBufferSize())},
                            {"sha256", digest(Texts[I]->getBuffer())}});
   Texts.clear();
-  const auto IndexStart = Clock::now();
   SignatureMatcher::HashIndex Index;
-  Index.build(Modules);
-  const auto Indexed = Clock::now();
+  llvm::json::Array IndexTimes, IndexCPUTimes;
+  std::string IndexDigest;
+  double FirstIndexTime = 0;
+  for (unsigned I = 0; I < IndexRepetitions; ++I) {
+    // Destroy the previous index outside the timed region. Each build starts
+    // with empty storage, instead of benefiting from retained node capacity.
+    Index = SignatureMatcher::HashIndex{};
+    llvm::sys::TimePoint<> Ignored;
+    std::chrono::nanoseconds UserBefore, SystemBefore, UserAfter, SystemAfter;
+    llvm::sys::Process::GetTimeUsage(Ignored, UserBefore, SystemBefore);
+    const auto IndexStart = Clock::now();
+    Index.build(Modules);
+    const double Elapsed = milliseconds(IndexStart, Clock::now());
+    llvm::sys::Process::GetTimeUsage(Ignored, UserAfter, SystemAfter);
+    IndexTimes.push_back(Elapsed);
+    IndexCPUTimes.push_back(
+        std::chrono::duration<double, std::milli>(UserAfter + SystemAfter -
+                                                  UserBefore - SystemBefore)
+            .count());
+    const auto Digest = indexDigest(Index);
+    if (I == 0) {
+      FirstIndexTime = Elapsed;
+      IndexDigest = Digest;
+    } else if (IndexDigest != Digest) {
+      return llvm::createStringError("index changed between repetitions");
+    }
+  }
 
   const auto Warmup = scan(*Image, *Entries, Modules, Index, false);
   llvm::json::Array Times;
@@ -259,7 +312,11 @@ llvm::Expected<llvm::json::Object> benchmark() {
                             {"selected_files", std::move(Sources)},
                             {"read_ms", milliseconds(Start, Read)},
                             {"parse_ms", milliseconds(Read, Parsed)},
-                            {"index_ms", milliseconds(IndexStart, Indexed)},
+                            {"index_ms", FirstIndexTime},
+                            {"index_samples_ms", std::move(IndexTimes)},
+                            {"index_samples_cpu_ms", std::move(IndexCPUTimes)},
+                            {"index_sha256", IndexDigest},
+                            {"index_nodes", int64_t(Index.Nodes.size())},
                             {"scan_ms", std::move(Times)},
                             {"scan_cpu_ms", std::move(CPUTimes)},
                             {"hits", Warmup.Hits},
@@ -298,10 +355,10 @@ llvm::Expected<llvm::json::Object> benchmark() {
 int main(int Argc, char **Argv) {
   llvm::cl::ParseCommandLineOptions(Argc, Argv,
                                     "Signature matching benchmark\n");
-  if (Repetitions == 0 || Threads == 0 ||
+  if (Repetitions == 0 || IndexRepetitions == 0 || Threads == 0 ||
       (EntriesFile.empty() == (Stride == 0))) {
-    llvm::errs() << "Use positive repetitions/threads and exactly one of "
-                    "--entries or --stride.\n";
+    llvm::errs() << "Use positive scan/index repetitions and threads, and "
+                    "exactly one of --entries or --stride.\n";
     return 1;
   }
   setWorkerThreadCount(Threads);

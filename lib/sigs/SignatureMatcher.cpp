@@ -334,9 +334,10 @@ class IndexBuilder {
 
 public:
   template <typename ModuleRange>
-  IndexBuilder(HashIndex &Index, const ModuleRange &Modules)
-      : Index(Index), Prefixes(Modules.size()), Order(Modules.size()),
-        Spare(Modules.size()) {
+  IndexBuilder(HashIndex &Index, const ModuleRange &Modules,
+               std::vector<size_t> &CandidateOrder)
+      : Index(Index), CandidateOrder(CandidateOrder), Prefixes(Modules.size()),
+        Order(Modules.size()), Spare(Modules.size()) {
     constexpr size_t Block = SignatureLimits::IndexBuildBlock;
     neverd::parallelForEach(
         (Modules.size() + Block - 1) / Block, [&](auto Claim, size_t Total) {
@@ -395,8 +396,14 @@ public:
       neverd::runWithLargeStackThreads(Threads, Work);
 
     Index.Root = 0;
+    size_t NodeCount = 1;
+    for (const auto &Subtree : Subtrees)
+      NodeCount += Subtree.size();
+    Index.Nodes.reserve(NodeCount);
     Index.Nodes.emplace_back();
     Index.Nodes[0].Offset = static_cast<uint8_t>(Offset);
+    Index.Nodes[0].ExactChildren.reserve(Groups.size() -
+                                         (Groups.front().Key == kUnstated));
     for (size_t G = 0; G < Groups.size(); ++G) {
       const size_t Base = Index.Nodes.size();
       for (HashIndex::Node &Node : Subtrees[G]) {
@@ -416,12 +423,14 @@ private:
     return (Prefix.Stated >> Offset) & 1 ? Prefix.Bytes[Offset] : kUnstated;
   }
 
-  static size_t leaf(std::vector<HashIndex::Node> &Nodes, size_t Begin,
-                     size_t End, const std::vector<size_t> &From) {
+  size_t leaf(std::vector<HashIndex::Node> &Nodes, size_t Begin, size_t End,
+              const std::vector<size_t> &From) const {
     const size_t NodeIndex = Nodes.size();
     Nodes.emplace_back();
-    Nodes[NodeIndex].Candidates.assign(From.begin() + Begin,
-                                       From.begin() + End);
+    std::copy(From.begin() + Begin, From.begin() + End,
+              CandidateOrder.begin() + Begin);
+    Nodes[NodeIndex].Candidates =
+        llvm::ArrayRef(CandidateOrder).slice(Begin, End - Begin);
     return NodeIndex;
   }
 
@@ -430,6 +439,29 @@ private:
       Node.WildcardChild = Child;
     else
       Node.ExactChildren.push_back({static_cast<uint8_t>(Key), Child});
+  }
+
+  /// The first column where this range can differ, after a uniform column.
+  /// Read each prefix once rather than count and repartition the same range
+  /// for every byte of a shared prologue. The decision nodes still check all
+  /// stated bytes; this only avoids repeating construction work.
+  size_t commonPrefixEnd(size_t Begin, size_t End, size_t Offset,
+                         const std::vector<size_t> &From) const {
+    size_t Limit = HashIndex::kIndexedBytes;
+    if (Offset >= Limit)
+      return Limit;
+    const IndexedPrefix &First = Prefixes[From[Begin]];
+    for (size_t I = Begin + 1; I < End && Limit > Offset; ++I) {
+      const IndexedPrefix &Other = Prefixes[From[I]];
+      const uint32_t Different = (First.Stated ^ Other.Stated) >> Offset;
+      if (Different)
+        Limit = std::min(Limit, Offset + llvm::countr_zero(Different));
+      const auto Mismatch = std::mismatch(First.Bytes.begin() + Offset,
+                                          First.Bytes.begin() + Limit,
+                                          Other.Bytes.begin() + Offset);
+      Limit = Mismatch.first - First.Bytes.begin();
+    }
+    return Limit;
   }
 
   /// Decide [\p Begin, \p End) of \p From, the order its modules are in:
@@ -497,6 +529,31 @@ private:
     const size_t NodeIndex = Nodes.size();
     Nodes.emplace_back();
     Nodes[NodeIndex].Offset = static_cast<uint8_t>(Offset);
+    Nodes[NodeIndex].ExactChildren.reserve(Groups.size() -
+                                           (Groups.front().Key == kUnstated));
+    if (Groups.size() == 1) {
+      // split() skips columns that are entirely unstated, so this is an
+      // exact edge. Emit the remaining uniform columns without recounting
+      // modules. Wildcard columns need no decision node.
+      const size_t CommonEnd = commonPrefixEnd(Begin, End, Offset + 1, *From);
+      size_t Parent = NodeIndex;
+      uint16_t Key = Groups.front().Key;
+      for (size_t Column = Offset + 1; Column < CommonEnd; ++Column) {
+        const uint16_t NextKey = keyAt((*From)[Begin], Column);
+        if (NextKey == kUnstated)
+          continue;
+        const size_t Child = Nodes.size();
+        Nodes.emplace_back();
+        Nodes[Child].Offset = static_cast<uint8_t>(Column);
+        attach(Nodes[Parent], Key, Child);
+        Parent = Child;
+        Key = NextKey;
+      }
+      const size_t Child =
+          buildRange(Nodes, Count, Begin, End, CommonEnd, From, Other);
+      attach(Nodes[Parent], Key, Child);
+      return NodeIndex;
+    }
     for (const Group &G : Groups) {
       const size_t Child =
           buildRange(Nodes, Count, G.Begin, G.End, Offset + 1, From, Other);
@@ -506,6 +563,7 @@ private:
   }
 
   HashIndex &Index;
+  std::vector<size_t> &CandidateOrder;
   std::vector<IndexedPrefix> Prefixes;
   std::vector<size_t> Order, Spare;
 };
@@ -652,11 +710,15 @@ void SignatureMatcher::scanRegion(const uint8_t *Data, size_t Size,
 
 void SignatureMatcher::HashIndex::build(
     const std::vector<PatternModule> &Modules) {
-  IndexBuilder(*this, Modules).build();
+  auto Storage = std::make_shared<std::vector<size_t>>(Modules.size());
+  IndexBuilder(*this, Modules, *Storage).build();
+  CandidateStorage = std::move(Storage);
 }
 
 void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
-  IndexBuilder(*this, Modules).build();
+  auto Storage = std::make_shared<std::vector<size_t>>(Modules.size());
+  IndexBuilder(*this, Modules, *Storage).build();
+  CandidateStorage = std::move(Storage);
 }
 
 uint16_t SignatureMatcher::HashIndex::keyOf(const PatternModule &Mod) const {

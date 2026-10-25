@@ -17,7 +17,6 @@
 #include "neverd/support/LoadProgress.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
@@ -45,11 +44,24 @@
 #elif defined(__linux__)
 #include <asm/hwcap.h>
 #include <sys/auxv.h>
+#elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 #elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__) ||           \
     defined(_M_IX86)
 #define NEVERD_SHA_EXTENSIONS 1
 #include <immintrin.h>
+#if (defined(__x86_64__) || defined(_M_X64)) && !defined(_M_ARM64EC)
+#define NEVERD_SHA_X86_64 1
+#ifdef _MSC_VER
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
+#endif
 #endif
 #endif
 
@@ -67,14 +79,15 @@ namespace {
 #elif defined(__linux__)
 #define NEVERD_SHA256_LINUX_FEATURES(Features)                                 \
   constexpr unsigned long LinuxFeatures = Features;
+#elif defined(_WIN32)
+#define NEVERD_SHA256_WINDOWS_FEATURE(Feature)                                 \
+  constexpr DWORD WindowsFeature = Feature;
 #else
 #define NEVERD_SHA256_ARM_FEATURES(Features, Target)                           \
   constexpr llvm::StringLiteral TargetFeatures(Features);
 #endif
 #else
 #define NEVERD_SHA256_LANES(Name, Value) constexpr int Name = Value;
-#define NEVERD_SHA256_TARGET_FEATURES(Features)                                \
-  constexpr llvm::StringLiteral TargetFeatures(Features);
 #endif
 #include "SHA256.def"
 
@@ -127,12 +140,36 @@ bool hasTargetFeatures() {
 #elif defined(NEVERD_SHA_ARM64) && defined(__linux__)
   // The kernel's process capabilities also work without a mounted /proc.
   return (getauxval(AT_HWCAP) & LinuxFeatures) == LinuxFeatures;
+#elif defined(NEVERD_SHA_ARM64) && defined(_WIN32)
+  return IsProcessorFeaturePresent(WindowsFeature) != 0;
+#elif defined(NEVERD_SHA_X86_64)
+  // CPUID is part of the x86-64 baseline. Query only the compression owner's
+  // required leaves; constructing LLVM's complete feature map is unnecessary.
+  return detail::x86HasSHA256Features([](uint32_t Leaf, uint32_t Subleaf) {
+#ifdef _MSC_VER
+    int Registers[4];
+    __cpuidex(Registers, static_cast<int>(Leaf), static_cast<int>(Subleaf));
+    return detail::X86CPUIDResult{static_cast<uint32_t>(Registers[0]),
+                                  static_cast<uint32_t>(Registers[1]),
+                                  static_cast<uint32_t>(Registers[2]),
+                                  static_cast<uint32_t>(Registers[3])};
+#else
+    detail::X86CPUIDResult Registers;
+    __cpuid_count(Leaf, Subleaf, Registers[0], Registers[1], Registers[2],
+                  Registers[3]);
+    return Registers;
+#endif
+  });
 #else
   const llvm::StringMap<bool> Host = llvm::sys::getHostCPUFeatures();
-  llvm::SmallVector<llvm::StringRef, 4> Features;
-  TargetFeatures.split(Features, ',');
-  return llvm::all_of(Features,
-                      [&](llvm::StringRef Name) { return Host.lookup(Name); });
+#ifdef NEVERD_SHA_ARM64
+  return Host.lookup(TargetFeatures);
+#else
+  // Retain LLVM's CPUID availability handling for 32-bit x86.
+  return llvm::all_of(detail::SHA256X86Features, [&](const auto &Feature) {
+    return Host.lookup(Feature.Name);
+  });
+#endif
 #endif
 }
 
@@ -190,15 +227,15 @@ void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
 /// The function is compiled for the target features SHA256.def names, which
 /// the build need not enable; sha256() calls it only on a processor that has
 /// them.
-#if defined(_MSC_VER) && !defined(__clang__)
-#define NEVERD_SHA256_TARGET_FEATURES(Features)
-#else
-#define NEVERD_SHA256_TARGET_FEATURES(Features)                                \
-  __attribute__((target(Features)))
-#endif
+#if !defined(_MSC_VER) || defined(__clang__)
+__attribute__((target(
+#define NEVERD_SHA256_X86_FIRST_FEATURE(Name, Leaf, Subleaf, Register, Bit) Name
+#define NEVERD_SHA256_X86_FEATURE(Name, Leaf, Subleaf, Register, Bit) "," Name
 #include "SHA256.def"
-LLVM_ATTRIBUTE_NOINLINE
-void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
+    )))
+#endif
+LLVM_ATTRIBUTE_NOINLINE void compress(uint32_t *State, const uint8_t *Data,
+                                      size_t Blocks) {
   const __m128i ByteSwap =
       _mm_loadu_si128(reinterpret_cast<const __m128i *>(WordByteSwap.data()));
   __m128i Swapped = _mm_shuffle_epi32(

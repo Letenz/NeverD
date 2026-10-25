@@ -15,6 +15,7 @@
 namespace neverd::bench {
 
 inline constexpr unsigned kSignatureRepetitions = 7;
+inline constexpr unsigned kSignatureIndexRepetitions = 1;
 inline constexpr unsigned kSignatureThreads = 1;
 inline constexpr char kSignatureRoot[] = "signatures";
 

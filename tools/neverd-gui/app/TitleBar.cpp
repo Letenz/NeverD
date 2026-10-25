@@ -9,6 +9,7 @@
 #include <QMenuBar>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScopedValueRollback>
 #include <QStyle>
 #include <QWindow>
 #include <algorithm>
@@ -217,8 +218,11 @@ TitleBar::TitleBar(QWidget &window, QMenuBar *menuBar)
     commandCenter_ = new CommandCenter(window, this);
     commandCenter_->setObjectName(QStringLiteral("commandCenter"));
     connect(commandCenter_, &QAbstractButton::clicked, this, [this] {
-      if (command_)
-        command_->trigger();
+      if (!command_)
+        return;
+      const QScopedValueRollback<QPointer<QWidget>> clicked(clicked_,
+                                                            commandCenter_);
+      command_->trigger();
     });
   }
   minimize_->setObjectName(QStringLiteral("minimizeButton"));

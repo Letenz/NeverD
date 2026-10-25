@@ -31,6 +31,9 @@ public:
   void setCommandCenterText(const QString &text, const QString &toolTip);
   /// The command the command center runs when clicked.
   void setCommandCenterAction(QAction *action);
+  /// The command center while a click on it runs its command, so that what
+  /// the command opens can drop from it; null otherwise.
+  QWidget *clickedCommandCenter() const { return clicked_; }
 
   enum class WindowControl { Minimize, Maximize, Close };
   /// Shared window-control drawing for workbench, dialogs and floating panes.
@@ -73,6 +76,7 @@ private:
   QAbstractButton *maximize_;
   QAbstractButton *close_;
   QPointer<QAction> command_;
+  QPointer<QWidget> clicked_;
   /// Where the buttons begin; a dialog's title stays left of them.
   int buttonsLeft_ = 0;
   /// Where a press on the bar's empty part began a possible window move.

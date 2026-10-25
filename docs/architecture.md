@@ -879,6 +879,28 @@ Schema 9 adds the canonical `proof` marker (`nowrap` or `modular`) to each guard
 witness. Replay rederives that marker with the complete group, and paged adapters
 only present it. The v1-v4 model default omits this field and preserves their
 published charge order and serialized bytes.
+`llvm-progress-ssa-v6` extends the same owner with parameter-relative EQ/NE
+guards. `FlowProgress` accepts only the same parameter index and exact bit view,
+directly or as P+K, K+P or P-K; it does not recognize parameters by names or
+register aliases. For X=counter-P, `(counter+A) pred (P+B)` becomes
+`X pred (B-A)` in the source-width ring. The original common-exit residue proof
+then covers every concrete parameter and seed without a separate odd-step
+restriction. All guards must share the relative domain; mixed absolute/relative
+or different-parameter groups refuse. Existing nowrap and v5 modular proofs
+retain priority and markers. Bound arithmetic may ignore overflow flags only
+because their poison is consumed by the direct guard, making the concrete
+continuation set a conservative superset.
+For a hypothetical infinite defined continuation, choose an admissible fixed
+parameter and seed. Independent undef uses include those coherent choices;
+the exact PHI recurrence preserves their relative orbit. At a shared exit every
+guard must exit or become undefined, contradicting defined infinite continuation.
+This uses LLVM's [undef/branch semantics](https://llvm.org/docs/LangRef.html#undefined-values),
+not an implicit freeze. Freeze/reset barriers are not traversed; a fresh freeze
+used only to select a guard does not change the counter or parameter proof.
+Schema 10 strictly gates `parameter_modular`. Saved validation rederives it;
+fresh native binding rejects changed parameters even when the changed graph
+still has a valid progress proof. CLI/SDK/worker/Qt only select or present this
+core contract, with no independent proof logic or new resource policy.
 Fresh source binding first compares exact graph records. If LLVM PHI numbering
 changed, `FlowBinding` anchors every non-PHI operation in its existing order and
 block, then propagates a bidirectional map through ordered inputs. Every node
@@ -6265,6 +6287,19 @@ the same shared observation rule in concrete execution and source projection.
 Their unknown-size volatile memory effects keep even zero-mask instructions.
 Stack-default fault provenance remains an explicit unsupported boundary.
 
+`X86FourSource.h` owns the explicit four-source memory shape and observation
+rules. The lifter snapshots independent register inputs into one packed SSA
+operand before an aliasing write; scalar forms retain only the four observed
+low dwords. Native LLVM expands that operand to four vector arguments, while
+the C renderer owns their native-builtin/checked-assembly projection. Numerical
+execution lives under `ir/low/X86/`, retaining the existing sequential FP and
+integer algorithms. Pure COPY/CONCAT transport cannot manufacture missing
+source bytes. Compact and four-source native functions share entry-unknown
+validation; their lifters share DS-carrier address admission. C scalar integer
+carriers accommodate the complete 256-byte source group, independently of the
+64-byte compiler vector limit. Legacy implicit-bank identities stay readable
+without acquiring an unproved native source-state contract.
+
 Both source routes retain a complete constant carried by an integer RETURN
 after copy propagation. A later synthetic low-register read is not another
 machine write and cannot truncate that reaching value. The shared
@@ -11257,7 +11292,12 @@ directly from GuestThreads through LinuxServices. It owns no second scheduler.
 fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
 `LinuxProcMaps` intersects optional backing identities and device aliases with
 AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
-labels on unmap. JSON supplies explicit identity/provider declarations only.
+labels on unmap. `LinuxVMAName` owns the explicitly selected legacy Android
+anonymous-name intervals and lazy guest-pointer reads, without retaining RAM.
+Raw syscalls and Bionic wrappers share that state. GuestThreads retires its
+mappings through LinuxMemory's shared munmap path so names and backing metadata
+cannot survive address reuse. JSON supplies explicit identity/provider
+declarations only.
 See [live proc](linux-live-proc.md) for the supported fields and boundaries.
 
 `AndroidJNI` owns an opt-in workload VM, thread attachments and immutable JNI

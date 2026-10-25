@@ -2605,7 +2605,8 @@ TEST_F(BinaryDiffSDK,
        ParameterViewsStoppedAndEmptyCollectionsKeepTheirProfile) {
   for (const auto *Profile :
        {"llvm-parameter-ssa-v1", "llvm-progress-ssa-v1", "llvm-progress-ssa-v2",
-        "llvm-progress-ssa-v3", "llvm-progress-ssa-v4", "llvm-progress-ssa-v5"})
+        "llvm-progress-ssa-v3", "llvm-progress-ssa-v4", "llvm-progress-ssa-v5",
+        "llvm-progress-ssa-v6"})
     for (bool Fragments : {false, true})
       for (const auto *Phase :
            {"primary:discovery", "primary:decode", "primary:dataflow"}) {
@@ -2637,7 +2638,10 @@ TEST_F(BinaryDiffSDK,
         EXPECT_EQ(Document->getAsObject()
                       ->getObject("flow_regions")
                       ->getString("profile"),
-                  std::string(Profile) == "llvm-progress-ssa-v5"
+                  std::string(Profile) == "llvm-progress-ssa-v6"
+                      ? (Fragments ? "llvm-progress-fragments-v6"
+                                   : "llvm-progress-neighborhoods-v6")
+                  : std::string(Profile) == "llvm-progress-ssa-v5"
                       ? (Fragments ? "llvm-progress-fragments-v5"
                                    : "llvm-progress-neighborhoods-v5")
                   : std::string(Profile) == "llvm-progress-ssa-v4"
@@ -2983,7 +2987,7 @@ void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex, unsigned Version,
       << take(neverd_comparison_last_error(Reopened));
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
   for (unsigned Forgery = 0;
-       Forgery < 2 * GuardCount + 4 + (Version == 5 ? 4 : 0); ++Forgery) {
+       Forgery < 2 * GuardCount + 4 + (Version >= 5 ? 4 : 0); ++Forgery) {
     auto V = llvm::json::parse(Saved);
     auto *Proof = V->getAsObject()
                       ->getObject("dataflow")
@@ -3054,6 +3058,70 @@ TEST_F(BinaryDiffSDK, ModularProgressPagesAndAuthenticatesProofKind) {
       5, 2, "nowrap");
 }
 
+TEST_F(BinaryDiffSDK, ParameterBoundProgressPagesAndAuthenticatesProofKind) {
+  // Owned parameter_bound_progress_fixture.c, clang x64 ELF O0. Inspect only.
+  checkBranchProgress(
+      "554889e5897dfc8975f88b45fc8945f48b45fc83e00183f80074228b45fc83f0176bc007"
+      "83c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b4df40d"
+      "31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f48b45f48b4df8"
+      "83c10039c8759f8b45fc3345f883c0035dc3",
+      6, 1, "parameter_modular");
+}
+
+TEST_F(BinaryDiffSDK, ValidParameterBoundProofStillRequiresFreshSourceBinding) {
+  const auto Bytes = llvm::fromHex(
+      "554889e5897dfc8975f88b45fc8945f48b45fc83e00183f80074228b45fc83f0176bc007"
+      "83c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b4df40d"
+      "31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f48b45f48b4df8"
+      "83c10039c8759f8b45fc3345f883c0035dc3");
+  const auto Raw = llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size());
+  const auto A = input(Raw, 0x1000), B = input(Raw, 0x8000);
+  const auto Old = compare(
+      A, B,
+      R"({"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v5"}})");
+  const auto OldPage = parsed(neverd_comparison_dataflow_json(
+      Old, R"({"kind":"nodes","address":"0x1000"})"));
+  EXPECT_EQ(OldPage.getAsObject()->getObject("progress")->getString("kind"),
+            "unproven");
+  const auto C = compare(
+      A, B,
+      R"({"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v6"}})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto V = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(V));
+  auto *Graph = V->getAsObject()
+                    ->getObject("dataflow")
+                    ->getObject("primary")
+                    ->getArray("entries")
+                    ->front()
+                    .getAsObject()
+                    ->getObject("graph");
+  auto &Nodes = *Graph->getArray("nodes");
+  const auto *Loop =
+      Graph->getObject("progress")->getArray("loops")->front().getAsObject();
+  ASSERT_EQ(Loop->getString("proof"), "parameter_modular");
+  auto Replacement = Nodes[*Loop->getInteger("counter")]
+                         .getAsObject()
+                         ->getArray("inputs")
+                         ->front();
+  ASSERT_EQ((*Replacement.getAsArray())[0].getAsInteger(), 2);
+  ASSERT_EQ((*Replacement.getAsArray())[3].getAsString(), "0x0");
+  (*Replacement.getAsArray())[6] = nullptr;
+  auto &Inputs =
+      *Nodes[*Loop->getInteger("compare")].getAsObject()->getArray("inputs");
+  ASSERT_EQ((*Inputs[1].getAsArray())[3].getAsString(), "0x1");
+  Inputs[1] = std::move(Replacement);
+  // The changed target still gives a valid relative exit proof. Only binding
+  // to the original native graph can reject this replacement parameter.
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*V).c_str()), 0);
+  EXPECT_NE(take(neverd_comparison_last_error(C))
+                .find("current native SSA projection"),
+            std::string::npos);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+}
+
 TEST_F(BinaryDiffSDK, RestoresPhiNumberingWhileAuthenticatingEverySourceFact) {
   // Owned family6 x64 O2 has two header PHIs whose placement may change when
   // native SSA construction changes. The saved node IDs remain authoritative.
@@ -3064,7 +3132,7 @@ TEST_F(BinaryDiffSDK, RestoresPhiNumberingWhileAuthenticatingEverySourceFact) {
   const auto Raw = llvm::ArrayRef<uint8_t>(
       reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size());
   const auto A = input(Raw, 0x1000), B = input(Raw, 0x8000);
-  for (unsigned Version : {4, 5}) {
+  for (unsigned Version : {4, 5, 6}) {
     const auto Options = render(llvm::json::Object{
         {"discover", false},
         {"dataflow",

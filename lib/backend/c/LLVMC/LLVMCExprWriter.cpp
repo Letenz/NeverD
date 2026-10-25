@@ -162,8 +162,9 @@ std::string unsignedCmpOperand(const std::string &S) {
 std::string signedIntegerOperand(const llvm::Type *Type,
                                  const std::string &Text) {
   const unsigned Width = Type->getIntegerBitWidth();
-  if (Width > 512)
-    throw std::runtime_error("LLVMC signed operand exceeds 512-bit carrier");
+  if (Width > limits::kMaxCSourceIntegerBytes * 8)
+    throw std::runtime_error(
+        "LLVMC signed operand exceeds source carrier width");
   if (Width > 128)
     return "(_BitInt(" + std::to_string(Width) + "))(" + Text + ")";
   const unsigned Carrier = Width <= 8    ? 8
@@ -3688,8 +3689,9 @@ std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
     return "(" + Dst + ")" + Src;
   const unsigned SrcWidth = SrcTy->getIntegerBitWidth();
   const unsigned DstWidth = DstTy->getIntegerBitWidth();
-  if (SrcWidth > 512 || DstWidth > 512)
-    throw std::runtime_error("LLVMC integer cast exceeds 512-bit carrier");
+  if (SrcWidth > limits::kMaxCSourceIntegerBytes * 8 ||
+      DstWidth > limits::kMaxCSourceIntegerBytes * 8)
+    throw std::runtime_error("LLVMC integer cast exceeds source carrier width");
 
   auto Cast = [](const std::string &Type, const std::string &Text) {
     return "(" + Type + ")(" + Text + ")";
