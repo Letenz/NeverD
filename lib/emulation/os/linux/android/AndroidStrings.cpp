@@ -16,6 +16,10 @@ namespace neverd::emulation::android_model {
 BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   const uint64_t Count = A[2];
+  llvm::StringRef Name(Call.Name);
+  if ((Name == symbol::StrncpyChk || Name == symbol::StrncpyChk2) &&
+      Count > A[3])
+    return failure(diagnostic::FortifyWritePrefix + Name);
   if (!Count)
     return value(A[0]);
   if (auto E = access(A[0], Count, Write))
@@ -42,6 +46,10 @@ BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
   // Recheck the deadline after staging, before publishing any guest bytes.
   if (auto E = access(A[0], Count, Write))
     return std::move(E);
+  // API 28 checks the consumed source extent after copying, including NUL.
+  // Retain the shared model's atomic refusal instead of pre-abort writes.
+  if (Name == symbol::StrncpyChk2 && ReadCount > A[4])
+    return failure(diagnostic::FortifyReadPrefix + Name);
   if (auto E = CPU.write(A[0], Bytes))
     return std::move(E);
   return value(A[0]);

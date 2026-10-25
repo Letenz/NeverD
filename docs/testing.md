@@ -771,6 +771,16 @@ truncation, high bytes, errno, full-width and zero counts, page ends, read-only
 source/destination, overlap and dynamic provider lifetime.
 `AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
 against complete guarded guest bytes. No host libc copy is used as the oracle.
+The `Checked*` cases extend the same callers and byte oracles to
+`__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
+post-scan source check, NUL-inclusive read counts, padding, truncation, zero
+count, full-width extents, pointer/permission faults and provider lifetime.
+`AndroidStringCopyMemory.CheckedBoundsAndRefusalsAreAtomic` checks unchanged
+backing bytes for fortify, overlap, pointer, memory-limit and deadline refusal,
+including zero count and destination-check precedence over an expired budget.
+`ProcessPublic.AndroidFortifyCopyReportsMatchSDKAndCLI` compares exact bytes,
+provider identity and terminal reports through both public routes. Run these
+with the string-length, character-search, token, formatting and memory suites.
 
 `AndroidStringLength.*` checks `strlen`, `strnlen` and `__strlen_chk` using
 independent O0/O2 AArch64 callers across relocation formats and available CPU
