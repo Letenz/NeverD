@@ -1743,7 +1743,10 @@ next to an inaccessible page, bounded progress, cancellation and retry.
 `NeverDPortableDigestTests` runs the same cases with the actual SHA owner compiled
 with its private `NEVERD_SHA256_PORTABLE` test definition. No product build disables
 runtime dispatch. `NEVERD_TEST_SHA256_HARDWARE=1` requires the hardware path to be
-selected; `=0` requires fallback, and an unset variable only records selection.
+selected; `=0` requires fallback, and an unset variable allows either selection.
+On x86-64 and Windows ARM64, the selected path must independently agree with
+LLVM's host feature detector. `DigestFeatures.*` checks all combinations of the
+required x86 feature bits, unavailable CPUID leaves and reuse of a queried leaf.
 
 The digest tests can build independently with the recorded LLVM fork's Support
 and TargetParser targets, or an explicit matching `LLVM_DIR`:
@@ -1754,8 +1757,11 @@ python scripts/build.py build-digest --target NeverDDigestTests NeverDPortableDi
 ctest --test-dir build-digest --output-on-failure --no-tests=error
 ```
 
-`digest.yml` requires native ARM64 compilation and hardware selection on Linux
-(Clang/GCC), macOS and Windows (MSVC/clang-cl). Both backends must pass every case.
+`digest.yml` covers native x86-64 and ARM64 compilation on Linux (Clang/GCC),
+macOS and Windows (MSVC/clang-cl). ARM64 jobs require hardware selection;
+x86-64 jobs also qualify hosts without SHA extensions. Every job must run all
+18 cases, including the portable control, without skips. The architecture
+definitions reject an accidentally selected compiler target.
 Its CMake argument array always contains the required profile and architecture
 checks, so macOS's Bash 3.2 can expand it with `nounset` enabled.
 `NeverDGoogleTest.cmake` handles GoogleTest 1.17's character-conversion warning
@@ -1766,15 +1772,19 @@ The optional `NeverDDigestTestsBench` and `NeverDPortableDigestTestsBench` targe
 feed `unittests/digest/benchmark.py`; it alternates process order, excludes an
 initial pair, compares complete digest/consumption results, and retains seven
 paired wall/process CPU observations plus binary hashes. Run after builds and
-tests finish. These are primitive measurements, not CLI/worker/GUI latency or
+tests finish. `first_wall_ns` separately records the first digest invocation in
+each fresh process, including capability selection; buffer setup and the LLVM
+reference digest precede that timer. The warmed measurements exclude it.
+These are primitive measurements, not process startup, CLI/worker/GUI latency or
 cross-host rankings. Native runner contention and unavailable hosts remain
 qualification limits.
 
 For before/after native comparisons, dispatch `digest.yml` with the full
 `baseline_commit` SHA. It exports that commit's digest owner and headers, builds
 `NeverDBaselineDigestTests` and its `Bench` target with the candidate's compiler,
-LLVM, allocator and freshly refreshed dependency snapshot, and runs all 24 cases
-before timing. Both native owners must select hardware; `baseline-timings.json`
+LLVM, allocator and freshly refreshed dependency snapshot, and runs all 26 cases
+before timing. Both native owners must select the same implementation, with
+hardware required on ARM64; `baseline-timings.json`
 retains alternating pairs and `baseline-source.txt` binds the source commit.
 Locally, set `NEVERD_DIGEST_BASELINE_ROOT` to the exported source tree and pass
 `--baseline` to `benchmark.py`. This option only adds test targets; it does not
@@ -1783,7 +1793,12 @@ select an older dependency revision or replace the product's digest owner.
 The ARM64 compression follows the [Arm ACLE SHA256 intrinsics](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#sha256).
 Linux detection uses the [kernel HWCAP contract](https://docs.kernel.org/arch/arm64/elf_hwcaps.html).
 Darwin detection uses Apple's [instruction-set capability query](https://developer.apple.com/documentation/kernel/1387446-sysctlbyname/determining_instruction_set_characteristics);
-Windows detection uses LLVM's mapping of [processor feature availability](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent).
+Windows ARM64 detection queries [processor feature availability](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent)
+directly, retaining LLVM's SHA2 mapping. x86-64 checks only the required
+[CPUID](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex) leaves,
+after querying the maximum supported basic leaf. The compiler target string,
+CPUID requirements and 32-bit x86 LLVM fallback share `SHA256.def`'s feature
+inventory. These cached admission queries do not change the compression loops.
 
 `SessionCAPITest.Exports*` checks complete export JSON spelling, row order and
 duplicates, zero and high addresses, the full ordinal width, escaped and invalid
