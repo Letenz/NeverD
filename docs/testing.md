@@ -53,6 +53,10 @@ pair its own compile test and every LAR/LSL destination width its own completion
 test. The split preserves both C routes, LLVM output, O0/O2, and all register,
 memory, success/failure and optimized/unoptimized descriptor cases within the
 ordinary per-test timeout. NeverC variants still require `NEVERD_TEST_NEVERC`.
+The AMX format-compilation and native completion/fault matrices likewise register
+each encoding separately, retaining all formats, both pipeline optimization
+settings and every source/native route. Parameter names retain the instruction
+and encoding index instead of process-specific diagnostic object bytes.
 
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
