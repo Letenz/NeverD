@@ -9072,6 +9072,22 @@ TEST(ObjCSourceBindings, OriginalReadOnlyTablesRejectInvalidAccessOrDomain) {
   }
 }
 
+TEST(ObjCSourceBindings,
+     OriginalReadOnlyTableIndexProofDoesNotCoverImmediateAccess) {
+  // These original loads use +16 and -16 encoded byte offsets. A zero raw
+  // index cannot prove that an access starts at the table base.
+  for (uint32_t Word : {0xf9400900U, 0xf85f0100U}) {
+    auto F =
+        originalReadonlyTableFixture(Word, Intrinsic::A64_LoadImmediate, 8, 8);
+    auto &Load = F.Function.Body[0].Body[0].RetVal;
+    Load->Operands[1] = HighExpr::makeConst(0, 8);
+    ASSERT_TRUE(aarch64AddressMemoryHighShapeIsValid(*Load));
+    EXPECT_TRUE(readOnlyScalarLoadPlans(F.Function, F.Image).empty());
+    EXPECT_TRUE(
+        bindObjCSourceReferences(F.Function, F.Image).BorrowedBytes.empty());
+  }
+}
+
 TEST(ObjCSourceBindings, OriginalReadOnlyTablePublicationRechecksUses) {
   for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
     SCOPED_TRACE(Mutation);

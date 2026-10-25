@@ -415,6 +415,50 @@ void compileMemoryC(
   }
 }
 
+// The native drivers pass machine words. Source type recovery may expose an
+// address as a pointer; adapt only those call arguments after the unchanged
+// emitted bodies. Each argument is evaluated once, and the original-word
+// oracle, complete memory comparisons and compiler diagnostics stay intact.
+void nativePointerArguments(llvm::raw_ostream &Out, llvm::StringRef Name,
+                            llvm::ArrayRef<bool> Pointers) {
+  if (llvm::none_of(Pointers, [](bool Pointer) { return Pointer; }))
+    return;
+  Out << "\n#define " << Name << '(';
+  for (size_t I = 0; I < Pointers.size(); ++I)
+    Out << (I ? ", " : "") << "a" << I;
+  Out << ") " << Name << '(';
+  for (size_t I = 0; I < Pointers.size(); ++I) {
+    Out << (I ? ", " : "");
+    if (Pointers[I])
+      Out << "(void *)(uintptr_t)";
+    Out << "(a" << I << ')';
+  }
+  Out << ")\n";
+}
+
+void nativePointerArguments(llvm::raw_ostream &Out,
+                            llvm::ArrayRef<HighFunc> Functions) {
+  for (const auto &Function : Functions) {
+    llvm::SmallVector<bool, 4> Pointers;
+    for (const auto &Parameter : Function.Params)
+      Pointers.push_back(Parameter.Type &&
+                         Parameter.Type->Kind == NdTypeKind::Ptr);
+    nativePointerArguments(Out, Function.Name, Pointers);
+  }
+}
+
+void nativePointerArguments(llvm::raw_ostream &Out,
+                            const llvm::Module &Module) {
+  for (const auto &Function : Module) {
+    if (Function.isDeclaration())
+      continue;
+    llvm::SmallVector<bool, 4> Pointers;
+    for (const auto &Parameter : Function.args())
+      Pointers.push_back(Parameter.getType()->isPointerTy());
+    nativePointerArguments(Out, Function.getName(), Pointers);
+  }
+}
+
 std::string memorySource(const MedFunc &Function, llvm::Module &Module,
                          bool LLVMRoute) {
   CEmitterOptions Options;
@@ -422,11 +466,13 @@ std::string memorySource(const MedFunc &Function, llvm::Module &Module,
   Options.Format = BinaryFormat::MachO;
   std::string Source;
   llvm::raw_string_ostream Out(Source);
-  if (LLVMRoute)
+  if (LLVMRoute) {
     EXPECT_TRUE(LLVMCEmitter().emit(Module, Out, Options));
-  else {
+    nativePointerArguments(Out, Module);
+  } else {
     const auto High = MedToHighConverter().convert(Function, Arch::AArch64);
     EXPECT_TRUE(HighCEmitter().emit({High}, Out, Options));
+    nativePointerArguments(Out, {High});
   }
   return Source;
 }
@@ -1911,18 +1957,20 @@ void executeVectorMemoryBatch(VectorMemoryMode Mode) {
       CEmitterOptions Options;
       Options.TheArch = Arch::AArch64;
       Options.Format = BinaryFormat::MachO;
-      std::string Source;
-      llvm::raw_string_ostream Out(Source);
-      if (LLVMRoute)
+      std::string Source, Adapters;
+      llvm::raw_string_ostream Out(Source), AdapterOut(Adapters);
+      if (LLVMRoute) {
         ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
-      else {
+        nativePointerArguments(AdapterOut, *Module);
+      } else {
         std::vector<HighFunc> High;
         for (const auto &Function : Functions)
           High.push_back(MedToHighConverter().convert(Function, Arch::AArch64));
         ASSERT_TRUE(HighCEmitter().emit(High, Out, Options));
+        nativePointerArguments(AdapterOut, High);
       }
 #if defined(__APPLE__) && defined(__aarch64__)
-      compileMemoryC(Source + Harness, true);
+      compileMemoryC(Source + Adapters + Harness, true);
 #else
       compileMemoryC(Source, false);
 #endif
@@ -2367,20 +2415,22 @@ TEST(AArch64VectorAddressMemory,
     CEmitterOptions Options;
     Options.TheArch = Arch::AArch64;
     Options.Format = BinaryFormat::MachO;
-    std::string Source;
-    llvm::raw_string_ostream Out(Source);
-    if (LLVMRoute)
+    std::string Source, Adapters;
+    llvm::raw_string_ostream Out(Source), AdapterOut(Adapters);
+    if (LLVMRoute) {
       ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
-    else {
+      nativePointerArguments(AdapterOut, *Module);
+    } else {
       std::vector<HighFunc> High;
       for (const auto &Function : Functions)
         High.push_back(MedToHighConverter().convert(Function, Arch::AArch64));
       ASSERT_TRUE(HighCEmitter().emit(High, Out, Options));
+      nativePointerArguments(AdapterOut, High);
     }
 #if defined(__APPLE__) && defined(__aarch64__)
-    compileMemoryC(Source + Harness, true);
+    compileMemoryC(Source + Adapters + Harness, true);
 #else
-    compileMemoryC(Source + Harness, false);
+    compileMemoryC(Source + Adapters + Harness, false);
 #endif
   }
   const auto Object =
@@ -2721,20 +2771,22 @@ TEST(AArch64ImmediateMemory,
     CEmitterOptions Options;
     Options.TheArch = Arch::AArch64;
     Options.Format = BinaryFormat::MachO;
-    std::string Source;
-    llvm::raw_string_ostream Out(Source);
-    if (LLVMRoute)
+    std::string Source, Adapters;
+    llvm::raw_string_ostream Out(Source), AdapterOut(Adapters);
+    if (LLVMRoute) {
       ASSERT_TRUE(LLVMCEmitter().emit(*Module, Out, Options));
-    else {
+      nativePointerArguments(AdapterOut, *Module);
+    } else {
       std::vector<HighFunc> High;
       for (const auto &Function : Functions)
         High.push_back(MedToHighConverter().convert(Function, Arch::AArch64));
       ASSERT_TRUE(HighCEmitter().emit(High, Out, Options));
+      nativePointerArguments(AdapterOut, High);
     }
     SaveArtifact(LLVMRoute ? kImmediateLLVMCArtifact : kImmediateHighCArtifact,
                  Source);
 #if defined(__APPLE__) && defined(__aarch64__)
-    compileMemoryC(Source + Harness, true);
+    compileMemoryC(Source + Adapters + Harness, true);
 #else
     compileMemoryC(Source, false);
 #endif

@@ -61,7 +61,8 @@ loadPlan(const ExprPtr &E, bool Bound, bool ObjectPointers, Arch Architecture) {
       aarch64AddressMemoryHighShapeIsValid(*E)) {
     Original = aarch64AddressMemoryInstruction(
         E->Operands[kAddressMemoryWordOperand]->ConstVal);
-    if (!Original->isLoad() || Original->stackBase())
+    if (!Original->isLoad() || Original->stackBase() ||
+        !Original->hasRegisterIndex())
       return std::nullopt;
   }
   if ((!Original && (!ordinary(E) || E->Kind != ExprKind::Load ||
