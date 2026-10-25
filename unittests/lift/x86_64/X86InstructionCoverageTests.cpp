@@ -136,7 +136,10 @@ TEST(X86InstructionCoverage, PinnedDecoderCorpusHasExplicitLiftResults) {
       std::vector<LowOp> Ops;
       if (I.Id == X86_INS_RETF || I.Id == X86_INS_RETFQ ||
           I.Id == X86_INS_IRET || I.Id == X86_INS_IRETD ||
-          I.Id == X86_INS_IRETQ) {
+          I.Id == X86_INS_IRETQ || I.Id == X86_INS_SYSENTER ||
+          I.Id == X86_INS_SYSEXIT || I.Id == X86_INS_SYSEXITQ ||
+          I.Id == X86_INS_SYSRET || I.Id == X86_INS_SYSRETQ ||
+          I.Id == X86_INS_RSM) {
         EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
         EXPECT_TRUE(Ops.empty());
         ++Refused;

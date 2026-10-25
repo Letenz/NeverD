@@ -992,12 +992,8 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     S.emitIntrinsic(Intrinsic::Wrpkru, NdVar());
     break;
   case X86_INS_SYSEXITQ:
-    S.emitIntrinsic(Intrinsic::Sysexitq);
-    break;
   case X86_INS_SYSRETQ:
-    // Control leaves for user mode; no value falls through.
-    S.emitIntrinsic(Intrinsic::Sysretq, NdVar());
-    break;
+    return false; // Requires the complete nonlocal machine-state boundary.
   case X86_INS_WBNOINVD:
     S.emitIntrinsic(Intrinsic::Wbnoinvd, NdVar());
     break;

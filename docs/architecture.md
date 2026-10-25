@@ -6209,6 +6209,10 @@ ENCLU's entry, exit, resume and asynchronous continuation remain unsupported.
 Far/interrupt returns do not use the bounded system contract or ordinary ABI
 RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
 and its nonlocal continuation are represented.
+The same boundary excludes SYSENTER/SYSEXIT/SYSRET and RSM, including permissive
+decoding. Legacy nonlocal intrinsic IDs retain their serialized identities;
+LowIR validation, MedIR conversion, verification and both source routes reject
+them before an ordinary return, generic syscall or bare assembly can be emitted.
 The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
 Their historical intrinsic IDs remain stable. Both enqueue operands are
 addresses; only the command-source address inherits FS/GS, while the portal

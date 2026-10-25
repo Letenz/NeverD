@@ -27,6 +27,7 @@
 #include "neverd/ir/intrinsics/RuntimeRoutineIntrinsics.h"
 #include "neverd/ir/intrinsics/X86/X64Syscall.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -802,6 +803,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
         if (isAArch64ExceptionReturnIntrinsic(Id))
           throw LowToMedConversionError(kAArch64ExceptionReturnUnsupported);
+        if (const char *Reason = x86NonlocalControlTransferReason(Id))
+          throw LowToMedConversionError(Reason);
         if (isX86BoundedLeafPending(Id))
           throw LowToMedConversionError(X86BoundedLeafUnproven);
         if (isX86BoundedLeafIntrinsic(Id)) {
