@@ -2298,6 +2298,37 @@ the disposable compositor. The native gesture case explicitly skips with the
 offscreen platform. These tests do not qualify release chronology, fresh native
 authentication or automated patch presence.
 
+`scripts/benchmark_binary_lineage.py` retains native synthetic ELF inputs and
+their exact reports for repeatable scale checks. Each snapshot has the same
+independently named/addressed functions with changed immediate returns. A chain,
+shortcuts and a reverse comparison exercise cyclic and parallel association
+paths. The harness verifies every generated match, complete paged function and
+trace inventories, independently calculated shortest distances, every original
+edge, current cache budgets, cancelled metadata replacement and exact source
+export before accepting a timing sample.
+
+```sh
+python3 scripts/benchmark_binary_lineage.py generate \
+  --neverd build-release/bin/neverd --compiler /path/to/clang \
+  --snapshots 16 --functions 10000 --output-dir build-release/lineage-corpus
+python3 scripts/benchmark_binary_lineage.py run \
+  --library build-release/bin/libneverd.so --corpus build-release/lineage-corpus \
+  --repeats 3 --output-dir build-release/lineage-timing
+```
+
+Use a completed Release build. Reuse the same corpus directory across builds;
+generation itself includes native comparison and is outside lineage timings.
+Output directories must be new, and input/library changes or failed graph checks
+prevent an aggregate result. Each sample runs in a fresh process with the shared
+engine's default allowances. The report separates first admission, function
+paging, first trace page, cached pages/edges, source reuse, export and return from
+commit-boundary cancellation. A cold handle does not imply an empty filesystem
+cache. Peak RSS is the whole Python process, including corpus verification and
+oracle data; it is not an engine-only allocation measurement. Preserve corpus,
+library and harness hashes, dependency receipts and host load alongside results.
+These synthetic measurements do not qualify matching accuracy, GUI latency,
+release chronology, arbitrary large application corpora or competitive rankings.
+
 Build `NeverDBinaryDiffTests`, `NeverDBinaryDiffFlowPipelineTests`,
 `NeverDBinaryDiffSDKTests`, `neverd`,
 `neverd-worker` and, with Qt enabled, `neverd-gui-comparison-tests`.
