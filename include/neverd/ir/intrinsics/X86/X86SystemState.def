@@ -38,6 +38,9 @@ NEVERD_X86_SYSTEM_STATE(X86TlbSync, "tlbsync", Void, -1)
 // These IDs are allocated outside this inventory. Consumers opt in without
 // renumbering their serialized IDs or duplicating their name tables.
 #ifdef NEVERD_X86_EXISTING_SYSTEM_STATE
+NEVERD_X86_EXISTING_SYSTEM_STATE(Clac, "clac", Void, -1)
+NEVERD_X86_EXISTING_SYSTEM_STATE(Stac, "stac", Void, -1)
+NEVERD_X86_EXISTING_SYSTEM_STATE(Xend, "xend", Void, -1)
 NEVERD_X86_EXISTING_SYSTEM_STATE(CetWrss, "wrss", ShadowWrite, 0)
 NEVERD_X86_EXISTING_SYSTEM_STATE(CetWruss, "wruss", ShadowWrite, 0)
 NEVERD_X86_EXISTING_SYSTEM_STATE(Enqcmd, "enqcmd", Enqueue, 0)

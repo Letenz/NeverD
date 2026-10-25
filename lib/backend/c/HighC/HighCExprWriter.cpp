@@ -27,6 +27,7 @@
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PointerC.h"
 #include "neverd/backend/c/render/X86/X87GuardedValueRender.h"
@@ -35,6 +36,7 @@
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/high/HighIntegerProjection.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86/X86ShadowStackShape.h"
@@ -1133,6 +1135,13 @@ std::string HighCWriter::integerView(const HighExpr &E, const TypeRef &To,
                                      int ParentPrec) {
   const uint16_t Width = To->Size;
   const bool Signed = To->IsSigned;
+  if (isPlainInteger(E.Type) && Width && Width < E.Type->Size && Width < 8) {
+    auto Original = std::make_shared<HighExpr>(E);
+    auto Projected =
+        projectHighIntegerBits(Original, (uint64_t{1} << (Width * 8)) - 1);
+    if (Projected != Original)
+      return integerView(*Projected, To, ParentPrec);
+  }
   const HighExpr *Source = &lowBytesSource(E, Width);
   std::string Text = exprStr(*Source, ParentPrec);
   if (Source != &E && !integerText(*Source, Text)) {
@@ -1157,6 +1166,13 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
   if (!isPlainInteger(To))
     return std::nullopt;
   const uint16_t Width = To->Size;
+  if (isPlainInteger(E.Type) && Width && Width < E.Type->Size && Width < 8) {
+    auto Original = std::make_shared<HighExpr>(E);
+    auto Projected =
+        projectHighIntegerBits(Original, (uint64_t{1} << (Width * 8)) - 1);
+    if (Projected != Original)
+      return integerView(*Projected, To, 0);
+  }
   const HighExpr &Source = lowBytesSource(E, Width);
   // A literal is spelled as the value it converts to.
   if (Source.Kind == ExprKind::Const && isPlainInteger(Source.Type)) {
@@ -2154,6 +2170,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                    : "__asm__ volatile(\"" + Instruction + "\" ::: \"memory\")";
     }
 
+    if (isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+        (Opts.TheArch != Arch::AArch64 ||
+         !aarch64AddressMemoryHighShapeIsValid(E)))
+      throw std::invalid_argument(kAddressMemoryMalformed);
     if (isAArch64PAuthLoadIntrinsic(E.IntrinsicId) &&
         (Opts.TheArch != Arch::AArch64 || !aarch64PAuthLoadHighShapeIsValid(E)))
       throw std::invalid_argument(kPAuthLoadMalformed);
@@ -2245,6 +2265,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     auto Rendered = renderIntrinsicCall(
         E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
         HasCIntrinsics, Opts.Format != BinaryFormat::COFF, OpBytes);
+    if (!Rendered.empty() && isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+        E.Type && E.Type->Kind == NdTypeKind::Ptr)
+      return llvm::formatv(kAddressLoadCPointerCast, typeToC(E.Type), Rendered)
+          .str();
     if (!Rendered.empty())
       return Rendered;
   }

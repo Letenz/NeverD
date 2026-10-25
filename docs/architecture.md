@@ -101,6 +101,45 @@ use. Separate target attributes would discard one group's requirements in a
 mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP
 comparison completion in long mode requires LAHF/SAHF on both native and
 assembly routes, and its `sahf` attribute survives every capability combination.
+SHA-256 vector projections participate in the same feature set, including the
+SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
+shape before selecting a compiler intrinsic.
+
+Source LLVM may retain loaded-image data in one external byte array, preserving
+overlapping scalar fields, pointer cells and original address differences.
+`LLVMOriginalImageStorage.h` owns the marker and its admission checks. This is
+an original-image source view, not a relocated reconstruction: native emission,
+relocatable objects and escaped address fragments retain their separate guards.
+The SDK includes this choice in its per-function LLVM cache key.
+
+Source unknown entry values use distinct opaque SSA seeds. A copy or PHI may
+transport an unavailable value without observing it; a real observation still
+requires its availability. Callee-save restoration follows those uses through
+dead copies and joins, while calls, exceptional entries and actual consumers
+retain their evidence. Native reconstruction does not acquire a machine-entry
+contract from these source seeds.
+
+After all native exception edges exist, the LLVM emitter removes an entry seed
+only when its private slot has one later definition dominating every read.
+This keeps SSA promotion from recomputing whole-function dominance frontiers
+for already defined temporaries. Bypassed definitions, first loop iterations,
+ordered accesses and escaping storage retain the original seed.
+
+LowIR owns x64 internal-call return proofs. Replaced-PC tail transfers require
+an exact write to the pushed return slot and a checked parent stack. Bounded
+closed recursive groups must preserve every invocation's return slot and
+ordinary preserved registers; unknown calls, memory writes or stack offsets
+cannot supply that proof. COFF stack-probe allocation recovery similarly uses
+the decoded subtraction and unwind-prologue boundary, sharing the decoded
+callee register-effect authority across frame analyses.
+
+LLVM-to-C assigns split Windows protected ranges to blocks independently of
+LLVM block order. Shared handlers remain outside protected scopes, normal-edge
+PHI copies retain their original destinations, and inconsistent incoming scope
+states are refused. Unsupported C scope layouts throw a recoverable emission
+error instead of terminating the embedding process. Source-only unresolved SEH
+frames remain explicitly marked in LLVM and C; native emission still refuses
+them without the missing runtime stack contract.
 
 X86 LLVM assembly that modifies arithmetic flags declares `~{flags}`. LLVM's
 x86 register constraint parser does not map `~{cc}` to EFLAGS; an apparently
@@ -140,6 +179,12 @@ entries and unwind frame starts; a frame that begins later, a chained row or a
 cold fragment cannot supply an independent callable identity. Next-entry bounds
 use those primary identities as well. Explicitly selecting code for analysis
 retains its separate decode and admission checks.
+COFF `IMAGE_SCN_CNT_CODE` is instruction-storage evidence independently of
+page execute permission. Ownership, selected pipeline entries and SDK batch
+selection share that distinction without changing the image's page flags.
+A completed SDK discovery run reconciles provisional loader boundary guesses
+against the detector result. Stated symbols and user-created or renamed
+identities remain; a later catalog rebuild cannot resurrect a refuted guess.
 Patch/lift output requires every explicitly selected entry to survive into
 MedIR before LLVM emission. Automatically included exception callbacks cannot
 substitute for a rejected parent. Failures retain the entry's audit disposition
@@ -311,6 +356,38 @@ explicit operand and clobber constraints. Compilation does not establish CPU
 feature availability. These operations preserve call argument setup and frame taint,
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
+
+`AArch64AddressMemory.def` owns original ordinary-memory operations. The first
+owned family is 64-bit `LDR Xt, [Xn, Xm, LSL #0/#3]`: its raw index and original
+word remain one effectful operation through LowIR, MedIR, LLVM and both C routes.
+The real load retains AddressAdd's access-EL checks and any internal
+AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
+The address is unknown to generic memory proofs, and discarding the result
+cannot discard the access or its possible fault. The scalar operation preserves
+local Z/P values and earlier call arguments other than its explicit output.
+Both native compiler routes use fixed separate input/output registers, preserving
+source aliases and the encoded scale. SP provenance is retained in IR, but
+execution projection refuses it without its alignment and tagging environment.
+The software tracer admits a finite image/RAM read only when the authoritative
+address owner proves identical address bits for CPTA on/off and every internal
+CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
+in both modes, including a poisoned or tagged base whose unchecked sum appears
+mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
+Swift receiver proofs consume a validated read with an explicit result, without
+granting purity or removing the access. Jump-table recovery
+requires the same control-independent address proof for every admitted physical
+slot, an exact table base and a full-width bound on the raw index. Its existing
+root, mutation and storage audits still apply. Both source routes consume the
+authenticated load's input occurrence, preserving zero indices and an index
+register overwritten by the load.
+Private-copy source replay recomputes stack-access annotations from the current
+MedIR body; a stale prologue-save flag cannot hide an edited store from that
+independent machine replay.
+This instruction preservation observes the execution host's controls; it does not model foreign
+EL/SCTLR2/translation state or preserve exception-PC and syndrome register
+identity. Other ordinary-memory families remain unqualified for CPA2, as does
+controlled native execution with CPTA enabled. The owner follows the pinned
+[Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
 their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
@@ -1968,7 +2045,10 @@ from the selected allocator backend.
 compilation and records the actual commits for qualification and installation.
 The private text helper uses Highway only after an inline short-run scan and
 simdutf only to prove that an entire UTF-8 span needs no repair. Existing string
-metadata and byte-preserving repair remain authoritative. Transport parsing
+metadata and byte-preserving repair remain authoritative. Metadata normalization
+keeps already-valid UTF-8 in its existing string storage; both owned and copied
+text use the same valid-prefix scanner and malformed-byte escape implementation.
+Transport parsing
 copies validated simdjson values into the owned nlohmann DOM and checks decoded
 keys during object insertion. Floating-point tokens and negative zero retain
 the original numeric parser; refused SIMD input uses the original admission path.
@@ -6047,6 +6127,11 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The existing CLAC/STAC and XEND IDs use this contract too. They produce no
+scalar result and remain ordered memory effects in both source routes. SMAP
+controls change hidden AC state while preserving arithmetic flags; transaction
+commit and its possible abort remain native. Native LLVM uses the corresponding
+intrinsics, and RTM intrinsic names select the code generator's RTM feature.
 The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
 INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
 returns CF and the lifter clears its other arithmetic flags. LKGS selector and
@@ -7691,6 +7776,13 @@ their per-call views borrow the existing Bionic state. Kernel bindings stay in
 with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
 do not need vocabulary entries.
+
+`AndroidFormatting` owns both ordinary and fortify string formatting. Its
+entrypoint classification supplies the fixed-argument layout and object-size
+checks to one formatter and the shared AAPCS64 `ArgumentReader`; it does not
+duplicate conversion rules for checked imports, dynamic providers, SDK or CLI.
+Fortify paths requiring unmodeled process-abort effects stop before publishing
+output. Existing memory, deadline and representable-result limits still apply.
 
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
@@ -11382,3 +11474,8 @@ The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter in
 Core retains exact root/offset relations through complete registers and frame spills, intersects them at joins and forgets overwritten or possibly corrupted relations. Fresh node roots restore only retained relations; lost entry bindings are never recreated. Physical frame addresses and native stack offsets remain frame-only. `ProveStoreFrameSeparation` separately proves that each complete executed write misses the frame, including wide, conditional atomic and full segmented addresses. Declarations grant no unchecked store exemption. Preparation, operations and symbolic nodes use existing budgets. Raw integrity binds every declaration field and order; an empty vector preserves the prior digest encoding. Ordinary source and native proof consumers still refuse this raw domain.
 
 Before original calls, `SourceFrameAnalysis` can observe proven private bytes on x64/ARM64 in a bounded, call-free, acyclic prefix. `observeSourceFrameBytes` authenticates immutable image loads without relocations; HighC and LLVM C show terminated text as comments without changing operations. Exact alignment guards remain active. These observations grant no ABI or native-rewrite authority.
+
+Entry-stack offset recovery accepts a narrower scalar displacement only when
+its nonnegative value is independent of sign or zero extension. Pointer
+provenance and negative narrow constants cannot certify a frame offset. The
+same proof supplies stack annotations and saved-register recovery.

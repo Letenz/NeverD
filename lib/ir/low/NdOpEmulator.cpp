@@ -20,7 +20,9 @@
 #include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/X86/X87GuardedValue.h"
 #include "neverd/ir/X86/X87Stack.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86/X86Regs.h"
 
@@ -494,6 +496,28 @@ bool NdOpEmulator::step(const LowOp &Op) {
   if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
       Op.Inputs[0].isConst()) {
     const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+    if (isAArch64AddressMemoryIntrinsic(Id)) {
+      if (Img.Arch != Arch::AArch64 || !lowAArch64AddressMemoryShapeIsValid(Op))
+        return false;
+      const auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
+      const auto &Index = Op.Inputs[kAddressMemoryIndexOperand + 1];
+      if ((!Base.isConst() && !Registers.contains(Base.Offset)) ||
+          (!Index.isConst() && !Registers.contains(Index.Offset)))
+        return false;
+      const auto Instruction = aarch64AddressMemoryInstruction(
+          Op.Inputs[kAddressMemoryWordOperand + 1].Offset);
+      const auto Address = Instruction->controlIndependentAddress(
+          readOperand(Base), readOperand(Index));
+      if (!Address)
+        return false;
+      // The finite image/RAM model already owns byte availability. This
+      // private execution view does not rewrite or remove the original IR.
+      LowOp Load = Op;
+      Load.Opcode = NdOp::LOAD;
+      Load.NumInputs = 1;
+      Load.Inputs[0] = NdVar::cst(*Address, kAddressMemoryPointerBytes);
+      return executeLoad(Load);
+    }
     if (isX86SystemStateIntrinsic(Id)) {
       switch (x86SystemStateContract(Id).Kind) {
       case X86SystemStateKind::Enqueue:

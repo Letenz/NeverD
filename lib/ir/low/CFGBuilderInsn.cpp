@@ -617,6 +617,49 @@ void CFGBuilder::rewriteOwnInteriorReturn(const BinaryImage &Img,
   Rec.Immediate = It->second.Continuation;
 }
 
+void CFGBuilder::rewriteOwnInteriorTailReturn(const BinaryImage &Img,
+                                              InsnRecord &Rec) {
+  if (!OwnInteriorTailReturns.count(Rec.Addr))
+    return;
+  const auto *Segment = Img.getSegmentFor(Rec.Addr);
+  if (Img.Arch != Arch::X64 || !Segment || Rec.Addr < Segment->VA ||
+      Rec.Addr - Segment->VA >= Segment->Data.size() ||
+      Segment->Data[Rec.Addr - Segment->VA] != 0xc3 || Rec.Size != 1 ||
+      !Rec.IsRet || Rec.IsCall || Rec.IsCond || Rec.Ops.size() != 1 ||
+      Rec.Ops.front().Opcode != NdOp::RETURN) {
+    UnsupportedInstructionAddresses.insert(Rec.Addr);
+    return;
+  }
+  const auto &TRI = getTargetRegInfo(Img.Arch);
+  const NdVar SP = NdVar::reg(TRI.StackPointer, TRI.PointerSize);
+  // A decoded RET has no other temporary. LowToMed keeps its instruction
+  // identity distinct from temporaries used by the preceding STORE.
+  const NdVar Target = NdVar::tmp(0, TRI.PointerSize);
+  LowOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.Output = Target;
+  Load.addInput(SP);
+  LowOp Pop;
+  Pop.Opcode = NdOp::INT_ADD;
+  Pop.Output = SP;
+  Pop.addInput(SP);
+  Pop.addInput(NdVar::scalar(TRI.PointerSize, TRI.PointerSize));
+  LowOp Call;
+  Call.Opcode = NdOp::INDIR_CALL;
+  Call.Output = NdVar::reg(TRI.IntReturnReg, TRI.PointerSize);
+  Call.addInput(Target);
+  LowOp Return = Rec.Ops.front();
+  Rec.Ops = {Load, Pop, Call, Return};
+  for (size_t I = 0; I < Rec.Ops.size(); ++I) {
+    Rec.Ops[I].Addr = Rec.Addr;
+    Rec.Ops[I].Seq = I;
+  }
+  Rec.IsCall = Rec.IsRet = Rec.IsIndirect = true;
+  Rec.IsBranch = Rec.IsCond = false;
+  Rec.BranchTarget = InvalidVA;
+  Rec.Immediate.reset();
+}
+
 void CFGBuilder::rewriteAsIndirectTailCall(InsnRecord &Rec) {
   if (!CurrentImg)
     return;

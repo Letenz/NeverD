@@ -17,6 +17,7 @@
 
 #include "neverd/ir/low/CFGBuilder.h"
 
+#include "PrologueStackAllocation.h"
 #include "X86/RegistrationSEHControl.h"
 
 #include "neverd/Limits.h"
@@ -637,6 +638,112 @@ bool CFGBuilder::codeFollowsTrap(const Decoder &Dec, va_t Next) {
   }
 }
 
+std::set<va_t>
+CFGBuilder::proveClosedOwnSubroutines(const BinaryImage &Img) const {
+  if (Img.Arch != Arch::X64 || OwnInteriorCallSites.empty())
+    return {};
+  const auto *Owner = Img.ExceptionMetadata.findFunction(CurrentFuncEntry);
+  if (!Owner || Owner->Kind != RuntimeFunctionKind::Primary ||
+      Owner->CodeRange.Begin != CurrentFuncEntry ||
+      !Owner->describesUnwindOnly() ||
+      !exceptionEncodingBoundsOneFunction(Owner->Encoding) ||
+      Owner->CodeRange.End <= CurrentFuncEntry ||
+      Owner->CodeRange.End - CurrentFuncEntry >
+          limits::ir::kOwnInteriorReturnProofBytes ||
+      OwnInteriorCallSites.size() >=
+          limits::ir::kOwnInteriorReturnProofFunctions)
+    return {};
+  std::set<va_t> Entries{CurrentFuncEntry};
+  for (const auto &[Target, Sites] : OwnInteriorCallSites) {
+    if (!Owner->CodeRange.contains(Target))
+      return {};
+    Entries.insert(Target);
+  }
+  Decoder Dec;
+  if (!Dec.init(Img))
+    return {};
+  StackFrameModel Model(getTargetRegInfo(Img.Arch), Img.abiFormat());
+  Model.CallsKeepStackPointer = true;
+  for (va_t Entry : Entries) {
+    CFGBuilder Builder;
+    Builder.SkipCalleeRegisterProofs = true;
+    Builder.setKnownFuncEntries(&Entries);
+    Builder.setExecutableCodeOwnerIndex(ExecutableCodeOwners);
+    const LowFunc Body = Builder.buildIntegerFrameProof(Img, Dec, Entry, "");
+    if (Body.Blocks.empty() || !Body.hasCompleteLiftCoverage() ||
+        !Body.UnsafeIndirectBranchAddresses.empty())
+      return {};
+    std::vector<std::optional<StackOffsetState>> In(Body.Blocks.size());
+    In.front() = StackOffsetState{{Model.StackPointer, {0, 0, 0}}};
+    solveStackOffsets(Model, Body, In);
+    bool HasReturn = false;
+    for (size_t B = 0; B < Body.Blocks.size(); ++B) {
+      const auto &Block = Body.Blocks[B];
+      if (!In[B] || !Owner->CodeRange.contains(Block.StartAddr) ||
+          Block.EndAddr > Owner->CodeRange.End ||
+          !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+        return {};
+      StackOffsetState State = *In[B];
+      bool Returns = false;
+      for (const LowOp &Op : Block.Ops) {
+        if (Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INDIR_BR ||
+            Op.Opcode == NdOp::INTRINSIC)
+          return {};
+        if (Op.Output.isReg() && Op.Output.Offset != Model.TRI->StackPointer &&
+            Model.TRI->isCallPreserved(Op.Output.Offset, Op.Output.Size,
+                                       Model.Format))
+          return {}; // No invented ordinary ABI for a custom register helper.
+        const auto SP = State.find(Model.StackPointer);
+        if (Op.Opcode == NdOp::CALL) {
+          // Simultaneous induction over the closed group: every callee can
+          // write only below its entry SP, and returns through its unchanged
+          // entry PC. No assumption about an external callee enters the proof.
+          if (!Op.NumInputs || !Op.Inputs[0].isConst() ||
+              !Entries.count(Op.Inputs[0].Offset) || SP == State.end() ||
+              SP->second.Base != 0 || SP->second.Hi > 0)
+            return {};
+        } else if (Op.Opcode == NdOp::RETURN) {
+          if (SP == State.end() || SP->second != StackOffsetRange{0, 0, 0})
+            return {};
+          const Segment *Segment = Img.getSegmentFor(Op.Addr);
+          if (!Segment || Op.Addr < Segment->VA ||
+              Op.Addr - Segment->VA >= Segment->Data.size())
+            return {};
+          const uint8_t Opcode = Segment->Data[Op.Addr - Segment->VA];
+          // A synthetic tail return belongs to a direct CALL in this group;
+          // all physical returns must be the plain full-width near RET.
+          const bool Tail = llvm::any_of(Block.Ops, [&](const LowOp &Call) {
+            return Call.Addr == Op.Addr && Call.Opcode == NdOp::CALL;
+          });
+          if (Opcode != 0xC3 && !Tail)
+            return {};
+          Returns = HasReturn = true;
+        } else if (Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::ATOMIC_XCHG ||
+                   Op.Opcode == NdOp::ATOMIC_ADD ||
+                   Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+          const auto Memory = lowMemoryOperands(Op);
+          if (!Memory.Complete || !Memory.Address ||
+              Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+            return {};
+          const auto Address =
+              State.find({Memory.Address->Space, Memory.Address->Offset,
+                          Memory.Address->Size});
+          if (Address == State.end() || Address->second.Base != 0 ||
+              Address->second.Hi > -int64_t(Memory.AccessSize))
+            return {};
+        }
+        transferStackOffsets(Model, Op, State);
+      }
+      if (Block.Succs.empty() && !Returns)
+        return {};
+    }
+    if (!HasReturn)
+      return {};
+  }
+  Entries.erase(CurrentFuncEntry);
+  return Entries;
+}
+
 CFGBuilder::OwnInteriorCallVerdict
 CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
                                      const LowFunc &Func) const {
@@ -699,6 +806,84 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
       Verdict.Unproven = Addr;
   };
 
+  // A retpoline replaces an internal call's pushed PC, then pops it as an
+  // indirect tail transfer. Prove the architectural slot and the enclosing
+  // ABI stack independently: a matching SP alone says nothing about either
+  // PC. Keep the STORE and the eventual LOAD, including their fault effects.
+  if (Img.Arch == Arch::X64 && Func.hasCompleteLiftCoverage())
+    for (size_t B = 0; B < N; ++B) {
+      const auto &Block = Func.Blocks[B];
+      if (!FromEntry[B] || Block.Ops.empty())
+        continue;
+      const va_t Address = Block.Ops.back().Addr;
+      if (Block.Ops.back().Opcode != NdOp::RETURN)
+        continue;
+      const auto *Segment = Img.getSegmentFor(Address);
+      if (!Segment || Address < Segment->VA ||
+          Address - Segment->VA >= Segment->Data.size() ||
+          Segment->Data[Address - Segment->VA] != 0xc3 ||
+          Block.EndAddr != Address + 1)
+        continue;
+      size_t ReturnIndex = Block.Ops.size() - 1;
+      while (ReturnIndex && Block.Ops[ReturnIndex - 1].Addr == Address)
+        --ReturnIndex;
+      if (!ReturnIndex)
+        continue;
+      const LowOp &Store = Block.Ops[ReturnIndex - 1];
+      if (Store.Opcode != NdOp::STORE || Store.NumInputs != 2 ||
+          Store.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          Store.Inputs[1].Size != M.Width || !Store.Inputs[1].isReg())
+        continue;
+      StackOffsetState Before = *FromEntry[B];
+      for (size_t I = 0; I + 1 < ReturnIndex; ++I)
+        transferStackOffsets(M, Block.Ops[I], Before);
+      const auto Slot =
+          Before.find({Store.Inputs[0].Space, Store.Inputs[0].Offset,
+                       Store.Inputs[0].Size});
+      const auto SP = Before.find(StackPointerKey);
+      const StackOffsetRange PushedSlot{0, -int64_t(M.Width),
+                                        -int64_t(M.Width)};
+      if (Slot == Before.end() || SP == Before.end() ||
+          Slot->second != PushedSlot || SP->second != PushedSlot)
+        continue;
+      bool Valid = true;
+      std::vector<bool> Seen(N, false);
+      std::vector<size_t> Pending{B};
+      while (Valid && !Pending.empty()) {
+        const size_t P = Pending.back();
+        Pending.pop_back();
+        if (Seen[P])
+          continue;
+        Seen[P] = true;
+        const LowBlock &Parent = Func.Blocks[P];
+        if (!FromEntry[P] || !Parent.ExceptionalPreds.empty() ||
+            (P != 0 &&
+             (Parent.Preds.empty() ||
+              Func.ModuleAnalysisRoots.count(Parent.StartAddr) ||
+              Func.OrdinaryModuleAnalysisRoots.count(Parent.StartAddr)))) {
+          Valid = false;
+          break;
+        }
+        StackOffsetState State = *FromEntry[P];
+        for (const LowOp &Op : Parent.Ops) {
+          if (P == B && Op.Addr == Address)
+            break;
+          if (mayWriteOwnReturnSlot(M, Op, State)) {
+            Valid = false;
+            break;
+          }
+          transferStackOffsets(M, Op, State);
+        }
+        for (int Pred : Parent.Preds)
+          if (Pred < 0 || size_t(Pred) >= N)
+            Valid = false;
+          else
+            Pending.push_back(size_t(Pred));
+      }
+      if (Valid)
+        Verdict.TailReturns.insert(Address);
+    }
+
   std::vector<bool> ReachedByAny(N, false);
   std::set<va_t> NonlocalReturns;
   for (const auto &[Target, Sites] : OwnInteriorCallSites) {
@@ -745,7 +930,7 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     if (!Seed)
       continue;
 
-    std::set<va_t> ReplayedReturns;
+    std::set<va_t> ReplayedReturns = Verdict.TailReturns;
     for (const auto &[Address, Return] : OwnInteriorReturns)
       if (Return.Target == Target)
         ReplayedReturns.insert(Address);
@@ -800,6 +985,10 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
       StackOffsetState Parent =
           FromEntry[B] ? *FromEntry[B] : StackOffsetState{};
       for (const LowOp &Op : Func.Blocks[B].Ops) {
+        if (Op.Seq == 0 && Verdict.TailReturns.count(Op.Addr)) {
+          Discards = true;
+          break;
+        }
         const bool Replayed = Op.Seq == 0 && ReplayedReturns.count(Op.Addr);
         if (Op.Opcode == NdOp::RETURN || Replayed) {
           auto SP = S.find(StackPointerKey);
@@ -972,7 +1161,8 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     StackOffsetState S = *FromEntry[B];
     for (const LowOp &Op : Func.Blocks[B].Ops) {
       if (Op.Opcode == NdOp::RETURN) {
-        if (Verdict.Returns.count(Op.Addr))
+        if (Verdict.Returns.count(Op.Addr) ||
+            Verdict.TailReturns.count(Op.Addr))
           continue;
         auto SP = S.find(StackPointerKey);
         if (SP != S.end() && SP->second.Base == 0 && SP->second.Hi < 0) {
@@ -997,6 +1187,7 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
   // Anything else makes the return that breaks the proof unsupported.
   KeptOwnInteriorCallTargets.clear();
   OwnInteriorReturns.clear();
+  OwnInteriorTailReturns.clear();
   RegistrationCallees.reset();
   X87CallEffects.reset();
   for (;;) {
@@ -1004,6 +1195,9 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
     if (OwnInteriorCallSites.empty())
       return Func;
     OwnInteriorCallVerdict Verdict = classifyOwnInteriorCalls(Img, Func);
+    for (va_t Address : OwnInteriorTailReturns)
+      if (!Verdict.TailReturns.count(Address))
+        Verdict.Unproven = Address;
     for (const auto &[Address, Return] : OwnInteriorReturns)
       if (auto It = Verdict.Returns.find(Address);
           It == Verdict.Returns.end() || It->second != Return)
@@ -1013,11 +1207,17 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
                                         Verdict.Subroutines.end());
       continue;
     }
-    if (!Verdict.Unproven && Verdict.Returns != OwnInteriorReturns) {
+    if (!Verdict.Unproven && (Verdict.Returns != OwnInteriorReturns ||
+                              Verdict.TailReturns != OwnInteriorTailReturns)) {
       OwnInteriorReturns = std::move(Verdict.Returns);
+      OwnInteriorTailReturns = std::move(Verdict.TailReturns);
       continue;
     }
     if (Verdict.Unproven) {
+      if (const auto Closed = proveClosedOwnSubroutines(Img); !Closed.empty()) {
+        KeptOwnInteriorCallTargets.insert(Closed.begin(), Closed.end());
+        continue;
+      }
       Func.UnprovenReturnAddresses.push_back(*Verdict.Unproven);
       if (!llvm::is_contained(Func.UnsupportedInstructionAddresses,
                               *Verdict.Unproven))
@@ -1091,6 +1291,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   JumpTableProofContextComplete = false;
   RequestedCompleteJumpTableProof = false;
   PersistentCFGRoots.clear();
+  CalleePreservedGPRs.clear();
   OrdinaryCFGRoots.clear();
   DurableCFGRoots.clear();
   CurrentExceptionalEntries.clear();
@@ -2050,6 +2251,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   LLVM_DEBUG(llvm::dbgs() << "CFG built: " << Func.Blocks.size()
                           << " blocks for " << Func.Name << " @ 0x"
                           << llvm::utohexstr(Func.Entry) << "\n");
+  canonicalizePrologueStackAllocation(Img, Func);
   return Func;
 }
 
@@ -2560,6 +2762,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       if (Rec.IsCall && !Rec.IsIndirect && Rec.Immediate)
         rewriteOwnInteriorCall(Img, Rec, Next);
       rewriteOwnInteriorReturn(Img, Rec);
+      rewriteOwnInteriorTailReturn(Img, Rec);
 
       // Keep recursive CFG exploration consistent with the decoder's
       // architecture-specific terminator classification.  Trap instructions

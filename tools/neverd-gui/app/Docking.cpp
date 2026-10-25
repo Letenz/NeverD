@@ -391,6 +391,22 @@ class DockTitleBar final : public KDDockWidgets::QtWidgets::TitleBar {
 public:
   using TitleBar::TitleBar;
 
+  void addToolbar(QWidget &toolbar) {
+    toolbar.setParent(this);
+    toolbar.setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    m_layout->insertWidget(m_layout->indexOf(moveArea_), &toolbar);
+    toolbar_ = &toolbar;
+    captionFocusPolicy_ = focusPolicy();
+    // A toolbar button must act on the current pane. Mouse focus on the
+    // caption otherwise activates the floating window's first dock instead.
+    setFocusPolicy(Qt::TabFocus);
+    toolbar.installEventFilter(this);
+    // Keep a control-sized patch available for moving even on small screens.
+    moveArea_->setMinimumWidth(
+        ::neverd::limits::gui_config::kTitleBarButtonWidth);
+    toolbar.show();
+  }
+
 protected:
   void init() override {
     TitleBar::init();
@@ -448,6 +464,13 @@ protected:
   }
 
   bool eventFilter(QObject *object, QEvent *event) override {
+    if (object == toolbar_ && event->type() == QEvent::ParentChange &&
+        toolbar_->parentWidget() != this) {
+      toolbar_->removeEventFilter(this);
+      toolbar_.clear();
+      setFocusPolicy(captionFocusPolicy_);
+      moveArea_->setMinimumWidth(0);
+    }
     if (object == moveArea_) {
       if (event->type() == QEvent::MouseButtonDblClick &&
           static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
@@ -530,6 +553,8 @@ private:
   }
 
   QAbstractButton *maximize_ = nullptr;
+  QPointer<QWidget> toolbar_;
+  Qt::FocusPolicy captionFocusPolicy_ = Qt::NoFocus;
   QToolButton *lock_ = nullptr;
   QWidget *moveArea_ = nullptr;
 };
@@ -633,6 +658,18 @@ void configureDocking() {
   config.setViewFactory(new DockViewFactory);
   config.setDragAboutToStartFunc(beginDockDrag);
   config.setDragEndedFunc(endDockDrag);
+}
+
+bool addFloatingWindowToolbar(QWidget &window, QWidget &toolbar) {
+  auto *floating =
+      qobject_cast<KDDockWidgets::QtWidgets::FloatingWindow *>(&window);
+  if (!floating)
+    return false;
+  auto *caption = KDDockWidgets::QtCommon::View_qt::asQWidget(
+      floating->floatingWindow()->titleBar()->view());
+  // configureDocking installs this caption for every floating window.
+  static_cast<DockTitleBar *>(caption)->addToolbar(toolbar);
+  return true;
 }
 
 QMargins dockAreaMargins() { return DockAreaMargins; }

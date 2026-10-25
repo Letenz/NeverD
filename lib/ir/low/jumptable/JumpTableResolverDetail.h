@@ -33,6 +33,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/symbolic/SymExpr.h"
 
@@ -46,6 +47,18 @@
 #include <vector>
 
 namespace neverd {
+
+/// This identifies an encoded read, not an unchecked effective address.
+/// Address-role adoption separately proves its base, complete native-width
+/// selector bound and CPA2 control independence.
+inline std::optional<AArch64AddressMemoryInstruction>
+originalAArch64TableLoad(const LowOp &Operation) {
+  if (!lowAArch64AddressMemoryShapeIsValid(Operation))
+    return std::nullopt;
+  const auto Instruction = aarch64AddressMemoryInstruction(
+      Operation.Inputs[kAddressMemoryWordOperand + 1].Offset);
+  return Instruction->stackBase() ? std::nullopt : Instruction;
+}
 
 struct BinaryImage;
 struct RelocatedAddressField;

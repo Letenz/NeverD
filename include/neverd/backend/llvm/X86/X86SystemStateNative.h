@@ -16,17 +16,33 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace neverd {
 
+/// RTM builtins and LLVM instruction selection require the same CPU feature.
+inline bool isX86RtmNativeName(std::string_view Name) {
+  return Name == "llvm.x86.xbegin" || Name == "llvm.x86.xend" ||
+         Name == "llvm.x86.xabort" || Name == "llvm.x86.xtest";
+}
+
 inline constexpr Intrinsic X86SystemStateNativeInventory[] = {
-    Intrinsic::X86ClearTaskSwitched,   Intrinsic::X86WriteMsrNonSerializing,
-    Intrinsic::X86ReadMsrList,         Intrinsic::X86WriteMsrList,
-    Intrinsic::X86LoadKernelGs,        Intrinsic::X86LoadKernelGsMemory,
-    Intrinsic::X86InvalidateBroadcast, Intrinsic::X86TlbSync,
-    Intrinsic::X86LoadAccessRights,    Intrinsic::X86LoadAccessRightsMemory,
-    Intrinsic::X86LoadSegmentLimit,    Intrinsic::X86LoadSegmentLimitMemory};
+    Intrinsic::Xend,
+    Intrinsic::Clac,
+    Intrinsic::Stac,
+    Intrinsic::X86ClearTaskSwitched,
+    Intrinsic::X86WriteMsrNonSerializing,
+    Intrinsic::X86ReadMsrList,
+    Intrinsic::X86WriteMsrList,
+    Intrinsic::X86LoadKernelGs,
+    Intrinsic::X86LoadKernelGsMemory,
+    Intrinsic::X86InvalidateBroadcast,
+    Intrinsic::X86TlbSync,
+    Intrinsic::X86LoadAccessRights,
+    Intrinsic::X86LoadAccessRightsMemory,
+    Intrinsic::X86LoadSegmentLimit,
+    Intrinsic::X86LoadSegmentLimitMemory};
 
 struct X86SystemStateNative {
   X86SystemStateAsm Assembly;

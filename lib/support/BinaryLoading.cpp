@@ -27,7 +27,7 @@ using namespace llvm;
 namespace neverd {
 
 void normalizeBinaryMetadata(BinaryImage &Img) {
-  auto Normalize = [](std::string &Text) { Text = escapeInvalidUTF8(Text); };
+  auto Normalize = [](std::string &Text) { escapeInvalidUTF8InPlace(Text); };
 
   for (auto &Seg : Img.Segments)
     Normalize(Seg.Name);

@@ -21,7 +21,6 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QScopedValueRollback>
 #include <QScreen>
 #include <QSurfaceFormat>
 #include <QTimer>
@@ -188,12 +187,20 @@ void WindowFrame::setWindowState(Qt::WindowStates states) {
   restoreMaximized_ = false;
   restoreScreenTimedOut_ = false;
   if (states.testFlag(Qt::WindowFullScreen) && !window_.isFullScreen()) {
-    beforeFullScreen_ = states & ~Qt::WindowFullScreen;
+    beforeFullScreen_ = window_.windowState() & Qt::WindowMaximized;
     normalBeforeFullScreen_ = window_.normalGeometry();
     fullScreenScreen_ = handle_.screen();
     if (fullScreenScreen_) {
       fullScreenAvailable_ = fullScreenScreen_->availableGeometry();
       fullScreenScreenGeometry_ = fullScreenScreen_->geometry();
+    }
+    if (QGuiApplication::platformName() == QLatin1String("windows") &&
+        beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
+      // Qt shares one saved rectangle between frameless maximization and
+      // full screen. Enter through normal size to retain the restore frame.
+      window_.showNormal();
+      window_.showFullScreen();
+      return;
     }
   } else if (window_.isFullScreen() && states == Qt::WindowMaximized &&
              (QGuiApplication::platformName() == QLatin1String("cocoa") ||
@@ -214,6 +221,8 @@ void WindowFrame::setWindowState(Qt::WindowStates states) {
 }
 
 void WindowFrame::toggleFullScreen() {
+  if (restoreMaximized_)
+    return;
   setWindowState(window_.isFullScreen()
                      ? beforeFullScreen_
                      : window_.windowState() | Qt::WindowFullScreen);
@@ -281,10 +290,10 @@ void WindowFrame::syncWindowState() {
   const auto states = handle_.windowStates();
   if (states == states_)
     return;
-  // A synchronous zoom notification caused by our own setGeometry is part
-  // of this gesture. Retain its grab so a reversal can leave the size bound.
-  if (!resizingGeometry_ ||
-      (states & (Qt::WindowFullScreen | Qt::WindowMinimized)))
+  // Cocoa can infer a maximized state when a drag reaches its size limit,
+  // including a notification delivered after setGeometry returns. Keep the
+  // held gesture so it can shrink back; full screen and minimization end it.
+  if (states & (Qt::WindowFullScreen | Qt::WindowMinimized))
     finishResize();
   states_ = states;
   updateMargins();
@@ -382,7 +391,6 @@ void WindowFrame::resizeTo(QPoint globalPosition) {
     if (resizing_ & Qt::TopEdge)
       next.moveBottom(resizeGeometry_.bottom());
   }
-  const QScopedValueRollback<bool> sizing(resizingGeometry_, true);
   window_.setGeometry(next);
 }
 

@@ -300,6 +300,19 @@ private slots:
       send(QEvent::MouseMove, global + delta * 100);
       QCOMPARE(window.width(), delta.x() ? 500 : original.width());
       QCOMPARE(window.height(), delta.y() ? 400 : original.height());
+      // Cocoa may classify the constrained maximum as a zoomed window.
+      // Reproduce that notification on the headless backend as well.
+      if (platform == QLatin1String("offscreen")) {
+        window.windowHandle()->setWindowStates(Qt::WindowMaximized);
+        QWindowStateChangeEvent maximized(Qt::WindowNoState);
+        QCoreApplication::sendEvent(window.windowHandle(), &maximized);
+      }
+      QVERIFY(QWidget::mouseGrabber() == &window);
+      if (platform == QLatin1String("offscreen")) {
+        window.windowHandle()->setWindowStates(Qt::WindowNoState);
+        QWindowStateChangeEvent restored(Qt::WindowMaximized);
+        QCoreApplication::sendEvent(window.windowHandle(), &restored);
+      }
       if (restartAtMaximum) {
         send(QEvent::MouseButtonRelease, global + delta * 100);
         const QPoint edge(edges & Qt::LeftEdge    ? 2

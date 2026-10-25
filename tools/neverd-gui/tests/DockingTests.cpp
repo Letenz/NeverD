@@ -8,13 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "Docking.h"
+#include "NativeWindowStates.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
 #include "WindowFrame.h"
-
-#ifdef Q_OS_MACOS
-#include "NativeWindowState.h"
-#endif
 
 #include <QApplication>
 #include <QCursor>
@@ -741,17 +738,20 @@ private slots:
                                        "throw Error('window did not restore');")
                             .arg(nativeWindow(*floating))));
     QTRY_COMPARE(floating->size(), normalSize);
+    test::NativeWindowStates applied(*floating->windowHandle());
 #ifdef Q_OS_MACOS
     QVERIFY(neverd::gui::test::setNativeFullScreen(*floating, true));
 #else
     floating->showFullScreen();
 #endif
+    QTRY_VERIFY_WITH_TIMEOUT(applied.is(Qt::WindowFullScreen), 10000);
     QTRY_VERIFY(floating->isFullScreen());
 #ifdef Q_OS_MACOS
     QVERIFY(neverd::gui::test::setNativeFullScreen(*floating, false));
 #else
     floating->showNormal();
 #endif
+    QTRY_VERIFY_WITH_TIMEOUT(applied.is(Qt::WindowNoState), 10000);
     QTRY_VERIFY(!floating->isFullScreen());
     QTRY_COMPARE(floating->size(), normalSize);
     QVERIFY(desktop.titleBar());
@@ -880,6 +880,15 @@ private slots:
       moved &= pointer.move(desktop.Window, destination, true);
     });
     QTimer::singleShot(550, &desktop.Window, [&] {
+      preview = area->currentDropLocation() == location;
+      if (!preview)
+        qWarning() << "Drop target mismatch: requested" << location << "actual"
+                   << int(area->currentDropLocation()) << "cursor"
+                   << QCursor::pos() << "destination"
+                   << desktop.Window.mapToGlobal(destination) << "workbench"
+                   << desktop.Window.geometry() << "floating"
+                   << floating->geometry() << "overlay visible"
+                   << area->dropIndicatorOverlay()->isVisible();
       const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
       if (!captures.isEmpty()) {
         QDir().mkpath(captures);
@@ -898,8 +907,10 @@ private slots:
                QStringLiteral("org.gnome.Shell.Screenshot.Screenshot"),
                QStringLiteral("false"), QStringLiteral("false"),
                captures + "/" + name + "-desktop.png"});
+        else
+          desktop.Window.screen()->grabWindow(0).save(captures + "/" + name +
+                                                      "-desktop.png");
       }
-      preview = area->currentDropLocation() == location;
       recordDrag("before release");
       released = pointer.button(desktop.Window, destination, false);
     });

@@ -97,7 +97,7 @@ private:
   QMargins margins_;
   /// The window states the window system last applied.
   Qt::WindowStates states_;
-  Qt::WindowStates beforeFullScreen_;
+  Qt::WindowStates beforeFullScreen_ = Qt::WindowNoState;
   QPointer<QScreen> fullScreenScreen_;
   QRect fullScreenAvailable_;
   QRect fullScreenScreenGeometry_;
@@ -108,7 +108,6 @@ private:
   bool restoreScreenTimedOut_ = false;
   Qt::Edges shown_;
   Qt::Edges resizing_;
-  bool resizingGeometry_ = false;
   QPoint resizeOrigin_;
   QRect resizeGeometry_;
 };

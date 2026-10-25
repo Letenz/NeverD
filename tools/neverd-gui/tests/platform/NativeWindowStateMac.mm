@@ -9,7 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "../NativeWindowState.h"
+#include "../NativeWindowStates.h"
 
 #import <AppKit/AppKit.h>
 #include <QGuiApplication>

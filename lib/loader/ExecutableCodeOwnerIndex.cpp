@@ -250,7 +250,13 @@ bool BinaryImage::hasExecutableCodeOwnerAt(
     va_t Addr, const ExecutableCodeOwnerIndex *Index) const {
   const va_t Normalized = normalizeCodeAddress(Addr, Arch, Mode);
   const Segment *Seg = getSegmentFor(Normalized);
-  if (!Seg || !Seg->isExecutable())
+  if (!Seg)
+    return false;
+  // COFF's code-content declaration is structural analysis provenance, not
+  // permission to execute the original mapping. Keep the page flags intact.
+  if (Format == BinaryFormat::COFF && isCodeAddress(Normalized))
+    return true;
+  if (!Seg->isExecutable())
     return false;
   if (const ARMCodeRegion *Region = armMappingRegionAt(Normalized);
       Region && Region->Kind == ARMCodeRegionKind::Data)

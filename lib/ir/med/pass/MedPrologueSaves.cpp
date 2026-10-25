@@ -52,6 +52,8 @@ ValueKey keyOf(const MedVar &V) { return {V.Kind, V.Id, V.SSAVer}; }
 struct ValueReads {
   std::map<ValueKey, std::vector<const MedOp *>> Ops;
   std::set<ValueKey> Others;
+  std::map<ValueKey, std::vector<ValueKey>> PhiOutputs;
+  std::set<ValueKey> ImplicitReads;
 
   explicit ValueReads(const MedFunc &Func) {
     auto Note = [&](const MedVar &V, const MedOp *By) {
@@ -64,10 +66,15 @@ struct ValueReads {
     };
     for (const MedBlock &Block : Func.Blocks) {
       for (const PhiNode &Phi : Block.Phis) {
-        for (const auto &Incoming : Phi.Args)
+        for (const auto &Incoming : Phi.Args) {
           Note(Incoming.second, nullptr);
-        if (Phi.ExceptionalEntry)
+          if (!Incoming.second.isConst() && Incoming.second.Id >= 0)
+            PhiOutputs[keyOf(Incoming.second)].push_back(keyOf(Phi.Output));
+        }
+        if (Phi.ExceptionalEntry) {
           Note(*Phi.ExceptionalEntry, nullptr);
+          ImplicitReads.insert(keyOf(*Phi.ExceptionalEntry));
+        }
       }
       for (const MedOp &Op : Block.Ops)
         for (unsigned I = 0; I < Op.NumInputs; ++I)
@@ -76,11 +83,47 @@ struct ValueReads {
     for (const MedCallClobber &Clobber : Func.CallClobbers) {
       Note(Clobber.Value, nullptr);
       Note(Clobber.PreservedInput, nullptr);
+      ImplicitReads.insert(keyOf(Clobber.Value));
+      ImplicitReads.insert(keyOf(Clobber.PreservedInput));
     }
   }
 
   bool unread(const MedVar &V) const {
     return !Ops.count(keyOf(V)) && !Others.count(keyOf(V));
+  }
+
+  /// Callee-save restores may flow through dead copies and joins. Scratch
+  /// restores still use unread(): later ABI recovery can observe their
+  /// register writes implicitly, so they need the separate overwrite proof.
+  bool onlyDeadCopies(const MedVar &V, size_t &Budget) const {
+    std::vector<ValueKey> Pending{keyOf(V)};
+    std::set<ValueKey> Seen;
+    while (!Pending.empty()) {
+      if (!Budget)
+        return false;
+      --Budget;
+      const ValueKey Key = Pending.back();
+      Pending.pop_back();
+      if (!Seen.insert(Key).second)
+        continue;
+      if (ImplicitReads.count(Key))
+        return false;
+      if (const auto It = Ops.find(Key); It != Ops.end())
+        for (const MedOp *Read : It->second) {
+          if (!Budget || Read->Opcode != NdOp::COPY || Read->NumInputs != 1 ||
+              Read->Output.Id < 0)
+            return false;
+          --Budget;
+          Pending.push_back(keyOf(Read->Output));
+        }
+      if (const auto It = PhiOutputs.find(Key); It != PhiOutputs.end()) {
+        if (It->second.size() > Budget)
+          return false;
+        Budget -= It->second.size();
+        Pending.insert(Pending.end(), It->second.begin(), It->second.end());
+      }
+    }
+    return true;
   }
 
   const MedOp *singleReader(const MedVar &V) const {
@@ -164,6 +207,7 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
 
   frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
 
+  size_t ReadBudget = limits::ir::kSourceEntrySpillWork;
   std::vector<MedOp *> Saves;
   for (const FrameAccess &Save : Stores) {
     const MedVar &Saved = Save.Op->Inputs[1];
@@ -193,14 +237,15 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
       if (Read.Offset != Save.Offset || Read.Size != Saved.Size)
         return false;
       const MedVar &Out = Read.Op->Output;
-      if (Reads.unread(Out))
+      if (Reads.onlyDeadCopies(Out, ReadBudget))
         return true;
       const MedOp *Reader = Reads.singleReader(Out);
       if (SameRegister(Out) || !Reader)
         return false;
       const MedOp &Copy = *Reader;
       return Copy.Opcode == NdOp::COPY && Copy.NumInputs == 1 &&
-             SameRegister(Copy.Output) && Reads.unread(Copy.Output);
+             SameRegister(Copy.Output) &&
+             Reads.onlyDeadCopies(Copy.Output, ReadBudget);
     });
     if (OnlyRestored)
       Saves.push_back(Save.Op);
@@ -675,6 +720,13 @@ void markReturnAddressReads(MedFunc &Func, Arch Architecture,
 
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format, StackEntryKind Entry) {
+  // These source-only annotations are derived from the current body. An
+  // edited store or load must not retain a proof from an earlier preparation.
+  for (MedBlock &Block : Func.Blocks)
+    for (MedOp &Op : Block.Ops) {
+      Op.PrologueSave = false;
+      Op.ReturnAddressRead = false;
+    }
   std::vector<FrameAccess> Loads, Stores;
   const ValueReads Reads(Func);
   markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores,

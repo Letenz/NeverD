@@ -11,6 +11,7 @@ class QMainWindow;
 class QMenu;
 class QMenuBar;
 class QToolBar;
+class QWidget;
 
 namespace neverd::gui {
 
@@ -40,6 +41,8 @@ public:
   using PlaceholderFiller = std::function<void(QMenu *menu, const QString &)>;
   void buildMenus(QMenuBar *bar, const PlaceholderFiller &fill);
   QList<QToolBar *> buildToolbars(QMainWindow *window);
+  /// The same commands in one compact row for the focus window's caption.
+  QToolBar *buildFocusToolbar(QWidget *parent) const;
   QMenu *menu(const QString &id) const { return menus_.value(id); }
 
   void retranslate();

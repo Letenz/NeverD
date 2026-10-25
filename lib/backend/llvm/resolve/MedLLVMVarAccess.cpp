@@ -643,6 +643,11 @@ MedLLVMEmitter::getPhiIncomingConstant(const MedVar &V, uint16_t OutputSize,
 llvm::Value *MedLLVMEmitter::getPhiIncomingValue(const MedVar &V,
                                                  uint16_t OutputSize,
                                                  llvm::IRBuilder<> &Builder) {
+  // Every incoming image address uses the same runtime coordinate model as
+  // ordinary operands. The mirror mode's raw-VA PHI convention is not valid
+  // for a single external original-image span.
+  if (usesOriginalImageStorage())
+    return getVar(V, Builder);
   // A PHI feeding another PHI is already a relocation-aware runtime value:
   // its predecessor copies materialized every exact code/data arm before
   // storing the selected value in the source PHI's alloca.  Re-proving the
@@ -1013,7 +1018,7 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
       }
 
       if (V.Provenance == ConstantAddressProvenance::Address && Img &&
-          Img->isCodeAddress(V.ConstVal)) {
+          !usesOriginalImageStorage() && Img->isCodeAddress(V.ConstVal)) {
         // A role-neutral architectural PC is also used as the numeric base of
         // ARM switch/literal expressions.  Eagerly turning every such COPY
         // into blockaddress changes arithmetic semantics and can leave an
@@ -1029,7 +1034,7 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
       // tail object in an adjacent .rodata segment; eagerly materializing only
       // that tail would mix it with the raw RELRO head nodes in a PHI/SELECT.
       if (V.Provenance == ConstantAddressProvenance::Address &&
-          addrInCodePtrMirrorRun(V.ConstVal))
+          !usesOriginalImageStorage() && addrInCodePtrMirrorRun(V.ConstVal))
         return rawConstant();
 
       uint64_t Address = 0;
@@ -1413,7 +1418,12 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
   llvm::IRBuilder<> AllocBuilder(&Entry, Entry.begin());
   auto *Ty = sizeToType(V.Size);
   auto *Alloca = AllocBuilder.CreateAlloca(Ty, nullptr, V.display());
-  AllocBuilder.CreateStore(llvm::ConstantInt::get(Ty, 0), Alloca);
+  llvm::Value *Initial =
+      PreserveUnknownSourceValues
+          ? llvm_source_unknown::createEntrySeed(
+                AllocBuilder, llvm::cast<llvm::IntegerType>(Ty))
+          : llvm::ConstantInt::get(Ty, 0);
+  AllocBuilder.CreateStore(Initial, Alloca);
   VarAllocs[Key] = Alloca;
   return Builder.CreateLoad(Ty, Alloca, V.display() + "_v");
 }

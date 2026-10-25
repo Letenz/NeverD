@@ -40,6 +40,7 @@
 #include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86SHA.h"
 #include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX87ConstantAsm.h"
@@ -55,6 +56,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Analysis/SimplifyQuery.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
@@ -63,6 +65,7 @@
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 #include "llvm/Support/SaveAndRestore.h"
 
 #include <cctype>
@@ -94,9 +97,13 @@ constexpr uint32_t kCxxCatchAll = 0x40u;
 // refinement: it equals the LLVM value when defined, and chooses one stable
 // value when poison-producing flags would make the LLVM result poison. This
 // does not introduce C undefined behavior on an LLVM-defined execution.
-// Variable shifts, FP conversion and uninitialized PHI cycles remain
-// unsupported.
-bool freezeHasDefinedCProjection(const llvm::Value *Root) {
+// Shifts use bounded C counts, including on LLVM poison executions. Unsafe
+// division, FP conversion and uninitialized PHI cycles remain unsupported.
+// Memory/call results are reused, never evaluated again.
+bool freezeHasDefinedCProjection(const llvm::Value *Root,
+                                 const llvm::DataLayout &Layout,
+                                 const llvm::Instruction *Context,
+                                 const llvm::DominatorTree &Dominators) {
   std::vector<const llvm::Value *> Work{Root}, Anchors;
   std::set<const llvm::Value *> Seen, Defined;
   std::map<const llvm::Value *, std::vector<const llvm::Value *>> Users;
@@ -110,26 +117,81 @@ bool freezeHasDefinedCProjection(const llvm::Value *Root) {
     if (!Seen.insert(Value).second)
       continue;
     auto *Type = llvm::dyn_cast<llvm::IntegerType>(Value->getType());
-    if (!Type || Type->getBitWidth() > 64 ||
+    if ((!Type && !Value->getType()->isPointerTy()) ||
+        (Type && Type->getBitWidth() > 128) ||
         llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Value))
       return false;
-    if (llvm::isa<llvm::ConstantInt, llvm::Argument, llvm::FreezeInst>(Value)) {
+    if (llvm::isa<llvm::ConstantInt, llvm::ConstantPointerNull,
+                  llvm::GlobalValue, llvm::AllocaInst, llvm::Argument,
+                  llvm::FreezeInst>(Value)) {
+      Anchors.push_back(Value);
+      continue;
+    }
+    if (llvm::isGuaranteedNotToBeUndefOrPoison(Value, nullptr, Context,
+                                               &Dominators)) {
+      Anchors.push_back(Value);
+      continue;
+    }
+    if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Value)) {
+      int64_t Offset = 0;
+      const auto *Base =
+          llvm::GetPointerBaseWithConstantOffset(GEP, Offset, Layout);
+      llvm::Type *Object = nullptr;
+      if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Base))
+        Object = Global->getValueType();
+      else if (const auto *Local = llvm::dyn_cast<llvm::AllocaInst>(Base);
+               Local && !Local->isArrayAllocation())
+        Object = Local->getAllocatedType();
+      if (!Object || !Object->isSized() || Offset < 0 ||
+          uint64_t(Offset) > Layout.getTypeAllocSize(Object))
+        return false;
       Anchors.push_back(Value);
       continue;
     }
     if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Value)) {
-      if (!Load->isSimple() || Load->getPointerAddressSpace() != 0)
+      if (Load->getPointerAddressSpace() != 0 &&
+          !isLLVMX86SegmentedAddressSpace(Load->getPointerAddressSpace()))
         return false;
       // The existing memory projection materializes this access. In C an
       // integer byte representation contains no LLVM poison bit.
       Anchors.push_back(Value);
       continue;
     }
+    if (const auto *Atomic = llvm::dyn_cast<llvm::AtomicRMWInst>(Value)) {
+      if (Atomic->getPointerAddressSpace() != 0)
+        return false;
+      // The atomic statement has already captured the old integer value.
+      // Reusing that result must neither repeat nor weaken the operation.
+      Anchors.push_back(Value);
+      continue;
+    }
     if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(Value)) {
       const auto *Callee = Call->getCalledFunction();
-      if (!Callee || Callee->isIntrinsic() || Call->hasOperandBundles() ||
+      if (Call->hasOperandBundles() ||
           Call->getCallingConv() != llvm::CallingConv::C)
         return false;
+      if (Callee && Callee->isIntrinsic()) {
+        // These integer intrinsics have total scalar C projections. Their
+        // operands still need the same definedness proof as ordinary integer
+        // arithmetic; accepting the intrinsic alone would hide poison inputs.
+        switch (Callee->getIntrinsicID()) {
+        case llvm::Intrinsic::smin:
+        case llvm::Intrinsic::smax:
+        case llvm::Intrinsic::umin:
+        case llvm::Intrinsic::umax:
+        case llvm::Intrinsic::ctpop:
+        case llvm::Intrinsic::ctlz:
+        case llvm::Intrinsic::cttz:
+        case llvm::Intrinsic::abs:
+        case llvm::Intrinsic::uadd_sat:
+        case llvm::Intrinsic::usub_sat:
+          if (!Type || Type->getBitWidth() > 64)
+            return false;
+          break;
+        default:
+          return false;
+        }
+      }
       // An ordinary integer C call materializes one returned bit pattern.
       // Reuse that value, without a new invocation or an LLVM noundef fact.
       // Its arguments must independently have a total projection: passing
@@ -139,6 +201,10 @@ bool freezeHasDefinedCProjection(const llvm::Value *Root) {
       for (const auto &Argument : Call->args()) {
         Users[Argument].push_back(Value);
         Work.push_back(Argument);
+      }
+      if (!Callee) {
+        Users[Call->getCalledOperand()].push_back(Value);
+        Work.push_back(Call->getCalledOperand());
       }
       continue;
     }
@@ -155,12 +221,34 @@ bool freezeHasDefinedCProjection(const llvm::Value *Root) {
       // wrapping C refinement of an upstream poison-producing expression.
       // Dropping an `exact` flag then merely chooses the ordinary rounded
       // quotient.
-      if (!llvm::all_of(Inst->operands(), [&](const llvm::Use &Operand) {
+      const bool DefinedInputs =
+          llvm::all_of(Inst->operands(), [&](const llvm::Use &Operand) {
             return llvm::isGuaranteedNotToBeUndefOrPoison(Operand, nullptr,
-                                                          Inst);
-          }))
+                                                          Inst, &Dominators);
+          });
+      if (DefinedInputs) {
+        Anchors.push_back(Value);
+        continue;
+      }
+      // A C-defined denominator makes a wrapping numerator safe as well.
+      // Ignore poison-generating flags when proving its nonzero value: an
+      // overflowing flagged multiply must not conceal a zero C denominator.
+      const llvm::SimplifyQuery Query(Layout, &Dominators, nullptr, Inst,
+                                      /*UseInstrInfo=*/false,
+                                      /*CanUseUndef=*/false);
+      auto *Denominator = Inst->getOperand(1);
+      if (!llvm::isKnownNonZero(Denominator, Query))
         return false;
-      Anchors.push_back(Value);
+      const bool Signed = Inst->getOpcode() == llvm::Instruction::SDiv ||
+                          Inst->getOpcode() == llvm::Instruction::SRem;
+      if (Signed &&
+          !llvm::isKnownNonEqual(Denominator,
+                                 llvm::ConstantInt::getSigned(Type, -1), Query))
+        return false;
+      for (const auto &Operand : Inst->operands()) {
+        Users[Operand].push_back(Value);
+        Work.push_back(Operand);
+      }
       continue;
     }
     switch (Inst->getOpcode()) {
@@ -177,18 +265,15 @@ bool freezeHasDefinedCProjection(const llvm::Value *Root) {
     case llvm::Instruction::Trunc:
     case llvm::Instruction::ZExt:
     case llvm::Instruction::SExt:
+    case llvm::Instruction::PtrToInt:
+    case llvm::Instruction::IntToPtr:
     case llvm::Instruction::ICmp:
     case llvm::Instruction::Select:
       break;
     case llvm::Instruction::Shl:
     case llvm::Instruction::LShr:
-    case llvm::Instruction::AShr: {
-      const auto *Count =
-          llvm::dyn_cast<llvm::ConstantInt>(Inst->getOperand(1));
-      if (!Count || Count->getValue().uge(Type->getBitWidth()))
-        return false;
+    case llvm::Instruction::AShr:
       break;
-    }
     default:
       return false;
     }
@@ -1575,7 +1660,8 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       if (ChooseZero ||
           llvm::isGuaranteedNotToBeUndefOrPoison(Value, nullptr, Freeze,
                                                  &Dominators) ||
-          freezeHasDefinedCProjection(Value)) {
+          freezeHasDefinedCProjection(Value, CurMod->getDataLayout(), Freeze,
+                                      Dominators)) {
         emitIndent(Indent);
         OS << Name << " = " << (ChooseZero ? "0" : valueStr(Value)) << ";\n";
         return;
@@ -1590,14 +1676,11 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
   // widths.  Copy through its original base+offset so a scalar access never
   // creates a separate C object or assumes alignment at an interior offset.
   if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
-      Load && Load->getPointerAddressSpace() == 0) {
+      Load && !Load->isAtomic() && Load->getPointerAddressSpace() == 0) {
     const unsigned Size = imageIntegerAccessSize(Load->getType());
     if (Size)
       if (auto Pointer =
               imageByteArrayPointer(Load->getPointerOperand(), Size)) {
-        if (Load->isAtomic())
-          llvm::report_fatal_error(
-              "unsupported atomic image byte-array C projection");
         const std::string Name = getName(Load);
         emitIndent(Indent);
         OS << Name << " = 0;\n";
@@ -1619,15 +1702,12 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       }
   }
   if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst);
-      Store && Store->getPointerAddressSpace() == 0) {
+      Store && !Store->isAtomic() && Store->getPointerAddressSpace() == 0) {
     const unsigned Size =
         imageIntegerAccessSize(Store->getValueOperand()->getType());
     if (Size)
       if (auto Pointer =
               imageByteArrayPointer(Store->getPointerOperand(), Size)) {
-        if (Store->isAtomic())
-          llvm::report_fatal_error(
-              "unsupported atomic image byte-array C projection");
         const std::string Bits = freshVar("image_bits");
         emitIndent(Indent);
         OS << "{ " << typeToCLLVM(Store->getValueOperand()->getType()) << " "
@@ -4111,6 +4191,21 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
        << ";\n";
     return true;
   }
+  if (const char *Name = llvmX86SHA256CName(Call)) {
+    if (!isNativeVectorIntrinsic(Call, Opts.TheArch))
+      throw std::runtime_error("SHA-256 requires an x86 C projection");
+    emitIndent(Indent);
+    if (!Call.use_empty())
+      OS << getName(&Call) << " = (" << typeToCLLVM(Call.getType()) << ")";
+    OS << Name << "(";
+    for (unsigned I = 0; I < Call.arg_size(); ++I) {
+      if (I)
+        OS << ", ";
+      OS << "(__m128i)(" << valueStr(Call.getArgOperand(I)) << ")";
+    }
+    OS << ");\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::aarch64_neon_bfmmla) {
     if (!isNativeVectorIntrinsic(Call, Opts.TheArch))
       throw std::runtime_error("BFMMLA requires an AArch64 C projection");
@@ -5114,6 +5209,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Memory = renderAArch64AddressMemoryCall(Opts.TheArch, Call, Name,
+                                                   ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Memory->Code;
+    return true;
+  }
   if (auto AuthenticatedLoad = renderAArch64PAuthLoadCall(
           Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);

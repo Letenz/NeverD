@@ -25,6 +25,7 @@
 class QDialog;
 class QLabel;
 class QMenuBar;
+class QToolBar;
 class McpConnectionManager;
 class GuiSessionBroker;
 
@@ -394,6 +395,7 @@ private:
   QByteArray focusLayout_;
   QPointer<QWidget> focusReturn_;
   QPointer<FocusSidebar> focusSidebar_;
+  QPointer<QToolBar> focusToolbar_;
   QPointer<ChooserView> focusFunctions_;
   QPointer<QWidget> focusSequenceView_;
   QTimer focusSequenceTimer_;
