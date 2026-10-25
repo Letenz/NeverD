@@ -6914,6 +6914,18 @@ multi-second durations, full unsigned 32-bit range, high register-bit narrowing,
 clock rollover, errno preservation, idle wake completion and a runnable peer.
 Disabled time policy, clock overflow and closed providers retain incomplete
 calls and unchanged output memory.
+The same callers check `sleep` through direct imports, dynamic lookup and full
+ABI registers: zero, ordinary seconds, both sides of `INT_MAX`, `UINT_MAX` and
+ignored upper bits. They compare complete output bytes, errno, unsigned return
+values and pending native events across single-thread and cooperative execution.
+`AndroidSignals.SecondSleep*` checks fractional and exact-second remainders,
+SA_RESTART, blocked/ignored signals, termination, deadline ordering, nested
+handlers, raw-result edits (including 32-bit return narrowing), and wrapper
+bypass. Run the complete Android signal/sleep and Linux process suites after
+changing the shared sleep owner or signal completion path.
+`ProcessPublic.AndroidSecondSleepReportsMatchSDKAndCLI` compares full C API and
+CLI reports for dynamic success, a large unsigned remainder, disabled clock
+policy and a closed provider. All callers are independent synthetic fixtures.
 `LinuxClockTests.cpp` checks shared elapsed
 time and atomic refusal on clock/deadline overflow. The x64/ARM64 Linux process
 fixtures verify raw sleep errors, unchanged input and both updated clock layouts.

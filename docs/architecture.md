@@ -7736,6 +7736,15 @@ for the owning scheduler or advancing an otherwise single-threaded workload.
 Bionic's `usleep` narrows its scalar argument to unsigned 32-bit microseconds
 and admits the converted duration through that same owner. Completion and errno
 conversion share the kernel-call path, including suspended native events.
+Bionic's `sleep` admits at most `INT32_MAX` seconds and retains the original
+unsigned argument in a typed libc continuation. `LinuxSleep` alone computes the
+interrupted remainder, either copying it to a raw caller's guest address or
+retaining a typed value for the modeled libc automatic. The scheduler carries
+that continuation through both ordinary waits and nested signal-return frames;
+it does not interpret the seconds or create another deadline. After the handler,
+Bionic applies kernel errno conversion, narrows the libc return to `int`, and converts the
+retained remainder into rounded-up seconds with the unattempted excess. A signal
+context redirect leaves the abandoned native event incomplete.
 Android's typed waits retain the consumed request, complete CPU context and
 native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
 readiness and completion; `GuestThreads` advances to the earliest deadline only
