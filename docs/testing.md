@@ -5968,7 +5968,13 @@ must compile and execute the same selection at `-O0` and `-O2` with undefined
 behavior traps. Unknown selector arms, bypassed definitions, clobbered values,
 reached backedges, mutated table storage and exhausted evidence must prevent
 unsupported source publication. Clang and the existing lift fixture tools
-are required; unavailable fixtures remain skips.
+are required; unavailable fixtures remain skips. Finite-selector and shared
+absolute-table source controls compile the unchanged generated C for the input
+architecture, retaining native memory instructions beside the recovered switch.
+They run as freestanding Linux x64/AArch64 programs, directly on matching Linux
+hosts or with `qemu-x86_64` / `qemu-aarch64` from `PATH`; a missing execution
+transport is an explicit skip. The same selection oracle also executes the
+original assembly objects. This does not qualify native Windows execution.
 The independent ARM64 frame fixture also distinguishes restored native tail
 calls from live or unknown SP values, changed link words, full/partial return
 slot writes, unknown aliases, borrowed frame pointers, independent roots and
@@ -6827,6 +6833,14 @@ O0/O2 with undefined-behavior traps, covering NaNs, infinities, fractional
 values and exact signed/unsigned bounds through 128 bits. Bit-reversal checks
 include non-byte widths and every one-hot input bit. Unsupported shapes fail
 before source emission.
+
+`IntegerToFloatUsesOpcodeSignednessAndWidth` and
+`FloatToIntegerPreservesSignedResultBits` execute ordinary LLVM numeric casts
+at O0/O2 with undefined-behavior traps. The matrix covers i1, rounded narrow
+carriers, native widths and exact `_BitInt` carriers through 512 bits. It checks
+negative values, the sign bit, unsigned high bits and fractional truncation;
+all inputs remain in the LLVM operation's defined domain. These conversions
+must use the opcode's signedness even when the C variable stores unsigned bits.
 
 ## Structured C control and call checks
 
