@@ -81,8 +81,8 @@ static cl::opt<std::string> Machine("machine", cl::desc(MachineHelp),
                                     cl::init(""));
 static cl::opt<bool> References(
     "references",
-    cl::desc("State the routines each COFF, ELF or Mach-O function branches to "
-             "directly as ^offset name references, which matching checks "
+    cl::desc("State direct branch targets and canonical COFF import pointers "
+             "as ^offset name references, which matching checks "
              "against the image; loaders older than the references reject "
              "such lines"),
     cl::init(false));
