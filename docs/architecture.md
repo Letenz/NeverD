@@ -128,6 +128,12 @@ SHA-256 vector projections participate in the same feature set, including the
 SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
 shape before selecting a compiler intrinsic.
 
+`X86LiftTransactions` owns the bounded XABORT/XEND/XTEST instruction family,
+separate from SIMD cryptography. Raw byte/detail agreement precedes all effects.
+XABORT's constant byte and void completion use the shared system-state shape
+across LowIR, MedIR and C admission. Native LLVM and both C routes retain the
+same byte; a missing or dynamic operand cannot become an arbitrary abort code.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR

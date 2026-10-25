@@ -177,7 +177,8 @@ void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,
   if (UsesForkNative)
     for (const auto &F : *Module)
       *UsesForkNative |= isX86VirtualizationNativeName(F.getName()) ||
-                         isX86SystemStateNativeName(F.getName()) ||
+                         (isX86SystemStateNativeName(F.getName()) &&
+                          F.getName() != "llvm.x86.xabort") ||
                          isX86ScalarSystemNativeName(F.getName()) ||
                          isX86DescriptorStateNativeName(F.getName()) ||
                          isX86SystemRegisterNativeName(F.getName()) ||
@@ -2385,6 +2386,162 @@ TEST(X86SystemStateSource, TransactionCommitRetainsSurroundingMemory) {
         if (::testing::Test::HasFailure())
           return;
       }
+}
+
+TEST(X86SystemStateSource, TransactionAbortUsesNativeByteAcrossEveryRoute) {
+  const char *NeverC = std::getenv("NEVERD_TEST_NEVERC");
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true})
+        for (uint8_t Code : {0, 127, 128, 255}) {
+          SCOPED_TRACE(static_cast<unsigned>(A));
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(Code);
+          auto Image =
+              image(A, Format, {0xc6, 0xf8, Code, 0xb8, 7, 0, 0, 0, 0xc3});
+          std::string High, C, IR;
+          sourceRoutes(Image, NoOpt, Entry, "xabort", &High, &C, {}, {}, &IR);
+          if (::testing::Test::HasFailure())
+            return;
+          EXPECT_NE(IR.find("call void @llvm.x86.xabort(i8"), std::string::npos)
+              << IR;
+          EXPECT_EQ(IR.find("asm sideeffect"), std::string::npos) << IR;
+          for (const auto &Source : {High, C}) {
+            EXPECT_NE(Source.find("_xabort("), std::string::npos) << Source;
+            EXPECT_EQ(Source.find("__asm__"), std::string::npos) << Source;
+          }
+          const std::vector<uint8_t> Instruction{0xc6, 0xf8, Code};
+          compileRoutes(Image, NoOpt, Entry, "xabort", std::nullopt, false,
+                        false, {}, Instruction, 4, true);
+          if (::testing::Test::HasFailure())
+            return;
+          if (A == Arch::X64 && NeverC && llvm::sys::fs::exists(NeverC)) {
+            compileRoutes(Image, NoOpt, Entry, "xabort", std::nullopt, false,
+                          false, {}, Instruction, 4, true, NeverC);
+            if (::testing::Test::HasFailure())
+              return;
+          }
+        }
+}
+
+TEST(X86SystemStateSource, TransactionAbortRequiresConstantTypedEffects) {
+  for (Arch A : {Arch::X86, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      MedOp Op;
+      Op.Opcode = NdOp::INTRINSIC;
+      Op.NumInputs = 2;
+      Op.Inputs[0] =
+          MedVar::makeConst(static_cast<uint16_t>(Intrinsic::Xabort), 2);
+      Op.Inputs[1] = MedVar::makeConst(128, 1);
+      auto Call =
+          HighExpr::makeCall("xabort", 0, {HighExpr::makeConst(128, 1)});
+      Call->IntrinsicId = Intrinsic::Xabort;
+      Call->Type = NdType::makeVoid();
+      switch (Mutation) {
+      case 1:
+        Op.NumInputs = 1;
+        Call->Operands.clear();
+        break;
+      case 2:
+        Op.Inputs[1] = MedVar::makeUnspecified(1, A);
+        Call->Operands[0]->Kind = ExprKind::Var;
+        break;
+      case 3:
+        Op.Inputs[1].Size = 4;
+        Call->Operands[0]->Type = NdType::makeInt(4, false);
+        break;
+      case 4:
+        Op.Inputs[1].ConstVal = 256;
+        Call->Operands[0]->ConstVal = 256;
+        break;
+      case 5:
+        Op.Output.Size = 1;
+        Call->Type = NdType::makeInt(1, false);
+        break;
+      case 6:
+        Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        Call->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        break;
+      case 7:
+        Op.MemoryOrdering = NdMemoryOrdering::Acquire;
+        Call->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      }
+      EXPECT_EQ(x86SystemStateShapeIsValid(Intrinsic::Xabort,
+                                           x86SystemStateMedShape(Op, A)),
+                Mutation == 0);
+      bool HasIntrinsics = false;
+      const std::vector<std::string> Arguments(Call->Operands.size(), "128");
+      if (Mutation)
+        EXPECT_THROW(renderX86SystemStateExpression(A, *Call, Arguments, false,
+                                                    HasIntrinsics),
+                     std::invalid_argument);
+      else {
+        EXPECT_EQ(renderX86SystemStateExpression(A, *Call, Arguments, false,
+                                                 HasIntrinsics),
+                  "_xabort(128)");
+        EXPECT_TRUE(HasIntrinsics);
+      }
+    }
+    for (bool LegacyAssembly : {false, true}) {
+      SCOPED_TRACE(LegacyAssembly);
+      llvm::LLVMContext Context;
+      llvm::Module Module("transaction-abort", Context);
+      llvm::IRBuilder<> Builder(Context);
+      auto *Signature = llvm::FunctionType::get(Builder.getVoidTy(),
+                                                {Builder.getInt8Ty()}, false);
+      auto *Function =
+          llvm::Function::Create(Signature, llvm::GlobalValue::ExternalLinkage,
+                                 "transaction_abort", Module);
+      Builder.SetInsertPoint(
+          llvm::BasicBlock::Create(Context, "entry", Function));
+      llvm::CallInst *Call;
+      if (LegacyAssembly) {
+        auto *Assembly =
+            llvm::InlineAsm::get(Signature, "xabort $0", "i,~{memory}", true);
+        Call = Builder.CreateCall(Assembly, {Builder.getInt8(128)});
+      } else {
+        auto *Callee = llvm::Intrinsic::getOrInsertDeclaration(
+            &Module, llvm::Intrinsic::lookupIntrinsicID("llvm.x86.xabort"));
+        Call = Builder.CreateCall(Callee, {Builder.getInt8(128)});
+      }
+      Builder.CreateRetVoid();
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      const std::vector<std::string> Arguments{"128"};
+      auto Render = [&]() {
+        return LegacyAssembly
+                   ? renderX86SystemStateCall(A, *Call, "", false, Arguments)
+                   : renderX86SystemStateNativeCall(A, *Call, "", false,
+                                                    Arguments);
+      };
+      EXPECT_EQ(Render(), "_xabort(128);\n");
+      CEmitterOptions Options;
+      Options.TheArch = A;
+      Options.Format = BinaryFormat::ELF;
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+      EXPECT_NE(Source.find("#include <immintrin.h>"), std::string::npos)
+          << Source;
+      EXPECT_NE(Source.find("_xabort(128)"), std::string::npos) << Source;
+      EXPECT_NE(Source.find("target(\"rtm\")"), std::string::npos) << Source;
+      Call->setArgOperand(0, Function->getArg(0));
+      EXPECT_THROW(Render(), std::invalid_argument);
+      Call->setArgOperand(0, Builder.getInt8(128));
+      for (const auto Effects :
+           {llvm::MemoryEffects::none(), llvm::MemoryEffects::readOnly(),
+            llvm::MemoryEffects::writeOnly()}) {
+        Call->setMemoryEffects(Effects);
+        EXPECT_THROW(Render(), std::invalid_argument);
+      }
+      Call->setMemoryEffects(llvm::MemoryEffects::unknown());
+      Call->setDoesNotReturn();
+      EXPECT_THROW(Render(), std::invalid_argument);
+    }
+  }
 }
 
 TEST(X86SystemStateSource, TransactionQueryRetainsFlagsAcrossNativeAndCRoutes) {
