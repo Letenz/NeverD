@@ -11870,6 +11870,22 @@ Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
 
+Source register-call recovery runs after that original CALL-slot guard. The
+callee-effect owner retains a bounded, complete, straight-line x64 scalar/CPUID
+body only when it has no memory operations, internal calls, exceptional roots,
+unmodeled exception metadata, direction-flag writes or nonordinary return.
+`PipelineRegisterCalls.cpp` uses the ordinary LowIR
+converter to capture the caller's extra result registers; it does not duplicate
+partial-register or intrinsic semantics. Required results must have no remaining
+entry-state dependencies, and every written ABI-preserved GPR must equal its
+incoming value. Each original query is then expanded once, in order, with fresh
+SSA values shared by all outputs. Native lifting retains the original CALL.
+The cache accounts for retained leaf bodies, and per-body/per-function work
+bounds prevent unbounded expansion. Incoming-state-dependent, memory-using and
+other hardware leaves retain the ordinary unavailable-state behavior. This is
+not a general machine-state calling convention or a proof of unresolved frame
+aliases.
+
 The shared entry-stack offset proof follows the lifter's exact zero-extension
 of a native 32-bit address into its 64-bit memory-address container. It does
 not authenticate a wider incoming SP, a signed extension, a truncated 64-bit

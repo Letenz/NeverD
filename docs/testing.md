@@ -13225,6 +13225,22 @@ through both C routes, with source optimization enabled and disabled, at C
 O0/O2 with UBSan. The oracle observes the non-return register's stored value
 and the ordinary call result. This qualifies bounded scalar constants, not
 dynamic machine-state returns or other architectures.
+`CallExitRegisters.PureRegisterLeafKeepsDynamicExtraResults` independently
+executes recovered query results against native CPUID on x64 COFF/ELF/Mach-O
+inputs through both C routes at O0/O2 with UBSan. Source execution selects the
+host's GNU intrinsic spelling while retaining the input image's recovered ABI.
+Cached emitter order, repeated calls and high-byte observations check shared
+result identity. IR checks retain exactly one query per expanded call. The
+`RegisterQuery*` controls retain memory/input-dependent leaves, other hardware
+operations, branching/nonordinary returns, image addresses, unpreserved RBX,
+unmodeled exception metadata, CLD/STD and native calls. Boundary controls run
+both source routes with and without optimization; the original CALL-slot read must still fail before source
+expansion. Opaque and general dynamic machine-state returns remain separate.
+`Win64CallContract.RegisterQueryWindowsSourceCompilesWithItsHeaders` compiles
+both unmodified C units for the Windows x64 target with Clang's freestanding
+headers. HighC includes `<intrin.h>` for the Microsoft CPUID spelling and its
+compiler barriers, as required by [Microsoft's intrinsic contract](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex).
+Target compilation does not qualify native Windows execution.
 The opaque CPUID-exit counterexample checks that both C routes report an
 observed missing value before modifying the caller's output, after exactly one
 provider call. It covers serial and sharded LLVM source emission, optimized and
