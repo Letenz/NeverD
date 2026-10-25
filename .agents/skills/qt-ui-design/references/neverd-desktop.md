@@ -91,12 +91,12 @@ judge each change in the real window.
   the buttons their window flags ask for (`WindowFrame::frameDialogs`). Draw
   the bar's glyphs and the Wayland shadow from `ChromeColors.def` roles
   instead of borrowing the platform's.
-- Keep each system's own frame where it does more than draw: Linux windows
-  are frameless and draw their edges, but Windows keeps its frame for snapping,
-  shadows and resizing and loses only the caption, and macOS keeps its frame
-  and traffic lights under a transparent 28-point title bar, with the menus in
-  the menu bar. Each platform's part lives in one file under `app/platform`
-  (`WindowFramePlatform.h`).
+- Use the application's frame, menus, controls and shadow on all desktops;
+  native APIs still provide movement, resizing and window-state transitions.
+  Cocoa hosts a frameless window, and the platform hook disables its native
+  shadow. Each platform's part lives under `app/platform`
+  (`WindowFramePlatform.h`). For macOS input and validation details, read
+  [macOS Qt rendering and input](macos-qt.md).
 - Keep the signature elements. The toolbar's colored duotone icons stay: the
   user kept them over a single-accent recolor and an outline variant, and had
   earlier rejected all-gray icons as lifeless. Refine spacing, weight, and

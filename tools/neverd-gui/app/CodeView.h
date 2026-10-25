@@ -4,6 +4,7 @@
 #include "LibraryCodeView.h"
 #include "StyledText.h"
 #include "ViewSearch.h"
+#include "WheelInput.h"
 
 #include "neverd/support/IntegerLiterals.h"
 
@@ -285,6 +286,7 @@ private:
   int textLeft() const;
   void moveCursor(int line, int column, bool extend);
 
+  WheelInput wheel_;
   Session &session_;
   QVector<Line> lines_;
   QVector<int> lineStarts_;
