@@ -206,6 +206,27 @@ TEST(ImmutableScalar, BudgetChargesTheInventoryBeforeARead) {
   EXPECT_EQ(Remaining, 0u);
 }
 
+TEST(ImmutableScalar, WideOperandFixupsCannotSupplyStableBytes) {
+  for (bool CodeOperand : {false, true})
+    for (uint8_t Width : {uint8_t{8}, uint8_t{16}, UINT8_MAX}) {
+      auto Image = codeImage();
+      Image.BaseRelocations.clear();
+      RelocatedAddressField Field;
+      Field.Width = Width;
+      auto &Operands = CodeOperand ? Image.CodeAddressRelocOperands
+                                   : Image.DataAddressRelocOperands;
+      // The field starts more than one pointer width before the read but its
+      // final byte still changes that byte when relocated. Malformed wide
+      // metadata is not permission to freeze the file's initial contents.
+      Operands.emplace(ReadVA - (Width - 1), Field);
+      EXPECT_FALSE(readImmutableCodeBytes(Image, ReadVA, 1));
+      EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
+      Operands.clear();
+      Operands.emplace(ReadVA - Width, Field);
+      EXPECT_EQ(readImmutableImageScalar(Image, ReadVA, 1), 0xb8u);
+    }
+}
+
 TEST(ImmutablePE32Code, IndexedQueriesChargeColdAndRepeatedWork) {
   const auto Image = codeImage();
   size_t Required = 0;
