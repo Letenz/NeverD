@@ -4939,26 +4939,28 @@ __asm__(".text\n.globl neverd_original\nneverd_original:\n"
     Source += "\".byte " + std::to_string(Byte) + "\\n\"\n";
   return Source + ");\n";
 }
+
+class X86AmxEncodingSource : public testing::TestWithParam<size_t> {};
 } // namespace
 
-TEST(X86AmxSource, EveryBankOperationAndEncodingCompilesAcrossNativeFormats) {
-  for (const auto &E : amxEncodings())
-    for (const auto Format :
-         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
-      for (bool NoOpt : {false, true}) {
-        SCOPED_TRACE(E.Assembly);
-        SCOPED_TRACE(static_cast<unsigned>(Format));
-        SCOPED_TRACE(NoOpt);
-        size_t Offset;
-        auto Image = image(Arch::X64, Format, amxFunction(E, Offset));
-        const bool FixedBank =
-            E.Kind == 2 || E.Kind == 3 || (E.Kind >= 9 && E.Kind < 22);
-        compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
-                      false, false, {},
-                      FixedBank ? E.Bytes : std::vector<uint8_t>{}, 0, true);
-        if (::testing::Test::HasFailure())
-          return;
-      }
+TEST_P(X86AmxEncodingSource, EveryRouteCompilesAcrossNativeFormats) {
+  const auto &E = amxEncodings()[GetParam()];
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(E.Assembly);
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      SCOPED_TRACE(NoOpt);
+      size_t Offset;
+      auto Image = image(Arch::X64, Format, amxFunction(E, Offset));
+      const bool FixedBank =
+          E.Kind == 2 || E.Kind == 3 || (E.Kind >= 9 && E.Kind < 22);
+      compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                    false, false, {},
+                    FixedBank ? E.Bytes : std::vector<uint8_t>{}, 0, true);
+      if (::testing::Test::HasFailure())
+        return;
+    }
 }
 
 TEST(X86AmxSource, NativeContractsRejectLostEffectsAndControls) {
@@ -5078,19 +5080,29 @@ TEST(X86AmxSource, NeverCCompilesBothRoutesWithoutAssembly) {
   RecordProperty("amx_native_c_object_compilations", Cases);
 }
 
-TEST(X86AmxSource, NativeCompletionAndFaultsMatchOriginalBytes) {
-  for (const auto &E : amxEncodings())
-    for (bool NoOpt : {false, true}) {
-      SCOPED_TRACE(E.Assembly);
-      SCOPED_TRACE(NoOpt);
-      size_t Offset;
-      auto Image = image(Arch::X64, BinaryFormat::ELF, amxFunction(E, Offset));
-      compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
-                    false, false, amxOutcomeDriver(Image));
-      if (::testing::Test::HasFailure())
-        return;
-    }
+TEST_P(X86AmxEncodingSource, NativeCompletionAndFaultsMatchOriginalBytes) {
+  const auto &E = amxEncodings()[GetParam()];
+  for (bool NoOpt : {false, true}) {
+    SCOPED_TRACE(E.Assembly);
+    SCOPED_TRACE(NoOpt);
+    size_t Offset;
+    auto Image = image(Arch::X64, BinaryFormat::ELF, amxFunction(E, Offset));
+    compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt, false,
+                  false, amxOutcomeDriver(Image));
+    if (::testing::Test::HasFailure())
+      return;
+  }
 }
+
+// Keep the format, optimization and native-fault checks together for each
+// encoding without charging the entire growing matrix to one test deadline.
+INSTANTIATE_TEST_SUITE_P(AmxEncodings, X86AmxEncodingSource,
+                         testing::Range(size_t{0}, amxEncodings().size()),
+                         [](const testing::TestParamInfo<size_t> &Info) {
+                           return std::string(
+                                      amxEncodings()[Info.param].Mnemonic) +
+                                  "_" + std::to_string(Info.param);
+                         });
 
 TEST(X86AmxSource, MalformedAssemblyCannotDropBankMemoryOrFeatureEffects) {
   for (const auto Descriptor :
