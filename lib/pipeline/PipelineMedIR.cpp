@@ -19,6 +19,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedCallReturnReads.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -57,6 +58,9 @@ void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
     return;
   simplifyProvenStackAlignment(Func, Image.Arch, Image.abiFormat(),
                                Func.EntryKind);
+  std::string Diagnostic;
+  if (!validateSourceCallReturnReads(Func, Image, Diagnostic))
+    throw LowToMedConversionError(Diagnostic);
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
 }
 

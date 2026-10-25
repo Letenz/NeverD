@@ -12912,3 +12912,13 @@ assembly inventories. Run `llc -O2 -stop-after=finalize-isel` on each exported
 `NeverDLLVMCIntrinsicSemanticTests` owners when changing these shared assembly
 contracts. Export/machine-effect checks do not establish successful privileged
 execution or a full guest exception-state contract.
+
+`SourceCallReturnReads.*` in `NeverDMedPrologueSavesTests` covers old constant
+contents, complete and partial later stores, separated slots, earlier loads,
+physical calls versus synthetic tail calls, joins, loop-carried observations,
+missing SPs, malformed graphs and exhausted budgets. `SourceStackSpills`
+variants 4 and 7 in `NeverDWin64CallContractTests` require the same explicit
+return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
+optimization on and off. Variant 8 supplies a complete later store and executes
+both generated C routes at O0/O2 with an independent provider. Native CALL
+continuation materialization remains a separate source-ABI requirement.

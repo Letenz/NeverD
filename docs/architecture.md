@@ -11590,3 +11590,13 @@ Entry-stack offset recovery accepts a narrower scalar displacement only when
 its nonnegative value is independent of sign or zero extension. Pointer
 provenance and negative narrow constants cannot certify a frame offset. The
 same proof supplies stack annotations and saved-register recovery.
+
+Shared source stack preparation rejects exact entry-relative loads reached by
+an x64 CALL return-slot write that the reconstructed C frame does not contain.
+It reuses the ABI owner's current-SP walk and original call/jump encoding
+policy; a synthetic tail call supplies no push. Explicit later stores kill only
+the bytes they write on each incoming path. Unknown call positions, incomplete
+candidate graphs and exhausted observation budgets cannot grant separation.
+Both source routes receive the same conversion diagnostic before cleanup can
+forward an old constant. This guard neither materializes a relocatable return
+PC nor certifies unresolved addresses, callee memory effects or other targets.

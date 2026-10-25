@@ -9,8 +9,10 @@
 #include "neverd/Common.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/MedCallReturnReads.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/lift/X86/X86Regs.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include <initializer_list>
 #include <limits>
@@ -714,6 +716,167 @@ TEST(SourceStackSpills, ImplicitCallWritesAreNotProjectedFrameStores) {
     // observation must not turn an unavailable value into uninitialized C.
     EXPECT_FALSE(save(Func).PrologueSave);
   }
+}
+
+BinaryImage callSlotImage(uint8_t Encoding = 0xe8) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::ELF;
+  Segment Code;
+  Code.VA = 0x1000;
+  Code.Size = 64;
+  Code.Data.resize(Code.Size, 0x90);
+  Code.Data[8] = Encoding;
+  Image.Segments.push_back(std::move(Code));
+  return Image;
+}
+
+MedFunc observedCallSlot() {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "call_slot";
+  Func.FrameSize = 40;
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Func.Entry;
+  Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(32, 8)}),
+               op(NdOp::INT_SUB, temp(20), {sp(1), MedVar::makeConst(8, 8)}),
+               op(NdOp::STORE, none(), {temp(20), MedVar::makeConst(19, 8)}),
+               op(NdOp::CALL, temp(21), {MedVar::makeConst(0x2000, 8)}),
+               op(NdOp::LOAD, temp(22), {temp(20)}),
+               op(NdOp::RETURN, none(), {temp(22)})};
+  Block.Ops[4].Addr = 0x1008;
+  Block.Ops[5].Addr = 0x100d;
+  Func.Blocks.push_back(std::move(Block));
+  return Func;
+}
+
+TEST(SourceCallReturnReads, ConstantOldContentsCannotHideTheImplicitWrite) {
+  auto Func = observedCallSlot();
+  std::string Error;
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+  EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos);
+  EXPECT_NE(Error.find("100D"), std::string::npos);
+  EXPECT_EQ(Func.Blocks[0].Ops[3].Inputs[1].ConstVal, 19u);
+  EXPECT_FALSE(Func.Blocks[0].Ops[3].PrologueSave);
+}
+
+TEST(SourceCallReturnReads, OnlyLaterWritesOfEachObservedByteEndTheHazard) {
+  for (unsigned Bytes : {1u, 4u, 8u}) {
+    auto Func = observedCallSlot();
+    auto &Ops = Func.Blocks[0].Ops;
+    Ops.insert(Ops.begin() + 5, op(NdOp::STORE, none(),
+                                   {temp(20), MedVar::makeConst(29, Bytes)}));
+    std::string Error;
+    EXPECT_EQ(validateSourceCallReturnReads(Func, callSlotImage(), Error),
+              Bytes == 8)
+        << Error;
+    Ops[6].Output.Size = Bytes;
+    EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error))
+        << Error;
+  }
+  auto Func = observedCallSlot();
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.insert(Ops.begin() + 5,
+             {op(NdOp::STORE, none(), {temp(20), MedVar::makeConst(29, 4)}),
+              op(NdOp::INT_ADD, temp(23), {temp(20), MedVar::makeConst(4, 8)}),
+              op(NdOp::STORE, none(), {temp(23), MedVar::makeConst(31, 4)})});
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error))
+      << Error;
+}
+
+TEST(SourceCallReturnReads, EarlierReadsAndSeparatedSlotsStayValid) {
+  auto Func = observedCallSlot();
+  std::swap(Func.Blocks[0].Ops[4], Func.Blocks[0].Ops[5]);
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error))
+      << Error;
+  Func = observedCallSlot();
+  Func.Blocks[0].Ops[2].Inputs[1] = MedVar::makeConst(16, 8);
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error))
+      << Error;
+}
+
+TEST(SourceCallReturnReads, TailJumpsDoNotAcquireAPush) {
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(observedCallSlot(),
+                                            callSlotImage(0xe9), Error))
+      << Error;
+  EXPECT_FALSE(validateSourceCallReturnReads(observedCallSlot(),
+                                             callSlotImage(0x90), Error));
+}
+
+TEST(SourceCallReturnReads, AStoreOnAnotherPathDoesNotHideACall) {
+  auto Func = observedCallSlot();
+  auto &Entry = Func.Blocks[0];
+  const auto Call = Entry.Ops[4];
+  const auto Load = Entry.Ops[5];
+  const auto Return = Entry.Ops[6];
+  const auto Store = Entry.Ops[3];
+  Entry.Ops.resize(4);
+  Entry.Succs = {1, 2};
+  MedBlock Left, Right, Join;
+  Left.Id = 1;
+  Left.Preds = {0};
+  Left.Succs = {3};
+  Left.Ops = {Call};
+  Right.Id = 2;
+  Right.Preds = {0};
+  Right.Succs = {3};
+  Right.Ops = {Store};
+  Join.Id = 3;
+  Join.Preds = {1, 2};
+  Join.Ops = {Load, Return};
+  Func.Blocks.insert(Func.Blocks.end(), {Left, Right, Join});
+  std::string Error;
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+  Func.Blocks[1].Ops.push_back(Store);
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error))
+      << Error;
+}
+
+TEST(SourceCallReturnReads, ALaterCallCanReachTheNextLoopIteration) {
+  auto Func = observedCallSlot();
+  auto &Entry = Func.Blocks[0];
+  const auto Call = Entry.Ops[4];
+  const auto Load = Entry.Ops[5];
+  Entry.Ops.resize(4);
+  Entry.Succs = {1};
+  MedBlock Loop;
+  Loop.Id = 1;
+  Loop.Preds = {0, 1};
+  Loop.Succs = {1};
+  Loop.Ops = {Load, Call};
+  Func.Blocks.push_back(Loop);
+  std::string Error;
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+}
+
+TEST(SourceCallReturnReads,
+     MissingStackAndMalformedGraphsDoNotGrantSeparation) {
+  auto Func = observedCallSlot();
+  Func.Blocks[0].Ops.insert(
+      Func.Blocks[0].Ops.begin() + 4,
+      op(NdOp::COPY, sp(2), {MedVar::makeUnspecified(8, Arch::X64)}));
+  std::string Error;
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+  Func = observedCallSlot();
+  Func.Blocks[0].Preds = {99};
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+  EXPECT_NE(Error.find("complete normal"), std::string::npos);
+}
+
+TEST(SourceCallReturnReads,
+     BudgetExhaustionNeverPublishesAnUncheckedProjection) {
+  std::string Error;
+  EXPECT_FALSE(validateSourceCallReturnReads(observedCallSlot(),
+                                             callSlotImage(), Error, 0));
+  EXPECT_NE(Error.find("work budget"), std::string::npos);
+  EXPECT_TRUE(validateSourceCallReturnReads(observedCallSlot(),
+                                            callSlotImage(0xe9), Error));
+  EXPECT_TRUE(Error.empty());
 }
 
 } // namespace
