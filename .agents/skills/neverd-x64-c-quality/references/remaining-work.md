@@ -71,10 +71,15 @@ unknown after earlier calls; never erase those inputs or replace them with zero.
 Source stack preparation now also discards post-entry scalar spills proved
 overwritten before observation. Explicit x86 flags transfers remain emitted;
 their frame loads/stores are already separate operations. Unread scratch
-restores require a register overwrite before a later call, or a normal exit;
+restores require a register overwrite before a later call, a checked absence of
+callee input observations, or a normal exit;
 ABI-preserved/result registers, PHIs and implicit clobber readers keep their
 values. This bounded shared proof removes avoidable HighC/LLVMC traps but does
 not recover escaping VM state or authorize a dynamic code-address fallback.
+The separate call-input proof does not mistake an inferred argument list or a
+nested may-write for absence of an observation. It fixes a HighC scratch-save
+trap that LLVMC's later cleanup already removed; both routes execute the public
+preserving-callee case. Opaque calls and unmodeled entry observers retain state.
 Pure POPCOUNT steps used to compute x86 parity no longer prevent an otherwise
 complete explicit scratch overwrite proof; trapping operations still do.
 Physical CALL return-slot writes remain barriers: they are absent from the C

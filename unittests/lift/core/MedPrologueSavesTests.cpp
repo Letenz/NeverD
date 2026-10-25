@@ -406,6 +406,52 @@ TEST(SourceStackSpills, OnlyUnreadScratchRestoresCanBeIgnored) {
   }
 }
 
+TEST(SourceStackSpills, UnreadCalleeInputsRequireTheOriginalCallProof) {
+  for (unsigned Mode = 0; Mode != 12; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func = pushedRbx(CallingConv::Win64);
+    auto &Ops = Func.Blocks[0].Ops;
+    const auto Restored = reg(30, x86reg::R10, 1);
+    Ops[4].Inputs[1] = MedVar::makeUnspecified(8, Arch::X64);
+    Ops[7] = op(NdOp::COPY, Restored, {temp(10)});
+    Ops[8] = op(NdOp::STORE, none(), {sp(1), MedVar::makeConst(19, 8)});
+    Ops[9] = op(NdOp::CALL, none(), {MedVar::makeConst(0x2000, 8)});
+    Ops[9].CallSiteId = 1;
+    Ops[9].Addr = 0x1010;
+    Ops[9].OriginSeq = 10;
+    Ops[9].CallPreservedGPRs = ~uint32_t{0};
+    Func.CallUnreadRegisters.emplace(
+        1, MedCallUnreadRegisters{0x2000, 0x1010, 10,
+                                  uint32_t{1} << (x86reg::R10 / 8)});
+    Ops.push_back(op(NdOp::RETURN, none(), {MedVar::makeConst(19, 8)}));
+    if (Mode == 1)
+      Func.CallUnreadRegisters.clear();
+    if (Mode == 2)
+      Func.CallUnreadRegisters.at(1).Families = 0;
+    if (Mode == 3)
+      Ops[9].Inputs[0] = MedVar::makeConst(0x3000, 8);
+    if (Mode == 4)
+      Ops[9].addInput(Restored);
+    if (Mode == 5)
+      Ops[9].Opcode = NdOp::INDIR_CALL;
+    if (Mode == 6)
+      ++Ops[9].Addr;
+    if (Mode == 7)
+      ++Ops[9].OriginSeq;
+    if (Mode == 8)
+      ++Ops[9].CallSiteId;
+    if (Mode == 9)
+      Ops.back().Inputs[0] = Restored;
+    if (Mode == 10)
+      Ops.insert(Ops.end() - 1,
+                 op(NdOp::CALL, none(), {MedVar::makeConst(0x3000, 8)}));
+    if (Mode == 11)
+      Ops[9].CallPreservedGPRs = 0;
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    EXPECT_EQ(save(Func).PrologueSave, Mode == 0 || Mode == 11);
+  }
+}
+
 TEST_P(MedPrologueSaves, AnArgumentSpillIsNoSave) {
   MedFunc Func = pushedRbx();
   Func.Blocks[0].Ops[4] = op(NdOp::STORE, none(), {sp(1), rcx(0)});

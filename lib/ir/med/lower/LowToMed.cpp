@@ -1330,6 +1330,21 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         MOp.CalleeVectorArgs = 0;
       } else if (!bindFormattedCall(MB, MOp, LOp))
         applyCallRegisterEffect(MB, MOp, LOp, TailCall);
+      if (CallUnreadGPRs && TheArch == Arch::X64 && LOp.Opcode == NdOp::CALL &&
+          MOp.Opcode == NdOp::CALL && LOp.NumInputs &&
+          LOp.Inputs[0].isConst() && MOp.NumInputs && MOp.Inputs[0].isConst() &&
+          MOp.Inputs[0].ConstVal == LOp.Inputs[0].Offset &&
+          !CallArgumentsFrom && !TailCall) {
+        const va_t Target = LOp.Inputs[0].Offset;
+        if (CallSummaryKeysRead)
+          CallSummaryKeysRead->insert(Target);
+        if (const auto Read = CallUnreadGPRs->find(Target);
+            Read != CallUnreadGPRs->end())
+          Func.CallUnreadRegisters.emplace(
+              MOp.CallSiteId,
+              MedCallUnreadRegisters{Target, MOp.Addr, MOp.OriginSeq,
+                                     Read->second});
+      }
       if (X87Arguments && LOp.NumInputs == X87Arguments + 1) {
         MOp.X87ArgumentInput = MOp.NumInputs;
         MOp.X87ImportArguments = LOp.X87ImportArguments;

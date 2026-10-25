@@ -104,6 +104,7 @@ add_neverd_component_library(NeverDIRLow
   X86/CFGBuilderX86GetPc.cpp
   X86/CFGBuilderX86PLT.cpp
   CallRegisterEffects.cpp
+  CallRegisterUnread.cpp
   CircleRange.cpp
   FuncDetector.cpp
   X86/FuncDetectorX86.cpp

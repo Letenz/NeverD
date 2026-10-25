@@ -131,6 +131,15 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+`CallRegisterUnread` proves absent GPR input observations independently of
+argument inference. Opaque calls read every candidate family, and a nested
+call's may-write mask never kills a later input observation. Partial writes,
+exceptional entries, malformed successors and exhausted work remain conservative.
+Low-to-Med binds this evidence to the original direct-call occurrence and target;
+omitted-callee memoization includes it. Source scratch-restore liveness can cross
+only a still-matching call. Private-byte overwrite and escape checks stay in
+`MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
+
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.
 This keeps SSA promotion from recomputing whole-function dominance frontiers

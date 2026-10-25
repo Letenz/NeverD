@@ -2296,6 +2296,10 @@ add_neverd_unittest(NeverDMedPrologueSavesTests
   core/MedPrologueSavesTests.cpp
   LINK_COMPONENTS IRMed
 )
+add_neverd_unittest(NeverDCallRegisterUnreadTests
+  core/CallRegisterUnreadTests.cpp
+  LINK_COMPONENTS IRLow
+)
 add_neverd_unittest(NeverDMedPointerAccessesTests
   core/MedPointerAccessesTests.cpp
   LINK_COMPONENTS IRMed

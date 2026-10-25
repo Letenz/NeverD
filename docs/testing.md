@@ -6680,7 +6680,14 @@ COFF/ELF/Mach-O frame models. Explicit x86 flags transfers keep their effects
 without observing unrelated lifted-frame bytes. Malformed transfers, exceptional
 edges, observed restores, ABI-preserved/result registers and later implicit call
 readers retain the spill. A restored scratch register must be killed before a
-later call, including across a straight continuation. Run it with `NeverDMedStackAlignmentTests`,
+later call or have a matching proof that the callee cannot observe it, including
+across a straight continuation. `NeverDCallRegisterUnreadTests` distinguishes
+that proof from argument inference: nested may-writes, opaque and hinted calls,
+partial writes, bypasses, cycles, exceptional roots and work exhaustion remain
+conservative. Call-target/occurrence changes invalidate the source proof.
+`OverwrittenCallClobberSpills` executes the preserving-but-unread callee through
+both C routes at O0/O2 on COFF/ELF/Mach-O; its observing callee remains a negative
+control. Run these with `NeverDMedStackAlignmentTests`,
 `NeverDHighControlFlowTests`, the SysV/i386/Win64/AAPCS64 call-contract owners and
 `NeverDPipelineOutcomeTests` after changing source stack-access analysis.
 `PipelineSourceStackAccesses` checks source, LLVM source projection, machine

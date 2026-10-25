@@ -73,6 +73,10 @@ inline constexpr unsigned kNdTypesNdTypeStrBudget = 4096;
 // lib/ir/RegisterFlow.cpp
 inline constexpr size_t kRegisterFlowQueryRegisterFlowBudget = 1000000;
 
+// lib/ir/low/CallRegisterUnread.cpp
+/// Whole-query ceiling for conservative callee input-observation proofs.
+inline constexpr size_t kCallRegisterUnreadWork = 1000000;
+
 // lib/ir/SourceParameterPlacement.cpp
 /// More scalars than any value a convention passes in registers holds: a
 /// value with more is placed by its size alone or not at all.

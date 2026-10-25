@@ -168,6 +168,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
     Local.setCallExitConstants(&Result.CallExitConstants);
     Local.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+    Local.setCallUnreadGPRs(&Result.CallUnreadGPRs);
     Local.setCallArgumentSources(&Result.CallArgumentSources);
     Local.setCallEntryStackArgs(&Result.CallEntryStackArgs);
     Local.setCallEntryStackSlots(&Result.CallEntryStackSlots);
@@ -298,6 +299,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallEntryVariadicArguments);
   COPY_SOURCE_FACT(OmittedCalleeVariadicArguments);
   COPY_SOURCE_FACT(CallEntryReadGPRs);
+  COPY_SOURCE_FACT(CallUnreadGPRs);
   COPY_SOURCE_FACT(CallEntryStackArgs);
   COPY_SOURCE_FACT(CallEntryStackPops);
   COPY_SOURCE_FACT(CallEntryStackSlots);
