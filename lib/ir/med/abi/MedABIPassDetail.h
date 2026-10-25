@@ -34,6 +34,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -51,6 +52,13 @@ struct BinaryImage;
 /// ends a later call's argument setup (endsCallArgumentSetup), as call
 /// argument collection in MedToHigh has it too.
 bool isAbiRecoveryBarrier(const MedOp &Op);
+
+/// Physical pre-call stack bases, using the ABI recovery walk. Source clients
+/// require a complete ordinary graph and charge all walks to one work budget;
+/// offsets are proved separately against the authenticated entry SP.
+std::map<const MedOp *, MedVar> returnAddressStackPointers(const MedFunc &Func,
+                                                           Arch Architecture,
+                                                           size_t &Remaining);
 
 /// Recover the sole ECX argument of an exact, source-checked PE32 cookie call.
 /// Incidental register values and inferred callee signatures do not extend it.

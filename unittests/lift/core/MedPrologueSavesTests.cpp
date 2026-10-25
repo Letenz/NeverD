@@ -9,8 +9,10 @@
 #include "neverd/Common.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/lift/X86/X86Regs.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include <initializer_list>
 #include <limits>
@@ -622,6 +624,215 @@ TEST(SourceFrameReads, GeneralPartialLoadsKeepTheirInitializedBits) {
   Func.Blocks[0].Ops.insert(Func.Blocks[0].Ops.end() - 1, LowWord);
   markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
   EXPECT_EQ(Func.Blocks[0].Ops[6].Opcode, NdOp::LOAD);
+}
+
+TEST(SourceStackSpills, PhysicalCallsOverwriteOnlyTheirReturnAddressBytes) {
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (unsigned Mode = 0; Mode < 11; ++Mode) {
+        SCOPED_TRACE(testing::Message()
+                     << unsigned(A) << ':' << unsigned(Format) << ':' << Mode);
+        const auto &TRI = getTargetRegInfo(A);
+        const auto Width = TRI.PointerSize;
+        auto SP0 = reg(1, TRI.StackPointer, 0);
+        SP0.TheArch = A;
+        SP0.Size = Width;
+        auto SP1 = SP0;
+        SP1.SSAVer = 1;
+        auto Address = temp(10);
+        Address.TheArch = A;
+        Address.Size = Width;
+        auto Read = Address;
+        Read.Id = 11;
+        MedFunc Func;
+        Func.Entry = 0x1000;
+        Func.FrameSize = 64;
+        MedBlock Block;
+        Block.Id = 0;
+        Block.StartAddr = Func.Entry;
+        Block.Ops = {
+            op(NdOp::COPY, SP0, {SP0}),
+            op(NdOp::INT_SUB, SP1, {SP0, MedVar::makeConst(32, Width)}),
+            op(NdOp::INT_SUB, Address,
+               {SP1, MedVar::makeConst(Width + (Mode == 3), Width)}),
+            op(NdOp::STORE, none(),
+               {Address, MedVar::makeUnspecified(Width, A)}),
+            op(Mode == 8 ? NdOp::INDIR_CALL : NdOp::CALL, none(),
+               {MedVar::makeConst(0x2000, Width)}),
+            op(NdOp::RETURN, none(), {MedVar::makeConst(19, Width)})};
+        Block.Ops[4].CallReturnAddressBytes = Mode == 1   ? 0
+                                              : Mode == 2 ? Width / 2
+                                                          : Width;
+        if (Mode == 4) {
+          Block.Ops[4].addInput(Read);
+          Block.Ops.insert(Block.Ops.begin() + 4,
+                           op(NdOp::LOAD, Read, {Address}));
+        }
+        if (Mode == 5)
+          Block.Ops.insert(
+              Block.Ops.begin() + 4,
+              op(NdOp::LOAD, Read, {MedVar::makeConst(0x8000, Width)}));
+        if (Mode == 6) {
+          auto Narrow = SP1;
+          ++Narrow.SSAVer;
+          Narrow.Size = 2;
+          Block.Ops.insert(Block.Ops.begin() + 4,
+                           op(NdOp::COPY, Narrow, {MedVar::makeConst(0, 2)}));
+        }
+        if (Mode == 7)
+          Block.Ops[0] = op(NdOp::NOP, none(), {});
+        if (Mode == 9)
+          Block.Ops[3].MemoryOrdering =
+              NdMemoryOrdering::SequentiallyConsistent;
+        if (Mode == 10)
+          Block.ExceptionalSuccs.emplace_back(1, 0x3000);
+        Func.Blocks.push_back(std::move(Block));
+        const auto Count = Func.Blocks[0].Ops.size();
+        markSourceStackAccesses(Func, A, Format);
+        EXPECT_EQ(Func.Blocks[0].Ops[3].PrologueSave,
+                  (A == Arch::X86 || A == Arch::X64) &&
+                      (Mode == 0 || Mode == 8));
+        EXPECT_EQ(Func.Blocks[0].Ops.size(), Count);
+      }
+}
+
+TEST(SourceStackSpills, ReturnAddressOverwriteRequiresACompleteReachingStack) {
+  for (unsigned Mode = 0; Mode < 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func = pushedRbx();
+    Func.FrameSize = 32;
+    auto &Entry = Func.Blocks[0];
+    Entry.Ops.resize(5);
+    Entry.Ops[4].Inputs[1] = MedVar::makeUnspecified(8, Arch::X64);
+    Entry.Ops.emplace_back(
+        op(NdOp::INT_ADD, sp(2), {sp(1), MedVar::makeConst(8, 8)}));
+    Entry.Ops.emplace_back(
+        op(NdOp::BRANCH, none(), {MedVar::makeConst(0x2000, 8)}));
+    Entry.Succs = {1};
+    MedBlock Next;
+    Next.Id = 1;
+    Next.StartAddr = 0x2000;
+    Next.Preds = {0};
+    Next.Ops = {op(NdOp::CALL, none(), {MedVar::makeConst(0x3000, 8)}),
+                op(NdOp::RETURN, none(), {MedVar::makeConst(19, 8)})};
+    Next.Ops[0].CallReturnAddressBytes = 8;
+    if (Mode == 1)
+      Next.Preds.clear();
+    if (Mode == 2)
+      Entry.Succs.clear();
+    if (Mode == 3)
+      Next.Preds.push_back(99);
+    if (Mode == 4)
+      Next.Id = 0;
+    if (Mode == 5) {
+      PhiNode Phi;
+      Phi.Output = sp(3);
+      Phi.Args = {{0, sp(2)}};
+      Next.Phis.push_back(Phi);
+    }
+    Func.Blocks.push_back(std::move(Next));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+    EXPECT_EQ(save(Func).PrologueSave, Mode == 0 || Mode == 5);
+  }
+}
+
+TEST(SourceStackSpills, APhysicalCallCanReplaceTheIncomingReturnAddress) {
+  MedFunc Func = pushedRbx();
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.resize(3);
+  Ops.push_back(op(NdOp::INT_ADD, sp(1), {sp(0), MedVar::makeConst(8, 8)}));
+  Ops.push_back(op(NdOp::CALL, none(), {MedVar::makeConst(0x2000, 8)}));
+  Ops.back().CallReturnAddressBytes = 8;
+  Ops.push_back(op(NdOp::LOAD, temp(10), {sp(0)}));
+  Ops.push_back(op(NdOp::RETURN, none(), {temp(10)}));
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+  EXPECT_FALSE(Ops[5].ReturnAddressRead);
+  Ops[4].CallReturnAddressBytes = 0;
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+  EXPECT_TRUE(Ops[5].ReturnAddressRead);
+}
+
+TEST(SourceStackSpills, OnlyCheckedNearCallOccurrencesPublishStackWrites) {
+  for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (unsigned Mode = 0; Mode < 10; ++Mode) {
+      SCOPED_TRACE(testing::Message() << unsigned(A) << ':' << Mode);
+      const auto &TRI = getTargetRegInfo(A);
+      BinaryImage Image;
+      Image.Arch = A;
+      Image.Format = BinaryFormat::ELF;
+      Section Text;
+      Text.VA = 0x1000;
+      Text.Data = {0xe8, 0xfb, 0x0f, 0x00, 0x00};
+      if (Mode == 1)
+        Text.Data = {0xff, 0xd0};
+      if (Mode == 2)
+        Text.Data[0] = 0xe9;
+      if (Mode == 5)
+        Text.Data = {0x66, 0xe8, 0x00, 0x00};
+      if (Mode == 6)
+        Text.Data = {0xff, 0x18};
+      if (Mode == 7)
+        Text.Data = {0x48, 0xff, 0xd0};
+      Text.Size = Text.Data.size();
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Image.Sections.push_back(Text);
+      LowFunc Low;
+      Low.Entry = Text.VA;
+      LowBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Text.VA;
+      Block.EndAddr = Text.VA + Text.Size;
+      LowOp Call;
+      Call.Opcode =
+          Mode == 1 || Mode == 6 || Mode == 7 ? NdOp::INDIR_CALL : NdOp::CALL;
+      Call.Addr = Text.VA;
+      Call.Output = NdVar::reg(TRI.IntReturnReg, TRI.PointerSize);
+      Call.addInput(Call.Opcode == NdOp::CALL
+                        ? NdVar::cst(0x2000, TRI.PointerSize)
+                        : NdVar::reg(TRI.IntReturnReg, TRI.PointerSize));
+      Block.Ops.push_back(Call);
+      LowInstructionBoundary Boundary;
+      Boundary.Address = Text.VA;
+      Boundary.Size = Text.Size;
+      Boundary.OpCount = 1;
+      Boundary.Control = LowInstructionControl::Call;
+      Boundary.ControlFlags = LowInstructionControlFlag::Call;
+      if (Call.Opcode == NdOp::INDIR_CALL)
+        Boundary.ControlFlags |= LowInstructionControlFlag::Indirect;
+      else
+        Boundary.Immediate = 0x2000;
+      if (Mode == 2) {
+        Boundary.Control = LowInstructionControl::TailCall;
+        Boundary.ControlFlags |= LowInstructionControlFlag::Return;
+      }
+      if (Mode == 3)
+        ++Boundary.Address;
+      if (Mode == 8) {
+        Boundary.Control = LowInstructionControl::ConditionalCall;
+        Boundary.ControlFlags |= LowInstructionControlFlag::Branch |
+                                 LowInstructionControlFlag::Conditional;
+      }
+      if (Mode != 4)
+        Block.InstructionBoundaries.push_back(Boundary);
+      Low.Blocks.push_back(std::move(Block));
+      LowToMedConverter Converter;
+      if (Mode != 9)
+        Converter.setBinaryImage(&Image);
+      const auto Med = Converter.convert(Low, A);
+      unsigned Calls = 0;
+      for (const auto &B : Med.Blocks)
+        for (const auto &Op : B.Ops)
+          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+            ++Calls;
+            const bool Expected =
+                ((A == Arch::X86 || A == Arch::X64) && Mode <= 1) ||
+                (A == Arch::X64 && Mode == 7);
+            EXPECT_EQ(Op.CallReturnAddressBytes,
+                      Expected ? TRI.PointerSize : 0);
+          }
+      EXPECT_EQ(Calls, 1u);
+    }
 }
 
 } // namespace

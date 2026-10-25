@@ -268,7 +268,8 @@ struct ReachingStackPtrResult {
 ReachingStackPtrResult
 findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
                      int BeforeIdx, MedDefSiteIndex *Defs = nullptr,
-                     const MedBlockIdIndex *Index = nullptr) {
+                     const MedBlockIdIndex *Index = nullptr,
+                     size_t *Remaining = nullptr, bool ComputeDelta = true) {
   // Walk transparent predecessors once and collect every boundary at which the
   // reaching SP becomes concrete: a local SP definition, an SP PHI, or a
   // function-entry block.  The former recursive walk only marked the current
@@ -313,7 +314,8 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
   };
   auto MergeBoundary = [&](const MedVar &Value) {
     MergeBasis(Value);
-    MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs));
+    if (ComputeDelta)
+      MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs));
   };
 
   while (!Worklist.empty()) {
@@ -326,6 +328,16 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
     if (!Found)
       return {};
     const MedBlock &Block = *Found;
+    if (Remaining) {
+      for (size_t Work : {size_t{1}, Block.Ops.size(), Block.Phis.size(),
+                          Block.Preds.size(), Block.ExceptionalPreds.size()}) {
+        if (*Remaining < Work) {
+          *Remaining = 0;
+          return {};
+        }
+        *Remaining -= Work;
+      }
+    }
     const int Boundary =
         std::clamp(Current.second, 0, static_cast<int>(Block.Ops.size()));
 
@@ -385,7 +397,7 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
   ReachingStackPtrResult Result;
   if (BasisExact)
     Result.Basis = CommonBasis;
-  if (DeltaExact)
+  if (ComputeDelta && DeltaExact)
     Result.Delta = CommonDelta;
   return Result;
 }
@@ -393,6 +405,52 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
 
 extern const AbiCallPolicy Win64AbiCallPolicy;
 extern const AbiCallPolicy I386AbiCallPolicy;
+
+std::map<const MedOp *, MedVar> returnAddressStackPointers(const MedFunc &Func,
+                                                           Arch Architecture,
+                                                           size_t &Remaining) {
+  std::map<const MedOp *, MedVar> Result;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if (!TRI.CallPushesReturnAddress || Func.Blocks.empty() || Func.SkippedSSA)
+    return Result;
+  bool HasWrites = false;
+  for (const auto &Block : Func.Blocks) {
+    for (size_t Work : {size_t{1}, Block.Ops.size(), Block.Preds.size(),
+                        Block.Succs.size()}) {
+      if (Remaining < Work) {
+        Remaining = 0;
+        return Result;
+      }
+      Remaining -= Work;
+    }
+    for (const auto &Op : Block.Ops)
+      HasWrites |= (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+                   Op.CallReturnAddressBytes == TRI.PointerSize && !Op.Dead;
+  }
+  if (!HasWrites)
+    return Result;
+  const MedBlockIdIndex Blocks(Func);
+  const safety::detail::ExactPhiGraph Graph(Func);
+  for (const auto &Block : Func.Blocks)
+    if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
+        !Graph.hasCompleteNormalPredecessors(Block))
+      return Result;
+  for (const auto &Block : Func.Blocks)
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const auto &Call = Block.Ops[I];
+      if ((Call.Opcode != NdOp::CALL && Call.Opcode != NdOp::INDIR_CALL) ||
+          Call.CallReturnAddressBytes != TRI.PointerSize || Call.Dead)
+        continue;
+      const auto Stack =
+          findReachingStackPtr(Func, TRI, Block.Id, static_cast<int>(I),
+                               nullptr, &Blocks, &Remaining, false);
+      if (Stack.Basis && Stack.Basis->Size == TRI.PointerSize)
+        Result.emplace(&Call, *Stack.Basis);
+      if (!Remaining)
+        return Result;
+    }
+  return Result;
+}
 
 bool hasBoundIntegerCallArguments(const MedOp &Op) {
   if (!Op.IntegerCallSignature || Op.ScalarCallSignature || Op.SourceCallHint ||

@@ -66,6 +66,12 @@ restores require a register overwrite before a later call, or a normal exit;
 ABI-preserved/result registers, PHIs and implicit clobber readers keep their
 values. This bounded shared proof removes avoidable HighC/LLVMC traps but does
 not recover escaping VM state or authorize a dynamic code-address fallback.
+Checked x86/x64 near calls now contribute their physical return-slot write to
+source spill proofs. A released private slot completely overwritten by that
+write need not observe its former value. Tail jumps, partial overlaps, unread
+restores without a liveness proof, unknown encodings and link-register calls
+remain conservative. This removes one transport class; it does not recover
+runtime VM inputs or call-clobbered registers.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by

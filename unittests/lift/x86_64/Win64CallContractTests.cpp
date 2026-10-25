@@ -1390,7 +1390,7 @@ TEST(CallExitRegisters, EntrySpillProofKeepsObservedBytesAndEscapes) {
 class OverwrittenCallClobberSpills : public testing::TestWithParam<unsigned> {};
 
 INSTANTIATE_TEST_SUITE_P(SourceStackSpills, OverwrittenCallClobberSpills,
-                         testing::Values(0u, 1u, 2u));
+                         testing::Values(0u, 1u, 2u, 3u));
 
 TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
   const unsigned Variant = GetParam();
@@ -1405,21 +1405,39 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
     const auto Call = throughSlot(Text + 4, slot(0));
     std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
     Code.insert(Code.end(), Call.begin(), Call.end());
-    const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
-    Code.insert(Code.end(), Save.begin(), Save.end());
-    if (Variant)
-      Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
-    if (Variant == 2)
-      Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
-    const std::vector<uint8_t> Body = {
-        0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
-        0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
-        0x48, 0x83, 0xC4, 0x28, 0xC3};
-    Code.insert(Code.end(), Body.begin(), Body.end());
-    auto Image = makeImage(Code, {{Text, "reused_scratch"}}, {"rand"});
+    if (Variant == 3) {
+      // The next physical CALL overwrites this released push slot. Passing
+      // another frame member to strlen keeps the frame observable in C.
+      Code.insert(
+          Code.end(),
+          {0x66, 0xc7, 0x44, 0x24, 0x10, 97, 0, 0x41, 0x53, // push r11
+           0x48, 0x8d, 0x64, 0x24, 8,                       // lea rsp,[rsp+8]
+           0x48, 0x8d,
+           static_cast<uint8_t>(Format == BinaryFormat::COFF ? 0x4c : 0x7c),
+           0x24, 0x10});
+      const auto Read = throughSlot(Text + Code.size(), slot(1));
+      Code.insert(Code.end(), Read.begin(), Read.end());
+      Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x28, 0xc3});
+    } else {
+      const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
+      Code.insert(Code.end(), Save.begin(), Save.end());
+      if (Variant)
+        Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
+      if (Variant == 2)
+        Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
+      const std::vector<uint8_t> Body = {
+          0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
+          0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
+          0x48, 0x83, 0xC4, 0x28, 0xC3};
+      Code.insert(Code.end(), Body.begin(), Body.end());
+    }
+    auto Image =
+        makeImage(Code, {{Text, "reused_scratch"}}, {"rand", "strlen"});
     Image.Format = Format;
     ASSERT_TRUE(Image.recordImportStorageSlot(
         Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        slot(1), "strlen", 0, ImportStorageEvidence::LoaderBind));
     for (bool LLVM : {false, true})
       for (bool NoOpt : {false, true}) {
         SCOPED_TRACE(testing::Message() << unsigned(Format) << ':' << Variant
@@ -1447,7 +1465,7 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
         } else
           ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
         EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-        if (Variant) {
+        if (Variant == 1 || Variant == 2) {
           EXPECT_NE(Source.find("__readeflags"), std::string::npos) << Source;
           EXPECT_NE(Source.find("__writeeflags"), std::string::npos) << Source;
         }
@@ -1467,13 +1485,21 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
               HighCEmitter().emit(Result.HighFuncs, NativeOutput, COptions));
         const std::string Provider = R"(
 #include <stdlib.h>
+#include <string.h>
 static unsigned calls;
 static int spill_provider(void) { ++calls; return 13; }
+static size_t spill_strlen_provider(const char *p) {
+  ++calls;
+  return p[0] == 97 && p[1] == 0 ? 1 : 99;
+}
 #define rand spill_provider
+#define strlen spill_strlen_provider
 )";
-        const std::string Oracle = R"(
-int main(void) { return reused_scratch() != 19 || calls != 1; }
-)";
+        const std::string Oracle =
+            Variant == 3 ? "int main(void) { return reused_scratch() != 1 || "
+                           "calls != 2; }"
+                         : "int main(void) { return reused_scratch() != 19 || "
+                           "calls != 1; }";
         for (llvm::StringRef Level : {"-O0", "-O2"})
           source_call_execution_test::compileAndRun(
               Provider + Native + Oracle,
