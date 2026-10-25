@@ -2033,6 +2033,9 @@ TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
     if (neverd_func_find_by_addr(Session, Main + Offset) < 0)
       ASSERT_EQ(neverd_func_create(Session, Main + Offset), 0)
           << takeString(neverd_last_error(Session));
+  const auto CandidatePattern = write(
+      "call-candidate.pat", "E801000000C3 00 0000 0006 :0000 library_guess\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, CandidatePattern.c_str()), 2);
   const auto Hex = [](uint64_t Address) {
     return "0x" + llvm::utohexstr(Address);
   };
@@ -2127,6 +2130,15 @@ TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
   EXPECT_EQ(Reply.getBoolean("depth_limited"), false);
   EXPECT_EQ(Strings(Reply.getArray("bottom_up")),
             (std::vector<std::string>{C, B, A, D, M}));
+  // Same-byte candidates for a and b cannot classify them as library code:
+  // doing so would stop traversal at a and hide b from the default tree.
+  Reply =
+      Query(neverd_call_tree_json, "{\"root\":\"" + M + "\",\"max_depth\":2}");
+  EXPECT_EQ(Strings(Reply.getArray("bottom_up")),
+            (std::vector<std::string>{C, B, A, D, M}));
+  ASSERT_NE(Reply.getArray("nodes"), nullptr);
+  for (const auto &Node : *Reply.getArray("nodes"))
+    EXPECT_FALSE(Node.getAsObject()->getBoolean("library").value_or(false));
   // And the callers.
   Reply = Query(neverd_call_tree_json, "{\"root\":\"" + C +
                                            "\",\"direction\":\"callers\","
@@ -11298,7 +11310,7 @@ TEST_F(SessionCAPITest, SignatureCannotReplaceAStatedHexPlaceholderName) {
 }
 
 TEST_F(SessionCAPITest,
-       SignatureIdentitySurvivesDiscoveryAndWithdrawsOnReload) {
+       SignatureCandidatesStaySeparateFromNamesAcrossDiscoveryAndReload) {
   const auto Input = write("stripped-identity.elf", makeNativeELF(false));
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
   const auto Entry = neverd_session_entry_addr(Session);
@@ -11309,11 +11321,12 @@ TEST_F(SessionCAPITest,
       << takeString(neverd_last_error(Session));
   const int Index = neverd_func_find_by_addr(Session, Entry);
   ASSERT_GE(Index, 0);
-  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
-  ASSERT_EQ(neverd_rename_func(Session, "library_guess", "user_choice"), 0);
+  const auto Original = "sub_" + llvm::utohexstr(Entry);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), Original);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry, "user_choice"), 0);
   write("stripped-identity.elf.neverd/renames.json", "[]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
-  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), Original);
   write("identity.pat", "B809000000C3 00 0000 0006 :0000 other_guess\n");
   ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Index)),
@@ -11325,7 +11338,7 @@ TEST_F(SessionCAPITest,
 TEST_F(SessionCAPITest, SignaturesMatchARoutineOnlyACallReveals) {
   // A stripped program without sections lists no function at all; its entry
   // calls a routine no table names.  Signatures are tried where the
-  // pipeline's detector would find functions, so the routine is still named.
+  // pipeline's detector would find functions, so its candidate is still found.
   const std::string Body("\xe8\x01\x00\x00\x00\xc3"  // call helper; ret
                          "\xb8\x2a\x00\x00\x00\xc3", // helper: mov eax, 42
                          12);

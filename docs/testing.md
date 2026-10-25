@@ -5376,6 +5376,16 @@ names. Explicit directory loading still attempts every file; a failed
 automatic load retains the previous successful database and statistics.
 `NeverDSessionSignatureProfileTests` verifies the same selection through the
 public C SDK, including header JSON counts and their manual-load reset.
+Its naming cases exercise PE exports and stripped PE, ELF x64/ARM64 and Mach-O:
+candidates stay visible without replacing function names, and evidence for one
+alias does not certify the others. `SignatureDBIdentity.*` covers confirmed
+references without source identity, stated names, data/analysis/user symbols,
+failed reloads and evidence withdrawal. `PersonalitySignatures.*` keeps the
+dedicated exception-context path. `SafetyCAPI.SignatureCandidateCannotInventSafetySinkIdentity`
+checks that a candidate cannot manufacture a safety sink. `NeverDWorkerTransport`
+checks library classification for admitted, candidate-only and legacy responses.
+`SessionCAPITest.CallPathsFollowTheDirectReferencesBetweenFunctions` checks that
+same-byte candidates cannot truncate the default call tree as library functions.
 See [signature selection](signature-selection.md) for the evidence boundaries.
 
 `SignatureMatcherCRCReuse.*` additionally bounds repeated-checksum work while
