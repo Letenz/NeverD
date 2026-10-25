@@ -5706,6 +5706,13 @@ handler and landing-pad cases retain the exception-boundary coverage.
 
 `HighCIntegerConversion.*` in `NeverDHighControlFlowTests` checks the integer conversions the HighC writer leaves to C. A conversion inside an operand that keeps the bytes an outer conversion keeps prints no cast of its own; an assignment to a declared integer local and a return convert implicitly, and a literal is spelled as the value it converts to, while a pointer keeps its explicit conversion. Stores convert like assignments, and a zero-extended argument to a typed wider parameter keeps its extension. A callee whose debug symbol has no type, or that nothing declares while the code reads more than an int of its result, returns its whole register, so a 64-bit pointer keeps its upper half. Each case runs at `-O0` and `-O2` with undefined-behavior traps against reference arithmetic.
 
+`HighCIntegerConversion.FloatingCallKeepsAConstantBitCast` executes typed local
+float/double calls for x86, x64, ARM32 and ARM64 at O0/O2. The call must retain
+the floating expression before immediate cleanup can expose its integer bits.
+The ARM32 VFP call regression also runs its recovered recurrence against the
+source. The softfp external-call oracle compares R0 result bits: its tail-call
+bytes cannot distinguish a source float from an integer view of that float.
+
 `HighCIntegerConversion.NarrowCopyKeepsLowBytesThroughSourceProjection` starts
 from MedIR and checks narrowing copies followed by zero extension for i386,
 x86-64 and AArch64. The emitted C executes at O0/O2 with undefined-behavior
