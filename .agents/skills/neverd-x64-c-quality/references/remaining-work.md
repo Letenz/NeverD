@@ -135,6 +135,19 @@ The shared stack-address owner also recognizes canonical zero-extended
 treating truncated 64-bit pointers or wider incoming registers as frame roots.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
+Post-recovery Win64 scalar leaf borrows now have a shared complete-use proof.
+Only unread private bytes can lose their stores; negative offsets, implicit
+register inputs and source call home areas retain observations. SSA version
+zero alone is not an incoming register. Nested callees, incoming pointer stack
+parameters and opaque external effects remain unsupported by this proof. The
+ntos `StDmpSinglePageAdd` gap therefore still requires broader authenticated
+pointer effects and per-slot incoming argument reads; a leaf fixture is not
+evidence that this original function is fixed.
+HighIR now keeps the shared direct-call argument boundary: its secondary setup
+scan cannot append neighboring stack locals after a complete recovered list or
+replace an unavailable interior operand with a stale local. This removes a
+route-specific source of extra arguments; it does not prove those interior
+operands unread.
 Integer call recovery now retains the complete SSA operand prefix published by
 callee-read summaries on x64 COFF, ELF and Mach-O. Authenticated fixed scalar
 stack declarations now bind their exact-width operands before SSA, using shared

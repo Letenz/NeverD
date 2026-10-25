@@ -84,10 +84,10 @@ LinuxMemory::procMappings(bool IncludeMMIOBoundaries) const {
       Cut(I->End);
     }
     auto Owner = std::upper_bound(
-        AnonymousResidencyRanges.begin(), AnonymousResidencyRanges.end(),
+        AnonymousAllocationRanges.begin(), AnonymousAllocationRanges.end(),
         Range.Address,
         [](uint64_t At, const auto &R) { return At < R.second; });
-    for (; Owner != AnonymousResidencyRanges.end() && Owner->first < End;
+    for (; Owner != AnonymousAllocationRanges.end() && Owner->first < End;
          ++Owner) {
       Cut(Owner->first);
       Cut(Owner->second);

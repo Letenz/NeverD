@@ -54,6 +54,81 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`*HandlerPost*` checks initial-state validation, nullable Runnable transport,
+retained Message fields, stable ordering, zero deadlines, thread detach,
+actual Linux clock advancement, final-method admission, override refusal,
+blocked-queue partial effects, cyclic links, bounded observation, and terminal
+resource failures. DEX verifies the Runnable remains unexecuted after post;
+independent JNI ordinary/array calls share the queue across native threads.
+Run full Dalvik, Android JNI and ProcessReport suites. Queue dispatch,
+message recycling and Java monitor scheduling are not covered.
+
+`*MainLooper*` checks unknown/null/prepared state in every application phase,
+retained process identity, Handler constructor fields, zero-initialized JNI
+allocations, null exceptions, malformed objects and terminal budgets. DEX
+constructors and independent JNI ordinary/array calls share the owner; another
+native thread checks the retained main Looper. Run Dalvik, Android JNI and
+ProcessReport suites. Queue dispatch and Java thread execution are not covered.
+
+`*ClassLoaderPaths*` covers application/system ownership, unknown versus empty
+inventories, exact ordering and spelling, fresh String identities, lifecycle,
+malformed wire input and terminal resource limits. DEX and JNI ordinary/array
+calls use the shared formatter. Run Dalvik, Android JNI and ProcessReport suites;
+these checks do not execute DEX loading, filesystem probes or native searches.
+
+`*DefaultLocale*` covers unknown, partial and empty state, normalization,
+application-phase independence, retained identity and interned components.
+DEX and JNI ordinary/array calls share the owner; the native fixture also
+checks another thread. Foreign/null receivers and terminal resource limits
+remain covered. Run Dalvik, Android JNI and ProcessReport suites. Constructors,
+setters, category defaults and Locale startup are outside this projection.
+
+`*TargetSdkVersion*` covers unknown versus explicit int32 state, independence
+from platform version properties, Context/query isolation, mutation, DEX
+execution, JNI detach/thread retention, foreign receivers and work limits.
+JSON checks both int32 endpoints and rejects null, nonintegers and overflow.
+Run Dalvik, Android JNI and ProcessReport suites; no APK parser or package
+service execution is implied by these field tests.
+
+`*PackageInfo*` covers exact positive package queries, absent versus null fields,
+per-result mutations, lifecycle validation and terminal work/storage limits.
+`*PackageInfoApplication*` checks the nested reference's unknown/null/object
+states, independent parcel/Context/query objects, inherited label fields,
+reference replacement, DEX writes, native thread/detach retention and nested
+schema validation. Declaration lookup alone does not require response input.
+DEX and JNI exercise String fields and 32-bit versionCode through the shared
+field owner; the native fixture includes array calls, detach and another thread.
+Run full Dalvik, Android JNI and ProcessReport suites because primitive field
+narrowing and query schema validation are shared. Package-service execution,
+negative package lookups and unlisted PackageInfo members remain unsupported.
+The PackageManager availability fixture invokes getPackageInfo after method
+lookup, so its unknown-query check continues to exercise missing response state
+when the method declaration is available.
+
+`*PackageResourcePath*` covers unknown/null/String inputs, exact path spelling,
+Context identity, independence from public ApplicationInfo writes, lifecycle and
+resource limits. DEX and JNI exercise the same owner; the native fixture checks
+ordinary/array calls, detach and another thread. Run full Dalvik, Android JNI and
+ProcessReport suites. Filesystem and resource-loader execution are not covered.
+Null-receiver checks use a fresh Runtime after a foreign-object refusal:
+unsupported operations terminate that Runtime, while Java exceptions are
+independently observable.
+Foreign-receiver probes allocate a concrete Application so they reach the
+Context ownership check.
+
+`*ApplicationLabel*` covers explicit safe-label mode, unknown/null/String field
+state, inherited declaration ownership, untrimmed CharSequence identity,
+mutable StringBuilder writes, query/Context isolation and terminal budgets.
+The original native fixture exercises ordinary and array JNI calls, null
+argument exceptions, detach and a second thread. DEX field writes and method
+calls share the owner. Run full Dalvik, Android JNI and ProcessReport suites.
+Resource lookup and safe-label conversion remain outside this coverage.
+`DalvikRuntime.StringCharSequenceAssignabilityIsSharedAndCovariant` checks the
+shared platform relationship and array covariance, including reverse, unrelated
+reference and primitive-array refusals. Label tests exercise the same rule
+through DEX and JNI field writes.
+
+
 `NeverDX86FourSourceSourceTests` verifies all six four-source arithmetic
 families, malformed native/assembly contracts, unknown operand suppression and
 observable raw-pipeline inputs/results. `NEVERD_FOUR_SOURCE_EXPORT_DIR` exports
@@ -7252,6 +7327,19 @@ body consumes. The Mach-O ARM/Thumb five-input MBA source tests execute both
 C routes at O0/O2 after wide-return recovery reconverts the caller; its saved
 R8 must not become an unknown-register trap.
 
+`SourceFrameBorrows.ReadExtentsAndEscapesBoundPrivateStoreRemoval` checks the
+post-recovery Win64 leaf-borrow proof, including negative and wide reads,
+implicit incoming registers, pointer capture, home-area storage and refusal
+boundaries. High-byte GPR inputs, scalar vector lanes and callee-SP aliases are
+negative controls too. `Win64CallContract.BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes`
+executes both source routes at O0/O2 with UBSan, with optimization enabled or
+disabled and with the callee selected or omitted. Its observing negative control
+must retain the unknown-value guard. These checks do not qualify nested borrows,
+incoming pointer stack arguments or undocumented external pointer effects.
+`MissingInteriorStackSlotCannotDiscardLaterArguments` also places known local
+words beyond the seven recovered arguments. Both routes must retain the missing
+interior operand and seventh argument without appending those neighboring words.
+
 `MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
 checks four architectures and three formats in both query orders. Accepted and
 moving loops, mixed joins, ambiguous/missing definitions, narrow occurrences and
@@ -11126,6 +11214,13 @@ failure reports for all four dynamically resolved names. Fixtures and expected
 bytes are independently authored; these tests require no Android device or
 host libc formatting oracle.
 
+Narrow scanning coverage includes whitespace-preserving `%c`, NUL-terminated
+`%s`, partial character widths at EOF, suppression, consumed-byte counts and
+outputs larger than an integer. The independent `android_scan_text.c` caller
+also crosses GP registers into stacked arguments with direct calls, `va_copy`
+and a wholly stacked `va_list`. Wide conversions remain explicit refusals.
+
+
 `AndroidSearchTests.cpp` executes independently compiled character-search
 callers at O0/O2 with ordinary, APS2 and RELR relocations on each available
 ARM64 backend. It checks first/last matches, NUL and unsigned characters,
@@ -13401,6 +13496,18 @@ optimization on and off. Variant 8 supplies a complete later store and executes
 both generated C routes at O0/O2 with an independent provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
 
+The call-slot suite also covers complete and partial handler stores, exact
+throwing instructions versus protected ranges, mismatched exceptional edges,
+and restored-stack facts bound to fresh LowIR occurrences. Repeated reads must
+fit a bounded shared history while a later CALL observation still fails.
+`MedStackAlignment.ProvenDefinitionsComposeOnlyWithinTheirQuery` rejects
+foreign, contradictory and narrow seeds without changing ordinary queries.
+`RelativeQueriesNeverInheritTheParentStackOrigin` rejects mixed parent/callback
+origins and unresolved exceptional inputs. The real PE32 `xcpt4` filter and
+`seh_probe` handler regressions in `NeverDCPointerProjectionTests` cover their
+interaction with source SEH rendering; run both source routes and the complete
+C-pointer, Win64, SysV and i386 call-contract suites after changing this boundary.
+
 `I386CallContract.PhysicalCallReturnSlotsDoNotKeepOldSourceConstants` checks
 four-byte CALL slots across the same three formats, both source routes and
 source optimization settings. A complete later DWORD store permits host C
@@ -13452,11 +13559,22 @@ after changing connection admission. All transport tests are offline.
 SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
 failed-description reuse.
 
-`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 28 complete
+`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 84 complete
 SDK/CLI reports across O0/O2 JNI callers. Resolver identity, UTF-16 builders,
 missing and null settings, signed integer defaults, mutable application fields,
-package-manager availability and exact package queries retain the same shared
-semantics through typed and public wire entrypoints.
+package-manager availability, nested package metadata, labels, resource paths,
+target SDK fields, split arrays, default Locale, class loader paths and exact
+package queries retain the same shared semantics through typed and public wire
+entrypoints.
+
+`*SplitSourceDirs*` verifies both split fields, independent identities and
+unknown/null/empty arrays, exact order and String
+contents, nullable elements, separate Context/query/parcel arrays, retained
+reference replacement, DEX element mutation, JNI array access across detach
+and another thread, strict wire types, typed count/byte bounds and terminal
+work/storage failures. Run full Dalvik, Android JNI and ProcessReport suites
+for this shared public layout. Split APK parsing, file lookup, package
+services and ART loading are not covered.
 
 <!-- i18n-section: interactive-byte-patches -->
 ## Interactive patch ownership
@@ -13482,3 +13600,93 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`AndroidMessageQueueTest.*` checks FIFO removal, exact Runnable identity and
+separate execution, synchronization barriers, future asynchronous candidates,
+unknown native callbacks and clocks, malformed complete chains, work-stop
+atomicity, capacity reuse and nonpublic method access. The independently
+written JNI fixture in `AndroidMessageQueueTests.cpp` exercises ordinary and
+array-form calls across O0/O2 and three relocation packings, retaining actual
+global references across detach/reattach. It compares every byte of a guarded
+output page and preserves the queue on unknown native state, foreign queues
+and empty blocking waits. ProcessReport tests distinguish an omitted
+`native_callbacks_empty` from both booleans and reject every non-boolean shape.
+
+`ProcessPublic.AndroidMessageQueuesMatchSDKAndCLI` compares 16 complete reports
+across O0/ordinary and O2/RELR native callers. Guarded output, retained message
+counts, monotonic timestamps and the unchanged terminal reason cover successful
+removal, unknown/nonempty native callbacks, empty/foreign queues, missing pool
+or clock observations, and the post-before-nativeWake boundary.
+
+`URLValueTest.*` covers independent HTTP URL values, exact UTF-16 rendering,
+unsupported forms, work and heap limits, hierarchy, inherited virtual versus
+nonvirtual equality, and original DEX construction. `AndroidJNI.URLValues*`
+uses independent ARM64 JNI callers, including varargs and jvalue-array
+construction, inherited method IDs, the connection boundary and guarded string
+reads. Run complete Dalvik and JNI suites because these share the library owner.
+No test may use DNS, URL.equals/hashCode or connection methods as a host oracle;
+reference construction/rendering must run with host networking denied.
+
+`URLValueTest.Handler*` and `ProcessReport.AndroidURLHandler*` cover explicit
+custom handler state, strict typed/JSON admission, null/empty/non-ASCII messages,
+fresh checked IOException identities, retained message identity, DEX catch and
+rethrow, missing-scheme refusal, and terminal work/heap limits. Original ARM64
+`AndroidJNI.URLHandler*` callers exercise direct, va_list and jvalue-array routes,
+ExceptionOccurred/Check/Clear/Throw and getMessage. Compare full Unicorn/HVF
+reports at O0/O2. Reference Java must install an explicit local throwing handler
+and run with networking denied; default HTTP connection behavior is not an oracle
+for this synthetic declaration. Run full Dalvik, JNI and wire/parser suites.
+
+
+`DalvikRuntime.PackageStatic*` covers a compiler-style synthetic accessor
+calling its own private body, static method calls and field reads/writes, exact
+and default packages, nested-package/prefix confusion, declaring-class
+visibility, and retained private/protected refusals.
+`DalvikRuntime.PackageInstanceDispatchIsStillAnExplicitBoundary` keeps the
+public-instance control distinct from unmodeled package instance dispatch.
+A separate locally compiled Java 8 anonymous-Runnable fixture provides an
+independent JVM oracle and reproduces the same static-accessor boundary after
+D8 conversion; its source, DEX and execution receipts are private artifacts.
+
+## Named UTF-8 byte arrays
+
+`StringGetBytesTest.*` covers encoding boundaries, NUL, malformed surrogate
+replacement, case variants, fresh empty/nonempty arrays, null/type/storage
+refusals and terminal work/heap limits without partial publication. Run full
+Dalvik and Android JNI suites for the shared value owner. Independent javac/D8
+fixtures compare compiled DEX output with the local JVM, including all BMP
+units and boundary surrogate pairs. Native ordinary and array-form JNI calls
+check byte-array regions, identity and retained references across detach.
+Only the canonical UTF-8 name is admitted; aliases and other codecs are not
+qualified by these tests.
+
+The URL and named UTF-8 byte encoding fixtures compare complete SDK and CLI
+reports, including terminal diagnostics, Java state and guarded native memory.
+The same UTF-16 encoder serves DEX and JNI callers; the native matrix checks
+optimization, relocation packing, reference retention and independent arrays.
+
+Regular-file bytes use a bounded hexadecimal transport allowance only after
+validation by the shared Linux file-input owner. JSON tests cover the decoded
+aggregate limit, malformed data, paths, escapes, and independent metadata limits.
+Public SDK and CLI tests compare complete reports for large admitted payloads.
+
+Narrow scanning public regressions compare 36 full SDK/CLI reports across
+O0/O2, direct calls, copied lists and wholly stacked lists. The full 8 KiB
+buffer includes source, format and output canaries, including unsupported
+wide conversions that must not publish earlier staged assignments.
+
+`LinuxMemory.Discard*` verifies rounded pages, full memory, permission and VMA
+metadata preservation, physical aliases and pinned views, holes, brk, unknown
+backing and model allocation limits. `AndroidNative.Discard*` uses independent
+callers for raw, Bionic, variadic and dynamic routes, including provider closure,
+full-width pointers, int narrowing, complete guards and errno. The
+`LinuxProcess.DiscardPreservesOuterPagesThenClearsBothSidesOfAHole` fixture runs
+actual AArch64 and x64 syscalls at O0/O2. Run Linux process, Android native,
+Dalvik/JNI, memory and proc regressions when changing this ownership boundary.
+All execution inputs are local and run with host network access denied.
+
+`ProcessPublic.AndroidAnonymousDiscardMatchesSDKAndCLI` compares 26 complete
+SDK/CLI report pairs with independently expected guarded bytes, across ordinary
+and RELR callers, four service routes, permission changes, holes and a closed
+dynamic provider. Named input RAM and unmap/replacement regressions verify that
+VMA names and address reuse cannot manufacture anonymous allocation provenance.

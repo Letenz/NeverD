@@ -1068,6 +1068,102 @@ int main(void) {
   }
 }
 
+TEST(Win64CallContract, BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes) {
+  constexpr va_t Consumer = Text + 0x80;
+  for (bool ReadsNeighbor : {false, true}) {
+    SCOPED_TRACE(ReadsNeighbor);
+    std::vector<uint8_t> Code(0x90, 0xCC);
+    std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38};
+    const auto Random = throughSlot(Text + Caller.size(), Iat);
+    Caller.insert(Caller.end(), Random.begin(), Random.end());
+    Caller.insert(Caller.end(),
+                  {0x31, 0xC0,             // xor eax,eax
+                   0x0F, 0xBD, 0xC8,       // bsr ecx,eax: old ECX
+                   0x89, 0x4C, 0x24, 0x20, // mov [rsp+20h],ecx
+                   0xC7, 0x44, 0x24, 0x24, 37,   0,    0,
+                   0,    0x48, 0x8D, 0x4C, 0x24, 0x24, // lea rcx,[rsp+24h]
+                   0xE8});
+    const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
+    Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+    Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x38, 0xC3});
+    put(Code, Text, Caller);
+    // The control reads the preceding unknown word. A pointer type or the
+    // positive offset at the call alone cannot bound the callee's accesses.
+    put(Code, Consumer,
+        ReadsNeighbor ? std::vector<uint8_t>{0x8B, 0x41, 0xFC, 0xC3}
+                      : std::vector<uint8_t>{0x8B, 0x01, 0xC3});
+    const auto Image =
+        makeImage(Code, {{Text, "read_neighbor"}, {Consumer, "bounded_reader"}},
+                  {"rand"});
+    for (bool OmitCallee : {false, true})
+      for (bool NoOpt : {false, true})
+        for (bool LLVM : {false, true}) {
+          SCOPED_TRACE(OmitCallee);
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(LLVM);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text};
+          if (!OmitCallee)
+            Options.OnlyFunctionEntries.insert(Consumer);
+          Options.NoOpt = NoOpt;
+          Options.SourceProjection = true;
+          Options.LiftMode = LLVM;
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Facts;
+          llvm::raw_string_ostream FactsOut(Facts);
+          for (const auto &Function : Result.MedFuncs) {
+            FactsOut << Function.Name << " cc=" << int(Function.CC)
+                     << " frame=" << Function.FrameSize
+                     << " calls=" << Function.CallInfos.size() << "\n";
+            for (const auto &Block : Function.Blocks)
+              for (const auto &Op : Block.Ops)
+                if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+                  FactsOut << "call " << Op.Addr
+                           << " regs=" << int(Op.CalleeRegisterArgs)
+                           << " stack=" << int(Op.CalleeStackArgs)
+                           << " vectors=" << int(Op.CalleeVectorArgs) << "\n";
+          }
+          Pipeline::dumpMedIR(Result.MedFuncs, FactsOut);
+          SCOPED_TRACE(Facts);
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          ASSERT_TRUE(
+              LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                         nullptr, &Image)
+                   : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          const bool HasUnknown =
+              Source.find("__builtin_trap") != std::string::npos;
+          EXPECT_EQ(HasUnknown, ReadsNeighbor) << Source;
+          if (ReadsNeighbor || HasUnknown)
+            continue;
+          std::string Oracle;
+          if (OmitCallee)
+            Oracle = R"(
+uint64_t read_provider(uint64_t address) __asm__("bounded_reader");
+uint64_t read_provider(uint64_t address) {
+  return *(uint32_t *)(uintptr_t)address;
+}
+)";
+          Oracle += R"(
+static unsigned observed;
+int rand(void) { ++observed; return 17; }
+int main(void) { return read_neighbor() != 37 || observed != 1; }
+)";
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Oracle,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+  }
+}
+
 TEST(Win64CallContract, BoundIntegerOperandsAgreeAcrossSourceRoutes) {
   constexpr va_t Consumer = Text + 0x80;
   std::vector<uint8_t> Code(0xA0, 0xCC);
@@ -1130,13 +1226,16 @@ TEST(Win64CallContract, MissingInteriorStackSlotCannotDiscardLaterArguments) {
   for (bool Initialized : {false, true}) {
     SCOPED_TRACE(Initialized);
     std::vector<uint8_t> Code(0xC0, 0xCC);
-    std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38,    // sub rsp,38h
-                                   0xB9, 1,    0,    0,    0, // mov ecx,1
-                                   0xBA, 2,    0,    0,    0, // mov edx,2
-                                   0x41, 0xB8, 3,    0,    0,    0, // mov r8d,3
-                                   0x41, 0xB9, 4,    0,    0,    0, // mov r9d,4
+    std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x58, // sub rsp,58h
+                                   0xB9, 1, 0, 0, 0,       // mov ecx,1
+                                   0xBA, 2, 0, 0, 0,       // mov edx,2
+                                   0x41, 0xB8, 3, 0, 0, 0, // mov r8d,3
+                                   0x41, 0xB9, 4, 0, 0, 0, // mov r9d,4
                                    0x48, 0xC7, 0x44, 0x24, 0x20, 13, 0, 0, 0,
-                                   0x48, 0xC7, 0x44, 0x24, 0x30, 29, 0, 0, 0};
+                                   0x48, 0xC7, 0x44, 0x24, 0x30, 29, 0, 0, 0,
+                                   // Adjacent locals are not eighth/ninth args.
+                                   0x48, 0xC7, 0x44, 0x24, 0x38, 47, 0, 0, 0,
+                                   0x48, 0xC7, 0x44, 0x24, 0x40, 53, 0, 0, 0};
     if (Initialized) {
       const std::array<uint8_t, 9> Middle = {0x48, 0xC7, 0x44, 0x24, 0x28,
                                              99,   0,    0,    0};
@@ -1145,7 +1244,7 @@ TEST(Win64CallContract, MissingInteriorStackSlotCannotDiscardLaterArguments) {
     Caller.push_back(0xE8);
     const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
     Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
-    for (uint8_t Byte : {0x48, 0x83, 0xC4, 0x38, 0xC3})
+    for (uint8_t Byte : {0x48, 0x83, 0xC4, 0x58, 0xC3})
       Caller.push_back(Byte);
     put(Code, Text, Caller);
     put(Code, Consumer,

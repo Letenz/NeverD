@@ -13,6 +13,7 @@
 
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedProvenStackOffsets.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
 #include <algorithm>
@@ -67,6 +68,62 @@ MedFunc frameWithEntrySP(Arch Architecture = Arch::ARM) {
       op(NdOp::COPY, reg(0, Architecture), reg(0, Architecture)));
   Func.Blocks.push_back(std::move(Block));
   return Func;
+}
+
+TEST(MedStackAlignment, ProvenDefinitionsComposeOnlyWithinTheirQuery) {
+  auto Func = frameWithEntrySP(Arch::X86);
+  const auto Loaded = temp(2, Arch::X86);
+  const auto Restored = reg(1, Arch::X86);
+  const auto Adjusted = reg(2, Arch::X86);
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.push_back(op(NdOp::LOAD, Loaded, reg(0, Arch::X86)));
+  Ops.push_back(op(NdOp::COPY, Restored, Loaded));
+  Ops.push_back(
+      op(NdOp::INT_ADD, Adjusted, Restored, MedVar::makeConst(16, 4)));
+  const ProvenStackOffset Seed{&Ops[1], -64};
+  EXPECT_EQ(entryStackOffsetsFromProvenDefinitions(
+                Func, {Adjusted}, {Seed}, Arch::X86, BinaryFormat::COFF,
+                StackEntryKind::Call)[0],
+            -48);
+  EXPECT_FALSE(entryStackOffset(Func, Adjusted, Arch::X86, BinaryFormat::COFF));
+  EXPECT_EQ(Ops[1].Opcode, NdOp::LOAD);
+  EXPECT_FALSE(entryStackOffsetsFromProvenDefinitions(
+      Func, {Adjusted}, {Seed, {&Ops[1], -32}}, Arch::X86, BinaryFormat::COFF,
+      StackEntryKind::Call)[0]);
+  auto Foreign = Ops[1];
+  EXPECT_FALSE(entryStackOffsetsFromProvenDefinitions(
+      Func, {Adjusted}, {{&Foreign, -64}}, Arch::X86, BinaryFormat::COFF,
+      StackEntryKind::Call)[0]);
+  auto Narrow = Adjusted;
+  Narrow.Size = 2;
+  EXPECT_FALSE(entryStackOffsetsFromProvenDefinitions(
+      Func, {Narrow}, {Seed}, Arch::X86, BinaryFormat::COFF,
+      StackEntryKind::Call)[0]);
+}
+
+TEST(MedStackAlignment, RelativeQueriesNeverInheritTheParentStackOrigin) {
+  auto Func = frameWithEntrySP(Arch::X86);
+  const auto Private = reg(1, Arch::X86);
+  const auto Pushed = reg(2, Arch::X86);
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.push_back(op(NdOp::COPY, Private, reg(0, Arch::X86)));
+  Ops.push_back(op(NdOp::INT_SUB, Pushed, Private, MedVar::makeConst(8, 4)));
+  auto Check = [&](llvm::ArrayRef<MedVar> Values) {
+    return stackOffsetsRelativeToDefinition(Func, Values, Ops[1], Arch::X86,
+                                            BinaryFormat::COFF);
+  };
+  EXPECT_EQ(Check({Pushed})[0], -8);
+  EXPECT_FALSE(Check({reg(0, Arch::X86)})[0]);
+  PhiNode Phi;
+  Phi.Output = reg(3, Arch::X86);
+  Phi.Args = {{0, Pushed}, {1, Pushed}};
+  Func.Blocks[0].Phis.push_back(Phi);
+  EXPECT_EQ(Check({Phi.Output})[0], -8);
+  Func.Blocks[0].Phis[0].Args[1].second = reg(0, Arch::X86);
+  EXPECT_FALSE(Check({Phi.Output})[0]);
+  Func.Blocks[0].Phis[0].Args[1].second = Pushed;
+  Func.Blocks[0].Phis[0].ExceptionalEntry = reg(0, Arch::X86);
+  EXPECT_FALSE(Check({Phi.Output})[0]);
 }
 
 TEST(MedStackAlignment,
