@@ -25,6 +25,7 @@ class QPushButton;
 class QTabWidget;
 
 namespace neverd::gui {
+class ElidedLabel;
 class LineageGraph;
 class LineagePageView;
 class LineageDialog final : public QDialog {
@@ -42,7 +43,8 @@ private:
   LineagePageView *TraceNodes, *TraceEdges, *TraceConflicts;
   LineageGraph *Graph;
   QTabWidget *Tabs;
-  QLabel *Summary, *Status, *FunctionTitle, *TraceTitle;
+  QLabel *Summary, *Status;
+  ElidedLabel *FunctionTitle, *TraceTitle;
   QLineEdit *Search;
   QPlainTextEdit *Details;
   QPushButton *Add, *Open, *Save, *Cancel, *Rename, *Trace, *Inspect, *Export,

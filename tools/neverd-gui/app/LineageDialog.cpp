@@ -11,6 +11,7 @@
 #include "LineageDialog.h"
 
 #include "../ResourceLimits.h"
+#include "ElidedLabel.h"
 #include "Icons.h"
 #include "LineageGraph.h"
 #include "LineagePageView.h"
@@ -126,8 +127,9 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   Tabs->setObjectName("lineageTabs");
   auto *FunctionPane = new QWidget(Tabs);
   auto *FL = new QVBoxLayout(FunctionPane);
-  FunctionTitle = label(
-      tr("Select a snapshot to browse all retained functions."), FunctionPane);
+  FunctionTitle = new ElidedLabel(FunctionPane);
+  FunctionTitle->setFullText(
+      tr("Select a snapshot to browse all retained functions."));
   FL->addWidget(FunctionTitle);
   Search = new QLineEdit(FunctionPane);
   Search->setObjectName("lineageSearch");
@@ -144,9 +146,10 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   Tabs->addTab(FunctionPane, tr("Functions"));
   auto *TracePane = new QWidget(Tabs);
   auto *TL = new QVBoxLayout(TracePane);
-  TraceTitle = label(tr("Trace a function to see every reachable association "
-                        "and its shortest-path witness."),
-                     TracePane);
+  TraceTitle = new ElidedLabel(TracePane);
+  TraceTitle->setFullText(
+      tr("Trace a function to see every reachable association "
+         "and its shortest-path witness."));
   TL->addWidget(TraceTitle);
   auto *TraceTabs = new QTabWidget(TracePane);
   TraceTabs->setObjectName("lineageTraceTabs");
@@ -494,9 +497,10 @@ void LineageDialog::loaded() {
     CurrentVersion.clear();
     TraceVersion.clear();
     TraceAddress.clear();
-    FunctionTitle->setText(
+    FunctionTitle->setFullText(
         tr("Add a comparison to browse retained functions."));
-    TraceTitle->setText(tr("Trace a function to inspect its associations."));
+    TraceTitle->setFullText(
+        tr("Trace a function to inspect its associations."));
   } else if (!TraceVersion.isEmpty())
     trace({{"version", TraceVersion}, {"address", TraceAddress}});
   Tabs->setCurrentIndex(SelectedTab);
@@ -516,18 +520,17 @@ QString LineageDialog::versionLabel(const QString &ID) const {
 }
 void LineageDialog::updateTitles() {
   if (!CurrentVersion.isEmpty())
-    FunctionTitle->setText(
+    FunctionTitle->setFullText(
         tr("Functions in %1").arg(versionLabel(CurrentVersion)));
   if (!TraceVersion.isEmpty())
-    TraceTitle->setText(tr("Trace from %1 in %2")
-                            .arg(TraceAddress, versionLabel(TraceVersion)));
+    TraceTitle->setFullText(tr("Trace from %1 in %2")
+                                .arg(TraceAddress, versionLabel(TraceVersion)));
 }
 void LineageDialog::selectVersion(const QString &ID) {
   if (ID.isEmpty())
     return;
   CurrentVersion = ID;
   updateTitles();
-  FunctionTitle->setToolTip(ID);
   Functions->setQuery(
       {{"kind", "functions"}, {"version", ID}, {"search", Search->text()}});
 }

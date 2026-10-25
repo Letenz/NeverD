@@ -11,6 +11,7 @@
 
 #include "../ResourceLimits.h"
 #include "ComparisonSession.h"
+#include "ElidedLabel.h"
 #include "Theme.h"
 #include "TypeSourceHighlighter.h"
 
@@ -147,38 +148,6 @@ private:
   }
 };
 
-class SourceTitle final : public QLabel {
-public:
-  explicit SourceTitle(QWidget *Parent) : QLabel(Parent) {
-    setTextFormat(Qt::PlainText);
-    setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    setMinimumWidth(0);
-  }
-  void setFullText(const QString &Text) {
-    FullText = Text;
-    setToolTip(Text);
-    setAccessibleName(Text);
-    updateText();
-  }
-
-protected:
-  void resizeEvent(QResizeEvent *Event) override {
-    QLabel::resizeEvent(Event);
-    updateText();
-  }
-  void changeEvent(QEvent *Event) override {
-    QLabel::changeEvent(Event);
-    if (Event->type() == QEvent::FontChange)
-      updateText();
-  }
-
-private:
-  QString FullText;
-  void updateText() {
-    setText(fontMetrics().elidedText(FullText, Qt::ElideMiddle,
-                                     contentsRect().width()));
-  }
-};
 QLabel *label(QWidget *Parent, const QString &Text = {}) {
   auto *L = new QLabel(Text, Parent);
   L->setTextFormat(Qt::PlainText);
@@ -240,7 +209,7 @@ ComparisonSourceView::ComparisonSourceView(ComparisonSession &S,
     auto *Container = new QWidget(Split);
     auto *Layout = new QVBoxLayout(Container);
     Layout->setContentsMargins(0, 0, 0, 0);
-    P.Title = new SourceTitle(Container);
+    P.Title = new ElidedLabel(Container);
     P.Title->setObjectName(Side ? "comparisonSecondarySourceTitle"
                                 : "comparisonPrimarySourceTitle");
     Layout->addWidget(P.Title);
@@ -386,7 +355,7 @@ void ComparisonSourceView::reset(bool Refresh) {
         aligned() ? tr("Go to aligned row") : tr("Go to source line");
     P.Line->setToolTip(Navigation);
     P.Line->setAccessibleName(Navigation);
-    static_cast<SourceTitle *>(P.Title)->setFullText(
+    static_cast<ElidedLabel *>(P.Title)->setFullText(
         (Side ? tr("Secondary: %1 %2") : tr("Primary: %1 %2"))
             .arg(P.Function.value("name").toString(),
                  P.Function.value("address").toString()));

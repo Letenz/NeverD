@@ -349,6 +349,46 @@ private slots:
              QString("Second-page release"));
   }
 
+  void longMetadataKeepsFunctionControlsReachable() {
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    auto &Session = View.session();
+    View.show();
+    View.resize(760, 560);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Reports}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().size() == 1,
+                             Timeout);
+    const auto Before = View.size();
+    const auto ID = Versions->selected().value("id");
+    const auto Long = QString("Long release label ").repeated(1024);
+    Session.load({{"append", true},
+                  {"version_updates",
+                   QJsonArray{QJsonObject{
+                       {"id", ID}, {"label", Long}, {"branch", "stable"}}}}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().size() == 1,
+                             Timeout);
+    QTest::qWait(60);
+    QCOMPARE(Versions->selected().value("label").toString(), Long);
+    QCOMPARE(View.size(), Before);
+    QVERIFY(Functions->table()->viewport()->height() >=
+            Functions->table()->fontMetrics().height() * 3);
+    auto *Action = View.findChild<QPushButton *>("lineageTrace");
+    QVERIFY(Action && Action->isEnabled());
+    QVERIFY(
+        View.rect().contains(Action->mapTo(&View, Action->rect().center())));
+    QTest::mouseClick(Action, Qt::LeftButton);
+    auto *TraceNodes = View.findChild<LineagePageView *>("lineageTraceNodes");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && TraceNodes->rows().size() == 3,
+                             Timeout);
+    QTest::qWait(60);
+    QCOMPARE(View.size(), Before);
+    QVERIFY(TraceNodes->table()->viewport()->height() >=
+            TraceNodes->table()->fontMetrics().height() * 3);
+  }
+
   void privateCompositorResizeAndReopen() {
     if (!QGuiApplication::platformName().startsWith("wayland") ||
         !qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER"))

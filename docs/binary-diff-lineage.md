@@ -30,7 +30,9 @@ source evidence and conflicts, then save or reopen the collection. Tables retain
 one bounded page; Previous/Next visit the complete admitted inventory. The
 diagram shows the current source-report page, not an entire unbounded graph.
 Keyboard activation and Copy copy original row evidence; context menus also copy
-full values. Resource settings apply to subsequent loads and queries. Invalid,
+full values. Long labels shorten only for display; headings retain their full
+accessible text and tooltips, and copied row evidence retains the original label.
+Resource settings apply to subsequent loads and queries. Invalid,
 stopped or over-budget replacement leaves the old collection available.
 
 ## Evidence and identity
