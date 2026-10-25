@@ -28,6 +28,7 @@
 #include <functional>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 namespace neverd::cli {
@@ -154,7 +155,9 @@ std::string readSaved(llvm::StringRef Path, ProgressState &Progress) {
       Size > limits::diff::kMaxSavedComparisonBytes)
     throw std::runtime_error("cannot read bounded comparison file: " +
                              Path.str());
-  std::ifstream Input(Path.str(), std::ios::binary);
+  std::ifstream Input(
+      std::filesystem::path(std::u8string(Path.begin(), Path.end())),
+      std::ios::binary);
   if (!Input)
     throw std::runtime_error("cannot read comparison file: " + Path.str());
   std::string Text;
