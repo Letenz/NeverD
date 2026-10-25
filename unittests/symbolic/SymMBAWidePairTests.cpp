@@ -93,6 +93,58 @@ Fixture fixture(SymContext &Ctx, unsigned Width, unsigned Kind,
   return {Ctx.mkMul(Factors), Width, Kind, Neighbor};
 }
 
+TEST(SymMBAWidePairs, CompletedParityProofKeepsReconstructionWithinBudget) {
+  constexpr size_t WorkLimit = 9500;
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = fixture(Ctx, Width, 3);
+    detail::WorkBudget Budget(WorkLimit);
+    size_t Storage = 1 << 24;
+    const auto Result =
+        detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
+    ASSERT_NE(Result, F.Input);
+    EXPECT_LT(Budget.used(), WorkLimit);
+    SymEvalPlan Reduced(Ctx, Result);
+    for (unsigned I = 0; I < 256; ++I) {
+      const std::array Values{llvm::APInt(Width, I), llvm::APInt(Width, 3 * I),
+                              llvm::APInt(Width, 7 * I)};
+      EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+    }
+  }
+}
+
+TEST(SymMBAWidePairs, StandaloneSelectorDoesNotProveOtherFactorsOdd) {
+  for (unsigned Width : {8u, 32u, 64u, 257u})
+    for (bool Complement : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Complement);
+      SymContext Ctx;
+      const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      auto Selector = Ctx.mkAnd(X, Ctx.mkOne(Width));
+      if (Complement)
+        Selector = Ctx.mkXor(Selector, Ctx.mkOne(Width));
+      const auto Scale = llvm::APInt(Width, 3).shl(Width - 8);
+      llvm::SmallVector<SymRef, 128> Factors{Ctx.mkConst(Scale), Selector};
+      Factors.append(127, Y);
+      Factors.push_back(Ctx.mkAdd(Y, Ctx.mkConst(Width, 128)));
+      const auto Input = Ctx.mkMul(Factors);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      const auto Result =
+          detail::foldResidueDecisions(Ctx, Input, Budget, Storage);
+      EXPECT_LE(Budget.used(), 65536u);
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned XV = 0; XV < 4; ++XV)
+        for (unsigned Low = 0; Low < 256; ++Low) {
+          const auto YV = llvm::APInt(Width, 1).shl(Width - 1) + Low;
+          const std::array Values{llvm::APInt(Width, XV), YV};
+          const auto Selected = llvm::APInt(Width, (XV & 1) ^ Complement);
+          EXPECT_EQ(Reduced.eval(Values),
+                    Scale * Selected * power(YV, 127) * (YV + 128));
+        }
+    }
+}
+
 TEST(SymMBAWidePairs, CorrectionsPreserveMasksProductsAndXorCrossTerms) {
   std::mt19937_64 Random(0x57494445434f5252);
   for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})

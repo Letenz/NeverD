@@ -508,11 +508,13 @@ private:
   std::vector<LowWordProjectionEntry> LowWordProjections;
   uint32_t LowWordProjectionInsertions = 0;
 
-  /// Hash of a node's identity to the nodes carrying that hash.  Collisions
-  /// are resolved by comparing the candidate against each bucket entry. The
-  /// split halves keep every 64-bit hash outside DenseMap's reserved key pairs.
-  llvm::DenseMap<std::pair<uint64_t, uint32_t>, llvm::SmallVector<uint32_t, 2>>
-      InternTable;
+  /// Hash of a node's identity to the first node carrying that hash. Full
+  /// identity checks follow the context-owned collision links below. The split
+  /// halves keep every 64-bit hash outside DenseMap's reserved key pairs.
+  llvm::DenseMap<std::pair<uint64_t, uint32_t>, SymRef> InternTable;
+  /// One next link per node avoids a separately managed vector in each bucket.
+  /// Invalid refs terminate a chain; copying a context retains all links.
+  std::vector<SymRef> InternNext;
   /// Plain variables keep their legacy name-and-width declaration identity.
   std::map<std::pair<std::string, uint32_t>, uint32_t> VarByNameAndWidth;
 

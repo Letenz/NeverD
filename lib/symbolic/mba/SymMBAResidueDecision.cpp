@@ -1668,6 +1668,7 @@ public:
     uint32_t Parity = 1;
     size_t Nonconstant = Factors.size() - Ctx.isConst(Factors.front());
     std::optional<uint32_t> Selector;
+    bool AssumptionCoversFactors = false;
     for (auto F : Factors) {
       auto Base = F;
       if (Ctx.op(Base) == SymOp::Xor && Ctx.numOperands(Base) == 2 &&
@@ -1703,6 +1704,7 @@ public:
           // odd branch and restore its exact selector after multiplication.
           Parity = *Common;
           Assumption = std::make_pair(D.Variable, D.High == 1);
+          AssumptionCoversFactors = !Selector;
           PriorityInput = uint32_t(D.Variable);
           Words.clear();
           Arithmetic.clear();
@@ -1738,7 +1740,9 @@ public:
         if (Ctx.isConst(Factor))
           continue;
         Nonconstants.push_back(Factor);
-        if (word(Factor, 1).front() != 1) {
+        // The common-parity scan already visited every factor before choosing
+        // its odd branch. A standalone selector only proves its own value.
+        if (!AssumptionCoversFactors && word(Factor, 1).front() != 1) {
           AllOdd = false;
           break;
         }
