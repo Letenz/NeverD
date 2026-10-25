@@ -4056,11 +4056,18 @@ void MainWindow::showShortcuts() {
 void MainWindow::showCommandPalette() {
   auto *owner = commandView();
   const QPointer<QWidget> focus = commandFocusWidget();
+  // A click on the title bar's command center drops the palette from it, as
+  // Visual Studio Code's does.  A key opens it over the pane its commands act
+  // on, which also serves focus mode, whose caption has no command center.
+  QWidget *center = titleBar_ ? titleBar_->clickedCommandCenter() : nullptr;
   auto *dialog =
       new CommandPaletteDialog(owner, Qt::Popup | Qt::FramelessWindowHint);
   dialog->setObjectName(QStringLiteral("commandPalette"));
   dialog->setWindowTitle(tr("Command palette"));
-  dialog->resize(560, 420);
+  const QSize size = ::neverd::limits::gui_config::kCommandPaletteSize;
+  dialog->resize(center ? std::max(size.width(), center->width())
+                        : size.width(),
+                 size.height());
   auto *layout = new QVBoxLayout(dialog);
   auto *filter = new QLineEdit(dialog);
   filter->setPlaceholderText(tr("Type a command"));
@@ -4090,8 +4097,23 @@ void MainWindow::showCommandPalette() {
   connect(filter, &QLineEdit::textChanged, dialog, populate);
   connect(filter, &QLineEdit::returnPressed, dialog, &QDialog::accept);
   connect(list, &QListWidget::itemActivated, dialog, &QDialog::accept);
-  dialog->move(owner->mapToGlobal(owner->rect().center()) -
-               dialog->rect().center());
+  if (center) {
+    QRect place(
+        QPoint(center->mapToGlobal(QPoint(center->width() / 2, 0)).x() -
+                   dialog->width() / 2,
+               titleBar_->mapToGlobal(QPoint(0, titleBar_->height())).y()),
+        dialog->size());
+    if (const QScreen *screen = center->screen()) {
+      const QRect area = screen->availableGeometry();
+      place.moveLeft(
+          std::clamp(place.left(), area.left(),
+                     std::max(area.left(), area.right() + 1 - place.width())));
+    }
+    dialog->move(place.topLeft());
+  } else {
+    dialog->move(owner->mapToGlobal(owner->rect().center()) -
+                 dialog->rect().center());
+  }
   connect(dialog, &QDialog::accepted, this, [this, list, focus] {
     if (!list->currentItem())
       return;

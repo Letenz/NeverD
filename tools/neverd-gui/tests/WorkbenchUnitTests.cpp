@@ -1678,7 +1678,11 @@ private slots:
     QCOMPARE(menus->parentWidget(), bar);
     QAction palette;
     int runs = 0;
-    connect(&palette, &QAction::triggered, &window, [&runs] { ++runs; });
+    QWidget *clicked = nullptr;
+    connect(&palette, &QAction::triggered, &window, [&] {
+      ++runs;
+      clicked = bar->clickedCommandCenter();
+    });
     bar->setCommandCenterAction(&palette);
     bar->setCommandCenterText(QStringLiteral("xxd"),
                               QStringLiteral("NeverD - xxd /tmp"));
@@ -1697,12 +1701,18 @@ private slots:
     QCOMPARE(button("maximizeButton")->accessibleName(),
              QStringLiteral("Maximize"));
 
-    // The command center names the file and runs its command.
+    // The command center names the file and runs its command, which can tell
+    // a click on the field, which it drops from, from its key.
     auto *center = button("commandCenter");
     QVERIFY(center && center->isVisible());
     QCOMPARE(center->text(), QStringLiteral("xxd"));
     QTest::mouseClick(center, Qt::LeftButton);
     QCOMPARE(runs, 1);
+    QCOMPARE(clicked, static_cast<QWidget *>(center));
+    QVERIFY(!bar->clickedCommandCenter());
+    palette.trigger();
+    QCOMPARE(runs, 2);
+    QVERIFY(!clicked);
 
     // The maximize button and a double click on the bar's empty part toggle
     // the maximized state, and the button then offers to restore.

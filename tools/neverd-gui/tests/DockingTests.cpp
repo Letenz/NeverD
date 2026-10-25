@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Docking.h"
+#include "Icons.h"
 #include "NativeWindowStates.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
@@ -397,6 +398,28 @@ private slots:
       QVERIFY(floating->windowFlags() & Qt::FramelessWindowHint);
       QCOMPARE(floating->windowHandle()->frameMargins(), QMargins());
     }
+    // The padlock shows the lock, closed while locked and open once unlocked,
+    // over the caption's own color rather than a checked fill.
+    auto *lock = desktop.lockButton();
+    auto *moveArea = floating->findChild<QWidget *>(
+        QStringLiteral("floatingWindowMoveArea"));
+    QVERIFY(moveArea);
+    const auto lockOverCaption = [&] {
+      const QImage window = floating->grab().toImage();
+      const auto at = [&](QWidget *widget, QPoint point) {
+        return window.pixelColor(widget->mapTo(floating, point) *
+                                 floating->devicePixelRatio());
+      };
+      return at(lock, QPoint(2, lock->height() / 2)) ==
+             at(moveArea, moveArea->rect().center());
+    };
+    QCOMPARE(lock->icon().cacheKey(), icon(QStringLiteral("lock")).cacheKey());
+    QVERIFY(lockOverCaption());
+    lock->setChecked(false);
+    QCOMPARE(lock->icon().cacheKey(),
+             icon(QStringLiteral("lock_open")).cacheKey());
+    QVERIFY(lockOverCaption());
+    lock->setChecked(true);
     QSettings().remove(settings::NativeTitleBar);
   }
 

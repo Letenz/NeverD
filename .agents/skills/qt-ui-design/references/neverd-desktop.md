@@ -54,12 +54,23 @@ judge each change in the real window.
   not shift (`DockTabBar` in `Docking.cpp`). Access-key underlines appear only
   while Alt is held or a menu opened from the keyboard is showing
   (`WorkbenchStyle`), as on Windows and GNOME.
+- Let a toggle's glyph carry its state when the glyph can change. A
+  disclosure chevron points where its panel goes, and a padlock closes and
+  opens (`lock`, `lock_open`). Such buttons set the `glyphToggle` property,
+  which keeps the checked accent fill off them, even while pressed: the user
+  found an accent-filled lock in every floating caption too loud. Keep the
+  fill for toggles whose glyph stays the same.
 - Give popups room and a soft shape. Menus have a 4-pixel inset, item
   highlights with a 3-pixel radius, and separators inset from the menu's
   edges; tooltips pad their text. Keep radii small and consistent, and do not
   round docks or views. A combo box's list drops below it and reads as a menu
   (`combobox-popup: 0`, and the styled item delegate `WorkbenchStyle` gives
   every combo box so the style sheet's item rules apply).
+- Open the command palette where it was asked for. A click on the title bar's
+  command center drops it from the bar's bottom edge, centered under the field
+  and at least as wide (`TitleBar::clickedCommandCenter`), as in Visual Studio
+  Code. Its key and menu item keep opening it over the pane its commands act
+  on; focus mode, whose caption has no command center, relies on that.
 - Draw every glyph from `IconSet.def`. Arrows are its chevrons; message boxes,
   file dialogs and their tool buttons take its icons through
   `WorkbenchStyle::standardIcon` and `fileIcons()`, not the platform icon
@@ -98,6 +109,51 @@ wholesale. The installed build keeps its themes in
 borders, quiets secondary text, and reserves the accent. Give every new color
 a role in `ChromeColors.def` or `ThemeColors.def` with light and dark values;
 style sheets and paint code read roles, never color literals.
+
+## Lists, fields, and states
+
+A review on 2026-10-25 measured these in captures of the real window; each
+looked unfinished to the user once pointed out.
+
+- Keep item text still. Horizontal padding in a `::item` rule applies only to
+  the items the style sheet paints, the hovered and selected ones, so their
+  text moved 2 pixels under the pointer. Item rules pad vertically only, and
+  Qt's own text margin insets the text. A rule that makes every state drawable
+  (a border or background on `::item`) also stops the base style painting
+  `Qt::BackgroundRole`, which the thunk and library rows use.
+- Draw nothing where two scroll bars meet. Fusion's corner panel left an
+  L-shaped outline beside every list with both bars;
+  `QAbstractScrollArea::corner` is transparent, so the view shows through as
+  it does along the bars.
+- Separate neighbors of nearly the same tone. A list's quick filter
+  (`chooserFilter`) keeps 4 pixels below the list: the horizontal scroll bar's
+  slider (`ScrollbarSlider`) and the field (`Input`) otherwise merged into one
+  gray block. The field's edge lines up with the status line's text below.
+- Let a primary button that cannot act fade, as Visual Studio Code's does, to
+  40% (`ButtonPrimaryDisabled`, `ButtonPrimaryDisabledText`). The full accent
+  behind gray text read as an enabled button that had broken.
+- Recolor what a theme change cannot reach. Content that stores colors, such
+  as the output log's text formats, keeps each part's level or role and colors
+  it again on `Theme::changed`; the dark theme's gray log lines all but
+  vanished on the light theme's white.
+- Scroll sideways rather than cut content off. A view that paints rows of a
+  fixed width, as the hex view does, scrolls horizontally when its pane is
+  narrower than a row, keeps the byte the keys reach in view, and maps clicks
+  through the offset.
+- Give Qt's own dialogs the room the workbench's dialogs have. The file dialog
+  opens at 860 by 540 with its size, type and date columns fitted to the folder
+  shown and the name taking the rest; Qt measures those columns from "128.88
+  GB" and "mp3Folder" and elides "10.02 MiB" and "Windows or EFI program". The
+  font dialog opens at 600 by 460, where its lists show more than three rows.
+  `WorkbenchStyle` applies both as the dialogs show.
+- Return in a dialog presses its default button on every platform, also from
+  a check box, a radio button, or a combo box that takes no typing
+  (`DialogReturnKey`). Qt's GNOME theme otherwise makes Return toggle the box
+  or reopen the list, unlike Windows and macOS.
+
+The user kept two choices that a review may question: the load dialog centers
+OK and Cancel as IDA does, and the Functions list keeps its horizontal scroll
+bar for the columns beyond its pane.
 
 ## Hierarchy and proportion
 
@@ -231,6 +287,13 @@ diff does not establish the appearance of a Qt widget.
    session's `XDG_CURRENT_DESKTOP` and `XDG_SESSION_TYPE`. Xvfb has no window
    manager, and without those variables Qt picks a different window
    decoration and the GNOME-specific code stays off.
+7. Review without touching the user's desktop in a private headless GNOME
+   Shell (`gnome-shell --headless --unsafe-mode --wayland` on its own D-Bus
+   session, as `tools/neverd-gui/tests/run_wayland_docking.py` starts it),
+   capturing through `org.gnome.Shell.Screenshot` and sending input through
+   Clutter virtual devices from `org.gnome.Shell.Eval`. Measure a suspected
+   shift in pixels, such as the first column of a hovered row's text against
+   its neighbors', instead of judging it by eye.
 
 When reporting an audit, connect each finding to its consequence and proposed
 change: for example, a timestamp beside the filename hides a build suffix, so
