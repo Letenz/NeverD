@@ -400,7 +400,7 @@ results remain return values; discarded C expressions retain the instruction.
 
 `AArch64AddressMemory.def` owns original ordinary-memory encodings and shapes.
 `AArch64AddressMemoryOperations.def` owns their identities, direction and
-register class. Its frozen scalar and vector lists occupy separate append
+register class. Its frozen scalar, vector and immediate lists occupy separate append
 positions, preserving previously published scalar and x86 identities. The GPR
 register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
 STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
@@ -428,6 +428,17 @@ The address is unknown to generic memory proofs, and discarding the result
 cannot discard the access or its possible fault. The operations preserve local
 Z/P values only when their physical vector registers are disjoint. Validated loads also preserve
 earlier call arguments other than their explicit outputs.
+The shared raw-operation contract also describes GPR and B/H/S/D/Q unsigned
+and unscaled immediate accesses, including the GPR unprivileged variants.
+These operations retain the raw base and encoded displacement; their index
+operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
+leaving every immediate bit and the access-EL variant intact. Explicit IR can
+execute these forms through LLVM and either C route without an image model.
+Automatic lifting still selects only register-offset operations. Image-backed
+immediate source projection fails explicitly until exact page/relocation
+occurrences, accessed-byte ownership and raw-base rebasing agree; source body
+filtering cannot bypass that requirement. This is not automatic immediate
+CPA2 lifting coverage.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
 execution projection refuses it without its alignment and tagging environment.
@@ -456,7 +467,10 @@ Source emission keeps these original reads even after recovering a switch.
 When a relocatable table read has no observable result, a bounded original-byte
 copy preserves the access without demanding callable identities for unreachable
 physical slots. The shared byte-storage descriptor grants no address or flow
-proof. HighC requires every use of the exact expression in its function to be
+proof. A common 64-bit byte-span query includes negative displacements and
+the original raw base, without shortening the maximum 65,536-byte unsigned-Q
+span. Alignment padding is not original prefix content. HighC requires every
+use of the exact expression in its function to be
 unobserved, together with a complete source-range proof; LLVM requires the
 existing exact-occurrence, storage-role and terminal-use closure. Observable
 reads still use the normal relocation-aware memory owner. Table-relative data
@@ -466,8 +480,8 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Immediate, pre/post-index, pair and other ordinary-memory families
-remain unqualified for CPA2, as does controlled native execution with CPTA
+identity. Automatic immediate, pre/post-index, pair and other ordinary-memory
+lifting remains unqualified for CPA2, as does controlled native execution with CPTA
 enabled. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF

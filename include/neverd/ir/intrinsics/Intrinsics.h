@@ -461,6 +461,7 @@ enum class Intrinsic : uint16_t {
 // Append-only: original memory instructions retain CPA2 address semantics.
 #define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, ...) Id,
 #define NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(...)
+#define NEVERD_A64_ADDRESS_IMMEDIATE_MEMORY_OPERATION(...)
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
 
   // Append-only: all four vector sources are explicit SSA values in one
@@ -477,6 +478,9 @@ enum class Intrinsic : uint16_t {
   X86LegacyRaoOr,
   X86LegacyRaoXor,
   X86LegacyCmpccXadd,
+
+#define NEVERD_A64_ADDRESS_IMMEDIATE_MEMORY_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
 
   _Count = 16000
 };
