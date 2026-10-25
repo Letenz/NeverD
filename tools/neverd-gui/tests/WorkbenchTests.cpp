@@ -3285,8 +3285,7 @@ private slots:
       if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
         button->setChecked(true);
     QVERIFY(view->locked());
-    view->window()->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(view->window()));
+    QVERIFY(activateTestWindow(view->window()));
     QVERIFY(code->findText(QStringLiteral("v7 = 0"), true));
     const auto target = code->renameTarget();
     QVERIFY(target);
@@ -3300,15 +3299,14 @@ private slots:
     auto *table =
         dialog->findChild<QTableView *>(QStringLiteral("localReferencesTable"));
     QVERIFY(table);
-    QVERIFY(QTest::qWaitForWindowActive(dialog));
+    QVERIFY(activateTestWindow(dialog));
     QTRY_VERIFY(table->hasFocus());
     QCOMPARE(dialog->windowModality(), Qt::NonModal);
     QVERIFY(!QApplication::activeModalWidget());
 
     // Real input must reach the source and another analysis pane while the
     // reference list remains open, including controller-level navigation.
-    view->window()->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(view->window()));
+    QVERIFY(activateTestWindow(view->window()));
     code->setFocus();
     QTRY_VERIFY(code->hasFocus());
     const auto line = code->cursorLine();
@@ -3319,8 +3317,7 @@ private slots:
     QVERIFY(code->verticalScrollBar()->value() > top);
     QVERIFY(dialog->isVisible());
 
-    bench.window->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    QVERIFY(activateTestWindow(bench.window.get()));
     assembly->focusContent();
     QTRY_VERIFY(assembly->listing()->hasFocus());
     auto *functions = bench.functions();
@@ -3335,8 +3332,7 @@ private slots:
                  std::optional<Address>(Base + 0x180));
     QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
     QCOMPARE(code->documentVersion(), version);
-    dialog->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(dialog));
+    QVERIFY(activateTestWindow(dialog));
     table->setFocus();
     QTRY_VERIFY(table->hasFocus());
     QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
@@ -3351,8 +3347,7 @@ private slots:
     QVERIFY(dialog && dialog->isVisible());
     QTRY_COMPARE(dialog->windowHandle()->transientParent(),
                  view->window()->windowHandle());
-    view->window()->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(view->window()));
+    QVERIFY(activateTestWindow(view->window()));
     QAbstractButton *dockButton = nullptr;
     for (auto *bar :
          view->window()->findChildren<KDDockWidgets::QtWidgets::TitleBar *>())
@@ -3376,8 +3371,7 @@ private slots:
     assemblyDock->setAsCurrentTab();
     QTRY_VERIFY(!view->isVisible());
     QVERIFY(dialog && dialog->isVisible());
-    dialog->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(dialog));
+    QVERIFY(activateTestWindow(dialog));
     table->setFocus();
     QTRY_VERIFY(table->hasFocus());
     QTest::mouseClick(table->viewport(), Qt::LeftButton, Qt::NoModifier,
@@ -8360,6 +8354,7 @@ private slots:
     QuickStartDialog ignored(pick);
     ignored.show();
     QVERIFY(QTest::qWaitForWindowExposed(&ignored));
+    QVERIFY(activateTestWindow(&ignored));
     QTest::keyClick(&ignored, Qt::Key_G);
     QVERIFY(ignored.isVisible());
     QCOMPARE(ignored.start(), QuickStartDialog::Start::None);
@@ -8367,6 +8362,7 @@ private slots:
     QuickStartDialog dialog(pick);
     dialog.show();
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    QVERIFY(activateTestWindow(&dialog));
     QVERIFY(buttonNamed(&dialog, QStringLiteral("&Continuer")));
     QTest::keyClick(&dialog, Qt::Key_C);
     QVERIFY(!dialog.isVisible());

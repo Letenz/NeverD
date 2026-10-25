@@ -5042,6 +5042,10 @@ otherwise print as an unassigned local or a zero.
 
 The pipeline runs both annotations through `markSourceStackAccesses`, sharing
 one batch of entry-stack offset proofs and the resulting load/store ranges.
+Nontrapping scalar parity counts may precede an explicit scratch overwrite.
+A physical CALL return-slot write cannot substitute for a represented store:
+source C does not yet materialize that write, and later reads or escaping frame
+pointers could observe the missing value. Calls remain observation barriers.
 Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
