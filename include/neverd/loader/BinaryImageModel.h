@@ -691,6 +691,32 @@ struct BinaryImage {
   /// restricted load omits Raw; never recomputed by reopening a mutable path.
   /// Absent for in-memory synthetic images or loaders without file evidence.
   std::optional<std::array<uint8_t, 32>> InputFileSHA256;
+  /// Immutable pre-edit image for byte-based identity only. lib/patch owns
+  /// publication and retirement alongside the materialized byte overlay.
+  std::shared_ptr<const BinaryImage> BytePatchOriginal;
+  std::vector<std::pair<va_t, uint64_t>> BytePatchRanges;
+
+  bool hasBytePatchIn(va_t Address, uint64_t Size) const {
+    for (const auto &[Start, Width] : BytePatchRanges)
+      if (Size && Width &&
+          (Address <= Start ? Start - Address < Size : Address - Start < Width))
+        return true;
+    return false;
+  }
+  /// Conservative contiguous extent for identity-derived call traits. The
+  /// pipeline additionally checks its recovered discontiguous basic blocks.
+  bool functionHasBytePatch(va_t Address) const {
+    if (BytePatchRanges.empty())
+      return false;
+    const auto *Segment = getSegmentFor(Address);
+    if (!Segment || !isCodeAddress(Address))
+      return false;
+    va_t End = Segment->VA + Segment->Size;
+    const va_t Next = nextKnownFunctionEntryAfter(Address);
+    if (Next != InvalidVA)
+      End = std::min(End, Next);
+    return End > Address && hasBytePatchIn(Address, End - Address);
+  }
 
   bool is64Bit() const { return neverd::is64Bit(Bits); }
   bool is32Bit() const { return neverd::is32Bit(Bits); }

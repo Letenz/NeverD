@@ -47,6 +47,7 @@ public:
   bool setCursorAddress(Address address);
   std::optional<Address> function() const { return function_; }
   std::optional<Address> currentAddress() const;
+  QRect cursorViewportRect() const;
   std::optional<Address> operandTarget() const;
   QString currentToken() const;
   QString currentRowText() const;

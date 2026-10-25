@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <utility>
@@ -143,6 +144,10 @@ struct RegisterBlock {
 struct LocalRegisterEffect {
   GPRFamilyMask Writes = 0;
   GPRExitConstants ExitConstants;
+  /// Complete, bounded straight-line scalar/CPUID body with an ordinary RET.
+  /// Source call recovery may expand it after checking the caller's physical
+  /// return-slot observations. This is not a general cached body for lifting.
+  std::shared_ptr<const std::vector<LowOp>> RegisterLeaf;
   std::set<va_t> Callees;
   /// Direct targets of calls that never return, but for those the name list
   /// knows: proved ones, and the code the user states never returns.  Their

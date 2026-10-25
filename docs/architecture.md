@@ -400,7 +400,7 @@ results remain return values; discarded C expressions retain the instruction.
 
 `AArch64AddressMemory.def` owns original ordinary-memory encodings and shapes.
 `AArch64AddressMemoryOperations.def` owns their identities, direction and
-register class. Its frozen scalar and vector lists occupy separate append
+register class. Its frozen scalar, vector and immediate lists occupy separate append
 positions, preserving previously published scalar and x86 identities. The GPR
 register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
 STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
@@ -428,6 +428,17 @@ The address is unknown to generic memory proofs, and discarding the result
 cannot discard the access or its possible fault. The operations preserve local
 Z/P values only when their physical vector registers are disjoint. Validated loads also preserve
 earlier call arguments other than their explicit outputs.
+The shared raw-operation contract also describes GPR and B/H/S/D/Q unsigned
+and unscaled immediate accesses, including the GPR unprivileged variants.
+These operations retain the raw base and encoded displacement; their index
+operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
+leaving every immediate bit and the access-EL variant intact. Explicit IR can
+execute these forms through LLVM and either C route without an image model.
+Automatic lifting still selects only register-offset operations. Image-backed
+immediate source projection fails explicitly until exact page/relocation
+occurrences, accessed-byte ownership and raw-base rebasing agree; source body
+filtering cannot bypass that requirement. This is not automatic immediate
+CPA2 lifting coverage.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
 execution projection refuses it without its alignment and tagging environment.
@@ -456,7 +467,10 @@ Source emission keeps these original reads even after recovering a switch.
 When a relocatable table read has no observable result, a bounded original-byte
 copy preserves the access without demanding callable identities for unreachable
 physical slots. The shared byte-storage descriptor grants no address or flow
-proof. HighC requires every use of the exact expression in its function to be
+proof. A common 64-bit byte-span query includes negative displacements and
+the original raw base, without shortening the maximum 65,536-byte unsigned-Q
+span. Alignment padding is not original prefix content. HighC requires every
+use of the exact expression in its function to be
 unobserved, together with a complete source-range proof; LLVM requires the
 existing exact-occurrence, storage-role and terminal-use closure. Observable
 reads still use the normal relocation-aware memory owner. Table-relative data
@@ -466,8 +480,8 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Immediate, pre/post-index, pair and other ordinary-memory families
-remain unqualified for CPA2, as does controlled native execution with CPTA
+identity. Automatic immediate, pre/post-index, pair and other ordinary-memory
+lifting remains unqualified for CPA2, as does controlled native execution with CPTA
 enabled. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
@@ -760,6 +774,13 @@ request. Navigation keeps the requested byte address separately from its owner.
 GUI refreshes retain loaded context within the per-side query budget and keep a
 prefetch margin, so replacing unchanged rows does not shrink and regrow the
 window used to route branch arrows. Revision and navigation fences still apply.
+
+<!-- i18n-section: interactive-patch-ownership -->
+## Interactive patch ownership
+
+`lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
+
+Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
 ## Structural comparison ownership
 
@@ -8300,8 +8321,15 @@ changing the allocator. Android preparation still accounts for every requested
 byte, and the existing final snapshot path checks current permissions. Terminal
 CPU/model faults retain their diagnostics without attempting observation reads.
 `LinuxResidency.cpp` owns bounded `mincore` validation within `LinuxMemory`.
-It uses `AddressSpace` mapping facts for first-page holes and does not maintain
-a second map or equate allocated backing storage with Linux page residency.
+It uses `AddressSpace` mapping facts for first-page holes. Optional ordered
+residency observations are matched against separately tracked anonymous
+allocation provenance, never VMA names or allocated RAM contents. `mapPages`
+publishes provenance only after complete mapping success; shared `unmapPages`
+retires it, including brk shrink and thread retirement. These intervals retain
+no RAM and confer no access permissions. Proc and residency share live VMA
+boundaries, while only residency admits device boundaries for explicit refusal.
+A monotonic query/output walk preserves complete vector chunks before errors;
+unknown partial-copy progress remains unsupported.
 Linux memory dispatch selects each operation before applying its own argument
 policy; raw and Bionic calls share that decision.
 `AndroidMemory` owns copies of caller-specified regular files into explicit
@@ -11453,6 +11481,19 @@ Program registers framework field ownership by declaration identity, independent
 of supplied source metadata. Runtime routes those instance fields to the same
 AndroidFramework state as library getters. Instrumentation starts from explicit
 optional state and retains compatible guest writes; JNI IDs do not own a copy.
+The attached Context's ApplicationInfo follows the same ownership rule. Its
+getter retains one instance shared by Application and base Context; `sourceDir`
+and `nativeLibraryDir` reads use independent nullable inputs until guest writes
+establish their values. Knowing one field does not supply the other.
+PackageManager ApplicationInfo queries match explicit own-user positive
+responses by exact package and flags. The same AndroidFramework field owner
+stores independent mutable slots per returned object; immutable response
+indices distinguish fresh parcel results from the Context's retained instance.
+The JSON adapter reuses one ApplicationInfo schema decoder, and the typed
+validator owns response bounds and preconditions. No JNI-side field copies or
+package service execution are introduced.
+Framework String materialization shares one budgeted helper across methods and
+fields. File existence and APK contents remain separate filesystem inputs.
 Exact loader-scoped negative class lookup observations are admitted by the
 shared Android application validator and checked against the Runtime's actual
 Program visibility. AndroidFramework creates the shared throwable and message;
@@ -11560,6 +11601,31 @@ preserves the same heap throwable through move-exception, rethrow and JNI.
 Frame storage is released on every unwind, including caught exceptions;
 resource/unsupported stops remain terminal and cannot be caught by Java.
 This is neither a second decoder nor an ART/JVM class-loader implementation.
+
+`AndroidFramework` also owns the explicitly supplied, generation-stable Secure
+and Global settings caches of its attached resolver. The bounded `android_id`
+and redirected `adb_enabled` reads keep
+unknown, cached null, empty and nonempty values distinct, with the same retained
+String identity for JNI and DEX. Typed snapshots and JSON share admission;
+neither transport chooses a default identifier or setting. The defaulted
+integer getter reuses that String owner, checks ASCII decimal int32 bounds, and
+uses the caller's default only for known absence or invalid ASCII text. Unknown
+state and unmodeled Unicode digit semantics remain explicit stops.
+This projection requires an
+existing own-user cache and does not implement Binder/provider acquisition,
+generation changes, other users or writes. Its contract follows API 28
+[Settings.Secure and NameValueCache](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/provider/Settings.java).
+
+The API 28 value profile admits StringBuilder's empty constructor,
+`append(char)` and `toString()` through that same Library owner. Its retained
+UTF-16 value is mutable; append returns the original identity and charges its
+copy before mutation. Nonempty String results own independent bytes; the empty
+result uses the literal pool. Program declares the concrete, abstract-base and
+interface hierarchy. This bounded value projection does not expose ART backing
+arrays or capacity, and other overloads remain unsupported.
+The contract follows the public API 28
+[StringBuilder](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/StringBuilder.java)
+and its abstract base; no implementation bodies are incorporated.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
@@ -11803,6 +11869,22 @@ candidate graphs and exhausted observation budgets cannot grant separation.
 Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
+
+Source register-call recovery runs after that original CALL-slot guard. The
+callee-effect owner retains a bounded, complete, straight-line x64 scalar/CPUID
+body only when it has no memory operations, internal calls, exceptional roots,
+unmodeled exception metadata, direction-flag writes or nonordinary return.
+`PipelineRegisterCalls.cpp` uses the ordinary LowIR
+converter to capture the caller's extra result registers; it does not duplicate
+partial-register or intrinsic semantics. Required results must have no remaining
+entry-state dependencies, and every written ABI-preserved GPR must equal its
+incoming value. Each original query is then expanded once, in order, with fresh
+SSA values shared by all outputs. Native lifting retains the original CALL.
+The cache accounts for retained leaf bodies, and per-body/per-function work
+bounds prevent unbounded expansion. Incoming-state-dependent, memory-using and
+other hardware leaves retain the ordinary unavailable-state behavior. This is
+not a general machine-state calling convention or a proof of unresolved frame
+aliases.
 
 The shared entry-stack offset proof follows the lifter's exact zero-extension
 of a native 32-bit address into its 64-bit memory-address container. It does

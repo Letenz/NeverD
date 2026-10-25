@@ -21,6 +21,7 @@
 namespace neverd::sorted {
 namespace detail {
 size_t longLowerBound64(const uint64_t *Data, size_t Size, uint64_t Key);
+bool longContains64(const uint64_t *Data, size_t Size, uint64_t Key);
 } // namespace detail
 
 /// Index of the first key >= Key, or Size. Data contains Size sorted keys;
@@ -35,8 +36,12 @@ inline size_t lowerBound64(const uint64_t *Data, size_t Size, uint64_t Key) {
 inline bool contains64(const uint64_t *Data, size_t Size, uint64_t Key) {
   if (Size < limits::support::kSortedSearchMinimumSIMDEntries)
     return std::binary_search(Data, Data + Size, Key);
-  const size_t Index = detail::longLowerBound64(Data, Size, Key);
-  return Index != Size && Data[Index] == Key;
+  if constexpr (limits::support::kSortedSearchUseDirectMembership) {
+    return detail::longContains64(Data, Size, Key);
+  } else {
+    const size_t Index = detail::longLowerBound64(Data, Size, Key);
+    return Index != Size && Data[Index] == Key;
+  }
 }
 } // namespace neverd::sorted
 

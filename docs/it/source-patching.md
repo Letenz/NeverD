@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
+<!-- i18n-source: dfc80a0bf5685db7576ab0eb49dc067cdc190a437a85b33c4a4186eed6915fce -->
 
 [← Documentation Index](README.md)
 
@@ -259,3 +259,10 @@ Le [verifiche di compatibilità Apple](https://github.com/gmh5225/test_mac_intel
 Le correzioni Mach-O autenticano le funzioni Thumb selezionate indipendentemente dal riepilogo ARM/Thumb misto dell'immagine, normalizzano i puntatori di esportazione Thumb comprovati e gli indirizzi di codice di unwinding ARM32 senza modificare puntatori ai dati o lunghezze degli intervalli. La build con sorgenti LLVM integrati ha superato localmente tutti i 283 controlli della matrice CPU e i 258 controlli dei contratti di eccezione, senza errori né casi saltati. Le prove Mach-O legacy usano un linker open source documentato e riservano spazio per l'unwinding; i386 dispone di un ingresso di avvio correttamente allineato e di un segmento page zero di 64 KiB.
 
 Questi risultati attestano l'esecuzione C negli emulatori e livelli di compatibilità indicati. Wine non è Microsoft Windows, Darling non è macOS e l'esecuzione ARMv7k nella HLE iOS non qualifica watchOS, WatchKit o dispositivi Apple. Non viene dedotta alcuna copertura di vecchi SDK Apple o hardware nativo a 32 bit; queste prove non qualificano neppure l'unwinding delle eccezioni C++. Le precedenti evidenze native e di compatibilità restano separate. NeverC non è stato compilato né modificato.
+
+<!-- i18n-section: interactive-byte-patches -->
+## Responsabilità delle patch interattive
+
+`lib/patch` gestisce la verifica dei byte, la codifica LLVM MC, la copia immutabile dell’ingresso, le modifiche normalizzate e l’esportazione esclusiva. L’SDK verifica i bersagli tramite il C esatto, le occorrenze LowIR canoniche e gli operandi decodificati; un’ancora di navigazione non basta. Il worker integra il file facoltativo `patches.json` in annulla e ripeti, invalidando poi l’analisi. Le firme leggono i byte originali; le funzioni modificate perdono gli effetti di libreria dedotti dall’identità. GUI, CLI e Python usano le stesse API. La sostituzione completa usa ancora `neverd_patch_source`, dopo l’esportazione e la riapertura delle modifiche ai byte.
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`

@@ -9,6 +9,7 @@
 #include "../os/linux/android/AndroidJavaLibrary.h"
 #include "../os/linux/android/AndroidLog.h"
 #include "../os/linux/android/AndroidObservation.h"
+#include "ProcessJSONInteger.h"
 #include "ProcessNetworkJSON.h"
 
 #include "neverd/dalvik/Budget.h"
@@ -45,6 +46,28 @@ llvm::Expected<std::string> string(const llvm::json::Value &V,
   return S->str();
 }
 std::string bits(uint64_t V) { return llvm::utohexstr(V, true); }
+llvm::Expected<mobile::dalvik::AndroidApplicationSnapshot::ApplicationInfo>
+applicationInfo(const llvm::json::Value &Value) {
+  const auto *Info = Value.getAsObject();
+  if (!Info || Info->size() < 1 || Info->size() > 2 ||
+      !Info->get("source_dir") ||
+      (Info->size() == 2 && !Info->get("native_library_dir")))
+    return invalid(field::ApplicationInfo);
+  mobile::dalvik::AndroidApplicationSnapshot::ApplicationInfo Result;
+  const auto &Entry = *Info->get("source_dir");
+  if (auto Text = Entry.getAsString())
+    Result.source_dir = Text->str();
+  else if (Entry.kind() != llvm::json::Value::Null)
+    return invalid(field::ApplicationInfo);
+  if (const auto *Native = Info->get("native_library_dir")) {
+    auto &Directory = Result.native_library_dir.emplace();
+    if (auto Text = Native->getAsString())
+      Directory = Text->str();
+    else if (Native->kind() != llvm::json::Value::Null)
+      return invalid(field::ApplicationInfo);
+  }
+  return Result;
+}
 llvm::Expected<std::vector<NativeMemoryRead>>
 memoryReads(const llvm::json::Value &Value) {
   const auto *Array = Value.getAsArray();
@@ -271,7 +294,58 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       mobile::dalvik::AndroidApplicationSnapshot Snapshot;
       bool HasPhase = false;
       for (const auto &[Key, Value] : *Input) {
-        if (Key == field::ApplicationLoaderEstablished) {
+        if (Key == field::ApplicationSecureSettingsCache ||
+            Key == field::ApplicationGlobalSettingsCache) {
+          const bool Secure = Key == field::ApplicationSecureSettingsCache;
+          const char *Setting = Secure ? "android_id" : "adb_enabled";
+          const auto *Cache = Value.getAsObject();
+          if (!Cache || Cache->size() != 1 || !Cache->get(Setting))
+            return invalid(Key);
+          const auto &Entry = *Cache->get(Setting);
+          auto &CachedValue =
+              Secure ? Snapshot.secure_settings_cache.emplace().android_id
+                     : Snapshot.global_settings_cache.emplace().adb_enabled;
+          if (auto Text = Entry.getAsString())
+            CachedValue = Text->str();
+          else if (Entry.kind() != llvm::json::Value::Null)
+            return invalid(Key);
+          continue;
+        } else if (Key == field::ApplicationInfo) {
+          auto Info = applicationInfo(Value);
+          if (!Info)
+            return Info.takeError();
+          Snapshot.application_info = std::move(*Info);
+          continue;
+        } else if (Key == field::ApplicationInfoQueries) {
+          const auto *Queries = Value.getAsArray();
+          if (!Queries ||
+              Queries->size() >
+                  ::neverd::limits::dalvik::kMaxAndroidApplicationInfoQueries)
+            return invalid(Key);
+          for (const auto &Entry : *Queries) {
+            const auto *Query = Entry.getAsObject();
+            if (!Query || Query->size() != 3 ||
+                !Query->getString("package_name") || !Query->get("flags") ||
+                !Query->get("info"))
+              return invalid(Key);
+            auto Flags = process_json::integer<int32_t>(*Query->get("flags"));
+            if (!Flags)
+              return invalid(Key);
+            auto Info = applicationInfo(*Query->get("info"));
+            if (!Info)
+              return Info.takeError();
+            Snapshot.application_info_queries.push_back(
+                {Query->getString("package_name")->str(), *Flags,
+                 std::move(*Info)});
+          }
+          continue;
+        } else if (Key == field::ApplicationPackageManagerAvailable) {
+          auto Available = Value.getAsBoolean();
+          if (!Available)
+            return invalid(Key);
+          Snapshot.package_manager_available = *Available;
+          continue;
+        } else if (Key == field::ApplicationLoaderEstablished) {
           auto Established = Value.getAsBoolean();
           if (!Established)
             return invalid(Key);
@@ -372,6 +446,26 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         mobile::dalvik::validateAndroidClassLookupFailures(Snapshot);
       } catch (const mobile::Error &) {
         return invalid(field::ApplicationClassLookupFailures);
+      }
+      try {
+        mobile::dalvik::validateAndroidSecureSettingsCache(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationSecureSettingsCache);
+      }
+      try {
+        mobile::dalvik::validateAndroidGlobalSettingsCache(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationGlobalSettingsCache);
+      }
+      try {
+        mobile::dalvik::validateAndroidApplicationInfo(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationInfo);
+      }
+      try {
+        mobile::dalvik::validateAndroidApplicationInfoQueries(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationInfoQueries);
       }
       Out.Application = std::move(Snapshot);
     } else if (Name == field::JNIClassLookupFailures) {

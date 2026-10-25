@@ -280,6 +280,148 @@ TEST_P(LinuxNetwork, StreamEventsKeepOrderingPartialReadsErrorsAndExplicitEOF) {
   EXPECT_EQ(std::vector(Read, Read + 4), (std::vector<uint8_t>{7, 8, 9, 10}));
 }
 
+TEST_P(LinuxNetwork, TCPConnectFailuresPreserveAdmissionAndBoundedOwnership) {
+  Options.LinuxNetwork->Connections.resize(1);
+  Options.LinuxNetwork->TCPConnectFailures = LinuxTCPConnectFailures{101, 2};
+  auto Other = Options.LinuxNetwork->Connections[0].Peer;
+  ++Other[3];
+  llvm::cantFail(cpu().write(Base + 32, Other));
+  auto FD = open();
+  // A present exact attempt cannot be bypassed by the failure-only tail.
+  EXPECT_FALSE(call(ServiceKind::Connect, FD, Base + 32, 16));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+  EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+  FD = open();
+  EXPECT_EQ(call(ServiceKind::Connect, 99, 1, 16), uint64_t(-9));
+  EXPECT_EQ(call(ServiceKind::Connect, 1, 1, 16), uint64_t(-88));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, 1, 129), uint64_t(-22));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, 1, 16), uint64_t(-14));
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base + 8191, 16), uint64_t(-14));
+  Other[0] = 10;
+  llvm::cantFail(cpu().write(Base + 32, Other));
+  EXPECT_FALSE(call(ServiceKind::Connect, FD, Base + 32, 16));
+  Other[0] = 2;
+  llvm::cantFail(cpu().write(Base + 32, Other));
+  auto Nonblocking = call(ServiceKind::Socket, 2, 1 | 0x800, 0).value();
+  EXPECT_FALSE(call(ServiceKind::Connect, Nonblocking, Base, 16));
+  EXPECT_EQ(call(ServiceKind::Close, Nonblocking), 0u);
+  auto UDP = call(ServiceKind::Socket, 2, 2, 17).value();
+  EXPECT_FALSE(call(ServiceKind::Connect, UDP, Base, 16));
+  EXPECT_EQ(call(ServiceKind::Close, UDP), 0u);
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base + 32, 16), uint64_t(-101));
+  const auto Alias = call(ServiceKind::Dup, FD).value();
+  EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+  EXPECT_FALSE(call(ServiceKind::Connect, Alias, Base, 16));
+  EXPECT_FALSE(call(ServiceKind::Read, Alias, Base + 128, 1));
+  EXPECT_EQ(call(ServiceKind::Close, Alias), 0u);
+  std::vector<uint8_t> IPv6(28, 0);
+  IPv6[0] = 10;
+  IPv6[23] = 1;
+  llvm::cantFail(cpu().write(Base + 64, IPv6));
+  FD = call(ServiceKind::Socket, 10, 1, 6).value();
+  EXPECT_EQ(call(ServiceKind::Connect, FD, Base + 64, 28), uint64_t(-101));
+  EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+  FD = open();
+  EXPECT_FALSE(call(ServiceKind::Connect, FD, Base, 16));
+  EXPECT_NE(Report.Diagnostic.find("failure contract exhausted"),
+            std::string::npos);
+}
+
+TEST_P(LinuxNetwork, TCPConnectFailuresReachConfiguredBoundThenStop) {
+  Options.LinuxNetwork->Connections.clear();
+  Options.LinuxNetwork->TCPConnectFailures = LinuxTCPConnectFailures{101, 4096};
+  for (unsigned I = 0; I != 4096; ++I) {
+    SCOPED_TRACE(I);
+    const auto FD = open();
+    ASSERT_EQ(call(ServiceKind::Connect, FD, Base, 16), uint64_t(-101));
+    ASSERT_EQ(call(ServiceKind::Close, FD), 0u);
+  }
+  const auto FD = open();
+  EXPECT_FALSE(call(ServiceKind::Connect, FD, Base, 16));
+  EXPECT_NE(Report.Diagnostic.find("failure contract exhausted"),
+            std::string::npos);
+}
+
+TEST(LinuxNetworkJSON,
+     TCPConnectFailuresRequireFiniteExplicitNegativeOutcomes) {
+  auto Check = [](llvm::StringRef Fields, bool Valid) {
+    auto P = processOptionsFromJSON(
+        "{\"linux_network\":{\"tcp_connect_failures\":" + Fields.str() + "}}");
+    EXPECT_EQ(bool(P), Valid) << Fields.str();
+    if (P && Valid) {
+      ASSERT_TRUE(P->LinuxNetwork->TCPConnectFailures);
+      EXPECT_GT(P->LinuxNetwork->TCPConnectFailures->Count, 0u);
+    }
+    if (!P)
+      llvm::consumeError(P.takeError());
+  };
+  for (unsigned Error : {4, 111, 110, 101, 113, 13})
+    Check("{\"errno\":" + std::to_string(Error) +
+              ",\"count\":" + std::to_string(4096) + "}",
+          true);
+  Check("{\"errno\":101,\"count\":" + std::to_string(4096 + 1) + "}", false);
+  // A long offline worker must be able to pass the former 256-attempt bound.
+  Check(R"({"errno":101,"count":257})", true);
+  for (const char *Fields : {"null",
+                             "[]",
+                             "{}",
+                             R"({"errno":101})",
+                             R"({"count":1})",
+                             R"({"errno":0,"count":1})",
+                             R"({"errno":115,"count":1})",
+                             R"({"errno":101,"count":0})",
+                             R"({"errno":101,"count":-1})",
+                             R"({"errno":101,"count":1.5})",
+                             R"({"errno":101,"count":null})",
+                             R"({"errno":101,"count":true})",
+                             R"({"errno":101,"count":"1x"})",
+                             R"({"errno":101,"count":"-1"})",
+                             R"({"errno":101,"count":"0"})",
+                             R"({"errno":101,"count":"4294967296"})",
+                             R"({"errno":101,"count":4294967296})",
+                             R"({"errno":101,"count":1,"peer_hex":""})",
+                             R"({"errno":101,"count":1,"receive_hex":"01"})",
+                             R"({"errno":-1,"count":1})",
+                             R"({"errno":true,"count":1})"})
+    Check(Fields, false);
+  // Observation integers also accept lossless decimal strings.
+  Check(R"({"errno":101,"count":"1"})", true);
+  Check("{\"errno\":\"101\",\"count\":\"" + std::to_string(4096) + "\"}", true);
+  LinuxNetworkOptions N;
+  LinuxStreamConnection S;
+  S.Peer = {2, 0, 0x23, 0x29, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+  S.ConnectErrno = 111;
+  N.Connections.resize(4096 - 2, S);
+  LinuxDatagramConnection D;
+  D.Peer = S.Peer;
+  N.DatagramConnections = {D};
+  for (auto F : {LinuxTCPConnectFailures{101, 1},
+                 {101, 2},
+                 {0, 1},
+                 {115, 1},
+                 {101, 0},
+                 {101, UINT32_MAX}}) {
+    N.TCPConnectFailures = F;
+    auto E = linux_model::validateNetworkOptions(N);
+    EXPECT_EQ(bool(E), F.Error != 101 || F.Count != 1);
+    llvm::consumeError(std::move(E));
+  }
+  const std::string Peer =
+      R"({"peer_hex":"020023297f0000010000000000000000","connect_errno":111})";
+  // A small explicit list keeps this aggregate-count test below the
+  // independently enforced process-options JSON metadata budget.
+  const std::string Entries = Peer;
+  for (unsigned Count : {4096 - 1, 4096}) {
+    auto P = processOptionsFromJSON(
+        "{\"linux_network\":{\"connections\":[" + Entries +
+        "],\"tcp_connect_failures\":{\"errno\":101,\"count\":" +
+        std::to_string(Count) + "}}}");
+    EXPECT_EQ(bool(P), Count == 4096 - 1);
+    if (!P)
+      llvm::consumeError(P.takeError());
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Raw, LinuxNetwork,
                          testing::Values(GuestArchitecture::X64,
                                          GuestArchitecture::AArch64));

@@ -9,6 +9,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <vector>
 namespace neverd::emulation {
 enum class AndroidGKIKernel {
 #define NEVERD_LINUX_GKI_KERNEL(Name, Label, Flags, Import, NonLeader,         \
@@ -30,6 +31,12 @@ struct LinuxKernelTask {
 enum class LinuxXAttrQueryImport { TargetBeforeName, NameBeforeTarget };
 /// Legacy Android VMA names borrow a guest pointer until proc reads the name.
 enum class LinuxAnonymousVMANames { AndroidUserPointer };
+/// Query-time states for an exact rounded mincore request, consumed once.
+/// Each byte is zero or one; these are not initial RAM contents.
+struct LinuxResidencyObservation {
+  uint64_t Address = 0;
+  std::vector<uint8_t> Pages;
+};
 /// Explicit Linux kernel contracts and observed absent kernel interfaces.
 /// Unmodeled interfaces retain their unsupported execution boundary.
 struct LinuxKernelOptions {
@@ -49,6 +56,9 @@ struct LinuxKernelOptions {
   /// Independent, opt-in anonymous VMA naming contract. Neither an Android
   /// API level nor GKI selects this legacy user-pointer representation.
   std::optional<LinuxAnonymousVMANames> AnonymousVMANames;
+  /// Missing or exhausted observations do not imply residency. Only live
+  /// anonymous allocations made through the Linux memory owner are admitted.
+  std::optional<std::vector<LinuxResidencyObservation>> ResidencyObservations;
 };
 } // namespace neverd::emulation
 #endif

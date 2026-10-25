@@ -366,6 +366,35 @@ declarations remain unqualified; the integer bridges do not certify those
 interfaces.
 The shared identity regression pins the published scalar and concurrent x86
 identities before admitting the appended vector operations.
+`AArch64ImmediateMemory` checks the explicit raw-operation contract with 177
+independent LLVM MC samples: unsigned, unscaled and GPR unprivileged immediate
+accesses. An independent Capstone operand-detail comparison also checks all
+112,640 immediate encodings and their scratch rewrites. The suite covers encoded
+displacements, signed result widths,
+neighboring writeback/pair exclusions, zero-index shape requirements, finite
+tracing in both modes and complete 64-bit byte spans. Both C routes and linked
+LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes,
+extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
+These are explicit-IR tests; they do not
+qualify automatic decoding/lifting, relocated-image projection or native
+half/whole-vector ABI. Stack and image requirements fail before body filtering.
+Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
+both generated C files, the independent native harness and an LLVM ELF object
+in a fresh directory recorded in the test's properties. These artifacts allow
+a controlled guest to consume the actual generated output; exporting them is
+not CPTA-on qualification.
+The official Arm AEM FVP 11.32.19 has executed these actual generated artifacts
+through HighC and LLVMC at O0/O2 and an LLVM ELF object. All five routes pass
+the 177 samples with SCTLR2_EL1 values 0, 512, 1024 and 1536, covering both
+CPTA/CPTA0 bits independently. Each guest requires CPA feature level 2,
+effective control readbacks, independent ADDPT overflow controls, completion
+and process success. Separate privileged-code and EL0/EL1-writable,
+non-executable data pages provide Normal WB memory; PAN and UAO read back zero.
+This qualifies the explicit no-image, nonoverflow memory fixtures on that
+model. It does not qualify automatic lifting, image relocation, original SP,
+writeback/pairs, EL0 instruction execution, native half/whole-vector ABI,
+Apple hardware, other translation/tagging contexts or overflowing memory and
+every CPACHECK choice. Remote GitHub CI results require separate observation.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the
@@ -791,6 +820,26 @@ function cannot suppress later record queries on the same writer.
 Run the store-forwarding, source-dialect and local-types debug-context owners
 after changing frame-member queries.
 
+`*PackageApplicationInfo*` tests exact name/flag keys, independent mutable
+query results, retained Context fields, nullable and unknown field states,
+UTF-16 names, invalid typed/JSON responses and terminal work/storage limits.
+The native fixture checks ordinary and jvalue-array calls and field ownership
+across detach and a second thread; DEX queries enter the same owner. Run the
+full Dalvik, Android JNI and ProcessReport suites for this shared contract.
+These tests do not execute a package service or Binder transaction.
+
+
+`AndroidFrameworkTest.*PackageManager*`, the Android JNI PackageManager
+fixture and `ProcessReport.AndroidPackageManagerAvailabilityIsExplicitAndStrict`
+check unknown/absent/present service state, retained context ownership, hierarchy,
+DEX/JNI sharing, thread lifetime, null/type refusal and terminal resource bounds.
+Run the full Dalvik, Android JNI and ProcessReport suites when changing this
+shared framework state. Package-service or Binder execution is not covered.
+JNI's null receiver is an admission failure; the DEX/library null receiver
+separately exercises Java NullPointerException. The lookup-only native mode
+does not require service availability and never calls the manager getter.
+
+
 `AndroidSignals.Descriptor*` and `Receive*` check caught/ignored/blocked and
 terminating signals during original poll/epoll/pselect6 and TCP/UDP receive
 calls. Independent O0/O2 fixtures run across relocation packing and available
@@ -878,6 +927,58 @@ field IDs, getters, null/replacement writes and detach/reattach across native
 fixture variants and CPU backends. `ProcessReport.AndroidInstrumentationInputIsExplicitAndStrict`
 checks JSON types and phase constraints. Run these with the full Dalvik suite,
 Android JNI regressions and ProcessReport tests after changing framework fields.
+
+`AndroidFrameworkTest.SecureCache*` and
+`DexReadsTheSameRetainedSecureCacheString` check the declared stable cache,
+unknown/null/empty/UTF-16 values, identity, resolver ownership, key admission,
+typed input validation and terminal budgets. The corresponding JNI test runs
+original ARM64 calls through all available backend/packing variants.
+`ProcessReport.AndroidSecureSettingsCacheRequiresExplicitNullableValue` checks
+strict JSON admission and nullable values. Run complete Dalvik, JNI and report
+suites for changes to this shared snapshot.
+`SecureKeyConstantsShareDexAndRuntimeLiteralStorage` and
+`AndroidJNI.SecureKeyConstantsUseInternedStaticFieldStorage` check the API 28
+`ADB_ENABLED` and `ANDROID_ID` key constants through DEX and native JNI, literal
+identity, read-only static storage and unknown-field refusal. These constants
+do not supply the corresponding settings values or a provider.
+`AndroidFrameworkTest.SettingsInt*` and
+`AndroidJNI.SecureSettingsIntegersUseGlobalCacheAndCallerDefault` cover the
+separate Global cache, shared string/int reads, DEX and native JNI transport,
+signed limits, invalid ASCII/default behavior, explicit absence versus unknown,
+Unicode refusal, resolver ownership and terminal budgets.
+`ProcessReport.AndroidGlobalSettingsCacheRequiresExplicitNullableValue` checks
+strict input admission. Run full Dalvik, JNI and report suites after changing
+these shared settings contracts.
+
+`AndroidFrameworkTest.ApplicationInfo*` checks retained identity, nullable
+sourceDir input, UTF-16 contents, mutable DEX/Runtime sharing, trusted field
+ownership, foreign/type/null refusal and terminal storage/work budgets.
+`AndroidJNI.ApplicationInfoSharesFieldsAcrossThreadsAndDetach` exercises original
+ARM64 getters and field reads/writes across threads, detach and reference
+deletion on all available backend/fixture variants.
+`ProcessReport.AndroidApplicationInfoRequiresExplicitNullableSourceDirectory`
+checks strict JSON admission. The NativeDirectory cases also check independent
+unknown/null/String state, DEX/JNI writes, cross-thread identity and strict
+`native_library_dir` input without inferring it from sourceDir. Run full Dalvik,
+JNI and report suites for this shared snapshot and field contract.
+
+`StringBuilderTest.*` covers API 28 empty construction, exact UTF-16 units,
+stable mutation identity, independent immutable results, DEX construction,
+hierarchy, terminal budgets and refusal boundaries.
+`AndroidJNI.MutableStringBuilderSharesUTF16ValuesWithJNI` executes independent
+original ARM64 JNI callers through the available backends and fixture packing
+variants, including both ordinary and jvalue-array arguments. Unknown capacity
+queries remain a stop. Run the complete Dalvik and JNI suites after changes to
+these shared value semantics.
+
+`AndroidFrameworkTest.ContentResolver*` and
+`DexAndLibraryShareTheContextResolver` check the retained resolver across
+Application/base Context calls, its concrete hierarchy, separate workload
+ownership, null/type/foreign-instance refusal, DEX sharing and terminal heap
+and instruction limits. `AndroidJNI.ApplicationContentResolver*` checks original
+native callers across O0/O2, relocation packing and available CPU backends,
+including global/local references, detach/reattach and two native threads.
+These tests do not supply content providers, settings or Binder responses.
 
 `LinuxFileNamespace.CreatedDirectories*` and `Directory*` check directory
 inodes, complete stat layouts, parent updates, setgid/umask, reservation/time
@@ -1791,16 +1892,19 @@ independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
 AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
 pass. The acceleration CI also runs installed binaries on each native host.
 
-`SortedSearch.*` compares ranks against independent counts, checks every
-insertion point across narrowed tails, and puts read-only input against an
-inaccessible page. It exercises every supported/generated Highway target,
+`SortedSearch.*` compares ranks against independent counts and membership
+against linear search, checks every insertion point across narrowed tails,
+and puts read-only input against an inaccessible page for both operations.
+Membership includes a possible match at the narrowed interval's upper bound.
+It exercises every supported/generated Highway target,
 including unsigned high-bit addresses and duplicate keys. Test XML records the
 targets and, on Linux ARM64 with SVE, the actual vector length. For example,
 QEMU's `-cpu max,sve-max-vq=3` exercises 384-bit SVE, whose lane count does not
 divide the fixed tail. Emulation checks correctness, not native speed.
 
-The optional `neverd-sorted-search-bench` target accepts `std`, `simd`, or, in
-the full build, `owner`, followed by sorted keys and query files containing
+The optional `neverd-sorted-search-bench` target accepts `std`/`simd` for lower
+bounds, `std-contains`/`contains` for membership, or, in the full build, `owner`,
+followed by sorted keys and query files containing
 hexadecimal unsigned integers. An optional final Highway target name selects
 a supported implementation. It validates the complete result vector and
 reports warm lookup wall/process CPU time; parsing, reference computation,
@@ -1999,6 +2103,14 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
 ## Structural binary comparison
+
+Saved-decision regressions reject an accepted pair that contradicts the final
+effective Unmatch in all historical completion states. A reverse-history oracle
+checks every five-event sequence over two pairs; remap, rejection clearing,
+confirmation and undo roundtrips remain valid. CLI tests preserve an existing
+save target and empty stdout on rejection; SDK/worker tests retain the current
+snapshot, revision, edits, cached inspection and undo/redo after a failed restore
+or replacement. The `decisions` restore checkpoint is cooperatively cancellable.
 
 Saved-restore regressions cover typed pre-cancellation/deadline, coordinator-only
 progress, cancellation at read/parse/validation/measurement/publication stages,
@@ -13119,6 +13231,22 @@ through both C routes, with source optimization enabled and disabled, at C
 O0/O2 with UBSan. The oracle observes the non-return register's stored value
 and the ordinary call result. This qualifies bounded scalar constants, not
 dynamic machine-state returns or other architectures.
+`CallExitRegisters.PureRegisterLeafKeepsDynamicExtraResults` independently
+executes recovered query results against native CPUID on x64 COFF/ELF/Mach-O
+inputs through both C routes at O0/O2 with UBSan. Source execution selects the
+host's GNU intrinsic spelling while retaining the input image's recovered ABI.
+Cached emitter order, repeated calls and high-byte observations check shared
+result identity. IR checks retain exactly one query per expanded call. The
+`RegisterQuery*` controls retain memory/input-dependent leaves, other hardware
+operations, branching/nonordinary returns, image addresses, unpreserved RBX,
+unmodeled exception metadata, CLD/STD and native calls. Boundary controls run
+both source routes with and without optimization; the original CALL-slot read must still fail before source
+expansion. Opaque and general dynamic machine-state returns remain separate.
+`Win64CallContract.RegisterQueryWindowsSourceCompilesWithItsHeaders` compiles
+both unmodified C units for the Windows x64 target with Clang's freestanding
+headers. HighC includes `<intrin.h>` for the Microsoft CPUID spelling and its
+compiler barriers, as required by [Microsoft's intrinsic contract](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex).
+Target compilation does not qualify native Windows execution.
 The opaque CPUID-exit counterexample checks that both C routes report an
 observed missing value before modifying the caller's output, after exactly one
 provider call. It covers serial and sharded LLVM source emission, optimized and
@@ -13277,3 +13405,60 @@ refusals and exact writes against complete TLS backing, and known pointer
 returns under a small copy budget. `ProcessPublic.AndroidErrorTextMatchesSDKAndCLI`
 compares complete reports through both public entrypoints. Run these alongside
 thread, environment, calendar, dynamic-loader and string regressions.
+
+`LinuxMemory.Residency*` covers ordered observations, PROT_NONE, exact output
+bytes, early errors versus consumed copy faults, completed VMA/page chunks,
+partial-copy refusal, brk provenance, named external RAM, unmap/address reuse,
+adjacent unknown backing and MMIO without device transactions.
+`LinuxKernelAvailability.ResidencyObservationsAreExplicitStrictAndBounded`
+checks typed and JSON admission. `LinuxProcess.Residency*` runs independent
+O0/O2 workloads on x64 and AArch64; `AndroidNative.Residency*` compares raw,
+libc, syscall and dynamic routes across relocation packings.
+`ProcessPublic.AndroidResidencyObservationsMatchSDKAndCLI` compares 36 complete
+SDK/CLI report pairs against independent guarded bytes and errno values. Run
+`NeverDLinuxProcessTests`, `NeverDAndroidNativeTests` and `NeverDProcessPublicTests`
+with CPU emulation enabled after changing the shared memory contract.
+
+`LinuxNetwork.TCPConnectFailuresPreserveAdmissionAndBoundedOwnership` verifies
+that early errors, unconsumed exact peers, UDP and nonblocking sockets cannot
+consume the failure tail. Aliases, exhausted counts and failed-description reuse
+remain explicit boundaries. `LinuxNetworkJSON` checks strict typed/wire input
+and the 4,096 combined TCP/UDP/failure budget. Android O0/O2 relocation variants
+exercise named, dynamic, variadic and raw ARM64 connect calls with independent
+errno and guarded-memory expectations. Run both Linux and Android network owners
+after changing connection admission. All transport tests are offline.
+
+`ProcessPublic.AndroidConnectionFailuresMatchSDKAndCLI` compares six complete
+SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
+failed-description reuse.
+
+`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 28 complete
+SDK/CLI reports across O0/O2 JNI callers. Resolver identity, UTF-16 builders,
+missing and null settings, signed integer defaults, mutable application fields,
+package-manager availability and exact package queries retain the same shared
+semantics through typed and public wire entrypoints.
+
+<!-- i18n-section: interactive-byte-patches -->
+## Interactive patch ownership
+
+`NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
+
+`NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
+
+`NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```

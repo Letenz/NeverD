@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Compares complete lower-bound results over caller-supplied hexadecimal
+/// Compares complete lookup results over caller-supplied hexadecimal
 /// keys and queries. Input parsing, reference work and allocation are untimed.
 /// Each query runs once; alternate process order when collecting samples.
 ///
@@ -133,9 +133,9 @@ int measure(const std::vector<uint64_t> &Keys,
 int main(int Argc, char **Argv) {
   try {
     if (Argc != 4 && Argc != 5)
-      throw std::runtime_error(
-          "usage: neverd-sorted-search-bench "
-          "std|simd|owner keys.hex queries.hex [SIMD-target]");
+      throw std::runtime_error("usage: neverd-sorted-search-bench "
+                               "std|simd|std-contains|contains|owner keys.hex "
+                               "queries.hex [SIMD-target]");
     if (Argc == 5) {
       bool Found = false;
 #if NEVERD_BENCH_HIGHWAY
@@ -164,6 +164,20 @@ int main(int Argc, char **Argv) {
         return static_cast<size_t>(
             std::lower_bound(Keys.begin(), Keys.end(), Key) - Keys.begin());
       });
+    if (Mode == "contains")
+      return measure(
+          Keys, Queries, "contains",
+          [&](uint64_t Key) {
+            return neverd::sorted::contains64(Keys.data(), Keys.size(), Key);
+          },
+          true);
+    if (Mode == "std-contains")
+      return measure(
+          Keys, Queries, "std-contains",
+          [&](uint64_t Key) {
+            return std::binary_search(Keys.begin(), Keys.end(), Key);
+          },
+          true);
 #if NEVERD_BENCH_CODE_OWNER
     if (Mode == "owner") {
       neverd::BinaryImage Image;

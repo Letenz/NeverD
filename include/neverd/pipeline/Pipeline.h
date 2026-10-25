@@ -305,6 +305,8 @@ struct PipelineResult {
   std::map<va_t, uint32_t> CallMayWriteGPRs;
   /// Scalar register words proved equal at every ordinary callee return.
   std::map<va_t, GPRExitConstants> CallExitConstants;
+  /// Validated register-only leaves, shared with the bounded callee cache.
+  std::map<va_t, std::shared_ptr<const std::vector<LowOp>>> CallRegisterLeaves;
   /// Bytes of each GPR family a lifted callee reads before writing (its
   /// register arguments, including pass-throughs), keyed by callee entry.
   std::map<va_t, GPRReadWidths> CallEntryReadGPRs;

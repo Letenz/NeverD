@@ -72,7 +72,9 @@ TEST(SortedSearch, UnsignedRanksDuplicatesAndAlignments) {
   checkTargets([] {
     EXPECT_EQ(neverd::sorted::lowerBound64(nullptr, 0, UINT64_MAX), 0u);
     EXPECT_FALSE(neverd::sorted::contains64(nullptr, 0, 0));
-    std::vector<uint64_t> Storage(1040);
+    std::vector<uint64_t> Storage(
+        std::max(size_t{1040},
+                 neverd::limits::support::kSortedSearchMinimumSIMDEntries + 1));
     for (const uint64_t Base :
          {uint64_t{0}, uint64_t{1} << 63, UINT64_MAX - 1024}) {
       for (size_t Offset = 0; Offset != 8; ++Offset) {
@@ -154,10 +156,15 @@ TEST(SortedSearch, ReadOnlyInputEndsAtAnInaccessiblePage) {
       const auto *At = Words + Count - Size;
       EXPECT_EQ(neverd::sorted::lowerBound64(At, Size, UINT64_MAX), Size);
       EXPECT_EQ(neverd::sorted::lowerBound64(At, Size, 0), 0u);
+      EXPECT_FALSE(neverd::sorted::contains64(At, Size, UINT64_MAX));
+      EXPECT_EQ(neverd::sorted::contains64(At, Size, 0),
+                Size != 0 && At[0] == 0);
       if (Size != 0) {
         EXPECT_EQ(neverd::sorted::lowerBound64(At, Size, At[0]), 0u);
         EXPECT_EQ(neverd::sorted::lowerBound64(At, Size, At[Size - 1]),
                   Size - 1);
+        EXPECT_TRUE(neverd::sorted::contains64(At, Size, At[0]));
+        EXPECT_TRUE(neverd::sorted::contains64(At, Size, At[Size - 1]));
       }
     }
   });
@@ -177,6 +184,10 @@ TEST(SortedSearch, EveryInsertionPointAcrossNarrowedTails) {
                             [Key](uint64_t Value) { return Value < Key; }));
           ASSERT_EQ(neverd::sorted::lowerBound64(Keys.data(), Size, Key),
                     Expected)
+              << Size << ' ' << Offset << ' ' << Repeats;
+          ASSERT_EQ(neverd::sorted::contains64(Keys.data(), Size, Key),
+                    std::find(Keys.begin(), Keys.begin() + Size, Key) !=
+                        Keys.begin() + Size)
               << Size << ' ' << Offset << ' ' << Repeats;
         }
       }

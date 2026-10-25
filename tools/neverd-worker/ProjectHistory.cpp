@@ -161,6 +161,25 @@ void validateRow(std::string_view table, const Json &row) {
                         ::neverd::limits::worker::
                             kProjectHistoryValidateRowSourceStringFieldMax);
     }
+  } else if (table == "patches") {
+    const auto Offset = parseAddress(stringField(row, "file_off"));
+    (void)parseAddress(stringField(row, "va"));
+    if (Offset != parseAddress(stringField(row, "addr")))
+      throw Error("history_invalid",
+                  "Patch history key differs from its file offset");
+    const auto Size =
+        sizeField(row, "size", 0, ::neverd::limits::patch::kMaxPatchedBytes);
+    if (!Size)
+      throw Error("history_invalid", "Empty patch row");
+    for (const char *Key : {"original", "current"}) {
+      const auto Hex = stringField(
+          row, Key, {}, ::neverd::limits::patch::kMaxPatchedBytes * 2);
+      if (Hex.size() != Size * 2 ||
+          !std::all_of(Hex.begin(), Hex.end(),
+                       [](unsigned char C) { return std::isxdigit(C); }))
+        throw Error("history_invalid", "Invalid patch bytes");
+    }
+    (void)stringField(row, "kind");
   } else if (table == "items") {
     // The engine checks a data item against the image when it loads one.
     (void)stringField(
@@ -406,11 +425,32 @@ void ProjectHistory::requireUsable() const {
                           "sidecars; explicitly reset history before editing");
 }
 
+std::uint64_t ProjectHistory::displayAddress(const Json &command) {
+  if (command.value("kind", "") == "patch")
+    for (const char *side : {"after", "before"})
+      if (const auto &row = command.at(side); row.is_object())
+        return parseAddress(row.at("va").get<std::string>());
+  return parseAddress(command.at("address").get<std::string>());
+}
+
 Json ProjectHistory::listing(std::size_t offset, std::size_t limit) const {
   Json items = Json::array();
   for (std::size_t i = std::min(offset, commands_.size());
        i < commands_.size() && items.size() < limit; ++i) {
     auto command = commands_[i];
+    command["address"] = hexAddress(displayAddress(command));
+    // The durable command retains every byte. A chooser page must not echo
+    // megabytes of old/new data per row; the patches query owns byte pages.
+    if (command.value("kind", "") == "patch") {
+      command["details_omitted"] = true;
+      command["changed_rows"] = 1 + command.value("rows", Json::array()).size();
+      command.erase("rows");
+      for (const auto *side : {"before", "after"})
+        if (command.contains(side) && command[side].is_object()) {
+          command[side].erase("original");
+          command[side].erase("current");
+        }
+    }
     command["index"] = i;
     command["applied"] = i < cursor_;
     items.push_back(std::move(command));

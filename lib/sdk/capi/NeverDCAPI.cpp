@@ -394,6 +394,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
         {"renames", neverd_renames_load},
         {"functions", neverd_functions_load},
         {"items", neverd_items_load},
+        {"patches", neverd_byte_patches_load},
         {"operands", neverd_operand_formats_load},
         {"types", neverd_type_declarations_load},
         {"type libraries", neverd_type_libraries_load}};
@@ -411,6 +412,21 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
     Image = std::move(Next.Img);
     Found.Context = std::move(Next.Dbg);
   }
+  // Byte edits are executable input, so malformed replay must fail before
+  // publishing even for an unpacked project. Other sidecars retain their
+  // existing independent load behavior.
+  std::unique_ptr<Session> PatchState;
+  if (!MemoryBytes && !ProjectState) {
+    PatchState = std::make_unique<Session>();
+    PatchState->Img = std::move(Image);
+    PatchState->FilePath = Path;
+    PatchState->Loaded = true;
+    if (neverd_byte_patches_load(PatchState.get()) != 0) {
+      S.setError("cannot load saved byte patches: " + PatchState->LastError);
+      return 0;
+    }
+    Image = std::move(PatchState->Img);
+  }
   Progress.report("ready", 1, 1, "");
 
   // Decoder::init retains its existing state on failure, so it is the final
@@ -426,6 +442,13 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.clearPipeline();
   auto PreviousProject = std::move(S.PackedProject);
   S.Img = std::move(Image);
+  auto *SavedPatches = ProjectState ? ProjectState.get() : PatchState.get();
+  S.BytePatches = SavedPatches ? std::move(SavedPatches->BytePatches)
+                               : patch::PatchOverlay();
+  S.BytePatchesSavedDigest =
+      SavedPatches ? SavedPatches->BytePatchesSavedDigest : std::nullopt;
+  S.PatchInput = SavedPatches ? std::move(SavedPatches->PatchInput)
+                              : std::optional<patch::InputFile>();
   S.ExceptionHandlersSettled = false;
   S.FilePath = std::move(Path);
   S.SanitizeSourcePath = std::move(SanitizeSourcePath);

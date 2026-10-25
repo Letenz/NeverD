@@ -74,6 +74,7 @@ public:
   /// worker-supplied extents from the current listing may define this range.
   std::optional<std::pair<Address, Address>> byteSelection() const;
   const Line *cursorLine() const;
+  QRect cursorViewportRect() const;
   void setShowPrefixes(bool show);
   void setOpcodeBytes(int count);
   int opcodeBytes() const { return opcodeBytes_; }

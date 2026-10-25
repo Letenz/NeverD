@@ -314,6 +314,26 @@ if(BUILD_TESTING)
     # individual waits still use the test's own bounded operation deadlines.
     set_tests_properties(NeverDGuiController PROPERTIES
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 600)
+    qt_add_executable(neverd-gui-patch-tests tests/PatchTests.cpp)
+    target_link_libraries(neverd-gui-patch-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_compile_definitions(neverd-gui-patch-tests PRIVATE
+      TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>")
+    add_dependencies(neverd-gui-patch-tests neverd-worker-test-server)
+    add_test(NAME NeverDGuiPatchKeys COMMAND neverd-gui-patch-tests
+      allSecondKeysOwnNativeShortcutDispatch cancelledAndRepeatedKeysNeverPatch
+      secondKeyPatchesThroughTheNativePopup patchEditorDismissalDoesNotApply
+      patchEditorKeepsFirstPaintGeometry patchEditorDragsAndRetainsPosition
+      patchPopupFollowsItsOrigin patchHistoryKeepsUnchangedFunctionRows)
+    set_tests_properties(NeverDGuiPatchKeys PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 180)
+    if(NEVERD_WORKER_REAL_ENGINE_TESTS)
+      add_dependencies(neverd-gui-patch-tests neverd-worker)
+      add_test(NAME NeverDGuiNativePatchKeys COMMAND neverd-gui-patch-tests
+        nativeInstructionKeysApplyUndoAndRedo)
+      set_tests_properties(NeverDGuiNativePatchKeys PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NEVERD_PATCH_NATIVE_WORKER=$<TARGET_FILE:neverd-worker>"
+        TIMEOUT 180)
+    endif()
     add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test
       --worker $<TARGET_FILE:neverd-worker-test-server>)
     set_tests_properties(NeverDGuiWidgets PROPERTIES
@@ -349,6 +369,7 @@ if(BUILD_TESTING)
   # These are console test runners, even though they exercise Qt GUI objects.
   # Keep their diagnostics connected to CTest's stdout on Windows.
   foreach(_neverd_gui_test IN ITEMS neverd-gui-tests neverd-gui-unit-tests
+      neverd-gui-patch-tests
       neverd-gui-library-view-tests neverd-gui-query-tests neverd-mcp-qt-tests
       neverd-gui-language-tests)
     if(TARGET ${_neverd_gui_test})

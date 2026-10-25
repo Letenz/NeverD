@@ -151,6 +151,26 @@ static const LibraryMethod Methods[] = {
     // preserve existing identities in deterministic execution reports.
     {"android/app/ActivityThread", "getInstrumentation",
      "()Landroid/app/Instrumentation;", ThreadInstrumentation},
+    {"android/content/Context", "getContentResolver",
+     "()Landroid/content/ContentResolver;", ContextContentResolver},
+    {"java/lang/StringBuilder", "<init>", "()V", Construct},
+    {"java/lang/StringBuilder", "append", "(C)Ljava/lang/StringBuilder;",
+     BuilderAppendChar},
+    {"java/lang/StringBuilder", "toString", "()Ljava/lang/String;",
+     BuilderString},
+    {"android/provider/Settings$Secure", "getString",
+     "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;",
+     SecureSettingString, true},
+    {"android/provider/Settings$Secure", "getInt",
+     "(Landroid/content/ContentResolver;Ljava/lang/String;I)I",
+     SecureSettingIntDefault, true},
+    {"android/content/Context", "getApplicationInfo",
+     "()Landroid/content/pm/ApplicationInfo;", ContextApplicationInfo},
+    {"android/content/Context", "getPackageManager",
+     "()Landroid/content/pm/PackageManager;", ContextPackageManager},
+    {"android/content/pm/PackageManager", "getApplicationInfo",
+     "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;",
+     PackageApplicationInfo},
 };
 
 struct LibraryStop {
@@ -260,7 +280,10 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
       result.external->library = std::move(text);
       return result;
     }
-    if (M.Op >= CurrentActivityThread && M.Op <= ThreadInstrumentation) {
+    if ((M.Op >= CurrentActivityThread && M.Op <= ThreadInstrumentation) ||
+        M.Op == ContextContentResolver || M.Op == SecureSettingString ||
+        M.Op == SecureSettingIntDefault || M.Op == ContextApplicationInfo ||
+        M.Op == ContextPackageManager || M.Op == PackageApplicationInfo) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,
@@ -287,6 +310,39 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
       work(bytes.size());
       return Ref(heap.stringConstant(key, {bytes.begin(), bytes.end()}));
     };
+    if (std::string_view(M.Class) == "java/lang/StringBuilder") {
+      // Constructors share the existing DEX/JNI constructor operation. The
+      // mutable UTF-16 value stays in the same retained workload object.
+      if (ObjectValue && (ObjectValue->Type != Object::Instance ||
+                          ObjectValue->ClassName != M.Class))
+        return failure("Java StringBuilder receiver type mismatch");
+      if (M.Op == Construct) {
+        if (ObjectValue && ObjectValue->Initialized)
+          return failure("Java StringBuilder receiver is already initialized");
+        auto o = ObjectValue ? ObjectValue
+                             : heap.allocate(Object::Instance, M.Class, 0);
+        if (!o || !heap.replaceBytes(*o, {}))
+          return Ref(std::shared_ptr<Object>());
+        return Ref(o);
+      }
+      if (M.Op == BuilderAppendChar) {
+        // Charge the complete copy before publishing any mutation.
+        work(ObjectValue->Bytes.size() + 2);
+        auto bytes = ObjectValue->Bytes;
+        bytes.push_back(uint8_t(Values[0]));
+        bytes.push_back(uint8_t(Values[0] >> 8));
+        if (!heap.replaceBytes(*ObjectValue, std::move(bytes)))
+          return Ref(std::shared_ptr<Object>());
+        return Ref(ObjectValue);
+      }
+      if (M.Op == BuilderString) {
+        // API 28 returns the interned empty literal; a nonempty result is a
+        // separate immutable String, unaffected by later appends.
+        return ObjectValue->Bytes.empty() ? Ref(heap.literal(""))
+                                          : Make(ObjectValue->Bytes);
+      }
+      return failure("unknown Java StringBuilder operation");
+    }
     const std::vector<uint8_t> EmptyBytes;
     if (M.Op == ObjectConstruct)
       return receiver ? value(receiver)

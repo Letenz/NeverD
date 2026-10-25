@@ -2096,3 +2096,28 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
 
 執行 `NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）和 `NeverDCSourcePresentationTests`，檢查位元組來源、路徑一致性、遭覆寫或逸出的儲存、不可變映像範圍、預算、編碼及中繼資料邊界。`NeverDWorkerStackText` 編譯公開的 x64/ARM64 PE 樣例並透過兩條 C 路徑驗證，包括未知的覆寫。此測試需要 Clang 和 lld-link；Windows 原生執行需要另外驗證。
+
+<!-- i18n-section: interactive-byte-patches -->
+## 互動式修補的職責
+
+`NeverDBytePatchTests` 涵蓋位元組覆寫層、重定位拒絕、PC 相對組譯及 PE 簽章與總和檢查碼。`NeverDWorkerPatch` 涵蓋預覽、過期輸入、復原重做、批次還原、唯讀副本、重新開啟及獨占匯出。
+
+`NeverDWorkerNativePatch` 使用真實 SDK 重複驗證。`NeverDWorkerSourceBytePatch` 在 Linux 上驗證原始碼證明、獨立預覽、堆疊框架符號與原生 C 函式替換。
+
+`NeverDGuiPatchKeys` 透過 `QWindow` 快捷鍵分派驗證全部第二按鍵、載入中的選單、取消及編輯器輸入。`NeverDGuiNativePatchKeys` 驗證真實 SDK 位元組、Hex、浮動視窗、復原重做與還原；在 X11 下執行同一程式可涵蓋原生彈出選單路徑。
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```
