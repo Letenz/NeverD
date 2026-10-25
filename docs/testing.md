@@ -881,12 +881,25 @@ Run the complete Linux process suite, Android file/status/proc/stdio suites and
 public Android cases when changing this shared owner. Platform skips do not
 establish native or physical-device filesystem equivalence.
 
+`AndroidFiles.ReadChk*` checks fortify ordering, signed and zero counts, unchanged
+memory/errno on refusal and shared file cursors. `AndroidReceive.ReadChk*`
+checks suspension and resumption across descriptor and memory changes.
+`AndroidFileStatusAt.PathnameAliases*` checks all four status aliases against
+complete independent 128-byte layouts, pathname/output error ordering, dynamic
+provider closure, explicit unsupported state and available native transports.
+`ProcessPublic.AndroidLibcCompatibilityMatchesSDKAndCLI` compares complete
+reports for these adapters and `strlcpy` through both public routes.
+
 `AndroidStringCopy.*` checks `strncpy` using independent AArch64 callers at
 O0/O2 across three relocation formats and available CPU backends: exact padding,
 truncation, high bytes, errno, full-width and zero counts, page ends, read-only
 source/destination, overlap and dynamic provider lifetime.
 `AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
 against complete guarded guest bytes. No host libc copy is used as the oracle.
+The `SizedCopy*` cases cover `strlcpy` full-source scanning, truncated and empty
+outputs, NUL termination without padding, full-width and zero capacities,
+read-only and page-tail memory, overlap and closed dynamic providers. Direct
+memory tests cover scan limits and expired deadlines without partial writes.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -5554,6 +5567,12 @@ enabled, `NeverDWorkerWeb` in `build-release/tools/neverd-worker` checks the rea
 framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
+
+`PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
+different addresses, recursion through aliases, canonical indirect import
+relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
+checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
+or absent metadata, evidence withdrawal, and the separate identity gate.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,

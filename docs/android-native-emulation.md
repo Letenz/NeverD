@@ -206,6 +206,12 @@ The supported Bionic subset is:
   refusal is a model diagnostic, not native fault/undefined-behavior emulation.
   The valid-call contract follows the pinned API 28
   [Bionic implementation](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strncpy.c).
+- `strlcpy` returns the full source length, including when the destination size
+  is zero. A nonzero size writes at most size minus one bytes and a terminating
+  NUL, without padding. It scans the entire source before changing memory and
+  validates only the bytes actually written. Overlap, inaccessible memory and
+  scan limits stop explicitly; success preserves errno. Static and dynamic
+  imports use the same string owner and provider-lifetime checks.
 - `__strncpy_chk` and `__strncpy_chk2` share that copy owner. Both require the
   requested count to fit the full LP64 destination extent before any memory
   access or copy limit check. `__strncpy_chk2` additionally checks the actual
@@ -507,8 +513,8 @@ The supported Bionic subset is:
   bits and does not update TLS errno.
   `madvise` supports the shared [KSM eligibility contract](process-emulation.md#linux-elf64-profile)
   for `MADV_MERGEABLE` and `MADV_UNMERGEABLE`; other advice stops explicitly.
-- `open`/`open64`, `openat`/`openat64`, `read`, `close`, `lseek`/`lseek64`
-  and `fstat`/`fstat64`, `fstatat`/`fstatat64`
+- `open`/`open64`, `openat`/`openat64`, `read`, `close`, `lseek`/`lseek64`,
+  `fstat`/`fstat64`, `fstatat`/`fstatat64`, `stat`/`stat64` and `lstat`/`lstat64`
   use the explicit [`linux_files` catalogue](process-emulation.md#explicit-memory-files).
   Raw traps, imported calls and guest threads share descriptors and cursors;
   only Bionic converts negative errors into `-1` and TLS errno. No host files or
@@ -518,6 +524,13 @@ The supported Bionic subset is:
   File status requires complete explicit `metadata`; it writes the 128-byte
   AArch64 layout and preserves the open cursor. Missing observations and mixed
   writable/inaccessible outputs stop without invented values or partial bytes.
+  The pathname-only status aliases adapt to `fstatat` with `AT_FDCWD`; `lstat`
+  aliases additionally select `AT_SYMLINK_NOFOLLOW`. They share its pathname
+  resolution, metadata requirements, output layout and unsupported boundaries.
+- `__read_chk` checks the signed byte-count limit and destination extent before
+  invoking the shared Linux read owner. Valid requests preserve descriptor
+  cursors, scheduled waits and Bionic errno conversion. Fortify failures stop
+  without changing memory or errno; they do not simulate a guest abort handler.
 - `syscall(number, ...)` uses the same Linux service table and effects. The
   AArch64 wrapper takes the number from x0 and six arguments from x1–x6;
   x7 is unused. It preserves full-width results and applies Bionic's -1/errno
