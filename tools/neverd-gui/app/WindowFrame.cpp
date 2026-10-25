@@ -229,6 +229,9 @@ void WindowFrame::toggleFullScreen() {
 
 void WindowFrame::syncWindowState() {
   const auto states = handle_.windowStates();
+  if (restoreAfterFullScreen_ && states.testFlag(Qt::WindowMaximized) &&
+      !states.testFlag(Qt::WindowFullScreen))
+    restoreAfterFullScreen_ = false;
   if (states == states_)
     return;
   // Cocoa can infer a maximized state when a drag reaches the window's size

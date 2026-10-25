@@ -11,6 +11,7 @@
 #include "ItemViewActivation.h"
 #include "LinkDispatch.h"
 #include "LoadFileDialog.h"
+#include "NativeWindowStates.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
 #include "SymbolTablePromptDialog.h"
@@ -152,34 +153,6 @@ QList<QKeySequence> idaKeys(QLatin1StringView spelling) {
     return {};
   return {key};
 }
-/// The window states the window system confirmed on a native window, which
-/// it reports with a WindowStateChange event there.
-class AppliedStates final : public QObject {
-public:
-  Qt::WindowStates states;
-  int count = 0;
-
-protected:
-  bool eventFilter(QObject *object, QEvent *event) override {
-    if (event->type() == QEvent::WindowStateChange) {
-      states = static_cast<QWindow *>(object)->windowStates();
-      ++count;
-    }
-    return false;
-  }
-};
-
-/// The state a window shows, of several it holds at once.
-Qt::WindowState effectiveState(Qt::WindowStates states) {
-  if (states & Qt::WindowMinimized)
-    return Qt::WindowMinimized;
-  if (states & Qt::WindowFullScreen)
-    return Qt::WindowFullScreen;
-  if (states & Qt::WindowMaximized)
-    return Qt::WindowMaximized;
-  return Qt::WindowNoState;
-}
-
 } // namespace
 
 class WorkbenchUnitTests : public QObject {
@@ -1876,16 +1849,7 @@ private slots:
                 QPoint(40, 40));
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    AppliedStates applied;
-    window.windowHandle()->installEventFilter(&applied);
-    // Windows implements frameless maximization through Qt geometry changes;
-    // it does not necessarily send a native state event for that transition.
-    if (QGuiApplication::platformName() == QLatin1String("windows"))
-      connect(window.windowHandle(), &QWindow::windowStateChanged, &applied,
-              [&](Qt::WindowState) {
-                applied.states = window.windowHandle()->windowStates();
-                ++applied.count;
-              });
+    test::NativeWindowStates applied(*window.windowHandle());
     QScreen *screen = window.screen();
     const auto barRect = [&] {
       return QRect(bar->mapToGlobal(QPoint(0, 0)), bar->size());
@@ -1909,15 +1873,10 @@ private slots:
       else
         window.setWindowState(states);
       const bool confirmed = QTest::qWaitFor(
-          [&] {
-            return applied.count > before &&
-                   effectiveState(applied.states) == effectiveState(states);
-          },
-          10000);
+          [&] { return applied.count > before && applied.is(states); }, 10000);
       QTest::qWait(300);
       report(step);
-      return confirmed &&
-             effectiveState(applied.states) == effectiveState(states);
+      return confirmed && applied.is(states);
     };
     report("normal");
     const QSize normal = window.size();
@@ -1945,13 +1904,15 @@ private slots:
     // inset there, and leaving full screen returns to the maximized size.
     QVERIFY(request(Qt::WindowMaximized, "maximized"));
     const QSize maximized = window.size();
-    QVERIFY(request(Qt::WindowMaximized | Qt::WindowFullScreen,
-                    "full screen from maximized"));
-    QVERIFY(screen->geometry().contains(barRect()));
-    QCOMPARE(barRect().top(), screen->geometry().top());
-    QVERIFY(request(Qt::WindowMaximized, "maximized again"));
-    QCOMPARE(window.size(), maximized);
-    QVERIFY(screen->availableGeometry().contains(barRect()));
+    for (int round = 0; round < 2; ++round) {
+      QVERIFY(request(Qt::WindowMaximized | Qt::WindowFullScreen,
+                      "full screen from maximized"));
+      QVERIFY(screen->geometry().contains(barRect()));
+      QCOMPARE(barRect().top(), screen->geometry().top());
+      QVERIFY(request(Qt::WindowMaximized, "maximized again"));
+      QCOMPARE(window.size(), maximized);
+      QVERIFY(screen->availableGeometry().contains(barRect()));
+    }
     QVERIFY(request(Qt::WindowNoState, "restored"));
     QCOMPARE(window.size(), normal);
   }
