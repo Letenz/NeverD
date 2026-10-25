@@ -2039,6 +2039,19 @@ missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
 
+`NeverDGuiAppearance` checks application-painted dialogs in both themes,
+including file, font, color, message, input and Quick Start windows with the
+retired native-caption preference enabled. It injects a conflicting desktop
+icon theme, palette and font, then checks the clear button, every palette role,
+menu ownership, button ordering and bundled glyph coverage across interface
+languages. `NEVERD_APPEARANCE_CAPTURES` saves actual dialog captures. Run it
+with a native window manager at 100% and 150% scaling as well as offscreen.
+`nativeFrameKeepsTheTitleBarOnScreen` checks native maximize/full-screen/restore
+transitions for the shared frameless chrome on Linux, Windows and macOS.
+All desktop windows use the application frame and shadow; native APIs still
+provide movement and window states. Cocoa resizing uses the same drawn edges
+with a mouse grab when Qt cannot start a native resize.
+
 `NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
 and shortcut tooltips through action changes, translation and disabled actions.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
@@ -2073,8 +2086,8 @@ reference selection. These cases also run in the native Windows/macOS checks;
 `floatingDocksReturnToWorkbench` checks returning through the client title bar,
 its dock button and the tab context menu in both themes. Direct dock actions
 work with the floating lock enabled; title-bar docking first unlocks it.
-`NeverDGuiDocking` checks the drawn floating caption with both native-caption
-preferences for the other windows, including visible minimize and maximize
+`NeverDGuiDocking` checks the drawn floating caption with both values of the
+retired native-caption preference, including visible minimize and maximize
 controls and full-size close targets. `doubleClickDetachStartsLocked` and
 `lockedDragsStayFloating` check the default lock, caption movement and rejected
 tab docking. `explicitDockIgnoresLock` clicks the dock button while locked.

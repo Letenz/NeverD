@@ -110,7 +110,8 @@ bool place(QWidget &window, QPoint position) {
   return shell(
       QStringLiteral(
           "(() => { const w = %1; if (!w) throw Error('missing window');"
-          "w.move_frame(true, %2, %3); Main.activateWindow(w); })()")
+          "Main.overview.hide(); w.move_frame(true, %2, %3);"
+          "Main.activateWindow(w); })()")
           .arg(nativeWindow(window))
           .arg(position.x())
           .arg(position.y()));
@@ -342,13 +343,18 @@ private slots:
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        Settings.path());
+    Theme::instance().apply();
     configureDocking();
     if (onWayland() && qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER")) {
       QVERIFY(shell(QStringLiteral(
           "Main.overview.hide(); global.neverdTestPointer = "
           "imports.gi.Clutter.get_default_backend().get_default_seat()"
           ".create_virtual_device(imports.gi.Clutter.InputDeviceType.POINTER_"
-          "DEVICE);")));
+          "DEVICE); global.neverdTestPointer.notify_absolute_motion("
+          "imports.gi.GLib.get_monotonic_time(), global.stage.width / 2, "
+          "global.stage.height / 2);")));
+      // A pointer left at (0, 0) can reopen GNOME's overview via its hot
+      // corner after startup, consuming the first window-control gestures.
       QTest::qWait(750); // Finish leaving the compositor's startup overview.
     }
   }

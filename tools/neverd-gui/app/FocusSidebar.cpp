@@ -28,7 +28,7 @@ namespace config = ::neverd::limits::gui_config;
 FocusSidebar::FocusSidebar(QWidget &host, QWidget &area, QWidget &content,
                            const QString &title)
     : QWidget(&host), host_(host), area_(&area),
-      toggle_(new QToolButton(&host)), resizeHandle_(new QWidget(this)),
+      toggle_(new QToolButton(&host)), resizeHandle_(new QWidget(&host)),
       preferredWidth_(config::kFocusSidebarPreferredWidth) {
   setObjectName(QStringLiteral("focusFunctionsSidebar"));
   setAccessibleName(title);
@@ -37,13 +37,13 @@ FocusSidebar::FocusSidebar(QWidget &host, QWidget &area, QWidget &content,
   const int border = config::kFocusSidebarBorderWidth;
   // Keep the triangle in the same place when open, clear of the function rows.
   layout->setContentsMargins(config::kFocusSidebarToggleWidth + border, border,
-                             config::kFocusSidebarResizeHandleWidth, border);
+                             config::kDockingSeparatorLineWidth, border);
   layout->setSpacing(0);
   layout->addWidget(&content, 1);
   resizeHandle_->setObjectName(QStringLiteral("focusSidebarResizeHandle"));
   resizeHandle_->setAccessibleName(title);
   resizeHandle_->setFocusPolicy(Qt::TabFocus);
-  resizeHandle_->setCursor(Qt::SizeHorCursor);
+  resizeHandle_->setCursor(Qt::SplitHCursor);
   resizeHandle_->installEventFilter(this);
   toggle_->setObjectName(QStringLiteral("focusSidebarToggle"));
   toggle_->setAccessibleName(title);
@@ -57,11 +57,14 @@ FocusSidebar::FocusSidebar(QWidget &host, QWidget &area, QWidget &content,
     else
       dismiss();
   });
-  connect(&Theme::instance(), &Theme::changed, this,
-          qOverload<>(&QWidget::update));
+  connect(&Theme::instance(), &Theme::changed, this, [this] {
+    update();
+    resizeHandle_->update();
+  });
   host_.installEventFilter(this);
   area.installEventFilter(this);
   hide();
+  resizeHandle_->hide();
   place();
   toggle_->show();
   toggle_->raise();
@@ -72,6 +75,7 @@ FocusSidebar::~FocusSidebar() {
   if (area_)
     area_->removeEventFilter(this);
   delete toggle_.data();
+  delete resizeHandle_;
 }
 
 void FocusSidebar::place() {
@@ -91,17 +95,24 @@ void FocusSidebar::place() {
   setGeometry(left, available.top(),
               std::clamp(preferredWidth_, minimumWidth, maximumWidth),
               available.height());
-  resizeHandle_->setGeometry(width() - config::kFocusSidebarResizeHandleWidth,
-                             0, config::kFocusSidebarResizeHandleWidth,
-                             height());
+  // Like the dock separator, the grab area overlaps both neighbors while
+  // only its hairline takes space in the layout.
+  const int inset = (config::kDockingSeparatorGrabWidth -
+                     config::kDockingSeparatorLineWidth) /
+                    2;
+  resizeHandle_->setGeometry(x() + width() -
+                                 config::kDockingSeparatorLineWidth - inset,
+                             y(), config::kDockingSeparatorGrabWidth, height());
   resizeHandle_->raise();
   if (width() != previousWidth)
     emit widthChanged(width());
   toggle_->setGeometry(
       left, available.center().y() - config::kFocusSidebarToggleHeight / 2,
       config::kFocusSidebarToggleWidth, config::kFocusSidebarToggleHeight);
-  if (isVisible())
+  if (isVisible()) {
     raise();
+    resizeHandle_->raise();
+  }
   toggle_->raise();
 }
 
@@ -113,6 +124,8 @@ void FocusSidebar::reveal() {
   place();
   show();
   raise();
+  resizeHandle_->show();
+  resizeHandle_->raise();
   const QSignalBlocker blocker(toggle_);
   toggle_->setChecked(true);
   toggle_->setArrowType(Qt::LeftArrow);
@@ -121,8 +134,11 @@ void FocusSidebar::reveal() {
 
 void FocusSidebar::dismiss() {
   auto *focus = QApplication::focusWidget();
-  const bool restore = focus && isAncestorOf(focus) && host_.isActiveWindow();
+  const bool restore = focus &&
+                       (isAncestorOf(focus) || focus == resizeHandle_) &&
+                       host_.isActiveWindow();
   hide();
+  resizeHandle_->hide();
   if (toggle_) {
     const QSignalBlocker blocker(toggle_);
     toggle_->setChecked(false);
@@ -137,6 +153,26 @@ void FocusSidebar::dismiss() {
 bool FocusSidebar::eventFilter(QObject *object, QEvent *event) {
   if (object == resizeHandle_) {
     switch (event->type()) {
+    case QEvent::Paint: {
+      QPainter painter(resizeHandle_);
+      const int line = config::kDockingSeparatorLineWidth;
+      const int inset = (config::kDockingSeparatorGrabWidth - line) / 2;
+      const auto &theme = Theme::instance();
+      painter.fillRect(QRect(inset, 0, line, resizeHandle_->height()),
+                       theme.chrome(QStringLiteral("DockSeparator")));
+      if (resizing_ || resizeHandle_->underMouse() ||
+          resizeHandle_->hasFocus()) {
+        const qreal highlight = config::kDockingSeparatorHighlightWidth;
+        const qreal start = inset + (line - highlight) / 2;
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(theme.chrome(QStringLiteral("DockSeparatorHover")));
+        painter.drawRoundedRect(
+            QRectF(start, 0, highlight, resizeHandle_->height()), highlight / 2,
+            highlight / 2);
+      }
+      return true;
+    }
     case QEvent::MouseButtonPress: {
       auto *mouse = static_cast<QMouseEvent *>(event);
       if (mouse->button() != Qt::LeftButton)
@@ -144,7 +180,7 @@ bool FocusSidebar::eventFilter(QObject *object, QEvent *event) {
       resizing_ = true;
       resizeStartX_ = mouse->globalPosition().x();
       resizeStartWidth_ = width();
-      update();
+      resizeHandle_->update();
       return true;
     }
     case QEvent::MouseMove:
@@ -160,7 +196,7 @@ bool FocusSidebar::eventFilter(QObject *object, QEvent *event) {
         resizing_ = false;
         preferredWidth_ = width();
       }
-      update();
+      resizeHandle_->update();
       return true;
     }
     case QEvent::KeyPress: {
@@ -180,7 +216,7 @@ bool FocusSidebar::eventFilter(QObject *object, QEvent *event) {
     case QEvent::Leave:
     case QEvent::FocusIn:
     case QEvent::FocusOut:
-      update();
+      resizeHandle_->update();
       break;
     default:
       break;
@@ -207,12 +243,6 @@ void FocusSidebar::paintEvent(QPaintEvent *) {
   painter.setPen(Theme::instance().chrome(QStringLiteral("Border")));
   painter.drawRect(rect().adjusted(0, 0, -config::kFocusSidebarBorderWidth,
                                    -config::kFocusSidebarBorderWidth));
-  if (resizing_ || resizeHandle_->underMouse() || resizeHandle_->hasFocus()) {
-    painter.setPen(
-        Theme::instance().chrome(QStringLiteral("DockSeparatorHover")));
-    const int edge = width() - config::kFocusSidebarBorderWidth;
-    painter.drawLine(edge, 0, edge, height() - 1);
-  }
 }
 
 } // namespace neverd::gui

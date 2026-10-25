@@ -133,6 +133,9 @@ jobs:
             toolbarButtonsKeepKeysInTooltips \
             -o build-gui/ci-diagnostics/native-frame.txt,txt
           frame_status=$?
+          build-gui/bin/neverd-gui-appearance-tests \
+            -o build-gui/ci-diagnostics/native-appearance.txt,txt
+          appearance_status=$?
           build-gui/bin/neverd-gui-tests \
             floatingDocksReturnToWorkbench \
             closingWorkbenchClosesDetachedWindows \
@@ -166,8 +169,10 @@ jobs:
             -o build-gui/ci-diagnostics/native-interactions.xml,xml
           interaction_status=$?
           cat build-gui/ci-diagnostics/native-frame.txt
+          cat build-gui/ci-diagnostics/native-appearance.txt
           cat build-gui/ci-diagnostics/native-interactions.txt
           if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
+          if [ "$appearance_status" -ne 0 ]; then exit "$appearance_status"; fi
           exit "$interaction_status"
       - name: Retain desktop GUI contract diagnostics
         id: gui_diagnostics
@@ -193,6 +198,7 @@ jobs:
               "ctest.log": "ci-diagnostics/ctest.log",
               "ctest-exit-code.txt": "ci-diagnostics/ctest-exit-code.txt",
               "native-frame.txt": "ci-diagnostics/native-frame.txt",
+              "native-appearance.txt": "ci-diagnostics/native-appearance.txt",
               "native-docking.txt": "ci-diagnostics/native-docking.txt",
               "native-interactions.txt": "ci-diagnostics/native-interactions.txt",
               "native-interactions.xml": "ci-diagnostics/native-interactions.xml",

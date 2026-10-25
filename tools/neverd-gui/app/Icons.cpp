@@ -75,16 +75,19 @@ public:
   QIcon icon(IconType type) const override {
     switch (type) {
     case Computer:
+    case Desktop:
       return gui::icon(QStringLiteral("computer"));
     case Drive:
       return gui::icon(QStringLiteral("drive"));
     case Folder:
+    case Network:
       return gui::icon(QStringLiteral("folder"));
     case File:
       return gui::icon(QStringLiteral("file"));
-    default:
-      return QFileIconProvider::icon(type);
+    case Trashcan:
+      return gui::icon(QStringLiteral("local_types_delete"));
     }
+    return {};
   }
   QIcon icon(const QFileInfo &info) const override {
     if (info.isRoot())
