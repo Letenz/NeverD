@@ -252,6 +252,20 @@ Recipes are `llvm-progress-neighborhoods-v6` and `llvm-progress-fragments-v6`.
 Earlier schemas never accept the new marker. Replay independently rederives
 the proof and binds the original parameter identities to fresh native evidence.
 
+`profile:"llvm-progress-ssa-v7"` additionally admits shared pure input-derived
+expression bounds. Every dependency must end in parameters, constants or typed
+undef/poison leaves; PHIs, freeze and cyclic definitions remain barriers.
+Supported arithmetic, casts, selects and finite integer intrinsics reuse the
+core finite-operation model. Guards must share the same basis node, optionally
+with affine constant offsets, and cover every modular counter cycle. Legacy
+proofs for every candidate are attempted before allocating the expression cache.
+Schema 11 adds canonical `proof:"invariant_modular"`; earlier schemas reject it.
+Recipes are `llvm-progress-neighborhoods-v7` and `llvm-progress-fragments-v7`.
+Pages and slices expose the same witness fields/counts. Restore rederives the
+basis and authenticates the full expression against fresh native SSA, even if
+a changed expression would still prove progress. This proves finite execution
+or undefined behavior, not normal return or whole-function equivalence.
+
 Fresh binding can authenticate a complete same-block PHI renumbering while
 retaining saved node IDs. Ordinary instruction order, source observations,
 ordered inputs and all proof metadata must still agree exactly; this does not

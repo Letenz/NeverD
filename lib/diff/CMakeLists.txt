@@ -10,6 +10,7 @@ add_neverd_component_library(NeverDDiff
   FlowBinding.cpp
   FlowEvidence.cpp
   FlowFragments.cpp
+  FlowInvariantBounds.cpp
   FlowMatch.cpp
   FlowParameterViews.cpp
   FlowProgress.cpp

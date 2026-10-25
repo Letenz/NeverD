@@ -1923,6 +1923,27 @@ saved restore. Earlier profiles and frozen historical reports remain separate
 compatibility checks. These fixtures qualify the stated shapes, not arbitrary
 parameter relationships or semantic equivalence.
 
+`BinaryDiffInvariantBoundProgress` checks opt-in v7 input-derived expressions
+at widths 1 through 64, supported integer operations/intrinsics, affine chains,
+select poison masking and undef leaves. Hidden PHI/freeze dependencies, cycles,
+unrelated bases, incompatible exits and residual infinite loops refuse. The
+independent concrete oracle evaluates the original expression and every seed's
+orbit; it does not reuse basis normalization. Poison-only cases are not used as
+an exact completeness oracle. Shared/deep DAGs check linear work and memoized
+rejection. Two-candidate tests require identical v6/v7 charge sequences and
+allowances for preferred old proofs. Exact storage/work limits, cancellation,
+deadlines, retry and schema/marker isolation remain covered.
+
+`invariant_bound_progress_fixture.c` supplies x64/AArch64 ELF/COFF/Mach-O
+O0/O2 compile-and-inspect cases, never native execution of possibly infinite
+loops. O0 demonstrates v6-unproven to v7-invariant progress; O2 retains its
+preferred modular proof. Output, body, mask, recurrence-step and exit-offset
+changes remain visible; even-step negative controls retain the source contract.
+SDK, worker, Python and Qt inspect bounded pages, slices, proof text and saved
+restore. Altering the mask can leave a valid mathematical proof but must still
+fail fresh native binding. Frozen v1-v6 reports provide a separate byte-exact
+compatibility check; these cases do not establish arbitrary invariant analysis.
+
 The region suite includes owned x86 assembly with exact split boundaries, native
 SDK span paging, persistence/tamper rejection, worker parity and a real paged Qt
 review window. Synthetic cases separately exercise overlapping clones, internal

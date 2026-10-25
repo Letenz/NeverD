@@ -885,6 +885,39 @@ Schema 10 strictly gates `parameter_modular`. Saved validation rederives it;
 fresh native binding rejects changed parameters even when the changed graph
 still has a valid progress proof. CLI/SDK/worker/Qt only select or present this
 core contract, with no independent proof logic or new resource policy.
+`llvm-progress-ssa-v7` adds input-derived invariant expression bounds. The
+private `FlowInvariantBounds` helper observes only structurally validated,
+finite scalar graphs admitted by `LLVMFlowSemantics`. Its iterative memoized
+walk requires every dependency to terminate in parameters, constants or exact
+typed undef/poison leaves. Every PHI, freeze, control node and dependency cycle
+is a barrier, even in an unselected arm or outside the loop. It does not attempt
+general invariant analysis or duplicate LLVM verification. Fresh source binding
+remains the authority for authenticating saved attributes and expressions.
+
+For each admitted node, the helper caches its basis node identity and affine
+offset. Exact typed add/sub literal translations B+K, K+B and B-K are peeled
+with the source-width arithmetic and valid nowrap flag mask. K-B, casts and
+other operators can be complete bases but are not peeled. Different terminal
+nodes are not equated algebraically. Parameter translations remain whole nodes;
+the existing v6 proof is attempted first for **every** candidate counter in a
+group. Only if all legacy candidates fail may v7 allocate or charge its cache.
+Consequently existing-proof successes retain the same witnesses and charge
+sequence, including when the second comparison operand supplies the proof.
+
+Choose coherent fixed input/undef leaves: a pure freeze-free bound evaluates to
+a fixed B or UB/poison. Select can suppress an unselected poison operand; the
+argument concerns the resulting bound, not universal poison propagation.
+In coordinates X=counter-B, all strict EQ/NE guards over the same basis use the
+existing exact common-exit residue proof. Every recurrence arm must retain the
+same nonzero delta. Original entry inventories, complete PHIs, atomic backedge
+cuts, nested rounds and the final residual DAG check remain authoritative.
+No noundef, implicit freeze, trip count or normal-return promise is introduced.
+The cache charges initialization, visited nodes/edges, semantic bytes and affine
+normalization under the existing work/cancel allowance. Acceptance and rejection
+are both memoized, so shared DAG traversal is linear and independent of depth.
+Schema 11 gates `invariant_modular`; v1-v6 cannot accept it and retain exact
+saved encodings. All adapters expose this same derived core evidence.
+
 Fresh source binding first compares exact graph records. If LLVM PHI numbering
 changed, `FlowBinding` anchors every non-PHI operation in its existing order and
 block, then propagates a bidirectional map through ordered inputs. Every node
