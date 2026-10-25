@@ -1911,8 +1911,11 @@ Native `!refs` candidates require all outgoing context before settlement;
 `!caller` records are separate name-indexed bodies requested only after that
 settlement by a complete, strong and unambiguous ordinary caller. Incoming
 requests never change their anchors or feed another inference round. Both
-remain candidate evidence under the same identity boundary. The matcher owns
-byte/index behavior, the database owns reference settlement, and the COFF
+remain candidate evidence under the same identity boundary. The shared name
+index reuses existing and supplemental complete bodies. Source
+refinements of ordinary anchors share the frozen reference validation pass;
+contradicted refinements withdraw only the incoming names they supported.
+The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
 loader owns validation of primary MSVC RTTI metadata.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise

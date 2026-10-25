@@ -118,10 +118,13 @@ public:
 
     /// !caller records never enter the byte decision tree. Lookup names from
     /// an established caller instead, then verify only those complete bodies.
+    /// When such records are present, complete existing modules participate in
+    /// name lookup too, so callers can reuse them without duplicate records.
     /// Numeric indices retain the same copy/move lifetime as byte candidates.
     struct CallerEntry {
       size_t Module = 0;
       size_t PublicName = 0;
+      size_t NameHash = 0;
     };
     bool hasCallerModules() const {
       return CallerStorage && !CallerStorage->empty();

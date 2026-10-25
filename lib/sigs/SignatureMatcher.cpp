@@ -8,6 +8,7 @@
 
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/Compiler.h"
@@ -19,6 +20,7 @@
 #include <atomic>
 #include <climits>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <utility>
 
@@ -123,8 +125,25 @@ bool bytesMatch(const StoredModule &Mod, size_t First, const uint8_t *Data,
 
 size_t statedBytes(const StoredModule &Mod, size_t First, size_t Count) {
   size_t Stated = 0;
-  for (size_t I = 0; I < Count; ++I)
-    Stated += Mod.isStated(First + I);
+  while (Count && First % CHAR_BIT) {
+    Stated += Mod.isStated(First++);
+    --Count;
+  }
+  constexpr size_t WordBits = std::numeric_limits<uint64_t>::digits;
+  while (Count >= WordBits) {
+    Stated += llvm::popcount(
+        llvm::support::endian::read64le(Mod.Stated + First / CHAR_BIT));
+    First += WordBits;
+    Count -= WordBits;
+  }
+  while (Count >= CHAR_BIT) {
+    Stated += llvm::popcount(Mod.Stated[First / CHAR_BIT]);
+    First += CHAR_BIT;
+    Count -= CHAR_BIT;
+  }
+  if (Count)
+    Stated += llvm::popcount(static_cast<uint8_t>(
+        Mod.Stated[First / CHAR_BIT] & ((unsigned{1} << Count) - 1)));
   return Stated;
 }
 
@@ -724,17 +743,25 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
   IndexBuilder(*this, Modules, *Storage).build();
   CandidateStorage = std::move(Storage);
   CallerStorage.reset();
+  if (llvm::none_of(Modules,
+                    [](const StoredModule &Mod) { return Mod.RequireCaller; }))
+    return;
   auto Callers = std::make_shared<std::vector<CallerEntry>>();
   for (size_t I = 0; I < Modules.size(); ++I)
-    if (Modules[I].RequireCaller)
+    if (SignatureMatcher::isFullyVerified(Modules[I]))
       for (size_t N = 0; N < Modules[I].PublicNameCount; ++N)
-        Callers->push_back({I, N});
+        if (Modules[I].publicNames()[N].Offset == 0)
+          Callers->push_back({I, N,
+                              std::hash<std::string_view>{}(
+                                  Modules[I].publicNames()[N].Name)});
   if (Callers->empty())
     return;
   const auto NameOf = [&](const CallerEntry &Entry) {
     return Modules[Entry.Module].publicNames()[Entry.PublicName].Name;
   };
   llvm::stable_sort(*Callers, [&](const CallerEntry &A, const CallerEntry &B) {
+    if (A.NameHash != B.NameHash)
+      return A.NameHash < B.NameHash;
     return NameOf(A) < NameOf(B);
   });
   CallerStorage = std::move(Callers);
@@ -745,14 +772,19 @@ SignatureMatcher::HashIndex::callerModules(llvm::ArrayRef<StoredModule> Modules,
                                            std::string_view Name) const {
   if (!hasCallerModules())
     return {};
-  const auto Begin = llvm::lower_bound(
-      *CallerStorage, Name,
-      [&](const CallerEntry &Entry, std::string_view Wanted) {
-        return Modules[Entry.Module].publicNames()[Entry.PublicName].Name <
-               Wanted;
-      });
+  const size_t Hash = std::hash<std::string_view>{}(Name);
+  auto Begin = llvm::lower_bound(*CallerStorage, Hash,
+                                 [](const CallerEntry &Entry, size_t Wanted) {
+                                   return Entry.NameHash < Wanted;
+                                 });
+  // Hashes locate a short numeric range; exact names still decide membership.
+  // Numeric indices also keep an index copy independent of a source arena's
+  // name pointers, just like its byte-candidate permutation.
+  while (Begin != CallerStorage->end() && Begin->NameHash == Hash &&
+         Modules[Begin->Module].publicNames()[Begin->PublicName].Name < Name)
+    ++Begin;
   auto End = Begin;
-  while (End != CallerStorage->end() &&
+  while (End != CallerStorage->end() && End->NameHash == Hash &&
          Modules[End->Module].publicNames()[End->PublicName].Name == Name)
     ++End;
   return llvm::ArrayRef(*CallerStorage)

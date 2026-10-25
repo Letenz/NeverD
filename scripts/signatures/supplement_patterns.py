@@ -99,6 +99,7 @@ def select(candidates: dict[str, builder.FoldResult],
         result.lines = [line for line in result.lines if line.key in keys]
         results[Path(name + ".pat")] = result
     old = []
+    old_by_key = defaultdict(list)
     owned = defaultdict(set)
     for path in builder.pattern_files(existing):
         with path.open(encoding="utf-8") as source:
@@ -106,6 +107,8 @@ def select(candidates: dict[str, builder.FoldResult],
                 line = relevant(raw)
                 if line is not None:
                     old.append(line)
+                    library = re.sub(r"\.part(?:[2-9][0-9]*|1[0-9]+)$", "", path.stem)
+                    old_by_key[library, line.key].append(line)
                     owned[line.key].update(line.names)
     results[Path("__existing__")] = builder.FoldResult(
         lines=[line for line in old if line.key in keys], evidence=old)
@@ -133,6 +136,9 @@ def select(candidates: dict[str, builder.FoldResult],
         for text in lines:
             line = builder.parse_line(text)
             claims[line.text] = line
+    source_by_key = defaultdict(list)
+    for line in claims.values():
+        source_by_key[line.key].append(line)
     for line in old:
         claims[line.text] = line
     by_key = defaultdict(list)
@@ -160,9 +166,23 @@ def select(candidates: dict[str, builder.FoldResult],
         # Incoming-context records make no claim of byte uniqueness. They
         # require a caller's unanimous exact linkage name and a complete body;
         # other names sharing these bytes never become competing byte hits.
-        # Raw source ownership and deduplication still apply to every record.
+        # Same-name variants across all source versions still constrain their
+        # outgoing references. A field absent in any version is unknown; two
+        # names at one field remain alternatives, never a chosen callee.
+        # An owned body is retained only when it adds a new unanimous field:
+        # this is queried metadata, not another globally scanned byte claim.
         for line in result.lines:
-            if line.require_caller and not set(line.names) & owned[line.key]:
+            if not line.require_caller:
+                continue
+            variants = [other for other in source_by_key[line.key]
+                        if set(line.names) & set(other.names)]
+            line = builder.common_refs([line, *variants])
+            previous = [other for other in old_by_key[name, line.key]
+                        if set(line.names) & set(other.names)]
+            old_fields = {offset for other in previous for offset, _ in other.refs}
+            adds_reference = any(len(names) == 1 and offset not in old_fields
+                                 for offset, names in builder.ref_table(line.refs).items())
+            if not previous or adds_reference:
                 selected[name].append(line)
         selected[name].sort(key=lambda line: line.text)
     return selected

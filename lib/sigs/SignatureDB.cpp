@@ -1076,66 +1076,120 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
   const auto Names = buildCandidateNameMap();
   const size_t OriginalMatches = Matches.size();
   std::map<uint64_t, std::vector<size_t>> At;
-  for (size_t I = 0; I < Matches.size(); ++I)
-    if (Names.contains(Matches[I].Address))
+  for (size_t I = 0; I < Matches.size(); ++I) {
+    const auto Name = Names.find(Matches[I].Address);
+    if (Name != Names.end() &&
+        (Matches[I].Name == Name->second ||
+         llvm::is_contained(Matches[I].Aliases, Name->second)))
       At[Matches[I].Address].push_back(I);
-  std::vector<uint64_t> Requested(Entries.begin(), Entries.end());
-  llvm::sort(Requested);
-  llvm::DenseMap<std::pair<uint64_t, size_t>, size_t> Tried;
-  for (const auto &[Address, Proposals] : At) {
-    const std::string &Name = Names.at(Address);
-    std::map<uint32_t, std::string_view> References;
-    bool First = true;
+  }
+  for (auto It = At.begin(); It != At.end();) {
     bool Anchored = true;
-    for (size_t I : Proposals) {
-      const SigMatch &Match = Matches[I];
-      if (Match.Name != Name && !llvm::is_contained(Match.Aliases, Name))
-        continue;
+    for (size_t &I : It->second) {
       if (MatchModules[I] == NoModule) {
         Anchored = false;
         break;
       }
-      const StoredModule &Mod = Modules[MatchModules[I]];
+      I = MatchModules[I];
+      const StoredModule &Mod = Modules[I];
       if (Mod.RequireReferences || Mod.RequireCaller ||
           !SignatureMatcher::isFullyVerified(Mod) ||
           SignatureMatcher::fixedByteCount(Mod) <
               SignatureMatcher::MinStatedBytes ||
           llvm::any_of(Mod.publicNames(), [&](const StoredName &Public) {
-            return Public.Name == Name && Public.Offset != 0;
+            return Public.Name == Names.at(It->first) && Public.Offset != 0;
           })) {
         Anchored = false;
+        break;
+      }
+    }
+    if (Anchored)
+      ++It;
+    else
+      It = At.erase(It);
+  }
+
+  // Old packs can omit newly supported address references. A source record
+  // may refine an existing full-body anchor only after its whole body and
+  // outgoing constraints agree. These temporary rows never become output or
+  // new anchors, and all validation reads the same frozen candidates.
+  std::map<uint64_t, std::vector<size_t>> Refined;
+  for (const auto &[Address, Proposals] : At) {
+    const auto &Name = Names.at(Address);
+    for (const auto &Candidate : Idx.callerModules(Modules, Name)) {
+      const StoredModule &Mod = Modules[Candidate.Module];
+      if (!Mod.RequireCaller ||
+          SignatureMatcher::fixedByteCount(Mod) <
+              SignatureMatcher::MinStatedBytes ||
+          llvm::any_of(Proposals, [&](size_t I) {
+            return Modules[I].TotalLen != Mod.TotalLen;
+          }))
+        continue;
+      const uint8_t *Bytes = Img.readVA(Address, Mod.TotalLen);
+      if (!Bytes || !SignatureMatcher::matchPattern(Mod, Bytes, Mod.TotalLen))
+        continue;
+      Refined[Address].push_back(Candidate.Module);
+    }
+  }
+  std::vector<uint64_t> Requested(Entries.begin(), Entries.end());
+  llvm::sort(Requested);
+  using CandidateKey = std::pair<uint64_t, size_t>;
+  struct Support {
+    CandidateKey Candidate;
+    std::string_view Name;
+    uint64_t Parent;
+  };
+  std::vector<Support> Supports;
+  llvm::DenseMap<std::pair<uint64_t, size_t>, size_t> Tried;
+  for (const auto &[Address, Proposals] : At) {
+    using Reference = std::pair<uint32_t, std::string_view>;
+    llvm::SmallVector<Reference, 8> References;
+    bool First = true;
+    const auto Extra = Refined.find(Address);
+    for (size_t I : Extra == Refined.end() ? Proposals : Extra->second) {
+      const StoredModule &Mod = Modules[I];
+      if (Mod.ReferenceCount == 0) {
+        References.clear();
         break;
       }
       // Every matching variant must name this exact callee at the same site.
       // Alternate spellings and narrow/wide template variants are alternatives,
       // not aliases. An arbitrary choice here would introduce false names.
-      std::map<uint32_t, std::string_view> Current;
-      for (const StoredName &Reference : Mod.references()) {
-        auto [It, Fresh] =
-            Current.try_emplace(Reference.Offset, Reference.Name);
-        if (!Fresh && It->second != Reference.Name)
-          It->second = {};
+      llvm::SmallVector<Reference, 8> Current;
+      for (const StoredName &Ref : Mod.references())
+        Current.emplace_back(Ref.Offset, Ref.Name);
+      llvm::sort(Current);
+      size_t Kept = 0;
+      for (size_t R = 0; R < Current.size();) {
+        size_t End = R + 1;
+        while (End < Current.size() && Current[End].first == Current[R].first)
+          ++End;
+        if (Current[R].second == Current[End - 1].second)
+          Current[Kept++] = Current[R];
+        R = End;
       }
-      std::erase_if(Current,
-                    [](const auto &Entry) { return Entry.second.empty(); });
+      Current.resize(Kept);
       if (First) {
         References = std::move(Current);
         First = false;
       } else {
-        std::erase_if(References, [&](const auto &Entry) {
-          const auto It = Current.find(Entry.first);
-          return It == Current.end() || It->second != Entry.second;
+        llvm::erase_if(References, [&](const Reference &Entry) {
+          return !std::binary_search(Current.begin(), Current.end(), Entry);
         });
       }
       if (References.empty())
         break;
     }
-    if (!Anchored)
-      continue;
+    if (Extra != Refined.end())
+      llvm::erase_if(References, [&](const Reference &Ref) {
+        return llvm::any_of(Proposals, [&](size_t I) {
+          return llvm::any_of(
+              Modules[I].references(), [&](const StoredName &Old) {
+                return Old.Offset == Ref.first && Old.Name != Ref.second;
+              });
+        });
+      });
     for (const auto &[Offset, Expected] : References) {
-      const auto Candidates = Idx.callerModules(Modules, Expected);
-      if (Candidates.empty())
-        continue;
       const uint64_t Start =
           Img.Arch == Arch::ARM ? Address & ~uint64_t(ThumbStateBit) : Address;
       std::optional<Branch> To = branchTarget(Img, Start, Offset);
@@ -1149,24 +1203,14 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
       // their work or modify the evidence used as a frozen anchor.
       if (Names.contains(To->Target))
         continue;
+      const auto Candidates = Idx.callerModules(Modules, Expected);
       for (const auto &Candidate : Candidates) {
         const StoredModule &Mod = Modules[Candidate.Module];
         auto [Previous, Fresh] = Tried.try_emplace(
             std::pair{To->Target, Candidate.Module}, NoModule);
         if (!Fresh) {
-          if (Previous->second != NoModule) {
-            auto &Match = Matches[Previous->second];
-            if (Match.Name != Expected &&
-                !llvm::is_contained(Match.Aliases, Expected)) {
-              if (preferredAliasOrder(Expected, Match.Name)) {
-                Match.Aliases.push_back(std::move(Match.Name));
-                Match.Name = Expected;
-              } else {
-                Match.Aliases.emplace_back(Expected);
-              }
-              llvm::sort(Match.Aliases, preferredAliasOrder);
-            }
-          }
+          if (Previous->second != NoModule)
+            Supports.push_back({Previous->first, Expected, Address});
           continue;
         }
         const uint8_t *Bytes = Img.readVA(To->Target, Mod.TotalLen);
@@ -1181,14 +1225,70 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
         Previous->second = Matches.size();
         Matches.push_back(std::move(Match));
         MatchModules.push_back(Candidate.Module);
+        Supports.push_back({Previous->first, Expected, Address});
       }
+    }
+  }
+  if (Matches.size() == OriginalMatches)
+    return;
+  // Only refine anchors that actually support a matched child. Validate both
+  // in one frozen pass, then remove every name whose supporting refinements
+  // were contradicted. Neither can certify the other through that pass.
+  llvm::DenseSet<uint64_t> UsedRefinements;
+  for (const Support &Claim : Supports) {
+    const auto Extra = Refined.find(Claim.Parent);
+    if (Extra == Refined.end() || !UsedRefinements.insert(Claim.Parent).second)
+      continue;
+    for (size_t Module : Extra->second) {
+      SigMatch Match;
+      Match.Address = Claim.Parent;
+      Match.Name = Names.at(Claim.Parent);
+      Matches.push_back(std::move(Match));
+      MatchModules.push_back(Module);
     }
   }
   // Validate incoming bodies' own references with the same resolver. Existing
   // candidates are frozen; new candidates cannot certify one another or feed
   // back into the caller that requested them.
-  if (Matches.size() != OriginalMatches)
-    checkReferences(Img, Entries, {}, OriginalMatches);
+  checkReferences(Img, Entries, {}, OriginalMatches);
+  llvm::DenseSet<uint64_t> ValidRefinements;
+  for (size_t I = OriginalMatches; I < Matches.size(); ++I)
+    if (UsedRefinements.contains(Matches[I].Address))
+      ValidRefinements.insert(Matches[I].Address);
+  llvm::sort(Supports, [](const Support &A, const Support &B) {
+    return A.Candidate < B.Candidate;
+  });
+  size_t Kept = OriginalMatches;
+  for (size_t I = OriginalMatches; I < Matches.size(); ++I) {
+    SigMatch &Match = Matches[I];
+    if (UsedRefinements.contains(Match.Address))
+      continue;
+    const CandidateKey Key{Match.Address, MatchModules[I]};
+    auto Begin = llvm::lower_bound(Supports, Key,
+                                   [](const Support &A, const CandidateKey &B) {
+                                     return A.Candidate < B;
+                                   });
+    llvm::SmallVector<std::string_view, 4> SupportedNames;
+    for (; Begin != Supports.end() && Begin->Candidate == Key; ++Begin)
+      if (!UsedRefinements.contains(Begin->Parent) ||
+          ValidRefinements.contains(Begin->Parent))
+        SupportedNames.push_back(Begin->Name);
+    if (SupportedNames.empty())
+      continue;
+    llvm::sort(SupportedNames, preferredAliasOrder);
+    SupportedNames.erase(
+        std::unique(SupportedNames.begin(), SupportedNames.end()),
+        SupportedNames.end());
+    Match.Name = SupportedNames.front();
+    Match.Aliases.clear();
+    for (std::string_view Name : llvm::drop_begin(SupportedNames))
+      Match.Aliases.emplace_back(Name);
+    if (Kept != I)
+      Matches[Kept] = std::move(Match);
+    MatchModules[Kept++] = MatchModules[I];
+  }
+  Matches.resize(Kept);
+  MatchModules.resize(Kept);
 }
 
 void SignatureDB::checkReferences(const BinaryImage &Img,
@@ -1207,7 +1307,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   };
   auto RequiresReferences = [&](size_t I) {
     return MatchModules[I] != NoModule &&
-           Modules[MatchModules[I]].RequireReferences;
+           Modules[MatchModules[I]].RequireReferences &&
+           !Matches[I].CallerConfirmed;
   };
   auto ModuleStartOf = [&](size_t I) {
     const uint64_t Address = Matches[I].Address;

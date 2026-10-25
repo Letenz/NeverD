@@ -76,6 +76,18 @@ independent identity evidence or automatic names.
 `neverd-sigmaker --caller-context` emits these records, including short bodies.
 The supplement builder requires exact raw source ownership and keeps distinct
 same-byte names separate; they are queries, not claims of byte uniqueness.
+When incoming context is loaded, the name index also reuses complete existing
+patterns, including unresolved `!refs` records. An incoming request supplies
+the context for that occurrence; its own reference contradictions still reject
+it. No duplicate body is needed just to support both directions of evidence.
+
+Complete ordinary anchors can use supplemental source references missing from
+an older pack. All matching source variants must agree on each new field, and
+existing alternatives cannot be narrowed. Only refinements used by a matched
+child enter the frozen validation pass. Contradicting a refinement removes its
+dependent names, including individual aliases; temporary anchor rows never
+appear in the results. Source references are intersected across raw versions,
+and supplement deduplication respects independently selected library packs.
 
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,

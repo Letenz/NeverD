@@ -17,7 +17,7 @@ class SupplementTests(unittest.TestCase):
         self.existing.mkdir()
 
     def select(self, candidates, evidence, existing=""):
-        (self.existing / "old.pat").write_text(existing)
+        (self.existing / "runtime.pat").write_text(existing)
         paths = []
         for index, (name, text) in enumerate(evidence):
             path = self.root / f"raw{index}.pat"
@@ -45,6 +45,32 @@ class SupplementTests(unittest.TestCase):
         builder.settle_directory(results)
         self.assertEqual([line.text for line in results[Path("caller.npat")].lines], [a.strip()])
         self.assertEqual([line.text for line in results[Path("ordinary.pat")].lines], [b.strip()])
+
+    def test_caller_deduplication_respects_independently_selected_libraries(self):
+        line = "33C0C3 00 0000 0003 !caller :0000 routine\n"
+        (self.existing / "older.part2.npat").write_text(line)
+        self.assertEqual([item.text for item in self.select(line, [("runtime", line)])],
+                         [line.strip()])
+        (self.existing / "runtime.part2.npat").write_text(line)
+        self.assertEqual(self.select(line, [("runtime", line)]), [])
+
+    def test_caller_metadata_keeps_cross_version_reference_alternatives(self):
+        a = "E8........C3 00 0000 0006 !caller :0000 parent ^0001 narrow\n"
+        b = a.replace("narrow", "wide").replace("!caller", "!evidence")
+        result = self.select(a, [("runtime", a), ("older", b)])
+        self.assertEqual(result[0].refs, ((1, "narrow"), (1, "wide")))
+        unknown = "E8........C3 00 0000 0006 !evidence :0000 parent\n"
+        result = self.select(a, [("runtime", a), ("older", unknown)])
+        self.assertEqual(result[0].refs, ())
+
+    def test_owned_caller_metadata_only_adds_missing_unanimous_fields(self):
+        a = "E8........C3 00 0000 0006 !caller :0000 parent ^0001 callee\n"
+        old = "E8........C3 00 0000 0006 :0000 parent\n"
+        self.assertEqual([line.text for line in self.select(a, [("runtime", a)], old)],
+                         [a.strip()])
+        self.assertEqual(self.select(a, [("runtime", a)], a), [])
+        rival = a.replace("callee", "other").replace("!caller", "!evidence")
+        self.assertEqual(self.select(a, [("runtime", a), ("older", rival)], old), [])
 
     def test_caller_records_reject_incomplete_bodies_and_nonzero_names(self):
         for text in ["33C0C3 00 0000 0004 !caller :0000 a",
@@ -111,7 +137,7 @@ class SupplementTests(unittest.TestCase):
         aliases = "AABBCCDD 00 0000 0004 :0000 copy :0000 move\n"
         old = "AABBCCDD 00 0000 0004 :0000 copy\n"
         self.assertEqual(self.select(aliases, [("runtime", aliases)], old), [])
-        self.assertEqual((self.existing / "old.pat").read_text(), old)
+        self.assertEqual((self.existing / "runtime.pat").read_text(), old)
 
     def test_relocated_leading_bytes_still_check_exact_collisions(self):
         claim = "....AABB 00 0000 0004 :0000 wanted\n"
