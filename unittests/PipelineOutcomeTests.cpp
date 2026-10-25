@@ -13,8 +13,10 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1689,6 +1691,119 @@ TEST(PipelineOutcome, RealShardedEmissionDefinesEverySourceFunction) {
     EXPECT_EQ(Function.getName(), Functions[Index++].Name);
   }
   EXPECT_EQ(Index, Functions.size());
+}
+
+MedFunc unhandledIntrinsicFunction(Arch Architecture, uint16_t OutputSize,
+                                   va_t Entry = 0x1000) {
+  MedFunc Function = sourceFunction(Entry, "unsupported_intrinsic");
+  MedVar Output;
+  Output.Kind = MedVar::Temp;
+  Output.TheArch = Architecture;
+  Output.Id = 1;
+  Output.Size = OutputSize;
+  MedOp Operation;
+  Operation.Opcode = NdOp::INTRINSIC;
+  Operation.Addr = Entry;
+  Operation.addInput(MedVar::makeConst(0xffff, 2));
+  if (OutputSize)
+    Operation.Output = Output;
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  if (OutputSize) {
+    Return.addInput(Output);
+    Function.ReturnType = NdType::makeInt(OutputSize);
+  }
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Entry;
+  Block.Ops = {Operation, Return};
+  Function.Blocks.push_back(std::move(Block));
+  return Function;
+}
+
+TEST(PipelineOutcome, UnhandledIntrinsicNeverPublishesZeroOrAnEmptyEffect) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (uint16_t Size : {0, 4}) {
+      SCOPED_TRACE(::testing::Message()
+                   << unsigned(Architecture) << ':' << Size);
+      llvm::LLVMContext Context;
+      MedLLVMEmitter Emitter;
+      auto Function = unhandledIntrinsicFunction(Architecture, Size);
+      std::unique_ptr<llvm::Module> Module;
+      try {
+        Module = Emitter.emit({Function}, Context, "unsupported", Architecture);
+        ADD_FAILURE() << "an unsupported intrinsic published a module";
+      } catch (const std::runtime_error &Error) {
+        EXPECT_NE(std::string(Error.what()).find("unsupported LLVM intrinsic"),
+                  std::string::npos);
+        EXPECT_NE(std::string(Error.what()).find("65535"), std::string::npos);
+      }
+      EXPECT_EQ(Module, nullptr);
+      EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), Size ? 1u : 0u);
+
+      // Reuse the same emitter after refusal. No old LLVM values or refusal
+      // counter may contaminate a later, valid generation.
+      auto &Operation = Function.Blocks[0].Ops[0];
+      Operation.Opcode = NdOp::COPY;
+      Operation.NumInputs = 0;
+      if (Size)
+        Operation.addInput(MedVar::makeConst(7, Size));
+      else
+        Function.Blocks[0].Ops.erase(Function.Blocks[0].Ops.begin());
+      Module = Emitter.emit({Function}, Context, "supported", Architecture);
+      ASSERT_NE(Module, nullptr);
+      EXPECT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+      EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 0u);
+    }
+  }
+}
+
+TEST(PipelineOutcome,
+     UnhandledIntrinsicRefusalsAgreeAcrossSingleAndShardedEmission) {
+  ScopedThreadCount Threads(2);
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (unsigned Count : {1u, 8u})
+      for (bool NoOpt : {false, true})
+        for (bool SourceProjection : {false, true})
+          for (uint16_t Size : {0, 4}) {
+            SCOPED_TRACE(::testing::Message()
+                         << unsigned(Architecture) << ':' << Count << ':'
+                         << NoOpt << ':' << SourceProjection << ':' << Size);
+            llvm::LLVMContext Context;
+            BinaryImage Image;
+            Image.Arch = Architecture;
+            Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                             ? Bitness::Bits32
+                             : Bitness::Bits64;
+            Image.Format = BinaryFormat::ELF;
+            PipelineResult Result;
+            for (unsigned Index = 0; Index != Count; ++Index) {
+              auto Function = unhandledIntrinsicFunction(
+                  Architecture, Size, 0x1000 + Index * 0x100);
+              Function.Name += "_" + std::to_string(Index);
+              if (Index + 1 != Count) {
+                Function.Blocks[0].Ops.erase(Function.Blocks[0].Ops.begin());
+                Function.Blocks[0].Ops[0].NumInputs = 0;
+                Function.ReturnType = NdType::makeVoid();
+              }
+              Result.MedFuncs.push_back(std::move(Function));
+            }
+            PipelineOptions Options;
+            Options.LiftMode = true;
+            Options.SourceProjection = SourceProjection;
+            Options.RetainLLVMSourceObservations = true;
+            Options.NoOpt = NoOpt;
+            EXPECT_FALSE(
+                PipelineTestPeer::runLift(Image, Context, Options, Result));
+            EXPECT_EQ(Result.LlvmModule, nullptr);
+            EXPECT_EQ(Result.LLVMSources, nullptr);
+            EXPECT_FALSE(Result.LLVMVerifierFailed);
+            EXPECT_NE(Result.Error.find("unsupported LLVM intrinsic"),
+                      std::string::npos)
+                << Result.Error;
+            if (Count == 8)
+              EXPECT_NE(Result.Error.find("LLVM shard "), std::string::npos);
+          }
 }
 
 TEST(PipelineOutcome, SourceEHRefusalsAgreeAcrossSingleAndShardedEmission) {
