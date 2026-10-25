@@ -169,8 +169,9 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
       }
       if (const auto *Callee = Call->getCalledFunction()) {
         Sgx |= isX86SgxNativeName(Callee->getName().str());
-        if (isX86RtmNativeName(Callee->getName().str()))
-          Required.insert("rtm");
+        if (const auto *Feature =
+                x86SystemNativeTargetFeature(Callee->getName().str()))
+          Required.insert(Feature);
       }
       if (const auto *Asm =
               llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())) {

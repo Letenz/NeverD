@@ -124,7 +124,9 @@ std::string nativeBody(const X86SystemStateNative &Plan,
     std::string Type = unsignedType(Plan.InputBytes[I]);
     if (isX86SystemStateAddressArgument(Id, I) && !Plan.AddressBits)
       Type =
-          Id == Intrinsic::X86ReadMsrList && I == 1 ? "void *" : "const void *";
+          (Id == Intrinsic::X86ReadMsrList && I == 1) || Id == Intrinsic::Clzero
+              ? "void *"
+              : "const void *";
     Text += "(" + Type + ")(" + Arguments[I] + ")";
   }
   if (Plan.DescriptorQuery)

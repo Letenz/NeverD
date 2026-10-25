@@ -493,7 +493,8 @@ enum class X86SystemStateKind : uint8_t {
   LoadKernelGs,
   HistoryReset,
   InvalidateBroadcast,
-  SegmentedBlock
+  SegmentedBlock,
+  CacheZero
 };
 
 struct X86SystemStateContract {

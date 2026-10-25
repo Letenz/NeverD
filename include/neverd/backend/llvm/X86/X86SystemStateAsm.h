@@ -122,6 +122,13 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
       P.Text = (Space == NdMemoryAddressSpace::X86FS ? "fs " : "gs ") + P.Text;
     P.Text += " " + Input(0);
     break;
+  case K::CacheZero:
+    // rAX is implicit, including with an FS/GS override. The lifter wraps the
+    // effective offset before extending it to the canonical address carrier.
+    P.InputConstraints = {"{ax}"};
+    if (!Segment.empty())
+      P.Text = (Space == NdMemoryAddressSpace::X86FS ? "fs " : "gs ") + P.Text;
+    break;
   case K::Wait:
     P.InputConstraints = {"r", "{ax}", "{dx}"};
     P.Text += " " + Input(0) + "\n\tsetc $0";

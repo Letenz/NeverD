@@ -12,12 +12,17 @@ stated symbols and user identities cannot be removed by that reconciliation.
 COFF instruction-content flags and page execute permissions are separate.
 Full source emission is not proof of executable kernel reconstruction.
 
-CLAC/STAC and XEND now share the validated system-instruction contract in
+CLAC/STAC, XEND and CLZERO now share the validated system-instruction contract in
 HighC, native LLVM and LLVMC. Their ordered effects survive unused results and
 source optimization; scalar emulation cannot silently claim completion.
 Instruction IDs remain unchanged, and native RTM code generation enables its
 required feature. SYSRETQ, like interrupt/far returns, still requires the
 complete state-transfer source boundary described below.
+CLZERO's implicit address no longer depends on Capstone exposing a register
+operand. Address width, FS/GS offsets, unchanged flags and native cache-line
+effects remain explicit; generated code does not replace the instruction with
+an eager fixed-size clear. Native cache-line writes on CLZERO-capable hardware
+remain a separate qualification from fault and register-transport checks.
 
 Large LLVM source functions no longer retain redundant entry stores on private
 SSA temporaries whose single later definition dominates every read. The proof
