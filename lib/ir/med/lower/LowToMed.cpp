@@ -30,6 +30,7 @@
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMedError.h"
@@ -773,6 +774,15 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       if (isLowRawEnvironmentRequirement(Op))
         throw LowToMedConversionError(
             "raw environment requirement has no ordinary source contract");
+      // Validate before legacy address-space checks or best-effort SSA can
+      // normalize away a malformed original-memory contract.
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          isAArch64AddressMemoryIntrinsic(
+              static_cast<Intrinsic>(Op.Inputs[0].Offset)) &&
+          (TheArch != Arch::AArch64 ||
+           !lowAArch64AddressMemoryShapeIsValid(Op)))
+        throw LowToMedConversionError(kAddressMemoryMalformed);
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");

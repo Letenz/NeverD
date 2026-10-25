@@ -623,11 +623,13 @@ private:
         return;
       }
       if (isAArch64PAuthIntrinsic(Id) || aarch64CPAOperation(Id) ||
-          isAArch64PAuthLoadIntrinsic(Id)) {
+          isAArch64PAuthLoadIntrinsic(Id) ||
+          isAArch64AddressMemoryIntrinsic(Id)) {
         Paths.push_back(Img.Arch == Arch::AArch64 &&
                                 (aarch64PAuthMedShapeIsValid(Op) ||
                                  aarch64CPAMedShapeIsValid(Op) ||
-                                 aarch64PAuthLoadMedShapeIsValid(Op))
+                                 aarch64PAuthLoadMedShapeIsValid(Op) ||
+                                 aarch64AddressMemoryMedShapeIsValid(Op))
                             ? ReturnedValue::Other
                             : ReturnedValue::Undefined);
         return;

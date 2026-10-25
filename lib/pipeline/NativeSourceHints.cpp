@@ -1652,9 +1652,11 @@ nativeRecordReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar,
     if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
       return std::nullopt;
     for (const auto &Op : Block.Ops) {
-      if (!Remaining-- || (Op.Opcode == NdOp::INTRINSIC &&
-                           !isArchitecturalNoReturn(Op, Architecture) &&
-                           !hasNativeScalarIntrinsicEvidence(Op, Architecture)))
+      if (!Remaining-- ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !isArchitecturalNoReturn(Op, Architecture) &&
+           !hasNativeScalarIntrinsicEvidence(Op, Architecture) &&
+           !hasNativeReadOnlyMemoryIntrinsicEvidence(Op, Architecture)))
         return std::nullopt;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
         if (!Op.SourceCallHint ||
@@ -2248,7 +2250,8 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
       // path and HighIR lowers the intrinsic as a terminal statement.
       if (Op.Opcode == NdOp::INTRINSIC &&
           !isArchitecturalNoReturn(Op, Image.Arch) &&
-          !hasNativeScalarIntrinsicEvidence(Op, Image.Arch))
+          !hasNativeScalarIntrinsicEvidence(Op, Image.Arch) &&
+          !hasNativeReadOnlyMemoryIntrinsicEvidence(Op, Image.Arch))
         return Reject("native intrinsic requires explicit scalar ABI evidence");
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         if (Op.NumInputs && Op.Inputs[0].isConst())

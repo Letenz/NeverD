@@ -1039,3 +1039,27 @@ TEST(NativeBooleanResultProof, EveryCallObservesItsImplicitStackPointer) {
     EXPECT_FALSE(F.prove());
   }
 }
+
+TEST(NativeBooleanResultProof, CheckedLoadsRequireIdenticalAddressInputs) {
+  auto Load = operation(
+      NdOp::INTRINSIC, NdVar::reg(a64reg::X9, kAddressMemoryPointerBytes),
+      {NdVar::scalar(static_cast<uint64_t>(Intrinsic::A64_Load64RegisterOffset),
+                     kAddressMemoryIdentifierBytes),
+       NdVar::reg(a64reg::X19, kAddressMemoryPointerBytes),
+       NdVar::reg(a64reg::X20, kAddressMemoryPointerBytes),
+       NdVar::scalar(kAddressLoadOpcode, kAddressMemoryWordBytes)});
+  Fixture F;
+  F.linear({call(), copy(a64reg::X8, a64reg::X0), Load, mask(), ret()});
+  EXPECT_TRUE(F.prove());
+  for (unsigned Operand :
+       {kAddressMemoryBaseOperand, kAddressMemoryIndexOperand}) {
+    auto Dependent = Load;
+    Dependent.Inputs[Operand + 1] =
+        NdVar::reg(a64reg::X8, kAddressMemoryPointerBytes);
+    F.linear({call(), copy(a64reg::X8, a64reg::X0), Dependent, mask(), ret()});
+    EXPECT_FALSE(F.prove());
+  }
+  Load.Inputs[kAddressMemoryWordOperand + 1].Size = kAddressMemoryPointerBytes;
+  F.linear({call(), copy(a64reg::X8, a64reg::X0), Load, mask(), ret()});
+  EXPECT_FALSE(F.prove());
+}

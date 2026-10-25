@@ -822,6 +822,28 @@ TEST(AArch64SVEVector, LocalStateSurvivesValidatedPointerAuthentication) {
   }
 }
 
+TEST(AArch64SVEVector, LocalStateSurvivesValidatedOriginalScalarMemory) {
+  auto Load = intrinsic(Intrinsic::A64_Load64RegisterOffset,
+                        temporary(kPAuthResultId, kScalarBytes),
+                        {constant(kEntry), constant(kBlockStride),
+                         constant(kAddressMemoryWord, kPatternBytes)});
+  Load.Inputs.front().Size = kAddressMemoryIdFixtureBytes;
+  ASSERT_TRUE(aarch64AddressMemoryMedShapeIsValid(Load));
+  auto Function = vectorFunction(kWideElement, kByteElement, Transport::Copy);
+  Function.Blocks.front().Ops.insert(
+      Function.Blocks.front().Ops.begin() + kCopyOperation, Load);
+  EXPECT_EQ(validateAArch64SVEState(Function, Arch::AArch64), nullptr);
+  EXPECT_FALSE(highSource(Function).empty());
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Function}, Context, kFunction, Arch::AArch64);
+  ASSERT_TRUE(Module);
+  EXPECT_FALSE(llvm::verifyModule(*Module));
+  auto &Malformed = Function.Blocks.front().Ops[kCopyOperation];
+  Malformed.Inputs[Malformed.NumInputs - 1].Kind = MedVar::Temp;
+  expectStateRejected(Function);
+}
+
 TEST(AArch64SVEVector, UnresolvedPACMCannotPreserveLocalState) {
   auto Function = vectorFunction(kWideElement, kByteElement, Transport::Copy);
   Function.Blocks.front().Ops.insert(

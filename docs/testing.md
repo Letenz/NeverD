@@ -287,6 +287,32 @@ PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
 state must return a normal error for both one-function serial and eight-function
 sharded LLVM emission, with and without optimization.
+`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks original 64-bit
+LSL register-offset loads through both raw decoders, strict/permissive lifting,
+SSA and both C routes. Independent LLVM MC words check source aliases, zero
+indices, discarded destinations and both encoded scales. O0/O2 object checks
+retain one load even with an unused result; native AArch64 C execution covers
+positive/negative offsets and stores on both sides of the load. Malformed
+LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
+and the software tracer refuses state-dependent addresses in both modes, even
+when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
+Control-independent addresses retain finite image reads without guessing CPTA.
+SP-origin source execution remains explicitly unsupported. Local Z/P state
+survives only a validated scalar memory operation. Run this group with the
+decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
+Include `NativeBooleanResultProof.*` and the jump-table/computed-goto tests:
+identical-address reads preserve the differential result proof, while either
+tainted address input must refuse it. Computed-goto execution covers both a
+zero-register index and a load overwriting its index register. Selector tests
+reject stale or duplicated authentication records and duplicate load occurrences.
+`MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
+an edited store must lose its previous prologue-save annotation before the
+ObjC private-copy machine replay compares both saved representations.
+These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
+instruction families.
+Pointer-valued results retain their bits through both C routes; independent
+LLVM return tests cover the 32/64-bit x86 and Arm register ABIs.
+
 `AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
 writeback and dead-result retention through a single combined authenticated
 load, with independent emitted-word checks at O0/O2 through LLVM and both C
