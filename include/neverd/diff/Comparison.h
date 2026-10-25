@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace neverd::diff {
@@ -137,6 +138,14 @@ struct Override {
 
   bool operator==(const Override &) const = default;
 };
+
+/// Address pairs rejected by the final ordered decisions, in ascending order.
+/// Match clears a previous rejection of the same pair; Confirm does not.
+/// Historical entries need not name the current inventory. Callers that use
+/// these pairs as evidence must resolve them in their own exact snapshots.
+std::vector<std::pair<uint64_t, uint64_t>>
+rejectedPairs(llvm::ArrayRef<Override> Overrides,
+              const ComparisonControl &Control = {});
 
 /// Two corresponding functions, by index into each program's functions.
 struct FunctionMatch {

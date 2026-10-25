@@ -1929,6 +1929,14 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+Saved-decision regressions reject an accepted pair that contradicts the final
+effective Unmatch in all historical completion states. A reverse-history oracle
+checks every five-event sequence over two pairs; remap, rejection clearing,
+confirmation and undo roundtrips remain valid. CLI tests preserve an existing
+save target and empty stdout on rejection; SDK/worker tests retain the current
+snapshot, revision, edits, cached inspection and undo/redo after a failed restore
+or replacement. The `decisions` restore checkpoint is cooperatively cancellable.
+
 Saved-restore regressions cover typed pre-cancellation/deadline, coordinator-only
 progress, cancellation at read/parse/validation/measurement/publication stages,
 retained output and undo/redo, retry, tampered-report rejection and restoration
