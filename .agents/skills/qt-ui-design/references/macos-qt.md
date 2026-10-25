@@ -20,6 +20,47 @@ context menu such as Output's Copy/Select all/Clear, not just registry actions.
 If icons are actually missing from a packaged application, inspect its resource
 registration and SVG runtime separately from the visibility policy.
 
+For a disproportionately small tab-close glyph, compare an ordinary `QTabBar`
+with the actual docking tab, including the style chain and the visible stroke
+in logical pixels. KDDockWidgets installs a default `QProxyStyle` on its tab
+bar to disable an unsafe removal animation. That proxy can resolve to the
+native macOS style even when the application uses Fusion, shrinking the close
+button's content rectangle. NeverD clears that local style so docking tabs
+inherit `WorkbenchStyle`; its tab animation hint preserves the library's
+safety workaround. Do not enlarge the shared SVG to compensate for an
+unintended native metric. Check ordinary and docked tabs in both themes and
+at native and fractional scale.
+
+## Platform font sizes and display scaling
+
+Do not copy a Linux point size to every desktop. Qt uses logical DPI to turn
+points into logical pixels: points × logical DPI / 72. Cocoa reports 72 DPI;
+Linux and Windows commonly use a 96-DPI baseline. Thus a fixed 10 pt can mean
+10 logical pixels on macOS and about 13.3 on another desktop. Retina's device
+pixel ratio is a separate scale; do not multiply the font by it again.
+
+Use `QFontDatabase::systemFont(GeneralFont)` for the reading size. NeverD keeps
+its bundled Noto and JetBrains faces while inheriting that size for both UI
+and code. Do not assume `systemFont(FixedFont)` gives a suitable editor size:
+on the reproduced Cocoa kit it was 10 pt while GeneralFont was 13 pt, so using
+FixedFont's size alone retained the small-code defect. Keep fractional point
+sizes and pixel-sized preferences intact. Input fields, code zoom and reset
+must share the same size policy; a reset must not restore the old literal.
+Explicit user font choices still take precedence over defaults.
+
+Separate monitor resolution, OS scaling, application zoom and font size when
+comparing another application. In the reproduced case, a 3840×2160 display
+already ran at a logical 1920×1080 with DPR 2. VS Code used zoom level 0,
+a 12-logical-pixel editor font and an 18-pixel line height. That is diagnostic
+evidence for that machine, not a universal size to hard-code. Normalize Retina
+screenshots to logical coordinates before comparing text density.
+
+`QTEST_MAIN` sets `AA_Use96Dpi` even when running on Cocoa. Native appearance
+tests need an entry point without that forced DPI, otherwise they can render
+larger fonts than the real application and miss this defect. NeverD's
+AppearanceTests verifies platform sizes on Windows and macOS at native and
+fractional scale; offscreen alone does not validate platform typography.
+
 ## Precision scrolling and zoom
 
 A wheel notch is 120 angle units, but individual events may be smaller.
@@ -76,4 +117,6 @@ explicitly deployed for a separate test package.
 
 References: [Qt 6.7.3 menu-default change](https://code.qt.io/cgit/qt/qtreleasenotes.git/about/qt/6.7.3/release-note.md),
 [QAction icon visibility](https://doc.qt.io/qt-6/qaction.html#iconVisibleInMenu-prop),
-[QWheelEvent deltas and phases](https://doc.qt.io/qt-6/qwheelevent.html).
+[QWheelEvent deltas and phases](https://doc.qt.io/qt-6/qwheelevent.html),
+[Qt system fonts](https://doc.qt.io/qt-6/qfontdatabase.html#systemFont),
+[logical DPI and device-pixel ratio](https://doc.qt.io/qt-6/qscreen.html#logicalDotsPerInch-prop).
