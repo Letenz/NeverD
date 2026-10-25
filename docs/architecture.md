@@ -380,6 +380,9 @@ slot, an exact table base and a full-width bound on the raw index. Its existing
 root, mutation and storage audits still apply. Both source routes consume the
 authenticated load's input occurrence, preserving zero indices and an index
 register overwritten by the load.
+Private-copy source replay recomputes stack-access annotations from the current
+MedIR body; a stale prologue-save flag cannot hide an edited store from that
+independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Other ordinary-memory families remain unqualified for CPA2, as does
