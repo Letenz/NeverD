@@ -58,6 +58,24 @@ bool isFatalOptimizationStop(OptimizationStopReason Stop) {
          Stop == OptimizationStopReason::VerificationFailed;
 }
 
+std::string functionAdmissionDiagnostic(va_t Entry,
+                                        const PipelineFunctionAudit *Audit) {
+  std::string Message =
+      "function 0x" + llvm::utohexstr(Entry) + " was not admitted";
+  if (!Audit)
+    return Message;
+  Message += " (" +
+             std::string(pipelineFunctionDispositionName(Audit->Disposition)) +
+             ")";
+  if (!Audit->DecodeFailures.empty())
+    Message += "; decode failure at 0x" +
+               llvm::utohexstr(Audit->DecodeFailures.front());
+  else if (!Audit->UnsupportedInstructions.empty())
+    Message += "; unsupported instruction at 0x" +
+               llvm::utohexstr(Audit->UnsupportedInstructions.front());
+  return Message;
+}
+
 } // namespace
 
 bool Pipeline::requiresSerialLLVMEmission(const std::vector<MedFunc> &Funcs,
@@ -104,28 +122,33 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     const va_t Entry = normalizeCodeAddress(Requested, Img.Arch, Img.Mode);
     if (AdmittedEntries.count(Entry))
       continue;
-    Result.Error = "selected " + std::string(ModeName) + " function 0x" +
-                   llvm::utohexstr(Requested) + " was not admitted";
     const auto Audit =
         std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
                      [&](const PipelineFunctionAudit &Candidate) {
                        return normalizeCodeAddress(Candidate.Entry, Img.Arch,
                                                    Img.Mode) == Entry;
                      });
-    if (Audit != Result.FunctionAudits.end()) {
-      Result.Error +=
-          " (" +
-          std::string(pipelineFunctionDispositionName(Audit->Disposition)) +
-          ")";
-      if (!Audit->DecodeFailures.empty())
-        Result.Error += "; decode failure at 0x" +
-                        llvm::utohexstr(Audit->DecodeFailures.front());
-      else if (!Audit->UnsupportedInstructions.empty())
-        Result.Error += "; unsupported instruction at 0x" +
-                        llvm::utohexstr(Audit->UnsupportedInstructions.front());
-    }
+    Result.Error =
+        "selected " + std::string(ModeName) + " " +
+        functionAdmissionDiagnostic(
+            Requested,
+            Audit != Result.FunctionAudits.end() ? &*Audit : nullptr);
     return false;
   }
+  // A whole-module request can reject every body before reaching LLVM. An
+  // empty module is not a successful lift of those instructions. Intentional
+  // runtime/import skips and read-only analysis retain their existing outcome.
+  if (!Opts.MedAnalysisOnly && Result.MedFuncs.empty())
+    for (const auto &Audit : Result.FunctionAudits)
+      if (Audit.Disposition == PipelineFunctionDisposition::RejectedLowIR ||
+          Audit.Disposition ==
+              PipelineFunctionDisposition::RejectedIncomplete ||
+          Audit.Disposition == PipelineFunctionDisposition::MedIRFailed) {
+        Result.Error = "no " + std::string(ModeName) +
+                       " functions were admitted; " +
+                       functionAdmissionDiagnostic(Audit.Entry, &Audit);
+        return false;
+      }
   if (Opts.PatchMode)
     for (const MedFunc &Function : Result.MedFuncs) {
       bool NeedsAdapter = Function.ConsumesX87Argument;

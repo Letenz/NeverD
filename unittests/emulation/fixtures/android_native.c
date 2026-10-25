@@ -443,3 +443,53 @@ u64 dynamic_providers(void) {
     return 2;
   return first("ab") + second("cde");
 }
+
+extern void *mmap(void *, u64, int, int, int, u64);
+extern int munmap(void *, u64);
+extern int mincore(void *, u64, unsigned char *);
+extern int mprotect(void *, u64, int);
+__asm__(".type mincore, %function");
+static u64 residency_raw(u64 address, u64 length, u64 vector) {
+  register u64 x0 __asm__("x0") = address;
+  register u64 x1 __asm__("x1") = length;
+  register u64 x2 __asm__("x2") = vector;
+  register u64 x8 __asm__("x8") = 232;
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x1), "r"(x2), "r"(x8)
+                   : "memory", "cc");
+  return x0;
+}
+u64 residency_observe(u64 *out, u64 route, u64 length, u64 vector, u64 mode) {
+  u64 base = (u64)mmap(0, 12288, 3, 0x22, -1, 0);
+  out[0] = base;
+  if (mode == 1)
+    munmap((void *)(base + 4096), 4096);
+  if (mode == 2)
+    mprotect((void *)base, 4096, 0);
+  if (mode == 3)
+    munmap((void *)base, 12288);
+  int (*fn)(void *, u64, unsigned char *) = mincore;
+  if (route == 3 || route == 4) {
+    void *handle = dlopen("libresidency.so", 2);
+    fn = (int (*)(void *, u64, unsigned char *))dlsym(handle, "mincore");
+    if (route == 4)
+      dlclose(handle);
+  }
+  *__errno() = 733;
+  u64 result;
+  if (route == 1)
+    result = (u64)syscall(232, base, length, vector);
+  else if (route == 2)
+    result = residency_raw(base, length, vector);
+  else
+    result = (u64)(long)fn((void *)base, length, (unsigned char *)vector);
+  out[1] = result;
+  out[2] = (u64)*__errno();
+  if (mode == 4) {
+    result = residency_raw(base, length, vector + 8);
+    out[3] = result;
+    out[4] = (u64)*__errno();
+  }
+  return result;
+}

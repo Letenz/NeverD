@@ -894,15 +894,20 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
     return true;
   }
 
-  const bool IsApxRao = Id == Intrinsic::ApxRaoAdd ||
-                        Id == Intrinsic::ApxRaoAnd ||
-                        Id == Intrinsic::ApxRaoOr || Id == Intrinsic::ApxRaoXor;
-  const bool IsApxCmpccXadd = Id == Intrinsic::ApxCmpccXadd;
+  const auto AtomicId = x86AtomicSemanticId(Id);
+  const bool IsApxRao =
+      AtomicId == Intrinsic::ApxRaoAdd || AtomicId == Intrinsic::ApxRaoAnd ||
+      AtomicId == Intrinsic::ApxRaoOr || AtomicId == Intrinsic::ApxRaoXor;
+  const bool IsApxCmpccXadd = AtomicId == Intrinsic::ApxCmpccXadd;
   if (IsApxRao || IsApxCmpccXadd) {
     if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace) ||
         !intrinsicSupportsMemoryAddressSpace(Id) ||
         !intrinsicApxAtomicShapeIsValid(Id, apxAtomicLowShape(Op, Img.Arch)))
       return false;
+
+    for (unsigned I = 1; I != Op.NumInputs; ++I)
+      if (!knownOperandBytes(Op.Inputs[I], 0, Op.Inputs[I].Size))
+        return false;
 
     const uint16_t Width = IsApxRao ? Op.Inputs[2].Size : Op.Output.Size;
 
@@ -941,11 +946,11 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
     uint64_t Stored = Old;
     if (IsApxRao) {
       const uint64_t Source = readOperand(Op.Inputs[2]) & Mask;
-      if (Id == Intrinsic::ApxRaoAdd)
+      if (AtomicId == Intrinsic::ApxRaoAdd)
         Stored = (Old + Source) & Mask;
-      else if (Id == Intrinsic::ApxRaoAnd)
+      else if (AtomicId == Intrinsic::ApxRaoAnd)
         Stored = Old & Source;
-      else if (Id == Intrinsic::ApxRaoOr)
+      else if (AtomicId == Intrinsic::ApxRaoOr)
         Stored = Old | Source;
       else
         Stored = Old ^ Source;

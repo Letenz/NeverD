@@ -31,6 +31,14 @@ safety workaround. Do not enlarge the shared SVG to compensate for an
 unintended native metric. Check ordinary and docked tabs in both themes and
 at native and fractional scale.
 
+Check the close glyph's distance from the tab edge as well as its size. Qt's
+styled tab text padding does not inset the separate close-button widget.
+NeverD puts the close-button margin on the outer right side; a left margin
+pushed the glyph against the edge even after its size was corrected. Inspect
+the normal and hover states in a real docking tab, and measure the visible
+stroke relative to `tabRect()`, not just the button's width. Keep the clickable
+area intact when adjusting the painted inset.
+
 ## Platform font sizes and display scaling
 
 Do not copy a Linux point size to every desktop. Qt uses logical DPI to turn

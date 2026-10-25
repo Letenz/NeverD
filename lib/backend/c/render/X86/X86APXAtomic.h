@@ -26,6 +26,13 @@ inline constexpr const char X86APXAtomicCompilerDispatch[] =
     "#define NEVERD_X86_APX_ATOMIC(native, ...) native\n"
     "#else\n"
     "#define NEVERD_X86_APX_ATOMIC(native, ...) __VA_ARGS__\n"
+    "#endif\n#endif\n"
+    "#ifndef NEVERD_X86_LEGACY_ATOMIC\n"
+    "#if defined(__NEVERC_X86_LEGACY_ATOMIC__) && __NEVERC_X86_LEGACY_ATOMIC__ "
+    ">= 1\n"
+    "#define NEVERD_X86_LEGACY_ATOMIC(native, ...) native\n"
+    "#else\n"
+    "#define NEVERD_X86_LEGACY_ATOMIC(native, ...) __VA_ARGS__\n"
     "#endif\n#endif\n";
 
 std::optional<X86APXAtomicPlan>

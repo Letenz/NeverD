@@ -30,7 +30,8 @@ std::string expression(const X86APXAtomicPlan &P,
     return Arg.find(Temporary) != std::string::npos;
   }))
     Temporary += "_";
-  const auto Address = "(uint64_t)(uintptr_t)(" + Args[0] + ")";
+  const auto Address = "(uint" + std::to_string(P.addressBytes() * 8) +
+                       "_t)(uintptr_t)(" + Args[0] + ")";
   std::string Native = P.builtin() + "(" + Address;
   for (unsigned I = 1; I < Args.size(); ++I)
     Native += ", (" + Word + ")(" + Args[I] + ")";
@@ -38,22 +39,32 @@ std::string expression(const X86APXAtomicPlan &P,
     Native += ", " + std::to_string(P.Condition);
   Native += ", " + std::to_string(P.AddressBits) + ", " +
             std::to_string(P.SegmentPrefix) + ")";
-  const auto Offset =
-      std::string(P.AddressBits == 32 ? "%k" : "%") + (P.compare() ? "1" : "0");
+  const auto Offset = std::string(P.AddressBits == 16   ? "%w"
+                                  : P.AddressBits == 32 ? "%k"
+                                                        : "%") +
+                      (P.compare() ? "1" : "0");
   const auto Segment = P.segment().empty() ? "" : "%%" + P.segment() + ":";
   std::string Fallback = "({ ";
   if (P.compare())
     Fallback += Word + " " + Temporary + " = (" + Word + ")(" + Args[1] + "); ";
   // GNU C uses escaped braces for literal assembler encoding controls.
-  Fallback += "__asm__ __volatile__(\"%{evex%} " + P.mnemonic() + " " +
-              (P.compare() ? "%2, %0, " : "%1, ") + Segment + "(" + Offset +
-              ")\" : ";
+  const auto Encoding = !P.legacy()                 ? "%{evex%} "
+                        : P.compare()               ? "%{vex%} "
+                        : P.TargetArch == Arch::X64 ? "%{rex%} "
+                                                    : "";
+  const std::string Register = P.legacy() ? "R" : "r";
+  Fallback += "__asm__ __volatile__(\"" + std::string(Encoding) + P.mnemonic() +
+              " " + (P.compare() ? "%2, %0, " : "%1, ") + Segment + "(" +
+              Offset + ")\" : ";
   if (P.compare())
-    Fallback += "\"+r\"(" + Temporary + ")";
-  Fallback += " : \"b\"(" + Address + "), \"r\"((" + Word + ")(" + Args.back() +
-              ")) : " + (P.compare() ? "\"cc\", " : "") + "\"memory\"); ";
+    Fallback += "\"+" + Register + "\"(" + Temporary + ")";
+  Fallback += " : \"b\"(" + Address + "), \"" + Register + "\"((" + Word +
+              ")(" + Args.back() + ")) : " + (P.compare() ? "\"cc\", " : "") +
+              "\"memory\"); ";
   Fallback += P.compare() ? Temporary + "; })" : "(void)0; })";
-  return "NEVERD_X86_APX_ATOMIC(" + Native + ", " + Fallback + ")";
+  return std::string(P.legacy() ? "NEVERD_X86_LEGACY_ATOMIC("
+                                : "NEVERD_X86_APX_ATOMIC(") +
+         Native + ", " + Fallback + ")";
 }
 
 bool scalar(const ExprPtr &E) {
@@ -92,7 +103,8 @@ x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call) {
     if (Bits > UINT32_MAX || Prefix > UINT32_MAX || Condition > UINT32_MAX)
       throw std::invalid_argument(
           "APX controls exceed their architectural width");
-    P = x86APXAtomicPlan(P->Id, P->Bytes, Bits, Prefix, Condition);
+    P = x86APXAtomicPlan(P->Id, P->Bytes, Bits, Prefix, Condition,
+                         P->TargetArch);
     if (!P)
       throw std::invalid_argument("invalid APX address/condition controls");
   } else if (Asm && llvm::StringRef(Asm->getAsmString())
@@ -104,9 +116,10 @@ x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call) {
     unsigned Bits, Prefix, Condition;
     if (!(Stream >> Name >> Bits >> Prefix >> Condition))
       throw std::invalid_argument("invalid APX atomic assembly marker");
-    const auto Named = x86APXAtomicName("llvm.x86." + Name + ".address");
+    const auto Named = x86APXAtomicName("llvm.x86." + Name + ".address" +
+                                        (A == Arch::X86 ? "32" : ""));
     if (Named)
-      P = x86APXAtomicPlan(Named->Id, Named->Bytes, Bits, Prefix, Condition);
+      P = x86APXAtomicPlan(Named->Id, Named->Bytes, Bits, Prefix, Condition, A);
     if (!P || Asm->getAsmString() != P->assembly() ||
         Asm->getConstraintString() != P->constraints() ||
         !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
@@ -117,7 +130,7 @@ x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call) {
   } else
     return std::nullopt;
 
-  if (A != Arch::X64 || Call.getFunctionType()->isVarArg() ||
+  if (A != P->TargetArch || Call.getFunctionType()->isVarArg() ||
       Call.getNumOperandBundles() || Call.doesNotReturn() ||
       Call.hasFnAttr(llvm::Attribute::NoSync) ||
       Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
@@ -171,11 +184,11 @@ std::string renderX86APXAtomicExpression(
     S.ConditionSize = CC->Type->Size;
     S.Condition = CC->ConstVal;
   }
-  if (A != Arch::X64 || !intrinsicApxAtomicShapeIsValid(E.IntrinsicId, S))
+  if (!intrinsicApxAtomicShapeIsValid(E.IntrinsicId, S))
     throw std::invalid_argument("invalid HighC APX atomic operands");
   const auto P = *x86APXAtomicPlan(
-      E.IntrinsicId, S.SourceSize, 64, *Prefix,
-      E.IntrinsicId == Intrinsic::ApxCmpccXadd ? S.Condition : 0);
+      E.IntrinsicId, S.SourceSize, A == Arch::X86 ? 32 : 64, *Prefix,
+      isX86CmpccXaddIntrinsic(E.IntrinsicId) ? S.Condition : 0, A);
   std::vector<std::string> Args = {Expr(*E.Operands[0])};
   if (P.compare())
     Args.push_back(Expr(*E.Operands[2]));

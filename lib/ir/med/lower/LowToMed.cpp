@@ -827,7 +827,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
             throw LowToMedConversionError(X86CompactMalformed);
           continue;
         }
-        if (isApxAtomicIntrinsic(Id)) {
+        if (isX86AtomicIntrinsic(Id)) {
           if (!intrinsicApxAtomicShapeIsValid(Id,
                                               apxAtomicLowShape(Op, TheArch)))
             llvm::report_fatal_error(
