@@ -8,15 +8,19 @@
 /// conflicting desktop theme or a retired native-caption preference.
 //===----------------------------------------------------------------------===//
 
+#include "ActionRegistry.h"
 #include "GnomeModalDialogs.h"
 #include "Language.h"
+#include "OutputWindow.h"
 #include "QuickStartDialog.h"
+#include "Session.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
 #include "TitleBar.h"
 #include "WindowFrame.h"
 
 #include <QAbstractButton>
+#include <QAction>
 #include <QApplication>
 #include <QColorDialog>
 #include <QDialogButtonBox>
@@ -205,6 +209,28 @@ private slots:
     menu.addAction("Open");
     menu.ensurePolished();
     QVERIFY(menu.windowFlags() & Qt::NoDropShadowWindowHint);
+  }
+
+  void menusKeepActionIconsWithPlatformDefaults() {
+    // The macOS platform enables this after QApplication is constructed.
+    QCoreApplication::setAttribute(Qt::AA_DontShowIconsInMenus, true);
+    Theme::instance().apply();
+    QVERIFY(!QCoreApplication::testAttribute(Qt::AA_DontShowIconsInMenus));
+    ActionRegistry registry;
+    for (auto *action : registry.allActions()) {
+      QVERIFY2(!action->icon().pixmap(16, 16).isNull(),
+               qPrintable(action->objectName()));
+      QVERIFY2(action->isIconVisibleInMenu(), qPrintable(action->objectName()));
+    }
+    Session session(QStringLiteral("unused-worker"));
+    OutputWindow output(session);
+    const std::unique_ptr<QMenu> context(output.createLogMenu());
+    for (auto *action : context->actions()) {
+      if (action->isSeparator())
+        continue;
+      QVERIFY(!action->icon().pixmap(16, 16).isNull());
+      QVERIFY(action->isIconVisibleInMenu());
+    }
   }
 
   void bundledFontsCoverInterfaceLanguages() {

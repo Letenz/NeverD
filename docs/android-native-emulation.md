@@ -391,6 +391,24 @@ The supported Bionic subset is:
   overflow stop explicitly. Full output admission precedes field writes; no
   guest clock advances and no host calendar function is called. The inverse
   and errno contract uses the same pinned API 28 source linked above.
+- `getenv`, reading the live LP64 pointer vector at
+  `android.environment_vector`. This unsigned 64-bit guest address accepts
+  numeric strings. Omission leaves the environment unknown and stops the
+  query; zero explicitly supplies a null environment. A nonzero address must
+  point to caller-supplied guest memory containing string pointers followed
+  by a null pointer. Each call rereads the vector and the necessary entry
+  prefixes, returns the first matching entry's original value pointer, and
+  preserves errno. Duplicate names and guest changes to pointers or string
+  bytes remain visible across calls, constructors and threads. As in
+  [API 28 Bionic](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/stdlib/getenv.c),
+  the query name ends at either NUL or `=`, and an empty name can match an
+  entry beginning with `=`. The name is read even for a null environment;
+  the returned value and later entries are not read. Invalid necessary reads
+  fail visibly. Aggregate pointer and byte reads are bounded by the workload
+  memory limit and execution deadline; exhaustion never becomes a missing
+  key. The input fixes the vector address, not its contents. Environment
+  mutators and an imported `environ` data symbol remain unsupported. Neither
+  the host environment nor Linux ELF process startup inputs are consulted.
 - `getauxval`, reading the complete immutable `android.auxiliary_vector`
   input. Each entry has unsigned 64-bit `type` and `value` fields; numeric
   strings, including hexadecimal values, are accepted. At most 128 unique,

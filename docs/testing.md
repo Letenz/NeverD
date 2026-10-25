@@ -829,6 +829,22 @@ match, empty/overlapping inputs, high bytes, page ends, errno and dynamic librar
 closure; `AndroidSearchMemory.*` checks memory/time bounds. The strict directory
 JSON check is `ProcessReport.DirectoryCreationRequiresCompleteBoundedMetadata`.
 
+`LinuxFileNamespace.Rename*`, `Unlink*` and `FileCreation*` check stable objects
+across name changes, duplicate/open cursors, complete stat bytes, fresh inodes,
+retained reservations, count/byte limits and atomic refusal on both LP64 ABIs.
+The `ParentWalk*`, `RelativeCreation*` and `InteriorDot*` cases preserve visited
+errors, search permissions and exact grants. Relative creation must not revisit
+ancestors above an already-open directory FD. `LinuxProc` checks fdinfo identity
+after rename and pathname reuse. Raw x64/AArch64 O0/O2 fixtures and
+`AndroidFiles` exercise named, variadic and dynamic Bionic calls, provider
+closure, errno and stdio creation. `AndroidFileStatusAt` compares complete
+reports on available native transports. `ProcessReport.FileRenames*`,
+`FileUnlinks*` and `FileCreation*` cover strict JSON and typed input admission;
+`ProcessPublic.AndroidFileLifecycleMatchesSDKAndCLI` compares public reports.
+Run the complete Linux process suite, Android file/status/proc/stdio suites and
+public Android cases when changing this shared owner. Platform skips do not
+establish native or physical-device filesystem equivalence.
+
 `AndroidStringCopy.*` checks `strncpy` using independent AArch64 callers at
 O0/O2 across three relocation formats and available CPU backends: exact padding,
 truncation, high bytes, errno, full-width and zero counts, page ends, read-only
@@ -2397,6 +2413,13 @@ missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
 
+`NeverDGuiWheelInput` replays precision wheel and trackpad events through the
+production disassembly, source and hex views. It compares small-event batches
+with their combined movement, checks pixel-only and horizontal source scrolling,
+and verifies that empty gesture boundaries and horizontal movement do not zoom
+the code font. Precision font zoom accumulates a notch before changing a point.
+Run this target offscreen and with `QT_QPA_PLATFORM=cocoa` on macOS.
+
 `NeverDGuiAppearance` checks application-painted dialogs in both themes,
 including file, font, color, message, input and Quick Start windows with the
 retired native-caption preference enabled. It injects a conflicting desktop
@@ -2409,8 +2432,18 @@ the bundled fallback families for CoreText shaping; unchanged script lists
 must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
 The shared frame tests separately exercise native edge gestures.
+
+The menu case injects macOS's hidden-icon default and checks registry actions
+and Output's dynamically created context menu after theme application. Screenshot
+color checks convert logical points using the captured image's device-pixel
+ratio. Cocoa native-pointer docking cases skip when
+`CGPreflightPostEventAccess()` denies event posting; report that missing coverage
+separately from passing offscreen behavior.
+
 `nativeFrameKeepsTheTitleBarOnScreen` checks native maximize/full-screen/restore
 transitions for the shared frameless chrome on Linux, Windows and macOS.
+On Cocoa it first requires an active foreground test window and skips when
+macOS refuses activation for the background test process.
 All desktop windows use the application frame and shadow; native APIs still
 provide movement and window states. Cocoa resizing uses the same drawn edges
 with a mouse grab when Qt cannot start a native resize.
@@ -10609,6 +10642,18 @@ is useful for local comparisons, not a portable throughput guarantee.
 `WhpStateTransferCases.def` also covers every partial prefix of the combined 32-register capture and conflicts in all seven metadata fields. Both XSAVE API generations must preserve caller state and force a complete retry. The same suite checks one register read per step and recovers omitted XSAVE metadata from that read.
 
 ### Android native workloads
+
+`AndroidEnvironmentTests` exercises imported and named `getenv` at O0/O2
+with ordinary, Android-packed and RELR relocations on available ARM64
+transports. Independent guest buffers cover absent/null/empty environments,
+duplicate and empty names, API 28 `=` truncation, borrowed pointer identity,
+live vector/value mutation, constructor and thread sharing, preserved errno,
+closed providers and required-read faults. Page-tail queries and values prove
+that irrelevant tails are not read. Direct model checks bound cumulative scan
+work and reject expired deadlines while preserving read-only input bytes.
+Strict JSON tests retain full-width addresses. The process-public suite
+compares complete C SDK and CLI reports for successful and refused queries.
+No test inherits the host environment.
 
 `AndroidAuxvTests` compares imported and named `getauxval` calls at O0/O2 with
 ordinary, Android-packed and RELR relocations on each available checked ARM64

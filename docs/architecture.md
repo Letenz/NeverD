@@ -7960,7 +7960,7 @@ output. Existing memory, deadline and representable-result limits still apply.
 
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
-Mutable bytes are one object per granted catalogue path; independent opens
+Mutable bytes belong to stable file objects; independent opens
 have independent offsets, while dup shares its open description. Without a metadata provider, mutation
 invalidates captured stat observations, retaining only unchanged block-size
 facts for libc buffer selection. Opt-in tracked memory files keep complete
@@ -7974,6 +7974,19 @@ metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
 the common string owner with bounded linear search and provider lifetime checks.
 See [directory creation contracts](android-directory-creation.md).
+
+`LinuxFiles` also owns the explicit file creation, rename and unlink grants.
+`LinuxFileMutation` maintains live names separately from object keys; creation
+uses unique internal keys, while initial objects keep their original keys.
+Descriptions, mutable bytes, write reservations and metadata attach to those
+objects. Directory entries, status, proc FD links and fdinfo resolve the same
+names, so pathname reuse cannot revive the previous object's inode or grant.
+Retired objects retain their charged reservation. Input validation bounds all
+creation generations and shared file bytes before execution; JSON only imports
+the options. Namespace checks and clock availability precede publication.
+`LinuxFilePaths` owns open's component walk and its directory-FD origin;
+creation must not recheck ancestors already outside that walk. Unsupported
+mapping, link, open-parent and replacement lifetimes remain explicit boundaries.
 
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
@@ -8231,6 +8244,15 @@ the scheduler records a per-thread continuation at the import's post-trap PC
 and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
 restored raw result, including guest edits, to errno/-1. A guest PC redirect
 bypasses that adapter without fabricating a returned native-call event.
+`AndroidEnvironment` owns Bionic lookup over an explicitly supplied guest
+environment vector. It reads live guest storage through the existing bounded
+memory helpers and returns borrowed value pointers. Imported and named calls,
+constructors and threads use that same owner; no host string map, cached
+environment copy or additional process state is maintained. The vector's
+presence is a public input fact, while pointer validity is checked only when
+the API needs to read it. Linux ELF startup still owns its independent initial
+stack construction; there is no kernel getenv service.
+
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use

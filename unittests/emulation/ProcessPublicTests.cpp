@@ -2303,6 +2303,61 @@ TEST_F(ProcessPublic, AndroidTerminalCPUStateMatchesSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidEnvironmentMatchesSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  std::vector<uint8_t> Bytes(4096, 0);
+  llvm::support::endian::write64le(Bytes.data() + 256, 0x20000200);
+  std::copy_n("COLOR=blue", 11, Bytes.data() + 512);
+  std::copy_n("COLOR", 6, Bytes.data() + 1024);
+  for (const char *Fixture : {"environment-O0-none", "environment-O2-relr"}) {
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string(Fixture) + ".so"))
+               .string();
+    for (unsigned Mode = 0; Mode != 4; ++Mode) {
+      SCOPED_TRACE(testing::Message() << Fixture << ":" << Mode);
+      llvm::json::Object Native{
+          {"entry_symbol", "environment_query"},
+          {"initialize", false},
+          {"arguments", llvm::json::Array{"0x20000000", "0x20000400", 0}},
+          {"memory", llvm::json::Array{llvm::json::Object{
+                         {"address", "0x20000000"},
+                         {"size", 4096},
+                         {"bytes_hex", llvm::toHex(Bytes)}}}},
+          {"read_memory", llvm::json::Array{llvm::json::Object{
+                              {"address", "0x20000000"}, {"size", 4096}}}},
+          {"observe_memory_on_failure", true}};
+      if (Mode)
+        Native["environment_vector"] = Mode == 1   ? "0"
+                                       : Mode == 2 ? "0x20000100"
+                                                   : "0xffffffffffffffff";
+      const auto Request = jsonText(llvm::json::Object{
+          {"backend", "unicorn"}, {"android", std::move(Native)}});
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      const bool Returned = Mode == 1 || Mode == 2;
+      EXPECT_EQ(Report.getAsObject()->getString(field::Stop),
+                Returned ? "returned"
+                : Mode   ? "runtime_failure"
+                         : "unsupported_service");
+      if (Returned)
+        EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Request, Output),
+                Returned ? process_cli::Success : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidDladdrObservationsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";
@@ -3232,6 +3287,86 @@ TEST_F(ProcessPublic, AndroidMutableFilesAndLiveProcMatchSDKAndCLI) {
     EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
               process_cli::Success);
     ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+  }
+#endif
+}
+
+TEST_F(ProcessPublic, AndroidFileLifecycleMatchesSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Input = llvm::cantFail(llvm::json::parse(R"({
+    "backend":"unicorn",
+    "linux_time":{"clocks":[{"id":0,"seconds":100,"nanoseconds":123}]},
+    "android":{"initialize":false,"thread_limit":1,
+      "libraries":{"libfiles.so":["open","openat","rename","renameat","unlink","unlinkat"]}},
+    "linux_files":{"dynamic_proc_fds":true,"directories":["/fixture"],
+      "files":[{"path":"/fixture/data","bytes_hex":"00ff410a805a",
+        "write_limit":8192,"track_write_metadata":true,
+        "metadata":{"device":7,"inode":42,"mode":33188,"link_count":1,
+          "uid":1000,"gid":1000,"size":6,"block_size":4096,"blocks":8,
+          "access_time":{"seconds":3,"nanoseconds":4},
+          "modification_time":{"seconds":5,"nanoseconds":6},
+          "change_time":{"seconds":7,"nanoseconds":8}}}],
+      "directory_creation":{"umask":18,"limit":64,"parents":[{
+        "path":"/fixture","metadata":{"device":7,"inode":91,
+          "mode":16877,"link_count":2,"uid":1000,"gid":1000,"size":60,
+          "block_size":4096,"blocks":0,
+          "access_time":{"seconds":3,"nanoseconds":4},
+          "modification_time":{"seconds":5,"nanoseconds":6},
+          "change_time":{"seconds":7,"nanoseconds":8}}}]},
+      "file_renames":{"parents":["/fixture"],"limit":2},
+      "file_unlinks":{"parents":["/fixture"],"limit":2},
+      "file_creations":[{"path":"/fixture/data","write_limit":8192,"count":1}]}})"));
+  for (const char *Fixture : {"files-O0-none", "files-O2-relr"}) {
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string(Fixture) + ".so"))
+               .string();
+    for (const char *Entry :
+         {"files_rename_bionic", "files_unlink_closed_bionic",
+          "files_creation_bionic", "files_creation_counted_bionic"}) {
+      for (unsigned Route : {0u, 4u, 5u}) {
+        SCOPED_TRACE(testing::Message()
+                     << Fixture << ':' << Entry << ':' << Route);
+        auto Request = Input;
+        auto &Native = *Request.getAsObject()->getObject("android");
+        Native["entry_symbol"] = Entry;
+        Native["arguments"] = llvm::json::Array{Route == 5 ? 0 : Route};
+        auto &Files = *Request.getAsObject()->getObject("linux_files");
+        auto &Reservation =
+            *Files.getArray("file_creations")->front().getAsObject();
+        if (llvm::StringRef(Entry) == "files_creation_counted_bionic") {
+          Reservation["count"] = 2;
+          Reservation["write_limit"] = 3;
+        }
+        if (Route == 5) {
+          if (llvm::StringRef(Entry) == "files_rename_bionic")
+            Files.erase("file_renames");
+          else if (llvm::StringRef(Entry) == "files_unlink_closed_bionic")
+            Files.erase("file_unlinks");
+          else
+            Files.erase("file_creations");
+        }
+        const auto Options = jsonText(*Request.getAsObject());
+        auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::cantFail(llvm::json::parse(Text));
+        EXPECT_EQ(Report.getAsObject()->getString(field::Stop),
+                  Route == 5 ? "unsupported_service" : "returned")
+            << Text;
+        if (Route != 5)
+          EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+        EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                  Route == 5 ? process_cli::Incomplete : process_cli::Success);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+      }
+    }
   }
 #endif
 }

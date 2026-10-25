@@ -360,6 +360,124 @@ TEST_P(LinuxProcess, MemoryFilesPreserveBinaryBytesCursorsAndFaultPrefixes) {
     }
   }
 }
+
+TEST_P(LinuxProcess, RenameMovesNamesWithoutReplacingOpenFileIdentity) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *opt : {"O0", "O2"}) {
+    auto file =
+        Path.parent_path() / (Path.stem().string() + "-files-" + opt + ".elf");
+    for (char mode : {'Q', 'T', '1'}) {
+      Options.Arguments = {"files", std::string(1, mode)};
+      Options.LinuxFiles = fileRenameTestInput();
+      if (mode == '1')
+        Options.LinuxFiles->DynamicProc = LinuxProcOptions{"fixture", 12};
+      auto r = emulateProcess(file, ProcessProfile::LinuxELF64, Options);
+      ASSERT_TRUE(bool(r)) << llvm::toString(r.takeError());
+      EXPECT_EQ(r->Stop, ProcessStopReason::Exited) << r->Diagnostic;
+      EXPECT_EQ(r->ExitStatus, 0u);
+      Options.LinuxFiles->FileRenames.reset();
+      auto refused = emulateProcess(file, ProcessProfile::LinuxELF64, Options);
+      ASSERT_TRUE(bool(refused)) << llvm::toString(refused.takeError());
+      EXPECT_EQ(refused->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_NE(refused->Diagnostic.find("explicit provider"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST_P(LinuxProcess,
+       UnlinkKnownErrorsKeepOriginalFilesAndUnsupportedBoundaries) {
+  Options.Limits.TimeoutMicroseconds = 30000000;
+  Options.LinuxFiles.emplace();
+  Options.LinuxFiles->Files["/fixture/data"] = {0,    0xff, 0x41,
+                                                0x0a, 0x80, 0x5a};
+  Options.LinuxFiles->SymbolicLinks["/links/raw"] = {'/', 'x'};
+  for (const char *opt : {"O0", "O2"}) {
+    auto file =
+        Path.parent_path() / (Path.stem().string() + "-files-" + opt + ".elf");
+    for (char mode : {'e', 'E', 'F', 'G', 'H', 'I', 'K'}) {
+      SCOPED_TRACE(testing::Message() << opt << ":" << mode);
+      Options.Arguments = {"files", std::string(1, mode)};
+      auto r = llvm::cantFail(
+          emulateProcess(file, ProcessProfile::LinuxELF64, Options));
+      if (mode == 'e') {
+        EXPECT_EQ(r.Stop, ProcessStopReason::Exited) << r.Diagnostic;
+        EXPECT_EQ(r.ExitStatus, 0u);
+      } else {
+        EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService)
+            << r.Diagnostic;
+        ASSERT_FALSE(r.Services.empty());
+        EXPECT_FALSE(r.Services.back().Result);
+      }
+    }
+  }
+}
+
+TEST_P(LinuxProcess, UnlinkClosedFileRequiresItsSeparateProvider) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto File =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    Options.Arguments = {"files", "E"};
+    Options.LinuxFiles = fileUnlinkTestInput();
+    auto R = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    Options.LinuxFiles->FileUnlinks.reset();
+    auto Refused = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Refused.Diagnostic.find("explicit provider"), std::string::npos);
+    ASSERT_FALSE(Refused.Services.empty());
+    EXPECT_FALSE(Refused.Services.back().Result);
+  }
+}
+
+TEST_P(LinuxProcess,
+       FileCreationExecutesOriginalCallersWithoutAliasingMovedFiles) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto File =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    Options.Arguments = {"files", "N"};
+    Options.LinuxFiles = fileCreationTestInput();
+    auto R = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    Options.LinuxFiles->FileCreations.reset();
+    auto Refused = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Refused.Diagnostic.find("explicit object reservation"),
+              std::string::npos);
+    ASSERT_FALSE(Refused.Services.empty());
+    EXPECT_FALSE(Refused.Services.back().Result);
+  }
+}
+
+TEST_P(LinuxProcess, FileCreationCountsExecuteIndependentRawLifecycles) {
+  Options.LinuxTime.emplace().Clocks[0] = {100, 123};
+  for (const char *Opt : {"O0", "O2"}) {
+    auto File =
+        Path.parent_path() / (Path.stem().string() + "-files-" + Opt + ".elf");
+    Options.Arguments = {"files", "M"};
+    Options.LinuxFiles = fileCreationCountTestInput();
+    auto R = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 0u);
+    Options.LinuxFiles->FileCreations->Files.at("/fixture/data").Count = 1;
+    auto Refused = llvm::cantFail(
+        emulateProcess(File, ProcessProfile::LinuxELF64, Options));
+    EXPECT_EQ(Refused.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Refused.Diagnostic.find("already consumed"), std::string::npos);
+    ASSERT_FALSE(Refused.Services.empty());
+    EXPECT_FALSE(Refused.Services.back().Result);
+  }
+}
+
 TEST_P(LinuxProcess, ExplicitDeviceTransactionsShareDescriptorOwnership) {
   Options.LinuxFiles.emplace().Devices["/fixture/control"] = deviceTestInput();
   for (const char *Optimization : {"O0", "O2"}) {
