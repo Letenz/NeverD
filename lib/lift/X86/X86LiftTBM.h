@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Shared TBM admission, lifting and undefined-flag qualification.
+//===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIB_LIFT_X86_X86LIFTTBM_H
 #define NEVERD_LIB_LIFT_X86_X86LIFTTBM_H
