@@ -23,15 +23,22 @@ bool setNativeFullScreen(QWidget &Window, bool FullScreen) {
                                                  : Qt::WindowNoState);
 }
 
-bool setNativeWindowState(QWidget &Window, Qt::WindowStates States) {
+bool setNativeWindowState(QWidget &Window, Qt::WindowStates States,
+                          const std::function<void()> &Apply) {
   if (QGuiApplication::platformName() != QLatin1String("cocoa"))
     return false;
   NSWindow *Native = reinterpret_cast<NSView *>(Window.winId()).window;
   if (!Native)
     return false;
   const bool FullScreen = States.testFlag(Qt::WindowFullScreen);
+  const auto Request = [&] {
+    if (Apply)
+      Apply();
+    else
+      Window.setWindowState(States);
+  };
   if (FullScreen == bool(Native.styleMask & NSWindowStyleMaskFullScreen)) {
-    Window.setWindowState(States);
+    Request();
     return true;
   }
   bool Finished = false;
@@ -45,7 +52,7 @@ bool setNativeWindowState(QWidget &Window, Qt::WindowStates States) {
               usingBlock:^(NSNotification *) {
                 *Completion = true;
               }];
-  Window.setWindowState(States);
+  Request();
   const bool Result = QTest::qWaitFor([&] { return Finished; });
   [Center removeObserver:Observer];
   return Result;

@@ -17,6 +17,8 @@
 
 class QApplication;
 class QDialog;
+class QScreen;
+class QTimer;
 class QWidget;
 class QWindow;
 
@@ -57,6 +59,11 @@ public:
   /// both edges.
   static Qt::Edges edgesAt(QPoint at, QSize size, QMargins shadow);
 
+  /// Apply a state after any native full-screen exit has restored its screen.
+  void setWindowState(Qt::WindowStates states);
+  /// Keep the state and normal geometry from before entering full screen.
+  void toggleFullScreen();
+
   ~WindowFrame() override;
 
 protected:
@@ -66,6 +73,7 @@ private:
   WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar);
   bool resizable() const;
   void syncWindowState();
+  void restoreAfterFullScreen();
   /// Draw the shadow outside the visible window and its surface inside.
   void paint();
   /// Give the shadow band its size, which a maximized or full-screen window
@@ -89,6 +97,15 @@ private:
   QMargins margins_;
   /// The window states the window system last applied.
   Qt::WindowStates states_;
+  Qt::WindowStates beforeFullScreen_;
+  QPointer<QScreen> fullScreenScreen_;
+  QRect fullScreenAvailable_;
+  QRect fullScreenScreenGeometry_;
+  QRect normalBeforeFullScreen_;
+  QMetaObject::Connection screenGeometryConnection_;
+  QTimer *restoreTimer_ = nullptr;
+  bool restoreMaximized_ = false;
+  bool restoreScreenTimedOut_ = false;
   Qt::Edges shown_;
   Qt::Edges resizing_;
   bool resizingGeometry_ = false;

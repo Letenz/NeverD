@@ -22,7 +22,9 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScopedValueRollback>
+#include <QScreen>
 #include <QSurfaceFormat>
+#include <QTimer>
 #include <QWidget>
 #include <QWindow>
 #include <algorithm>
@@ -153,9 +155,25 @@ WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar)
   if (QGuiApplication::platformName() == QLatin1String("windows"))
     connect(&handle, &QWindow::windowStateChanged, this,
             &WindowFrame::syncWindowState);
-  connect(&handle, &QWindow::screenChanged, this, [this] {
+  restoreTimer_ = new QTimer(this);
+  restoreTimer_->setSingleShot(true);
+  connect(restoreTimer_, &QTimer::timeout, this, [this] {
+    restoreScreenTimedOut_ = true;
+    restoreAfterFullScreen();
+  });
+  const auto watchScreen = [this](QScreen *screen) {
+    disconnect(screenGeometryConnection_);
+    if (screen)
+      screenGeometryConnection_ =
+          connect(screen, &QScreen::availableGeometryChanged, this,
+                  &WindowFrame::restoreAfterFullScreen);
+  };
+  watchScreen(handle.screen());
+  connect(&handle, &QWindow::screenChanged, this, [this, watchScreen] {
+    watchScreen(handle_.screen());
     platform::configureFrame(handle_);
     updateMargins();
+    restoreAfterFullScreen();
   });
   updateMargins();
 }
@@ -163,6 +181,54 @@ WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar)
 WindowFrame::~WindowFrame() {
   finishResize();
   showEdges({});
+}
+
+void WindowFrame::setWindowState(Qt::WindowStates states) {
+  restoreTimer_->stop();
+  restoreMaximized_ = false;
+  restoreScreenTimedOut_ = false;
+  if (states.testFlag(Qt::WindowFullScreen) && !window_.isFullScreen()) {
+    beforeFullScreen_ = states & ~Qt::WindowFullScreen;
+    normalBeforeFullScreen_ = window_.normalGeometry();
+    fullScreenScreen_ = handle_.screen();
+    if (fullScreenScreen_) {
+      fullScreenAvailable_ = fullScreenScreen_->availableGeometry();
+      fullScreenScreenGeometry_ = fullScreenScreen_->geometry();
+    }
+  } else if (window_.isFullScreen() && states == Qt::WindowMaximized &&
+             QGuiApplication::platformName() == QLatin1String("cocoa")) {
+    // Cocoa restores the window before the Dock's work area. Requesting
+    // maximization in the same transition makes Qt zoom against that temporary
+    // area and overwrite the normal geometry with the old maximized frame.
+    restoreMaximized_ = true;
+    window_.setWindowState(Qt::WindowNoState);
+    restoreTimer_->start(
+        ::neverd::limits::gui_config::kWindowFrameScreenRestoreTimeoutMs);
+    return;
+  }
+  window_.setWindowState(states);
+}
+
+void WindowFrame::toggleFullScreen() {
+  setWindowState(window_.isFullScreen()
+                     ? beforeFullScreen_
+                     : window_.windowState() | Qt::WindowFullScreen);
+}
+
+void WindowFrame::restoreAfterFullScreen() {
+  if (!restoreMaximized_ || states_.testFlag(Qt::WindowFullScreen))
+    return;
+  QScreen *screen = handle_.screen();
+  if (!restoreScreenTimedOut_ && screen && screen == fullScreenScreen_ &&
+      screen->geometry() == fullScreenScreenGeometry_ &&
+      screen->availableGeometry() != fullScreenAvailable_)
+    return;
+  restoreMaximized_ = false;
+  restoreTimer_->stop();
+  if (!states_.testFlag(Qt::WindowMaximized) &&
+      normalBeforeFullScreen_.isValid())
+    window_.setGeometry(normalBeforeFullScreen_);
+  window_.setWindowState(Qt::WindowMaximized);
 }
 
 Qt::Edges WindowFrame::edgesAt(QPoint at, QSize size, QMargins shadow) {
@@ -218,6 +284,9 @@ void WindowFrame::syncWindowState() {
     finishResize();
   states_ = states;
   updateMargins();
+  // Finish outside Cocoa's native state notification, after Qt has consumed it.
+  if (restoreMaximized_)
+    QTimer::singleShot(0, this, &WindowFrame::restoreAfterFullScreen);
 }
 
 bool WindowFrame::eventFilter(QObject *object, QEvent *event) {

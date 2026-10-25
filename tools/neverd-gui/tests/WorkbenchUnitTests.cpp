@@ -1846,7 +1846,8 @@ private slots:
     auto *menus = new QMenuBar;
     menus->addMenu(QStringLiteral("&File"));
     auto *bar = new TitleBar(window, menus);
-    QVERIFY(WindowFrame::attach(window, bar));
+    auto *frame = WindowFrame::attach(window, bar);
+    QVERIFY(frame);
     // Small CI screens (1024x768) leave the default placement partly off
     // screen; start inside the available area.
     window.resize(900, 600);
@@ -1880,15 +1881,22 @@ private slots:
     // Each step waits until the window system confirms the state on the
     // native window: macOS animates full screen and ignores a request made
     // before an animation ends, and reports full screen alone over maximized.
-    const auto request = [&](Qt::WindowStates states, const char *step) {
+    const auto request = [&](Qt::WindowStates states, const char *step,
+                             bool toggleFullScreen = false) {
       const int before = applied.count;
       bool nativeFinished = true;
+      const auto apply = [&] {
+        if (toggleFullScreen)
+          frame->toggleFullScreen();
+        else
+          frame->setWindowState(states);
+      };
 #ifdef Q_OS_MACOS
       if (QGuiApplication::platformName() == QLatin1String("cocoa"))
-        nativeFinished = test::setNativeWindowState(window, states);
+        nativeFinished = test::setNativeWindowState(window, states, apply);
       else
 #endif
-        window.setWindowState(states);
+        apply();
       const bool confirmed = QTest::qWaitFor(
           [&] {
             return applied.count > before &&
@@ -1927,10 +1935,10 @@ private slots:
     QVERIFY(request(Qt::WindowMaximized, "maximized"));
     const QSize maximized = window.size();
     QVERIFY(request(Qt::WindowMaximized | Qt::WindowFullScreen,
-                    "full screen from maximized"));
+                    "full screen from maximized", true));
     QVERIFY(screen->geometry().contains(barRect()));
     QCOMPARE(barRect().top(), screen->geometry().top());
-    QVERIFY(request(Qt::WindowMaximized, "maximized again"));
+    QVERIFY(request(Qt::WindowMaximized, "maximized again", true));
     QCOMPARE(window.size(), maximized);
     QVERIFY(screen->availableGeometry().contains(barRect()));
     QVERIFY(request(Qt::WindowNoState, "restored"));
