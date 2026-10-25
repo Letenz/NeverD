@@ -82,7 +82,8 @@ class LowWordDecisions {
   // The low edge bit denotes complement. Negation never duplicates a graph;
   // zero and one are the two edges of the single terminal node.
   std::vector<Decision> Nodes{{UINT64_MAX, 0, 0}};
-  llvm::DenseMap<Decision, uint32_t, DecisionInfo> Unique, Applied;
+  llvm::DenseMap<Decision, uint32_t, DecisionInfo> Unique;
+  llvm::DenseMap<uint64_t, uint32_t> Applied;
   struct CarryKey {
     uint32_t A, B, C;
     bool operator==(const CarryKey &) const = default;
@@ -226,7 +227,10 @@ class LowWordDecisions {
       Failed = true;
       return 0;
     }
-    const Decision Key{Op, A, B};
+    // Edges use twice the bounded node index. The unused top bit distinguishes
+    // AND from XOR, so application keys need no full decision-node tuple.
+    static_assert(limits::kMaxResidueDecisionNodes <= UINT32_MAX / 4);
+    const uint64_t Key = (uint64_t(Op == Xor) << 63) | (uint64_t(A) << 32) | B;
     if (auto It = Applied.find(Key); It != Applied.end())
       return It->second ^ Complement;
     // Recursive insertion may reallocate Nodes; copy both decisions first.
@@ -239,7 +243,7 @@ class LowWordDecisions {
         apply(Op, Left.Variable == Variable ? Left.High : A,
               Right.Variable == Variable ? Right.High : B, Depth + 1);
     const auto Result = node(Variable, Low, High);
-    if (!charge(1, sizeof(Decision) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
+    if (!charge(1, sizeof(Key) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
         !reserveEntry(Applied))
       return 0;
     Applied.try_emplace(Key, Result);

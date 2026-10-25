@@ -784,7 +784,10 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
       const SymRef Factor = Term.Factors.front();
       if (!Budget.consume(Ctx.dagSize(Factor)))
         return std::nullopt;
-      Ctx.collectVars(Factor, LinearVariables);
+      if (Ctx.op(Factor) == SymOp::Var)
+        LinearVariables.push_back(Ctx.varId(Factor));
+      else
+        Ctx.collectVars(Factor, LinearVariables);
     }
   llvm::SmallVector<SymRef, 16> LinearAtoms;
   for (size_t I = 0; I != AtomIds.size(); ++I)
