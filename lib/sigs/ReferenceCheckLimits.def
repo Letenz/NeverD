@@ -14,10 +14,9 @@
 #error "Define NEVERD_SIGS_REFERENCE_LIMIT before including this file"
 #endif
 
-// What a round of reference checking settles is what the next round checks
-// the callers against; each round names routines the one before could not,
-// and the chains of calls it follows are short, so this many rounds are
-// enough.
+// Bound propagation of reference evidence, including its withdrawal. If work
+// remains, its addresses and dependent callers are left unnamed. Increasing
+// this budget can resolve longer chains; it cannot establish cyclic claims.
 NEVERD_SIGS_REFERENCE_LIMIT(MaxReferenceRounds, 16)
 
 // A round checks its matches in parallel from this many, in blocks of this
