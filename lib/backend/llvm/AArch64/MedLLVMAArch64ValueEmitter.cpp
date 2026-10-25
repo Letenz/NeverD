@@ -41,6 +41,31 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                           llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
 
+  if (isAArch64AddressMemoryIntrinsic(IC)) {
+    if (!aarch64AddressMemoryMedShapeIsValid(Op))
+      llvm::report_fatal_error(kAddressMemoryMalformed);
+    const auto Instruction =
+        *aarch64AddressMemoryInstruction(Op.Inputs[3].ConstVal);
+    if (Instruction.stackBase())
+      llvm::report_fatal_error(kAddressMemorySPUnsupported);
+    auto Integer = [&](const MedVar &Input) {
+      auto *Value = getVar(Input, Builder);
+      return Value->getType()->isPointerTy()
+                 ? Builder.CreatePtrToInt(Value, Builder.getInt64Ty())
+                 : Value;
+    };
+    auto *Asm = llvm::InlineAsm::get(
+        llvm::FunctionType::get(
+            Builder.getInt64Ty(),
+            {Builder.getInt64Ty(), Builder.getInt64Ty(), Builder.getInt32Ty()},
+            false),
+        kAddressLoadAsm, kAddressLoadConstraints, /*hasSideEffects=*/true);
+    return Builder.CreateCall(Asm,
+                              {Integer(Op.Inputs[1]), Integer(Op.Inputs[2]),
+                               Builder.getInt32(Instruction.scratchWord())},
+                              kAddressLoadResult);
+  }
+
   if (isAArch64PAuthLoadIntrinsic(IC)) {
     if (!aarch64PAuthLoadMedShapeIsValid(Op))
       llvm::report_fatal_error(kPAuthLoadMalformed);

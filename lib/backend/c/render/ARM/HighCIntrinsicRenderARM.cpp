@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
@@ -811,6 +812,18 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   using I = Intrinsic;
   if (isAArch64ExceptionReturnIntrinsic(Id))
     throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
+  if (isAArch64AddressMemoryIntrinsic(Id)) {
+    const auto Word = Ops.size() == kAddressLoadOperandCount
+                          ? constantOperand(Ops[2])
+                          : std::nullopt;
+    if (OperandBytes.size() != kAddressLoadOperandCount ||
+        !aarch64AddressMemoryShapeIsValid(Id, Ops.size() + 1, ResultBytes,
+                                          OperandBytes[0], OperandBytes[1],
+                                          OperandBytes[2], Word))
+      throw std::invalid_argument(kAddressMemoryMalformed);
+    return aarch64AddressMemoryC(*aarch64AddressMemoryInstruction(*Word),
+                                 Ops[0], Ops[1]);
+  }
   if (isAArch64PAuthLoadIntrinsic(Id)) {
     const auto Word = Ops.size() == kPAuthLoadOperandCount
                           ? constantOperand(Ops[1])

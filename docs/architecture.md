@@ -296,6 +296,25 @@ feature availability. These operations preserve call argument setup and frame ta
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
+`AArch64AddressMemory.def` owns original ordinary-memory operations. The first
+owned family is 64-bit `LDR Xt, [Xn, Xm, LSL #0/#3]`: its raw index and original
+word remain one effectful operation through LowIR, MedIR, LLVM and both C routes.
+The real load retains AddressAdd's access-EL checks and any internal
+AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
+The address is unknown to generic memory proofs, and discarding the result
+cannot discard the access or its possible fault. The scalar operation preserves
+local Z/P values and earlier call arguments other than its explicit output.
+Both native compiler routes use fixed separate input/output registers, preserving
+source aliases and the encoded scale. SP provenance is retained in IR, but
+execution projection refuses it without its alignment and tagging environment.
+The software tracer refuses this operation in both strict and lenient modes
+until an authoritative runtime memory profile is available. This instruction
+preservation observes the execution host's controls; it does not model foreign
+EL/SCTLR2/translation state or preserve exception-PC and syndrome register
+identity. Other ordinary-memory families remain unqualified for CPA2, as does
+controlled native execution with CPTA enabled. The owner follows the pinned
+[Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
+
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
 their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
 Segmented format 14 retains the original load-command segment indices and

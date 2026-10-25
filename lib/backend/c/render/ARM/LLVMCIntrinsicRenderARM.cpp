@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64CPAC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
@@ -42,6 +43,51 @@ static const AsmToCEntry ARMAsmTable[] = {
 };
 
 } // anonymous namespace
+
+bool validateAArch64AddressMemoryCall(Arch TheArch,
+                                      const llvm::CallInst &Call) {
+  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (!Asm || Asm->getAsmString() != kAddressLoadAsm)
+    return false;
+  if (TheArch != Arch::AArch64 ||
+      Asm->getConstraintString() != kAddressLoadConstraints ||
+      !Asm->hasSideEffects() || Call.arg_size() != kAddressLoadOperandCount ||
+      !Call.getType()->isIntegerTy(kAddressMemoryPointerBits) ||
+      !Call.getArgOperand(0)->getType()->isIntegerTy(
+          kAddressMemoryPointerBits) ||
+      !Call.getArgOperand(1)->getType()->isIntegerTy(
+          kAddressMemoryPointerBits) ||
+      !Call.getArgOperand(2)->getType()->isIntegerTy(kAddressMemoryWordBytes *
+                                                     CHAR_BIT))
+    throw std::invalid_argument(kAddressMemoryMalformed);
+  const auto *Word = llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(2));
+  const auto Instruction =
+      Word ? aarch64AddressMemoryInstruction(Word->getZExtValue())
+           : std::nullopt;
+  if (!Instruction || Instruction->base() != kAddressMemoryScratchBase ||
+      Instruction->index() != kAddressMemoryScratchIndex ||
+      Instruction->destination() != kAddressMemoryScratchValue)
+    throw std::invalid_argument(kAddressMemoryMalformed);
+  return true;
+}
+
+std::optional<InlineAsmRender>
+renderAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call,
+                               const std::string &ResultName, bool ResultLive,
+                               const std::vector<std::string> &Args) {
+  if (!validateAArch64AddressMemoryCall(TheArch, Call))
+    return std::nullopt;
+  if (Args.size() != kAddressLoadOperandCount)
+    throw std::invalid_argument(kAddressMemoryMalformed);
+  const auto *Word = llvm::cast<llvm::ConstantInt>(Call.getArgOperand(2));
+  const auto Value = aarch64AddressMemoryC(
+      *aarch64AddressMemoryInstruction(Word->getZExtValue()), Args[0], Args[1]);
+  return InlineAsmRender{
+      ResultLive && !ResultName.empty()
+          ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value).str()
+          : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
+      false};
+}
 
 std::optional<InlineAsmRender>
 renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,

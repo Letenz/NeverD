@@ -27,6 +27,7 @@
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PointerC.h"
 #include "neverd/backend/c/render/X86/X87GuardedValueRender.h"
@@ -2154,6 +2155,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                    : "__asm__ volatile(\"" + Instruction + "\" ::: \"memory\")";
     }
 
+    if (isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+        (Opts.TheArch != Arch::AArch64 ||
+         !aarch64AddressMemoryHighShapeIsValid(E)))
+      throw std::invalid_argument(kAddressMemoryMalformed);
     if (isAArch64PAuthLoadIntrinsic(E.IntrinsicId) &&
         (Opts.TheArch != Arch::AArch64 || !aarch64PAuthLoadHighShapeIsValid(E)))
       throw std::invalid_argument(kPAuthLoadMalformed);
@@ -2245,6 +2250,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     auto Rendered = renderIntrinsicCall(
         E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
         HasCIntrinsics, Opts.Format != BinaryFormat::COFF, OpBytes);
+    if (!Rendered.empty() && isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+        E.Type && E.Type->Kind == NdTypeKind::Ptr)
+      return llvm::formatv(kAddressLoadCPointerCast, typeToC(E.Type), Rendered)
+          .str();
     if (!Rendered.empty())
       return Rendered;
   }

@@ -791,6 +791,14 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
           if (isAArch64ExceptionReturnIntrinsic(Id))
             throw std::runtime_error(kAArch64ExceptionReturnUnsupported);
+          if (isAArch64AddressMemoryIntrinsic(Id)) {
+            if (TheArch != Arch::AArch64 ||
+                !aarch64AddressMemoryMedShapeIsValid(Op))
+              throw std::runtime_error(kAddressMemoryMalformed);
+            if (aarch64AddressMemoryInstruction(Op.Inputs[3].ConstVal)
+                    ->stackBase())
+              throw std::runtime_error(kAddressMemorySPUnsupported);
+          }
           if (isAArch64PAuthLoadIntrinsic(Id)) {
             if (TheArch != Arch::AArch64 ||
                 !aarch64PAuthLoadMedShapeIsValid(Op))

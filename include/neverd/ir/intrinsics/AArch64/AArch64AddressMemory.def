@@ -1,0 +1,51 @@
+//===- AArch64AddressMemory.def - Original memory operations ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Original memory operations retain AddressAdd's access-EL checks and the
+/// processor's AddressIncrement choice. VALUE owns encoding/shape constants;
+/// TEXT owns diagnostics and LLVM syntax; OPERATION owns appended identities.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_A64_ADDRESS_MEMORY_VALUE
+#define NEVERD_A64_ADDRESS_MEMORY_VALUE(Type, Name, Value)
+#endif
+#ifndef NEVERD_A64_ADDRESS_MEMORY_TEXT
+#define NEVERD_A64_ADDRESS_MEMORY_TEXT(Name, Text)
+#endif
+#ifndef NEVERD_A64_ADDRESS_MEMORY_OPERATION
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic)
+#endif
+
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_Load64RegisterOffset, "ldr")
+NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressLoadOpcodeMask, 0xffe0ec00U)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressLoadOpcode, 0xf8606800U)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryRegisterMask, 0x1fU)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryBaseShift, 5)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryIndexShift, 16)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryRegistersMask,
+                                0x1f03ffU)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryPointerBytes, 8)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryPointerBits, 64)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryWordBytes, 4)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryIdentifierBytes, 2)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressLoadOperandCount, 3)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryScratchBase, 16)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryScratchIndex, 15)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryScratchValue, 17)
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressLoadAsm,
+                               ".inst ${3:c} // neverd.address.load")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressLoadConstraints,
+                               "=&{x17},{x16},{x15},i,~{memory}")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressLoadResult, "address.load")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressMemoryMalformed,
+                               "malformed AArch64 original memory operation")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(
+    kAddressMemorySPUnsupported,
+    "SP-origin memory requires the original SP alignment and tagging environment")
+
+#undef NEVERD_A64_ADDRESS_MEMORY_OPERATION
+#undef NEVERD_A64_ADDRESS_MEMORY_TEXT
+#undef NEVERD_A64_ADDRESS_MEMORY_VALUE

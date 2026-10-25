@@ -19,6 +19,7 @@
 #include "neverd/ir/X86/X87GuardedValue.h"
 #include "neverd/ir/X86/X87PortableABI.h"
 #include "neverd/ir/X86/X87Value.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
@@ -81,6 +82,32 @@ inline bool aarch64SVECPAMedShapeIsValid(const MedOp &Op) {
          aarch64_sve::cpaOperation(
              static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
              .has_value();
+}
+
+inline bool aarch64AddressMemoryMedShapeIsValid(const MedOp &Op) {
+  if (!hasValidMedIntrinsicId(Op) ||
+      Op.NumInputs != kAddressLoadOperandCount + 1 ||
+      Op.Inputs[0].Size != kAddressMemoryIdentifierBytes ||
+      Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      !Op.IntrinsicOutputs.empty() ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      (Op.Output.TheArch != Arch::Unknown &&
+       Op.Output.TheArch != Arch::AArch64) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  for (unsigned I = 1; I != kAddressLoadOperandCount; ++I)
+    if ((!Op.Inputs[I].isConst() && Op.Inputs[I].Kind != MedVar::Reg &&
+         Op.Inputs[I].Kind != MedVar::Temp &&
+         Op.Inputs[I].Kind != MedVar::Param) ||
+        (!Op.Inputs[I].isConst() && Op.Inputs[I].TheArch != Arch::Unknown &&
+         Op.Inputs[I].TheArch != Arch::AArch64))
+      return false;
+  return aarch64AddressMemoryShapeIsValid(
+      static_cast<Intrinsic>(Op.Inputs[0].ConstVal), Op.NumInputs,
+      Op.Output.Size, Op.Inputs[1].Size, Op.Inputs[2].Size, Op.Inputs[3].Size,
+      Op.Inputs[3].isConst() ? std::optional<uint64_t>(Op.Inputs[3].ConstVal)
+                             : std::nullopt);
 }
 
 inline bool aarch64PAuthLoadMedShapeIsValid(const MedOp &Op) {
@@ -569,6 +596,7 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
   return !preservesCallSetup(Id) && !onlyChecksForAFault(Id) &&
          !aarch64PAuthMedShapeIsValid(Op) &&
          !aarch64PAuthLoadMedShapeIsValid(Op) &&
+         !aarch64AddressMemoryMedShapeIsValid(Op) &&
          !aarch64CPAMedShapeIsValid(Op) && !aarch64SVECPAMedShapeIsValid(Op) &&
          !aarch64SVEPrefixMedShapeIsValid(Op) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));

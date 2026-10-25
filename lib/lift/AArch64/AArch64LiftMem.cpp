@@ -10,8 +10,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/AArch64/AArch64Lifter.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -21,6 +23,35 @@ namespace neverd {
 
 bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
                             const cs_aarch64 &ARM64) {
+  if (Insn->size == kAddressMemoryWordBytes) {
+    if (const auto Instruction =
+            aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes))) {
+      // Preserve the raw index: the machine instruction owns its scale and
+      // AddressAdd's access-EL check. Reading both inputs before publishing
+      // the result also retains source/destination aliases.
+      const NdVar Base = NdVar::reg(
+          Instruction->stackBase()
+              ? a64reg::SP
+              : a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
+          kAddressMemoryPointerBytes);
+      const NdVar Index =
+          Instruction->index() == kAddressMemoryRegisterMask
+              ? NdVar::scalar(0, kAddressMemoryPointerBytes)
+              : NdVar::reg(a64reg::X0 + Instruction->index() *
+                                            kAddressMemoryPointerBytes,
+                           kAddressMemoryPointerBytes);
+      const NdVar Destination =
+          Instruction->destination() == kAddressMemoryRegisterMask
+              ? S.makeTemp(kAddressMemoryPointerBytes)
+              : NdVar::reg(a64reg::X0 + Instruction->destination() *
+                                            kAddressMemoryPointerBytes,
+                           kAddressMemoryPointerBytes);
+      S.emitIntrinsic(Intrinsic::A64_Load64RegisterOffset, Destination,
+                      {Base, Index,
+                       NdVar::cst(Instruction->Word, kAddressMemoryWordBytes)});
+      return true;
+    }
+  }
   switch (Insn->id) {
 
   // --- LDR / LDUR / STR / STUR ---

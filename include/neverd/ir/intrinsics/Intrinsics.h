@@ -458,6 +458,10 @@ enum class Intrinsic : uint16_t {
   X86EncluBounded,
   X86GetsecBounded,
 
+// Append-only: original memory instructions retain CPA2 address semantics.
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+
   _Count = 16000
 };
 

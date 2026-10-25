@@ -29,6 +29,7 @@
 
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/c/FloatingPointContract.h"
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
@@ -4536,6 +4537,14 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   CheckRequirement = [&](const ExprPtr &Expr) {
     if (!Expr || !Seen.insert(Expr.get()).second)
       return;
+    if (isAArch64AddressMemoryIntrinsic(Expr->IntrinsicId)) {
+      if (Opts.TheArch != Arch::AArch64 ||
+          !aarch64AddressMemoryHighShapeIsValid(*Expr))
+        throw std::invalid_argument(kAddressMemoryMalformed);
+      if (aarch64AddressMemoryInstruction(Expr->Operands[2]->ConstVal)
+              ->stackBase())
+        throw std::invalid_argument(kAddressMemorySPUnsupported);
+    }
     if (isAArch64PAuthLoadIntrinsic(Expr->IntrinsicId)) {
       if (Opts.TheArch != Arch::AArch64 ||
           !aarch64PAuthLoadHighShapeIsValid(*Expr))

@@ -147,6 +147,8 @@ NEVERD_SVE_VECTOR_FIXTURE(const char *, kSignedStateAuthenticate,
 NEVERD_SVE_VECTOR_FIXTURE(const char *, kSignedStateTargetUse,
                           "neverd authenticated target")
 NEVERD_SVE_VECTOR_FIXTURE(unsigned, kPAuthResultId, 13)
+NEVERD_SVE_VECTOR_FIXTURE(uint32_t, kAddressMemoryWord, 0xf8626820)
+NEVERD_SVE_VECTOR_FIXTURE(unsigned, kAddressMemoryIdFixtureBytes, 2)
 NEVERD_SVE_VECTOR_FIXTURE(uint64_t, kPAuthModeEnabled, 1)
 NEVERD_SVE_VECTOR_WIDTH(1)
 NEVERD_SVE_VECTOR_WIDTH(2)

@@ -20,6 +20,7 @@
 #include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/X86/X87GuardedValue.h"
 #include "neverd/ir/X86/X87Stack.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86/X86Regs.h"
@@ -494,6 +495,10 @@ bool NdOpEmulator::step(const LowOp &Op) {
   if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
       Op.Inputs[0].isConst()) {
     const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+    // The scalar tracer has no authenticated access-EL/SCTLR2 profile. An
+    // unknown checked address cannot become a wrapping ordinary memory read.
+    if (isAArch64AddressMemoryIntrinsic(Id))
+      return false;
     if (isX86SystemStateIntrinsic(Id)) {
       switch (x86SystemStateContract(Id).Kind) {
       case X86SystemStateKind::Enqueue:

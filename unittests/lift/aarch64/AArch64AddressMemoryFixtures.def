@@ -1,0 +1,111 @@
+//===- AArch64AddressMemoryFixtures.def - Independent memory words -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Independent LLVM MC words, including original and fixed-register loads.
+/// CASE owns raw word, destination, base, index and expected emitted word.
+//===----------------------------------------------------------------------===//
+
+#ifndef MEMORY_CASE
+#define MEMORY_CASE(Word, Dst, Base, Index, Scratch)
+#endif
+#ifndef MEMORY_VALUE
+#define MEMORY_VALUE(Type, Name, Value)
+#endif
+#ifndef MEMORY_TEXT
+#define MEMORY_TEXT(Name, Text)
+#endif
+
+MEMORY_CASE(0xf8626820, 0, 1, 2, 0xf86f6a11)
+MEMORY_CASE(0xf8627820, 0, 1, 2, 0xf86f7a11)
+MEMORY_CASE(0xf8626821, 1, 1, 2, 0xf86f6a11)
+MEMORY_CASE(0xf8627822, 2, 1, 2, 0xf86f7a11)
+MEMORY_CASE(0xf8616820, 0, 1, 1, 0xf86f6a11)
+MEMORY_CASE(0xf87f6820, 0, 1, 31, 0xf86f6a11)
+MEMORY_CASE(0xf862683f, 31, 1, 2, 0xf86f6a11)
+MEMORY_CASE(0xf8626be0, 0, 31, 2, 0xf86f6a11)
+MEMORY_VALUE(uint32_t, kFirst, 0xf8626820)
+MEMORY_VALUE(uint32_t, kScaled, 0xf8627820)
+MEMORY_VALUE(uint32_t, kStackBase, 0xf8626be0)
+MEMORY_VALUE(uint32_t, kABIFirst, 0xf8616800)
+MEMORY_VALUE(uint32_t, kABIScaled, 0xf8617800)
+MEMORY_VALUE(uint32_t, kReturn, 0xd65f03c0)
+MEMORY_VALUE(uint32_t, kNotLoad, 0xf8226820)
+MEMORY_VALUE(uint32_t, kWordLoad, 0xb8626820)
+MEMORY_VALUE(uint32_t, kSignedIndex, 0xf862d820)
+MEMORY_VALUE(uint32_t, kImmediate, 0xf9400420)
+MEMORY_VALUE(uint64_t, kOversized, 0x1f8626820ULL)
+MEMORY_VALUE(uint64_t, kWrappedId, 65536)
+MEMORY_VALUE(unsigned, kScalarBytes, 8)
+MEMORY_VALUE(unsigned, kWordBytes, 4)
+MEMORY_VALUE(unsigned, kIdBytes, 2)
+MEMORY_VALUE(unsigned, kZeroRegister, 31)
+MEMORY_VALUE(va_t, kEntry, 0x1000)
+MEMORY_VALUE(unsigned, kTimeoutSeconds, 30)
+MEMORY_TEXT(kName, "original_memory_load")
+MEMORY_TEXT(kObject, "original-memory.o")
+MEMORY_TEXT(kTempPrefix, "neverd-original-memory")
+MEMORY_TEXT(kSourceExtension, "c")
+MEMORY_TEXT(kOutputExtension, "out")
+MEMORY_TEXT(kErrorExtension, "err")
+MEMORY_TEXT(kClang, "clang")
+MEMORY_TEXT(kTargetFlag, "-target")
+MEMORY_TEXT(kTarget, "arm64-apple-macos")
+MEMORY_TEXT(kFreestanding, "-ffreestanding")
+MEMORY_TEXT(kNoSystemHeaders, "-nostdlibinc")
+MEMORY_TEXT(kInclude, "-I")
+MEMORY_TEXT(kLanguage, "-std=gnu11")
+MEMORY_TEXT(kOutputFlag, "-o")
+MEMORY_TEXT(kCompileOnly, "-c")
+MEMORY_TEXT(kO0, "-O0")
+MEMORY_TEXT(kO2, "-O2")
+MEMORY_TEXT(kMissingCompiler, "clang is required for original-memory execution")
+MEMORY_TEXT(kMissingNative, "native AArch64 execution is unavailable")
+MEMORY_TEXT(kBaseExpression,
+            "__memory_base + __memory_value + __memory_base_input")
+MEMORY_TEXT(kIndexExpression,
+            "__memory_index + __memory_value + __memory_index_input")
+MEMORY_TEXT(kResultName, "result")
+MEMORY_TEXT(kCaptureSource,
+            "#include <stdint.h>\nuint64_t capture(uint64_t __memory_base, "
+            "uint64_t __memory_index, uint64_t __memory_value, "
+            "uint64_t __memory_base_input, uint64_t __memory_index_input) "
+            "{{ return {0}; }\n")
+MEMORY_TEXT(kBaseCall, "get_base()")
+MEMORY_TEXT(kIndexCall, "get_index()")
+MEMORY_TEXT(kInputCallsSource,
+            "#include <stdint.h>\nstatic uint64_t data = 71; static int calls; "
+            "__attribute__((noinline)) static uint64_t get_base(void) "
+            "{{ ++calls; return (uint64_t)(uintptr_t)&data; } "
+            "__attribute__((noinline)) static uint64_t get_index(void) "
+            "{{ ++calls; __asm__ volatile(\"mov x16, #0\" ::: \"x16\"); return 0; } "
+            "int main(void) {{ uint64_t result = {0}; "
+            "return result != 71 || calls != 2 || data != 71; }\n")
+MEMORY_TEXT(kNativeHarness,
+            "\nint main(void) {{ uint64_t data[] = {{ 11, 23, 37, 53, 71, 89, 107 }; "
+            "for (int i = -3; i <= 3; ++i) {{ "
+            "uint64_t offset = (uint64_t)(int64_t)(i * {1}); "
+            "uint64_t got = {0}((uint64_t)(uintptr_t)&data[3], offset); "
+            "if (got != data[3 + i]) return 1; } "
+            "return data[0] != 11 || data[6] != 107; }\n")
+
+MEMORY_TEXT(kBarrierHarness,
+            "\nint main(void) {{ uint64_t value = 7; "
+            "__auto_type base = _Generic(&{0}, "
+            "uint64_t (*)(void *, int64_t): (void *)&value, "
+            "uint64_t (*)(void *, uint64_t): (void *)&value, "
+            "default: (uint64_t)(uintptr_t)&value); "
+            "uint64_t result = {0}(base, 0); "
+            "return result != 11 || value != 23; }\n")
+
+MEMORY_TEXT(kPointerHarness,
+            "\nint main(void) {{ uint64_t data = 71; "
+            "uint64_t slot = (uint64_t)(uintptr_t)&data; "
+            "void *result = {0}((uint64_t)(uintptr_t)&slot, 0); "
+            "return result != &data || data != 71; }\n")
+
+#undef MEMORY_TEXT
+#undef MEMORY_VALUE
+#undef MEMORY_CASE
