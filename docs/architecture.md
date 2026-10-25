@@ -229,6 +229,8 @@ The COFF loader separates V2 epilogue positions from prologue operations. V2 res
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
 
+Linked x64 PE discovery collects canonical RIP-relative LEA code addresses during the existing call sweep. Targets still need independent ownership and a bounded callable-exit proof; internal labels, continuations and unsupported bodies remain excluded. Discovery and signature references share the address-encoding classifier. COFF conditional rel32 references additionally require explicit source function symbols and zero-addend relocations. Offline `--single-reference-context` audits each complete single-site clause against every overlapping raw source claim, retaining all alternatives at that site.
+
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting
 an ABI, a supported body or runtime CFG admission. The low-level detector owns

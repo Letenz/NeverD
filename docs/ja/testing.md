@@ -4,6 +4,8 @@
 
 # NeverD のテスト
 
+`PEFunctionAddresses.*` はスタックフレームのない x64 PE リーフ、所有関係、命令境界、拒否する接頭辞と狭いオペランド、出口、キャンセル、1/2/4/16 ワーカーの一致を検証します。シグネチャテストは全16条件の rel32 の正負変位、明示的な入口範囲、ソース再配置制約を扱います。Python テストは各単一位置条件がすべての元の競合宣言を区別し、代替名と共同で必要な位置を保持して既存宣言を重複させないことを確認します。
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*` と `DriverMSRDeclaration.*` は明示した MSR 値、全幅分割、状態保持、反復読み取り、厳密な命令予算、不足・無効な宣言、メモリ権限が増えないことを利用可能なバックエンドで検査します。`KernelMSRRead.*` は未使用宣言の依存を保持します。ネイティブドライバ、ドライバエミュレーション、カーネルスナップショットのテストを実行します。利用不能な WHP/HVF はスキップであり認証ではありません。
