@@ -23,8 +23,8 @@ struct LoadProgress;
 
 /// The SHA-256 digest of \p Data, the same as llvm::SHA256::hash's.
 ///
-/// Uses the x86 SHA extensions only when all required host features are
-/// present, and the LLVM implementation on other processors.
+/// Uses x86 or little-endian ARM64 SHA extensions only when the required host
+/// features are present, and the LLVM implementation on other processors.
 std::array<uint8_t, 32> sha256(llvm::ArrayRef<uint8_t> Data);
 
 /// Same digest and hardware implementation, with bounded byte checkpoints.
