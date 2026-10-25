@@ -58,8 +58,10 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace neverd;
@@ -237,6 +239,62 @@ MedFunc memoryFunction(uint32_t Word, bool Discard = false) {
   }
   Function.Blocks.front().Ops.push_back(Return);
   return Function;
+}
+
+TEST(AArch64AddressMemory, PointerParametersRetainOriginalAddressRoles) {
+  for (const auto [Word, IndexIsPointer] :
+       {std::pair{0xf8606900U, true}, std::pair{0xf8206900U, true},
+        std::pair{0xf8607900U, false}, std::pair{0xf8604900U, false}}) {
+    SCOPED_TRACE(Word);
+    auto Function = memoryFunction(Word);
+    ASSERT_TRUE(aarch64AddressMemoryMedShapeIsValid(
+        Function.Blocks.front().Ops.front()));
+    const std::set<int> ExpectedParams =
+        IndexIsPointer ? std::set<int>{0, 1} : std::set<int>{0};
+    EXPECT_EQ(detectPtrParamIds(Function), ExpectedParams);
+    auto Typed = Function;
+    inferMedTypes(Typed, Arch::AArch64);
+    ASSERT_EQ(Typed.TypedParams.size(), Function.Params.size());
+    for (size_t I = 0; I != Typed.TypedParams.size(); ++I)
+      EXPECT_EQ(Typed.TypedParams[I].Type->Kind == NdTypeKind::Ptr,
+                ExpectedParams.count(I) != 0);
+    auto &Load = Function.Blocks.front().Ops.front();
+    Load.Inputs[1].Kind = Load.Inputs[2].Kind = MedVar::Reg;
+    const std::set<uint64_t> ExpectedRegs =
+        IndexIsPointer ? std::set<uint64_t>{a64reg::X0, a64reg::X1}
+                       : std::set<uint64_t>{a64reg::X0};
+    EXPECT_EQ(detectPtrParamRegs(Function), ExpectedRegs);
+  }
+}
+
+TEST(AArch64AddressMemory,
+     MalformedOriginalAccessCannotInferPointerParameters) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    auto Function = memoryFunction(0xf8606900U);
+    auto &Load = Function.Blocks.front().Ops.front();
+    switch (Mutation) {
+    case 0:
+      Load.Inputs[1].TheArch = Arch::X64;
+      break;
+    case 1:
+      Load.Inputs[2].Size = 4;
+      break;
+    case 2:
+      Load.Inputs[3].Size = 8;
+      break;
+    case 3:
+      --Load.NumInputs;
+      break;
+    }
+    EXPECT_FALSE(aarch64AddressMemoryMedShapeIsValid(Load));
+    EXPECT_TRUE(detectPtrParamIds(Function).empty());
+    auto Typed = Function;
+    inferMedTypes(Typed, Arch::AArch64);
+    for (const auto &Param : Typed.TypedParams)
+      EXPECT_NE(Param.Type->Kind, NdTypeKind::Ptr);
+    Load.Inputs[1].Kind = Load.Inputs[2].Kind = MedVar::Reg;
+    EXPECT_TRUE(detectPtrParamRegs(Function).empty());
+  }
 }
 
 LowFunc lowFunction(const LowOp &Load) {

@@ -322,6 +322,14 @@ native-word comparisons exercise each family through HighC and LLVMC at O0/O2,
 including signed data, W-result zero extension, narrow-index high garbage,
 negative offsets, exact store widths and unchanged neighbouring bytes.
 Eighteen decoded narrow-index aliases also exercise source ABI recovery.
+Pointer-parameter regressions compare the shared MedIR and both HighIR
+consumers for full-width, scaled and narrowed indices, with malformed word,
+width, operand and architecture controls. `ObjCSourceBindings.*ReadOnlyTable*`
+and `ObjCSourceInputs.*` cover retained original reads, every bounded table
+occurrence, publication mutations, runtime offset snapshots and competing
+effects. The native indirect-field, read-only-table and switch-effect fixtures
+in `NeverDObjCRuntimeSourceTests` execute the recovered source against runtime
+metadata, integer/floating bits, stores and calls.
 Native harnesses also link the LLVM-generated objects and compare their memory
 and return values with independent instruction words. Fifty-two additional MC
 fixtures cover SP provenance, zero indices, discarded loads, zero stores and
@@ -6226,6 +6234,8 @@ the index register, the table base register reused for the anchor, and signed
 byte and halfword entries (`sxtb #2`, `sxth #2`) with a case before the anchor.
 It requires the exact targets and the lifted switch cases, and no table for a
 halfword entry the dispatch truncates to its low byte.
+The full-width index variant requires an X-register guard with a narrow scalar
+immediate; the existing W-register guard cannot authorize that raw X index.
 `JTE_AArch64.GCCCompactGuardBoundsTheStorageItReads` is libgcc's
 `size_of_encoded_value`: a guard bounds the index below bytes that follow the
 table in its data owner, and one case calls `abort`. It requires the five

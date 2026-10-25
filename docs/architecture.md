@@ -389,6 +389,14 @@ MedIR, LLVM and both C routes. W indices consume exactly four bytes. A load
 returns its accessed bytes; explicit IR sign/zero extends through the encoded
 W/X result width before publishing the complete X register. Stores consume
 only their accessed data bytes, with no invented return value.
+MedIR and HighIR share the original-memory pointer-input visitor: a non-SP
+base or an unscaled full-width index can supply parameter type evidence.
+Narrow or scaled indices do not. This type inference preserves the original
+instruction and grants no permission to replace its address calculation.
+Objective-C scalar table binding relocates only a proved immutable base,
+retaining the raw index, encoded extension, access width and memory effects.
+Every occurrence needs a bounded complete access range and the original
+instruction owner's address proof; publication rechecks the current uses.
 Byte and halfword stores slice the encoded W value explicitly; the tracer
 requires those source bytes to be known before publishing the slice. Unknown
 unused upper bytes do not prevent a known narrow store.
@@ -6131,6 +6139,14 @@ id, blocks, protocol-only types, ambiguous storage and unknown pointer bases do
 not provide class facts. Source validation repeats the entire path against the
 current image. These facts describe declared types, not object identity or
 permission to remove memory operations.
+
+A native helper's single entry read of a runtime ivar-offset cell may be
+snapshotted before the call without changing its pointer ABI. The shared
+entry-read proof follows a validated original AArch64 read's inputs only when
+all sibling inputs are pure and no competing effect precedes the read.
+Duplicate reads, escapes, unsupported ordering and malformed instructions
+remain unproved. The snapshot reads current runtime metadata; it does not copy
+the offset stored in the analyzed image.
 
 When control flow selects among authenticated Objective-C ivar-offset cells,
 the source binding may move the runtime offset values to the predecessor edges
