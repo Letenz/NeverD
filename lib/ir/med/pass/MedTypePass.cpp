@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -1209,6 +1210,121 @@ static void inferLocalTypes(MedFunc &Func) {
 // Entry point
 //===----------------------------------------------------------------------===//
 
+namespace {
+struct SourceStackSeeds {
+  size_t Position = 0;
+  int64_t Headroom = 0;
+  std::vector<MedOp> Operations;
+};
+
+// A declared incoming stack value also initializes the bytes reached through
+// entry SP. Binding only generic Param uses leaves raw LOADs disconnected from
+// that value. Publish ordinary MedIR stores once, so both source backends and
+// later alias-aware passes observe the same initialization and later writes.
+std::optional<SourceStackSeeds>
+sourceStackSeeds(const MedFunc &Func, Arch Architecture,
+                 const TargetRegInfo &TRI,
+                 const std::vector<SourceABIParameter> &Parameters) {
+  SourceStackSeeds Seeds;
+  if (Func.SourceParametersBound ||
+      std::none_of(Parameters.begin(), Parameters.end(), [](const auto &P) {
+        return P.Location.Kind == SourceABICarrierKind::Stack;
+      }))
+    return Seeds;
+  if (Func.SkippedSSA || Func.Blocks.empty() ||
+      !Func.Blocks.front().Preds.empty())
+    return std::nullopt;
+  std::optional<MedVar> Stack;
+  bool Ambiguous = false;
+  int MaximumId = 0;
+  auto Visit = [&](const MedVar &Value) {
+    if (!Value.isConst())
+      MaximumId = std::max(MaximumId, Value.Id);
+    if (Value.Kind == MedVar::Reg && Value.RegOff == TRI.StackPointer &&
+        Value.Size == TRI.PointerSize && Value.SSAVer == 0) {
+      Ambiguous |= Stack && *Stack != Value;
+      Stack = Value;
+    }
+  };
+  for (const auto &Block : Func.Blocks) {
+    for (const auto &Phi : Block.Phis) {
+      Visit(Phi.Output);
+      for (const auto &[Pred, Value] : Phi.Args)
+        Visit(Value);
+      if (Phi.ExceptionalEntry)
+        Visit(*Phi.ExceptionalEntry);
+    }
+    for (const auto &Op : Block.Ops) {
+      Visit(Op.Output);
+      for (const auto &Output : Op.IntrinsicOutputs)
+        Visit(Output);
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        Visit(Op.Inputs[I]);
+    }
+  }
+  for (const auto &Call : Func.CallInfos)
+    for (const auto &Argument : Call.Args)
+      Visit(Argument);
+  for (const auto &Clobber : Func.CallClobbers) {
+    Visit(Clobber.Value);
+    Visit(Clobber.PreservedInput);
+  }
+  if (Ambiguous ||
+      Parameters.size() >
+          static_cast<size_t>(std::numeric_limits<int>::max() - MaximumId))
+    return std::nullopt;
+  // A body already expressed entirely through Param values has no remaining
+  // entry-SP memory to initialize.
+  if (!Stack)
+    return Seeds;
+  for (const auto &Op : Func.Blocks.front().Ops) {
+    if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
+        Op.Output != Op.Inputs[0])
+      break;
+    ++Seeds.Position;
+  }
+  for (size_t I = 0; I < Parameters.size(); ++I) {
+    const auto &Location = Parameters[I].Location;
+    if (Location.Kind != SourceABICarrierKind::Stack)
+      continue;
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.TheArch = Architecture;
+    Parameter.Id = static_cast<int>(I);
+    Parameter.RegOff = kNoParamReg;
+    Parameter.Size = Location.ValueBytes;
+    MedOp Address;
+    Address.Opcode = NdOp::INT_ADD;
+    Address.Addr = Func.Entry;
+    Address.Output.Kind = MedVar::Temp;
+    Address.Output.TheArch = Architecture;
+    Address.Output.Id = ++MaximumId;
+    Address.Output.SSAVer = 1;
+    Address.Output.Size = TRI.PointerSize;
+    Address.addInput(*Stack);
+    Address.addInput(MedVar::makeConst(Location.EntryStackOffset,
+                                       TRI.PointerSize,
+                                       ConstantAddressProvenance::Scalar));
+    MedOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.Addr = Func.Entry;
+    Store.addInput(Address.Output);
+    Store.addInput(Parameter);
+    Seeds.Headroom = std::max(Seeds.Headroom,
+                              Location.EntryStackOffset + Location.ValueBytes);
+    Seeds.Operations.push_back(std::move(Address));
+    Seeds.Operations.push_back(std::move(Store));
+  }
+  for (const auto &Call : Func.CallInfos)
+    if (Call.BlockId == Func.Blocks.front().Id && Call.OpIdx >= 0 &&
+        static_cast<size_t>(Call.OpIdx) >= Seeds.Position &&
+        Seeds.Operations.size() >
+            static_cast<size_t>(std::numeric_limits<int>::max() - Call.OpIdx))
+      return std::nullopt;
+  return Seeds;
+}
+} // namespace
+
 void inferMedTypes(MedFunc &Func, Arch TheArch,
                    const std::map<va_t, uint16_t> *CalleeFloatReturns) {
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -1292,8 +1408,9 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
         if (Old.Kind != MedVar::Param && !EntryRegister)
           continue;
         if (Func.SourceParametersBound) {
-          Valid &=
-              Old.Id >= 0 && static_cast<size_t>(Old.Id) < Parameters.size();
+          if (Old.Kind == MedVar::Param)
+            Valid &=
+                Old.Id >= 0 && static_cast<size_t>(Old.Id) < Parameters.size();
           continue;
         }
         int Index = -1;
@@ -1403,6 +1520,11 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
     Func.SourceTypeHint.reset();
     return;
   }
+  auto Seeds = sourceStackSeeds(Func, TheArch, TRI, Parameters);
+  if (!Seeds) {
+    Func.SourceTypeHint.reset();
+    return;
+  }
   std::vector<MedVar> BoundParams;
   std::vector<MedTypedParam> BoundTypes;
   for (size_t I = 0; I < Parameters.size(); ++I) {
@@ -1448,6 +1570,16 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
   Func.SourceTypeHint = std::move(Hint);
   Func.SourceParametersBound = true;
   Func.FPReturnViaX87 = false;
+  if (!Seeds->Operations.empty()) {
+    auto &Entry = Func.Blocks.front().Ops;
+    Entry.insert(Entry.begin() + Seeds->Position, Seeds->Operations.begin(),
+                 Seeds->Operations.end());
+    for (auto &Call : Func.CallInfos)
+      if (Call.BlockId == Func.Blocks.front().Id && Call.OpIdx >= 0 &&
+          static_cast<size_t>(Call.OpIdx) >= Seeds->Position)
+        Call.OpIdx += static_cast<int>(Seeds->Operations.size());
+    Func.FrameHeadroom = std::max(Func.FrameHeadroom, Seeds->Headroom);
+  }
 }
 
 void propagateForwardedPointerParams(std::vector<MedFunc> &Funcs,

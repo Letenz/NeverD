@@ -186,7 +186,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // signature, its return class (FP-in-vector-register vs integer) and its
   // argument counts.
   for (auto &MF : Result.MedFuncs)
-    inferMedTypes(MF, Img.Arch);
+    if (!MF.SourceParametersBound)
+      inferMedTypes(MF, Img.Arch);
 
   // A callee that merely forwards an indirect scalar-FP call has no explicit
   // post-call D0/V0 read: the native RET returns whatever BLR left in V0, so

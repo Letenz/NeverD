@@ -68,6 +68,10 @@ public:
   void setSourceCallHintsEnabled(bool Enabled) {
     SourceCallHintsEnabled = Enabled;
   }
+  /// Permit explicit call bindings without discovering runtime source ABIs.
+  void setSourceCallRuntimeHintsEnabled(bool Enabled) {
+    SourceCallRuntimeHintsEnabled = Enabled;
+  }
   void setSourceCallSiteHints(
       const std::map<SourceCallOccurrenceKey, SourceCallTypeHint> *Hints) {
     SourceCallSiteHints = Hints;
@@ -418,6 +422,7 @@ private:
 
   const BinaryImage *Image = nullptr;
   bool SourceCallHintsEnabled = false;
+  bool SourceCallRuntimeHintsEnabled = true;
   const std::map<SourceCallOccurrenceKey, SourceCallTypeHint>
       *SourceCallSiteHints = nullptr;
   bool SEHSourceProjectionEnabled = false;

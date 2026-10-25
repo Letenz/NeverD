@@ -167,8 +167,8 @@ struct PipelineOptions {
   /// (true) or no longer one (false).  Whole-program detection follows them;
   /// a restricted run lifts its OnlyFunctionEntries.
   std::map<va_t, bool> FunctionEdits;
-  /// Explicit declarations for source rendering only; never consumed in
-  /// PatchMode or LiftMode and never promoted to transformation evidence.
+  /// Explicit declarations for source rendering, including LLVM-to-C. Machine
+  /// lifting, patching and analysis never consume them as ABI evidence.
   std::map<va_t, SourceFunctionTypeHint> SourceTypeHints;
   /// Exact semantic declarations used only when binding calls to a callee.
   /// This is distinct from SourceTypeHints: compiler-generated thunks may
@@ -215,6 +215,13 @@ struct PipelineOptions {
   /// Machine analysis and rewriting exclude presentation-only source hints.
   bool usesMachineMedIR() const {
     return PatchMode || LiftMode || MedAnalysisOnly;
+  }
+
+  /// A requested LLVM source view can bind explicit declarations without
+  /// enabling runtime discovery or authorizing machine-code rewriting.
+  bool usesSourceDeclarations() const {
+    return !usesMachineMedIR() ||
+           (LiftMode && SourceProjection && !PatchMode && !MedAnalysisOnly);
   }
 };
 
