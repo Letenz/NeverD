@@ -83,7 +83,7 @@ BinaryImage homeImage(Arch Architecture, BinaryFormat Format) {
   return Image;
 }
 
-SourceFunctionTypeHint homeSignature(Arch Architecture) {
+SourceFunctionTypeHint homeSignature(Arch Architecture, bool Floating) {
   SourceFunctionTypeHint Hint;
   Hint.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
   Hint.Architecture = Architecture;
@@ -93,7 +93,7 @@ SourceFunctionTypeHint homeSignature(Arch Architecture) {
                          getTargetRegInfo(Architecture).IntReturnReg, 0, 8};
   SourceParameterTypeHint Parameter;
   Parameter.Name = "incoming_home";
-  Parameter.Type = NdType::makeInt(8, false);
+  Parameter.Type = Floating ? NdType::makeFloat(8) : NdType::makeInt(8, false);
   Parameter.Location = {SourceABICarrierKind::Stack, 0,
                         Architecture == Arch::X64 ? 8 : 0, 8};
   Hint.Parameters.push_back(std::move(Parameter));
@@ -101,75 +101,88 @@ SourceFunctionTypeHint homeSignature(Arch Architecture) {
 }
 
 TEST(IncomingHomeSource, ExplicitStackCarrierReachesBothCPaths) {
-  for (Arch Architecture : {Arch::X64, Arch::AArch64})
-    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
-      SCOPED_TRACE(static_cast<unsigned>(Architecture));
-      SCOPED_TRACE(static_cast<unsigned>(Format));
-      const auto Image = homeImage(Architecture, Format);
-      const auto Signature = homeSignature(Architecture);
-      std::string Diagnostic;
-      ASSERT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
-      Decoder Decoder;
-      ASSERT_TRUE(Decoder.init(Image));
-      CFGBuilder Builder;
-      const std::set<va_t> Entries{Caller, Callee};
-      Builder.setKnownFuncEntries(&Entries);
-      const auto Low = Builder.build(Image, Decoder, Caller, "caller_home");
-      std::map<SourceCallOccurrenceKey, SourceCallTypeHint> Sites;
-      for (const auto &Block : Low.Blocks)
-        for (const auto &Operation : Block.Ops)
-          if (const auto Site = sourceCallOccurrenceKey(Operation);
-              Site && Site->StaticTarget == Callee) {
-            SourceCallTypeHint Hint;
-            Hint.CallKind = SourceCallTypeHint::Kind::Native;
-            Hint.TargetAddress = Callee;
-            Hint.TargetName = "read_home";
-            Hint.Signature = Signature;
-            Sites.emplace(*Site, std::move(Hint));
+  for (bool Floating : {false, true})
+    for (Arch Architecture : {Arch::X64, Arch::AArch64})
+      for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+        SCOPED_TRACE(Floating);
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        const auto Image = homeImage(Architecture, Format);
+        const auto Signature = homeSignature(Architecture, Floating);
+        std::string Diagnostic;
+        ASSERT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+        Decoder Decoder;
+        ASSERT_TRUE(Decoder.init(Image));
+        CFGBuilder Builder;
+        const std::set<va_t> Entries{Caller, Callee};
+        Builder.setKnownFuncEntries(&Entries);
+        const auto Low = Builder.build(Image, Decoder, Caller, "caller_home");
+        std::map<SourceCallOccurrenceKey, SourceCallTypeHint> Sites;
+        for (const auto &Block : Low.Blocks)
+          for (const auto &Operation : Block.Ops)
+            if (const auto Site = sourceCallOccurrenceKey(Operation);
+                Site && Site->StaticTarget == Callee) {
+              SourceCallTypeHint Hint;
+              Hint.CallKind = SourceCallTypeHint::Kind::Native;
+              Hint.TargetAddress = Callee;
+              Hint.TargetName = "read_home";
+              Hint.Signature = Signature;
+              Sites.emplace(*Site, std::move(Hint));
+            }
+        ASSERT_EQ(Sites.size(), 1u);
+        for (bool LLVM : {false, true})
+          for (bool NoOpt : {false, true}) {
+            SCOPED_TRACE(LLVM);
+            SCOPED_TRACE(NoOpt);
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.OnlyFunctionEntries = Entries;
+            Options.SourceProjection = true;
+            Options.LiftMode = LLVM;
+            Options.NoOpt = NoOpt;
+            Options.SourceTypeHints.emplace(Callee, Signature);
+            Options.SourceCallSiteHints.emplace(Caller, Sites);
+            auto Result = Pipeline().run(Image, Context, Options);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            const auto Function =
+                std::find_if(Result.MedFuncs.begin(), Result.MedFuncs.end(),
+                             [](const MedFunc &Function) {
+                               return Function.Entry == Callee;
+                             });
+            ASSERT_NE(Function, Result.MedFuncs.end());
+            ASSERT_TRUE(Function->SourceParametersBound);
+            std::string Source;
+            llvm::raw_string_ostream Output(Source);
+            CEmitterOptions COptions;
+            COptions.TheArch = Image.Arch;
+            COptions.Format = Image.Format;
+            COptions.Image = &Image;
+            if (LLVM) {
+              ASSERT_TRUE(Result.LlvmModule);
+              ASSERT_FALSE(
+                  llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+              ASSERT_TRUE(
+                  LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+            } else
+              ASSERT_TRUE(
+                  HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+            ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos)
+                << Source;
+            const std::string Oracle =
+                Floating
+                    ? "\nint main(void) { double value = 71.0; uint64_t bits; "
+                      "memcpy(&bits, &value, sizeof(bits)); "
+                      "return caller_home() != 42 || read_home(value) != bits; "
+                      "}\n"
+                    : "\nint main(void) { return caller_home() != 42 || "
+                      "read_home(71) != 71; }\n";
+            for (llvm::StringRef Level : {"-O0", "-O2"})
+              source_call_execution_test::compileAndRun(
+                  Source + Oracle,
+                  {Level, "-ftrivial-auto-var-init=pattern",
+                   "-fsanitize=undefined", "-fsanitize-trap=all"});
           }
-      ASSERT_EQ(Sites.size(), 1u);
-      for (bool LLVM : {false, true})
-        for (bool NoOpt : {false, true}) {
-          SCOPED_TRACE(LLVM);
-          SCOPED_TRACE(NoOpt);
-          llvm::LLVMContext Context;
-          PipelineOptions Options;
-          Options.EmitDumpOutput = false;
-          Options.OnlyFunctionEntries = Entries;
-          Options.SourceProjection = true;
-          Options.LiftMode = LLVM;
-          Options.NoOpt = NoOpt;
-          Options.SourceTypeHints.emplace(Callee, Signature);
-          Options.SourceCallSiteHints.emplace(Caller, Sites);
-          auto Result = Pipeline().run(Image, Context, Options);
-          ASSERT_TRUE(Result.Success) << Result.Error;
-          const auto Function = std::find_if(
-              Result.MedFuncs.begin(), Result.MedFuncs.end(),
-              [](const MedFunc &Function) { return Function.Entry == Callee; });
-          ASSERT_NE(Function, Result.MedFuncs.end());
-          ASSERT_TRUE(Function->SourceParametersBound);
-          std::string Source;
-          llvm::raw_string_ostream Output(Source);
-          CEmitterOptions COptions;
-          COptions.TheArch = Image.Arch;
-          COptions.Format = Image.Format;
-          COptions.Image = &Image;
-          if (LLVM) {
-            ASSERT_TRUE(Result.LlvmModule);
-            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
-            ASSERT_TRUE(
-                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
-          } else
-            ASSERT_TRUE(
-                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
-          ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-          for (llvm::StringRef Level : {"-O0", "-O2"})
-            source_call_execution_test::compileAndRun(
-                Source + "\nint main(void) { return caller_home() != 42 || "
-                         "read_home(71) != 71; }\n",
-                {Level, "-ftrivial-auto-var-init=pattern",
-                 "-fsanitize=undefined", "-fsanitize-trap=all"});
-        }
-    }
+      }
 }
 } // namespace
