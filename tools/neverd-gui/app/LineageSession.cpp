@@ -100,21 +100,23 @@ void LineageSession::load(const QJsonObject &Payload) {
   if (!Ready || busy())
     return;
   Message.clear();
-  request("lineage_load", Payload, this, [this](const QJsonObject &Value) {
-    if (Value["status"] != QJsonValue("ok")) {
-      const auto Error = Value["error"].toObject();
-      Message = Error["code"] == QJsonValue("cancelled")
-                    ? tr("Loading stopped. You can retry.")
-                    : Error["message"].toString();
-      if (!Summary.isEmpty())
-        Message += tr(" Your previous graph is still available.");
-      emit failed(Message);
-      return;
-    }
-    Summary = Value["payload"].toObject();
-    Message = tr("Version graph loaded.");
-    emit collectionChanged();
-  });
+  request("lineage_load", Payload, this,
+          [this, Appended = Payload.value("append").toBool()](
+              const QJsonObject &Value) {
+            if (Value["status"] != QJsonValue("ok")) {
+              const auto Error = Value["error"].toObject();
+              Message = Error["code"] == QJsonValue("cancelled")
+                            ? tr("Loading stopped. You can retry.")
+                            : Error["message"].toString();
+              if (!Summary.isEmpty())
+                Message += tr(" Your previous graph is still available.");
+              emit failed(Message);
+              return;
+            }
+            Summary = Value["payload"].toObject();
+            Message = tr("Version graph loaded.");
+            emit collectionChanged(Appended);
+          });
 }
 void LineageSession::save(const QString &Path, const QString &Report) {
   if (!Ready || busy() || Summary.isEmpty())

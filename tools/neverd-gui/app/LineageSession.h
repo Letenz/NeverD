@@ -42,7 +42,7 @@ public:
 
 signals:
   void changed();
-  void collectionChanged();
+  void collectionChanged(bool Appended);
   void progress(const QJsonObject &Value);
   void failed(const QString &Message);
   void saved(const QString &Path);

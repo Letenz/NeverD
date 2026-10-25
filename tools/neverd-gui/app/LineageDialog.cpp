@@ -35,6 +35,7 @@
 #include <QRegularExpressionValidator>
 #include <QScreen>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTableView>
@@ -472,13 +473,30 @@ void LineageDialog::update() {
     QTimer::singleShot(0, this, &QWidget::close);
   }
 }
-void LineageDialog::loaded() {
-  const auto SelectedTab = Tabs->currentIndex();
-  const auto SelectedVersion = Versions->selected().value("id").toString();
+void LineageDialog::loaded(bool Appended) {
+  const auto SelectedTab = Appended ? Tabs->currentIndex() : 0;
+  const auto SelectedVersion =
+      Appended ? Versions->selected().value("id").toString() : QString();
   const auto VersionOffset =
-      Versions->offset() < Session.summary()["versions"].toInteger()
+      Appended && Versions->offset() < Session.summary()["versions"].toInteger()
           ? Versions->offset()
           : 0;
+  Filter.stop();
+  if (!Appended) {
+    SavedPath.clear();
+    const QSignalBlocker BlockSearch(Search);
+    Search->clear();
+  }
+  if (!Appended || Session.summary()["versions"].toInteger() == 0) {
+    CurrentVersion.clear();
+    TraceVersion.clear();
+    TraceAddress.clear();
+    FunctionTitle->setFullText(
+        tr("Select a snapshot to browse all retained functions."));
+    TraceTitle->setFullText(
+        tr("Trace a function to see every reachable association "
+           "and its shortest-path witness."));
+  }
   Dirty = OpeningPath.isEmpty();
   if (!OpeningPath.isEmpty())
     SavedPath = OpeningPath;
@@ -493,15 +511,7 @@ void LineageDialog::loaded() {
   Sources->setQuery({{"kind", "reports"}});
   Conflicts->setQuery({{"kind", "conflicts"}});
   Reviews->setQuery({{"kind", "reviews"}});
-  if (Session.summary()["versions"].toInteger() == 0) {
-    CurrentVersion.clear();
-    TraceVersion.clear();
-    TraceAddress.clear();
-    FunctionTitle->setFullText(
-        tr("Add a comparison to browse retained functions."));
-    TraceTitle->setFullText(
-        tr("Trace a function to inspect its associations."));
-  } else if (!TraceVersion.isEmpty())
+  if (!TraceVersion.isEmpty())
     trace({{"version", TraceVersion}, {"address", TraceAddress}});
   Tabs->setCurrentIndex(SelectedTab);
   update();

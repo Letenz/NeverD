@@ -58,7 +58,7 @@ private:
   bool Dirty = false, CloseWhenIdle = false, CloseAfterSave = false,
        SavingSource = false;
   void update();
-  void loaded();
+  void loaded(bool Appended);
   QString versionLabel(const QString &ID) const;
   void updateTitles();
   void selectVersion(const QString &ID);

@@ -349,6 +349,72 @@ private slots:
              QString("Second-page release"));
   }
 
+  void replacementResetsNavigationButAppendAndFailureKeepIt() {
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Reports}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
+    auto *Trace = View.findChild<LineagePageView *>("lineageTraceNodes");
+    auto *Search = View.findChild<QLineEdit *>("lineageSearch");
+    auto *Tabs = View.findChild<QTabWidget *>("lineageTabs");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().size() == 1,
+                             Timeout);
+    const auto ID = Versions->selected().value("id");
+    QTest::mouseClick(View.findChild<QPushButton *>("lineageTrace"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Trace->rows().size() == 3,
+                             Timeout);
+    Search->setText("an unmatched search from the old collection");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Functions->rows().isEmpty(),
+                             Timeout);
+    const auto Previous = Session.revision();
+    Session.load({{"path", Directory.filePath("missing-lineage.ndlineage")}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Errors.size() == 1, Timeout);
+    QCOMPARE(Session.revision(), Previous);
+    QCOMPARE(Trace->rows().size(), 3);
+    QVERIFY(!Search->text().isEmpty());
+    QCOMPARE(Tabs->currentIndex(), 1);
+    Session.load({{"append", true},
+                  {"version_updates",
+                   QJsonArray{QJsonObject{{"id", ID},
+                                          {"label", "A retained snapshot"},
+                                          {"branch", "stable"}}}}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Versions->selected()["id"], ID);
+    QCOMPARE(Trace->rows().size(), 3);
+    QVERIFY(!Search->text().isEmpty());
+    QCOMPARE(Tabs->currentIndex(), 1);
+
+    // Replace with two disjoint authored snapshot identities. These report
+    // copies exercise navigation, not native authentication or new analysis.
+    auto Other = QJsonDocument::fromJson(read(Reports[0].toString())).object();
+    for (const auto *Side : {"primary", "secondary"}) {
+      auto Identity = Other[Side].toObject();
+      Identity["sha256"] = QString(64, Side[0] == 'p' ? 'a' : 'b');
+      Other[Side] = Identity;
+    }
+    const auto Path = Directory.filePath("replacement.nddiff");
+    QVERIFY(write(Path, QJsonDocument(Other).toJson(QJsonDocument::Compact)));
+    Session.load({{"reports", QJsonArray{Path}}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 2,
+                             Timeout);
+    QCOMPARE(Errors.size(), 1);
+    QVERIFY(Search->text().isEmpty());
+    QCOMPARE(Tabs->currentIndex(), 0);
+    QVERIFY(Trace->rows().isEmpty());
+    QCOMPARE(Functions->rows().size(), 1);
+    QVERIFY(Versions->selected()["id"] != ID);
+    QTest::mouseClick(View.findChild<QPushButton *>("lineageTrace"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Trace->rows().size() == 2,
+                             Timeout);
+  }
+
   void longMetadataKeepsFunctionControlsReachable_data() {
     QTest::addColumn<QString>("Long");
     QTest::newRow("wide") << QString("Long release label ").repeated(1024);
