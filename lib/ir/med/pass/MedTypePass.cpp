@@ -1300,8 +1300,8 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
       Ranges[RangeCount++] = Range;
   }
   Ranges.resize(RangeCount);
-  std::vector<MedVar> Loads;
-  std::vector<uint16_t> Widths;
+  std::vector<MedVar> Loads{*Stack};
+  std::vector<uint16_t> Widths{0};
   for (const auto &Block : Func.Blocks)
     for (const auto &Op : Block.Ops)
       if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1 && Op.Output.Size &&
@@ -1311,11 +1311,13 @@ sourceStackSeeds(const MedFunc &Func, Arch Architecture,
       }
   // This binder has no loader format; do not add format-specific alignment
   // assumptions to the address proof.
-  const auto Offsets =
-      Loads.empty() ? std::vector<std::optional<int64_t>>{}
-                    : entryStackOffsets(Func, Loads, Architecture,
-                                        BinaryFormat::Unknown, Func.EntryKind);
-  for (size_t I = 0; I < Offsets.size(); ++I) {
+  const auto Offsets = entryStackOffsets(Func, Loads, Architecture,
+                                         BinaryFormat::Unknown, Func.EntryKind);
+  // Authenticate the entry value before publishing stores through it. Merely
+  // seeing an SSA-zero register at SP does not establish the entry seed.
+  if (Offsets.empty() || Offsets.front() != 0)
+    return std::nullopt;
+  for (size_t I = 1; I < Offsets.size(); ++I) {
     if (!Offsets[I])
       continue;
     const int64_t Begin = *Offsets[I];

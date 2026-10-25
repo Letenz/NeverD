@@ -17,6 +17,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -252,6 +253,7 @@ TEST(IncomingHomeSource, EntryInitializationRetainsCallOccurrenceIndices) {
     Function.Blocks.resize(1);
     auto &Block = Function.Blocks.front();
     Block.Id = 0;
+    Block.StartAddr = Function.Entry;
     MedVar Stack;
     Stack.Kind = MedVar::Reg;
     Stack.TheArch = Architecture;
@@ -307,6 +309,7 @@ TEST(IncomingHomeSource, NarrowDeclarationsDoNotDefineAdjacentStackBytes) {
     Function.Blocks.resize(1);
     auto &Block = Function.Blocks.front();
     Block.Id = 0;
+    Block.StartAddr = Function.Entry;
     MedVar Stack;
     Stack.Kind = MedVar::Reg;
     Stack.Id = 20;
@@ -340,6 +343,19 @@ TEST(IncomingHomeSource, NarrowDeclarationsDoNotDefineAdjacentStackBytes) {
     Return.Opcode = NdOp::RETURN;
     Return.addInput(Load.Output);
     Block.Ops = {Seed, Address, Load, Return};
+    ASSERT_EQ(
+        entryStackOffset(Function, Address.Output, Architecture,
+                         BinaryFormat::Unknown),
+        Function.SourceTypeHint->Parameters.front().Location.EntryStackOffset);
+    inferMedTypes(Function, Architecture);
+    EXPECT_FALSE(Function.SourceTypeHint);
+    EXPECT_FALSE(Function.SourceParametersBound);
+    EXPECT_EQ(Block.Ops.size(), 4u);
+
+    Function.SourceTypeHint = homeSignature(Architecture, false);
+    Block.StartAddr = Function.Entry + 1;
+    EXPECT_FALSE(
+        entryStackOffset(Function, Stack, Architecture, BinaryFormat::Unknown));
     inferMedTypes(Function, Architecture);
     EXPECT_FALSE(Function.SourceTypeHint);
     EXPECT_FALSE(Function.SourceParametersBound);
