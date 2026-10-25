@@ -50,6 +50,19 @@ both objects' `getApplicationContext()` return the same Application and their
 deletion, local frames, native thread attachment and detachment do not reset
 these workload-owned identities. Two native threads see the same objects.
 
+`package_resource_path` optionally supplies the attached Application's stable
+API 28 `LoadedApk.mResDir`, returned by `Context.getPackageResourcePath()`.
+Missing input is unknown, JSON null is a known null Java value, and a String
+is preserved exactly up to 4096 UTF-8/WTF-8 bytes. The Application and its base
+Context share the retained result across DEX/JNI calls and native thread detach.
+No path normalization, file access or resource loading is inferred. Writes to
+the public ApplicationInfo fields do not change this separate retained value.
+The snapshot requires the application phase; system and foreign contexts are
+unsupported. It does not infer sourceDir/publicSourceDir selection or changes
+to LoadedApk after the snapshot. This follows API 28
+[ContextImpl.getPackageResourcePath](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java)
+and [LoadedApk.getResDir](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
+
 `package_manager_available` optionally declares stable package-service
 availability for this Context. Absence is unknown and stops
 `Context.getPackageManager()`; false returns null. True permits one retained
@@ -69,7 +82,8 @@ Each entry has exactly `package_name`, signed 32-bit `flags`, and `info`.
 Flags accept exact JSON integers or decimal strings through the shared integer
 reader; booleans, fractional values and out-of-range values are rejected.
 Names contain 1–1024 UTF-8 bytes without NUL. `info` uses the same required
-nullable `source_dir` and optional nullable `native_library_dir` schema as
+nullable `source_dir` and optional nullable `native_library_dir` and
+`non_localized_label` schema as
 `application_info`; each String is limited to 4096 UTF-8 bytes. The shared
 validator requires an Application and known available package service for any
 nonempty inventory. Responses declare the final API 28 result after ABI path
@@ -85,6 +99,25 @@ Context's retained ApplicationInfo. Unknown optional fields stay unknown until
 an explicit guest write supplies them. Query matching, object allocation and
 field materialization use the existing work and storage budgets.
 
+`package_info_queries` independently supplies up to 64 positive own-user
+`PackageManager.getPackageInfo(String, int)` results. It uses the same exact
+`package_name`, int32 `flags` and `info` record keys, query matching, lifecycle
+requirements and budgets as ApplicationInfo queries. Its `info` object admits
+only `package_name`, `version_name` and `version_code`, all optional. String
+fields distinguish unknown, known null and exact UTF-8/WTF-8 text up to 4096
+bytes; version_code is an explicit signed int32. Empty info leaves all three
+fields unknown. A query key does not infer its returned packageName field.
+
+Each result is a fresh Parcelable PackageInfo with independently mutable
+`packageName`, `versionName` and `versionCode` fields. JNI and DEX share Runtime
+reference validation and primitive narrowing before the field owner stores a
+write. Guest writes can establish unknown fields and survive native detach.
+There is no APK parsing or package-service execution in this projection.
+Missing query records, foreign instances, all other PackageInfo members and
+negative lookups remain explicit unsupported cases. This contract follows API 28
+[PackageInfo](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/content/pm/PackageInfo.java)
+and [ApplicationPackageManager.getPackageInfo](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ApplicationPackageManager.java).
+
 An optional `application_info` object with a required `source_dir` member
 supplies the initial Java `ApplicationInfo.sourceDir` field. It requires the
 application phase. The member is null or a UTF-8/WTF-8 string of at most 4096
@@ -93,6 +126,16 @@ including empty values, without path normalization or filesystem inference.
 An optional `native_library_dir` member independently supplies `nativeLibraryDir`
 under the same nullable String and byte-limit rules. Its absence is unknown even
 when sourceDir is known; no library directory is derived from the APK path.
+`non_localized_label` optionally supplies the inherited
+`PackageItemInfo.nonLocalizedLabel` field, initially as a String or known null.
+It has the same 4096-byte validation bound and independent unknown state.
+Its public `CharSequence` field also retains compatible guest writes, including
+mutable StringBuilder identities; JNI and DEX use the same field owner.
+Optional `target_sdk_version` supplies the
+independent mutable `targetSdkVersion` int32 field, including an explicitly
+known zero. Missing input stays unknown; neither the platform SDK property nor
+APK bytes supply it implicitly. Context and package-query results retain
+separate values, and guest writes use Runtime's common 32-bit field conversion.
 `Context.getApplicationInfo()` retains one ApplicationInfo shared by the
 Application and its base Context. JNI and DEX reads/writes access the same
 mutable fields and String identities. A guest write may establish an initially
@@ -103,6 +146,19 @@ The contract follows API 28 [ApplicationInfo](https://android.googlesource.com/p
 [ContextImpl](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java)
 and [LoadedApk](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
 The implementation and tests are independently authored.
+
+`package_item_force_safe_labels` declares the stable API 28 PackageItemInfo
+static mode. Its absence is unknown. `PackageManager.getApplicationLabel(info)`
+requires the workload's own manager and a retained Context or query result.
+A null info argument throws NullPointerException. With the mode explicitly
+false and nonLocalizedLabel nonnull, it returns that exact CharSequence,
+including whitespace and mutable object identity. No trim, String conversion
+or resource access occurs on this branch. Unknown mode/field state, true mode,
+null-label resource/name fallback and foreign objects remain explicit stops.
+The mode is not inferred from the Java static initializer or APK bytes.
+This contract follows API 28
+[PackageItemInfo.loadLabel/loadUnsafeLabel](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/content/pm/PackageItemInfo.java)
+and [ApplicationPackageManager.getApplicationLabel](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ApplicationPackageManager.java).
 
 An optional `secure_settings_cache` object with exactly one `android_id` member
 declares an already populated, generation-stable API 28 settings cache for the
@@ -404,3 +460,7 @@ Behavior was checked against API 28 ART
 [`JavaVMExt::LoadNativeLibrary`](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/java_vm_ext.cc)
 and the [JNI invocation specification](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/invocation.html#JNI_OnLoad).
 Implementation and synthetic programs are independently authored.
+
+Package query flags, version codes and target SDK fields use the shared signed
+32-bit JSON integer contract, including decimal strings. Input budgets are
+owned by the Dalvik limits header and reused by typed and JSON admission.

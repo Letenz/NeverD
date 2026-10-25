@@ -34,18 +34,29 @@ public:
 private:
   ExecutionResult stringValue(Heap &heap, std::string_view text,
                               const AdmitInstruction &admit);
-  ExecutionResult applicationInfoStringValue(Heap &heap, uint64_t receiver,
-                                             bool native_directory,
-                                             std::optional<uint64_t> write,
-                                             const AdmitInstruction &admit);
+  enum class ApplicationInfoField {
+    SourceDirectory,
+    NativeLibraryDirectory,
+    NonLocalizedLabel,
+    TargetSdkVersion
+  };
+  ExecutionResult applicationInfoFieldValue(Heap &heap, uint64_t receiver,
+                                            ApplicationInfoField selected,
+                                            std::optional<uint64_t> write,
+                                            const AdmitInstruction &admit);
   ExecutionResult instrumentationValue(Heap &heap, uint64_t receiver,
                                        std::optional<uint64_t> write,
                                        const AdmitInstruction &admit);
+  ExecutionResult packageInfoFieldValue(Heap &heap, uint64_t receiver,
+                                        std::string_view field,
+                                        std::optional<uint64_t> write,
+                                        const AdmitInstruction &admit);
   std::optional<AndroidApplicationSnapshot> snapshot;
   std::optional<uint64_t> instrumentation;
   uint32_t thread = 0, application = 0, context = 0;
   uint32_t boot_loader = 0, system_loader = 0, app_loader = 0, package = 0;
   uint32_t files_directory = 0, files_path = 0;
+  uint32_t package_resource_path = 0;
   uint32_t content_resolver = 0;
   uint32_t package_manager = 0;
   uint32_t secure_android_id = 0, global_adb_enabled = 0;
@@ -56,7 +67,16 @@ private:
     std::optional<size_t> query;
     std::optional<uint64_t> source_directory;
     std::optional<uint64_t> native_library_directory;
+    std::optional<uint64_t> non_localized_label;
+    std::optional<uint64_t> target_sdk_version;
   };
   std::map<uint64_t, ApplicationInfoState> application_info_states;
+  struct PackageInfoState {
+    size_t query = 0;
+    std::optional<uint64_t> package_name;
+    std::optional<uint64_t> version_name;
+    std::optional<uint64_t> version_code;
+  };
+  std::map<uint64_t, PackageInfoState> package_info_states;
 };
 } // namespace neverd::mobile::dalvik

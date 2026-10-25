@@ -580,6 +580,387 @@ const FieldRef SourceDirectoryField{"Landroid/content/pm/ApplicationInfo;",
                                     "sourceDir", "Ljava/lang/String;"};
 const FieldRef NativeDirectoryField{"Landroid/content/pm/ApplicationInfo;",
                                     "nativeLibraryDir", "Ljava/lang/String;"};
+const FieldRef NonLocalizedLabelField{"Landroid/content/pm/PackageItemInfo;",
+                                      "nonLocalizedLabel",
+                                      "Ljava/lang/CharSequence;"};
+AndroidApplicationSnapshot labelSnapshot() {
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_manager_available = true;
+  input.package_item_force_safe_labels = false;
+  input.application_info.emplace();
+  return input;
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationLabelPreservesCharSequenceIdentityAndWhitespace) {
+  const auto *field = program.findField(NonLocalizedLabelField, false);
+  ASSERT_NE(field, nullptr);
+  EXPECT_TRUE(program.androidFrameworkField(*field));
+  EXPECT_TRUE(has(field->access, "public"));
+  EXPECT_FALSE(has(field->access, "final"));
+  FieldRef inherited = NonLocalizedLabelField;
+  inherited.owner = "Landroid/content/pm/ApplicationInfo;";
+  EXPECT_EQ(program.findField(inherited, false), field);
+  for (const auto &text : {std::string{}, std::string{" \tlabel\n"},
+                           std::string{"\xc3\xa9"}, std::string{"a\0b", 3}}) {
+    auto input = labelSnapshot();
+    input.application_info->non_localized_label =
+        std::optional<std::string>{text};
+    Runtime state(program, heap, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto manager =
+        state.library(operation(ContextPackageManager), app, {}, Admit).value;
+    const uint64_t args[]{
+        state.library(operation(ContextApplicationInfo), app, {}, Admit).value};
+    auto label =
+        state.library(operation(PackageApplicationLabel), manager, args, Admit);
+    ASSERT_EQ(label.stop, ExecutionStop::Returned) << label.diagnostic;
+    ASSERT_NE(label.value, 0u);
+    EXPECT_EQ(heap->get(label.value)->Bytes, javaStringBytes(text));
+    EXPECT_EQ(state.field(*field, args[0], {}, Admit, 65536).value,
+              label.value);
+    EXPECT_EQ(
+        state.library(operation(PackageApplicationLabel), manager, args, Admit)
+            .value,
+        label.value);
+    const auto *constructor = libraryMethod(
+        MethodRef{"Ljava/lang/StringBuilder;", "<init>", {}, "V"}, false);
+    ASSERT_NE(constructor, nullptr);
+    auto constructed = state.library(*constructor, 0, {}, Admit);
+    ASSERT_EQ(constructed.stop, ExecutionStop::Returned)
+        << constructed.diagnostic;
+    auto builder = heap->get(constructed.value);
+    ASSERT_NE(builder, nullptr);
+    ASSERT_EQ(
+        state.field(*field, args[0], builder->Identity, Admit, 65536).stop,
+        ExecutionStop::Returned);
+    const uint64_t character[]{'!'};
+    ASSERT_EQ(state
+                  .library(operation(BuilderAppendChar), builder->Identity,
+                           character, Admit)
+                  .stop,
+              ExecutionStop::Returned);
+    auto mutable_label =
+        state.library(operation(PackageApplicationLabel), manager, args, Admit);
+    EXPECT_EQ(mutable_label.stop, ExecutionStop::Returned);
+    EXPECT_EQ(mutable_label.value, builder->Identity);
+    EXPECT_EQ(heap->get(mutable_label.value)->Bytes, javaStringBytes("!"));
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       PackageResourcePathRetainsContextValueAfterInfoWrites) {
+  for (const auto &text :
+       {std::string{}, std::string{"relative//base.apk"},
+        std::string{"/\xc3\xa9.apk"}, std::string{"a\0b", 3}}) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    input.package_resource_path = std::optional<std::string>{text};
+    Runtime state(program, heap, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+    auto path = state.library(operation(PackageResourcePath), app, {}, Admit);
+    ASSERT_EQ(path.stop, ExecutionStop::Returned) << path.diagnostic;
+    ASSERT_NE(path.value, 0u);
+    EXPECT_EQ(heap->get(path.value)->Bytes, javaStringBytes(text));
+    EXPECT_EQ(
+        state.library(operation(PackageResourcePath), base, {}, Admit).value,
+        path.value);
+    auto info =
+        state.library(operation(ContextApplicationInfo), base, {}, Admit).value;
+    const auto *field = program.findField(SourceDirectoryField, false);
+    ASSERT_NE(field, nullptr);
+    auto changed = heap->literal("/replacement.apk")->Identity;
+    ASSERT_EQ(state.field(*field, info, changed, Admit, 65536).stop,
+              ExecutionStop::Returned);
+    EXPECT_EQ(
+        state.library(operation(PackageResourcePath), app, {}, Admit).value,
+        path.value);
+    EXPECT_EQ(state.field(*field, info, {}, Admit, 65536).value, changed);
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       PackageResourcePathKeepsUnknownNullAndForeignDistinct) {
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.application_info =
+      AndroidApplicationSnapshot::ApplicationInfo{"/known.apk"};
+  Runtime unknown(program, heap, input);
+  auto app = unknown.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto result = unknown.library(operation(PackageResourcePath), app, {}, Admit);
+  EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+  EXPECT_EQ(result.diagnostic, "Android package resource path is not supplied");
+  input.package_resource_path = std::optional<std::string>{};
+  Runtime state(program, heap, input);
+  app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+  for (auto receiver : {app, base}) {
+    auto value =
+        state.library(operation(PackageResourcePath), receiver, {}, Admit);
+    EXPECT_EQ(value.stop, ExecutionStop::Returned) << value.diagnostic;
+    EXPECT_EQ(value.value, 0u);
+  }
+  auto foreign = heap->allocate(Object::Instance, "android/app/ContextImpl", 0);
+  ASSERT_NE(foreign, nullptr);
+  EXPECT_EQ(
+      state
+          .library(operation(PackageResourcePath), foreign->Identity, {}, Admit)
+          .stop,
+      ExecutionStop::Unsupported);
+  Runtime null_state(program, heap, input);
+  auto null = null_state.library(operation(PackageResourcePath), 0, {}, Admit);
+  EXPECT_EQ(null.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(null.exception, "java/lang/NullPointerException");
+}
+TEST_F(AndroidFrameworkTest,
+       PackageResourcePathValidatesSnapshotAndTerminalBudgets) {
+  for (auto phase : {Phase::Unattached, Phase::Attached}) {
+    AndroidApplicationSnapshot input{phase};
+    input.package_resource_path = std::optional<std::string>{};
+    EXPECT_THROW((Runtime(program, heap, input)), Error);
+  }
+  for (const auto &text : {std::string(4097, 'x'), std::string{"\xff"}}) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    input.package_resource_path = std::optional<std::string>{text};
+    EXPECT_THROW((Runtime(program, heap, input)), Error);
+  }
+  AndroidApplicationSnapshot valid{Phase::Application};
+  valid.package_resource_path =
+      std::optional<std::string>{std::string(4096, 'x')};
+  EXPECT_NO_THROW((Runtime(program, heap, valid)));
+  for (unsigned mode = 0; mode != 5; ++mode) {
+    auto bounded =
+        std::make_shared<Heap>(mode == 4 ? 4096 : 65536, mode == 3 ? 1 : 128);
+    auto input = valid;
+    if (mode != 4)
+      input.package_resource_path = std::optional<std::string>{"path"};
+    Runtime state(program, bounded, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    ASSERT_NE(app, 0u);
+    unsigned ticks = 0;
+    auto result = state.library(operation(PackageResourcePath), app, {}, [&] {
+      return mode < 3 && ++ticks > mode ? ExecutionStop::InstructionLimit
+                                        : ExecutionStop::Returned;
+    });
+    auto expected =
+        mode < 3 ? ExecutionStop::InstructionLimit : ExecutionStop::HeapLimit;
+    EXPECT_EQ(result.stop, expected) << mode << ": " << result.diagnostic;
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              expected);
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       PackageResourcePathDexAndLibraryCallsShareIdentity) {
+  Class reader;
+  reader.name = "Ltest/ResourcePathReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {
+      reader.name, "read", {"Landroid/content/Context;"}, "Ljava/lang/String;"};
+  method.access = {"public", "static"};
+  method.registers = 2;
+  Instruction invoke;
+  invoke.opcode = "invoke-virtual";
+  invoke.registers = {1};
+  invoke.reference = MethodRef{"Landroid/content/Context;",
+                               "getPackageResourcePath",
+                               {},
+                               "Ljava/lang/String;"};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result-object";
+  move.registers = {0};
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {invoke, move, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_resource_path = std::optional<std::string>{"/resource.apk"};
+  Runtime state(code, heap, input);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+  auto expected = state.library(operation(PackageResourcePath), app, {}, Admit);
+  ASSERT_EQ(expected.stop, ExecutionStop::Returned);
+  const uint64_t args[]{base};
+  auto result =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(result.value, expected.value);
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationLabelRequiresExplicitStateAndOwnedObjects) {
+  for (unsigned mode = 0; mode < 8; ++mode) {
+    auto input = labelSnapshot();
+    if (mode != 2)
+      input.application_info->non_localized_label =
+          mode == 3 ? std::optional<std::string>{}
+                    : std::optional<std::string>{"label"};
+    if (mode == 0)
+      input.package_item_force_safe_labels.reset();
+    if (mode == 1)
+      input.package_item_force_safe_labels = true;
+    Runtime state(program, heap, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto manager =
+        state.library(operation(ContextPackageManager), app, {}, Admit).value;
+    uint64_t args[]{
+        state.library(operation(ContextApplicationInfo), app, {}, Admit).value};
+    if (mode == 4)
+      args[0] = 0;
+    if (mode == 5)
+      args[0] = heap->allocate(Object::Instance,
+                               "android/content/pm/ApplicationInfo", 0)
+                    ->Identity;
+    if (mode == 6)
+      manager = heap->allocate(Object::Instance,
+                               "android/app/ApplicationPackageManager", 0)
+                    ->Identity;
+    if (mode == 7)
+      args[0] = app;
+    auto result =
+        state.library(operation(PackageApplicationLabel), manager, args, Admit);
+    EXPECT_EQ(result.stop, mode == 4   ? ExecutionStop::Thrown
+                           : mode == 7 ? ExecutionStop::Invalid
+                                       : ExecutionStop::Unsupported)
+        << mode;
+    if (mode == 4)
+      EXPECT_EQ(result.exception, "java/lang/NullPointerException");
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationLabelQueryFieldsDoNotAliasContextOrOtherResults) {
+  auto input = labelSnapshot();
+  input.application_info->non_localized_label =
+      std::optional<std::string>{"context"};
+  AndroidApplicationSnapshot::ApplicationInfo info;
+  info.non_localized_label = std::optional<std::string>{"query"};
+  input.application_info_queries = {{"test.app", 0, info}};
+  Runtime state(program, heap, input);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto manager =
+      state.library(operation(ContextPackageManager), app, {}, Admit).value;
+  auto context =
+      state.library(operation(ContextApplicationInfo), app, {}, Admit).value;
+  const uint64_t query_args[]{heap->literal("test.app")->Identity, 0};
+  auto first = state.library(operation(PackageApplicationInfo), manager,
+                             query_args, Admit);
+  auto second = state.library(operation(PackageApplicationInfo), manager,
+                              query_args, Admit);
+  ASSERT_EQ(first.stop, ExecutionStop::Returned);
+  ASSERT_EQ(second.stop, ExecutionStop::Returned);
+  const auto *field = program.findField(NonLocalizedLabelField, false);
+  auto changed = heap->literal("changed")->Identity;
+  EXPECT_EQ(state.field(*field, first.value, changed, Admit, 65536).value,
+            changed);
+  for (auto [object, expected] : {std::pair{first.value, "changed"},
+                                  {second.value, "query"},
+                                  {context, "context"}}) {
+    const uint64_t args[]{object};
+    auto result =
+        state.library(operation(PackageApplicationLabel), manager, args, Admit);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned);
+    EXPECT_EQ(heap->get(result.value)->Bytes, javaStringBytes(expected));
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationLabelValidatesInputAndHonorsTerminalBudgets) {
+  for (bool query : {false, true}) {
+    for (const auto &bad : {std::string(4097, 'x'), std::string{"\xff"}}) {
+      auto input = labelSnapshot();
+      if (query) {
+        AndroidApplicationSnapshot::ApplicationInfo info;
+        info.non_localized_label = std::optional<std::string>{bad};
+        input.application_info_queries = {{"test.app", 0, info}};
+      } else {
+        input.application_info->non_localized_label =
+            std::optional<std::string>{bad};
+      }
+      EXPECT_THROW((Runtime(program, heap, input)), Error);
+    }
+  }
+  for (unsigned mode = 0; mode < 5; ++mode) {
+    auto input = labelSnapshot();
+    input.application_info->non_localized_label = std::optional<std::string>{
+        mode == 4 ? std::string(4096, 'x') : "label"};
+    auto bounded =
+        std::make_shared<Heap>(mode == 4 ? 4096 : 65536, mode == 3 ? 3 : 128);
+    Runtime state(program, bounded, input);
+    auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+    auto manager =
+        state.library(operation(ContextPackageManager), app, {}, Admit).value;
+    auto info =
+        state.library(operation(ContextApplicationInfo), app, {}, Admit);
+    ASSERT_EQ(info.stop, ExecutionStop::Returned);
+    const uint64_t args[]{info.value};
+    unsigned ticks = 0;
+    auto result =
+        state.library(operation(PackageApplicationLabel), manager, args, [&] {
+          return mode < 3 && ++ticks > mode ? ExecutionStop::InstructionLimit
+                                            : ExecutionStop::Returned;
+        });
+    const auto expected =
+        mode < 3 ? ExecutionStop::InstructionLimit : ExecutionStop::HeapLimit;
+    EXPECT_EQ(result.stop, expected) << mode;
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              expected);
+  }
+}
+TEST_F(AndroidFrameworkTest,
+       ApplicationLabelSharesDexFieldWritesWithLibraryCalls) {
+  Class reader;
+  reader.name = "Ltest/LabelReader;";
+  reader.superclass = "Ljava/lang/Object;";
+  reader.access = {"public"};
+  Method method;
+  method.reference = {reader.name,
+                      "replace",
+                      {"Landroid/content/pm/PackageManager;",
+                       "Landroid/content/pm/ApplicationInfo;",
+                       "Ljava/lang/CharSequence;"},
+                      "Ljava/lang/CharSequence;"};
+  method.access = {"public", "static"};
+  method.registers = 4;
+  Instruction put;
+  put.opcode = "iput-object";
+  put.registers = {3, 2};
+  put.reference = NonLocalizedLabelField;
+  Instruction get;
+  get.pc = 2;
+  get.opcode = "invoke-virtual";
+  get.registers = {1, 2};
+  get.reference = MethodRef{"Landroid/content/pm/PackageManager;",
+                            "getApplicationLabel",
+                            {"Landroid/content/pm/ApplicationInfo;"},
+                            "Ljava/lang/CharSequence;"};
+  Instruction move;
+  move.pc = 5;
+  move.opcode = "move-result-object";
+  move.registers = {0};
+  Instruction ret;
+  ret.pc = 6;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {put, get, move, ret};
+  reader.methods.push_back(method);
+  Program code({reader}, Properties{});
+  Runtime state(code, heap, labelSnapshot());
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto manager =
+      state.library(operation(ContextPackageManager), app, {}, Admit).value;
+  auto info =
+      state.library(operation(ContextApplicationInfo), app, {}, Admit).value;
+  auto replacement = heap->literal("  from DEX  ")->Identity;
+  const uint64_t args[]{manager, info, replacement};
+  auto result =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(result.value, replacement);
+  EXPECT_EQ(state
+                .field(*code.findField(NonLocalizedLabelField, false), info, {},
+                       Admit, 65536)
+                .value,
+            replacement);
+}
 TEST_F(AndroidFrameworkTest,
        PackageApplicationInfoResultsHaveIndependentFields) {
   AndroidApplicationSnapshot input{Phase::Application};
@@ -1966,6 +2347,413 @@ TEST_F(AndroidFrameworkTest,
   Class replacement;
   replacement.name = "Landroid/app/Application;";
   EXPECT_THROW(Program({replacement}, Properties{}), Error);
+}
+const FieldRef PackageInfoNameField{"Landroid/content/pm/PackageInfo;",
+                                    "packageName", "Ljava/lang/String;"};
+const FieldRef PackageInfoVersionField{"Landroid/content/pm/PackageInfo;",
+                                       "versionName", "Ljava/lang/String;"};
+const FieldRef PackageInfoCodeField{"Landroid/content/pm/PackageInfo;",
+                                    "versionCode", "I"};
+AndroidApplicationSnapshot packageInfoSnapshot() {
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_manager_available = true;
+  AndroidApplicationSnapshot::PackageInfo info;
+  info.package_name = std::optional<std::string>{"result.app"};
+  info.version_name = std::optional<std::string>{"fixture-version"};
+  info.version_code = 7;
+  input.package_info_queries = {{"test.app", 0, info}};
+  return input;
+}
+uint64_t packageInfoManager(Runtime &state) {
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit);
+  EXPECT_EQ(app.stop, ExecutionStop::Returned);
+  auto manager =
+      state.library(operation(ContextPackageManager), app.value, {}, Admit);
+  EXPECT_EQ(manager.stop, ExecutionStop::Returned);
+  return manager.value;
+}
+ExecutionResult queryPackageInfo(Runtime &state, Heap &store, uint64_t manager,
+                                 std::string_view name = "test.app",
+                                 uint64_t flags = 0) {
+  auto text = store.literal(name);
+  EXPECT_TRUE(text);
+  const uint64_t args[]{text ? text->Identity : 0, flags};
+  return state.library(operation(PackageInfoQuery), manager, args, Admit);
+}
+TEST_F(AndroidFrameworkTest, PackageInfoQueriesKeepResultsIndependent) {
+  auto input = packageInfoSnapshot();
+  auto alternate = input.package_info_queries[0].info;
+  alternate.version_code = -1;
+  input.package_info_queries.push_back({"test.app", -1, alternate});
+  input.package_info_queries.push_back({"other.\xc3\xa9", 0, alternate});
+  Runtime state(program, heap, input);
+  auto manager = packageInfoManager(state);
+  auto first = queryPackageInfo(state, *heap, manager);
+  auto second = queryPackageInfo(state, *heap, manager);
+  ASSERT_EQ(first.stop, ExecutionStop::Returned) << first.diagnostic;
+  ASSERT_EQ(second.stop, ExecutionStop::Returned);
+  EXPECT_NE(first.value, second.value);
+  EXPECT_EQ(heap->get(first.value)->ClassName,
+            "android/content/pm/PackageInfo");
+  EXPECT_TRUE(program.assignable("Landroid/content/pm/PackageInfo;",
+                                 "Landroid/os/Parcelable;"));
+  const auto *version = program.findField(PackageInfoVersionField, false);
+  ASSERT_NE(version, nullptr);
+  auto original = state.field(*version, first.value, {}, Admit, 65536);
+  ASSERT_EQ(original.stop, ExecutionStop::Returned);
+  EXPECT_EQ(heap->get(original.value)->Bytes,
+            javaStringBytes("fixture-version"));
+  auto changed = heap->literal("changed")->Identity;
+  EXPECT_EQ(state.field(*version, first.value, changed, Admit, 65536).value,
+            changed);
+  auto unchanged = state.field(*version, second.value, {}, Admit, 65536);
+  ASSERT_EQ(unchanged.stop, ExecutionStop::Returned);
+  EXPECT_EQ(heap->get(unchanged.value)->Bytes,
+            javaStringBytes("fixture-version"));
+  const auto *code = program.findField(PackageInfoCodeField, false);
+  for (auto result :
+       {queryPackageInfo(state, *heap, manager, "test.app",
+                         0x12345678ffffffffULL),
+        queryPackageInfo(state, *heap, manager, "other.\xc3\xa9")}) {
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(state.field(*code, result.value, {}, Admit, 65536).value,
+              UINT32_MAX);
+  }
+  auto name = state.field(*program.findField(PackageInfoNameField, false),
+                          first.value, {}, Admit, 65536);
+  ASSERT_EQ(name.stop, ExecutionStop::Returned);
+  EXPECT_EQ(heap->get(name.value)->Bytes, javaStringBytes("result.app"));
+}
+TEST_F(AndroidFrameworkTest, PackageInfoQueriesKeepUnknownInputsExplicit) {
+  for (unsigned mode = 0; mode < 6; ++mode) {
+    auto input = packageInfoSnapshot();
+    if (mode == 0)
+      input.package_info_queries.clear();
+    Runtime state(program, heap, input);
+    auto manager = packageInfoManager(state);
+    auto text = heap->literal(mode == 1   ? "other.app"
+                              : mode == 5 ? std::string(1025, 'x')
+                                          : "test.app");
+    uint64_t args[]{mode == 3 ? 0 : text->Identity, mode == 2 ? 1u : 0u};
+    if (mode == 4)
+      manager = heap->allocate(Object::Instance,
+                               "android/app/ApplicationPackageManager", 0)
+                    ->Identity;
+    auto result =
+        state.library(operation(PackageInfoQuery), manager, args, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported) << mode;
+    EXPECT_TRUE(result.exception.empty());
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              ExecutionStop::Unsupported);
+  }
+}
+TEST_F(AndroidFrameworkTest, PackageInfoFieldsDistinguishUnknownNullAndWrites) {
+  for (const auto &ref :
+       {PackageInfoNameField, PackageInfoVersionField, PackageInfoCodeField}) {
+    auto input = packageInfoSnapshot();
+    input.package_info_queries[0].info = {};
+    Runtime state(program, heap, input);
+    auto result = queryPackageInfo(state, *heap, packageInfoManager(state));
+    ASSERT_EQ(result.stop, ExecutionStop::Returned);
+    auto unknown = state.field(*program.findField(ref, false), result.value, {},
+                               Admit, 65536);
+    EXPECT_EQ(unknown.stop, ExecutionStop::Unsupported);
+    EXPECT_NE(unknown.diagnostic.find("is not supplied"), std::string::npos);
+  }
+  auto input = packageInfoSnapshot();
+  auto &info = input.package_info_queries[0].info;
+  info.package_name = std::optional<std::string>{};
+  info.version_name = std::optional<std::string>{};
+  info.version_code = 0;
+  Runtime known(program, heap, input);
+  auto result = queryPackageInfo(known, *heap, packageInfoManager(known));
+  ASSERT_EQ(result.stop, ExecutionStop::Returned);
+  for (const auto &ref :
+       {PackageInfoNameField, PackageInfoVersionField, PackageInfoCodeField}) {
+    auto value = known.field(*program.findField(ref, false), result.value, {},
+                             Admit, 65536);
+    EXPECT_EQ(value.stop, ExecutionStop::Returned);
+    EXPECT_EQ(value.value, 0u);
+  }
+  auto foreign =
+      heap->allocate(Object::Instance, "android/content/pm/PackageInfo", 0);
+  EXPECT_EQ(known
+                .field(*program.findField(PackageInfoCodeField, false),
+                       foreign->Identity, {}, Admit, 65536)
+                .stop,
+            ExecutionStop::Unsupported);
+  info = {};
+  Runtime written(program, heap, input);
+  auto object = queryPackageInfo(written, *heap, packageInfoManager(written));
+  ASSERT_EQ(object.stop, ExecutionStop::Returned);
+  const auto *field = program.findField(PackageInfoVersionField, false);
+  auto text = heap->literal("written")->Identity;
+  EXPECT_EQ(written.field(*field, object.value, text, Admit, 65536).value,
+            text);
+  EXPECT_EQ(written.field(*field, object.value, {}, Admit, 65536).value, text);
+  auto wrong = heap->allocate(Object::Instance, "java/lang/Object", 0);
+  EXPECT_EQ(
+      written.field(*field, object.value, wrong->Identity, Admit, 65536).stop,
+      ExecutionStop::Invalid);
+}
+TEST_F(AndroidFrameworkTest, PackageInfoPrimitiveFieldsShareDexNarrowing) {
+  Class owner;
+  owner.name = "Ltest/PackageVersion;";
+  owner.superclass = "Ljava/lang/Object;";
+  owner.access = {"public"};
+  Field ordinary;
+  ordinary.reference = {owner.name, "ordinary", "I"};
+  ordinary.access = {"public", "static"};
+  owner.fields.push_back(ordinary);
+  Method method;
+  method.reference = {
+      owner.name, "replace", {"Landroid/content/pm/PackageInfo;", "I"}, "I"};
+  method.access = {"public", "static"};
+  method.registers = 2;
+  Instruction put;
+  put.opcode = "iput";
+  put.registers = {1, 0};
+  put.reference = PackageInfoCodeField;
+  Instruction get;
+  get.pc = 2;
+  get.opcode = "iget";
+  get.registers = {1, 0};
+  get.reference = PackageInfoCodeField;
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return";
+  ret.registers = {1};
+  method.instructions = {put, get, ret};
+  owner.methods.push_back(method);
+  Program code({owner}, Properties{});
+  Runtime state(code, heap, packageInfoSnapshot());
+  auto object = queryPackageInfo(state, *heap, packageInfoManager(state));
+  ASSERT_EQ(object.stop, ExecutionStop::Returned);
+  const auto *framework = code.findField(PackageInfoCodeField, false);
+  const auto *plain = code.findField(ordinary.reference, true);
+  for (uint64_t bits : std::vector<uint64_t>{
+           0, 0xffffffff, 0x123456789abcdef0ULL, UINT64_MAX}) {
+    auto a = state.field(*framework, object.value, bits, Admit, 65536);
+    auto b = state.field(*plain, 0, bits, Admit, 65536);
+    ASSERT_EQ(a.stop, ExecutionStop::Returned);
+    ASSERT_EQ(b.stop, ExecutionStop::Returned);
+    EXPECT_EQ(a.value, uint32_t(bits));
+    EXPECT_EQ(a.value, b.value);
+    EXPECT_EQ(state.field(*framework, object.value, {}, Admit, 65536).value,
+              b.value);
+  }
+  const uint64_t args[]{object.value, 0xfedcba98};
+  auto result =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(result.value, 0xfedcba98u);
+  EXPECT_EQ(state.field(*framework, object.value, {}, Admit, 65536).value,
+            result.value);
+}
+TEST_F(AndroidFrameworkTest, PackageInfoQueriesValidateKeysAndFieldBounds) {
+  for (auto phase : {Phase::Unattached, Phase::Attached}) {
+    auto input = packageInfoSnapshot();
+    input.phase = phase;
+    EXPECT_THROW((Runtime(program, heap, input)), Error);
+  }
+  for (auto available : {std::optional<bool>{}, std::optional<bool>{false}}) {
+    auto input = packageInfoSnapshot();
+    input.package_manager_available = available;
+    EXPECT_THROW((Runtime(program, heap, input)), Error);
+  }
+  auto duplicate = packageInfoSnapshot();
+  duplicate.package_info_queries.push_back(
+      duplicate.package_info_queries.front());
+  EXPECT_THROW((Runtime(program, heap, duplicate)), Error);
+  for (const auto &text : {std::string(), std::string(1025, 'x'),
+                           std::string("a\0b", 3), std::string("\xff")}) {
+    auto input = packageInfoSnapshot();
+    input.package_info_queries[0].package_name = text;
+    EXPECT_THROW((Runtime(program, heap, input)), Error);
+  }
+  for (bool version : {false, true}) {
+    for (const auto &text : {std::string(4097, 'x'), std::string("\xff")}) {
+      auto input = packageInfoSnapshot();
+      auto &info = input.package_info_queries[0].info;
+      (version ? info.version_name : info.package_name) =
+          std::optional<std::string>{text};
+      EXPECT_THROW((Runtime(program, heap, input)), Error);
+    }
+  }
+  auto input = packageInfoSnapshot();
+  for (int32_t flags = 1; flags < 64; ++flags)
+    input.package_info_queries.push_back({"test.app", flags, {}});
+  EXPECT_NO_THROW((Runtime(program, heap, input)));
+  input.package_info_queries.push_back({"test.app", 64, {}});
+  EXPECT_THROW((Runtime(program, heap, input)), Error);
+}
+TEST_F(AndroidFrameworkTest, PackageInfoQueriesHonorTerminalBudgets) {
+  for (unsigned mode = 0; mode < 5; ++mode) {
+    auto input = packageInfoSnapshot();
+    if (mode == 4)
+      input.package_info_queries[0].info.version_name =
+          std::optional<std::string>{std::string(4096, 'x')};
+    auto bounded = std::make_shared<Heap>(mode == 4 ? 4096 : 65536, 16);
+    Runtime state(program, bounded, input);
+    auto manager = packageInfoManager(state);
+    auto text = bounded->literal("test.app");
+    ASSERT_TRUE(text);
+    if (mode == 3)
+      while (bounded->allocate(Object::Instance, "java/lang/Object", 0)) {
+      }
+    const uint64_t args[]{text->Identity, 0};
+    unsigned ticks = 0;
+    auto result =
+        state.library(operation(PackageInfoQuery), manager, args, [&] {
+          return mode < 3 && ++ticks > (mode == 0   ? 0u
+                                        : mode == 1 ? 4u
+                                                    : 10u)
+                     ? ExecutionStop::InstructionLimit
+                     : ExecutionStop::Returned;
+        });
+    if (mode == 4) {
+      ASSERT_EQ(result.stop, ExecutionStop::Returned);
+      result = state.field(*program.findField(PackageInfoVersionField, false),
+                           result.value, {}, Admit, 65536);
+    }
+    const auto expected =
+        mode < 3 ? ExecutionStop::InstructionLimit : ExecutionStop::HeapLimit;
+    EXPECT_EQ(result.stop, expected) << mode;
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              expected);
+  }
+}
+const FieldRef TargetSdkField{"Landroid/content/pm/ApplicationInfo;",
+                              "targetSdkVersion", "I"};
+uint64_t targetSdkInfo(Runtime &state) {
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit);
+  EXPECT_EQ(app.stop, ExecutionStop::Returned);
+  auto info =
+      state.library(operation(ContextApplicationInfo), app.value, {}, Admit);
+  EXPECT_EQ(info.stop, ExecutionStop::Returned);
+  return info.value;
+}
+TEST_F(AndroidFrameworkTest, TargetSdkVersionIsIndependentOfPlatformVersion) {
+  Program code({}, Properties{{"ro.build.version.sdk", "35"}});
+  const auto *field = code.findField(TargetSdkField, false);
+  ASSERT_NE(field, nullptr);
+  EXPECT_EQ(code.findField(TargetSdkField, true), nullptr);
+  for (bool supplied_info : {false, true}) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    if (supplied_info)
+      input.application_info.emplace();
+    Runtime state(code, heap, input);
+    auto result = state.field(*field, targetSdkInfo(state), {}, Admit, 65536);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+    EXPECT_NE(result.diagnostic.find("targetSdkVersion is not supplied"),
+              std::string::npos);
+  }
+  for (int32_t value : {INT32_MIN, 0, 28, INT32_MAX}) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    input.application_info.emplace().target_sdk_version = value;
+    Runtime state(code, heap, input);
+    auto result = state.field(*field, targetSdkInfo(state), {}, Admit, 65536);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned);
+    EXPECT_EQ(result.value, uint32_t(value));
+  }
+}
+TEST_F(AndroidFrameworkTest, TargetSdkVersionMutationsRemainWithTheirOwner) {
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_manager_available = true;
+  input.application_info.emplace().target_sdk_version = 28;
+  AndroidApplicationSnapshot::ApplicationInfo query;
+  query.target_sdk_version = 29;
+  input.application_info_queries = {{"test.app", 0, query}};
+  Runtime state(program, heap, input);
+  const auto *field = program.findField(TargetSdkField, false);
+  auto context = targetSdkInfo(state);
+  auto app = state.library(operation(CurrentApplication), 0, {}, Admit).value;
+  auto base = state.library(operation(BaseContext), app, {}, Admit).value;
+  EXPECT_EQ(
+      state.library(operation(ContextApplicationInfo), base, {}, Admit).value,
+      context);
+  auto manager = packageInfoManager(state);
+  const uint64_t args[]{heap->literal("test.app")->Identity, 0};
+  auto first =
+      state.library(operation(PackageApplicationInfo), manager, args, Admit);
+  auto second =
+      state.library(operation(PackageApplicationInfo), manager, args, Admit);
+  ASSERT_EQ(first.stop, ExecutionStop::Returned);
+  ASSERT_EQ(second.stop, ExecutionStop::Returned);
+  EXPECT_NE(first.value, second.value);
+  EXPECT_EQ(state.field(*field, context, {}, Admit, 65536).value, 28u);
+  EXPECT_EQ(state.field(*field, first.value, {}, Admit, 65536).value, 29u);
+  EXPECT_EQ(state.field(*field, first.value, 31, Admit, 65536).value, 31u);
+  EXPECT_EQ(state.field(*field, second.value, {}, Admit, 65536).value, 29u);
+  EXPECT_EQ(state.field(*field, context, UINT64_MAX, Admit, 65536).value,
+            UINT32_MAX);
+  EXPECT_EQ(state.field(*field, first.value, {}, Admit, 65536).value, 31u);
+  auto foreign =
+      heap->allocate(Object::Instance, "android/content/pm/ApplicationInfo", 0);
+  EXPECT_EQ(state.field(*field, foreign->Identity, {}, Admit, 65536).stop,
+            ExecutionStop::Unsupported);
+  input.application_info.reset();
+  Runtime written(program, heap, input);
+  auto object = targetSdkInfo(written);
+  EXPECT_EQ(written.field(*field, object, 0, Admit, 65536).stop,
+            ExecutionStop::Returned);
+  auto zero = written.field(*field, object, {}, Admit, 65536);
+  EXPECT_EQ(zero.stop, ExecutionStop::Returned);
+  EXPECT_EQ(zero.value, 0u);
+}
+TEST_F(AndroidFrameworkTest, TargetSdkVersionDexWritesUseSharedFieldState) {
+  Class owner;
+  owner.name = "Ltest/TargetSdk;";
+  owner.superclass = "Ljava/lang/Object;";
+  owner.access = {"public"};
+  Method method;
+  method.reference = {owner.name,
+                      "replace",
+                      {"Landroid/content/pm/ApplicationInfo;", "I"},
+                      "I"};
+  method.access = {"public", "static"};
+  method.registers = 2;
+  Instruction put;
+  put.opcode = "iput";
+  put.registers = {1, 0};
+  put.reference = TargetSdkField;
+  Instruction get = put;
+  get.pc = 2;
+  get.opcode = "iget";
+  Instruction ret;
+  ret.pc = 4;
+  ret.opcode = "return";
+  ret.registers = {1};
+  method.instructions = {put, get, ret};
+  owner.methods.push_back(method);
+  Program code({owner}, Properties{});
+  Runtime state(code, heap, AndroidApplicationSnapshot{Phase::Application});
+  auto info = targetSdkInfo(state);
+  const uint64_t args[]{info, UINT32_MAX};
+  auto result =
+      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(result.value, UINT32_MAX);
+  EXPECT_EQ(
+      state
+          .field(*code.findField(TargetSdkField, false), info, {}, Admit, 65536)
+          .value,
+      UINT32_MAX);
+}
+TEST_F(AndroidFrameworkTest, TargetSdkVersionHonorsTerminalWorkLimits) {
+  for (bool write : {false, true}) {
+    AndroidApplicationSnapshot input{Phase::Application};
+    input.application_info.emplace().target_sdk_version = 28;
+    Runtime state(program, heap, input);
+    auto info = targetSdkInfo(state);
+    auto result = state.field(
+        *program.findField(TargetSdkField, false), info,
+        write ? std::optional<uint64_t>{29} : std::nullopt,
+        [] { return ExecutionStop::InstructionLimit; }, 65536);
+    EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+    EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
+              ExecutionStop::InstructionLimit);
+  }
 }
 } // namespace
 } // namespace neverd::mobile::dalvik

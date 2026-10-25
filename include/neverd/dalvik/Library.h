@@ -60,7 +60,10 @@ enum LibraryOperation {
   SecureSettingIntDefault,
   ContextApplicationInfo,
   ContextPackageManager,
-  PackageApplicationInfo
+  PackageApplicationInfo,
+  PackageApplicationLabel,
+  PackageResourcePath,
+  PackageInfoQuery
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

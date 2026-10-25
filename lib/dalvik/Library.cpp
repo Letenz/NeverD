@@ -171,6 +171,13 @@ static const LibraryMethod Methods[] = {
     {"android/content/pm/PackageManager", "getApplicationInfo",
      "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;",
      PackageApplicationInfo},
+    {"android/content/pm/PackageManager", "getApplicationLabel",
+     "(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;",
+     PackageApplicationLabel},
+    {"android/content/Context", "getPackageResourcePath",
+     "()Ljava/lang/String;", PackageResourcePath},
+    {"android/content/pm/PackageManager", "getPackageInfo",
+     "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;", PackageInfoQuery},
 };
 
 struct LibraryStop {
@@ -283,7 +290,9 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
     if ((M.Op >= CurrentActivityThread && M.Op <= ThreadInstrumentation) ||
         M.Op == ContextContentResolver || M.Op == SecureSettingString ||
         M.Op == SecureSettingIntDefault || M.Op == ContextApplicationInfo ||
-        M.Op == ContextPackageManager || M.Op == PackageApplicationInfo) {
+        M.Op == ContextPackageManager || M.Op == PackageApplicationInfo ||
+        M.Op == PackageApplicationLabel || M.Op == PackageResourcePath ||
+        M.Op == PackageInfoQuery) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,

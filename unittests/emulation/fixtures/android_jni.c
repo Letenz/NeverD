@@ -520,6 +520,319 @@ int jni_package_application_info(int mode) {
   CHECK(!C(e, int, 228));
   return C(vm, int, 5);
 }
+static Ref package_info_manager, package_info_first, package_info_name;
+static Ref package_info_getter, package_info_version, package_info_code;
+static void *package_info_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  Ref fresh = C(e, Ref, 34, package_info_manager, package_info_getter,
+                package_info_name, 0);
+  Ref version = C(e, Ref, 95, fresh, package_info_version);
+  Ref changed = C(e, Ref, 95, package_info_first, package_info_version);
+  int code = C(e, int, 100, fresh, package_info_code);
+  int mutated = C(e, int, 100, package_info_first, package_info_code);
+  int ok = fresh && !C(e, int, 24, fresh, package_info_first) &&
+           query_text(e, version, "fixture-version") &&
+           query_text(e, changed, "changed") && code == 7 && mutated == -1;
+  int detach = C(vm, int, 5);
+  return (void *)(U64)(!ok || detach);
+}
+int jni_package_info(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref thread = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current = C(e, Ref, 113, thread, "currentApplication",
+                  "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, thread, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref manager_id = C(e, Ref, 33, context, "getPackageManager",
+                     "()Landroid/content/pm/PackageManager;");
+  Ref manager = C(e, Ref, 34, app, manager_id);
+  Ref cls = C(e, Ref, 31, manager);
+  package_info_getter =
+      C(e, Ref, 33, cls, "getPackageInfo",
+        "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;");
+  CHECK(package_info_getter);
+  if (mode == 4)
+    return C(vm, int, 5);
+  Ref name = C(e, Ref, 167, "test.app");
+  if (mode == 2)
+    name = 0;
+  if (mode == 3)
+    manager = C(e, Ref, 27, cls);
+  Ref first =
+      C(e, Ref, 34, manager, package_info_getter, name, mode == 1 ? 1 : 0);
+  CHECK(first);
+  U64 arguments[] = {name, 0};
+  Ref second = C(e, Ref, 36, manager, package_info_getter, arguments);
+  CHECK(second && !C(e, int, 24, first, second));
+  Ref info = C(e, Ref, 6, "android/content/pm/PackageInfo");
+  Ref package = C(e, Ref, 94, info, "packageName", "Ljava/lang/String;");
+  package_info_version =
+      C(e, Ref, 94, info, "versionName", "Ljava/lang/String;");
+  package_info_code = C(e, Ref, 94, info, "versionCode", "I");
+  if (mode == 6)
+    first = C(e, Ref, 27, info);
+  Ref version = C(e, Ref, 95, first, package_info_version);
+  if (mode == 5) {
+    CHECK(!version);
+    return C(vm, int, 5);
+  }
+  CHECK(query_text(e, version, "fixture-version"));
+  Ref package_name = C(e, Ref, 95, first, package);
+  CHECK(query_text(e, package_name, "result.app"));
+  CHECK(C(e, int, 100, first, package_info_code) == 7);
+  Ref changed = C(e, Ref, 167, "changed");
+  C(e, void, 104, first, package_info_version, changed);
+  C(e, void, 109, first, package_info_code, -1);
+  Ref unchanged = C(e, Ref, 95, second, package_info_version);
+  CHECK(query_text(e, unchanged, "fixture-version"));
+  CHECK(C(e, int, 100, second, package_info_code) == 7);
+  package_info_manager = C(e, Ref, 21, manager);
+  package_info_first = C(e, Ref, 21, first);
+  package_info_name = C(e, Ref, 21, name);
+  C(e, void, 23, first);
+  CHECK(!C(vm, int, 5));
+  U64 child = 0;
+  void *result = (void *)1;
+  CHECK(!pthread_create(&child, 0, package_info_thread, 0));
+  CHECK(!pthread_join(child, &result) && !result);
+  e = attach();
+  CHECK(e);
+  C(e, void, 22, package_info_manager);
+  C(e, void, 22, package_info_first);
+  C(e, void, 22, package_info_name);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+static Ref target_info_saved, target_query_saved, target_field;
+static Ref target_manager, target_name, target_getter;
+static void *target_sdk_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  int context = C(e, int, 100, target_info_saved, target_field);
+  int query = C(e, int, 100, target_query_saved, target_field);
+  Ref fresh = C(e, Ref, 34, target_manager, target_getter, target_name, 0);
+  int initial = C(e, int, 100, fresh, target_field);
+  int ok = context == -1 && query == 31 && initial == 29 &&
+           !C(e, int, 24, fresh, target_query_saved);
+  int detach = C(vm, int, 5);
+  return (void *)(U64)(!ok || detach);
+}
+int jni_target_sdk(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref thread = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current = C(e, Ref, 113, thread, "currentApplication",
+                  "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, thread, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref info_get = C(e, Ref, 33, context, "getApplicationInfo",
+                   "()Landroid/content/pm/ApplicationInfo;");
+  Ref info = C(e, Ref, 34, app, info_get);
+  Ref type = C(e, Ref, 6, "android/content/pm/ApplicationInfo");
+  target_field = C(e, Ref, 94, type, "targetSdkVersion", "I");
+  CHECK(target_field);
+  if (mode == 4)
+    return C(vm, int, 5);
+  if (mode == 2)
+    info = C(e, Ref, 27, type);
+  CHECK(C(e, int, 100, info, target_field) == (mode == 1 ? 0 : 28));
+  C(e, void, 109, info, target_field, -1);
+  Ref repeated = C(e, Ref, 34, app, info_get);
+  CHECK(C(e, int, 24, repeated, info));
+  CHECK(C(e, int, 100, repeated, target_field) == -1);
+  Ref manager_get = C(e, Ref, 33, context, "getPackageManager",
+                      "()Landroid/content/pm/PackageManager;");
+  Ref manager = C(e, Ref, 34, app, manager_get);
+  Ref pm = C(e, Ref, 6, "android/content/pm/PackageManager");
+  target_getter =
+      C(e, Ref, 33, pm, "getApplicationInfo",
+        "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;");
+  Ref name = C(e, Ref, 167, "test.app");
+  Ref query = C(e, Ref, 34, manager, target_getter, name, 0);
+  CHECK(query && !C(e, int, 24, query, info));
+  CHECK(C(e, int, 100, query, target_field) == 29);
+  C(e, void, 109, query, target_field, 31);
+  U64 arguments[] = {name, 0};
+  Ref second = C(e, Ref, 36, manager, target_getter, arguments);
+  CHECK(second && !C(e, int, 24, second, query));
+  CHECK(C(e, int, 100, second, target_field) == 29);
+  target_info_saved = C(e, Ref, 21, info);
+  target_query_saved = C(e, Ref, 21, query);
+  target_manager = C(e, Ref, 21, manager);
+  target_name = C(e, Ref, 21, name);
+  C(e, void, 23, info);
+  C(e, void, 23, query);
+  CHECK(!C(vm, int, 5));
+  U64 child = 0;
+  void *result = (void *)1;
+  CHECK(!pthread_create(&child, 0, target_sdk_thread, 0));
+  CHECK(!pthread_join(child, &result) && !result);
+  e = attach();
+  CHECK(e);
+  C(e, void, 22, target_info_saved);
+  C(e, void, 22, target_query_saved);
+  C(e, void, 22, target_manager);
+  C(e, void, 22, target_name);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+static Ref resource_context_saved, resource_value_saved, resource_getter;
+static void *resource_path_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  Ref value = C(e, Ref, 36, resource_context_saved, resource_getter, (void *)0);
+  int ok = C(e, int, 24, value, resource_value_saved);
+  int detach = C(vm, int, 5);
+  return (void *)(U64)(!ok || detach);
+}
+int jni_package_resource_path(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref thread = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current = C(e, Ref, 113, thread, "currentApplication",
+                  "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, thread, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  resource_getter =
+      C(e, Ref, 33, context, "getPackageResourcePath", "()Ljava/lang/String;");
+  CHECK(resource_getter);
+  if (mode == 4)
+    return C(vm, int, 5);
+  Ref receiver = app;
+  if (mode == 2) {
+    Ref concrete = C(e, Ref, 31, app);
+    CHECK(concrete);
+    receiver = C(e, Ref, 27, concrete);
+  }
+  if (mode == 3)
+    receiver = 0;
+  Ref path = C(e, Ref, 34, receiver, resource_getter);
+  if (mode == 1)
+    CHECK(!path);
+  else
+    CHECK(query_text(e, path, "/public//fixture.apk"));
+  Ref wrapper = C(e, Ref, 6, "android/content/ContextWrapper");
+  Ref base_id =
+      C(e, Ref, 33, wrapper, "getBaseContext", "()Landroid/content/Context;");
+  Ref base = C(e, Ref, 34, app, base_id);
+  Ref info_id = C(e, Ref, 33, context, "getApplicationInfo",
+                  "()Landroid/content/pm/ApplicationInfo;");
+  Ref info = C(e, Ref, 34, app, info_id);
+  Ref info_class = C(e, Ref, 6, "android/content/pm/ApplicationInfo");
+  Ref source = C(e, Ref, 94, info_class, "sourceDir", "Ljava/lang/String;");
+  Ref changed = C(e, Ref, 167, "/replacement.apk");
+  C(e, void, 104, info, source, changed);
+  Ref repeated = C(e, Ref, 36, base, resource_getter, (void *)0);
+  CHECK(C(e, int, 24, path, repeated));
+  resource_context_saved = C(e, Ref, 21, base);
+  resource_value_saved = C(e, Ref, 21, path);
+  C(e, void, 23, base);
+  CHECK(!C(vm, int, 5));
+  U64 child = 0;
+  void *result = (void *)1;
+  CHECK(!pthread_create(&child, 0, resource_path_thread, 0));
+  CHECK(!pthread_join(child, &result) && !result);
+  e = attach();
+  CHECK(e);
+  C(e, void, 22, resource_context_saved);
+  C(e, void, 22, resource_value_saved);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+static Ref label_manager_saved, label_info_saved, label_value_saved;
+static Ref label_getter, label_field;
+static void *label_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  Ref value =
+      C(e, Ref, 34, label_manager_saved, label_getter, label_info_saved);
+  Ref field_value = C(e, Ref, 95, label_info_saved, label_field);
+  int ok = C(e, int, 24, value, label_value_saved) &&
+           C(e, int, 24, value, field_value);
+  int detach = C(vm, int, 5);
+  return (void *)(U64)(!ok || detach);
+}
+int jni_application_label(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref thread = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current = C(e, Ref, 113, thread, "currentApplication",
+                  "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, thread, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref manager_id = C(e, Ref, 33, context, "getPackageManager",
+                     "()Landroid/content/pm/PackageManager;");
+  Ref manager = C(e, Ref, 34, app, manager_id);
+  Ref manager_class = C(e, Ref, 31, manager);
+  label_getter =
+      C(e, Ref, 33, manager_class, "getApplicationLabel",
+        "(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;");
+  CHECK(label_getter);
+  if (mode == 4)
+    return C(vm, int, 5);
+  Ref context_info_id = C(e, Ref, 33, context, "getApplicationInfo",
+                          "()Landroid/content/pm/ApplicationInfo;");
+  Ref info = C(e, Ref, 34, app, context_info_id);
+  if (mode == 1) {
+    Ref value = C(e, Ref, 34, manager, label_getter, (Ref)0);
+    CHECK(!value);
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref npe = C(e, Ref, 6, "java/lang/NullPointerException");
+    CHECK(exception && C(e, int, 32, exception, npe));
+    return C(vm, int, 5);
+  }
+  if (mode == 2) {
+    Ref type = C(e, Ref, 31, info);
+    info = C(e, Ref, 27, type);
+  }
+  Ref label = C(e, Ref, 34, manager, label_getter, info);
+  CHECK(query_text(e, label, "  fixture  "));
+  Ref item = C(e, Ref, 6, "android/content/pm/PackageItemInfo");
+  label_field =
+      C(e, Ref, 94, item, "nonLocalizedLabel", "Ljava/lang/CharSequence;");
+  Ref field_value = C(e, Ref, 95, info, label_field);
+  CHECK(C(e, int, 24, label, field_value));
+  Ref builder_type = C(e, Ref, 6, "java/lang/StringBuilder");
+  Ref ctor = C(e, Ref, 33, builder_type, "<init>", "()V");
+  Ref builder = C(e, Ref, 28, builder_type, ctor);
+  CHECK(builder);
+  Ref append =
+      C(e, Ref, 33, builder_type, "append", "(C)Ljava/lang/StringBuilder;");
+  C(e, Ref, 34, builder, append, '!');
+  C(e, void, 104, info, label_field, builder);
+  U64 args[] = {info};
+  Ref mutable_label = C(e, Ref, 36, manager, label_getter, args);
+  CHECK(C(e, int, 24, mutable_label, builder));
+  Ref changed = C(e, Ref, 167, "changed");
+  C(e, void, 104, info, label_field, changed);
+  label_manager_saved = C(e, Ref, 21, manager);
+  label_info_saved = C(e, Ref, 21, info);
+  label_value_saved = C(e, Ref, 21, changed);
+  C(e, void, 23, info);
+  CHECK(!C(vm, int, 5));
+  U64 child = 0;
+  void *result = (void *)1;
+  CHECK(!pthread_create(&child, 0, label_thread, 0));
+  CHECK(!pthread_join(child, &result) && !result);
+  e = attach();
+  CHECK(e);
+  C(e, void, 22, label_manager_saved);
+  C(e, void, 22, label_info_saved);
+  C(e, void, 22, label_value_saved);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
 static int check_package_manager_thread(void) {
   Handle e = attach();
   CHECK(e);
@@ -580,8 +893,11 @@ int jni_package_manager(int mode) {
   CHECK(C(e, int, 24, parent, declared));
   CHECK(C(e, int, 32, package_manager, declared));
   if (mode == 1) {
-    C(e, Ref, 33, declared, "getPackageInfo",
-      "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;");
+    Ref query = C(e, Ref, 33, declared, "getPackageInfo",
+                  "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;");
+    CHECK(query);
+    Ref name = C(e, Ref, 167, "test.app");
+    C(e, Ref, 34, package_manager, query, name, 0);
     return __LINE__;
   }
   package_manager_app = C(e, Ref, 21, app);

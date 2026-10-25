@@ -70,6 +70,11 @@ struct AndroidApplicationSnapshot {
     // Missing outer optional is unknown. Present inner null is a known null
     // nativeLibraryDir field, independent of sourceDir and actual file bytes.
     std::optional<std::optional<std::string>> native_library_dir;
+    // Optional String-backed initial nonLocalizedLabel. Guest writes may
+    // retain any compatible CharSequence; absence does not imply null.
+    std::optional<std::optional<std::string>> non_localized_label;
+    // Independent Java int field; not inferred from the platform SDK property.
+    std::optional<int32_t> target_sdk_version;
   };
   std::optional<ApplicationInfo> application_info;
   // Stable availability of the package service for this Context. Unknown when
@@ -86,6 +91,26 @@ struct AndroidApplicationSnapshot {
     ApplicationInfo info;
   };
   std::vector<ApplicationInfoQuery> application_info_queries;
+  // Explicit stable PackageItemInfo static state, not its assumed initializer.
+  // True requires safe-label processing, which this projection does not model.
+  std::optional<bool> package_item_force_safe_labels;
+  // Stable LoadedApk.mResDir for this attached Application. Unknown when the
+  // outer optional is absent; inner null is an explicit null Java value.
+  // Independent of mutable ApplicationInfo fields and filesystem contents.
+  std::optional<std::optional<std::string>> package_resource_path;
+  // Partial positive PackageInfo responses for exact own-user package/flag
+  // queries. Missing fields remain unknown, rather than Java default values.
+  struct PackageInfo {
+    std::optional<std::optional<std::string>> package_name;
+    std::optional<std::optional<std::string>> version_name;
+    std::optional<int32_t> version_code;
+  };
+  struct PackageInfoQuery {
+    std::string package_name;
+    int32_t flags = 0;
+    PackageInfo info;
+  };
+  std::vector<PackageInfoQuery> package_info_queries;
 };
 std::optional<bool>
 androidApplicationLoaderState(const AndroidApplicationSnapshot &input);
@@ -100,4 +125,7 @@ void validateAndroidGlobalSettingsCache(
 void validateAndroidApplicationInfo(const AndroidApplicationSnapshot &input);
 void validateAndroidApplicationInfoQueries(
     const AndroidApplicationSnapshot &input);
+void validateAndroidPackageResourcePath(
+    const AndroidApplicationSnapshot &input);
+void validateAndroidPackageInfoQueries(const AndroidApplicationSnapshot &input);
 } // namespace neverd::mobile::dalvik

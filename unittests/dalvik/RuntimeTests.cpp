@@ -607,6 +607,24 @@ TEST(DalvikRuntime, FinitePlatformMarkerInterfacesPreserveAssignability) {
   Program program({c});
   EXPECT_TRUE(program.assignable(c.name, "Ljava/io/Serializable;"));
 }
+TEST(DalvikRuntime, StringCharSequenceAssignabilityIsSharedAndCovariant) {
+  Program program({}, std::map<std::string, std::string>{});
+  for (const auto &[source, destination, expected] :
+       std::vector<std::tuple<const char *, const char *, bool>>{
+           {"Ljava/lang/String;", "Ljava/lang/CharSequence;", true},
+           {"[Ljava/lang/String;", "[Ljava/lang/CharSequence;", true},
+           {"[[Ljava/lang/String;", "[[Ljava/lang/CharSequence;", true},
+           {"Ljava/lang/CharSequence;", "Ljava/lang/String;", false},
+           {"Ljava/lang/Class;", "Ljava/lang/CharSequence;", false},
+           {"Ljava/lang/Object;", "Ljava/lang/CharSequence;", false},
+           {"[Ljava/lang/String;", "Ljava/lang/CharSequence;", false},
+           {"[C", "[Ljava/lang/CharSequence;", false},
+           {"[C", "Ljava/lang/CharSequence;", false}}) {
+    SCOPED_TRACE(std::string(source) + " -> " + destination);
+    EXPECT_EQ(referenceAssignable(source, destination), expected);
+    EXPECT_EQ(program.assignable(source, destination), expected);
+  }
+}
 class StringBuilderTest : public testing::Test {
 protected:
   Program program{{}, std::map<std::string, std::string>{}};

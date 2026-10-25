@@ -389,6 +389,8 @@ struct Runtime::State::Engine {
                  ref.type); // Constructor escape is outside this profile.
     if (write && ref.type == "Z" && *write > 1)
       fail(ExecutionStop::Invalid, "noncanonical boolean field store");
+    if (write)
+      write = narrow(*write, ref.type);
     uint64_t *value;
     if (is_static) {
       if (receiver)
@@ -405,12 +407,12 @@ struct Runtime::State::Engine {
             state.framework.field(*state.heap, field, receiver, write, admit);
         if (result.stop != ExecutionStop::Returned)
           throw Halt{std::move(result)};
-        co_return result.value;
+        co_return narrow(result.value, ref.type);
       }
       value = &instance->Fields.at(&field);
     }
     if (write)
-      *value = narrow(*write, ref.type);
+      *value = *write;
     co_return *value;
   }
   bool accessible(const std::string &owner, const Access &access,

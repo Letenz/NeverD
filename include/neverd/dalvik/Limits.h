@@ -26,8 +26,13 @@ inline constexpr uint32_t kHeapObjectLimit = 4096;
 inline constexpr int kMaxAndroidSettingsValueBytes = 4096;
 inline constexpr int kMaxAndroidApplicationInfoFieldBytes = 4096;
 inline constexpr int kMaxAndroidApplicationInfoQueries = 64;
+inline constexpr int kMaxAndroidPackageResourcePathBytes = 4096;
+inline constexpr int kMaxAndroidPackageInfoFieldBytes = 4096;
+inline constexpr int kMaxAndroidPackageInfoQueries = 64;
 // Conservative per-entry bookkeeping in addition to the retained state value.
-inline constexpr uint64_t kAndroidApplicationInfoStateOverheadBytes = 64;
+inline constexpr uint64_t kFrameworkFieldStateOverheadBytes = 64;
+inline constexpr uint64_t kAndroidApplicationInfoStateOverheadBytes =
+    kFrameworkFieldStateOverheadBytes;
 
 // lib/dalvik/AndroidFramework.cpp
 inline constexpr int kMaxAndroidApplicationClassLookupFailures = 256;

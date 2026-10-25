@@ -209,6 +209,8 @@ bool referenceAssignable(std::string_view source,
   destination = destination.substr(1, destination.size() - 2);
   for (; !source.empty(); source = javaParent(source)) {
     if (source == destination ||
+        (source == "java/lang/String" &&
+         destination == "java/lang/CharSequence") ||
         (destination == "java/io/Serializable" &&
          (source == "java/lang/String" || source == "java/lang/Class" ||
           source == "java/lang/Throwable")))

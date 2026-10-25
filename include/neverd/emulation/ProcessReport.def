@@ -330,6 +330,11 @@ NEVERD_PROCESS_REPORT_FIELD(JNIClassLookupFailures, "jni_class_lookup_failures")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationSnapshot, "application_snapshot")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationInfo, "application_info")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationInfoQueries, "application_info_queries")
+NEVERD_PROCESS_REPORT_FIELD(PackageInfoQueries, "package_info_queries")
+NEVERD_PROCESS_REPORT_FIELD(PackageItemForceSafeLabels,
+                            "package_item_force_safe_labels")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationPackageResourcePath,
+                            "package_resource_path")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationPackageManagerAvailable,
                             "package_manager_available")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationPhase, "phase")

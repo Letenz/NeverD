@@ -11471,8 +11471,30 @@ indices distinguish fresh parcel results from the Context's retained instance.
 The JSON adapter reuses one ApplicationInfo schema decoder, and the typed
 validator owns response bounds and preconditions. No JNI-side field copies or
 package service execution are introduced.
+The retained ApplicationInfo targetSdkVersion uses the same per-object owner
+and common Runtime int32 field conversion as PackageInfo integer fields. Its
+optional input is independent of platform Build.VERSION state; JSON only
+decodes and validates the explicit Context or query response.
+PackageInfo queries share exact query-key validation and matching, while
+retaining their own response inventory and per-object field slots. Their
+packageName, versionName and versionCode inputs are independently optional.
+Runtime validates reference writes and narrows primitive writes before
+dispatching to either ordinary DEX storage or framework field storage; field
+owners cannot introduce a second JNI-specific integer conversion.
+The inherited PackageItemInfo nonLocalizedLabel declaration uses this same
+per-object field storage. Label lookup returns the stored CharSequence only
+under explicitly known unsafe-label mode; it never caches a second copy or
+assumes the mutable static flag's initializer. Resource and safe-label paths
+remain unsupported.
+The shared `referenceAssignable` predicate owns the platform String to
+CharSequence relationship, including reference-array covariance. Program
+hierarchy checks, DEX field writes and JNI argument/field transport consume
+that relationship instead of relaxing individual field types.
 Framework String materialization shares one budgeted helper across methods and
 fields. File existence and APK contents remain separate filesystem inputs.
+The package resource path belongs to AndroidFramework's stable LoadedApk
+projection. Context getters share its retained nullable String independently of
+mutable ApplicationInfo fields; JSON and typed callers use one validator.
 Exact loader-scoped negative class lookup observations are admitted by the
 shared Android application validator and checked against the Runtime's actual
 Program visibility. AndroidFramework creates the shared throwable and message;

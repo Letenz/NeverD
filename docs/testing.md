@@ -54,6 +54,48 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`*TargetSdkVersion*` covers unknown versus explicit int32 state, independence
+from platform version properties, Context/query isolation, mutation, DEX
+execution, JNI detach/thread retention, foreign receivers and work limits.
+JSON checks both int32 endpoints and rejects null, nonintegers and overflow.
+Run Dalvik, Android JNI and ProcessReport suites; no APK parser or package
+service execution is implied by these field tests.
+
+`*PackageInfo*` covers exact positive package queries, absent versus null fields,
+per-result mutations, lifecycle validation and terminal work/storage limits.
+DEX and JNI exercise String fields and 32-bit versionCode through the shared
+field owner; the native fixture includes array calls, detach and another thread.
+Run full Dalvik, Android JNI and ProcessReport suites because primitive field
+narrowing and query schema validation are shared. Package-service execution,
+negative package lookups and unlisted PackageInfo members remain unsupported.
+The PackageManager availability fixture invokes getPackageInfo after method
+lookup, so its unknown-query check continues to exercise missing response state
+when the method declaration is available.
+
+`*PackageResourcePath*` covers unknown/null/String inputs, exact path spelling,
+Context identity, independence from public ApplicationInfo writes, lifecycle and
+resource limits. DEX and JNI exercise the same owner; the native fixture checks
+ordinary/array calls, detach and another thread. Run full Dalvik, Android JNI and
+ProcessReport suites. Filesystem and resource-loader execution are not covered.
+Null-receiver checks use a fresh Runtime after a foreign-object refusal:
+unsupported operations terminate that Runtime, while Java exceptions are
+independently observable.
+Foreign-receiver probes allocate a concrete Application so they reach the
+Context ownership check.
+
+`*ApplicationLabel*` covers explicit safe-label mode, unknown/null/String field
+state, inherited declaration ownership, untrimmed CharSequence identity,
+mutable StringBuilder writes, query/Context isolation and terminal budgets.
+The original native fixture exercises ordinary and array JNI calls, null
+argument exceptions, detach and a second thread. DEX field writes and method
+calls share the owner. Run full Dalvik, Android JNI and ProcessReport suites.
+Resource lookup and safe-label conversion remain outside this coverage.
+`DalvikRuntime.StringCharSequenceAssignabilityIsSharedAndCovariant` checks the
+shared platform relationship and array covariance, including reverse, unrelated
+reference and primitive-array refusals. Label tests exercise the same rule
+through DEX and JNI field writes.
+
+
 `NeverDX86FourSourceSourceTests` verifies all six four-source arithmetic
 families, malformed native/assembly contracts, unknown operand suppression and
 observable raw-pipeline inputs/results. `NEVERD_FOUR_SOURCE_EXPORT_DIR` exports
@@ -13373,8 +13415,9 @@ after changing connection admission. All transport tests are offline.
 SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
 failed-description reuse.
 
-`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 28 complete
+`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 46 complete
 SDK/CLI reports across O0/O2 JNI callers. Resolver identity, UTF-16 builders,
 missing and null settings, signed integer defaults, mutable application fields,
-package-manager availability and exact package queries retain the same shared
+package-manager availability, package metadata, labels, resource paths, target
+SDK fields and exact package queries retain the same shared
 semantics through typed and public wire entrypoints.
