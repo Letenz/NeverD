@@ -14,6 +14,7 @@
 
 #include "neverd/ir/low/FuncDetector.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
 #include "neverd/support/ProloguePatterns.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -555,7 +556,9 @@ bool walkX86OwnCode(const BinaryImage &Img, Decoder &Dec, va_t Entry, va_t End,
       if (ThroughSlot)
         Callee =
             static_cast<va_t>(static_cast<uint32_t>(X86.operands[0].mem.disp));
-      if (Callee == InvalidVA || !libc::isNoReturnTarget(Img, Callee))
+      if (Callee == InvalidVA ||
+          !(ThroughSlot ? libc::isNoReturnLoadedTarget(Img, Callee)
+                        : libc::isNoReturnTarget(Img, Callee)))
         Work.emplace_back(Next, X86Reach::AfterCall);
       continue;
     }

@@ -14,10 +14,12 @@
 #include "neverd/Common.h"
 #include "neverd/libc/LibCFortify.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
 #include "neverd/libc/StackProbeIndex.h"
 #include "neverd/libc/WindowsCRT.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/LanguageRuntime.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -616,6 +618,17 @@ bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
     if (const Export *Exp = Img.findExportAt(Target))
       It->second = NoReturn(Exp->Name);
   return It->second;
+}
+
+bool isNoReturnLoadedTarget(const BinaryImage &Image, va_t Slot,
+                            const NoReturnTargetIndex *Index) {
+  if (const auto Stated = Image.userNoReturnAt(Slot))
+    return *Stated;
+  if (isNoReturnTarget(Image, Slot, Index))
+    return true;
+  if (const auto Target = readImmutableImageCodePointer(Image, Slot))
+    return isNoReturnTarget(Image, *Target, Index);
+  return false;
 }
 
 bool isNoReturnTarget(const BinaryImage &Img, va_t Target,
