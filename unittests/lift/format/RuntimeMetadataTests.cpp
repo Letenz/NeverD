@@ -3,6 +3,11 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Native import identity and lifecycle metadata invariants.
+///
+//===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
 
@@ -1299,6 +1304,7 @@ TEST(RuntimeMetadata, CollectsEveryMachORuntimeFunctionSectionKind) {
   Img.Segments.push_back(makeSegment(0x3000, 0x100, false));
 
   Segment &Arrays = Img.Segments.back();
+  Arrays.FileSz = Arrays.Size;
   writePtr(Arrays.Data.data(), 0x1010, true);
   writePtr(Arrays.Data.data() + 0x20, 0x1020, true);
   writePtr(Arrays.Data.data() + 0x40, 0x1030, true);
