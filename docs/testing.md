@@ -1565,6 +1565,9 @@ number boundaries, BOMs, depth and error precedence; nested/concurrent queues,
 thread limits, original exceptions and large stacks. The full build additionally
 runs `NeverDStringScanTests`, `NeverDTextEncodingTests`, pipeline, SDK and worker
 owners. Compare complete string metadata and output, not only throughput.
+`NeverDTextEncodingTests` also requires in-place normalization to retain valid
+string storage, including embedded NUL and Unicode noncharacters, while keeping
+the same malformed-byte escapes with SIMD validation enabled or disabled.
 Native pipeline CI repeats the complete selected owners and actual SDK/worker
 checks with both the default oneTBB backend and the explicit native-thread baseline.
 It also runs the pinned Capstone fork's x86 unit inventory, including guard-page
@@ -5131,6 +5134,14 @@ automatic load retains the previous successful database and statistics.
 `NeverDSessionSignatureProfileTests` verifies the same selection through the
 public C SDK, including header JSON counts and their manual-load reset.
 See [signature selection](signature-selection.md) for the evidence boundaries.
+
+`SignatureMatcherCRCReuse.*` additionally bounds repeated-checksum work while
+checking indexed/value/packed matching, all CRC lengths, tail disagreements,
+truncation, changed buffers and parallel equivalence. The Release
+`neverd-signature-bench` tool separates pattern reading/parsing, index building
+and repeated scans, with reproducible hashes and optional work counters.
+See [signature quality and performance](signature-quality.md) for the
+measurement contract, negative workloads and final-name truth checks.
 
 The feature repository retains the original compiler objects, truth, source
 profiles and digests. `NeverDLibraryRecognitionTests` consumes those archives

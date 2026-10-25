@@ -218,9 +218,20 @@ bool activateTestWindow(QWidget *window) {
   window->activateWindow();
   // Qt can report a transient family as active before native keyboard focus
   // reaches this particular window. Wait for both before sending test input.
-  return QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
-           return QGuiApplication::focusWindow() == window->windowHandle();
-         });
+  const bool active =
+      QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
+        return QGuiApplication::focusWindow() == window->windowHandle();
+      });
+  if (!active)
+    qWarning() << "Native focus did not reach" << window << "visible"
+               << window->isVisible() << "exposed"
+               << (window->windowHandle() &&
+                   window->windowHandle()->isExposed())
+               << "focus" << QGuiApplication::focusWindow() << "active"
+               << QApplication::activeWindow() << "popup"
+               << QApplication::activePopupWidget() << "modal"
+               << QApplication::activeModalWidget();
+  return active;
 }
 
 /// Bound a regression to exec() so a modal reference list fails rather than
@@ -642,6 +653,91 @@ private slots:
                                      << QStringLiteral("offlinePackageReview");
     QTest::newRow("binary-comparison")
         << int(ActionId::FileCompare) << QStringLiteral("binaryComparison");
+  }
+
+  void focusToolbarKeepsWorkbenchCommands_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void focusToolbarKeepsWorkbenchCommands() {
+    QFETCH(bool, dark);
+    auto &theme = Theme::instance();
+    const auto previous = theme.mode();
+    const auto restoreTheme = qScopeGuard([&] { theme.setMode(previous); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    theme.apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "focus-toolbar.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    auto *mode = bench.action(ActionId::ViewFocusMode);
+    mode->trigger();
+    auto *workspace = assembly->window();
+    QVERIFY(activateTestWindow(workspace));
+    QPointer<QToolBar> toolbar =
+        workspace->findChild<QToolBar *>(QStringLiteral("focusToolbar"));
+    QVERIFY(toolbar && toolbar->isVisible());
+    QCOMPARE(toolbar->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    for (auto *normal : bench.window->findChildren<QToolBar *>(
+             QString(), Qt::FindDirectChildrenOnly)) {
+      if (normal->objectName() == QLatin1String("toolbarNavigationBand"))
+        continue;
+      for (auto *action : normal->actions())
+        if (!action->isSeparator())
+          QVERIFY2(toolbar->actions().contains(action),
+                   qPrintable(action->objectName()));
+    }
+    auto *code = workspace->findChild<CodeView *>();
+    QVERIFY(code);
+    QTRY_COMPARE(code->text()->function(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(!code->text()->loading());
+    assembly->navigate(Base + 0x1e0);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    code->text()->setFocus();
+    QTRY_VERIFY(code->text()->hasFocus());
+    const auto click = [&](ActionId id) {
+      auto *button = toolbar->widgetForAction(bench.action(id));
+      if (!button || !button->isVisible() || !button->isEnabled())
+        return false;
+      QTest::mouseClick(workspace->windowHandle(), Qt::LeftButton,
+                        Qt::NoModifier,
+                        button->mapTo(workspace, button->rect().center()));
+      return true;
+    };
+    QVERIFY(click(ActionId::JumpBack));
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(code->text()->hasFocus());
+    QVERIFY(click(ActionId::JumpForward));
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x1e0));
+    QTRY_COMPARE(code->text()->function(), assembly->currentFunction());
+    QTRY_VERIFY(!code->text()->loading());
+    const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(workspace->grab().save(captures + "/focus-toolbar-" +
+                                     QTest::currentDataTag() + ".png"));
+    }
+    mode->trigger();
+    QTRY_VERIFY(!toolbar);
+    auto *output = bench.window->findChild<OutputWindow *>();
+    QVERIFY(output && output->isVisible());
+    mode->trigger();
+    workspace = assembly->window();
+    QCOMPARE(workspace->findChildren<QToolBar *>(QStringLiteral("focusToolbar"))
+                 .size(),
+             1);
+    workspace->close();
+    QTRY_VERIFY(!mode->isChecked());
+    QVERIFY(output->isVisible());
   }
 
   void focusFunctionsSidebarTogglesAndNavigates_data() {

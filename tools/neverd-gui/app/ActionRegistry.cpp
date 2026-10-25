@@ -1,5 +1,6 @@
 #include "ActionRegistry.h"
 
+#include "../Config.h"
 #include "Icons.h"
 
 #include <QAction>
@@ -144,6 +145,34 @@ QList<QToolBar *> ActionRegistry::buildToolbars(QMainWindow *window) {
 #include "Toolbars.def"
   retranslate();
   return result;
+}
+
+QToolBar *ActionRegistry::buildFocusToolbar(QWidget *parent) const {
+  auto *toolbar = new QToolBar(parent);
+  toolbar->setObjectName(QStringLiteral("focusToolbar"));
+  toolbar->setIconSize(
+      QSize(::neverd::limits::gui_config::kWorkbenchStyleSmallIconSize,
+            ::neverd::limits::gui_config::kWorkbenchStyleSmallIconSize));
+  toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+  toolbar->setMovable(false);
+  toolbar->setFloatable(false);
+  toolbar->setFixedHeight(::neverd::limits::gui_config::kTitleBarHeight);
+  const auto *focus = action(ActionId::ViewFocusMode);
+  const auto describe = [toolbar, focus] {
+    QString title = focus->text();
+    title.remove(QLatin1Char('&'));
+    toolbar->setAccessibleName(title);
+  };
+  connect(focus, &QAction::changed, toolbar, describe);
+  describe();
+#define NEVERD_TOOLBAR(Id, Title)                                              \
+  if (!toolbar->actions().isEmpty())                                           \
+    toolbar->addSeparator();
+#define NEVERD_TOOLBAR_ITEM(Toolbar, Action)                                   \
+  toolbar->addAction(action(ActionId::Action));
+#define NEVERD_TOOLBAR_SEPARATOR(Toolbar) toolbar->addSeparator();
+#include "Toolbars.def"
+  return toolbar;
 }
 
 void ActionRegistry::retranslate() {

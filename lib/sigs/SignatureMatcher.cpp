@@ -10,6 +10,7 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/bit.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -157,13 +158,70 @@ size_t statedTail(const StoredModule &Mod, size_t Count) {
 
 // The rules, one set for both forms.
 
+struct DirectCRC {
+  void candidate() {}
+  uint16_t crc(const uint8_t *Data, size_t Leading, uint8_t Length) {
+    return SignatureMatcher::computeCRC16(Data + Leading, Length);
+  }
+};
+
+/// Candidates often share a prologue and CRC window. Cache checksums only
+/// for this input address, after each candidate has passed its bounds and
+/// leading-byte checks. A different leading width starts a fresh cache.
+/// Storage is bounded by the pattern format's byte-sized CRC length, not
+/// by the number of modules. Negative prefixes never initialize the arrays.
+template <bool Track> class EntryCRC {
+public:
+  explicit EntryCRC(SignatureMatcher::ScanStatistics *Statistics = nullptr)
+      : Statistics(Statistics) {}
+
+  void candidate() {
+    if constexpr (Track)
+      ++Statistics->Candidates;
+  }
+
+  // Keep the cache lookup and checksum loop off the common prefix-mismatch
+  // path; otherwise their code and register pressure penalize negative scans.
+  LLVM_ATTRIBUTE_NOINLINE uint16_t crc(const uint8_t *Data, size_t Leading,
+                                       uint8_t Length) {
+    if constexpr (Track)
+      ++Statistics->CRCRequests;
+    if (Leading != CachedLeading) {
+      Known.fill(0);
+      CachedLeading = Leading;
+    }
+    const size_t Word = Length / WordBits;
+    const uint64_t Bit = uint64_t{1} << (Length % WordBits);
+    if ((Known[Word] & Bit) == 0) {
+      Values[Length] = SignatureMatcher::computeCRC16(Data + Leading, Length);
+      Known[Word] |= Bit;
+      if constexpr (Track) {
+        ++Statistics->CRCComputations;
+        Statistics->CRCBytes += Length;
+      }
+    }
+    return Values[Length];
+  }
+
+private:
+  static constexpr size_t WordBits = std::numeric_limits<uint64_t>::digits;
+  SignatureMatcher::ScanStatistics *Statistics;
+  size_t CachedLeading = std::numeric_limits<size_t>::max();
+  std::array<uint64_t, ByteValues / WordBits> Known;
+  std::array<uint16_t, ByteValues> Values;
+};
+
 template <typename Module> size_t effectiveLeadingCount(const Module &Mod) {
   return Mod.TotalLen == 0 ? leadingCount(Mod)
                            : std::min(leadingCount(Mod), size_t{Mod.TotalLen});
 }
 
-template <typename Module>
-bool matchModule(const Module &Mod, const uint8_t *Data, size_t Available) {
+template <typename Module, typename Checksum>
+// Candidates that fail bounds or leading bytes need no per-candidate call.
+LLVM_ATTRIBUTE_ALWAYS_INLINE bool matchModule(const Module &Mod,
+                                              const uint8_t *Data,
+                                              size_t Available, Checksum &CRC) {
+  CRC.candidate();
   const size_t Leading = leadingCount(Mod);
   size_t MatchLimit = Mod.TotalLen;
   if (MatchLimit == 0) {
@@ -182,7 +240,7 @@ bool matchModule(const Module &Mod, const uint8_t *Data, size_t Available) {
     if (Leading > MatchLimit || !checkedAdd(Leading, Mod.CRCLen, CRCEnd) ||
         CRCEnd > MatchLimit)
       return false;
-    if (SignatureMatcher::computeCRC16(Data + Leading, Mod.CRCLen) != Mod.CRC16)
+    if (CRC.crc(Data, Leading, Mod.CRCLen) != Mod.CRC16)
       return false;
   }
 
@@ -462,27 +520,28 @@ findExactEdge(const SignatureMatcher::HashIndex::Node &Node, uint8_t Value) {
 }
 
 /// Report, by index, the modules of \p Modules that match \p Data.
-template <typename ModuleRange, typename Report>
+template <typename ModuleRange, typename Checksum, typename Report>
 void matchIndexNode(const SignatureMatcher::HashIndex &Index, size_t NodeIndex,
                     const ModuleRange &Modules, const uint8_t *Data,
-                    size_t Available, Report &&Found) {
+                    size_t Available, Checksum &CRC, Report &&Found) {
   if (NodeIndex >= Index.Nodes.size())
     return;
   const SignatureMatcher::HashIndex::Node &Node = Index.Nodes[NodeIndex];
   if (Node.isLeaf()) {
     for (size_t ModuleIndex : Node.Candidates)
       if (ModuleIndex < Modules.size() &&
-          matchModule(Modules[ModuleIndex], Data, Available))
+          matchModule(Modules[ModuleIndex], Data, Available, CRC))
         Found(ModuleIndex);
     return;
   }
 
   if (Node.WildcardChild != SignatureMatcher::HashIndex::kNoNode)
-    matchIndexNode(Index, Node.WildcardChild, Modules, Data, Available, Found);
+    matchIndexNode(Index, Node.WildcardChild, Modules, Data, Available, CRC,
+                   Found);
   if (Node.Offset >= Available)
     return;
   if (const auto *Edge = findExactEdge(Node, Data[Node.Offset]))
-    matchIndexNode(Index, Edge->Child, Modules, Data, Available, Found);
+    matchIndexNode(Index, Edge->Child, Modules, Data, Available, CRC, Found);
 }
 
 size_t countIndexNode(const SignatureMatcher::HashIndex &Index,
@@ -508,18 +567,29 @@ size_t countIndexNode(const SignatureMatcher::HashIndex &Index,
 }
 
 /// Report the modules that match at \p Entry, when it lies in the image.
-template <typename ModuleRange, typename Report>
+template <bool Track = false, bool CallbackMayMutate = false,
+          typename ModuleRange, typename Report>
 void scanEntry(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
                uint64_t Entry, const ModuleRange &Modules,
-               const SignatureMatcher::HashIndex &Index, Report &&Found) {
+               const SignatureMatcher::HashIndex &Index, Report &&Found,
+               SignatureMatcher::ScanStatistics *Statistics = nullptr) {
   if (Entry < BaseVA)
     return;
   const uint64_t Offset = Entry - BaseVA;
   if (Offset >= ImageSize)
     return;
+  if constexpr (Track)
+    ++Statistics->Entries;
   const size_t Available = ImageSize - static_cast<size_t>(Offset);
-  matchIndexNode(Index, Index.Root, Modules, ImageBase + Offset, Available,
-                 Found);
+  if constexpr (CallbackMayMutate) {
+    DirectCRC CRC;
+    matchIndexNode(Index, Index.Root, Modules, ImageBase + Offset, Available,
+                   CRC, Found);
+  } else {
+    EntryCRC<Track> CRC(Statistics);
+    matchIndexNode(Index, Index.Root, Modules, ImageBase + Offset, Available,
+                   CRC, Found);
+  }
 }
 
 } // namespace
@@ -536,12 +606,14 @@ uint16_t SignatureMatcher::computeCRC16(const uint8_t *Data, size_t Len) {
 
 bool SignatureMatcher::matchPattern(const PatternModule &Mod,
                                     const uint8_t *Data, size_t Available) {
-  return matchModule(Mod, Data, Available);
+  DirectCRC CRC;
+  return matchModule(Mod, Data, Available, CRC);
 }
 
 bool SignatureMatcher::matchPattern(const StoredModule &Mod,
                                     const uint8_t *Data, size_t Available) {
-  return matchModule(Mod, Data, Available);
+  DirectCRC CRC;
+  return matchModule(Mod, Data, Available, CRC);
 }
 
 size_t SignatureMatcher::fixedByteCount(const PatternModule &Mod) {
@@ -570,7 +642,10 @@ void SignatureMatcher::scanRegion(const uint8_t *Data, size_t Size,
 
   for (size_t Offset = 0; Offset < Size; ++Offset) {
     const size_t Available = Size - Offset;
-    matchIndexNode(Idx, Idx.Root, Modules, Data + Offset, Available,
+    // User callbacks can modify the input through another alias. Only the
+    // packed batch scan has no external callback during verification.
+    DirectCRC CRC;
+    matchIndexNode(Idx, Idx.Root, Modules, Data + Offset, Available, CRC,
                    [&](size_t Module) { Callback(Offset, Modules[Module]); });
   }
 }
@@ -625,14 +700,23 @@ void SignatureMatcher::scanAtAddresses(
     return;
 
   for (uint64_t Entry : FuncEntries)
-    scanEntry(ImageBase, ImageSize, BaseVA, Entry, Modules, Index,
-              [&](size_t Module) { Callback(Entry, Modules[Module]); });
+    scanEntry<false, true>(
+        ImageBase, ImageSize, BaseVA, Entry, Modules, Index,
+        [&](size_t Module) { Callback(Entry, Modules[Module]); });
 }
 
-std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
-    const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
-    llvm::ArrayRef<uint64_t> FuncEntries, llvm::ArrayRef<StoredModule> Modules,
-    const HashIndex &Index) {
+namespace {
+
+template <bool Track>
+std::vector<SignatureMatcher::Hit>
+findAtAddresses(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
+                llvm::ArrayRef<uint64_t> FuncEntries,
+                llvm::ArrayRef<StoredModule> Modules,
+                const SignatureMatcher::HashIndex &Index,
+                SignatureMatcher::ScanStatistics *Statistics) {
+  using Hit = SignatureMatcher::Hit;
+  if constexpr (Track)
+    *Statistics = {};
   if (ImageSize != 0 && !ImageBase)
     return {};
 
@@ -641,19 +725,50 @@ std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
   constexpr size_t BlockEntries = SignatureLimits::MatchBlockEntries;
   const size_t Blocks = (FuncEntries.size() + BlockEntries - 1) / BlockEntries;
   std::vector<std::vector<Hit>> BlockHits(Blocks);
+  std::vector<SignatureMatcher::ScanStatistics> BlockStatistics;
+  if constexpr (Track)
+    BlockStatistics.resize(Blocks);
   neverd::parallelForEach(Blocks, [&](auto Claim, size_t Total) {
     for (size_t B = Claim(); B < Total; B = Claim()) {
       std::vector<Hit> &Hits = BlockHits[B];
       const size_t End = std::min(FuncEntries.size(), (B + 1) * BlockEntries);
       for (size_t I = B * BlockEntries; I < End; ++I)
-        scanEntry(
+        scanEntry<Track>(
             ImageBase, ImageSize, BaseVA, FuncEntries[I], Modules, Index,
-            [&](size_t Module) { Hits.push_back({FuncEntries[I], Module}); });
+            [&](size_t Module) { Hits.push_back({FuncEntries[I], Module}); },
+            Track ? &BlockStatistics[B] : nullptr);
     }
   });
 
   std::vector<Hit> Hits;
   for (const std::vector<Hit> &Block : BlockHits)
     Hits.insert(Hits.end(), Block.begin(), Block.end());
+  if constexpr (Track) {
+    for (const auto &Block : BlockStatistics) {
+      Statistics->Entries += Block.Entries;
+      Statistics->Candidates += Block.Candidates;
+      Statistics->CRCRequests += Block.CRCRequests;
+      Statistics->CRCComputations += Block.CRCComputations;
+      Statistics->CRCBytes += Block.CRCBytes;
+    }
+  }
   return Hits;
+}
+
+} // namespace
+
+std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
+    const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
+    llvm::ArrayRef<uint64_t> FuncEntries, llvm::ArrayRef<StoredModule> Modules,
+    const HashIndex &Index) {
+  return ::findAtAddresses<false>(ImageBase, ImageSize, BaseVA, FuncEntries,
+                                  Modules, Index, nullptr);
+}
+
+std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
+    const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
+    llvm::ArrayRef<uint64_t> FuncEntries, llvm::ArrayRef<StoredModule> Modules,
+    const HashIndex &Index, ScanStatistics &Statistics) {
+  return ::findAtAddresses<true>(ImageBase, ImageSize, BaseVA, FuncEntries,
+                                 Modules, Index, &Statistics);
 }
