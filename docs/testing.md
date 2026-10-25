@@ -287,6 +287,32 @@ PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
 state must return a normal error for both one-function serial and eight-function
 sharded LLVM emission, with and without optimization.
+`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks original 64-bit
+LSL register-offset loads through both raw decoders, strict/permissive lifting,
+SSA and both C routes. Independent LLVM MC words check source aliases, zero
+indices, discarded destinations and both encoded scales. O0/O2 object checks
+retain one load even with an unused result; native AArch64 C execution covers
+positive/negative offsets and stores on both sides of the load. Malformed
+LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
+and the software tracer refuses state-dependent addresses in both modes, even
+when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
+Control-independent addresses retain finite image reads without guessing CPTA.
+SP-origin source execution remains explicitly unsupported. Local Z/P state
+survives only a validated scalar memory operation. Run this group with the
+decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
+Include `NativeBooleanResultProof.*` and the jump-table/computed-goto tests:
+identical-address reads preserve the differential result proof, while either
+tainted address input must refuse it. Computed-goto execution covers both a
+zero-register index and a load overwriting its index register. Selector tests
+reject stale or duplicated authentication records and duplicate load occurrences.
+`MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
+an edited store must lose its previous prologue-save annotation before the
+ObjC private-copy machine replay compares both saved representations.
+These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
+instruction families.
+Pointer-valued results retain their bits through both C routes; independent
+LLVM return tests cover the 32/64-bit x86 and Arm register ABIs.
+
 `AArch64PAuthLoadSemantics` checks both raw decoder routes, signed offsets,
 writeback and dead-result retention through a single combined authenticated
 load, with independent emitted-word checks at O0/O2 through LLVM and both C
@@ -2627,11 +2653,17 @@ compiled by the linked SDK rather than sent to an incompatible system Clang.
 `LLVMCValues.NativeVirtualizationKeepsStatusAndFailedReadPrior` supplies controlled
 VMX completion values to check C status conversion, exact operand evaluation
 and failed-read preservation without executing privileged instructions.
-`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 84 modules for
-CLTS, WRMSRNS, MSRLIST, default-address LKGS, INVLPGB and TLBSYNC. The corresponding
-NeverC test requires 240 C-to-native-IR compilations with no inline assembly;
+`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 288 modules for
+CLAC/STAC, XEND, CLTS, WRMSRNS, MSRLIST, LKGS, LAR/LSL, INVLPGB and TLBSYNC.
+The corresponding NeverC test requires 744 C-to-native-IR compilations with no inline assembly;
 its fixtures explicitly initialize RSI/RDI across ABIs. The native-call refusal
 test checks mode, result identity and lost memory/nonreturning effects.
+SMAP regressions retain distinct ordinary reads before, between and after its
+controls, plus the intervening store, through optimization on x86/x64 in
+ELF/COFF/Mach-O. Both C routes compile at O0/O2 without executing privileged
+controls. LowIR rejects invented scalar results, operands, address spaces and
+architectures; the scalar emulator cannot claim successful SMAP or XEND
+completion. Missing NeverC remains an explicit unqualified compiler route.
 `X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart` compiles both C
 routes with NeverC and executes the existing fault/register/completion/restart
 oracle at O0/O2. This uses controlled signal continuation and does not qualify
@@ -10361,6 +10393,20 @@ destination aliases, thread errno and dynamic provider lifetime. Full memory
 comparisons cover canaries and refusals. Formatting regressions exercise the
 same GP argument reader. These tests establish the bounded Android model;
 they do not establish behavior on an Android device.
+
+`AndroidFormattingTests.cpp` covers ordinary and fortify formatting at O0/O2
+with ordinary, APS2 and RELR relocations on available checked ARM64 transports.
+The four checked entrypoints exercise their distinct GP argument positions,
+register-to-stack transitions, real `va_copy`, explicit save areas, binary NUL
+counting, truncation, errno preservation and full-width object sizes. Checks
+include guard ordering, exact-fit terminators, zero capacity and existing
+INT_MAX limits. Unsupported conversions, malformed lists, inaccessible
+destinations and retired providers fail explicitly. Direct model checks cover
+exact memory-budget admission, timeout and cross-page write atomicity. Complete buffer comparisons
+check that fortify stops publish no partial output. C API/CLI tests compare complete success and fortify
+failure reports for all four dynamically resolved names. Fixtures and expected
+bytes are independently authored; these tests require no Android device or
+host libc formatting oracle.
 
 `AndroidSearchTests.cpp` executes independently compiled character-search
 callers at O0/O2 with ordinary, APS2 and RELR relocations on each available

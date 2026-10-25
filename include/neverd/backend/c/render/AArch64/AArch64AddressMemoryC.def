@@ -1,0 +1,33 @@
+//===- AArch64AddressMemoryC.def - Original memory C syntax -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Shared GNU C syntax retains one faulting memory instruction. Inputs are
+/// evaluated before the output; memory cannot move across the operation.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_A64_ADDRESS_MEMORY_C_TEXT
+#error "Define NEVERD_A64_ADDRESS_MEMORY_C_TEXT before including this file"
+#endif
+
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCValue, "__memory_value")
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCBase, "__memory_base")
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCIndex, "__memory_index")
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCBaseInput, "__memory_base_input")
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCIndexInput,
+                                 "__memory_index_input")
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCPointerCast,
+                                 "({0})(uintptr_t)({1})")
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(
+    kAddressLoadCExpression,
+    "({{ const uint64_t {6} = (uint64_t)({3}); "
+    "const uint64_t {7} = (uint64_t)({4}); "
+    "register uint64_t {0} __asm__(\"x17\"); "
+    "register uint64_t {1} __asm__(\"x16\") = {6}; "
+    "register uint64_t {2} __asm__(\"x15\") = {7}; "
+    "__asm__ volatile(\".inst %c3\" : \"=&r\"({0}) "
+    ": \"r\"({1}), \"r\"({2}), \"i\"({5}) : \"memory\"); {0}; })")
+
+#undef NEVERD_A64_ADDRESS_MEMORY_C_TEXT

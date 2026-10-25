@@ -5225,6 +5225,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Memory = renderAArch64AddressMemoryCall(Opts.TheArch, Call, Name,
+                                                   ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Memory->Code;
+    return true;
+  }
   if (auto AuthenticatedLoad = renderAArch64PAuthLoadCall(
           Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);

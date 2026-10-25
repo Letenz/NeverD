@@ -104,6 +104,12 @@ std::string renderX86SegmentedLoad(
     const std::function<std::string(const llvm::Value *)> &ValueStr);
 
 //--- Arch-specific (LLVMCIntrinsicRenderARM.cpp) ---
+/// False for another assembly identity; malformed owned calls throw.
+bool validateAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call);
+std::optional<InlineAsmRender>
+renderAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call,
+                               const std::string &ResultName, bool ResultLive,
+                               const std::vector<std::string> &Args);
 std::optional<InlineAsmRender>
 renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,
                            const std::string &ResultName, bool ResultLive,

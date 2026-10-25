@@ -117,6 +117,9 @@ SIDEEFFECT(Intrinsic::A64_PACMPending);
 #define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, ...) SIDEEFFECT(Intrinsic::Id);
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.def"
 
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, ...) SIDEEFFECT(Intrinsic::Id);
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+
 // Pointer-check controls are observable even when the result is discarded.
 #define NEVERD_A64_SVE_CPA_OPERATION(Id, ...) SIDEEFFECT(Intrinsic::Id);
 #include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"

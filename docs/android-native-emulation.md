@@ -263,8 +263,9 @@ The supported Bionic subset is:
   checked before either effect, and errno is preserved. Invalid pointers and
   exhausted scan/deadline bounds stop explicitly. No host tokenizer or hidden
   process cursor supplies state; `strtok` remains unsupported.
-- `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
-  byte-string formatting subset described below.
+- `snprintf`, `vsnprintf`, `sprintf`, `vsprintf` and their four `__*_chk`
+  fortify forms, for the bounded integer and byte-string formatting subset
+  described below.
 - `sscanf`, `vsscanf`, for bounded integer scanning as described below.
 - `kill`, sharing the [Linux signal contract](process-emulation.md) with raw
   SVC and variadic `syscall`: self signal-zero probes, process-wide SIGKILL and
@@ -527,7 +528,7 @@ The model is independently implemented; these sources specify the ABI.
 
 ### String formatting
 
-The four string formatting imports share one Android implementation. It reads
+The eight string formatting imports share one Android implementation. It reads
 ordinary GP arguments from x0–x7 and then the guest stack. The `v` forms consume
 the caller's actual 32-byte AAPCS64 `va_list`, including its GP save area and
 overflow stack; they never use the host's variadic ABI. The caller's list is
@@ -548,6 +549,22 @@ only the actual destination prefix to be writable. Padding is counted without
 materializing discarded bytes; input scans and retained output share the
 process's existing memory and deadline limits.
 
+`__snprintf_chk` and `__vsnprintf_chk` check the requested capacity against the
+compiler-supplied object size before reading the format or variadic arguments.
+An admitted request retains ordinary `snprintf` truncation and counting rules,
+including a zero-capacity call with a null destination. The object size remains
+64-bit and may be SIZE_MAX when the requested capacity is within the supported
+range. `__sprintf_chk` and `__vsprintf_chk` use the object size as their capacity
+and require the complete result plus its final NUL to fit. Even an empty result
+requires one byte. API 28 ignores the flags argument in all four forms.
+
+Fortify violations stop as `unsupported_service` without publishing a result or
+partial output; Bionic's abort, logging and pre-abort writes are not simulated.
+The checked `sprintf` forms retain the existing INT_MAX capacity admission
+boundary, including explicit refusal of an unknown SIZE_MAX object size. API 28
+maps that unknown size to SSIZE_MAX, whose version-specific formatting behavior
+is outside this model. No smaller capacity or successful result is guessed.
+
 Floating-point, wide text, positional arguments, `%n`, unknown conversions,
 `snprintf` capacities above INT_MAX, and lengths exceeding INT_MAX stop as
 `unsupported_service` before publishing output. This boundary does not simulate
@@ -558,8 +575,9 @@ same implementation and provider lifetime checks as direct imports.
 
 The independently authored implementation and compiled O0/O2 callers follow
 [AAPCS64's variadic layout](https://github.com/ARM-software/abi-aa/blob/2025Q1/aapcs64/aapcs64.rst#the-va_list-type),
-Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
-and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
+Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp),
+[conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp)
+and [fortify wrappers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/fortify.cpp).
 
 ### Byte streams
 

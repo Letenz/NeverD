@@ -122,6 +122,9 @@ A(Intrinsic::A64_FcvtzuFixed,  "fcvtzu");
 #define NEVERD_A64_PAUTH_LOAD_OPERATION(Id, Mnemonic, ...) A(Intrinsic::Id, Mnemonic);
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.def"
 
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic) A(Intrinsic::Id, Mnemonic);
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+
 #define NEVERD_A64_SVE_CPA_OPERATION(Id, Insn, Name, ...) A(Intrinsic::Id, Name);
 #include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"
 
