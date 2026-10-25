@@ -38,6 +38,7 @@
 #include "Session.h"
 #include "SetTypeDialog.h"
 #include "SettingsKeys.h"
+#include "ShortcutHint.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
@@ -1850,7 +1851,6 @@ void MainWindow::connectActions() {
       QApplication::clipboard()->setText(hexAddress(*address));
   });
   on(ActionId::EditRename, [this] { rename(); });
-  on(ActionId::EditComment, [this] { comment(); });
   on(ActionId::EditRepeatableComment, [this] { comment(); });
   on(ActionId::EditBookmark, [this] {
     const auto address = currentAddress();
@@ -2365,8 +2365,6 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::EditConvertToStruct)
       ->setEnabled(declarations && session_.convertsParameters() && code &&
                    code->text()->function().has_value());
-  actions_.action(ActionId::EditComment)
-      ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::OptionsAnalyze)
@@ -4039,21 +4037,22 @@ void MainWindow::showShortcuts() {
   tree->setHeaderLabels({tr("Action"), tr("Shortcut"), tr("Scope")});
   tree->setRootIsDecorated(false);
   tree->setUniformRowHeights(true);
-  const auto add = [&](const QString &text, const QKeySequence &key,
+  const auto add = [&](const QString &text, const QList<QKeySequence> &keys,
                        const QString &scope, const QIcon &icon = {}) {
     auto *item = new QTreeWidgetItem(tree);
     item->setIcon(0, icon);
     item->setText(0, QString(text).remove(QLatin1Char('&')));
-    item->setText(1, key.isEmpty() ? tr("Unassigned")
-                                   : key.toString(QKeySequence::NativeText));
+    const auto hint = shortcutHint(keys);
+    item->setText(1, hint.isEmpty() ? tr("Unassigned") : hint);
     item->setText(2, scope);
-    item->setData(1, Qt::UserRole, key.toString(QKeySequence::PortableText));
+    item->setData(1, Qt::UserRole,
+                  shortcutHint(keys, QKeySequence::PortableText));
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     return item;
   };
   for (auto *action : actions_.allActions()) {
     auto *item =
-        add(action->text(), action->shortcut(),
+        add(action->text(), action->shortcuts(),
             actions_.viewActions().contains(action) ? tr("Analysis views")
                                                     : tr("Workbench"),
             action->icon());
@@ -4061,13 +4060,13 @@ void MainWindow::showShortcuts() {
     item->setToolTip(0, action->statusTip());
   }
   add(actions_.action(ActionId::EditFunction)->text(),
-      ChooserView::commandKey(ChooserCommand::Edit), tr("Functions"));
-  add(tr("Quick filter"), QKeySequence(QKeySequence::Find), tr("Lists"));
-  add(tr("Add types…"), LocalTypesView::commandKey(TypesCommand::Add),
+      {ChooserView::commandKey(ChooserCommand::Edit)}, tr("Functions"));
+  add(tr("Quick filter"), {QKeySequence(QKeySequence::Find)}, tr("Lists"));
+  add(tr("Add types…"), {LocalTypesView::commandKey(TypesCommand::Add)},
       tr("Local Types"));
-  add(tr("Edit type…"), LocalTypesView::commandKey(TypesCommand::Edit),
+  add(tr("Edit type…"), {LocalTypesView::commandKey(TypesCommand::Edit)},
       tr("Local Types"));
-  add(tr("Delete types…"), LocalTypesView::commandKey(TypesCommand::Delete),
+  add(tr("Delete types…"), {LocalTypesView::commandKey(TypesCommand::Delete)},
       tr("Local Types"));
   tree->sortItems(0, Qt::AscendingOrder);
   tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -4127,7 +4126,7 @@ void MainWindow::showCommandPalette() {
         continue;
       auto *item = new QListWidgetItem(action->icon(), label, list);
       item->setData(SecondaryTextDelegate::SecondaryTextRole,
-                    action->shortcut().toString(QKeySequence::NativeText));
+                    shortcutHint(action->shortcuts()));
       item->setData(Qt::UserRole, action->objectName());
     }
     if (list->count())
@@ -4387,7 +4386,8 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     if (target && target->contains(QStringLiteral("parameter")))
       menu.addAction(convert);
   }
-  for (const auto id : {ActionId::EditComment, ActionId::EditBookmark})
+  for (const auto id :
+       {ActionId::EditRepeatableComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
   // IDA offers the operand's structure offset after its rename.
   if (auto *structure = actions_.action(ActionId::EditOperandStruct);

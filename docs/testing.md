@@ -2784,13 +2784,19 @@ and that a click on the last text cell, scrolled sideways, takes its byte.
 
 `NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
 and shortcut tooltips through action changes, translation and disabled actions.
+`commentKeysShareOneViewScopedAction` routes `;` and `/` through Qt's window
+shortcut dispatch to the same comment action, checks that `:` is unbound and
+the duplicate menu entry is gone, and preserves punctuation in single-line
+and multiline text fields. The shortcut collision check includes aliases.
+Cocoa key dispatch skips if macOS refuses to activate the background test
+window; report that missing native coverage separately from offscreen checks.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
 Ctrl+E/P/L/S keys, filtering, Enter, cancellation and navigation history with
 the fixture worker. `shortcutsCanBeFoundByKeyAndScope` checks the shortcut
-browser's scoped Ctrl+E commands and unassigned actions using native and
-portable key spellings. `commandButtonsExposeTheirKeys` checks local action
-buttons in both themes, including compact Close and Back buttons whose Escape
-binding stays functional without visible key text.
+browser's scoped Ctrl+E commands, both comment keys and unassigned actions
+using native and portable key spellings. `commandButtonsExposeTheirKeys` checks
+local action buttons in both themes, including compact Close and Back buttons
+whose Escape binding stays functional without visible key text.
 Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
 repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
 and function-edit controller cases check that their scoped Ctrl+E still wins.
