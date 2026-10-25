@@ -39,6 +39,7 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
@@ -413,31 +414,133 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
   const auto &TRI = getTargetRegInfo(Architecture);
   if (Func.SkippedSSA || Func.Blocks.empty())
     return Result;
-  const MedBlockIdIndex Blocks(Func);
-  for (const auto &Block : Func.Blocks) {
+
+  // Each block boundary has at most two changes: no reaching origin becomes
+  // one exact definition, then conflicting origins make it unknown. Share
+  // that fixed point across every call. Repeating the backward ABI query at
+  // each call otherwise rescans the same large predecessor graph and exhausts
+  // the source proof's budget on ordinary functions with many calls.
+  struct Basis {
+    enum Kind { NoOrigin, Exact, Unknown } State = NoOrigin;
+    MedVar Value;
+
+    bool merge(const Basis &Other) {
+      if (Other.State == NoOrigin || State == Unknown)
+        return false;
+      if (State == NoOrigin) {
+        *this = Other;
+        return true;
+      }
+      if (Other.State == Unknown ||
+          entrySpKey(Value) != entrySpKey(Other.Value)) {
+        State = Unknown;
+        return true;
+      }
+      return false;
+    }
+  };
+  const auto Charge = [&](size_t Count) {
+    if (Count > Remaining) {
+      Remaining = 0;
+      return false;
+    }
+    Remaining -= Count;
+    return true;
+  };
+  const auto StackDefinition = [&](const MedVar &Value) {
+    return Value.Kind == MedVar::Reg && Value.Size &&
+           Value.RegOff == TRI.StackPointer;
+  };
+  const size_t Count = Func.Blocks.size();
+  std::map<int, size_t> Index;
+  std::vector<Basis> Entries(Count), Exits(Count);
+  std::vector<bool> EntryBoundary(Count), ExitBoundary(Count), Queued(Count);
+  std::vector<std::vector<size_t>> Users(Count);
+  for (size_t I = 0; I < Count; ++I) {
+    const auto &Block = Func.Blocks[I];
+    for (size_t Work : {size_t{1}, Block.Ops.size(), Block.Phis.size(),
+                        Block.Preds.size(), Block.ExceptionalPreds.size()})
+      if (!Charge(Work))
+        return {};
+    if (!Index.emplace(Block.Id, I).second)
+      return {};
+    for (const auto &Phi : Block.Phis)
+      if (StackDefinition(Phi.Output)) {
+        Entries[I] = {Basis::Exact, Phi.Output};
+        EntryBoundary[I] = true;
+        break;
+      }
+    for (const auto &Op : Block.Ops)
+      if (StackDefinition(Op.Output)) {
+        Exits[I] = {Basis::Exact, Op.Output};
+        ExitBoundary[I] = true;
+      }
+  }
+  for (size_t I = 0; I < Count; ++I) {
+    const auto &Block = Func.Blocks[I];
+    if (!EntryBoundary[I]) {
+      const auto Predecessor = [&](int Id) {
+        const auto Found = Index.find(Id);
+        if (Found == Index.end())
+          Entries[I].State = Basis::Unknown;
+        else
+          Users[Found->second].push_back(I);
+      };
+      if (!Block.Preds.empty()) {
+        for (int Pred : Block.Preds)
+          Predecessor(Pred);
+      } else if (!Block.ExceptionalPreds.empty()) {
+        // Match the ABI walk: a landing pad without ordinary predecessors
+        // inherits the source block's final SP unless an SP PHI owns it.
+        for (const auto &Edge : Block.ExceptionalPreds)
+          Predecessor(Edge.BlockId);
+      } else {
+        Entries[I].State = Basis::Unknown;
+      }
+    }
+    if (!ExitBoundary[I])
+      Exits[I] = Entries[I];
+  }
+  std::deque<size_t> Pending;
+  const auto Enqueue = [&](size_t I) {
+    if (!Queued[I]) {
+      Queued[I] = true;
+      Pending.push_back(I);
+    }
+  };
+  for (size_t I = 0; I < Count; ++I)
+    if (Exits[I].State != Basis::NoOrigin)
+      Enqueue(I);
+  while (!Pending.empty()) {
+    const size_t I = Pending.front();
+    Pending.pop_front();
+    Queued[I] = false;
+    if (!Charge(1) || !Charge(Users[I].size()))
+      return {};
+    for (size_t User : Users[I])
+      if (Entries[User].merge(Exits[I]) && !ExitBoundary[User]) {
+        Exits[User] = Entries[User];
+        Enqueue(User);
+      }
+  }
+  // Publish only after every incoming history has reached the fixed point.
+  // A closed cycle with no origin remains unknown, while a local write still
+  // establishes a new basis after an unknown or conflicting block entry.
+  for (size_t B = 0; B < Count; ++B) {
+    const auto &Block = Func.Blocks[B];
+    if (!Charge(Block.Ops.size()))
+      return {};
     std::optional<MedVar> LocalStack;
+    if (Entries[B].State == Basis::Exact)
+      LocalStack = Entries[B].Value;
     for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      if (!Remaining)
-        return Result;
-      --Remaining;
       const auto &Op = Block.Ops[I];
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-          !Op.Dead) {
-        if (LocalStack) {
-          if (LocalStack->Size == TRI.PointerSize)
-            Result.emplace(&Op, *LocalStack);
-        } else {
-          const auto Stack =
-              findReachingStackPtr(Func, TRI, Block.Id, static_cast<int>(I),
-                                   nullptr, &Blocks, &Remaining, false);
-          if (Stack.Basis && Stack.Basis->Size == TRI.PointerSize)
-            Result.emplace(&Op, *Stack.Basis);
-        }
-      }
+          !Op.Dead && LocalStack && LocalStack->Size == TRI.PointerSize)
+        Result.emplace(&Op, *LocalStack);
       // Cache the same most recent definition used by the backward ABI walk.
       // A call's own output, if any, belongs only to subsequent occurrences.
-      if (Op.Output.Kind == MedVar::Reg && Op.Output.Size &&
-          Op.Output.RegOff == TRI.StackPointer)
+      if (StackDefinition(Op.Output))
         LocalStack = Op.Output;
     }
   }
