@@ -66,6 +66,7 @@ jobs:
           cmake -S tools/neverd-gui/tests/mock-sdk -B build-fixture -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build-fixture --parallel 3
       - name: Build workbench with fixture SDK
+        id: build_workbench
         shell: bash
         run: |
           cmake -S tools/neverd-gui -B build-gui -G Ninja \
@@ -113,6 +114,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Verify GUI, IPC, MCP and translation contracts
+        if: ${{ !cancelled() && steps.build_workbench.outcome == 'success' }}
         shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
@@ -169,6 +171,7 @@ jobs:
             closingWorkbenchClosesDetachedWindows \
             codeOpensBesideFloatingDisassembly \
             focusModeGroupsViewsAndRestoresLayout \
+            focusToolbarKeepsWorkbenchCommands \
             focusFunctionsSidebarTogglesAndNavigates \
             focusSequenceUsesNativeKeysAndIgnoresTyping \
             fileReviewWindowsOfferWindowControls \

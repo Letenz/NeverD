@@ -197,7 +197,11 @@ void WindowFrame::syncWindowState() {
   const auto states = handle_.windowStates();
   if (states == states_)
     return;
-  finishResize();
+  // Cocoa can infer a maximized state when a drag reaches the window's size
+  // limit. The held gesture must still be able to shrink back from that limit.
+  // Only entering a state with no resize interaction cancels the grab.
+  if (states & (Qt::WindowFullScreen | Qt::WindowMinimized))
+    finishResize();
   states_ = states;
   updateMargins();
 }

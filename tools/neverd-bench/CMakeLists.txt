@@ -5,6 +5,10 @@ add_neverd_tool(neverd-bench
   neverd_shared
 )
 
+add_neverd_tool(neverd-signature-bench
+  signature-bench.cpp
+  LINK_COMPONENTS Sigs)
+
 if(NEVERD_ENABLE_CPU_EMULATION)
   add_neverd_tool(neverd-cpu-bench
     cpu-bench.cpp
