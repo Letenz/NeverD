@@ -510,6 +510,12 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
       return;
     Analysis.AssignedVars.insert(VarFn(S.Dst->Var));
   });
+  // GetExceptionCode() assignments are emitted at handler entry rather than
+  // represented by ordinary HighIR Assign statements.
+  for (const auto &[HandlerVA, Name] : SEHExceptionCodeNames) {
+    (void)HandlerVA;
+    Analysis.AssignedVars.insert(Name);
+  }
 
   HiLoPairs.clear();
   auto RegisterHiLo = [this](const HighStmt &S, const HighExpr &CE) {
@@ -4684,12 +4690,24 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
   });
 }
 
+bool HighCWriter::debugCallReturnIsDeclared(const HighExpr &Call,
+                                            const FunctionSym &Function) const {
+  const std::string Name = callIdentifier(Call);
+  // A header can declare a record-argument ABI even when the generic scalar
+  // extern path cannot. Its call adapter and result use that declaration.
+  return calledDefinition(Call) || positionalDebugSignature(Function) ||
+         (Name == Function.Name && includesHeaderOf(Name));
+}
+
 TypeRef HighCWriter::callResultType(const HighExpr &Call) const {
   if (Call.SourceCallHint &&
       Call.SourceCallHint->CallKind == SourceCallTypeHint::Kind::Analyst)
     return cDisplayType(Call.SourceCallHint->Signature.ReturnType);
   TypeRef ReturnType;
-  if (const auto FS = debugCallee(Call)) {
+  // An external prototype rejected by noteDebugExtern cannot supply the
+  // printed result type: the fallback declaration returns its ABI carrier.
+  if (const auto FS = debugCallee(Call);
+      FS && debugCallReturnIsDeclared(Call, *FS)) {
     if (Dbg)
       Dbg->completeType(FS->ReturnType);
     ReturnType = cDisplayType(FS->ReturnType);

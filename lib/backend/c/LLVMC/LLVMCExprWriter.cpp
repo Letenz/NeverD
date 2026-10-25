@@ -1341,13 +1341,16 @@ std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
 } // namespace
 
 uint16_t LLVMCWriter::llvmAccessSize(const llvm::Type *Ty) const {
-  if (!Ty)
+  // Source-map discovery also visits EH tokens. They identify control-flow
+  // state and have no storage extent for DataLayout to measure.
+  if (!Ty || !Ty->isSized())
     return 0;
   if (CurMod) {
-    const uint64_t Size =
+    const auto Size =
         CurMod->getDataLayout().getTypeStoreSize(const_cast<llvm::Type *>(Ty));
-    if (Size && Size <= UINT16_MAX)
-      return static_cast<uint16_t>(Size);
+    if (!Size.isScalable() && Size.getFixedValue() <= UINT16_MAX)
+      return static_cast<uint16_t>(Size.getFixedValue());
+    return 0;
   }
   if (Ty->isIntegerTy())
     return static_cast<uint16_t>(Ty->getIntegerBitWidth() / 8);

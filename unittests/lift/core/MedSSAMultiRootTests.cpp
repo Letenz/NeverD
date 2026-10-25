@@ -2169,10 +2169,12 @@ TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
   const size_t Handler = Source.find("__except");
   ASSERT_NE(Handler, std::string::npos) << Source;
   const std::string Arm = Source.substr(Handler);
-  EXPECT_NE(Arm.find("exception_code = GetExceptionCode();"), std::string::npos)
+  EXPECT_NE(Arm.find("seh_exception_code = GetExceptionCode();"),
+            std::string::npos)
       << Source;
-  EXPECT_NE(Arm.find("var_m64 = exception_code;"), std::string::npos) << Source;
-  EXPECT_NE(Source.substr(0, Handler).find(" exception_code;"),
+  EXPECT_NE(Arm.find("var_m64 = seh_exception_code;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.substr(0, Handler).find(" seh_exception_code;"),
             std::string::npos)
       << Source;
 }

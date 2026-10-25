@@ -7977,6 +7977,82 @@ TEST(HighCPointerAddresses, SingleUseCallDoesNotEnterCxxTry) {
       << Source;
 }
 
+TEST(HighCPointerAddresses, CallResultUsesTheAdmittedExternDeclaration) {
+  const auto Word = NdType::makeInt(8);
+  for (bool Positional : {false, true}) {
+    SCOPED_TRACE(Positional);
+    class CalleeDebug : public NullDebugContext {
+    public:
+      bool Positional;
+      explicit CalleeDebug(bool Positional) : Positional(Positional) {}
+      std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+        FunctionSym Function;
+        Function.Addr = Address;
+        if (Address == 0x140002000) {
+          Function.Name = "get_pointer";
+          Function.ReturnType = NdType::makePtr();
+          // A by-value record cannot use the positional scalar prototype.
+          Function.Params.emplace_back(
+              "value", Positional ? NdType::makeInt(8)
+                                  : NdType::makeNamedRecord("OpaqueWord", 8));
+        } else if (Address == 0x140002100) {
+          Function.Name = "consume_pointer";
+          Function.ReturnType = NdType::makeVoid();
+          Function.Params.emplace_back("value", NdType::makePtr());
+        } else {
+          return std::nullopt;
+        }
+        return Function;
+      }
+      bool hasInfo() const override { return true; }
+    } Debug(Positional);
+    HighFunc Function;
+    Function.Name = "use_pointer";
+    Function.Entry = 0x140001000;
+    Function.ReturnType = Word;
+    Function.Params = {{"value", Word}};
+    MedVar Result;
+    Result.Kind = MedVar::Temp;
+    Result.Id = 1;
+    Result.Size = 8;
+    Result.TheArch = Arch::X64;
+    HighStmt Assign;
+    Assign.Kind = StmtKind::Assign;
+    Assign.Dst = HighExpr::makeVar(Result, Word);
+    Assign.Val =
+        HighExpr::makeCall("get_pointer", 0x140002000, {parameter(0, Word)});
+    Assign.Val->Type = Word;
+    Function.Body.push_back(Assign);
+    HighStmt Consume;
+    Consume.Kind = StmtKind::Call;
+    Consume.CallExpr = HighExpr::makeCall("consume_pointer", 0x140002100,
+                                          {HighExpr::makeVar(Result, Word)});
+    Function.Body.push_back(Consume);
+    returnValue(Function, HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                                              HighExpr::makeVar(Result, Word),
+                                              HighExpr::makeConst(0, 8)));
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Function}, Stream, Options, &Debug));
+    const std::string Harness =
+        "\nstatic int object, calls, bad;\n" +
+        std::string(Positional ? "void *" : "int64_t") +
+        " get_pointer(int64_t value) { ++calls; return " +
+        (Positional ? "(void *)(uintptr_t)value" : "value") + R"(;
+}
+void consume_pointer(void *value) { bad |= value != &object; }
+int main(void) {
+  if (use_pointer((intptr_t)&object) != 1) return 1;
+  return calls != 1 || bad;
+}
+)";
+    compileAndRunCallOrdering(Source + Harness, /*TrapUndefined=*/true);
+  }
+}
+
 TEST(HighCPointerAddresses, CallResultTempUsesDebugReturnType) {
   class CalleeDbg : public NullDebugContext {
   public:
@@ -25253,7 +25329,7 @@ TEST(HighCPointerAddresses, NestedPrologueThisHomeIsHidden) {
 TEST(HighCPointerAddresses, InplaceAndBitClearPrintsTildeMask) {
   HighFunc Func;
   Func.Name = "bit_clear";
-  Func.ReturnType = NdType::makeVoid();
+  Func.ReturnType = NdType::makeInt(4, false);
   Func.Params = {{"flags", NdType::makeInt(4, false)}};
   HighStmt Clear;
   Clear.Kind = StmtKind::Assign;
@@ -25263,9 +25339,19 @@ TEST(HighCPointerAddresses, InplaceAndBitClearPrintsTildeMask) {
       HighExpr::makeConst(static_cast<uint64_t>(-33), 4));
   Clear.Val->Type = NdType::makeInt(4, false);
   Func.Body = {Clear};
+  // Keep the assignment observable so dead-local elimination cannot erase
+  // the bit-clear operation this rendering test exercises.
+  returnValue(Func, parameter(0, NdType::makeInt(4, false)));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("flags &= ~0x20"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("& -33"), std::string::npos) << Source;
+  compileAndRunCallOrdering(Source + R"(
+int main(void) {
+  return bit_clear(0) != 0 || bit_clear(0x20) != 0 ||
+         bit_clear(0xFFFFFFFFu) != 0xFFFFFFDFu;
+}
+)",
+                            /*TrapUndefined=*/true);
 }
 
 TEST(HighCPointerAddresses, CleanupEmptyIfDoesNotKeepCondTemp) {
@@ -32850,11 +32936,11 @@ TEST(HighCPointerAddresses, ExceptArmCapturesTheExceptionCode) {
   const size_t ArmAt = Source.find("__except");
   ASSERT_NE(ArmAt, std::string::npos) << Source;
   const size_t CaptureAt =
-      Source.find("exception_code = GetExceptionCode();", ArmAt);
+      Source.find("seh_exception_code = GetExceptionCode();", ArmAt);
   ASSERT_NE(CaptureAt, std::string::npos) << Source;
   expectPortableStore(std::string_view(Source).substr(CaptureAt), "int32_t",
-                      "+ 8", "exception_code");
-  EXPECT_NE(Source.find("exception_code;"), std::string::npos) << Source;
+                      "+ 8", "seh_exception_code");
+  EXPECT_NE(Source.find("seh_exception_code;"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, UnreadExceptionCodeIsDeclaredOnce) {
@@ -32877,12 +32963,12 @@ TEST(HighCPointerAddresses, UnreadExceptionCodeIsDeclaredOnce) {
   Copy.Val = HighExpr::makeVar(Code, NdType::makeInt(4, true));
   Func.Body = {exceptTry({callStmt("Probe", 0x140002000, {})}, {Copy})};
   const std::string Source = emitFunctions({Func});
-  ASSERT_NE(Source.find("exception_code = GetExceptionCode();"),
+  ASSERT_NE(Source.find("seh_exception_code = GetExceptionCode();"),
             std::string::npos)
       << Source;
   size_t Declarations = 0;
-  for (size_t At = Source.find(" exception_code;"); At != std::string::npos;
-       At = Source.find(" exception_code;", At + 1))
+  for (size_t At = Source.find(" seh_exception_code;"); At != std::string::npos;
+       At = Source.find(" seh_exception_code;", At + 1))
     ++Declarations;
   EXPECT_EQ(Declarations, 1u) << Source;
 }
@@ -32924,19 +33010,19 @@ TEST(HighCPointerAddresses, NestedExceptArmKeepsTheOuterExceptionCode) {
   const size_t OuterArm = Source.find("__except");
   ASSERT_NE(OuterArm, std::string::npos) << Source;
   const size_t OuterCapture =
-      Source.find("exception_code = GetExceptionCode();", OuterArm);
+      Source.find("seh_exception_code = GetExceptionCode();", OuterArm);
   ASSERT_NE(OuterCapture, std::string::npos) << Source;
   const size_t InnerCapture =
-      Source.find("exception_code_2 = GetExceptionCode();", OuterCapture);
+      Source.find("seh_exception_code_2 = GetExceptionCode();", OuterCapture);
   ASSERT_NE(InnerCapture, std::string::npos) << Source;
   expectPortableStore(std::string_view(Source).substr(InnerCapture), "int32_t",
-                      "+ 0x10", "exception_code_2");
+                      "+ 0x10", "seh_exception_code_2");
   expectPortableStore(std::string_view(Source).substr(InnerCapture), "int32_t",
-                      "+ 8", "exception_code");
-  EXPECT_NE(Source.substr(0, OuterArm).find(" exception_code;"),
+                      "+ 8", "seh_exception_code");
+  EXPECT_NE(Source.substr(0, OuterArm).find(" seh_exception_code;"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.substr(0, OuterArm).find(" exception_code_2;"),
+  EXPECT_NE(Source.substr(0, OuterArm).find(" seh_exception_code_2;"),
             std::string::npos)
       << Source;
 }
