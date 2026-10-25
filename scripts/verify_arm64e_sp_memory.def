@@ -104,5 +104,6 @@
     "revision": "A full lowercase NeverD source commit is required",
     "harness": "The original harness entry or control address is ambiguous",
     "observations": "The native exception record does not match the independent SP oracle"
-  }
+  },
+  "harness_optimization": "-O2"
 }

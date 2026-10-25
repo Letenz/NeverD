@@ -52,7 +52,7 @@ int main(void) {
   if (sigaction(SIGBUS, &Action, NULL) || sigaction(SIGSEGV, &Action, NULL) ||
       sigaction(SIGILL, &Action, NULL))
     return SP_TEST_HANDLER_ERROR;
-  _Alignas(16) static unsigned char Guard[SP_TEST_MEMORY_BYTES];
+  _Alignas(SP_TEST_ALIGNMENT) static unsigned char Guard[SP_TEST_MEMORY_BYTES];
   unsigned Faults = 0;
   for (volatile unsigned C = 0; C != SP_TEST_CASE_COUNT; ++C) {
     for (unsigned I = 0; I != sizeof(Guard); ++I)

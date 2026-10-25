@@ -130,7 +130,8 @@ def main():
         source = work / CONFIG["harness_file"]
         source.write_text(harness)
         harness_object = work / "harness.o"
-        execute([compiler, *flags, "-O2", "-c", str(source), "-o", str(harness_object)],
+        execute([compiler, *flags, CONFIG["harness_optimization"], "-c",
+                 str(source), "-o", str(harness_object)],
                 work, "harness-compile", CONFIG["compile_timeout_seconds"], env)
         for route in CONFIG["routes"]:
             start = time.monotonic()

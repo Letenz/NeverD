@@ -448,8 +448,8 @@ cold/warm query mixtures exercise the distinct cache modes.
 `MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
 an edited store must lose its previous prologue-save annotation before the
 ObjC private-copy machine replay compares both saved representations.
-These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
-instruction families.
+The source-stack proof checks alone do not qualify SCTLR2 CPTA-on execution
+or additional CPA2 memory instruction families.
 `SourceStackSpills` checks that pure POPCOUNT parity calculations allow an
 explicit scratch overwrite while division and actual old-slot reads remain
 barriers. `OverwrittenCallClobberSpills` executes the flag-save case through
