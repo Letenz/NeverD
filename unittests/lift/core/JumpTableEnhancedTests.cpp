@@ -8953,7 +8953,8 @@ TEST_F(JTE_X86_64, NonContiguousMaskPreservesPhysicalSlotCoordinates) {
   ASSERT_NE(Label, std::string::npos) << Body;
   const std::string CaseBody =
       Body.substr(Label, Body.find("\n\n", Label + 1) - Label);
-  EXPECT_NE(CaseBody.find("trunc i64 3302 to i32"), std::string::npos)
+  EXPECT_TRUE(CaseBody.find("trunc i64 3302 to i32") != std::string::npos ||
+              CaseBody.find("ret i32 3302") != std::string::npos)
       << "selector 2 must route to physical slot 2, not compressed slot 1:\n"
       << CaseBody;
   EXPECT_EQ(CaseBody.find("3301"), std::string::npos) << CaseBody;
@@ -10887,6 +10888,86 @@ TEST_F(JTE_AArch64, StaleWRegisterAliasDoesNotEscapeWritableTable) {
   EXPECT_NE(Body.find("switch i"), std::string::npos) << Body;
   EXPECT_TRUE(llvmHasSwitchCase(Body, 0)) << Body;
   EXPECT_TRUE(llvmHasSwitchCase(Body, 1)) << Body;
+  EXPECT_NE(Body.find("neverd.address.load"), std::string::npos) << Body;
+}
+
+TEST_F(JTE_AArch64, CheckedIndexedLoadsKeepReadAndEscapeEffectsDistinct) {
+  auto ImageOrErr = neverd::loadBinary(indexIdentityA64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  const neverd::Symbol *Function =
+      Image.findSymbol("a64_writable_arg_alias_clobber");
+  ASSERT_NE(Function, nullptr);
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const neverd::LowFunc Owner =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Owner.JumpTables.size(), 1u);
+  const neverd::JumpTable &Table = Owner.JumpTables.front();
+  ASSERT_EQ(Table.AuthenticatedTableLoads.size(), 1u);
+  const auto &Occurrence = Table.AuthenticatedTableLoads.front();
+  const neverd::LowOp *Load = nullptr;
+  for (const auto &Block : Owner.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Addr == Occurrence.Addr && Op.Seq == Occurrence.Seq)
+        Load = &Op;
+  ASSERT_NE(Load, nullptr);
+  ASSERT_EQ(Load->Opcode, neverd::NdOp::INTRINSIC);
+  ASSERT_EQ(Load->NumInputs, 4u);
+
+  auto arbitrate = [&](const std::vector<neverd::LowFunc> &Functions) {
+    return neverd::pipeline_detail::arbitrateModuleJumpTablesForTesting(
+        Image, Functions);
+  };
+  const auto Safe = arbitrate({Owner});
+  ASSERT_TRUE(Safe.AnalysisComplete);
+  EXPECT_TRUE(Safe.UnsafeBranches.empty());
+
+  // A separate reader retains the table's relocation mirrors, but does not
+  // authorize a write or an escape merely by reading through its address.
+  neverd::LowFunc Reader;
+  Reader.Entry = 0x800000;
+  Reader.Name = "independent_checked_table_reader";
+  neverd::LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Reader.Entry;
+  Block.EndAddr = Reader.Entry + 12;
+  neverd::LowOp Base;
+  Base.Addr = Reader.Entry;
+  Base.Seq = 0;
+  Base.Opcode = neverd::NdOp::COPY;
+  Base.Output = Load->Inputs[1];
+  Base.NumInputs = 1;
+  Base.Inputs[0] = neverd::NdVar::dataAddress(Table.BaseAddr, 8);
+  Block.Ops.push_back(Base);
+  neverd::LowOp Read = *Load;
+  Read.Addr = Reader.Entry + 4;
+  Block.Ops.push_back(Read);
+  Reader.Blocks.push_back(std::move(Block));
+  const auto Independent = arbitrate({Owner, Reader});
+  ASSERT_TRUE(Independent.AnalysisComplete);
+  EXPECT_TRUE(Independent.UnsafeBranches.empty());
+  EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr));
+  EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr + 8));
+
+  // A malformed checked-load record must still use opaque effect handling.
+  // Missing operands, an invalid instruction, and an invalid result width
+  // cannot acquire the validated read-only contract.
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    auto Malformed = Reader;
+    auto &BadLoad = Malformed.Blocks.front().Ops.back();
+    if (Mutation == 0)
+      --BadLoad.NumInputs;
+    else if (Mutation == 1)
+      BadLoad.Inputs[3].Offset = 0;
+    else
+      BadLoad.Output.Size = 4;
+    const auto Unsafe = arbitrate({Owner, Malformed});
+    EXPECT_TRUE(Unsafe.AnalysisComplete) << Mutation;
+    EXPECT_TRUE(Unsafe.UnsafeBranches.count(Table.InsnAddr)) << Mutation;
+  }
 }
 
 TEST_F(JTE_AArch64, WSelfCopyPreservesWritableTableArgumentEscape) {

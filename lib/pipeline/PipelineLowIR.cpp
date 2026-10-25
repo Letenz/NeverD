@@ -1400,7 +1400,23 @@ bool collectLowAddressUses(
             Op.Opcode == NdOp::ATOMIC_CMPXCHG;
         if (IsMemoryEffect && !Memory.Complete)
           return false;
-        if (Op.Opcode == NdOp::LOAD && Memory.Complete) {
+        if (Img.Arch == Arch::AArch64 &&
+            lowAArch64AddressMemoryShapeIsValid(Op)) {
+          // The original checked load observes its address without publishing
+          // it or clobbering ABI argument registers. Keep both operand roots
+          // as a conservative read footprint; neither the effective address
+          // nor the loaded value is an unchecked base-plus-index expression.
+          ModuleAddressFacts Address =
+              factsFor(Op.Inputs[kAddressMemoryBaseOperand + 1]);
+          if (!mergeFacts(Address,
+                          factsFor(Op.Inputs[kAddressMemoryIndexOperand + 1])))
+            return false;
+          reclassifyExactRoots(Address);
+          Address.Imprecise = true;
+          if (!addUse(Op, ModuleAddressUse::Kind::Load, Address,
+                      Op.Output.Size))
+            return false;
+        } else if (Op.Opcode == NdOp::LOAD && Memory.Complete) {
           if (!addUse(Op, ModuleAddressUse::Kind::Load,
                       factsFor(*Memory.Address), Memory.AccessSize))
             return false;
