@@ -1087,6 +1087,10 @@ registerLeaf(const BinaryImage &Image, CallRegisterBodyView Body) {
   bool HasQuery = false;
   for (size_t I = 0; I + 1 < Block.Ops.size(); ++I) {
     const auto &Op = Block.Ops[I];
+    // CLD/STD change control state outside the projected GPR results, even
+    // when this caller has no explicit read of the direction flag.
+    if (Op.Output.isReg() && Op.Output.Offset == x86reg::DF)
+      return {};
     if (Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         !Scalar(Op.Output))

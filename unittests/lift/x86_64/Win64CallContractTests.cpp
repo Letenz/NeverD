@@ -4570,33 +4570,38 @@ int main(void) {
 
 TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
   constexpr va_t Producer = Text + 0x80;
-  for (unsigned Mutation :
-       {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 12u, 13u, 14u, 15u}) {
-    SCOPED_TRACE(Mutation);
-    auto Image = registerQueryImage(Mutation);
-    llvm::LLVMContext Context;
-    PipelineOptions Options;
-    Options.EmitDumpOutput = false;
-    Options.OnlyFunctionEntries = {Text};
-    Options.SourceProjection = true;
-    auto Result = Pipeline().run(Image, Context, Options);
-    if (Mutation == 7) {
-      EXPECT_FALSE(Result.Success);
-      EXPECT_NE(Result.Error.find("physical CALL return slot"),
-                std::string::npos)
-          << Result.Error;
-      continue;
-    }
-    ASSERT_TRUE(Result.Success) << Result.Error;
-    bool CallsOriginal = false;
-    for (const auto &Function : Result.MedFuncs)
-      for (const auto &Block : Function.Blocks)
-        for (const auto &Op : Block.Ops)
-          CallsOriginal |= Op.Opcode == NdOp::CALL && Op.NumInputs &&
-                           Op.Inputs[0].isConst() &&
-                           Op.Inputs[0].ConstVal == Producer;
-    EXPECT_TRUE(CallsOriginal);
-  }
+  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 12u, 13u, 14u, 15u})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(Mutation);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        auto Image = registerQueryImage(Mutation);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.SourceProjection = true;
+        Options.LiftMode = LLVM;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        if (Mutation == 7) {
+          EXPECT_FALSE(Result.Success);
+          EXPECT_NE(Result.Error.find("physical CALL return slot"),
+                    std::string::npos)
+              << Result.Error;
+          continue;
+        }
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        bool CallsOriginal = false;
+        for (const auto &Function : Result.MedFuncs)
+          for (const auto &Block : Function.Blocks)
+            for (const auto &Op : Block.Ops)
+              CallsOriginal |= Op.Opcode == NdOp::CALL && Op.NumInputs &&
+                               Op.Inputs[0].isConst() &&
+                               Op.Inputs[0].ConstVal == Producer;
+        EXPECT_TRUE(CallsOriginal);
+      }
 }
 
 TEST(CallExitRegisters, RegisterQueryDoesNotRewriteMachineCalls) {

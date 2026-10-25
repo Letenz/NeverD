@@ -13065,8 +13065,9 @@ host's GNU intrinsic spelling while retaining the input image's recovered ABI.
 Cached emitter order, repeated calls and high-byte observations check shared
 result identity. IR checks retain exactly one query per expanded call. The
 `RegisterQuery*` controls retain memory/input-dependent leaves, other hardware
-operations, branching/nonordinary returns, image addresses, unpreserved
-RBX and native calls; the original CALL-slot read must still fail before source
+operations, branching/nonordinary returns, image addresses, unpreserved RBX,
+unmodeled exception metadata, CLD/STD and native calls. Boundary controls run
+both source routes with and without optimization; the original CALL-slot read must still fail before source
 expansion. Opaque and general dynamic machine-state returns remain separate.
 `Win64CallContract.RegisterQueryWindowsSourceCompilesWithItsHeaders` compiles
 both unmodified C units for the Windows x64 target with Clang's freestanding

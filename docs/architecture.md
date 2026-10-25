@@ -11786,8 +11786,9 @@ PC nor certifies unresolved addresses, callee memory effects or other targets.
 
 Source register-call recovery runs after that original CALL-slot guard. The
 callee-effect owner retains a bounded, complete, straight-line x64 scalar/CPUID
-body only when it has no memory operations, internal calls, exceptional roots
-or nonordinary return. `PipelineRegisterCalls.cpp` uses the ordinary LowIR
+body only when it has no memory operations, internal calls, exceptional roots,
+unmodeled exception metadata, direction-flag writes or nonordinary return.
+`PipelineRegisterCalls.cpp` uses the ordinary LowIR
 converter to capture the caller's extra result registers; it does not duplicate
 partial-register or intrinsic semantics. Required results must have no remaining
 entry-state dependencies, and every written ABI-preserved GPR must equal its
