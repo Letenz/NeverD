@@ -231,6 +231,71 @@ readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
   return std::vector<uint8_t>(Bytes, Bytes + Size);
 }
 
+std::optional<uint64_t> readImmutableImageScalar(const BinaryImage &Image,
+                                                 va_t Address, uint32_t Size,
+                                                 size_t *RemainingWork) {
+  if (!Size || Size > sizeof(uint64_t) || !supportsImmutableImageReads(Image))
+    return std::nullopt;
+  if (RemainingWork) {
+    size_t Available = *RemainingWork;
+    // Charge inventories even when a mapping/fixup check could return early.
+    // This bounds cold queries independently of which record happens to match
+    // and includes the ordered indices used by the pointer-candidate check.
+    for (size_t Work : {size_t{1} + Size,
+                        Image.Sections.size(),
+                        Image.Segments.size(),
+                        Image.ARMCodeRegions.size(),
+                        Image.Relocations.size(),
+                        Image.BaseRelocations.size(),
+                        Image.RuntimeCallablePointerSlots.size(),
+                        Image.CodePtrRelocSlots.size(),
+                        Image.MachOAuthenticatedPointers.size(),
+                        Image.DataPtrRelocSlots.size(),
+                        Image.DataPtrRelocTargetOwners.size(),
+                        Image.RelCodeRelocSlots.size(),
+                        Image.RelDataPtrRelocSlots.size(),
+                        Image.MachOResolvedChainedPointerSlots.size(),
+                        Image.ConflictingImportStorageSlots.size(),
+                        Image.ImportPtrSlots.size(),
+                        Image.ImportStorageSlots.size(),
+                        Image.DyldBindSlots.size(),
+                        Image.ObjCSourceReferences.size(),
+                        Image.DataAddressRelocOperands.size(),
+                        Image.CodeAddressRelocOperands.size(),
+                        Image.RelocDataAddrs.size(),
+                        Image.WritableRelocDataAddrs.size(),
+                        Image.RodataAnchorSeg.size(),
+                        Image.CodeRefTargets.size()}) {
+      if (Work > Available)
+        return std::nullopt;
+      Available -= Work;
+    }
+    // Pointer-candidate checks can query section/segment ownership for each
+    // segment end. Reserve those nested inventories without overflowing.
+    if (Size == Image.getPointerSize())
+      for (size_t Inventory : {Image.Sections.size(), Image.Segments.size()}) {
+        if (Inventory && Image.Segments.size() > Available / Inventory)
+          return std::nullopt;
+        Available -= Inventory * Image.Segments.size();
+      }
+    *RemainingWork = Available;
+  }
+  auto Bytes = readImmutableImageBytes(Image, Address, Size);
+  // A real LOAD may read scalar constants placed among instructions. Keep
+  // the code reader's exact permissions, mapping and no-fixup requirements.
+  if (!Bytes)
+    Bytes = readImmutableCodeBytes(Image, Address, Size);
+  if (!Bytes)
+    return std::nullopt;
+  uint64_t Bits = 0;
+  for (unsigned I = 0; I < Size; ++I)
+    Bits |= uint64_t{(*Bytes)[I]} << (I * 8);
+  if (Size == Image.getPointerSize() &&
+      Image.isPotentiallyRelocatableAddress(Bits))
+    return std::nullopt;
+  return Bits;
+}
+
 bool isFileBackedCodeImageRange(const BinaryImage &Image, va_t Address,
                                 uint32_t Size) {
   return supportsImmutableImageReads(Image) && Size &&

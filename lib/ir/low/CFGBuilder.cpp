@@ -1559,12 +1559,14 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   rebuildBlocks(Func);
 
   size_t ScalarBranchWork = limits::kMaxScalarBranchEvidenceWork;
-  recoverScalarConstantBranches(Img, Dec, Func, ScalarBranchWork);
+  ScalarImageFacts ImageScalars;
+  recoverScalarConstantBranches(Img, Dec, Func, ScalarBranchWork, ImageScalars);
   multiStageResolve(Img, Dec, Func);
   // Jump-table exploration may add an incoming edge between a constant's
   // definition and its use. Revalidate against that completed graph, and let
   // the ordinary resolver reconsider any transfers whose proof was withdrawn.
-  while (recoverScalarConstantBranches(Img, Dec, Func, ScalarBranchWork))
+  while (recoverScalarConstantBranches(Img, Dec, Func, ScalarBranchWork,
+                                       ImageScalars))
     multiStageResolve(Img, Dec, Func);
 
   // PAGEOFF output provenance is consumed only after lifting, so authenticate

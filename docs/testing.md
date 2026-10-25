@@ -2,6 +2,13 @@
 
 [← Documentation Index](README.md)
 
+`NeverDConstantBranchTests` covers immutable scalar branch recovery across
+x86/x64/AArch64 and ELF/PE/Mach-O, unary target arithmetic, independent function
+ownership, and refusal of mutable, ambiguous, relocated or unaffordable reads.
+`NeverDReadOnlyBytesTests` checks scalar width, relocation identity and cold-read
+budget boundaries. `LowScalarConstant.*` in `NeverDSEHRuntimeMemoryTests`
+compares unary arithmetic and sign extension with concrete LowIR execution.
+
 The source projection regressions include
 `NeverDOwnInteriorCallTests` (checked replaced-PC tails and closed recursive
 groups), `NeverDExecutableCodeOwnerTests` (COFF content flags independently of

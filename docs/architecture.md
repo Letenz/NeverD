@@ -662,8 +662,14 @@ semantics.
 ## GUI project and search ownership
 
 `CFGBuilder` owns exact scalar branch recovery. It evaluates width-correct
-LowIR facts without reading memory or inventing live-in register values, then
-revalidates the producer's basic block after discovering new paths. Lost or
+LowIR facts without inventing live-in register values. Exact ordinary scalar
+loads share `readImmutableImageScalar` with MedIR: only uniquely mapped,
+immutable data or supported instruction storage without overlapping fixups
+can supply bits, and pointer-width address candidates retain their separate
+relocation proof. Cold reads charge the image metadata inventory against the
+existing evidence budget; repeated reads cache successes and failures within
+one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
+Recovery revalidates the producer's basic block after discovering new paths. Lost or
 incomplete proofs retain the original indirect transfer. The native function
 disassembly API publishes these same instruction boundaries and targets; raw
 disassembly remains linear. The worker uses recovered bodies for function

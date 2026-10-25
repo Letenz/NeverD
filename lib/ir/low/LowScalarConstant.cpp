@@ -27,15 +27,29 @@ std::optional<uint64_t> lowScalarConstantResult(
   std::optional<uint64_t> Result;
   if (Op.NumInputs == 1 &&
       (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
+       Op.Opcode == NdOp::INT_SEXT || Op.Opcode == NdOp::INT_NOT ||
+       Op.Opcode == NdOp::INT_NEGATE || Op.Opcode == NdOp::INT_NEG2 ||
        Op.Opcode == NdOp::BOOL_NOT)) {
     const auto Width = Op.Inputs[0].Size;
+    const bool Extension =
+        Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT;
     if (!Width || Width > Op.Output.Size ||
         (Op.Opcode == NdOp::BOOL_NOT && (Width != 1 || Op.Output.Size != 1)) ||
-        (Op.Opcode == NdOp::COPY && Width != Op.Output.Size))
+        (!Extension && Width != Op.Output.Size))
       return std::nullopt;
-    if (auto Value = ValueOf(Op.Inputs[0]))
-      Result = Op.Opcode == NdOp::BOOL_NOT ? !(*Value & Mask(Width))
-                                           : *Value & Mask(Width);
+    if (auto Value = ValueOf(Op.Inputs[0])) {
+      const uint64_t Bits = *Value & Mask(Width);
+      if (Op.Opcode == NdOp::INT_SEXT)
+        Result = llvm::APInt(Width * 8, Bits)
+                     .sextOrTrunc(Op.Output.Size * 8)
+                     .getZExtValue();
+      else if (Op.Opcode == NdOp::INT_NOT || Op.Opcode == NdOp::INT_NEGATE)
+        Result = ~Bits;
+      else if (Op.Opcode == NdOp::INT_NEG2)
+        Result = uint64_t{0} - Bits;
+      else
+        Result = Op.Opcode == NdOp::BOOL_NOT ? !Bits : Bits;
+    }
   } else if (Op.NumInputs == 2 && Op.Output.Size == 1 && Op.Inputs[0].Size &&
              Op.Inputs[0].Size <= 8 && Op.Inputs[0].Size == Op.Inputs[1].Size &&
              (Op.Opcode == NdOp::INT_EQUAL || Op.Opcode == NdOp::INT_NOTEQUAL ||
