@@ -10952,6 +10952,51 @@ TEST_F(JTE_AArch64, CheckedIndexedLoadsKeepReadAndEscapeEffectsDistinct) {
   EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr));
   EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr + 8));
 
+  // A checked read of a private spill does not escape the spill's address,
+  // but a pointer read from it can still escape through a later call.
+  auto FrameReader = Reader;
+  auto &FrameBlock = FrameReader.Blocks.front();
+  const auto &TRI = neverd::getTargetRegInfo(Image.Arch);
+  auto FrameAddress = Base;
+  FrameAddress.Addr = Reader.Entry + 4;
+  FrameAddress.Opcode = neverd::NdOp::INT_ADD;
+  FrameAddress.Output = neverd::NdVar::tmp(0x20000, 8);
+  FrameAddress.NumInputs = 2;
+  FrameAddress.Inputs[0] = neverd::NdVar::reg(TRI.StackPointer, 8);
+  FrameAddress.Inputs[1] = neverd::NdVar::cst(16, 8);
+  neverd::LowOp Spill;
+  Spill.Addr = Reader.Entry + 8;
+  Spill.Opcode = neverd::NdOp::STORE;
+  Spill.NumInputs = 2;
+  Spill.Inputs[0] = FrameAddress.Output;
+  Spill.Inputs[1] = Base.Output;
+  auto StackBase = Base;
+  StackBase.Addr = Reader.Entry + 12;
+  StackBase.Inputs[0] = Spill.Inputs[0];
+  auto FrameLoad = Read;
+  FrameLoad.Addr = Reader.Entry + 16;
+  FrameBlock.Ops = {Base, FrameAddress, Spill, StackBase, FrameLoad};
+  FrameBlock.EndAddr = Reader.Entry + 20;
+  const auto Unobserved = arbitrate({Owner, FrameReader});
+  ASSERT_TRUE(Unobserved.AnalysisComplete);
+  EXPECT_TRUE(Unobserved.UnsafeBranches.empty());
+
+  auto Argument = Base;
+  Argument.Addr = Reader.Entry + 20;
+  Argument.Output = neverd::NdVar::reg(TRI.IntParamRegs.front(), 8);
+  Argument.Inputs[0] = FrameLoad.Output;
+  FrameBlock.Ops.push_back(Argument);
+  neverd::LowOp Call;
+  Call.Addr = Reader.Entry + 24;
+  Call.Opcode = neverd::NdOp::CALL;
+  Call.NumInputs = 1;
+  Call.Inputs[0] = neverd::NdVar::codeAddress(Reader.Entry + 0x100, 8);
+  FrameBlock.Ops.push_back(Call);
+  FrameBlock.EndAddr = Reader.Entry + 28;
+  const auto Escaped = arbitrate({Owner, FrameReader});
+  ASSERT_TRUE(Escaped.AnalysisComplete);
+  EXPECT_TRUE(Escaped.UnsafeBranches.count(Table.InsnAddr));
+
   // A malformed checked-load record must still use opaque effect handling.
   // Missing operands, an invalid instruction, and an invalid result width
   // cannot acquire the validated read-only contract.

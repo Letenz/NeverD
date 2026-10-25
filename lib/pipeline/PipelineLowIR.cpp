@@ -1416,6 +1416,25 @@ bool collectLowAddressUses(
           if (!addUse(Op, ModuleAddressUse::Kind::Load, Address,
                       Op.Output.Size))
             return false;
+          if (!Address.FrameOffsets.empty()) {
+            // A dynamic checked address can read any retained private spill.
+            // Preserve their possible pointee roots without claiming an exact
+            // address, frame-cell identity, or successful access. A later use
+            // of the loaded pointer must still expose a writable table.
+            ModuleAddressFacts Loaded;
+            for (const auto &[Key, Stored] :
+                 entriesIn(State, VnodeSpace::STACK))
+              if (std::get<2>(Key) != 0 && !mergeFacts(Loaded, Stored))
+                return false;
+            reclassifyExactRoots(Loaded);
+            Loaded.ExactValues.clear();
+            Loaded.FrameCellEscaped = false;
+            Loaded.FrameCellPresent = false;
+            Loaded.FrameCellOutgoingSeed = false;
+            Loaded.MayBeNonFrame = true;
+            Loaded.Imprecise = true;
+            MemoryEffectOutput = std::move(Loaded);
+          }
         } else if (Op.Opcode == NdOp::LOAD && Memory.Complete) {
           if (!addUse(Op, ModuleAddressUse::Kind::Load,
                       factsFor(*Memory.Address), Memory.AccessSize))
@@ -1943,6 +1962,10 @@ bool collectLowAddressUses(
             // above and do not forward operand provenance into their outputs.
             break;
           case NdOp::INTRINSIC:
+            if (MemoryEffectOutput) {
+              Output = *MemoryEffectOutput;
+              break;
+            }
             if (!lowIntrinsicHasOnlyValueEffects(Op))
               break;
             [[fallthrough]];
