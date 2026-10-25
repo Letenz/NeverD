@@ -6589,6 +6589,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>SSA محسّنة مع تحليل الحلقات المتفرعة</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات الالتفاف العددي</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6743,6 +6747,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>حلقة مثبتة: كتلة الرأس %1 → كتلة الرجوع %2 · العدّاد #%3 → التحديث #%4 · الشرط الحارس #%5 في الكتلة %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات الالتفاف العددي</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>دليل الإثبات: عدّاد رتيب يلتزم بعقد يمنع تجاوز النطاق.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>دليل الإثبات: تصل كل دورة للعدّاد إلى مخرج مشترك، حتى بعد الالتفاف العددي.</translation>
     </message>
 </context>
 <context>

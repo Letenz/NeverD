@@ -180,14 +180,19 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
       }
       if (const auto *Callee = Call->getCalledFunction()) {
         Sgx |= isX86SgxNativeName(Callee->getName().str());
-        if (isX86RtmNativeName(Callee->getName().str()))
-          Required.insert("rtm");
+        if (const auto *Feature =
+                x86SystemNativeTargetFeature(Callee->getName().str()))
+          Required.insert(Feature);
       }
       if (const auto *Asm =
               llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())) {
         const auto Mnemonic =
             llvm::StringRef(Asm->getAsmString()).split('\n').first;
         Sgx |= Mnemonic == "encls" || Mnemonic == "enclv";
+        // An older SDK's owned assembly can select a native C builtin later.
+        // Its feature requirement must survive that assembly representation.
+        if (isX86RtmNativeName("llvm.x86." + Mnemonic.str()))
+          Required.insert("rtm");
       }
     }
   return (Atomic ? X86APXAtomicCompilerDispatch : "") +

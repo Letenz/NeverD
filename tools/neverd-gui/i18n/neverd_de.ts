@@ -6445,6 +6445,10 @@ Abdeckung: %7</translation>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>Optimierte SSA mit Analyse verzweigter Schleifen</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Optimierte SSA mit Analyse von Schleifen mit Zahlenüberlauf</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6603,18 @@ Terminierung belegt keine gleichen Schleifenzahlen oder Funktionsergebnisse.</tr
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Bewiesene Schleife: Kopfblock %1 → Rücksprungblock %2 · Zähler #%3 → Aktualisierung #%4 · Wächter #%5 in Block %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Optimierte SSA mit Analyse von Schleifen mit Zahlenüberlauf</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Beweis: ein monotoner Zähler mit einem Vertrag ohne Überlauf.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Beweis: Jeder Zählerzyklus erreicht einen gemeinsamen Ausgang, auch nach einem Zahlenüberlauf.</translation>
     </message>
 </context>
 <context>

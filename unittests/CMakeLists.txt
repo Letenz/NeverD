@@ -74,6 +74,7 @@ target_include_directories(NeverDSupportThreadTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
 add_subdirectory(acceleration)
+add_subdirectory(digest)
 
 add_neverd_unittest(NeverDExportTableTests
   ExportTableTests.cpp
@@ -117,6 +118,8 @@ add_neverd_unittest(NeverDBinaryDiffTests
   BinaryDiffParameterViewTests.cpp
   BinaryDiffProgressTests.cpp
   BinaryDiffBranchProgressTests.cpp
+  BinaryDiffModularProgressTests.cpp
+  BinaryDiffFlowBindingTests.cpp
   BinaryDiffFlowRegionsTests.cpp
   BinaryDiffFlowFragmentsTests.cpp
   BinaryDiffImpactTests.cpp

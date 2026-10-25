@@ -2211,6 +2211,10 @@ std::string nativeSystemName(const SystemEncoding &E, Arch A) {
     return "llvm.x86.stac";
   case Intrinsic::Xend:
     return "llvm.x86.xend";
+  case Intrinsic::Clzero:
+    return E.Bytes.front() == 0x64 || E.Bytes.front() == 0x65
+               ? ""
+               : "llvm.x86.clzero";
   case Intrinsic::X86LoadAccessRights:
   case Intrinsic::X86LoadAccessRightsMemory:
   case Intrinsic::X86LoadSegmentLimit:
@@ -2277,7 +2281,7 @@ TEST(X86SystemStateSource, QualifiedSdkUsesNativeSystemCalls) {
           EXPECT_EQ(IR.find(" asm "), std::string::npos) << IR;
           ++Cases;
         }
-  EXPECT_EQ(Cases, 288u);
+  EXPECT_EQ(Cases, 312u);
   RecordProperty("native_system_modules", Cases);
 }
 
@@ -2382,7 +2386,131 @@ TEST(X86SystemStateSource, TransactionCommitRetainsSurroundingMemory) {
       }
 }
 
-TEST(X86SystemStateSource, XendBuiltinCompilesWithoutCallerFeatureFlags) {
+TEST(X86SystemStateSource, CacheZeroKeepsMemoryEffectsAndTheImplicitAddress) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (const bool NoOpt : {false, true}) {
+        std::vector<uint8_t> Bytes;
+        if (A == Arch::X86)
+          Bytes = {0x8b, 0x4c, 0x24, 0x04}; // mov ecx, [esp+4]
+        else if (Format != BinaryFormat::COFF)
+          Bytes = {0x48, 0x89, 0xf9}; // mov rcx, rdi
+        if (A == Arch::X64)
+          Bytes.push_back(0x48);
+        Bytes.insert(Bytes.end(), {0x89, 0xc8, // mov rax/eax, rcx/ecx
+                                   0xc7, 0x01, 7, 0, 0, 0});
+        const auto Offset = Bytes.size();
+        Bytes.insert(Bytes.end(), {0x0f, 0x01, 0xfc, // clzero
+                                   0x8b, 0x01, 0xc3});
+        auto Image = image(A, Format, std::move(Bytes));
+        std::string High, LLVM, IR;
+        sourceRoutes(Image, NoOpt, Entry + Offset, "clzero", &High, &LLVM, {},
+                     {}, &IR);
+        if (::testing::Test::HasFailure())
+          return;
+        const auto Store = IR.find("store i32 7,");
+        const auto Clear = IR.find("call void @llvm.x86.clzero(ptr ");
+        const auto Load = IR.find("load i32");
+        ASSERT_NE(Load, std::string::npos) << IR;
+        EXPECT_LT(Store, Clear) << IR;
+        EXPECT_LT(Clear, Load) << IR;
+        for (const auto &Source : {High, LLVM}) {
+          EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+          EXPECT_EQ(Source.find("memset("), std::string::npos) << Source;
+        }
+        if (Format == BinaryFormat::ELF)
+          compileRoutes(Image, NoOpt, Entry + Offset, "clzero");
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+namespace {
+std::string cacheZeroDriver(const BinaryImage &Image, bool Address32,
+                            bool Dead) {
+  auto Driver = faultDriver(Image);
+  for (const auto Name : {"virtualization_test", "neverd_original"}) {
+    const auto Declaration = "extern void " + std::string(Name);
+    Driver.replace(Driver.find(Declaration), Declaration.size(),
+                   "extern unsigned long long " + std::string(Name));
+  }
+  const std::string Pointer = "void (*fn)(void)";
+  Driver.replace(Driver.find(Pointer), Pointer.size(),
+                 "unsigned long long (*fn)(void)");
+  const std::string Main = "int main(void)";
+  Driver.replace(Driver.find(Main), Main.size(),
+                 "static int compare_faults(void)");
+  Driver = "#define _GNU_SOURCE\n#include <stdint.h>\n#include <ucontext.h>\n" +
+           Driver;
+  llvm::raw_string_ostream OS(Driver);
+  OS << "\nstatic const uint64_t mask = "
+     << (Address32 ? "UINT64_C(0xffffffff)" : "UINT64_MAX") << ";\n"
+     << "static const uint64_t expected = "
+     << (Dead ? "0" : "UINT64_C(0x11223344ffffedab)") << ";\n";
+  // First compare real faults. The controlled completion below checks the
+  // instruction's actual RAX input and preserved return value; it does not
+  // stand in for native cache-line writes on a host without CLZERO support.
+  OS << R"C(
+static volatile sig_atomic_t events;
+static void complete(int signal, siginfo_t *info, void *context) {
+  ucontext_t *uc = context;
+  greg_t *g = uc->uc_mcontext.gregs;
+  const unsigned char *ip = (const unsigned char *)(uintptr_t)g[REG_RIP];
+  unsigned prefix = 0;
+  (void)signal; (void)info;
+  while (prefix < 2 && (ip[prefix] == 0x64 || ip[prefix] == 0x65 ||
+                        ip[prefix] == 0x67)) ++prefix;
+  if (ip[prefix] != 0x0f || ip[prefix + 1] != 0x01 ||
+      ip[prefix + 2] != 0xfc) _exit(21);
+  if (((uint64_t)g[REG_RAX] & mask) != (UINT64_C(0x11223344ffffedab) & mask))
+    _exit(22);
+  g[REG_RIP] += prefix + 3;
+  ++events;
+}
+int main(void) {
+  if (compare_faults()) return 10;
+  struct sigaction action = {0};
+  action.sa_sigaction = complete;
+  action.sa_flags = SA_SIGINFO;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGILL, &action, 0) || sigaction(SIGSEGV, &action, 0) ||
+      sigaction(SIGBUS, &action, 0)) return 11;
+  events = 0;
+  if (neverd_original() != expected || events != 1) return 12;
+  events = 0;
+  if (virtualization_test() != expected || events != 1) return 13;
+  return 0;
+}
+)C";
+  return Driver;
+}
+} // namespace
+
+TEST(X86SystemStateSource, CacheZeroFaultsAndAddressTransportMatchRawBytes) {
+  for (const auto &E : cacheZeroEncodings())
+    for (const bool NoOpt : {false, true})
+      for (const bool Dead : {false, true}) {
+        std::vector<uint8_t> Bytes = {0x48, 0xb8, 0xab, 0xed, 0xff,
+                                      0xff, 0x44, 0x33, 0x22, 0x11};
+        const auto Offset = Bytes.size();
+        Bytes.insert(Bytes.end(), E.Bytes.begin(), E.Bytes.end());
+        if (Dead)
+          Bytes.insert(Bytes.end(), {0x31, 0xc0});
+        Bytes.push_back(0xc3);
+        auto Image = image(Arch::X64, BinaryFormat::ELF, std::move(Bytes));
+        const bool Address32 =
+            std::find(E.Bytes.begin(), E.Bytes.end(), 0x67) != E.Bytes.end();
+        compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                      false, false, cacheZeroDriver(Image, Address32, Dead),
+                      {0x0f, 0x01, 0xfc}, 8);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+TEST(X86SystemStateSource,
+     StockSystemBuiltinsCompileWithoutCallerFeatureFlags) {
   const std::string Compiler = NEVERD_TEST_CLANG;
   if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
     GTEST_SKIP() << "Clang is unavailable";
@@ -2392,28 +2520,36 @@ TEST(X86SystemStateSource, XendBuiltinCompilesWithoutCallerFeatureFlags) {
   const auto Cleanup = llvm::scope_exit(
       [&] { (void)llvm::sys::fs::remove_directories(Directory); });
   unsigned Cases = 0;
-  for (const auto Format :
-       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
-    for (const bool NoOpt : {false, true}) {
-      auto Image = image(Arch::X64, Format,
-                         {0xb8, 0x11, 0, 0, 0, 0x0f, 0x01, 0xd5, 0xc3});
-      std::string High, LLVM;
-      sourceRoutes(Image, NoOpt, Entry + 5, "xend", &High, &LLVM);
-      if (::testing::Test::HasFailure())
-        return;
-      for (const auto &Source : {High, LLVM}) {
-        // Stock Clang owns XEND too. Select the generated native branch,
-        // without claiming support for the fork's other system builtins.
-        const auto Native =
-            "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n" + Source;
-        compileNativeC(Compiler, Directory, Format, Native, "llvm.x86.xend",
-                       Cases, std::nullopt, true, false);
+  for (const bool Zero : {false, true})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (const bool NoOpt : {false, true}) {
+        const std::string Mnemonic = Zero ? "clzero" : "xend";
+        auto Image = image(Arch::X64, Format,
+                           {0xb8, 0x11, 0, 0, 0, 0x0f, 0x01,
+                            static_cast<uint8_t>(Zero ? 0xfc : 0xd5), 0xc3});
+        std::string High, LLVM;
+        sourceRoutes(Image, NoOpt, Entry + 5, Mnemonic, &High, &LLVM);
         if (::testing::Test::HasFailure())
           return;
+        for (const auto &Source : {High, LLVM}) {
+          // Stock Clang owns these builtins too. Select the native branch,
+          // without claiming support for the fork's other system builtins.
+          ASSERT_NE(
+              Source.find(Zero ? "target(\"clzero\")" : "target(\"rtm\")"),
+              std::string::npos)
+              << Source;
+          const auto Native =
+              "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n" + Source;
+          compileNativeC(Compiler, Directory, Format, Native,
+                         "llvm.x86." + Mnemonic, Cases, std::nullopt, true,
+                         false);
+          if (::testing::Test::HasFailure())
+            return;
+        }
       }
-    }
-  EXPECT_EQ(Cases, 24u);
-  RecordProperty("xend_native_c_compilations", Cases);
+  EXPECT_EQ(Cases, 48u);
+  RecordProperty("stock_system_native_c_compilations", Cases);
 }
 
 TEST(X86SystemStateSource, NeverCCompilesBothRoutesToNativeSystemCalls) {
@@ -2450,7 +2586,7 @@ TEST(X86SystemStateSource, NeverCCompilesBothRoutesToNativeSystemCalls) {
             return;
         }
       }
-  EXPECT_EQ(Cases, 744u);
+  EXPECT_EQ(Cases, 792u);
   RecordProperty("native_system_c_compilations", Cases);
 }
 
@@ -2460,6 +2596,7 @@ TEST(X86SystemStateSource, NativeCallsCannotLoseModeResultsOrEffects) {
   for (const char *Name : {"llvm.x86.clac",
                            "llvm.x86.stac",
                            "llvm.x86.xend",
+                           "llvm.x86.clzero",
                            "llvm.x86.clts",
                            "llvm.x86.wrmsrns",
                            "llvm.x86.rdmsrlist",

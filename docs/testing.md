@@ -794,6 +794,19 @@ source/destination, overlap and dynamic provider lifetime.
 `AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
 against complete guarded guest bytes. No host libc copy is used as the oracle.
 
+`AndroidStringLength.*` checks `strlen`, `strnlen` and `__strlen_chk` using
+independent O0/O2 AArch64 callers across relocation formats and available CPU
+backends. It covers byte lengths, unchanged errno and memory, NUL-inclusive
+object bounds, full-width extents, read-only/cross-page inputs, page-tail NUL,
+scan-before-fortify fault order and dynamic provider lifetime.
+`AndroidStringLengthMemory.*` checks exact scan limits and expired deadlines,
+including zero object bounds, without publishing a result or guest writes.
+`ProcessPublic.AndroidFortifyLengthReportsMatchSDKAndCLI` compares shared SDK
+and CLI reports for success, fortify refusal and a pointer fault. Run these
+with `AndroidSearch.*`, `AndroidSearchMemory.*`, `AndroidStringCopy*`,
+`AndroidToken*` and `AndroidFormatting*` to protect neighboring string owners.
+Expected lengths and bytes are authored independently of host libc.
+
 `AndroidSearch.*Span*` checks `strspn` and `strcspn` at O0/O2 across relocation formats and
 available CPU backends. Independent expected counts cover empty sets, duplicates,
 all nonzero byte values, read-only/overlapping strings, page-tail termination or
@@ -1665,6 +1678,38 @@ order and retain paired measurements and CPU time alongside output hashes.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
 
+`NeverDDigestTests` owns the former Lift `InputDigest.*` vector checks and adds
+multi-block vectors, every byte alignment and padding boundary, read-only input
+next to an inaccessible page, bounded progress, cancellation and retry.
+`NeverDPortableDigestTests` runs the same cases with the actual SHA owner compiled
+with its private `NEVERD_SHA256_PORTABLE` test definition. No product build disables
+runtime dispatch. `NEVERD_TEST_SHA256_HARDWARE=1` requires the hardware path to be
+selected; `=0` requires fallback, and an unset variable only records selection.
+
+The digest tests can build independently with the recorded LLVM fork's Support
+and TargetParser targets, or an explicit matching `LLVM_DIR`:
+
+```bash
+cmake -S unittests/digest -B build-digest -G Ninja -DCMAKE_BUILD_TYPE=Release
+python scripts/build.py build-digest --target NeverDDigestTests NeverDPortableDigestTests --parallel 4
+ctest --test-dir build-digest --output-on-failure --no-tests=error
+```
+
+`digest.yml` requires native ARM64 compilation and hardware selection on Linux
+(Clang/GCC), macOS and Windows (MSVC/clang-cl). Both backends must pass every case.
+The optional `NeverDDigestTestsBench` and `NeverDPortableDigestTestsBench` targets
+feed `unittests/digest/benchmark.py`; it alternates process order, excludes an
+initial pair, compares complete digest/consumption results, and retains seven
+paired wall/process CPU observations plus binary hashes. Run after builds and
+tests finish. These are primitive measurements, not CLI/worker/GUI latency or
+cross-host rankings. Native runner contention and unavailable hosts remain
+qualification limits.
+
+The ARM64 compression follows the [Arm ACLE SHA256 intrinsics](https://arm-software.github.io/acle/neon_intrinsics/advsimd.html#sha256).
+Linux detection uses the [kernel HWCAP contract](https://docs.kernel.org/arch/arm64/elf_hwcaps.html).
+Darwin detection uses Apple's [instruction-set capability query](https://developer.apple.com/documentation/kernel/1387446-sysctlbyname/determining_instruction_set_characteristics);
+Windows detection uses LLVM's mapping of [processor feature availability](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent).
+
 `SessionCAPITest.Exports*` checks complete export JSON spelling, row order and
 duplicates, zero and high addresses, the full ordinal width, escaped and invalid
 UTF-8 names, and later edits to the image's export table.
@@ -2043,6 +2088,43 @@ loop/backedge/guard totals plus each selected guard's physical latch in both
 themes and at fractional DPI. Frozen v3 complete/limited/cancelled reports join
 the previous compatibility corpus. These fixtures establish supported behavior,
 not general behavioral equivalence or held-out accuracy.
+
+`BinaryDiffModularProgress` checks v5 modular orbit coverage against independent
+concrete-state oracles: every integer comparison, operand order and branch
+polarity for widths 1–4 with both literal bounds and two same-counter affine
+observations, plus every pair of translated unsigned ranges at width 3. These
+oracles enumerate defined integer states; they do not substitute for
+the undef/poison argument. Dedicated cases cover unfrozen and externally frozen
+seeds, empty/full continuation sets, disconnected exits, split residue
+projections, i64 endpoints, common/selected/direct backedges, mixed nested proof
+kinds, exact storage/work limits and cancellation at every charged work point.
+Freezes, resets, incompatible steps, missing residues and remaining cycles
+must refuse progress. Schema 9 replays and authenticates each canonical proof
+kind; legacy encodings omit that field.
+
+Owned `modular_progress_fixture.c` adds unknown initial counters with odd/even
+steps across x64/AArch64 ELF/COFF/Mach-O at O0/O2. Reachable exit ranges and
+single-exit infinite controls retain the ordinary optimizer and native argument
+attributes. Tests record unsupported compiler shapes and require qualified
+cross-level anchors, changed constants/body/steps/bounds, and saved replay.
+The former AArch64 family5/family6 gaps now exercise modular/affine admission;
+their v4 refusals remain tested. SDK, Python, worker and Qt inspect actual
+owned bytes, proof kinds, page-size-one witnesses, slices and source-bound
+restore. Qt also checks both proof explanations in light/dark themes and at
+fractional DPI. Frozen v4 complete/limited/cancelled reports supplement the
+older byte-exact corpus. This remains functional coverage, not a held-out
+accuracy benchmark or proof of whole-function equivalence.
+
+`BinaryDiffFlowBinding` qualifies exact LLVM report binding across same-block
+PHI permutations, including anchored cycles and remapped progress IDs. It
+rejects changed constants, origins, contracts, proof kinds, conflicting aliases,
+ordinary instruction reordering, unanchored PHI cycles and malformed fresh
+references. Exact binding-work exhaustion and every injected cancellation point
+leave both snapshots unchanged. The C SDK regression
+`RestoresPhiNumberingWhileAuthenticatingEverySourceFact` checks v4/v5 reports,
+preserves saved IDs through repeated export/restore, and rejects altered source
+observations. The frozen report corpus exercises actual old native projections;
+no compatibility fixture is regenerated to make a new engine pass.
 
 `BinaryDiffParameterViews` covers opt-in native 64-to-32 parameter observations:
 all-use admission, multiple truncations, PHI predecessors, exact contracts,
@@ -2675,9 +2757,9 @@ compiled by the linked SDK rather than sent to an incompatible system Clang.
 `LLVMCValues.NativeVirtualizationKeepsStatusAndFailedReadPrior` supplies controlled
 VMX completion values to check C status conversion, exact operand evaluation
 and failed-read preservation without executing privileged instructions.
-`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 288 modules for
-CLAC/STAC, XEND, CLTS, WRMSRNS, MSRLIST, LKGS, LAR/LSL, INVLPGB and TLBSYNC.
-The corresponding NeverC test requires 744 C-to-native-IR compilations with no inline assembly;
+`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 312 modules for
+CLAC/STAC, XEND, CLZERO, CLTS, WRMSRNS, MSRLIST, LKGS, LAR/LSL, INVLPGB and TLBSYNC.
+The corresponding NeverC test requires 792 C-to-native-IR compilations with no inline assembly;
 its fixtures explicitly initialize RSI/RDI across ABIs. The native-call refusal
 test checks mode, result identity and lost memory/nonreturning effects.
 SMAP regressions retain distinct ordinary reads before, between and after its
@@ -2686,6 +2768,22 @@ ELF/COFF/Mach-O. Both C routes compile at O0/O2 without executing privileged
 controls. LowIR rejects invented scalar results, operands, address spaces and
 architectures; the scalar emulator cannot claim successful SMAP or XEND
 completion. Missing NeverC remains an explicit unqualified compiler route.
+CLZERO cases retain the address input, memory ordering and unchanged flags,
+including address-size wrapping and FS/GS overrides. Malformed operand,
+prefix and output contracts fail before emission. The source matrix compares
+real faults with the original bytes and uses controlled signal continuation
+to check RAX transport and preserved results, including dead results. That
+continuation does not qualify successful cache-line writes on a host without
+CLZERO. The instruction's native memory effect is specified by the
+[AMD architecture manual](https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/24594.pdf).
+`CallExitRegisters.LowReadsDoNotReplaceAPropagatedWideConstantReturn` also
+executes byte, word and dword stores from a wide constant return register,
+including a subsequent real EAX overwrite, through both C routes and ELF,
+COFF and Mach-O at O0/O2. CLZERO's address-override cases independently expose
+the narrow-read projection that previously truncated that full return.
+Stock Clang additionally compiles 48 native XEND/CLZERO C outputs and objects
+at O0/O2 across both source routes and three formats, without caller-supplied
+target feature flags.
 `X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart` compiles both C
 routes with NeverC and executes the existing fault/register/completion/restart
 oracle at O0/O2. This uses controlled signal continuation and does not qualify
@@ -2760,6 +2858,10 @@ the shared renderer/dialog matching rules without involving the worker.
 `viewSearchWholeWordsRecognizesSupplementaryCharacters` verifies that UTF-16
 surrogate pairs preserve letter and combining-mark word boundaries while emoji
 remain delimiters.
+`findInViewSurvivesTargetDestruction` destroys the main window with a modeless
+search attached to source or assembly, both idle and with a pending search.
+It checks dialog retirement and drains deferred callbacks; instrumented runs
+can check the same ownership paths for invalid memory access.
 The large-source case selects among 20,000 hits without replacing the document.
 The optional native-input case uses NEVERD_FIND_WORKER, NEVERD_FIND_INPUT,
 NEVERD_FIND_TARGET and optional NEVERD_FIND_PDB / NEVERD_FIND_TEXT. It copies
@@ -6391,7 +6493,7 @@ Packed-flags tests cover all scalar entry-flag combinations, privilege masks, bo
 
 `NeverDX86DecodeDetailTests` covers all three decode routes, both x64 address widths, signed displacement boundaries, mandatory prefixes, genuine i386 disp16, moffs, truncation and detail-free reuse. Exact relocation occurrences bind; wrong widths, offsets and values do not. Native independence and refinement tests additionally retain full frame writes, reject observed arbitrary flags and reject an altered shift candidate.
 
-`NeverDLowUndefinedDigestTests` checks independent SHA-256 vectors, every stored field, signed sequence bits, order, padding exclusion and unchanged inputs. Cases cover inline-buffer growth, the 199/200-operation boundary and larger streaming spans. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` checks real stale-evidence rejection and rebinding across both paths. Keep existing `InputDigest.*` coverage in `NeverDLiftTests`, and rebuild affected callers when changing the outlined owner. Report actual sanitizer, portable-path and host coverage; digest microbenchmarks alone do not certify native equivalence.
+`NeverDLowUndefinedDigestTests` checks independent SHA-256 vectors, every stored field, signed sequence bits, order, padding exclusion and unchanged inputs. Cases cover inline-buffer growth, the 199/200-operation boundary and larger streaming spans. `LowIRRefinement.StaleUnusedInputRefusesAcrossDigestStorageBoundaries` checks real stale-evidence rejection and rebinding across both paths. Keep `InputDigest.*` coverage in `NeverDDigestTests` and controlled loader cases in `NeverDNativeBufferTests`, and rebuild affected callers when changing the outlined owner. Report actual sanitizer, portable-path and host coverage; digest microbenchmarks alone do not certify native equivalence.
 
 ```bash
 cmake --build build-release --target NeverDLowUndefinedDigestTests --parallel 4
@@ -6953,6 +7055,18 @@ multi-second durations, full unsigned 32-bit range, high register-bit narrowing,
 clock rollover, errno preservation, idle wake completion and a runnable peer.
 Disabled time policy, clock overflow and closed providers retain incomplete
 calls and unchanged output memory.
+The same callers check `sleep` through direct imports, dynamic lookup and full
+ABI registers: zero, ordinary seconds, both sides of `INT_MAX`, `UINT_MAX` and
+ignored upper bits. They compare complete output bytes, errno, unsigned return
+values and pending native events across single-thread and cooperative execution.
+`AndroidSignals.SecondSleep*` checks fractional and exact-second remainders,
+SA_RESTART, blocked/ignored signals, termination, deadline ordering, nested
+handlers, raw-result edits (including 32-bit return narrowing), and wrapper
+bypass. Run the complete Android signal/sleep and Linux process suites after
+changing the shared sleep owner or signal completion path.
+`ProcessPublic.AndroidSecondSleepReportsMatchSDKAndCLI` compares full C API and
+CLI reports for dynamic success, a large unsigned remainder, disabled clock
+policy and a closed provider. All callers are independent synthetic fixtures.
 `LinuxClockTests.cpp` checks shared elapsed
 time and atomic refusal on clock/deadline overflow. The x64/ARM64 Linux process
 fixtures verify raw sleep errors, unchanged input and both updated clock layouts.
@@ -7961,6 +8075,11 @@ and independently materialized SELECT arms. Both suites retain ambiguous
 relocatable comparisons and distinguish adjacent objects' one-past addresses.
 `MedConstantPropagation` also checks full SSA identities at maximum integer
 IDs/versions and atomic budget refusal on reverse-ordered width chains.
+`DefaultWordAbsorptionRequiresTheSameSSAValueAndWidth` checks default MedIR
+absorption on x86, x64, ARM and AArch64 in PE/COFF, ELF and Mach-O. Both operand
+orders simplify `x | (x & y)` and `x & (x | y)`, while a changed SSA version or
+an intervening narrowing conversion prevents the fold. The shared operation
+rewrite supplies both source routes without expanding an expression tree.
 `HighCSourceCalls.ReusedConverterRebuildsClobberIdentityAndOrder` checks first
 record precedence and clearing/restoring clobbers between conversions of the
 same function, against a fresh converter. The worker code-edit checks cover

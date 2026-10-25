@@ -27,10 +27,19 @@ inline bool isX86RtmNativeName(std::string_view Name) {
          Name == "llvm.x86.xabort" || Name == "llvm.x86.xtest";
 }
 
+inline const char *x86SystemNativeTargetFeature(std::string_view Name) {
+  if (isX86RtmNativeName(Name))
+    return "rtm";
+  if (Name == "llvm.x86.clzero")
+    return "clzero";
+  return nullptr;
+}
+
 inline constexpr Intrinsic X86SystemStateNativeInventory[] = {
     Intrinsic::Xend,
     Intrinsic::Clac,
     Intrinsic::Stac,
+    Intrinsic::Clzero,
     Intrinsic::X86ClearTaskSwitched,
     Intrinsic::X86WriteMsrNonSerializing,
     Intrinsic::X86ReadMsrList,

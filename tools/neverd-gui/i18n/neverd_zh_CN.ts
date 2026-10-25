@@ -6409,6 +6409,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>带分支循环分析的优化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>优化 SSA（含回绕循环分析）</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6563,6 +6567,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>已证明的循环：头块 %1 → 回边块 %2 · 计数器 #%3 → 更新 #%4 · 块 %6 中的守卫 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>优化 SSA（含回绕循环分析）</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>证明依据：计数器单调变化，且遵守无溢出约束。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>证明依据：每个计数周期都会到达共同出口，包括发生回绕的周期。</translation>
     </message>
 </context>
 <context>

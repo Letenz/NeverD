@@ -215,13 +215,18 @@ QDialog *visibleDialog(const QString &name = {}) {
 }
 
 bool activateTestWindow(QWidget *window) {
-  window->activateWindow();
   // Qt can report a transient family as active before native keyboard focus
-  // reaches this particular window. Wait for both before sending test input.
-  const bool active =
-      QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
-        return QGuiApplication::focusWindow() == window->windowHandle();
-      });
+  // reaches this particular window. A dialog's pending activation can also
+  // supersede a single request. Keep requesting within the ordinary test
+  // deadline, and require both observations before sending keyboard input.
+  const bool active = QTest::qWaitFor([window] {
+    if (window->isActiveWindow() &&
+        QGuiApplication::focusWindow() == window->windowHandle())
+      return true;
+    window->raise();
+    window->activateWindow();
+    return false;
+  });
   if (!active)
     qWarning() << "Native focus did not reach" << window << "visible"
                << window->isVisible() << "exposed"
@@ -2503,6 +2508,50 @@ private slots:
       QVERIFY(dialog.grab().save(capture + "/find-dialog.png"));
     }
     dialog.reject();
+  }
+
+  void findInViewSurvivesTargetDestruction_data() {
+    QTest::addColumn<bool>("source");
+    QTest::addColumn<bool>("pending");
+    QTest::newRow("source-idle") << true << false;
+    QTest::newRow("source-pending") << true << true;
+    QTest::newRow("listing-idle") << false << false;
+    QTest::newRow("listing-pending") << false << true;
+  }
+
+  void findInViewSurvivesTargetDestruction() {
+    QFETCH(bool, source);
+    QFETCH(bool, pending);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "code-folding.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    QWidget *target = assembly->listing();
+    if (source) {
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *code = bench.codeView("source")->text();
+      QTRY_VERIFY(code->complete());
+      target = code;
+    }
+    target->setFocus();
+    QTRY_VERIFY(target->hasFocus());
+    bench.action(ActionId::SearchInView)->trigger();
+    QPointer<FindInViewDialog> dialog =
+        bench.window->findChild<FindInViewDialog *>();
+    QVERIFY(dialog);
+    if (pending)
+      dialog->findChild<QLineEdit *>("findInViewText")->setText("return");
+    // A pane can disappear without closing its modeless search first.
+    // Exercise direct owner teardown, including a pending debounce callback.
+    bench.window.reset();
+    QVERIFY(!dialog);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents();
   }
 
   void findInViewSearchesAssemblyAddressesAndRetargets() {

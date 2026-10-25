@@ -100,6 +100,7 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width,
     // rAX contains the address AND control bits; it is not a memory operand.
     return X86SystemStateLayout{0, 3, {Width, 4, 4}};
   case K::Monitor:
+  case K::CacheZero:
     // Addresses use LowIR's canonical 64-bit carrier on both architectures.
     return X86SystemStateLayout{0, 1, {8}};
   case K::Wait:
@@ -166,6 +167,10 @@ inline uint16_t x86SystemStateWidth(Intrinsic Id,
 inline uint16_t x86SystemStateMemoryBytes(Intrinsic Id, uint16_t Width) {
   switch (x86SystemStateContract(Id).Kind) {
   case X86SystemStateKind::Monitor:
+  case X86SystemStateKind::CacheZero:
+    // CLZERO owns the containing cache line, whose size is CPU-defined. This
+    // carrier must not cause an eager load, an alignment guard or a fixed-size
+    // software clear of bytes starting at the possibly unaligned address.
     return 1;
   case X86SystemStateKind::ShadowWrite:
   case X86SystemStateKind::DirectStore:

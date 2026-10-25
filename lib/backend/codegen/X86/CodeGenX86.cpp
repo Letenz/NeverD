@@ -16,8 +16,6 @@
 
 #include "neverd/backend/llvm/X86/X86SystemStateNative.h"
 
-#include <algorithm>
-
 namespace neverd {
 
 namespace {
@@ -107,8 +105,12 @@ detectTargetFeaturesX86(const std::set<std::string> &Names) {
     F += ",+lzcnt";
   if (SHA)
     F += ",+sha";
-  if (std::any_of(Names.begin(), Names.end(), isX86RtmNativeName))
-    F += ",+rtm";
+  std::set<std::string> SystemFeatures;
+  for (const auto &Name : Names)
+    if (const auto *Feature = x86SystemNativeTargetFeature(Name))
+      SystemFeatures.insert(Feature);
+  for (const auto &Feature : SystemFeatures)
+    F += ",+" + Feature;
   return {AVX ? kX86CpuAvx : kX86CpuBaseline, F};
 }
 

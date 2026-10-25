@@ -255,6 +255,7 @@ C(Intrinsic::X86FPComiState, "neverd_x86_comi_state");
 C(Intrinsic::X86FPComiMemoryState, "neverd_x86_comi_memory_state");
 C(Intrinsic::Clac, "__neverd_clac");
 C(Intrinsic::Stac, "__neverd_stac");
+C(Intrinsic::Clzero, "__neverd_clzero");
 
 C(Intrinsic::X86FPMaskCompareState, "neverd_x86_mask_compare_state");
 C(Intrinsic::X86FPMaskCompareMemoryState,

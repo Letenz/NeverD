@@ -367,6 +367,8 @@ private slots:
     QTest::newRow("nested-v3") << 3 << 4;
     QTest::newRow("selected-updates-v4") << 4 << 5;
     QTest::newRow("common-update-v4") << 4 << 6;
+    QTest::newRow("nowrap-proof-v5") << 5 << 6;
+    QTest::newRow("modular-proof-v5") << 5 << 7;
   }
   void loopProgressExplainsProofAndRestoresSelection() {
     QFETCH(int, Version);
@@ -438,6 +440,16 @@ private slots:
                               "f9027c1dffc989c740f6c70175df83c71131d789f8c1e007"
                               "01f031f883f9017fe331f0"
                               "83c003c3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
+    if (Family == 7) {
+      // Owned modular_progress_fixture.c, x64 O0; never executed.
+      const auto Bytes = QByteArray::fromHex(
+          "554889e5897dfc8975f88b45f88945f48b45fc83e00183f80074228b45fc83f0176b"
+          "c00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b"
+          "4df40d31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f4837d"
+          "f40173a68b45fc3345f883c0035dc3");
       QVERIFY(write(A, Bytes));
       QVERIFY(write(B, Bytes));
     }
@@ -519,10 +531,11 @@ private slots:
       QCOMPARE(Latches.size(), 2);
       Table->selectRow(Proved);
     }
-    if (Version == 4) {
+    if (Version >= 4) {
+      const int GuardCount = Family == 7 ? 1 : 2;
       QVERIFY(Status->text().contains("Counter loops: 1"));
       QVERIFY(Status->text().contains("Backedges: 1"));
-      QVERIFY(Status->text().contains("Guards: 2"));
+      QVERIFY(Status->text().contains(QString("Guards: %1").arg(GuardCount)));
       QSet<int> Guards, Latches;
       for (int N = 0; N < Rows->rowCount(); ++N) {
         const auto Witness = Rows->row(N)["progress_loop"].toObject();
@@ -537,8 +550,15 @@ private slots:
             LoopStatus->text().contains(QString("guard #%1 in block %2")
                                             .arg(Witness["compare"].toInt())
                                             .arg(Witness["block"].toInt())));
+        if (Version == 5) {
+          QCOMPARE(Witness["proof"].toString(),
+                   QString(Family == 7 ? "modular" : "nowrap"));
+          QVERIFY(LoopStatus->text().contains(
+              Family == 7 ? "every counter cycle reaches a shared exit"
+                          : "monotone counter with a no-overflow contract"));
+        }
       }
-      QCOMPARE(Guards.size(), 2);
+      QCOMPARE(Guards.size(), GuardCount);
       QCOMPARE(Latches.size(), 1);
       Table->selectRow(Proved);
     }
@@ -554,7 +574,9 @@ private slots:
         Dialog->resize(1280, 800);
         QTest::qWait(40);
         QVERIFY(Dialog->grab().save(Captures +
-                                    (Family == 6    ? "/common-update"
+                                    (Family == 7    ? "/modular-proof"
+                                     : Version == 5 ? "/nowrap-proof"
+                                     : Family == 6  ? "/common-update"
                                      : Family == 5  ? "/selected-updates"
                                      : Version == 3 ? "/nested"
                                      : Version == 2 ? "/multiblock"

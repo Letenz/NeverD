@@ -20,12 +20,72 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86SegmentedBlock.h"
 #include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/support/ISAEncoding.h"
 
 #define DEBUG_TYPE "neverd-lift-x86"
 
 namespace neverd {
 
 namespace {
+
+bool liftCacheZero(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
+                   const cs_x86 &X) {
+  if (!Insn->detail || Insn->size < 3 || Insn->size > x86::kMaxInstructionLen ||
+      X.op_count || X.eflags || X.encoding.imm_size || X.encoding.imm_offset ||
+      X.encoding.disp_size || X.encoding.disp_offset ||
+      Insn->detail->regs_read_count || Insn->detail->regs_write_count ||
+      Insn->detail->groups_count)
+    return false;
+  const bool Mode64 = L.targetArch() == Arch::X64;
+  uint8_t Segment = 0, Rex = 0;
+  bool OperandOverride = false, AddressOverride = false;
+  const auto OpcodeOffset = Insn->size - 3;
+  for (unsigned I = 0; I < OpcodeOffset; ++I) {
+    const uint8_t Byte = Insn->bytes[I];
+    if (Mode64 && Byte >= 0x40 && Byte <= 0x4f) {
+      Rex = Byte;
+      continue;
+    }
+    Rex = 0;
+    if (Byte == 0x66)
+      OperandOverride = true;
+    else if (Byte == 0x67)
+      AddressOverride = true;
+    else if (Byte == 0x3e || Byte == 0x64 || Byte == 0x65)
+      Segment = Byte;
+    else
+      // Other segment identities and refining prefixes need their own
+      // architectural contract; do not silently turn them into default DS.
+      return false;
+  }
+  const unsigned AddressSize =
+      Mode64 ? (AddressOverride ? 4 : 8) : (AddressOverride ? 2 : 4);
+  if (X.prefix[0] || X.prefix[1] != Segment ||
+      X.prefix[2] != (OperandOverride ? 0x66 : 0) ||
+      X.prefix[3] != (AddressOverride ? 0x67 : 0) || X.rex != Rex ||
+      X.addr_size != AddressSize || S.AddressSize != AddressSize ||
+      X.opcode[0] != 0x0f || X.opcode[1] != 0x01 || X.opcode[2] ||
+      X.opcode[3] || X.modrm != 0xfc ||
+      X.encoding.modrm_offset != OpcodeOffset + 2 ||
+      Insn->bytes[OpcodeOffset] != 0x0f ||
+      Insn->bytes[OpcodeOffset + 1] != 0x01 ||
+      Insn->bytes[OpcodeOffset + 2] != 0xfc)
+    return false;
+  // Capstone supplies no explicit operand or register-read entry. The
+  // address-size-selected AX/EAX/RAX is nevertheless the instruction input.
+  NdVar Address = NdVar::reg(x86reg::RAX, AddressSize);
+  if (AddressSize != 8) {
+    const auto Extended = S.makeTemp(8);
+    S.emit(NdOp::INT_ZEXT, Extended, {Address});
+    Address = Extended;
+  }
+  const auto Space = Segment == 0x64   ? NdMemoryAddressSpace::X86FS
+                     : Segment == 0x65 ? NdMemoryAddressSpace::X86GS
+                                       : NdMemoryAddressSpace::Default;
+  S.emitIntrinsic(Intrinsic::Clzero, {}, {Address}, NdMemoryOrdering::None,
+                  Space);
+  return true;
+}
 
 bool liftSegmentedBlock32(X86Lifter &L, X86Lifter::LiftState &S,
                           const cs_insn *Insn, const cs_x86 &X86,
@@ -851,8 +911,7 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
 
   // CLZERO — zero cache line (AMD Zen).
   case X86_INS_CLZERO:
-    S.emitIntrinsic(Intrinsic::Clzero, NdVar());
-    break;
+    return liftCacheZero(L, S, Insn, X86);
 
   // XTEST already handled in TSX block.
 

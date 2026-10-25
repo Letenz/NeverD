@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/X86/X86APXAtomic.h"
 #include "neverd/backend/llvm/X86/X86RepStateAsm.h"
 #include "neverd/backend/llvm/X86/X86SgxAsm.h"
+#include "neverd/backend/llvm/X86/X86SystemStateAsm.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
@@ -353,6 +354,51 @@ TEST(LLVMCValues, SHAFeaturesComposeWithNativeInstructionFallbacks) {
           for (llvm::StringRef Level : {"-O0", "-O2"})
             compileAndRun(Source + "\nint main(void) { return 0; }\n", Level);
         }
+}
+
+TEST(LLVMCValues, RtmFeaturesComposeWithShaAcrossNativeAndAssemblyCalls) {
+  for (const bool Native : {false, true}) {
+    SCOPED_TRACE(Native);
+    llvm::LLVMContext Context;
+    llvm::Module Module("mixed_rtm_features", Context);
+    Module.setDataLayout("e-p:64:64-i64:64");
+    llvm::IRBuilder<> B(Context);
+    auto *F = llvm::Function::Create(
+        llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, "mixed_rtm_features", Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+    if (Native) {
+      B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, llvm::Intrinsic::x86_xend));
+    } else {
+      const auto P =
+          *neverd::x86SystemStateAsm(neverd::Intrinsic::Xend, neverd::Arch::X64,
+                                     0, neverd::NdMemoryAddressSpace::Default);
+      auto *Type = llvm::FunctionType::get(B.getVoidTy(), false);
+      auto *Asm = llvm::InlineAsm::get(Type, P.Text, P.Constraints, true);
+      B.CreateCall(Asm);
+    }
+    auto *Vector = llvm::FixedVectorType::get(B.getInt32Ty(), 4);
+    auto *Input = B.CreateAlignedLoad(Vector, F->getArg(0), llvm::Align(1));
+    auto *Result =
+        B.CreateIntrinsic(llvm::Intrinsic::x86_sha256msg1, {}, {Input, Input});
+    B.CreateAlignedStore(Result, F->getArg(0), llvm::Align(1));
+    B.CreateRetVoid();
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    neverd::CEmitterOptions Options;
+    Options.TheArch = neverd::Arch::X64;
+    Options.Format = neverd::BinaryFormat::ELF;
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Output, Options));
+    EXPECT_NE(Source.find("target(\"rtm,sha\")"), std::string::npos) << Source;
+    // Select the builtin branch even on a stock compiler. Compile the body,
+    // but do not attempt XEND without a hardware transaction.
+    Source = "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n" + Source +
+             "\nint main(void) { return 0; }\n";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source, Level);
+  }
 }
 
 TEST(LLVMCValues, ByteShufflesKeepLaneBoundariesAndEveryMaskBit) {

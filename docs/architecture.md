@@ -809,6 +809,45 @@ the guard count. Production and replay derive them independently. Metadata
 paging uses these totals in constant time; guard-sorted witnesses retain the
 existing logarithmic node lookup. Legacy scanners, charge order and wire
 fields remain exact, and frontend adapters introduce no new proof rules.
+`llvm-progress-ssa-v5` adds modular counter progress in the same owner. A guard
+may observe one direct fixed affine translation of the counter. The common
+nowrap domain takes priority; otherwise every recurrence arm must have the same
+nonzero width-normalized delta. Each guard compares against a literal or another
+fixed affine observation of that same counter.
+`ConstantRange` constructs each continuation region after operand/polarity
+normalization and affine translation. Ignoring observation overflow flags gives
+a continuation superset, so the complement of their union contains only common
+exits. Width+1 APInt endpoints retain 2^64 exactly. Sorted interval unions and
+their complemented gaps project onto residues modulo 2^ctz(delta); coverage of
+every residue proves that every possible counter orbit encounters a common exit.
+No iteration simulation, fixed seed or native noundef attribute is introduced.
+For an unfrozen undef seed, a defined continuation must hold for every
+contributing choice, including a coherent initial value following that orbit;
+at a common exit the selected guard exits or is undefined. Exact forwarding
+and final residual acyclicity prevent resets or an unrelated infinite suffix.
+For `(counter+A) pred (counter+B)`, the fixed difference `D=B-A` determines the
+wrap point `-D`; equal offsets give a constant comparison. Signed predicates
+rotate both observations by the sign bit. This yields an exact concrete region
+without treating independently varying undef uses as correlated; the proof
+uses the coherent choices included among all contributing undef choices.
+The new interval work is charged O(G log G), with O(G) scratch for G guards;
+residual component rounds retain their existing accounting and final DAG check.
+Schema 9 adds the canonical `proof` marker (`nowrap` or `modular`) to each guard
+witness. Replay rederives that marker with the complete group, and paged adapters
+only present it. The v1-v4 model default omits this field and preserves their
+published charge order and serialized bytes.
+Fresh source binding first compares exact graph records. If LLVM PHI numbering
+changed, `FlowBinding` anchors every non-PHI operation in its existing order and
+block, then propagates a bidirectional map through ordered inputs. Every node
+must be bound; conflicts, unanchored PHI cycles and ordinary instruction
+reordering refuse. Fresh graph validation precedes reference traversal. Only
+node references, block terminators and progress counter/update/compare IDs are
+translated before complete graph equality, including origins, predecessor
+labels, attributes, contracts and counts. Saved nodes and report IDs remain
+untouched. This is exact source authentication under renumbering, not semantic
+equivalence. The additional binding pass charges allocation, traversal and
+copy/comparison payloads to the existing per-graph work allowance; validation
+retains its own bounded pass. Public restore remains synchronous.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
@@ -6144,6 +6183,18 @@ scalar result and remain ordered memory effects in both source routes. SMAP
 controls change hidden AC state while preserving arithmetic flags; transaction
 commit and its possible abort remain native. Native LLVM uses the corresponding
 intrinsics, and RTM intrinsic names select the code generator's RTM feature.
+CLZERO also retains its implicit address-sized AX/EAX/RAX input. The lifter
+wraps the offset before FS/GS base addition, and the shared instruction contract
+preserves the native cache-line effect and arithmetic flags. The CPU owns line
+size, alignment, store checks and weak ordering; an ordinary fixed-size clear
+cannot substitute for it. Native LLVM and C select the CLZERO target feature.
+
+Both source routes retain a complete constant carried by an integer RETURN
+after copy propagation. A later synthetic low-register read is not another
+machine write and cannot truncate that reaching value. The shared
+`MedReturnValue` decision still requires the operand to cover the return width;
+narrow operands retain the existing ABI reconstruction checks.
+Unrepresented segment identities and malformed decode details are refused.
 The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
 INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
 returns CF and the lifter clears its other arithmetic flags. LKGS selector and
@@ -7762,6 +7813,15 @@ for the owning scheduler or advancing an otherwise single-threaded workload.
 Bionic's `usleep` narrows its scalar argument to unsigned 32-bit microseconds
 and admits the converted duration through that same owner. Completion and errno
 conversion share the kernel-call path, including suspended native events.
+Bionic's `sleep` admits at most `INT32_MAX` seconds and retains the original
+unsigned argument in a typed libc continuation. `LinuxSleep` alone computes the
+interrupted remainder, either copying it to a raw caller's guest address or
+retaining a typed value for the modeled libc automatic. The scheduler carries
+that continuation through both ordinary waits and nested signal-return frames;
+it does not interpret the seconds or create another deadline. After the handler,
+Bionic applies kernel errno conversion, narrows the libc return to `int`, and converts the
+retained remainder into rounded-up seconds with the unattempted excess. A signal
+context redirect leaves the abandoned native event incomplete.
 Android's typed waits retain the consumed request, complete CPU context and
 native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
 readiness and completion; `GuestThreads` advances to the earliest deadline only
@@ -9582,7 +9642,9 @@ libraries supplied by the CMake helper.
 | `lib/support` | Shared binary-loading helpers and independent SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
 
-`NeverDDigest` owns the existing one-shot SHA-256 implementation in `lib/support`, with unchanged runtime feature checks and portable fallback, and no Loader or IR dependency. `loader/InputDigest.h` remains a forwarding header. `NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
+`NeverDDigest` owns one-shot SHA-256 in `lib/support`, with no Loader or IR dependency. Runtime dispatch selects x86 SHA extensions or little-endian ARM64 SHA2 only when the host reports support, otherwise retaining LLVM's portable implementation. Linux ARM64 checks the kernel's `AT_HWCAP` SHA2/Advanced SIMD bits, including when `/proc` is unavailable; Windows uses LLVM's processor-feature mapping. Darwin ARM64 uses the documented `hw.optional.arm.FEAT_SHA256` sysctl because LLVM's host map is empty there. The decision is cached, unknown or failed queries fall back, and target-specific instructions stay inside the compression function. Both accelerated implementations share the `.def` constants, padding, digest encoding and bounded cancellation checkpoints. `loader/InputDigest.h` remains a forwarding header.
+
+`NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
 
 ### Analysis and simplification ownership
 
