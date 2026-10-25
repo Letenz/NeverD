@@ -12,6 +12,7 @@
 #include "Session.h"
 
 #include <QApplication>
+#include <QDebug>
 #include <QDialog>
 #include <QEvent>
 #include <QObject>
@@ -19,10 +20,34 @@
 #include <QWidget>
 #include <QWindow>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 namespace neverd::gui {
 namespace {
 constexpr char OwnerName[] = "modelessDialogOwner";
+
+void setTransientOwner(QWindow *window, QWindow *parent) {
+  window->setTransientParent(parent);
+#ifdef Q_OS_WIN
+  // Qt 6.8 updates this property without changing an existing HWND's owner.
+  // Synchronize it before a floating owner is destroyed, and again when the
+  // pane reaches its destination. Offscreen windows do not have Win32 handles.
+  if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+    const auto native = reinterpret_cast<HWND>(window->winId());
+    const auto owner =
+        parent ? reinterpret_cast<HWND>(parent->winId()) : nullptr;
+    SetLastError(ERROR_SUCCESS);
+    if (!SetWindowLongPtrW(native, GWLP_HWNDPARENT,
+                           reinterpret_cast<LONG_PTR>(owner))) {
+      const auto error = GetLastError();
+      if (error != ERROR_SUCCESS)
+        qWarning() << "Unable to update modeless window owner:" << error;
+    }
+  }
+#endif
+}
 
 class DialogOwner final : public QObject {
 public:
@@ -57,7 +82,7 @@ private:
       if (auto *widget = qobject_cast<QWidget *>(object);
           widget && (widget == Source || widget->isAncestorOf(Source)))
         if (auto *window = Dialog->windowHandle())
-          window->setTransientParent(nullptr);
+          setTransientOwner(window, nullptr);
     // Wait until the destination window exists, including grouped docking.
     if (event->type() == QEvent::ParentChange || event->type() == QEvent::Show)
       if (auto *widget = qobject_cast<QWidget *>(object);
@@ -65,7 +90,7 @@ private:
         QTimer::singleShot(0, this, [this] {
           if (Dialog->isVisible())
             if (auto *window = Dialog->windowHandle())
-              window->setTransientParent(Source->window()->windowHandle());
+              setTransientOwner(window, Source->window()->windowHandle());
         });
     return false;
   }
