@@ -283,6 +283,18 @@ NEVERD_ANDROID_DIAGNOSTIC(
 NEVERD_ANDROID_DIAGNOSTIC(ArgumentVAListAlignment, "unaligned AAPCS64 va_list")
 NEVERD_ANDROID_DIAGNOSTIC(ArgumentRegisterOffset,
                           "invalid AAPCS64 general register offset")
+NEVERD_ANDROID_DIAGNOSTIC(DladdrObservationCount,
+                          "dladdr observation count exceeds its limit")
+NEVERD_ANDROID_DIAGNOSTIC(DladdrObservationInvalid,
+                          "invalid positive dladdr observation")
+NEVERD_ANDROID_DIAGNOSTIC(DladdrObservationBytes,
+                          "dladdr observation bytes exceed their limit")
+NEVERD_ANDROID_DIAGNOSTIC(
+    DladdrObservationUnknown,
+    "dladdr requires an explicit successful address observation")
+NEVERD_ANDROID_DIAGNOSTIC(DladdrObservationChanged,
+                          "dladdr observation string storage changed")
+NEVERD_ANDROID_DIAGNOSTIC(SnapshotDiagnosticTruncated, "... [truncated]")
 #endif
 
 NEVERD_ANDROID_DIAGNOSTIC(MutexWaitPadding,

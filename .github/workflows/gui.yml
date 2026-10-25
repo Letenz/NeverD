@@ -77,6 +77,28 @@ jobs:
             -DNEVERD_WORKER_REAL_ENGINE_TESTS=OFF
           python scripts/build.py build-gui --parallel 3
           cp "build-fixture/bin/${{ matrix.library }}" build-gui/bin/
+      - name: Verify native appearance before controller regressions
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          mkdir -p build-gui/ci-diagnostics
+          set +e
+          NEVERD_APPEARANCE_CAPTURES=build-gui/ci-diagnostics/appearance \
+            build-gui/bin/neverd-gui-appearance-tests \
+            -o build-gui/ci-diagnostics/native-appearance.txt,txt
+          appearance_status=$?
+          cat build-gui/ci-diagnostics/native-appearance.txt
+          exit "$appearance_status"
+      - name: Retain native appearance diagnostics
+        if: ${{ always() && runner.os != 'Linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-gui-${{ runner.os }}-appearance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build-gui/ci-diagnostics/native-appearance.txt
+            build-gui/ci-diagnostics/appearance/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify GUI, IPC, MCP and translation contracts
         shell: bash
         env:
@@ -193,6 +215,7 @@ jobs:
               "ctest.log": "ci-diagnostics/ctest.log",
               "ctest-exit-code.txt": "ci-diagnostics/ctest-exit-code.txt",
               "native-frame.txt": "ci-diagnostics/native-frame.txt",
+              "native-appearance.txt": "ci-diagnostics/native-appearance.txt",
               "native-docking.txt": "ci-diagnostics/native-docking.txt",
               "native-interactions.txt": "ci-diagnostics/native-interactions.txt",
               "native-interactions.xml": "ci-diagnostics/native-interactions.xml",

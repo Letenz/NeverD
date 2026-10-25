@@ -287,15 +287,20 @@ def parameter_views(client, args, root, fixture):
 
 def loop_progress(client, args, root, fixture):
     source = fixture.with_name("control_regions_fixture.c")
-    for family, version in ((2, 1), (3, 2), (4, 3)):
+    for family, version in ((2, 1), (3, 2), (4, 3), (5, 4), (6, 4)):
+        source = fixture.with_name("branch_progress_fixture.c" if family >= 5
+                                   else "control_regions_fixture.c")
         for arch, target in (("x64", "x86_64-unknown-linux-gnu"),
                              ("aarch64", "aarch64-unknown-linux-gnu")):
-            paths = [root / f"progress-v{version}-{arch}-O{level}.o" for level in (0, 2)]
+            paths = [root / f"progress-f{family}-v{version}-{arch}-O{level}.o" for level in (0, 2)]
             for path, level in zip(paths, (0, 2)):
                 subprocess.run([args.cc, f"--target={target}", "-c", f"-O{level}",
                                 "-fno-asynchronous-unwind-tables", f"-DFAMILY={family}",
                                 str(source), "-o", str(path)], check=True, capture_output=True)
-            start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paths[1])},
+            if family == 6:
+                paths.reverse()
+            paired = paths[0] if version == 4 else paths[1]
+            start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paired)},
                      "options": {"use_names": False, "dataflow": {"profile": f"llvm-progress-ssa-v{version}"},
                                  "flow_regions": {"fragments": True}}}
             summary = ok(client, "comparison_start", start)
@@ -319,6 +324,15 @@ def loop_progress(client, args, root, fixture):
                         assert proof["header"] != proof["block"]
                     witnesses.append(proof)
             assert witnesses
+            if version == 4:
+                assert page["progress"]["loop_count"] == 1
+                assert page["progress"]["backedge_count"] == 1
+                assert page["progress"]["guard_count"] == 2
+                assert len({proof["latch"] for proof in witnesses}) == 1
+                assert len({proof["block"] for proof in witnesses}) == 2
+                for proof in {w["block"]: w for w in witnesses}.values():
+                    assert ok(client, "comparison_slice", {"side": "primary", "address": address,
+                              "seeds": [proof["compare"]], "limit": 1})["rows"]
             if version == 3:
                 assert page["progress"]["loop_count"] == 2
                 assert len({proof["block"] for proof in witnesses}) == 2
@@ -326,15 +340,25 @@ def loop_progress(client, args, root, fixture):
                         "seeds": [witnesses[0]["update"]], "limit": 1})
             assert sliced["schema_version"] == 4 + version and sliced["rows"]
             document = ok(client, "comparison_export")
-            saved = root / f"progress-v{version}-{arch}.nddiff"
+            saved = root / f"progress-f{family}-v{version}-{arch}.nddiff"
             saved.write_text(json.dumps(document))
             cli = subprocess.run([args.neverd, "diff", "--structural", "-a", str(paths[0]),
-                                  "-b", str(paths[1]), "--reopen", str(saved), "--json"],
+                                  "-b", str(paired), "--reopen", str(saved), "--json"],
                                  capture_output=True, text=True, timeout=60)
             assert cli.returncode in (0, 2), cli.stderr
             assert json.loads(cli.stdout) == document
             ok(client, "comparison_start", {**start, "restore_path": str(saved)})
             assert ok(client, "comparison_export") == document
+            if version == 4:
+                # Only one optimization level retains the required premises.
+                # Keep the unproved side visible without claiming a match.
+                crossed = ok(client, "comparison_start", {**start, "secondary": {"path": str(paths[1])}})
+                assert crossed["flow_regions"]["anchor_count"] == 0
+                evidence = ok(client, "comparison_export")["dataflow"]
+                assert evidence["primary"]["entries"][0]["graph"] == document["dataflow"]["primary"]["entries"][0]["graph"]
+                unproven = evidence["secondary"]["entries"][0]["graph"]["progress"]
+                assert unproven["kind"] == "unproven"
+                assert unproven["source_contract"] == unproven["observed_contract"]
     print("Loop progress: x64/AArch64 proofs, paged witnesses, slices and CLI/worker restore passed")
 
 

@@ -22,6 +22,7 @@
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/FunctionNames.h"
+#include "neverd/loader/ImageProfile.h"
 #include "neverd/loader/InputDigest.h"
 #include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/loader/StringLiteralSymbols.h"
@@ -312,15 +313,20 @@ const char *neverd_exports_json(neverd_session_t Sess) {
   if (!S->Loaded)
     return dupStr(std::string("[]"));
 
-  llvm::json::Array Arr;
-  for (const auto &Exp : S->Img.Exports) {
-    llvm::json::Object Obj;
-    Obj["name"] = jsonSafeText(Exp.Name);
-    Obj["ordinal"] = static_cast<int64_t>(Exp.Ordinal);
-    Obj["addr"] = vaHex(Exp.Addr);
-    Arr.push_back(std::move(Obj));
-  }
-  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+  // Stream in the sorted key order a json::Object prints.
+  std::string Buf;
+  llvm::raw_string_ostream OS(Buf);
+  llvm::json::OStream J(OS);
+  J.array([&] {
+    for (const auto &Exp : S->Img.Exports)
+      J.object([&] {
+        J.attribute("addr", vaHex(Exp.Addr));
+        J.attribute("name", jsonSafeText(Exp.Name));
+        J.attribute("ordinal", static_cast<int64_t>(Exp.Ordinal));
+      });
+  });
+  OS.flush();
+  return dupStr(Buf);
 }
 
 const char *neverd_segments_json(neverd_session_t Sess) {
@@ -709,6 +715,28 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["arch"] = getArchName(S->Img.Arch);
   Root["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   Root["format"] = S->Img.getFormatName();
+  const ImageProfile Profile = identifyImageProfile(S->Img);
+  llvm::json::Object Target;
+  Target["system"] = imageSystemName(Profile.System);
+  Target["domain"] = imageDomainName(Profile.Domain);
+  Target["runtime"] = imageRuntimeName(Profile.Runtime);
+  Target["conflicting_evidence"] = Profile.ConflictingEvidence;
+  llvm::json::Array TargetEvidence, Years;
+  for (llvm::StringRef Reason : Profile.Evidence)
+    TargetEvidence.push_back(Reason);
+  for (unsigned Year : Profile.VisualStudioYears)
+    Years.push_back(Year);
+  Target["evidence"] = std::move(TargetEvidence);
+  Target["visual_studio_years"] = std::move(Years);
+  Root["target_profile"] = std::move(Target);
+  if (const auto &Selection = S->SigDB.automaticSelection()) {
+    llvm::json::Object Statistics;
+    Statistics["available_files"] = int64_t(Selection->AvailableFiles);
+    Statistics["selected_files"] = int64_t(Selection->SelectedFiles);
+    Statistics["skipped_files"] =
+        int64_t(Selection->AvailableFiles - Selection->SelectedFiles);
+    Root["signature_selection"] = std::move(Statistics);
+  }
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
   Root["file_path"] = jsonSafeText(pathToUTF8(S->FilePath));
   if (S->Img.MachOSharedCache) {

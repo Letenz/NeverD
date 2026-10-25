@@ -54,6 +54,16 @@ linuxKernelOptionsFromJSON(const llvm::json::Value &Value) {
       auto Name = Entry.getAsString();
       if (!Name || !(Out.GKI = gkiKernel(*Name)))
         return invalid(field::GKI);
+    } else if (Key == field::XAttrQueryImport) {
+      auto Name = Entry.getAsString();
+      if (!Name)
+        return invalid(field::XAttrQueryImport);
+      if (*Name == "target-before-name")
+        Out.XAttrQueryImport = LinuxXAttrQueryImport::TargetBeforeName;
+      else if (*Name == "name-before-target")
+        Out.XAttrQueryImport = LinuxXAttrQueryImport::NameBeforeTarget;
+      else
+        return invalid(field::XAttrQueryImport);
     } else if (Key == field::KernelTasks) {
       const auto *Tasks = Entry.getAsArray();
       if (!Tasks || Tasks->size() > linux_model::KernelTaskLimit)

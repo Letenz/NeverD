@@ -6405,6 +6405,10 @@ Coverage: %7</source>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>入れ子ループ解析付き最適化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>分岐ループ解析付き最適化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6547,6 +6551,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>証明済みループ：ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · 条件 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>分岐ループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>復帰の進行を証明済み · カウンターループ: %1 · 後退辺: %2 · ガード: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>証明済みループ: ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · ブロック %6 のガード #%5</translation>
     </message>
 </context>
 <context>

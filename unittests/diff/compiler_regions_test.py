@@ -323,7 +323,9 @@ def main():
                        for anchor in changed_body['flow_regions']['anchors']
                        for pair in anchor['nodes'])
     for family, version, shape, loop_count in ((3, 2, 'multiblock', 1),
-                                               (4, 3, 'nested', 2)):
+                                               (4, 3, 'nested', 2),
+                                               (5, 4, 'selected-updates', 1),
+                                               (6, 4, 'common-update', 1)):
         progress_profile = [f'--dataflow-profile=llvm-progress-ssa-v{version}', '--flow-fragments']
         for arch, targets in (
                 ('x64', (('elf', 'x86_64-unknown-linux-gnu'),
@@ -339,29 +341,49 @@ def main():
                     return build(f'{prefix}-{name}', args.clang,
                                  [f'--target={triple}', f'-O{level}',
                                   '-fno-asynchronous-unwind-tables', f'-DFAMILY={family}',
-                                  *definitions], control)
+                                  *definitions],
+                                 control.with_name('branch_progress_fixture.c')
+                                 if family >= 5 else control)
 
                 a, b = loop_input('O0', 0), loop_input('O2', 2)
-                patch = loop_input('patch', 2, ['-DFINAL_ADD=5u'])
-                bound = loop_input('bound', 2, ['-DLOOP_MASK=3u'])
-                body = loop_input('body', 2, ['-DLOOP_MUL=11u'])
+                if family == 6:
+                    a, b = b, a
+                patch_level = 0 if family == 5 else 2
+                patch = loop_input('patch', patch_level, ['-DFINAL_ADD=5u'])
+                bound = loop_input('bound', patch_level, ['-DLOOP_MASK=3u'])
+                body = loop_input('body', patch_level, ['-DLOOP_MUL=11u'])
+                paired = a if version == 4 else b
                 report = root / f'{prefix}.nddiff'
-                document = compare(prefix, a, b,
+                document = compare(prefix, a, paired,
                                    [*progress_profile, '--save', str(report)])
                 graphs = [document['dataflow'][side]['entries'][0]['graph']
                           for side in ('primary', 'secondary')]
                 assert all(g['schema_version'] == 4 + version for g in graphs)
                 assert graphs[0]['progress']['kind'] == 'counter_loops'
                 assert graphs[0]['progress']['loop_count'] == loop_count
-                assert graphs[1]['progress']['kind'] in ('acyclic', 'counter_loops')
+                if version == 4:
+                    # The other optimization level loses a proof premise. Its
+                    # different observed contract must not create anchors.
+                    crossed = compare(prefix + '-cross-level', a, b, progress_profile, False)
+                    other = crossed['dataflow']['secondary']['entries'][0]['graph']['progress']
+                    assert other['kind'] == 'unproven'
+                    assert other['source_contract'] == other['observed_contract']
+                    assert crossed['dataflow']['primary']['entries'][0]['graph'] == graphs[0]
+                    assert crossed['flow_regions']['anchor_count'] == 0
+                    proof = graphs[0]['progress']
+                    assert proof['backedge_count'] == 1 and proof['guard_count'] == 2
+                    assert len({loop['latch'] for loop in proof['loops']}) == 1
+                    assert len({loop['block'] for loop in proof['loops']}) == 2
+                else:
+                    assert graphs[1]['progress']['kind'] in ('acyclic', 'counter_loops')
                 if version == 2:
                     assert all(loop['header'] != loop['block']
                                for loop in graphs[0]['progress']['loops'])
-                else:
+                elif version == 3:
                     proofs = graphs[0]['progress']['loops']
                     assert len({loop['header'] for loop in proofs}) == 2
                     assert len({loop['block'] for loop in proofs}) == 2
-                legacy = compare(prefix + '-legacy', a, b,
+                legacy = compare(prefix + '-legacy', a, paired,
                                  [f'--dataflow-profile=llvm-progress-ssa-v{version - 1}', '--flow-fragments'], False)
                 old = legacy['dataflow']['primary']['entries'][0]['graph']['progress']
                 assert old['kind'] == 'unproven' and old['source_contract'] == old['observed_contract']
@@ -373,9 +395,9 @@ def main():
                 assert any(anchor['node_count'] >= 4 and anchor['frontier_count']
                            for anchor in regions['anchors'])
                 assert all(anchor['open_control_frontier'] for anchor in regions['anchors'])
-                assert compare(prefix + '-reopen', a, b,
+                assert compare(prefix + '-reopen', a, paired,
                                ['--reopen', str(report)]) == document
-                changed = compare(prefix + '-patch', a, patch, progress_profile, False)
+                changed = compare(prefix + '-patch', a, patch, progress_profile, version == 4)
                 patched = changed['dataflow']['secondary']['entries'][0]['graph']
                 final_adds = {i for i, n in enumerate(patched['nodes'])
                               if n['opcode'] == 'add' and
@@ -383,14 +405,14 @@ def main():
                 assert final_adds
                 assert all(pair[1] not in final_adds for anchor in changed['flow_regions']['anchors']
                            for pair in anchor['nodes'])
-                changed_bound = compare(prefix + '-bound', a, bound, progress_profile, False)
+                changed_bound = compare(prefix + '-bound', a, bound, progress_profile, version == 4)
                 smaller = changed_bound['dataflow']['secondary']['entries'][0]['graph']
                 assert any(n['opcode'] == 'and' and any(v[0] == 1 and v[3] == '0x3'
                            for v in n['inputs']) for n in smaller['nodes'])
                 assert smaller['nodes'] != graphs[1]['nodes']
                 assert all(anchor['open_control_frontier']
                            for anchor in changed_bound['flow_regions']['anchors'])
-                changed_body = compare(prefix + '-body', a, body, progress_profile, False)
+                changed_body = compare(prefix + '-body', a, body, progress_profile, version == 4)
                 altered = changed_body['dataflow']['secondary']['entries'][0]['graph']
                 multiplications = {i for i, n in enumerate(altered['nodes'])
                                    if n['opcode'] == 'mul' and

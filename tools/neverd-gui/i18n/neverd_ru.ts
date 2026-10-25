@@ -6477,6 +6477,10 @@ Coverage: %7</source>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>Оптимизированная SSA с анализом вложенных циклов</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>Оптимизированная SSA с анализом разветвлённых циклов</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6619,6 +6623,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>Доказанный цикл: блок заголовка %1 → блок обратного перехода %2 · счётчик #%3 → обновление #%4 · условие #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>Оптимизированная SSA с анализом разветвлённых циклов</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>Продвижение к возврату доказано · Циклы со счётчиком: %1 · Обратные рёбра: %2 · Условия: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>Доказанный цикл: блок заголовка %1 → блок возврата %2 · счётчик #%3 → обновление #%4 · условие #%5 в блоке %6</translation>
     </message>
 </context>
 <context>

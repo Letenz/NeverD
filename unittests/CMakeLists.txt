@@ -75,6 +75,14 @@ target_include_directories(NeverDSupportThreadTests PRIVATE
 
 add_subdirectory(acceleration)
 
+add_neverd_unittest(NeverDExportTableTests
+  ExportTableTests.cpp
+  "${CMAKE_SOURCE_DIR}/tools/neverd/ExportTable.cpp"
+  LINK_LIBS neverd_tool_json LLVMSupport
+)
+target_include_directories(NeverDExportTableTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/tools/neverd" ${LLVM_INCLUDE_DIRS})
+
 add_neverd_unittest(NeverDLowUndefinedDigestTests
   LowUndefinedDigestTests.cpp
   LINK_COMPONENTS IRLowValidation
@@ -108,6 +116,7 @@ add_neverd_unittest(NeverDBinaryDiffTests
   BinaryDiffLLVMDataFlowTests.cpp
   BinaryDiffParameterViewTests.cpp
   BinaryDiffProgressTests.cpp
+  BinaryDiffBranchProgressTests.cpp
   BinaryDiffFlowRegionsTests.cpp
   BinaryDiffFlowFragmentsTests.cpp
   BinaryDiffImpactTests.cpp
@@ -326,6 +335,12 @@ if(TARGET neverd_shared)
     LINK_COMPONENTS Types
     LINK_LIBS neverd_shared
   )
+  add_neverd_unittest(NeverDSessionSignatureProfileTests
+    SessionSignatureProfileTests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDSessionSignatureProfileTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDUnwindFrameCAPITests
     UnwindFrameCAPITests.cpp
     LINK_LIBS neverd_shared LLVMSupport
