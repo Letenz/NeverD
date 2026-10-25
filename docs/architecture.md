@@ -380,10 +380,21 @@ only their accessed data bytes, with no invented return value.
 Byte and halfword stores slice the encoded W value explicitly; the tracer
 requires those source bytes to be known before publishing the slice. Unknown
 unused upper bytes do not prevent a known narrow store.
+The SIMD/FP register-offset inventory also covers B/H/S/D/Q loads and stores
+with all four extensions and both encoded scales. A load publishes the encoded
+physical register view before explicitly zeroing its upper V bytes; a later
+S/D read across a branch cannot reuse an older scalar definition. V31 remains
+data, rather than acquiring X31's zero-register meaning. Stores consume only
+the selected vector bytes. Native LLVM and C use V17 for that data while
+keeping the base and index in separate GPRs. Validated scalar S/D loads also
+participate in the common floating-return inference. AAPCS64 interfaces use
+native float/double parameters only when the existing byte-demand proof
+establishes the scalar width; full vector inputs retain their wide LLVM type.
 The real load retains AddressAdd's access-EL checks and any internal
 AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
 The address is unknown to generic memory proofs, and discarding the result
-cannot discard the access or its possible fault. The scalar operations preserve local Z/P values. Validated loads also preserve
+cannot discard the access or its possible fault. The operations preserve local
+Z/P values only when their physical vector registers are disjoint. Validated loads also preserve
 earlier call arguments other than their explicit outputs.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
@@ -396,7 +407,8 @@ mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
 Swift receiver proofs consume a validated read with an explicit result, without
 granting purity or removing the access. Jump-table recovery
 requires the same control-independent address proof for every admitted physical
-slot and an exact table base/index identity. A monotonic address interval may
+slot and an exact table base/index identity. SIMD loads do not acquire the
+GPR table-transport proof. A monotonic address interval may
 certify the entire zero-extended W input domain without a branch proof; a full
 X input first needs an explicit zero-extension proof at the exact load use.
 Otherwise a complete native-width bound retains its compound unsigned path
@@ -422,8 +434,12 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Immediate, pre/post-index, pair and SIMD/FP ordinary-memory families remain
-unqualified for CPA2, as does controlled native execution with CPTA enabled.
+identity. Immediate, pre/post-index, pair and other ordinary-memory families
+remain unqualified for CPA2, as does controlled native execution with CPTA
+enabled. Whole-vector C entry/return ABI and DWARF vector declarations remain
+separate, unqualified interfaces; integer bridges do not certify those native
+interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
+profile, and does not qualify native Apple SVE or LLVMC scalable carriers.
 The owner follows the pinned
 [Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 

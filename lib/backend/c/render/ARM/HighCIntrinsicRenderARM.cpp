@@ -815,7 +815,7 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
   if (isAArch64AddressMemoryIntrinsic(Id)) {
     const unsigned Count = aarch64AddressMemoryOperandCount(Id);
-    const bool Store = Id == Intrinsic::A64_StoreRegisterOffset;
+    const bool Store = isAArch64AddressStoreIntrinsic(Id);
     const auto Word = Ops.size() == Count
                           ? constantOperand(Ops[kAddressMemoryWordOperand])
                           : std::nullopt;

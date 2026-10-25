@@ -53,11 +53,24 @@ aarch64AddressMemoryC(const AArch64AddressMemoryInstruction &Instruction,
     const auto DataInput = aarch64PAuthTemporary(
         kAddressStoreCDataInput, {Base, Index, Data, ValueName, BaseName,
                                   IndexName, BaseInput, IndexInput});
+    if (Instruction.isVector())
+      return llvm::formatv(
+                 kAddressVectorStoreCExpression, ValueName, BaseName, IndexName,
+                 Base, Index, Instruction.scratchWord(), BaseInput, IndexInput,
+                 DataInput, Data,
+                 llvm::formatv(kAddressVectorFromBitsC, DataInput).str())
+          .str();
     return llvm::formatv(kAddressStoreCExpression, ValueName, BaseName,
                          IndexName, Base, Index, Instruction.scratchWord(),
                          BaseInput, IndexInput, DataInput, Data)
         .str();
   }
+  if (Instruction.isVector())
+    return llvm::formatv(kAddressVectorLoadCExpression, ValueName, BaseName,
+                         IndexName, Base, Index, Instruction.scratchWord(),
+                         BaseInput, IndexInput,
+                         llvm::formatv(kAddressVectorToBitsC, ValueName).str())
+        .str();
   return llvm::formatv(kAddressLoadCExpression, ValueName, BaseName, IndexName,
                        Base, Index, Instruction.scratchWord(), BaseInput,
                        IndexInput)

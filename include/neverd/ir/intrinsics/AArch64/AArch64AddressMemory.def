@@ -6,10 +6,12 @@
 /// \file
 /// Original memory operations retain AddressAdd's access-EL checks and the
 /// processor's AddressIncrement choice. VALUE owns encoding/shape constants;
-/// TEXT owns diagnostics and LLVM syntax; OPERATION owns appended identities.
-/// ENCODING owns Id, masked word, access bytes, result bytes and signedness.
-/// Loads return accessed bytes; explicit IR extends them through the encoded
-/// W/X result width before publishing X. Stores consume only accessed bytes.
+/// TEXT owns diagnostics and LLVM syntax; OPERATION owns appended identities,
+/// store direction and vector class. ENCODING owns Id, masked word, access
+/// bytes, result bytes and signedness. Loads return accessed bytes; explicit IR
+/// extends them through the encoded W/X result width before publishing X,
+/// or publishes the natural vector view before zeroing its upper V bytes.
+/// Stores consume only accessed bytes.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_A64_ADDRESS_MEMORY_VALUE
@@ -19,15 +21,22 @@
 #define NEVERD_A64_ADDRESS_MEMORY_TEXT(Name, Text)
 #endif
 #ifndef NEVERD_A64_ADDRESS_MEMORY_OPERATION
-#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic)
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic, Store, Vector)
 #endif
 #ifndef NEVERD_A64_ADDRESS_MEMORY_ENCODING
 #define NEVERD_A64_ADDRESS_MEMORY_ENCODING(Id, Word, Access, Result, Signed)
 #endif
 
-NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_Load64RegisterOffset, "ldr")
-NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_LoadRegisterOffset, "scalar.load")
-NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_StoreRegisterOffset, "scalar.store")
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_Load64RegisterOffset, "ldr", false,
+                                    false)
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_LoadRegisterOffset, "scalar.load",
+                                    false, false)
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_StoreRegisterOffset, "scalar.store",
+                                    true, false)
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_VectorLoadRegisterOffset, "vector.load",
+                                    false, true)
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_VectorStoreRegisterOffset,
+                                    "vector.store", true, true)
 // Canonical unscaled UXTX LDR word for existing typed IR producers.
 NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressLoadOpcode, 0xf8606800U)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryOpcodeMask, 0xffe04c00U)
@@ -58,6 +67,27 @@ NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_StoreRegisterOffset, 0xb8204800U, 4, 0,
 NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_StoreRegisterOffset, 0xf8204800U, 8, 0,
                                    false)
 
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorLoadRegisterOffset, 0x3c604800U, 1,
+                                   16, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorLoadRegisterOffset, 0x7c604800U, 2,
+                                   16, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorLoadRegisterOffset, 0xbc604800U, 4,
+                                   16, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorLoadRegisterOffset, 0xfc604800U, 8,
+                                   16, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorLoadRegisterOffset, 0x3ce04800U,
+                                   16, 16, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorStoreRegisterOffset, 0x3c204800U,
+                                   1, 0, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorStoreRegisterOffset, 0x7c204800U,
+                                   2, 0, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorStoreRegisterOffset, 0xbc204800U,
+                                   4, 0, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorStoreRegisterOffset, 0xfc204800U,
+                                   8, 0, false)
+NEVERD_A64_ADDRESS_MEMORY_ENCODING(A64_VectorStoreRegisterOffset, 0x3ca04800U,
+                                   16, 0, false)
+
 NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryRegisterMask, 0x1fU)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryBaseShift, 5)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryIndexShift, 16)
@@ -66,6 +96,8 @@ NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryRegistersMask,
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryPointerBytes, 8)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryPointerBits, 64)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryWordBytes, 4)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryVectorBytes, 16)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryVectorBits, 128)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryIdentifierBytes, 2)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressLoadOperandCount, 3)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressStoreOperandCount, 4)
@@ -102,6 +134,14 @@ NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressStoreAsm,
                                ".inst ${2:c} // neverd.address.store")
 NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressStoreConstraints,
                                "{x16},{x15},i,{x17},~{memory}")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressVectorLoadAsm,
+                               ".inst ${3:c} // neverd.address.vector.load")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressVectorLoadConstraints,
+                               "=&{v17},{x16},{x15},i,~{memory}")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressVectorStoreAsm,
+                               ".inst ${2:c} // neverd.address.vector.store")
+NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressVectorStoreConstraints,
+                               "{x16},{x15},i,{v17},~{memory}")
 NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressMemoryMalformed,
                                "malformed AArch64 original memory operation")
 NEVERD_A64_ADDRESS_MEMORY_TEXT(kAddressMemorySPUnsupported,

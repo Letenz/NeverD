@@ -592,8 +592,15 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   // 16-byte register (x86 XMM, AArch64 V) takes the <2 x i64> vector so the
   // body's 16-byte register model flows through and LLVM's SSE/AAPCS lowering
   // assigns it to the FP register file; an 8/4-byte register (ARM D/S) takes a
-  // scalar double/float so the AAPCS-VFP lowering assigns it to D/S.
-  auto fpAbiType = [&](uint16_t ElemSize) -> llvm::Type * {
+  // scalar double/float so the AAPCS-VFP lowering assigns it to D/S. A proven
+  // AAPCS64 scalar also keeps its scalar type at the ABI boundary: the wide
+  // physical V-register model is not a source-language vector parameter.
+  auto fpAbiType = [&](uint16_t ElemSize,
+                       bool WholeVector = false) -> llvm::Type * {
+    if (TargetArch == Arch::AArch64 && !WholeVector &&
+        (ElemSize == sizeof(float) || ElemSize == sizeof(double)))
+      return ElemSize == sizeof(float) ? llvm::Type::getFloatTy(*Ctx)
+                                       : llvm::Type::getDoubleTy(*Ctx);
     const uint16_t ABIWidth = TRI.FPABIRegWidth != 0
                                   ? TRI.FPABIRegWidth
                                   : static_cast<uint16_t>(TRI.VecRegStride);
@@ -621,7 +628,8 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
     // The i386 cdecl x87 (st0) return is a scalar FP type so LLVM lowers it to
     // the x87 stack; the XMM0-vector convention keeps the 16-byte vector type.
     RetType = Func.FPReturnViaX87 ? mapNdtype(Func.ReturnType)
-                                  : fpAbiType(Func.ReturnType->Size);
+                                  : fpAbiType(Func.ReturnType->Size,
+                                              Func.ReturnsVectorRegister);
   }
 
   // AArch64: a narrow integer return is materialized by a sub-register write
@@ -652,7 +660,11 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
     // it to the FP register file; declaring it an integer would route it
     // through the integer registers instead.
     if (P.RegOff != kNoParamReg && TRI.isFPArgReg(P.RegOff, TargetFormat)) {
-      ParamTypes.push_back(fpAbiType(P.Size));
+      const auto Scalar = Func.FPParamScalarBytes.find(P.RegOff);
+      ParamTypes.push_back(fpAbiType(
+          TargetArch == Arch::AArch64 && Scalar != Func.FPParamScalarBytes.end()
+              ? Scalar->second
+              : P.Size));
       continue;
     }
     if (HaveTypes)
