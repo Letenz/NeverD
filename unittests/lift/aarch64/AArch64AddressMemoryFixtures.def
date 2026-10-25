@@ -29,6 +29,7 @@ MEMORY_CASE(0xf8626be0, 0, 31, 2, 0xf86f6a11)
 MEMORY_VALUE(uint32_t, kFirst, 0xf8626820)
 MEMORY_VALUE(uint32_t, kScaled, 0xf8627820)
 MEMORY_VALUE(uint32_t, kStackBase, 0xf8626be0)
+MEMORY_VALUE(uint32_t, kZeroIndex, 0xf87f6820)
 MEMORY_VALUE(uint32_t, kABIFirst, 0xf8616800)
 MEMORY_VALUE(uint32_t, kABIScaled, 0xf8617800)
 MEMORY_VALUE(uint32_t, kReturn, 0xd65f03c0)
@@ -43,6 +44,12 @@ MEMORY_VALUE(unsigned, kWordBytes, 4)
 MEMORY_VALUE(unsigned, kIdBytes, 2)
 MEMORY_VALUE(unsigned, kZeroRegister, 31)
 MEMORY_VALUE(va_t, kEntry, 0x1000)
+MEMORY_VALUE(uint64_t, kTagHealingBase, 0x0100000000001000ULL)
+MEMORY_VALUE(uint64_t, kTagHealingIndex, 0xff00000000000000ULL)
+MEMORY_VALUE(uint64_t, kPoisonHealingBase, 0x0040000000001000ULL)
+MEMORY_VALUE(uint64_t, kPoisonHealingIndex, 0xffc0000000000000ULL)
+MEMORY_VALUE(uint64_t, kAccessBoundary, 0x003ffffffffffffcULL)
+MEMORY_VALUE(uint64_t, kLoadedValue, 0x123456789abcdef0ULL)
 MEMORY_VALUE(unsigned, kTimeoutSeconds, 30)
 MEMORY_TEXT(kName, "original_memory_load")
 MEMORY_TEXT(kObject, "original-memory.o")
@@ -75,30 +82,31 @@ MEMORY_TEXT(kCaptureSource,
             "{{ return {0}; }\n")
 MEMORY_TEXT(kBaseCall, "get_base()")
 MEMORY_TEXT(kIndexCall, "get_index()")
-MEMORY_TEXT(kInputCallsSource,
-            "#include <stdint.h>\nstatic uint64_t data = 71; static int calls; "
-            "__attribute__((noinline)) static uint64_t get_base(void) "
-            "{{ ++calls; return (uint64_t)(uintptr_t)&data; } "
-            "__attribute__((noinline)) static uint64_t get_index(void) "
-            "{{ ++calls; __asm__ volatile(\"mov x16, #0\" ::: \"x16\"); return 0; } "
-            "int main(void) {{ uint64_t result = {0}; "
-            "return result != 71 || calls != 2 || data != 71; }\n")
-MEMORY_TEXT(kNativeHarness,
-            "\nint main(void) {{ uint64_t data[] = {{ 11, 23, 37, 53, 71, 89, 107 }; "
-            "for (int i = -3; i <= 3; ++i) {{ "
-            "uint64_t offset = (uint64_t)(int64_t)(i * {1}); "
-            "uint64_t got = {0}((uint64_t)(uintptr_t)&data[3], offset); "
-            "if (got != data[3 + i]) return 1; } "
-            "return data[0] != 11 || data[6] != 107; }\n")
+MEMORY_TEXT(
+    kInputCallsSource,
+    "#include <stdint.h>\nstatic uint64_t data = 71; static int calls; "
+    "__attribute__((noinline)) static uint64_t get_base(void) "
+    "{{ ++calls; return (uint64_t)(uintptr_t)&data; } "
+    "__attribute__((noinline)) static uint64_t get_index(void) "
+    "{{ ++calls; __asm__ volatile(\"mov x16, #0\" ::: \"x16\"); return 0; } "
+    "int main(void) {{ uint64_t result = {0}; "
+    "return result != 71 || calls != 2 || data != 71; }\n")
+MEMORY_TEXT(
+    kNativeHarness,
+    "\nint main(void) {{ uint64_t data[] = {{ 11, 23, 37, 53, 71, 89, 107 }; "
+    "for (int i = -3; i <= 3; ++i) {{ "
+    "uint64_t offset = (uint64_t)(int64_t)(i * {1}); "
+    "uint64_t got = {0}((uint64_t)(uintptr_t)&data[3], offset); "
+    "if (got != data[3 + i]) return 1; } "
+    "return data[0] != 11 || data[6] != 107; }\n")
 
-MEMORY_TEXT(kBarrierHarness,
-            "\nint main(void) {{ uint64_t value = 7; "
-            "__auto_type base = _Generic(&{0}, "
-            "uint64_t (*)(void *, int64_t): (void *)&value, "
-            "uint64_t (*)(void *, uint64_t): (void *)&value, "
-            "default: (uint64_t)(uintptr_t)&value); "
-            "uint64_t result = {0}(base, 0); "
-            "return result != 11 || value != 23; }\n")
+MEMORY_TEXT(kBarrierHarness, "\nint main(void) {{ uint64_t value = 7; "
+                             "__auto_type base = _Generic(&{0}, "
+                             "uint64_t (*)(void *, int64_t): (void *)&value, "
+                             "uint64_t (*)(void *, uint64_t): (void *)&value, "
+                             "default: (uint64_t)(uintptr_t)&value); "
+                             "uint64_t result = {0}(base, 0); "
+                             "return result != 11 || value != 23; }\n")
 
 MEMORY_TEXT(kPointerHarness,
             "\nint main(void) {{ uint64_t data = 71; "

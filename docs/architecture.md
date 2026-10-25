@@ -307,8 +307,11 @@ local Z/P values and earlier call arguments other than its explicit output.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
 execution projection refuses it without its alignment and tagging environment.
-The software tracer refuses this operation in both strict and lenient modes
-until an authoritative runtime memory profile is available. This instruction
+The software tracer admits a finite image/RAM read only when the authoritative
+address owner proves identical address bits for CPTA on/off and every internal
+CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
+in both modes, including a poisoned or tagged base whose unchecked sum appears
+mapped. This proves no translation, tagging or no-fault behavior. This instruction
 preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Other ordinary-memory families remain unqualified for CPA2, as does

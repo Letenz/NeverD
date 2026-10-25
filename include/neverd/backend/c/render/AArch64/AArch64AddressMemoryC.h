@@ -46,13 +46,19 @@ inline bool aarch64AddressMemoryHighShapeIsValid(const HighExpr &Expression) {
     if (!Operand || !Operand->Type ||
         (!Integer(Operand->Type) && Operand->Type->Kind != NdTypeKind::Ptr))
       return false;
-  const auto &Word = *Expression.Operands[2];
+  const auto &Word = *Expression.Operands[kAddressMemoryWordOperand];
   if (!Integer(Word.Type) || Word.Kind != ExprKind::Const)
     return false;
   return aarch64AddressMemoryShapeIsValid(
       Expression.IntrinsicId, Expression.Operands.size() + 1,
-      Expression.Type->Size, Expression.Operands[0]->Type->Size,
-      Expression.Operands[1]->Type->Size, Word.Type->Size, Word.ConstVal);
+      Expression.Type->Size,
+      Expression.Operands[kAddressMemoryBaseOperand]->Type->Size,
+      Expression.Operands[kAddressMemoryIndexOperand]->Type->Size,
+      Word.Type->Size, Word.ConstVal,
+      Expression.Operands[kAddressMemoryIndexOperand]->Kind == ExprKind::Const
+          ? std::optional<uint64_t>(
+                Expression.Operands[kAddressMemoryIndexOperand]->ConstVal)
+          : std::nullopt);
 }
 
 inline std::string

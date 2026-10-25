@@ -44,8 +44,8 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
   if (isAArch64AddressMemoryIntrinsic(IC)) {
     if (!aarch64AddressMemoryMedShapeIsValid(Op))
       llvm::report_fatal_error(kAddressMemoryMalformed);
-    const auto Instruction =
-        *aarch64AddressMemoryInstruction(Op.Inputs[3].ConstVal);
+    const auto Instruction = *aarch64AddressMemoryInstruction(
+        Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
     if (Instruction.stackBase())
       llvm::report_fatal_error(kAddressMemorySPUnsupported);
     auto Integer = [&](const MedVar &Input) {
@@ -60,10 +60,12 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
             {Builder.getInt64Ty(), Builder.getInt64Ty(), Builder.getInt32Ty()},
             false),
         kAddressLoadAsm, kAddressLoadConstraints, /*hasSideEffects=*/true);
-    return Builder.CreateCall(Asm,
-                              {Integer(Op.Inputs[1]), Integer(Op.Inputs[2]),
-                               Builder.getInt32(Instruction.scratchWord())},
-                              kAddressLoadResult);
+    return Builder.CreateCall(
+        Asm,
+        {Integer(Op.Inputs[kAddressMemoryBaseOperand + 1]),
+         Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
+         Builder.getInt32(Instruction.scratchWord())},
+        kAddressLoadResult);
   }
 
   if (isAArch64PAuthLoadIntrinsic(IC)) {

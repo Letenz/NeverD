@@ -73,9 +73,17 @@ inline bool lowAArch64AddressMemoryShapeIsValid(const LowOp &Op) {
       return false;
   return aarch64AddressMemoryShapeIsValid(
       static_cast<Intrinsic>(Op.Inputs[0].Offset), Op.NumInputs, Op.Output.Size,
-      Op.Inputs[1].Size, Op.Inputs[2].Size, Op.Inputs[3].Size,
-      Op.Inputs[3].isConst() ? std::optional<uint64_t>(Op.Inputs[3].Offset)
-                             : std::nullopt);
+      Op.Inputs[kAddressMemoryBaseOperand + 1].Size,
+      Op.Inputs[kAddressMemoryIndexOperand + 1].Size,
+      Op.Inputs[kAddressMemoryWordOperand + 1].Size,
+      Op.Inputs[kAddressMemoryWordOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryWordOperand + 1].Offset)
+          : std::nullopt,
+      Op.Inputs[kAddressMemoryIndexOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryIndexOperand + 1].Offset)
+          : std::nullopt);
 }
 
 inline bool lowAArch64PAuthLoadShapeIsValid(const LowOp &Op) {

@@ -16,7 +16,8 @@ NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCValue, "__memory_value")
 NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCBase, "__memory_base")
 NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCIndex, "__memory_index")
 NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCBaseInput, "__memory_base_input")
-NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCIndexInput, "__memory_index_input")
+NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCIndexInput,
+                                 "__memory_index_input")
 NEVERD_A64_ADDRESS_MEMORY_C_TEXT(kAddressLoadCPointerCast,
                                  "({0})(uintptr_t)({1})")
 NEVERD_A64_ADDRESS_MEMORY_C_TEXT(

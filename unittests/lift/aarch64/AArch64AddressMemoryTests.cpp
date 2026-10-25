@@ -114,7 +114,9 @@ MedFunc memoryFunction(uint32_t Word, bool Discard = false) {
   Load.addInput(MedVar::makeConst(
       static_cast<uint64_t>(Intrinsic::A64_Load64RegisterOffset), kIdBytes));
   Load.addInput(Function.Params[0]);
-  Load.addInput(Function.Params[1]);
+  Load.addInput(aarch64AddressMemoryInstruction(Word)->index() == kZeroRegister
+                    ? MedVar::makeConst(0, kScalarBytes)
+                    : Function.Params[1]);
   Load.addInput(MedVar::makeConst(Word, kWordBytes));
   MedOp Return;
   Return.Opcode = NdOp::RETURN;
@@ -396,6 +398,7 @@ TEST(AArch64AddressMemory,
     OutputKind,
     BaseWidth,
     IndexWidth,
+    ZeroIndexValue,
     WordWidth,
     DynamicWord,
     WordRange,
@@ -409,9 +412,10 @@ TEST(AArch64AddressMemory,
   for (auto Change :
        {Mutation::IdWidth, Mutation::WrappedId, Mutation::OutputWidth,
         Mutation::OutputKind, Mutation::BaseWidth, Mutation::IndexWidth,
-        Mutation::WordWidth, Mutation::DynamicWord, Mutation::WordRange,
-        Mutation::Opcode, Mutation::InputKind, Mutation::Ordering,
-        Mutation::AddressSpace, Mutation::ExtraInput, Mutation::ExtraOutput}) {
+        Mutation::ZeroIndexValue, Mutation::WordWidth, Mutation::DynamicWord,
+        Mutation::WordRange, Mutation::Opcode, Mutation::InputKind,
+        Mutation::Ordering, Mutation::AddressSpace, Mutation::ExtraInput,
+        Mutation::ExtraOutput}) {
     SCOPED_TRACE(static_cast<unsigned>(Change));
     auto Function = memoryFunction(kFirst);
     auto &Med = Function.Blocks.front().Ops.front();
@@ -436,6 +440,11 @@ TEST(AArch64AddressMemory,
       break;
     case Mutation::IndexWidth:
       Low.Inputs[2].Size = Med.Inputs[2].Size = kWordBytes;
+      break;
+    case Mutation::ZeroIndexValue:
+      // The raw word's XZR index requires an explicit zero value, even when
+      // an adapter fabricates otherwise well-typed register operands.
+      Low.Inputs[3].Offset = Med.Inputs[3].ConstVal = kZeroIndex;
       break;
     case Mutation::WordWidth:
       Low.Inputs[3].Size = Med.Inputs[3].Size = kScalarBytes;
@@ -770,6 +779,14 @@ TEST(AArch64AddressMemory,
   EXPECT_THROW(validateAArch64AddressMemoryCall(Arch::AArch64, *Load),
                std::invalid_argument);
   Load->setCalledOperand(const_cast<llvm::InlineAsm *>(Original));
+  Load->setMemoryEffects(llvm::MemoryEffects::none());
+  EXPECT_THROW(validateAArch64AddressMemoryCall(Arch::AArch64, *Load),
+               std::invalid_argument);
+  Load->setMemoryEffects(llvm::MemoryEffects::unknown());
+  Load->addFnAttr(llvm::Attribute::Speculatable);
+  EXPECT_THROW(validateAArch64AddressMemoryCall(Arch::AArch64, *Load),
+               std::invalid_argument);
+  Load->removeFnAttr(llvm::Attribute::Speculatable);
   auto *Word = Load->getArgOperand(2);
   Load->setArgOperand(2, llvm::ConstantInt::get(Word->getType(), kFirst));
   EXPECT_THROW(renderAArch64AddressMemoryCall(Arch::AArch64, *Load, kResultName,
@@ -802,5 +819,66 @@ TEST(AArch64AddressMemory,
     Emulator.setStrictMode(Strict);
     EXPECT_FALSE(Emulator.step(liftMemory(kFirst, false).front()));
     EXPECT_EQ(Emulator.getRegister(a64reg::X0), kEntry);
+  }
+}
+
+TEST(AArch64AddressMemory, ImageReadsRequireControlIndependentAddresses) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Segment Data;
+  Data.VA = kEntry;
+  Data.Size = Data.FileSz = 2 * kScalarBytes;
+  Data.Flags = SegmentFlags::Readable;
+  Data.Data.resize(Data.Size);
+  writeLE<uint64_t>(Data.Data.data(), kLoadedValue);
+  writeLE<uint64_t>(Data.Data.data() + kScalarBytes, ~kLoadedValue);
+  Image.Segments.push_back(Data);
+  const auto Load = liftMemory(kFirst, false).front();
+  const auto Scaled = liftMemory(kScaled, false).front();
+  const auto Instruction = aarch64AddressMemoryInstruction(kFirst);
+  ASSERT_TRUE(Instruction);
+  EXPECT_FALSE(Instruction->controlIndependentAddress(kAccessBoundary, 0));
+  EXPECT_FALSE(Instruction->controlIndependentAddress(kTagHealingBase,
+                                                      kTagHealingIndex));
+  EXPECT_FALSE(Instruction->controlIndependentAddress(kPoisonHealingBase,
+                                                      kPoisonHealingIndex));
+  // Checking an already poisoned address without changing its region is
+  // idempotent. Identical bits alone still grant no mapped-memory evidence.
+  EXPECT_EQ(Instruction->controlIndependentAddress(kPoisonHealingBase, 0),
+            kPoisonHealingBase);
+  EXPECT_FALSE(aarch64AddressMemoryInstruction(kStackBase)
+                   ->controlIndependentAddress(kEntry, 0));
+  for (bool Strict : {false, true}) {
+    NdOpEmulator UnknownIndex(Image);
+    UnknownIndex.setStrictMode(Strict);
+    UnknownIndex.setRegister(a64reg::X1, kEntry);
+    EXPECT_FALSE(UnknownIndex.step(Load));
+    NdOpEmulator Emulator(Image);
+    Emulator.setStrictMode(Strict);
+    Emulator.setLoadCollect(true);
+    Emulator.setRegister(a64reg::X1, kEntry);
+    Emulator.setRegister(a64reg::X2, 0);
+    ASSERT_TRUE(Emulator.step(Load));
+    EXPECT_EQ(Emulator.getRegister(a64reg::X0), kLoadedValue);
+    Emulator.setRegister(a64reg::X2, 1);
+    ASSERT_TRUE(Emulator.step(Scaled));
+    EXPECT_EQ(Emulator.getRegister(a64reg::X0), ~kLoadedValue);
+    Emulator.setRegister(a64reg::X2, kScalarBytes);
+    ASSERT_TRUE(Emulator.step(Load));
+    EXPECT_EQ(Emulator.getRegister(a64reg::X0), ~kLoadedValue);
+    const auto Reads = Emulator.getLoadRecords().size();
+    // Both sums would read the mapped first word under unchecked addition.
+    // Unknown CPTA must not turn either poisoned/tagged base into that read.
+    for (const auto &[Base, Index] :
+         {std::pair{kTagHealingBase, kTagHealingIndex},
+          std::pair{kPoisonHealingBase, kPoisonHealingIndex},
+          std::pair{kAccessBoundary, uint64_t(0)}}) {
+      Emulator.setRegister(a64reg::X0, kEntry);
+      Emulator.setRegister(a64reg::X1, Base);
+      Emulator.setRegister(a64reg::X2, Index);
+      EXPECT_FALSE(Emulator.step(Load));
+      EXPECT_EQ(Emulator.getRegister(a64reg::X0), kEntry);
+      EXPECT_EQ(Emulator.getLoadRecords().size(), Reads);
+    }
   }
 }

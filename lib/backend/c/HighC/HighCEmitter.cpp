@@ -4541,7 +4541,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       if (Opts.TheArch != Arch::AArch64 ||
           !aarch64AddressMemoryHighShapeIsValid(*Expr))
         throw std::invalid_argument(kAddressMemoryMalformed);
-      if (aarch64AddressMemoryInstruction(Expr->Operands[2]->ConstVal)
+      if (aarch64AddressMemoryInstruction(
+              Expr->Operands[kAddressMemoryWordOperand]->ConstVal)
               ->stackBase())
         throw std::invalid_argument(kAddressMemorySPUnsupported);
     }

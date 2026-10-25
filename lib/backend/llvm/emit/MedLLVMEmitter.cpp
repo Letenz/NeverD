@@ -795,7 +795,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
             if (TheArch != Arch::AArch64 ||
                 !aarch64AddressMemoryMedShapeIsValid(Op))
               throw std::runtime_error(kAddressMemoryMalformed);
-            if (aarch64AddressMemoryInstruction(Op.Inputs[3].ConstVal)
+            if (aarch64AddressMemoryInstruction(
+                    Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal)
                     ->stackBase())
               throw std::runtime_error(kAddressMemorySPUnsupported);
           }

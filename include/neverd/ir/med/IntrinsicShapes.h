@@ -105,9 +105,17 @@ inline bool aarch64AddressMemoryMedShapeIsValid(const MedOp &Op) {
       return false;
   return aarch64AddressMemoryShapeIsValid(
       static_cast<Intrinsic>(Op.Inputs[0].ConstVal), Op.NumInputs,
-      Op.Output.Size, Op.Inputs[1].Size, Op.Inputs[2].Size, Op.Inputs[3].Size,
-      Op.Inputs[3].isConst() ? std::optional<uint64_t>(Op.Inputs[3].ConstVal)
-                             : std::nullopt);
+      Op.Output.Size, Op.Inputs[kAddressMemoryBaseOperand + 1].Size,
+      Op.Inputs[kAddressMemoryIndexOperand + 1].Size,
+      Op.Inputs[kAddressMemoryWordOperand + 1].Size,
+      Op.Inputs[kAddressMemoryWordOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal)
+          : std::nullopt,
+      Op.Inputs[kAddressMemoryIndexOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryIndexOperand + 1].ConstVal)
+          : std::nullopt);
 }
 
 inline bool aarch64PAuthLoadMedShapeIsValid(const MedOp &Op) {

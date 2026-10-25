@@ -3,6 +3,7 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/med/MedNoReturn.h"
 
 #include <algorithm>
@@ -488,8 +489,14 @@ public:
         DidTerminate = true;
         return true;
       }
+      const bool OriginalLoad =
+          Architecture == Arch::AArch64 &&
+          lowAArch64AddressMemoryShapeIsValid(Op) &&
+          !aarch64AddressMemoryInstruction(
+               Op.Inputs[kAddressMemoryWordOperand + 1].Offset)
+               ->stackBase();
       if (Op.NumInputs > 6 || Op.Output.Size > 64 ||
-          (Op.Opcode == NdOp::INTRINSIC &&
+          (Op.Opcode == NdOp::INTRINSIC && !OriginalLoad &&
            !hasNativeScalarIntrinsicEvidence(Op, Architecture) &&
            !(Architecture == Arch::X64 && !ObservationPointers.empty() &&
              isSourceFrameObservationGuard(Op))) ||
@@ -543,7 +550,7 @@ public:
       // must never influence a source-visible control or value effect.
       if ((RequirePrivateFrame || OutputQuery) && MayBeFrame &&
           Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
-          !privateFrameScalarTransfer(Op.Opcode))
+          !OriginalLoad && !privateFrameScalarTransfer(Op.Opcode))
         return false;
       if (UsedEntryRegisters && Op.Opcode != NdOp::COPY &&
           Op.Opcode != NdOp::RETURN) {
@@ -1190,8 +1197,25 @@ public:
         return false;
       std::vector<ByteFact> Value(Op.Output.Size,
                                   {ByteFact::Unknown, 0, 0, MayBeFrame});
-      if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-          Op.Inputs[0].Size == Op.Output.Size) {
+      if (OriginalLoad) {
+        // Only normal-continuation effects are known: no frame write and
+        // one unknown scalar result. Never recover a spill through an
+        // unproved checked address, or erase a possibly loaded frame alias.
+        if (RequirePrivateFrame && !ExternalMemoryDisjoint)
+          return false;
+        if (MayBeFrame) {
+          if (RequirePrivateFrame || OutputQuery || !Current.Values.empty() ||
+              Remaining < Current.Stack.size())
+            return false;
+          Remaining -= Current.Stack.size();
+          if (std::any_of(
+                  Current.Stack.begin(), Current.Stack.end(),
+                  [](const auto &Item) { return Item.second.MayBeFrame; }))
+            return false;
+        }
+        std::fill(Value.begin(), Value.end(), ByteFact{});
+      } else if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+                 Op.Inputs[0].Size == Op.Output.Size) {
         for (unsigned I = 0; I < Value.size(); ++I)
           Value[I] = Read(Op.Inputs[0], I);
       } else if (Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs == 1 &&

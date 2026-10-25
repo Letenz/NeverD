@@ -51,16 +51,26 @@ bool validateAArch64AddressMemoryCall(Arch TheArch,
     return false;
   if (TheArch != Arch::AArch64 ||
       Asm->getConstraintString() != kAddressLoadConstraints ||
-      !Asm->hasSideEffects() || Call.arg_size() != kAddressLoadOperandCount ||
+      !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
+      Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
+      Call.arg_size() != kAddressLoadOperandCount ||
+      Call.getFunctionType()->isVarArg() || Call.getNumOperandBundles() ||
+      Call.getCallingConv() != llvm::CallingConv::C || Call.doesNotReturn() ||
+      Call.hasFnAttr(llvm::Attribute::Speculatable) ||
+      Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
       !Call.getType()->isIntegerTy(kAddressMemoryPointerBits) ||
-      !Call.getArgOperand(0)->getType()->isIntegerTy(
-          kAddressMemoryPointerBits) ||
-      !Call.getArgOperand(1)->getType()->isIntegerTy(
-          kAddressMemoryPointerBits) ||
-      !Call.getArgOperand(2)->getType()->isIntegerTy(kAddressMemoryWordBytes *
-                                                     CHAR_BIT))
+      !Call.getArgOperand(kAddressMemoryBaseOperand)
+           ->getType()
+           ->isIntegerTy(kAddressMemoryPointerBits) ||
+      !Call.getArgOperand(kAddressMemoryIndexOperand)
+           ->getType()
+           ->isIntegerTy(kAddressMemoryPointerBits) ||
+      !Call.getArgOperand(kAddressMemoryWordOperand)
+           ->getType()
+           ->isIntegerTy(kAddressMemoryWordBytes * CHAR_BIT))
     throw std::invalid_argument(kAddressMemoryMalformed);
-  const auto *Word = llvm::dyn_cast<llvm::ConstantInt>(Call.getArgOperand(2));
+  const auto *Word = llvm::dyn_cast<llvm::ConstantInt>(
+      Call.getArgOperand(kAddressMemoryWordOperand));
   const auto Instruction =
       Word ? aarch64AddressMemoryInstruction(Word->getZExtValue())
            : std::nullopt;
@@ -79,9 +89,11 @@ renderAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call,
     return std::nullopt;
   if (Args.size() != kAddressLoadOperandCount)
     throw std::invalid_argument(kAddressMemoryMalformed);
-  const auto *Word = llvm::cast<llvm::ConstantInt>(Call.getArgOperand(2));
+  const auto *Word = llvm::cast<llvm::ConstantInt>(
+      Call.getArgOperand(kAddressMemoryWordOperand));
   const auto Value = aarch64AddressMemoryC(
-      *aarch64AddressMemoryInstruction(Word->getZExtValue()), Args[0], Args[1]);
+      *aarch64AddressMemoryInstruction(Word->getZExtValue()),
+      Args[kAddressMemoryBaseOperand], Args[kAddressMemoryIndexOperand]);
   return InlineAsmRender{
       ResultLive && !ResultName.empty()
           ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value).str()

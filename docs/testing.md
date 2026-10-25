@@ -245,7 +245,9 @@ indices, discarded destinations and both encoded scales. O0/O2 object checks
 retain one load even with an unused result; native AArch64 C execution covers
 positive/negative offsets and stores on both sides of the load. Malformed
 LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
-and the software tracer refuses unknown runtime memory state in both modes.
+and the software tracer refuses state-dependent addresses in both modes, even
+when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
+Control-independent addresses retain finite image reads without guessing CPTA.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives only a validated scalar memory operation. Run this group with the
 decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.

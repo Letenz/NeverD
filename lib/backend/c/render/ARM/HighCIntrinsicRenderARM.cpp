@@ -814,15 +814,21 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
     throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
   if (isAArch64AddressMemoryIntrinsic(Id)) {
     const auto Word = Ops.size() == kAddressLoadOperandCount
-                          ? constantOperand(Ops[2])
+                          ? constantOperand(Ops[kAddressMemoryWordOperand])
                           : std::nullopt;
     if (OperandBytes.size() != kAddressLoadOperandCount ||
-        !aarch64AddressMemoryShapeIsValid(Id, Ops.size() + 1, ResultBytes,
-                                          OperandBytes[0], OperandBytes[1],
-                                          OperandBytes[2], Word))
+        !aarch64AddressMemoryShapeIsValid(
+            Id, Ops.size() + 1, ResultBytes,
+            OperandBytes[kAddressMemoryBaseOperand],
+            OperandBytes[kAddressMemoryIndexOperand],
+            OperandBytes[kAddressMemoryWordOperand], Word,
+            Ops.size() == kAddressLoadOperandCount
+                ? constantOperand(Ops[kAddressMemoryIndexOperand])
+                : std::nullopt))
       throw std::invalid_argument(kAddressMemoryMalformed);
     return aarch64AddressMemoryC(*aarch64AddressMemoryInstruction(*Word),
-                                 Ops[0], Ops[1]);
+                                 Ops[kAddressMemoryBaseOperand],
+                                 Ops[kAddressMemoryIndexOperand]);
   }
   if (isAArch64PAuthLoadIntrinsic(Id)) {
     const auto Word = Ops.size() == kPAuthLoadOperandCount
