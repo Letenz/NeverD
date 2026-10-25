@@ -136,8 +136,8 @@ TEST_F(LinuxMemory, ResidencyEarlyErrorsDoNotConsumeButCopyFaultDoes) {
   EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint));
 }
 TEST_F(LinuxMemory, ResidencyMismatchAndUnknownBackingDoNotConsumeInput) {
-  ASSERT_EQ(map(PageSize),
-            UnitHint); // No provenance capture was requested yet.
+  // Input RAM is not an anonymous mapping allocated by LinuxMemory.
+  llvm::cantFail(Space->map(UnitHint, PageSize, Read | Write | UserAccessible));
   Options.LinuxKernel.emplace().ResidencyObservations =
       std::vector<LinuxResidencyObservation>{{UnitHint, {1}}};
   EXPECT_FALSE(call(ServiceKind::Mincore, UnitHint, PageSize, UnitHint));
@@ -533,8 +533,7 @@ TEST_F(LinuxMemory, UnsupportedAdviceCannotInventReturnsOrChangePolicy) {
   ASSERT_EQ(call(ServiceKind::Madvise, UnitHint, PageSize, 12), 0u);
   ASSERT_EQ(llvm::toString(Space->writeInteger(UnitHint, FirstByte, 8)), "");
   const auto Generation = Space->mappingGeneration();
-  // In particular DONTNEED must not be accepted as a content-preserving hint.
-  for (uint64_t Advice : {0u, 4u, 8u, 0xffffffffu}) {
+  for (uint64_t Advice : {0u, 8u, 0xffffffffu}) {
     EXPECT_FALSE(call(ServiceKind::Madvise, UnitHint, PageSize, Advice));
     EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
     EXPECT_NE(Report.Diagnostic.find("madvise"), std::string::npos);
@@ -542,6 +541,172 @@ TEST_F(LinuxMemory, UnsupportedAdviceCannotInventReturnsOrChangePolicy) {
     EXPECT_EQ(*Space->readInteger(UnitHint, 8), FirstByte);
   }
   EXPECT_EQ(Space->mappingGeneration(), Generation);
+}
+TEST_F(LinuxMemory, DiscardRoundsPagesAndPreservesNamesPermissionsAndPolicy) {
+  Options.LinuxKernel.emplace().AnonymousVMANames =
+      LinuxAnonymousVMANames::AndroidUserPointer;
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  std::vector<uint8_t> Bytes(3 * PageSize, 0xa5);
+  llvm::cantFail(Space->write(UnitHint, Bytes));
+  ASSERT_EQ(call(ServiceKind::Prctl, 0x53564d41, 0, UnitHint, 3 * PageSize, 73),
+            0u);
+  ASSERT_EQ(call(ServiceKind::Madvise, UnitHint, 3 * PageSize, 12), 0u);
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, 3 * PageSize, ProtRead), 0u);
+  const auto Allocated = RAM->allocatedBytes();
+  const auto Mapped = Space->mappedBytes();
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint + PageSize, 1,
+                 (uint64_t(1) << 32) | 4),
+            0u);
+  std::fill_n(Bytes.begin() + PageSize, PageSize, 0);
+  EXPECT_EQ(readBytes(UnitHint, Bytes.size()), Bytes);
+  EXPECT_EQ(RAM->allocatedBytes(), Allocated);
+  EXPECT_EQ(Space->mappedBytes(), Mapped);
+  auto Maps = llvm::cantFail(Memory->procMappings());
+  ASSERT_EQ(Maps.size(), 1u);
+  EXPECT_EQ(Maps[0].AnonymousName, 73u);
+  EXPECT_EQ(Maps[0].Permissions, Read | UserAccessible);
+  EXPECT_TRUE(Memory->isMergeable(UnitHint + PageSize));
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, 3 * PageSize, 0), 0u);
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, 3 * PageSize, 4), 0u);
+  EXPECT_FALSE(llvm::cantFail(Space->canAccess(UnitHint, PageSize, Read)));
+  ASSERT_EQ(call(ServiceKind::Mprotect, UnitHint, 3 * PageSize, ProtRead), 0u);
+  EXPECT_EQ(readBytes(UnitHint, Bytes.size()),
+            std::vector<uint8_t>(Bytes.size()));
+}
+TEST_F(LinuxMemory, DiscardRetiresOnlyItsMappingAndPreservesPinnedAliases) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  std::vector<uint8_t> Bytes(PageSize, 0x73);
+  llvm::cantFail(Space->write(UnitHint, Bytes));
+  auto Pinned = llvm::cantFail(Space->pinBacking(UnitHint, PageSize));
+  auto Witness = llvm::cantFail(Pinned.watchWrites());
+  const auto Alias = UnitHint + 8 * PageSize;
+  llvm::cantFail(Space->mapAlias(Alias, UnitHint, PageSize,
+                                 Read | Write | UserAccessible));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, PageSize, 4), 0u);
+  EXPECT_EQ(readBytes(UnitHint, PageSize), std::vector<uint8_t>(PageSize));
+  EXPECT_EQ(readBytes(Alias, PageSize), Bytes);
+  std::vector<uint8_t> Retained(PageSize);
+  llvm::cantFail(Pinned.read(0, Retained));
+  EXPECT_EQ(Retained, Bytes);
+  EXPECT_TRUE(llvm::cantFail(Witness.intact()));
+  auto Fresh = llvm::cantFail(Space->pinBacking(UnitHint, PageSize));
+  EXPECT_FALSE(Pinned.overlaps(Fresh));
+  EXPECT_EQ(RAM->allocatedBytes(), 2 * PageSize);
+  llvm::cantFail(Space->writeInteger(UnitHint, 19, 1));
+  EXPECT_EQ(readBytes(Alias, PageSize), Bytes);
+}
+TEST_F(LinuxMemory, DiscardHolesKeepBothCompletedSidesAndRetireOldData) {
+  ASSERT_EQ(map(3 * PageSize), UnitHint);
+  llvm::cantFail(
+      Space->write(UnitHint, std::vector<uint8_t>(3 * PageSize, 0xa5)));
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint + PageSize, PageSize), 0u);
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, 3 * PageSize, 4),
+            uint64_t(-12));
+  EXPECT_EQ(readBytes(UnitHint, PageSize), std::vector<uint8_t>(PageSize));
+  EXPECT_EQ(readBytes(UnitHint + 2 * PageSize, PageSize),
+            std::vector<uint8_t>(PageSize));
+  EXPECT_FALSE(
+      llvm::cantFail(Space->canAccess(UnitHint + PageSize, PageSize, 0)));
+  EXPECT_EQ(RAM->allocatedBytes(), 2 * PageSize);
+}
+TEST_F(LinuxMemory, DiscardChecksAlignmentOverflowAndZeroBeforeBacking) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  llvm::cantFail(Space->write(UnitHint, std::vector<uint8_t>(PageSize, 0xa5)));
+  const auto Generation = Space->mappingGeneration();
+  for (auto Pair :
+       {std::pair{UnitHint + 1, uint64_t(0)}, std::pair{UnitHint, UINT64_MAX},
+        std::pair{UINT64_MAX - PageSize + 1, PageSize}})
+    EXPECT_EQ(call(ServiceKind::Madvise, Pair.first, Pair.second, 4),
+              uint64_t(-22));
+  EXPECT_EQ(call(ServiceKind::Madvise, UINT64_MAX - PageSize + 1, 0, 4), 0u);
+  EXPECT_EQ(call(ServiceKind::Madvise, UserLimit, PageSize, 4), uint64_t(-12));
+  EXPECT_EQ(call(ServiceKind::Madvise, 0, PageSize, 4), uint64_t(-12));
+  EXPECT_EQ(Space->mappingGeneration(), Generation);
+  EXPECT_EQ(readBytes(UnitHint, PageSize),
+            std::vector<uint8_t>(PageSize, 0xa5));
+}
+TEST_F(LinuxMemory, DiscardBreakPagesPreservesBreakPosition) {
+  const uint64_t End = UnitHeap + PageSize + 37;
+  ASSERT_EQ(call(ServiceKind::Brk, End), End);
+  llvm::cantFail(
+      Space->write(UnitHeap, std::vector<uint8_t>(2 * PageSize, 0xa5)));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHeap, 2 * PageSize, 4), 0u);
+  EXPECT_EQ(call(ServiceKind::Brk), End);
+  EXPECT_EQ(readBytes(UnitHeap, 2 * PageSize),
+            std::vector<uint8_t>(2 * PageSize));
+}
+TEST_F(LinuxMemory, DiscardUnknownBackingDoesNotInventSuccessOrEraseIt) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  llvm::cantFail(Space->map(UnitHint + PageSize, PageSize, Read | Write));
+  llvm::cantFail(
+      Space->write(UnitHint, std::vector<uint8_t>(2 * PageSize, 0xa5)));
+  EXPECT_FALSE(call(ServiceKind::Madvise, UnitHint, 2 * PageSize, 4));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Report.Diagnostic.find("owned private anonymous"),
+            std::string::npos);
+  EXPECT_EQ(readBytes(UnitHint, PageSize), std::vector<uint8_t>(PageSize));
+  EXPECT_EQ(readBytes(UnitHint + PageSize, PageSize),
+            std::vector<uint8_t>(PageSize, 0xa5));
+}
+TEST_F(LinuxMemory, DiscardCannotUseAnAnonymousNameAsAllocationProvenance) {
+  Options.LinuxKernel.emplace().AnonymousVMANames =
+      LinuxAnonymousVMANames::AndroidUserPointer;
+  llvm::cantFail(Space->map(UnitHint, PageSize, Read | Write | UserAccessible));
+  std::vector<uint8_t> Bytes(PageSize, 0xa5);
+  llvm::cantFail(Space->write(UnitHint, Bytes));
+  ASSERT_EQ(call(ServiceKind::Prctl, 0x53564d41, 0, UnitHint, PageSize, 73),
+            0u);
+  const auto Generation = Space->mappingGeneration();
+  EXPECT_FALSE(call(ServiceKind::Madvise, UnitHint, PageSize, 4));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Report.Diagnostic.find("owned private anonymous"),
+            std::string::npos);
+  EXPECT_EQ(Space->mappingGeneration(), Generation);
+  EXPECT_EQ(readBytes(UnitHint, PageSize), Bytes);
+}
+TEST_F(LinuxMemory, DiscardRetiresProvenanceAtSharedUnmap) {
+  ASSERT_EQ(map(PageSize), UnitHint);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  llvm::cantFail(Space->map(UnitHint, PageSize, Read | Write | UserAccessible));
+  std::vector<uint8_t> Bytes(PageSize, 0xa5);
+  llvm::cantFail(Space->write(UnitHint, Bytes));
+  EXPECT_FALSE(call(ServiceKind::Madvise, UnitHint, PageSize, 4));
+  EXPECT_EQ(readBytes(UnitHint, PageSize), Bytes);
+  ASSERT_EQ(call(ServiceKind::Munmap, UnitHint, PageSize), 0u);
+  ASSERT_EQ(map(PageSize), UnitHint);
+  llvm::cantFail(Space->write(UnitHint, Bytes));
+  EXPECT_EQ(call(ServiceKind::Madvise, UnitHint, PageSize, 4), 0u);
+  EXPECT_EQ(readBytes(UnitHint, PageSize), std::vector<uint8_t>(PageSize));
+}
+TEST_F(LinuxMemory, DiscardBackingBudgetIsARefusalBeforeRemovingThePage) {
+  auto SmallRAM = llvm::cantFail(PhysicalMemory::create(PageSize));
+  auto SmallSpace = llvm::cantFail(AddressSpace::create(SmallRAM, PageSize));
+  ProcessOptions SmallOptions;
+  SmallOptions.MemoryLimit = PageSize;
+  SmallOptions.StackSize = PageSize;
+  linux_model::LinuxMemory Small(*SmallSpace, {UserLimit, PageSize}, UnitHeap,
+                                 SmallOptions);
+  auto Mapped =
+      llvm::cantFail(Small.handle(ServiceKind::Mmap,
+                                  {0,
+                                   0,
+                                   {UnitHint, PageSize, ProtRead | ProtWrite,
+                                    PrivateAnonymous, UINT64_MAX, 0},
+                                   {}},
+                                  Report));
+  ASSERT_EQ(Mapped, UnitHint);
+  std::vector<uint8_t> Bytes(PageSize, 0xa5), Actual(PageSize);
+  llvm::cantFail(SmallSpace->write(UnitHint, Bytes));
+  const auto Generation = SmallSpace->mappingGeneration();
+  EXPECT_FALSE(llvm::cantFail(
+      Small.handle(ServiceKind::Madvise,
+                   {0, 0, {UnitHint, PageSize, 4, 0, 0, 0}, {}}, Report)));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(Report.Diagnostic.find("model memory limit"), std::string::npos);
+  llvm::cantFail(SmallSpace->read(UnitHint, Actual));
+  EXPECT_EQ(Actual, Bytes);
+  EXPECT_EQ(SmallSpace->mappingGeneration(), Generation);
+  EXPECT_EQ(SmallRAM->allocatedBytes(), PageSize);
 }
 TEST_F(LinuxMemory, DeviceSnapshotsSharePagesAndRetireOnlyTheLastAlias) {
   LinuxDeviceOptions Device;

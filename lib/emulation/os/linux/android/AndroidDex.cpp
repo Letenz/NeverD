@@ -6,10 +6,14 @@
 /// \file
 /// Shared decoder admission and execution budgets for JNI-supplied DEX code.
 //===----------------------------------------------------------------------===//
+#include "../kernel/LinuxTime.h"
 #include "AndroidInternal.h"
 
 #include "neverd/dalvik/Runtime.h"
 #include "neverd/emulation/Limits.h"
+
+#include <cstdint>
+#include <utility>
 
 namespace neverd::emulation::android_model {
 llvm::Error Bionic::initializeDex() {
@@ -92,8 +96,33 @@ llvm::Error Bionic::initializeDex() {
       if (mobile::dalvik::platformClass(Name) || JNI.Dex->containsClass(Type))
         return failure("JNI class lookup failure shadows a known class");
     }
+    mobile::dalvik::RuntimeServices Services;
+    Services.uptime_milliseconds = [this] {
+      using mobile::dalvik::ExecutionResult;
+      using mobile::dalvik::ExecutionStop;
+      // Native and modeled Java work use the same cumulative clock owner.
+      // Accounting a repeated total never advances time twice.
+      if (!Kernel.clock().accountInstructions(Budget.instructions(), Result))
+        return ExecutionResult{
+            ExecutionStop::Unsupported, 0, {}, Result.Diagnostic};
+      auto Now = Kernel.clock().read(linux_model::ClockMonotonic, Result);
+      if (!Now)
+        return ExecutionResult{
+            ExecutionStop::Unsupported, 0, {}, Result.Diagnostic};
+      // API 28 systemTime uses signed nanoseconds before converting to ms.
+      if (Now->Seconds < 0 ||
+          uint64_t(Now->Seconds) >
+              (uint64_t(INT64_MAX) - Now->Nanoseconds) / 1000000000)
+        return ExecutionResult{ExecutionStop::Unsupported,
+                               0,
+                               {},
+                               "Android monotonic time exceeds its range"};
+      return ExecutionResult{ExecutionStop::Returned,
+                             uint64_t(Now->Seconds) * 1000 +
+                                 Now->Nanoseconds / 1000000};
+    };
     JNI.DexRuntime = std::make_shared<mobile::dalvik::Runtime>(
-        *JNI.Dex, JNI.Heap, Native.Application);
+        *JNI.Dex, JNI.Heap, Native.Application, std::move(Services));
   } catch (const mobile::Error &E) {
     return failure(llvm::Twine("invalid supplied DEX: ") + E.what());
   }

@@ -14,8 +14,95 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 namespace neverd::mobile::dalvik {
 namespace {
+// Java's named UTF-8 encoder replaces each malformed UTF-16 unit with '?'.
+// This is distinct from the WTF-8 representation used to retain DEX literals.
+template <typename ChargeUnit, typename EmitByte>
+void encodeUTF8(std::span<const uint8_t> bytes, ChargeUnit charge,
+                EmitByte emit) {
+  auto unit = [&](size_t i) {
+    return uint32_t(bytes[i] | uint32_t(bytes[i + 1]) << 8);
+  };
+  for (size_t i = 0; i < bytes.size(); i += 2) {
+    charge();
+    uint32_t c = unit(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 2 < bytes.size() &&
+        unit(i + 2) >= 0xdc00 && unit(i + 2) <= 0xdfff) {
+      charge();
+      c = 0x10000 + ((c - 0xd800) << 10) + (unit(i + 2) - 0xdc00);
+      i += 2;
+    } else if (c >= 0xd800 && c <= 0xdfff) {
+      c = '?';
+    }
+    if (c < 0x80) {
+      emit(uint8_t(c));
+    } else if (c < 0x800) {
+      emit(uint8_t(0xc0 | (c >> 6)));
+      emit(uint8_t(0x80 | (c & 0x3f)));
+    } else if (c < 0x10000) {
+      emit(uint8_t(0xe0 | (c >> 12)));
+      emit(uint8_t(0x80 | ((c >> 6) & 0x3f)));
+      emit(uint8_t(0x80 | (c & 0x3f)));
+    } else {
+      emit(uint8_t(0xf0 | (c >> 18)));
+      emit(uint8_t(0x80 | ((c >> 12) & 0x3f)));
+      emit(uint8_t(0x80 | ((c >> 6) & 0x3f)));
+      emit(uint8_t(0x80 | (c & 0x3f)));
+    }
+  }
+}
+
+// This bounded value subset needs no normalization or protocol-handler lookup.
+// Other URL forms remain unsupported, including forms that may be valid in
+// Java.
+bool retainedHTTPURL(std::span<const uint8_t> bytes) {
+  if (bytes.size() / 2 > ::neverd::limits::dalvik::kMaxJavaURLCodeUnits ||
+      bytes.size() % 2)
+    return false;
+  std::string text;
+  for (size_t i = 0; i < bytes.size(); i += 2) {
+    if (bytes[i + 1] || bytes[i] <= 32 || bytes[i] >= 127 || bytes[i] == '\\')
+      return false;
+    text.push_back(char(bytes[i]));
+  }
+  size_t begin = text.starts_with("http://")    ? 7
+                 : text.starts_with("https://") ? 8
+                                                : 0;
+  if (!begin)
+    return false;
+  auto end = text.find_first_of("/?#", begin);
+  auto authority = std::string_view(text).substr(
+      begin, end == text.npos ? text.size() - begin : end - begin);
+  auto colon = authority.find(':');
+  auto host = authority.substr(0, colon);
+  if (host.empty())
+    return false;
+  for (char c : host)
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '.' || c == '-'))
+      return false;
+  if (colon != authority.npos) {
+    auto port = authority.substr(colon + 1);
+    if (port.empty() || port.size() > 5 || (port.size() > 1 && port[0] == '0'))
+      return false;
+    unsigned number = 0;
+    for (char c : port) {
+      if (c < '0' || c > '9')
+        return false;
+      number = number * 10 + unsigned(c - '0');
+    }
+    if (number > 65535)
+      return false;
+  }
+  return true;
+}
 // These classes have no observable class initializer in this profile.
 static const LibraryMethod Methods[] = {
     {"java/lang/String", "intern", "()Ljava/lang/String;", Intern},
@@ -171,6 +258,46 @@ static const LibraryMethod Methods[] = {
     {"android/content/pm/PackageManager", "getApplicationInfo",
      "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;",
      PackageApplicationInfo},
+    {"android/content/pm/PackageManager", "getApplicationLabel",
+     "(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;",
+     PackageApplicationLabel},
+    {"android/content/Context", "getPackageResourcePath",
+     "()Ljava/lang/String;", PackageResourcePath},
+    {"android/content/pm/PackageManager", "getPackageInfo",
+     "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;", PackageInfoQuery},
+    {"dalvik/system/BaseDexClassLoader", "toString", "()Ljava/lang/String;",
+     ClassLoaderString},
+    {"java/util/Locale", "getDefault", "()Ljava/util/Locale;", LocaleDefault,
+     true},
+    {"java/util/Locale", "getLanguage", "()Ljava/lang/String;", LocaleLanguage},
+    {"java/util/Locale", "getCountry", "()Ljava/lang/String;", LocaleCountry},
+    {"android/os/Looper", "getMainLooper", "()Landroid/os/Looper;", MainLooper,
+     true},
+    {"android/os/Handler", "<init>", "(Landroid/os/Looper;)V", Construct},
+    {"android/os/Handler", "post", "(Ljava/lang/Runnable;)Z", HandlerPost,
+     false, true},
+    {"android/os/Looper", "getQueue", "()Landroid/os/MessageQueue;",
+     LooperQueue},
+    {"android/os/MessageQueue", "next", "()Landroid/os/Message;",
+     MessageQueueNext, false, false, false},
+    {"android/os/Message", "getCallback", "()Ljava/lang/Runnable;",
+     MessageCallback},
+    {"android/os/Message", "getTarget", "()Landroid/os/Handler;",
+     MessageTarget},
+    {"java/net/URL", "<init>", "(Ljava/lang/String;)V", Construct},
+    {"java/net/URL", "toString", "()Ljava/lang/String;", ToString},
+    {"java/net/URL", "toExternalForm", "()Ljava/lang/String;", ToString},
+    // These overrides must not inherit Object identity or String byte
+    // semantics.
+    {"java/net/URL", "equals", "(Ljava/lang/Object;)Z", Equals},
+    {"java/net/URL", "hashCode", "()I", Hash},
+    {"java/net/URL", "openConnection", "()Ljava/net/URLConnection;",
+     URLOpenConnection},
+    {"java/io/IOException", "<init>", "()V", ThrowableConstruct},
+    {"java/io/IOException", "<init>", "(Ljava/lang/String;)V",
+     ThrowableConstruct},
+    // Append new entries to preserve the existing JNI intrinsic method tokens.
+    {"java/lang/String", "getBytes", "(Ljava/lang/String;)[B", StringGetBytes},
 };
 
 struct LibraryStop {
@@ -283,7 +410,16 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
     if ((M.Op >= CurrentActivityThread && M.Op <= ThreadInstrumentation) ||
         M.Op == ContextContentResolver || M.Op == SecureSettingString ||
         M.Op == SecureSettingIntDefault || M.Op == ContextApplicationInfo ||
-        M.Op == ContextPackageManager || M.Op == PackageApplicationInfo) {
+        M.Op == ContextPackageManager || M.Op == PackageApplicationInfo ||
+        M.Op == PackageApplicationLabel || M.Op == PackageResourcePath ||
+        M.Op == PackageInfoQuery || M.Op == LocaleDefault ||
+        M.Op == LocaleLanguage || M.Op == LocaleCountry ||
+        M.Op == ClassLoaderString || M.Op == MainLooper ||
+        M.Op == HandlerPost || M.Op == LooperQueue ||
+        M.Op == MessageQueueNext || M.Op == MessageCallback ||
+        M.Op == MessageTarget ||
+        (M.Op == Construct &&
+         std::string_view(M.Class) == "android/os/Handler")) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,
@@ -310,6 +446,57 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
       work(bytes.size());
       return Ref(heap.stringConstant(key, {bytes.begin(), bytes.end()}));
     };
+    if (std::string_view(M.Class) == "java/net/URL") {
+      if (ObjectValue && (ObjectValue->Type != Object::Instance ||
+                          ObjectValue->ClassName != M.Class))
+        return failure("Java URL receiver type mismatch");
+      if (M.Op == Construct) {
+        if (ObjectValue && ObjectValue->Initialized)
+          return failure("Java URL receiver is already initialized");
+        auto spec = object(Values[0]);
+        if (!spec)
+          return {ExecutionStop::Unsupported,
+                  0,
+                  {},
+                  "Java URL null input exception state is unmodeled"};
+        work(spec->Bytes.size());
+        if (!retainedHTTPURL(spec->Bytes))
+          return {ExecutionStop::Unsupported,
+                  0,
+                  {},
+                  "Java URL form is outside the bounded HTTP value contract"};
+        auto o = ObjectValue ? ObjectValue
+                             : heap.allocate(Object::Instance, M.Class,
+                                             spec->Bytes.size());
+        if (!o || !heap.replaceBytes(*o, spec->Bytes))
+          return Ref(std::shared_ptr<Object>());
+        return Ref(o);
+      }
+      if (M.Op == ToString)
+        return Make(ObjectValue->Bytes);
+      if (M.Op == URLOpenConnection) {
+        work(ObjectValue->Bytes.size());
+        if (!retainedHTTPURL(ObjectValue->Bytes))
+          return failure("Java URL receiver has no retained HTTP value");
+        if (!framework)
+          return {ExecutionStop::Unsupported,
+                  0,
+                  {},
+                  "Java URL.openConnection handler state is not supplied"};
+        return framework->openURL(
+            heap, ObjectValue->Bytes[8] == ':' ? "http" : "https", admit);
+      }
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Java URL handler-dependent equality or hashing is unmodeled"};
+    }
+    if (M.Op == IdentityEquals && !Nonvirtual && ObjectValue &&
+        ObjectValue->ClassName == "java/net/URL")
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Java URL handler-dependent equality or hashing is unmodeled"};
     if (std::string_view(M.Class) == "java/lang/StringBuilder") {
       // Constructors share the existing DEX/JNI constructor operation. The
       // mutable UTF-16 value stays in the same retained workload object.
@@ -385,6 +572,50 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
       return Ref(ObjectValue);
     if (M.Op == ToChars)
       return Make(Bytes, true);
+    if (M.Op == StringGetBytes) {
+      auto charset = object(Values[0]);
+      if (!charset)
+        return Throw("java/lang/NullPointerException");
+      if (ObjectValue->Type != Object::String || Bytes.size() % 2 ||
+          ObjectValue->Length != Bytes.size() / 2 ||
+          charset->Type != Object::String || charset->Bytes.size() % 2 ||
+          charset->Length != charset->Bytes.size() / 2)
+        return failure("Java UTF-8 encoder string storage is malformed");
+      constexpr std::string_view name = "utf-8";
+      bool supported = charset->Length == name.size();
+      if (supported)
+        for (size_t i = 0; i < name.size(); ++i) {
+          tick();
+          auto c = Unit(charset->Bytes, i);
+          if (c >= 'A' && c <= 'Z')
+            c += 'a' - 'A';
+          supported &= c == uint8_t(name[i]);
+        }
+      if (!supported)
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java String.getBytes charset is unmodeled"};
+      // Account for both passes before allocating or publishing any result.
+      // The retained heap admits the exact byte count, including empty arrays.
+      uint64_t size = 0;
+      encodeUTF8(
+          Bytes,
+          [&] {
+            tick();
+            tick();
+          },
+          [&](uint8_t) { ++size; });
+      auto result = heap.allocate(Object::PrimitiveArray, "[B", size);
+      if (!result)
+        return Ref(result);
+      size_t offset = 0;
+      encodeUTF8(
+          Bytes, [] {}, [&](uint8_t byte) { result->Bytes[offset++] = byte; });
+      result->Length = size;
+      result->ElementSize = 1;
+      return Ref(result);
+    }
     if (M.Op == Hash) {
       uint32_t Hash = 0;
       for (size_t I = 0; I < ObjectValue->Length; ++I) {

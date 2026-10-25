@@ -8122,6 +8122,13 @@ time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
+`processOptionsFromJSON` owns request wire accounting for every frontend.
+Only validated DEX and Linux regular-file bytes earn hexadecimal payload
+capacity beyond the metadata ceiling. The Android and Linux input owners
+retain their independent decoded and aggregate budgets; strings, paths,
+other binary fields and JSON escape overhead remain metadata. The C ABI
+uses the same outer limit before scanning its NUL-terminated input.
+
 `LinuxFiles` also owns the opt-in directory creation provider, mutable directory
 metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
@@ -11498,6 +11505,13 @@ boundary and heap; native thread detach never resets that process state. JSON
 supplies an optional snapshot, not inferred initialization or a second object
 owner. See [application snapshots](android-application-runtime.md) for the
 admitted methods, loader namespace and unsupported lifecycle transitions.
+AndroidFramework owns the prepared main queue's head; Message links and data
+remain ordinary fields in the shared heap. Posting and read-only snapshots
+consume that one list. RuntimeServices transports uptime observations from the
+existing LinuxClock, with cumulative ExecutionBudget accounting; it introduces
+no independent clock. The intrinsic catalog records final methods so Program
+admission can reject conflicting supplied declarations. Handler's virtual
+sendMessageAtTime override remains an explicit execution boundary.
 Program registers framework field ownership by declaration identity, independent
 of supplied source metadata. Runtime routes those instance fields to the same
 AndroidFramework state as library getters. Instrumentation starts from explicit
@@ -11513,8 +11527,36 @@ indices distinguish fresh parcel results from the Context's retained instance.
 The JSON adapter reuses one ApplicationInfo schema decoder, and the typed
 validator owns response bounds and preconditions. No JNI-side field copies or
 package service execution are introduced.
+The retained ApplicationInfo targetSdkVersion uses the same per-object owner
+and common Runtime int32 field conversion as PackageInfo integer fields. Its
+optional input is independent of platform Build.VERSION state; JSON only
+decodes and validates the explicit Context or query response.
+PackageInfo queries share exact query-key validation and matching, while
+retaining their own response inventory and per-object field slots. Their
+packageName, versionName and versionCode inputs are independently optional.
+Their nullable applicationInfo field retains one nested object per parcel
+result. It uses the existing ApplicationInfo field owner, with an immutable
+response source/index instead of aliasing the Context or a separate package
+query. Missing input remains unknown; explicit null and later reference writes
+are retained in the PackageInfo slot. JSON reuses the ApplicationInfo decoder
+and typed validation, and materialization charges the shared heap budget.
+Runtime validates reference writes and narrows primitive writes before
+dispatching to either ordinary DEX storage or framework field storage; field
+owners cannot introduce a second JNI-specific integer conversion.
+The inherited PackageItemInfo nonLocalizedLabel declaration uses this same
+per-object field storage. Label lookup returns the stored CharSequence only
+under explicitly known unsafe-label mode; it never caches a second copy or
+assumes the mutable static flag's initializer. Resource and safe-label paths
+remain unsupported.
+The shared `referenceAssignable` predicate owns the platform String to
+CharSequence relationship, including reference-array covariance. Program
+hierarchy checks, DEX field writes and JNI argument/field transport consume
+that relationship instead of relaxing individual field types.
 Framework String materialization shares one budgeted helper across methods and
 fields. File existence and APK contents remain separate filesystem inputs.
+The package resource path belongs to AndroidFramework's stable LoadedApk
+projection. Context getters share its retained nullable String independently of
+mutable ApplicationInfo fields; JSON and typed callers use one validator.
 Exact loader-scoped negative class lookup observations are admitted by the
 shared Android application validator and checked against the Runtime's actual
 Program visibility. AndroidFramework creates the shared throwable and message;
@@ -11930,3 +11972,74 @@ not authenticate a wider incoming SP, a signed extension, a truncated 64-bit
 pointer or an ambiguous definition. Alignment rewrites keep their existing
 native-width rules. Source call-slot observation therefore sees the same frame
 bytes for direct pointer-width addresses and canonical widened addresses.
+
+ApplicationInfo.splitSourceDirs and splitPublicSourceDirs are owned by the existing shared framework
+field state. Explicit input distinguishes unknown, null and ordered nullable
+String arrays; per-result arrays are independently allocated in the shared
+heap, and JNI/DEX field and element writes retain reference identity. Missing
+paths are not inferred from sourceDir or the other array field, and no split APK bytes, package parsing
+or service execution are implied.
+
+Android message removal belongs to the same Dalvik framework owner as posting
+and queue inspection. Its private head and real Message fields are authoritative;
+JNI getters create ordinary references to these identities. A declared empty
+native callback set admits only a nonblocking initial poll and immediately due
+removal. The shared monotonic service supplies uptime, and the common Dalvik
+message-count limit bounds traversal. Unsupported waits or malformed state
+cannot partially unlink a message. Retrieval does not dispatch a callback or
+create a Java thread; JNI access to package-private next does not make that
+method public to application DEX.
+
+The bounded Java URL value profile admits explicit lowercase `http://` and
+`https://` strings up to 4096 ASCII units, with a nonempty ASCII hostname,
+optional canonical decimal port 0–65535, and unchanged path/query/fragment.
+The shared Library owner retains independent UTF-16 bytes and renders them
+through `toString` and `toExternalForm`. Program declares URL's final Object /
+Serializable hierarchy. Other URL forms, null-input exception state, protocol
+handlers, successful connections, DNS, URL equality and hashing remain explicit
+unsupported boundaries unless separately declared below. Inherited virtual Object.equals must not become identity equality
+for URL; a deliberately nonvirtual Object.equals call retains identity semantics.
+JNI validates its nonvirtual lookup against the same method catalog. This value
+subset carries no host network or filesystem authority and does not claim full
+Android libcore behavior or physical-device equivalence.
+
+The optional application snapshot `url_open_failure_handlers` declares an
+already-installed custom URLStreamHandler for each listed lowercase HTTP scheme.
+It is synthetic initial handler state, independent of application attachment;
+it does not describe the default HTTP handler, network availability, or factory
+installation execution. Shared Library validates the retained URL and selects
+its scheme. AndroidFramework owns the immutable policy and retained nullable
+message; every invocation throws a fresh checked IOException with that message
+identity. Work/heap stops remain terminal resource stops. Missing schemes remain
+unsupported. URLConnection is an abstract type only; no connection, DNS or host
+network access is performed. The typed and JSON adapters share one validator:
+at most two distinct http/https entries, each with an explicit null or bounded
+4096-byte UTF-8/WTF-8 message. Empty, null and absent handler state are distinct.
+
+
+DEX member visibility has one Runtime owner shared by calls and field accesses.
+Within the single supplied-class namespace represented by Program,
+package-visible static methods and fields admit another caller in the exact
+same package, including compiler-generated static accessors. Declaring-class
+visibility remains required. Private access remains confined to the declaring
+class; protected resolution and nonpublic instance dispatch remain explicitly
+unsupported across classes. This does not merge independent class-loader
+namespaces or change JNI access and nonpublic framework-library restrictions.
+
+## Named UTF-8 String encoding
+
+`dalvik::Library` owns `String.getBytes(String)` for the ASCII case-insensitive
+canonical name `UTF-8`. It reads retained UTF-16 units, preserves NUL, combines
+valid surrogate pairs and replaces isolated surrogates with byte `0x3f`. DEX
+and JNI receive fresh mutable `[B` objects, including empty results. Both
+conversion passes are charged before allocating an exact-size heap array.
+Null names throw NullPointerException; other names, aliases and overloads
+remain explicit unsupported boundaries. No default charset or host codec is
+inferred, and this does not add a Java charset provider.
+
+Anonymous allocation provenance is owned by LinuxMemory for every successful
+private anonymous mmap or brk growth, independently of optional observations and
+VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
+this authority. Discard replaces each target page through AddressSpace while
+retaining permissions and VMA policy; old physical aliases and pinned views
+keep their bytes. Device/GPU admission remains in the shared service dispatch.
