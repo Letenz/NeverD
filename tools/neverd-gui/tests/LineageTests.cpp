@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QFontInfo>
 #include <QGraphicsItem>
+#include <QGraphicsTextItem>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -462,6 +463,21 @@ private slots:
     QCOMPARE(View.size(), Before);
     QVERIFY(TraceNodes->table()->viewport()->height() >=
             TraceNodes->table()->fontMetrics().height() * 3);
+    View.findChild<QTabWidget *>("lineageTabs")->setCurrentIndex(2);
+    auto *Graph = View.findChild<LineageGraph *>("lineageGraph");
+    QTest::qWait(60);
+    bool Found = false;
+    for (auto *Item : Graph->scene()->items())
+      if (Item->data(0) == "version" && Item->data(1) == ID.toString()) {
+        Found = true;
+        for (auto *Child : Item->childItems())
+          if (auto *Text = qgraphicsitem_cast<QGraphicsTextItem *>(Child)) {
+            QVERIFY(Item->boundingRect().contains(
+                Text->mapRectToParent(Text->boundingRect())));
+            QCOMPARE(Text->toPlainText().count('\n'), 1);
+          }
+      }
+    QVERIFY(Found);
   }
 
   void privateCompositorResizeAndReopen() {
