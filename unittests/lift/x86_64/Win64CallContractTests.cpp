@@ -3971,7 +3971,7 @@ TEST(CallExitRegisters, DiscardedReturnsDoNotKeepUnknownDefinitionsAlive) {
           F.Body.push_back(Return);
           ASSERT_TRUE(HighCEmitter().emit({F}, Output));
         }
-        EXPECT_EQ(Source.find("unknown value") == std::string::npos,
+        EXPECT_EQ(Source.find("__builtin_trap") == std::string::npos,
                   Void && !ObserveUnknown)
             << Source;
         const std::string Guard = R"(
