@@ -56,7 +56,7 @@ public:
   void wakeMutex(uint64_t Address);
   void waitSemaphore(uint64_t Address, bool Shared);
   void wakeSemaphore(uint64_t Address);
-  bool waitKernel();
+  bool waitKernel(const std::optional<SleepContinuation> &Sleep = std::nullopt);
   void waitNative(std::unique_ptr<NativeWait> Pending);
   void suspend(const ServiceRequest &Request, size_t Event,
                WaitSource Source = WaitSource::NativeCall);
@@ -96,10 +96,12 @@ private:
     std::optional<ServiceRequest> Request;
     size_t Event = 0;
     WaitSource Source = WaitSource::NativeCall;
+    std::optional<SleepContinuation> Sleep = std::nullopt;
   };
   struct SignalReturn {
     ServiceRequest Request;
     size_t Event, Depth;
+    std::optional<SleepContinuation> Sleep;
   };
   struct Thread {
     NativeThreadSnapshot Report;

@@ -13,6 +13,7 @@
 
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
@@ -50,6 +51,8 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
         "raw environment requirement has no C runtime contract");
   if (aarch64_sve::vectorOperation(Id) && TheArch != Arch::AArch64)
     throw std::invalid_argument(aarch64_sve::kMalformedVector);
+  if (isAArch64AddressMemoryIntrinsic(Id) && TheArch != Arch::AArch64)
+    throw std::invalid_argument(kAddressMemoryMalformed);
   if (isAArch64PAuthLoadIntrinsic(Id) && TheArch != Arch::AArch64)
     throw std::invalid_argument(kPAuthLoadMalformed);
   std::string Result;

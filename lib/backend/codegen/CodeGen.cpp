@@ -377,6 +377,13 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
 
   PM.run(Mod);
 
+  // LLVM can report a recoverable inline-assembly or allocation error and
+  // still emit a parseable, incomplete object. Such bytes are not a successful
+  // compilation. Keep the caller's diagnostic handler and original message.
+  if (const auto *Handler = Mod.getContext().getDiagHandlerPtr();
+      Handler && Handler->HasErrors)
+    return Result;
+
   Result.ObjectData.assign(ObjBuf.begin(), ObjBuf.end());
   LLVM_DEBUG(llvm::dbgs() << "codegen: compiled " << Result.ObjectData.size()
                           << " bytes of object code" << "\n");

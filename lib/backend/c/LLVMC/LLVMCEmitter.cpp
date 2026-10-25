@@ -2829,6 +2829,13 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const BinaryImage *Img, const llvm::Function *Only) {
   if (Opts.SourceMap)
     Opts.SourceMap->Variables.clear();
+  // Admission precedes function filtering and source normalization. Hiding a
+  // body cannot turn a malformed owned memory operation into valid source.
+  for (const auto &Function : Mod)
+    for (const auto &Block : Function)
+      for (const auto &Instruction : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
+          (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(
         "C projection references unsupported vector global storage");

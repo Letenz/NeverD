@@ -129,6 +129,12 @@ struct GuestThreadWait {};
 struct GuestThreadExit {
   uint64_t Value;
 };
+/// Libc-only state carried unchanged by the scheduler through kernel waits
+/// and signal returns. Linux owns the copied remainder; Bionic owns rounding.
+struct SleepContinuation {
+  uint32_t Seconds, Excess;
+  std::shared_ptr<LinuxTimespec> Remaining;
+};
 /// A returning model either completes now or suspends for a guest callback.
 using BionicValue =
     std::variant<uint64_t, GuestCallback, GuestThreadWait, GuestThreadExit>;
@@ -163,7 +169,9 @@ public:
   void reportJNIState();
   BionicResult resumeMutex(uint64_t Address, uint16_t Attributes);
   /// Complete a shared kernel result using the current thread's libc errno.
-  BionicResult kernelResult(std::optional<uint64_t> Returned);
+  BionicResult
+  kernelResult(std::optional<uint64_t> Returned,
+               const std::optional<SleepContinuation> &Sleep = std::nullopt);
   BionicResult resumeSemaphore(uint64_t Address, bool Shared);
   llvm::Error jniThreadExit();
   llvm::Error initializeDex();
@@ -262,6 +270,7 @@ private:
   llvm::Expected<uint64_t> allocate(uint64_t Size, uint8_t FillByte = 0);
   llvm::Error release(uint64_t Address);
   llvm::Error setErrno(uint32_t Value);
+  llvm::Expected<uint32_t> errnoValue();
   BionicResult linkerError(llvm::StringRef Message, uint64_t ReturnValue = 0);
   static std::optional<BionicValue> value(uint64_t Value) {
     return BionicValue(Value);
@@ -278,6 +287,9 @@ private:
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
   BionicResult usleep(const NativeCallEvent &Call);
+  BionicResult sleep(const NativeCallEvent &Call);
+  BionicResult sleepResult(uint64_t Returned,
+                           const SleepContinuation &Continuation);
   BionicResult getcwd(const NativeCallEvent &Call);
   BionicResult pollCall(const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);

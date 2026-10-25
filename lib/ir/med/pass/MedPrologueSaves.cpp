@@ -720,6 +720,13 @@ void markReturnAddressReads(MedFunc &Func, Arch Architecture,
 
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format, StackEntryKind Entry) {
+  // These source-only annotations are derived from the current body. An
+  // edited store or load must not retain a proof from an earlier preparation.
+  for (MedBlock &Block : Func.Blocks)
+    for (MedOp &Op : Block.Ops) {
+      Op.PrologueSave = false;
+      Op.ReturnAddressRead = false;
+    }
   std::vector<FrameAccess> Loads, Stores;
   const ValueReads Reads(Func);
   markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores,

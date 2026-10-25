@@ -97,7 +97,7 @@ bool jumpTableTargetLoadUsesDefaultAddressSpace(llvm::ArrayRef<LowOp> Ops,
     bool Matches = true;
     Matches &= Op.Addr == Address;
     Matches &= Op.Seq == Sequence;
-    Matches &= Op.Opcode == NdOp::LOAD;
+    Matches &= Op.Opcode == NdOp::LOAD || originalAArch64TableLoad(Op);
     Matches &= Op.Output.Space == Output.Space;
     Matches &= Op.Output.Offset == Output.Offset;
     Matches &= Op.Output.Size == Output.Size;
@@ -3703,7 +3703,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     for (const LowOp &Op : LoadInsn->second.Ops) {
       if (Op.Addr != State.TableLoadAddr || Op.Seq != State.TableLoadSeq)
         continue;
-      if (Load || Op.Opcode != NdOp::LOAD)
+      if (Load || (Op.Opcode != NdOp::LOAD && !originalAArch64TableLoad(Op)))
         return false;
       Load = &Op;
     }
@@ -6060,7 +6060,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
         };
     auto isAuthenticatedTargetLoad = [&](const LowOp &Op,
                                          bool &AnalysisComplete) {
-      if (Op.Opcode != NdOp::LOAD)
+      if (Op.Opcode != NdOp::LOAD && !originalAArch64TableLoad(Op))
         return false;
       auto Authenticates = [&](const auto &Candidate) {
         const std::optional<size_t> ComparisonWork =
@@ -6234,7 +6234,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
         return false;
       }
       for (const LowOp &Op : It->second.Ops)
-        if (Op.Opcode == NdOp::LOAD &&
+        if ((Op.Opcode == NdOp::LOAD || originalAArch64TableLoad(Op)) &&
             isAuthenticatedTargetLoad(Op, AnalysisComplete))
           return true;
       return false;
@@ -6391,6 +6391,19 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           return false;
         }
         for (const LowOp &Op : It->second.Ops) {
+          // The exact authenticated read consumes its address; it cannot
+          // publish that address. Other encoded reads retain the conservative
+          // escape path, including independent consumers of this storage.
+          if (originalAArch64TableLoad(Op)) {
+            const bool Authenticated =
+                isAuthenticatedTargetLoad(Op, AnalysisComplete);
+            if (!AnalysisComplete) {
+              QueryConstructionComplete = false;
+              return false;
+            }
+            if (Authenticated)
+              continue;
+          }
           if (Op.Opcode == NdOp::STORE) {
             const auto Memory = lowMemoryOperands(Op);
             if (!Memory.Complete) {

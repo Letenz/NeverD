@@ -118,6 +118,50 @@ void LowToMedConverter::propagate(MedFunc &Func) {
     }
   }
 
+  // Absorption only compares already named SSA values. It neither expands
+  // their definitions nor evaluates their producers, so a large dispatcher
+  // expression costs the same as a register operand. Keep loads, calls and
+  // their effects as separate operations for the ordinary DCE policy.
+  auto FoldWordAbsorption = [&](MedOp &Op) {
+    const auto PlainWord = [](const MedOp &Value) {
+      return (Value.Opcode == NdOp::INT_AND || Value.Opcode == NdOp::INT_OR) &&
+             Value.NumInputs == 2 && Value.Output.Size &&
+             Value.Output.Size <= sizeof(uint64_t) &&
+             Value.Inputs[0].Size == Value.Output.Size &&
+             Value.Inputs[1].Size == Value.Output.Size && !Value.Dead &&
+             Value.RegistrationRoot == MedOp::RegistrationRootKind::None &&
+             !Value.SourceCallHint && Value.IntrinsicOutputs.empty() &&
+             Value.MemoryOrdering == NdMemoryOrdering::None &&
+             Value.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+    };
+    if (!PlainWord(Op))
+      return false;
+    for (unsigned I = 0; I < 2; ++I) {
+      const auto &Retained = Op.Inputs[1 - I];
+      // Two Unspecified occurrences do not denote one stable machine word.
+      if (!Retained.isConst() &&
+          (Retained.Id < 0 ||
+           (Retained.Kind != MedVar::Reg && Retained.Kind != MedVar::Temp &&
+            Retained.Kind != MedVar::Param)))
+        continue;
+      const auto It = Defs.find(keyOf(Op.Inputs[I]));
+      if (It == Defs.end())
+        continue;
+      const auto &Nested = *It->second;
+      if (!PlainWord(Nested) || Nested.Opcode == Op.Opcode ||
+          Nested.Output.Size != Op.Output.Size ||
+          (Nested.Inputs[0] != Retained && Nested.Inputs[1] != Retained))
+        continue;
+      // x | (x & y) and x & (x | y) retain x's width and address provenance.
+      const auto Value = Retained;
+      Op.Opcode = NdOp::COPY;
+      Op.Inputs[0] = Value;
+      Op.NumInputs = 1;
+      return true;
+    }
+    return false;
+  };
+
   // Constant folding: fold binary ops of two constants
   Changed = true;
   Iters = 0;
@@ -136,6 +180,10 @@ void LowToMedConverter::propagate(MedFunc &Func) {
       for (auto &Op : Blk.Ops) {
         if (Op.NumInputs < 2)
           continue;
+        if (FoldWordAbsorption(Op)) {
+          Changed = true;
+          continue;
+        }
         switch (Op.Opcode) {
         case NdOp::INT_ADD:
         case NdOp::INT_SUB:

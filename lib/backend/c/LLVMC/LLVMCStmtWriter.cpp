@@ -14,6 +14,7 @@
 #include "../CRecordCall.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
+#include "../render/X86/X86APXAtomic.h"
 #include "../render/X86/X86AmxState.h"
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86FPStateHelpers.h"
@@ -3957,6 +3958,21 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (x86APXAtomicName(Callee->getName().str())) {
+    const auto *Instruction = llvm::dyn_cast<llvm::CallInst>(&Call);
+    if (!Instruction)
+      throw std::invalid_argument(
+          "APX native intrinsic requires a direct call");
+    std::vector<std::string> Arguments;
+    for (const auto &Argument : Call.args())
+      Arguments.push_back(valueStr(Argument.get()));
+    const bool Live = valueFeedsPrintedUse(&Call);
+    emitIndent(Indent);
+    OS << *renderX86APXAtomicCall(Opts.TheArch, *Instruction,
+                                  Live ? getName(&Call) : "", Live, Arguments);
+    return true;
+  }
+
   if (Callee->getName().starts_with("llvm.x86.rep.")) {
     const auto *Instruction = llvm::dyn_cast<llvm::CallInst>(&Call);
     if (!Instruction)
@@ -5209,6 +5225,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   for (unsigned I = 0; I < Call.arg_size(); ++I)
     ArgStrs.push_back(valueStr(Call.getArgOperand(I)));
 
+  if (auto Memory = renderAArch64AddressMemoryCall(Opts.TheArch, Call, Name,
+                                                   ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Memory->Code;
+    return true;
+  }
   if (auto AuthenticatedLoad = renderAArch64PAuthLoadCall(
           Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);
@@ -5240,6 +5262,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
                                   typeToCLLVM(Call.getType()))) {
     emitIndent(Indent);
     OS << *Amx;
+    return true;
+  }
+  if (auto Atomic = renderX86APXAtomicCall(Opts.TheArch, Call, Name, ResultLive,
+                                           ArgStrs)) {
+    emitIndent(Indent);
+    OS << *Atomic;
     return true;
   }
   if (auto BoundedLeaf = renderX86BoundedLeafCall(Opts.TheArch, Call, Name,

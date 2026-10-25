@@ -68,6 +68,9 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
           if (isAArch64ExceptionReturnIntrinsic(Id))
             Err(kAArch64ExceptionReturnUnsupported, Blk.Id, Op.Addr);
+          if (isAArch64AddressMemoryIntrinsic(Id) &&
+              !aarch64AddressMemoryMedShapeIsValid(Op))
+            Err(kAddressMemoryMalformed, Blk.Id, Op.Addr);
           if (isAArch64PAuthLoadIntrinsic(Id) &&
               !aarch64PAuthLoadMedShapeIsValid(Op))
             Err(kPAuthLoadMalformed, Blk.Id, Op.Addr);

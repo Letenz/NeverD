@@ -12,6 +12,13 @@ stated symbols and user identities cannot be removed by that reconciliation.
 COFF instruction-content flags and page execute permissions are separate.
 Full source emission is not proof of executable kernel reconstruction.
 
+CLAC/STAC and XEND now share the validated system-instruction contract in
+HighC, native LLVM and LLVMC. Their ordered effects survive unused results and
+source optimization; scalar emulation cannot silently claim completion.
+Instruction IDs remain unchanged, and native RTM code generation enables its
+required feature. SYSRETQ, like interrupt/far returns, still requires the
+complete state-transfer source boundary described below.
+
 Large LLVM source functions no longer retain redundant entry stores on private
 SSA temporaries whose single later definition dominates every read. The proof
 runs after exception edges are installed; bypasses, loop-first reads, ordering
@@ -135,6 +142,13 @@ Same-width signed/unsigned views no longer hide word absorption. Consecutive
 scalar offsets combine modulo their declared width; negative-literal spelling
 retains scalar provenance and leaves explicit high kernel addresses intact.
 This source cleanup does not resolve a VM target that depends on runtime data.
+Default MedIR propagation now folds same-width word absorption using SSA
+identity before either source route expands expression trees. Changed SSA
+versions and narrowing conversions remain distinct; named producers retain
+their effects under the existing DCE rules. Public x86/x64/ARM/ARM64 MedIR
+contracts cover all three formats, with independent host execution of x64 and
+ARM64 PE/ELF C outputs. This reduces repeated dispatcher arithmetic but does
+not recover its runtime inputs or prove a unique callable target.
 
 Mapped LLVM C now keeps array and record allocations out of scalar variable
 typing, including frames larger than the supported integer width. HighC and

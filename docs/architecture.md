@@ -94,6 +94,18 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
+`X86APXAtomic.h` owns the APX atomic native API names, operand widths,
+condition/segment controls and exact assembly fallback. The existing
+`ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
+routes preserve a native EVEX RAO-INT or CMPccXADD transaction, including dead
+results and false-condition write-back; no ordinary load/store expansion is
+permitted. Normalized offsets retain DS/FS/GS selection, with address-size
+wrapping performed by the existing effective-address owner. Default-stack
+RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
+the segment: the normalized offset cannot yet retain their distinct #SS fault
+class. `Codegen` treats LLVM error diagnostics as compilation failures and
+does not publish the parseable but incomplete objects LLVM can leave behind.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in
@@ -356,6 +368,38 @@ explicit operand and clobber constraints. Compilation does not establish CPU
 feature availability. These operations preserve call argument setup and frame taint,
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
+
+`AArch64AddressMemory.def` owns original ordinary-memory operations. The first
+owned family is 64-bit `LDR Xt, [Xn, Xm, LSL #0/#3]`: its raw index and original
+word remain one effectful operation through LowIR, MedIR, LLVM and both C routes.
+The real load retains AddressAdd's access-EL checks and any internal
+AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
+The address is unknown to generic memory proofs, and discarding the result
+cannot discard the access or its possible fault. The scalar operation preserves
+local Z/P values and earlier call arguments other than its explicit output.
+Both native compiler routes use fixed separate input/output registers, preserving
+source aliases and the encoded scale. SP provenance is retained in IR, but
+execution projection refuses it without its alignment and tagging environment.
+The software tracer admits a finite image/RAM read only when the authoritative
+address owner proves identical address bits for CPTA on/off and every internal
+CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
+in both modes, including a poisoned or tagged base whose unchecked sum appears
+mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
+Swift receiver proofs consume a validated read with an explicit result, without
+granting purity or removing the access. Jump-table recovery
+requires the same control-independent address proof for every admitted physical
+slot, an exact table base and a full-width bound on the raw index. Its existing
+root, mutation and storage audits still apply. Both source routes consume the
+authenticated load's input occurrence, preserving zero indices and an index
+register overwritten by the load.
+Private-copy source replay recomputes stack-access annotations from the current
+MedIR body; a stale prologue-save flag cannot hide an edited store from that
+independent machine replay.
+This instruction preservation observes the execution host's controls; it does not model foreign
+EL/SCTLR2/translation state or preserve exception-PC and syndrome register
+identity. Other ordinary-memory families remain unqualified for CPA2, as does
+controlled native execution with CPTA enabled. The owner follows the pinned
+[Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
 their strides, multi-start pages, 16/24-bit import ordinals and signed addends.
@@ -6120,6 +6164,11 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The existing CLAC/STAC and XEND IDs use this contract too. They produce no
+scalar result and remain ordered memory effects in both source routes. SMAP
+controls change hidden AC state while preserving arithmetic flags; transaction
+commit and its possible abort remain native. Native LLVM uses the corresponding
+intrinsics, and RTM intrinsic names select the code generator's RTM feature.
 The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
 INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
 returns CF and the lifter clears its other arithmetic flags. LKGS selector and
@@ -7738,6 +7787,15 @@ for the owning scheduler or advancing an otherwise single-threaded workload.
 Bionic's `usleep` narrows its scalar argument to unsigned 32-bit microseconds
 and admits the converted duration through that same owner. Completion and errno
 conversion share the kernel-call path, including suspended native events.
+Bionic's `sleep` admits at most `INT32_MAX` seconds and retains the original
+unsigned argument in a typed libc continuation. `LinuxSleep` alone computes the
+interrupted remainder, either copying it to a raw caller's guest address or
+retaining a typed value for the modeled libc automatic. The scheduler carries
+that continuation through both ordinary waits and nested signal-return frames;
+it does not interpret the seconds or create another deadline. After the handler,
+Bionic applies kernel errno conversion, narrows the libc return to `int`, and converts the
+retained remainder into rounded-up seconds with the unattempted excess. A signal
+context redirect leaves the abandoned native event incomplete.
 Android's typed waits retain the consumed request, complete CPU context and
 native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
 readiness and completion; `GuestThreads` advances to the earliest deadline only
@@ -9558,7 +9616,9 @@ libraries supplied by the CMake helper.
 | `lib/support` | Shared binary-loading helpers and independent SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
 
-`NeverDDigest` owns the existing one-shot SHA-256 implementation in `lib/support`, with unchanged runtime feature checks and portable fallback, and no Loader or IR dependency. `loader/InputDigest.h` remains a forwarding header. `NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
+`NeverDDigest` owns one-shot SHA-256 in `lib/support`, with no Loader or IR dependency. Runtime dispatch selects x86 SHA extensions or little-endian ARM64 SHA2 only when the host reports support, otherwise retaining LLVM's portable implementation. Linux ARM64 checks the kernel's `AT_HWCAP` SHA2/Advanced SIMD bits, including when `/proc` is unavailable; Windows uses LLVM's processor-feature mapping. Darwin ARM64 uses the documented `hw.optional.arm.FEAT_SHA256` sysctl because LLVM's host map is empty there. The decision is cached, unknown or failed queries fall back, and target-specific instructions stay inside the compression function. Both accelerated implementations share the `.def` constants, padding, digest encoding and bounded cancellation checkpoints. `loader/InputDigest.h` remains a forwarding header.
+
+`NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
 
 ### Analysis and simplification ownership
 

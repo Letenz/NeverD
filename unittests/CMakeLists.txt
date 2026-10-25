@@ -74,6 +74,7 @@ target_include_directories(NeverDSupportThreadTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
 add_subdirectory(acceleration)
+add_subdirectory(digest)
 
 add_neverd_unittest(NeverDExportTableTests
   ExportTableTests.cpp
@@ -189,6 +190,10 @@ add_neverd_unittest(NeverDSourceDialectTests
 
 add_neverd_unittest(NeverDSourcePatchLayoutTests
   SourcePatchLayoutTests.cpp
+  LINK_COMPONENTS CodeGen
+)
+add_neverd_unittest(NeverDCodegenDiagnosticTests
+  backend/CodegenDiagnosticTests.cpp
   LINK_COMPONENTS CodeGen
 )
 add_neverd_unittest(NeverDItaniumHandlerTests

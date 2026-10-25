@@ -117,7 +117,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | EVEX compress stores and expand loads | LowIR has masked contiguous-memory semantics, but `EVEXCompressStore` and `EVEXExpandLoad` still stop at the LLVM backend guard. Native memory/fault behavior and both executable C routes remain to be completed. |
 | V4FMADDPS/SS, V4FNMADDPS/SS | The exact four-iteration floating-point contract exists in LowIR; `X86FourFMA` still has no LLVM lowering. Native source groups, rounding/flags and memory completion need qualification. |
 | VP4DPWSSD, VP4DPWSSDS | LowIR owns the four-source word dot product; the LLVM backend still rejects both IDs. Native register grouping, saturation and memory/mask behavior remain open. |
-| APX AADD/AAND/AOR/AXOR and CMPccXADD | LowIR/concrete atomic contracts exist, but LLVM rejects the five `Apx*` IDs. The existing LLVM RAO-INT/CMPCCXADD APIs must be checked for APX encoding, segment/address, synchronization and completion requirements before integration. |
+| Remaining RAO-INT/CMPccXADD forms | EVEX AADD/AAND/AOR/AXOR and all sixteen CMPccXADD conditions now have native LLVM and both C routes. Legacy RAO-INT and VEX CMPccXADD still lack strict lifter admission. Default-stack RSP/RBP memory with 64-bit addressing and no FS/GS override remains refused until the normalized address retains its #SS fault class. Physical APX execution is not qualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
@@ -1590,3 +1590,78 @@ for 63,360 controlled operand comparisons. The four exported observer sources
 are identical between SDKs. Restoring the signed-widening expression makes
 all four observers fail. These are C operand-transport checks; they do not
 execute privileged port I/O.
+
+## Native APX atomic output
+
+EVEX AADD/AAND/AOR/AXOR and all sixteen CMPccXADD conditions now retain their
+native 32/64-bit transactions through MedIR, LLVM, HighC and LLVM-to-C.
+The fork adds ten `llvm.x86.<operation><width>.address` interfaces; NeverC
+provides matching `__builtin_ia32_<operation><width>_address` builtins and
+`__NEVERC_X86_APX_ATOMIC__=1`. These are native IR operations. The existing
+SDK uses validated owned assembly, and ordinary Clang/GCC C output uses the
+same native instructions through the compiler fallback.
+
+The interfaces preserve explicit address width, all seven segment-prefix
+choices, EVEX encoding, unknown memory/synchronization effects, dead results
+and repeated transactions. CMPccXADD retains false-condition write-back and
+EFLAGS definitions; RAO-INT preserves flags. Normalized NeverD addresses have
+already wrapped before native FS/GS base addition. The C renderer therefore
+does not require Clang address-space pointers for these instruction-owned
+accesses. LLVM fixed-register constraints use `{bx}`; GNU C uses `b`, and
+RAO mnemonics infer width from their register for GNU assembler compatibility.
+
+LLVM, NeverC and NeverC-IR-to-full-LLVM each pass 120,960 controlled completions
+across 10,080 compiled functions, O0/O2 and ELF/COFF/Mach-O. Each profile also
+passes twelve ATT/Intel assembly round trips. Function identities, instruction
+bytes and offsets within each function are compared; alignment padding and
+independent function order do not define instruction semantics. The LLVM
+neighbor matrix passes 22 tests, and NeverC's 76 focused frontend tests pass.
+
+The initial pinned and native SDK matrices register 740 tests: 734 pass and six
+skip unavailable SDK/platform interfaces. Each SDK passes 159,840 controlled
+wrapper completions across 37 programs. Both additionally qualify 504
+production pipeline objects, checking offsets, operands, return flags and
+nonvolatile registers against the original CMP/atomic/LAHF/SETO sequence.
+The 1,008 recovered pipeline C files are identical between SDKs; their 4,032
+Clang/NeverC compilations at O0/O2 supply 28,224 controlled completions, reused
+only after byte-for-byte source comparison. Production pipeline objects add
+3,528 completions per SDK. A separate Codegen regression prevents recoverable
+LLVM errors from publishing parseable but incomplete objects.
+
+The subsequent `dev` integration at `101544392` registers 752 tests across
+the two SDKs: 746 pass and six skip unavailable SDK/platform interfaces. The
+feature-composition regression now covers all sixteen combinations of SGX,
+AMX, REP and APX atomics with SHA present, using native interfaces or the shared
+owned-assembly templates according to SDK availability. Both SDKs again pass
+37 wrapper programs and 504 production pipeline objects. All 1,008 pipeline
+C sources match between SDKs; 396 changed since the initial qualification
+and were recompiled 1,584 times, while the other 612 reuse the prior evidence
+only after comparing source and case metadata.
+
+The following system-contract integration exposes an older-SDK XEND source
+failure: its owned LLVM assembly can select a native C builtin, so the shared
+feature collector must retain `rtm` for that representation too. The corrected
+collector combines RTM with SHA in one attribute. Both native and owned-assembly
+regressions compile at O0/O2 without caller feature flags. The complete matrix
+and affected rechecks cover 1,024 unique test/profile pairs: 986 pass and 38
+skip unavailable SDK, compiler-mode, platform or hardware prerequisites.
+The APX IR, C and object exports are byte-identical after this correction.
+
+LLVM `698a418beac3` and NeverC `6efa5e2a6` additionally correct the older
+pointer-taking atomic APIs: an integer width of 32/64 bits must not become a
+32/64-byte pointer-alignment promise. Machine memory descriptors retain byte
+alignment and volatile read/write effects. LLVM checks 48 combinations at
+O0/O2 and with APX register allocation enabled; NeverC's x86 backend test
+checks the same 48 signatures, alongside 76 passing frontend tests. This
+does not change the production SDK pin or qualify physical atomicity.
+
+The remaining row above is deliberately narrower than full RAO/CMPccXADD
+support. Legacy RAO and VEX CMPccXADD still need strict admission. Unoverridden
+RSP/RBP bases with 64-bit addressing need explicit stack-fault provenance;
+ignored CS/DS/ES/SS prefixes cannot restore it after normalization. See
+[Intel's canonical-address rule, section 3.3.7.1](https://www.intel.com/content/dam/support/us/en/documents/processors/pentium4/sb/25366521.pdf)
+and [APX revision 9 exception tables](https://kib.kiev.ua/x86docs/Intel/APX/355828-009.pdf).
+The concrete executor still restricts atomic accesses to aligned ordinary
+memory. Controlled completions do not prove physical atomicity, coherence or
+hardware fault behavior. LLVM release and production pinning remain deferred
+while the remaining instruction contracts are unfinished.
