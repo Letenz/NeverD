@@ -186,21 +186,38 @@ class ComparisonIntegrationTests(unittest.TestCase):
             self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
 
     def test_branch_progress_pages_every_guard_and_authenticates_counts(self) -> None:
-        from neverd_plugin import abi
-
         # Owned family5 x64 O0; two guarded updates join one backedge. Inspect only.
-        self.binary.write_bytes(bytes.fromhex(
+        self._check_counter_progress(
             "554889e5897dfc8975f88b45f883e00783c0018945f48b45fc83e00183f80074328b45"
             "fc83f0176bc00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fc8b45f483c0"
             "ff8945f483f8007402ebc5eb308b45fc83c0116b4df80d31c88945fc8b45fcc1e00703"
             "45f83345fc8945fc8b45f483c0ff8945f483f8007402eb95eb008b45fc3345f883c003"
-            "5dc3"))
+            "5dc3", 4, 2)
+
+    def test_modular_progress_pages_slices_and_authenticates_basis(self) -> None:
+        # Owned modular_progress_fixture.c, x64 O0. Inspect only.
+        self._check_counter_progress(
+            "554889e5897dfc8975f88b45f88945f48b45fc83e00183f80074228b45fc83f0176b"
+            "c00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b"
+            "4df40d31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f4837d"
+            "f40173a68b45fc3345f883c0035dc3", 5, 1, "modular")
+        # Owned family6 x64 O2, now explicitly naming its preferred proof.
+        self._check_counter_progress(
+            "89f183e1078d04768d1486eb1e0f1f0083f7178d04fd0000000029f883c009c1c01b83"
+            "f9027c1dffc989c740f6c70175df83c71131d789f8c1e00701f031f883f9017fe331f0"
+            "83c003c3", 5, 2, "nowrap")
+
+    def _check_counter_progress(self, code, version, guard_count, proof_kind=None):
+        from neverd_plugin import abi
+
+        self.binary.write_bytes(bytes.fromhex(code))
         left, right = self.session(), self.session()
         for session in (left, right):
             self.assertEqual(self.host.call("neverd_session_load", session,
                                             str(self.binary).encode()), 1)
         comparison = self.comparison()
-        options = b'{"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v4"}}'
+        options = json.dumps({"discover": False,
+            "dataflow": {"profile": f"llvm-progress-ssa-v{version}"}}).encode()
         self.assertEqual(self.host.call("neverd_comparison_run", comparison,
             left, right, options, abi.ComparisonProgressCallback(), None), 1)
         guards, latches = set(), set()
@@ -209,31 +226,46 @@ class ComparisonIntegrationTests(unittest.TestCase):
             query = {"kind": "nodes", "address": "0x1000", "limit": 1, "offset": offset}
             page = json.loads(self.host.owned_string("neverd_comparison_dataflow_json",
                 comparison, json.dumps(query).encode()))
-            self.assertEqual(page["schema_version"], 8)
+            self.assertEqual(page["schema_version"], 4 + version)
             self.assertEqual(page["progress"]["kind"], "counter_loops")
             self.assertEqual(page["progress"]["loop_count"], 1)
             self.assertEqual(page["progress"]["backedge_count"], 1)
-            self.assertEqual(page["progress"]["guard_count"], 2)
+            self.assertEqual(page["progress"]["guard_count"], guard_count)
             self.assertNotIn("loops", page["progress"])
             self.assertEqual(len(page["rows"]), 1)
             row = page["rows"][0]
             if row["progress_loop"]:
-                self.assertEqual(row["progress_loop"]["block"], row["block"])
-                guards.add(row["progress_loop"]["block"])
-                latches.add(row["progress_loop"]["latch"])
+                witness = row["progress_loop"]
+                self.assertEqual(witness["block"], row["block"])
+                self.assertEqual(witness.get("proof"), proof_kind)
+                if witness["block"] not in guards:
+                    query = {"address": "0x1000", "seeds": [witness["compare"]], "limit": 1}
+                    sliced = json.loads(self.host.owned_string("neverd_comparison_slice_json",
+                        comparison, json.dumps(query).encode()))
+                    self.assertEqual(sliced["schema_version"], 4 + version)
+                    self.assertTrue(sliced["rows"])
+                guards.add(witness["block"])
+                latches.add(witness["latch"])
             offset, total = offset + 1, page["total"]
-        self.assertEqual(len(guards), 2)
+        self.assertEqual(len(guards), guard_count)
         self.assertEqual(len(latches), 1)
         saved = self.host.owned_string("neverd_comparison_export_json", comparison)
         self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
                                         saved.encode()), 1)
         self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
-        for field in ("loop_count", "backedge_count", "guard_count", "header", "latch"):
-            for layer in range(2):
+        fields = ["loop_count", "backedge_count", "guard_count", "header", "latch"]
+        if version == 5:
+            fields += ["proof", "missing_proof"]
+        for field in fields:
+            for layer in range(guard_count):
                 forged = json.loads(saved)
                 proof = forged["dataflow"]["primary"]["entries"][0]["graph"]["progress"]
                 if field in ("header", "latch"):
                     proof["loops"][layer][field] = 0
+                elif field == "proof":
+                    proof["loops"][layer][field] = "nowrap" if proof_kind == "modular" else "modular"
+                elif field == "missing_proof":
+                    del proof["loops"][layer]["proof"]
                 else:
                     proof[field] = 99
                 self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,

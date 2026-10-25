@@ -227,6 +227,22 @@ The shared proof owner retains existing resource/cancellation allowances and
 all published v1/v2/v3 contracts. Complex, irreducible, duplicate-edge or
 missing-nowrap recurrences remain explicit unproven cases.
 
+`profile:"llvm-progress-ssa-v5"` adds fixed modular counter cycles and one
+affine guard observation. The preferred nowrap proof retains its common-domain
+rules. Modular fallback requires identical nonzero width-normalized steps,
+literal bounds or two affine observations of the same counter, and common
+exits covering every residue class of the step.
+All residual cycles still require proof; no iteration limit or native argument
+attributes are invented. Schema 9 retains the three counts and witness IDs,
+adding `proof:"nowrap"` or `proof:"modular"`. Each guard-block node page exposes
+its own witness; replay recomputes the canonical proof kind before fresh source
+authentication. Recipes are `llvm-progress-neighborhoods-v5` and
+`llvm-progress-fragments-v5`. All v1-v4 contracts and encodings remain exact.
+Fresh binding can authenticate a complete same-block PHI renumbering while
+retaining saved node IDs. Ordinary instruction order, source observations,
+ordered inputs and all proof metadata must still agree exactly; this does not
+weaken edited-report rejection or add public restore cancellation.
+
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
 allowance; public node counts and coverage still count operations. Metadata

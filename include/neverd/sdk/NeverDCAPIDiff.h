@@ -218,7 +218,8 @@ neverd_comparison_flow_regions_json(neverd_comparison_t Comparison,
 /// llvm-progress-ssa-v1 (parameter views and independently proved progress),
 /// llvm-progress-ssa-v2 (also single-entry multi-block counter components),
 /// llvm-progress-ssa-v3 (also nested single-entry counter components),
-/// llvm-progress-ssa-v4 (also shared-counter branches and compiler latches).
+/// llvm-progress-ssa-v4 (also shared-counter branches and compiler latches),
+/// or llvm-progress-ssa-v5 (also affine guards and wrapping counter cycles).
 /// Schema 6 witnesses add header to block (latch)/counter/update/compare.
 /// Schema 8 counts loops, physical backedges and consuming guards separately.
 /// Its witness block is the guard block; latch names the backedge source.
