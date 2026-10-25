@@ -2013,7 +2013,10 @@ from the selected allocator backend.
 compilation and records the actual commits for qualification and installation.
 The private text helper uses Highway only after an inline short-run scan and
 simdutf only to prove that an entire UTF-8 span needs no repair. Existing string
-metadata and byte-preserving repair remain authoritative. Transport parsing
+metadata and byte-preserving repair remain authoritative. Metadata normalization
+keeps already-valid UTF-8 in its existing string storage; both owned and copied
+text use the same valid-prefix scanner and malformed-byte escape implementation.
+Transport parsing
 copies validated simdjson values into the owned nlohmann DOM and checks decoded
 keys during object insertion. Floating-point tokens and negative zero retain
 the original numeric parser; refused SIMD input uses the original admission path.
