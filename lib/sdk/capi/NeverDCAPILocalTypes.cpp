@@ -214,7 +214,7 @@ void joinHeaders(Session &S) {
       Joined.Error = "its records lay out otherwise than the program's";
     } else if (const types::TypeLibrary *Headers =
                    types::headerLibrary(Library, &Joined.Error)) {
-      Joined.Merge = types::mergeHeaderTypes(*S.LocalTypes, *Headers);
+      Joined.Merge = types::mergeHeaderTypes(*S.LocalTypes, *Headers, Library);
     }
     S.LocalTypeHeaders.push_back(std::move(Joined));
   };

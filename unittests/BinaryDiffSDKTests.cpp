@@ -2616,7 +2616,7 @@ TEST_F(BinaryDiffSDK,
   for (const auto *Profile :
        {"llvm-parameter-ssa-v1", "llvm-progress-ssa-v1", "llvm-progress-ssa-v2",
         "llvm-progress-ssa-v3", "llvm-progress-ssa-v4", "llvm-progress-ssa-v5",
-        "llvm-progress-ssa-v6"})
+        "llvm-progress-ssa-v6", "llvm-progress-ssa-v7"})
     for (bool Fragments : {false, true})
       for (const auto *Phase :
            {"primary:discovery", "primary:decode", "primary:dataflow"}) {
@@ -2648,7 +2648,10 @@ TEST_F(BinaryDiffSDK,
         EXPECT_EQ(Document->getAsObject()
                       ->getObject("flow_regions")
                       ->getString("profile"),
-                  std::string(Profile) == "llvm-progress-ssa-v6"
+                  std::string(Profile) == "llvm-progress-ssa-v7"
+                      ? (Fragments ? "llvm-progress-fragments-v7"
+                                   : "llvm-progress-neighborhoods-v7")
+                  : std::string(Profile) == "llvm-progress-ssa-v6"
                       ? (Fragments ? "llvm-progress-fragments-v6"
                                    : "llvm-progress-neighborhoods-v6")
                   : std::string(Profile) == "llvm-progress-ssa-v5"
@@ -3082,6 +3085,75 @@ TEST_F(BinaryDiffSDK, ParameterBoundProgressPagesAndAuthenticatesProofKind) {
       6, 1, "parameter_modular");
 }
 
+TEST_F(BinaryDiffSDK, InvariantBoundProgressPagesAndAuthenticatesProofKind) {
+  // Owned invariant_bound_progress_fixture.c, clang x64 ELF O0. Inspect only.
+  checkBranchProgress(
+      "554889e5897dfc8975f88b45f88b4df8c1e90331c88b4dfc81e1ff00000001c88945"
+      "f48b45fc8945f08b45fc83e00183f80074228b45fc83f0176bc00783c0098945fc8b"
+      "45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b4df00d31c88945fc8b"
+      "45fcc1e0070345f83345fc8945fc8b45f083c0038945f08b45f08b4df483c10039c8"
+      "759f8b45fc3345f883c0035dc3",
+      7, 1, "invariant_modular");
+}
+
+TEST_F(BinaryDiffSDK, ValidInvariantBoundProofStillRequiresFreshSourceBinding) {
+  const auto Bytes = llvm::fromHex(
+      "554889e5897dfc8975f88b45f88b4df8c1e90331c88b4dfc81e1ff00000001c88945"
+      "f48b45fc8945f08b45fc83e00183f80074228b45fc83f0176bc00783c0098945fc8b"
+      "45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b4df00d31c88945fc8b"
+      "45fcc1e0070345f83345fc8945fc8b45f083c0038945f08b45f08b4df483c10039c8"
+      "759f8b45fc3345f883c0035dc3");
+  const auto Raw = llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size());
+  const auto A = input(Raw, 0x1000), B = input(Raw, 0x8000);
+  const auto Old = compare(
+      A, B,
+      R"({"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v6"}})");
+  const auto OldPage = parsed(neverd_comparison_dataflow_json(
+      Old, R"({"kind":"nodes","address":"0x1000"})"));
+  EXPECT_EQ(OldPage.getAsObject()->getObject("progress")->getString("kind"),
+            "unproven");
+  const auto C = compare(
+      A, B,
+      R"({"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v7"}})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto V = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(V));
+  auto *Graph = V->getAsObject()
+                    ->getObject("dataflow")
+                    ->getObject("primary")
+                    ->getArray("entries")
+                    ->front()
+                    .getAsObject()
+                    ->getObject("graph");
+  auto &Nodes = *Graph->getArray("nodes");
+  ASSERT_EQ(Graph->getObject("progress")
+                ->getArray("loops")
+                ->front()
+                .getAsObject()
+                ->getString("proof"),
+            "invariant_modular");
+  bool Changed = false;
+  for (auto &Node : Nodes)
+    if (Node.getAsObject()->getString("opcode") == "and")
+      for (auto &Input : *Node.getAsObject()->getArray("inputs")) {
+        auto &Value = *Input.getAsArray();
+        if (Value[0].getAsInteger() == 1 && Value[3].getAsString() == "0xff") {
+          Value[3] = "0x7f";
+          Changed = true;
+        }
+      }
+  ASSERT_TRUE(Changed);
+  // Changing the input mask preserves the invariant proof. Fresh native
+  // binding, not mathematical progress alone, must reject the alteration.
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*V).c_str()), 0);
+  EXPECT_NE(take(neverd_comparison_last_error(C))
+                .find("current native SSA projection"),
+            std::string::npos);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+}
+
 TEST_F(BinaryDiffSDK, ValidParameterBoundProofStillRequiresFreshSourceBinding) {
   const auto Bytes = llvm::fromHex(
       "554889e5897dfc8975f88b45fc8945f48b45fc83e00183f80074228b45fc83f0176bc007"
@@ -3146,7 +3218,7 @@ TEST_F(BinaryDiffSDK, RestoresPhiNumberingWhileAuthenticatingEverySourceFact) {
   const auto Raw = llvm::ArrayRef<uint8_t>(
       reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size());
   const auto A = input(Raw, 0x1000), B = input(Raw, 0x8000);
-  for (unsigned Version : {4, 5, 6}) {
+  for (unsigned Version : {4, 5, 6, 7}) {
     const auto Options = render(llvm::json::Object{
         {"discover", false},
         {"dataflow",

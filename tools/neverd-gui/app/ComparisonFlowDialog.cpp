@@ -288,6 +288,13 @@ void ComparisonFlowDialog::controls() {
         tr("Proof: every counter cycle reaches a shared exit relative to an "
            "input parameter. Undefined behavior may occur before exit."));
 
+  else if (Loop["proof"] == "invariant_modular")
+    LoopStatus->setText(
+        LoopStatus->text() + '\n' +
+        tr("Proof: every counter cycle reaches a shared exit relative to an "
+           "input-derived expression. Undefined behavior may occur before "
+           "exit."));
+
   const bool Node = !Nodes->row(NodeTable->currentIndex().row()).isEmpty();
   const bool Idle =
       Session.ready() && !Session.busy() && !Session.cancellable();
@@ -344,7 +351,10 @@ void ComparisonFlowDialog::selectSide() {
         Summary->text() + '\n' +
         tr("SSA representation: %1")
             .arg(Profile == ::neverd::limits::diff::
-                                kLLVMParameterBoundProgressSSAProfile
+                                kLLVMInvariantBoundProgressSSAProfile
+                     ? tr("Optimized SSA with expression-bound loop analysis")
+                 : Profile == ::neverd::limits::diff::
+                                  kLLVMParameterBoundProgressSSAProfile
                      ? tr("Optimized SSA with parameter-bound loop analysis")
                  : Profile ==
                          ::neverd::limits::diff::kLLVMModularProgressSSAProfile

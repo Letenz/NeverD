@@ -709,6 +709,82 @@ def main():
                 assert unproved['kind'] == 'unproven' and not unproved['loops']
                 assert unproved['source_contract'] == unproved['observed_contract']
                 assert negative['flow_regions']['anchor_count'] == 0
+    invariant_bound_profile = ['--dataflow-profile=llvm-progress-ssa-v7', '--flow-fragments']
+    for arch, targets in (
+            ('x64', (('elf', 'x86_64-unknown-linux-gnu'),
+                     ('coff', 'x86_64-pc-windows-msvc'),
+                     ('macho', 'x86_64-apple-darwin'))),
+            ('aarch64', (('elf', 'aarch64-unknown-linux-gnu'),
+                         ('coff', 'aarch64-pc-windows-msvc'),
+                         ('macho', 'arm64-apple-macos11')))):
+        for fmt, triple in targets:
+            prefix = f'invariant-bound-{arch}-{fmt}'
+
+            def invariant_bound_input(name, level, changes=None):
+                definitions = {'COUNT_STEP': 3, 'EXIT_OFFSET': 0,
+                               'BOUND_MASK': 255, 'LOOP_MUL': 7, 'FINAL_ADD': 3}
+                definitions.update(changes or {})
+                return build(f'{prefix}-{name}', args.clang,
+                    [f'--target={triple}', f'-O{level}', '-fno-asynchronous-unwind-tables',
+                     *[f'-D{k}={v}u' for k, v in definitions.items()]],
+                    control.with_name('invariant_bound_progress_fixture.c'))
+
+            a, b = invariant_bound_input('O0', 0), invariant_bound_input('O2', 2)
+            saved = root / f'{prefix}.nddiff'
+            document = compare(prefix, a, a, [*invariant_bound_profile, '--save', str(saved)])
+            graph = document['dataflow']['primary']['entries'][0]['graph']
+            proof = graph['progress']
+            assert graph['schema_version'] == 11 and proof['kind'] == 'counter_loops'
+            assert proof['loop_count'] == proof['backedge_count'] == proof['guard_count'] == 1
+            assert {w['proof'] for w in proof['loops']} == {'invariant_modular'}
+            assert all(not p['attributes'] for p in graph['parameter_views'])
+            assert document['flow_regions']['profile'] == 'llvm-progress-fragments-v7'
+            assert compare(prefix + '-reopen', a, a, ['--reopen', str(saved)]) == document
+            old = compare(prefix + '-legacy', a, a,
+                          ['--dataflow-profile=llvm-progress-ssa-v6', '--flow-fragments'], False)
+            old_proof = old['dataflow']['primary']['entries'][0]['graph']['progress']
+            assert old_proof['kind'] == 'unproven' and not old_proof['loops']
+            assert old_proof['source_contract'] == old_proof['observed_contract']
+            # Finite local fragments can still match in an unproved loop.
+            # Their open control boundaries do not establish whole-loop progress.
+            assert all(anchor['open_control_frontier'] for anchor in old['flow_regions']['anchors'])
+            crossed = compare(prefix + '-cross-level', a, b, invariant_bound_profile)
+            optimized = crossed['dataflow']['secondary']['entries'][0]['graph']['progress']
+            assert optimized['kind'] == 'counter_loops'
+            # Both optimized targets use a literal exit. Keep the preferred
+            # existing proof instead of relabelling it as expression-relative.
+            assert {w['proof'] for w in optimized['loops']} == {'modular'}
+            for name, changes, opcode, constant in (
+                    ('patch', {'FINAL_ADD': 5}, 'add', '0x5'),
+                    ('body', {'LOOP_MUL': 11}, 'mul', '0xb'),
+                    ('mask', {'BOUND_MASK': 127}, 'and', '0x7f')):
+                other = invariant_bound_input(name, 0, changes)
+                changed = compare(prefix + '-' + name, a, other, invariant_bound_profile)
+                changed_graph = changed['dataflow']['secondary']['entries'][0]['graph']
+                changed_nodes = {i for i, n in enumerate(changed_graph['nodes'])
+                    if n['opcode'] == opcode and any(v[0] == 1 and v[3] == constant for v in n['inputs'])}
+                assert changed_nodes
+                assert all(pair[1] not in changed_nodes
+                    for anchor in changed['flow_regions']['anchors'] for pair in anchor['nodes'])
+            other = invariant_bound_input('step', 0, {'COUNT_STEP': 5})
+            changed = compare(prefix + '-step', a, other, invariant_bound_profile)
+            new_graph = changed['dataflow']['secondary']['entries'][0]['graph']
+            updates = {w['update'] for w in new_graph['progress']['loops']}
+            assert updates and new_graph['progress']['kind'] == 'counter_loops'
+            assert all(pair[1] not in updates for anchor in changed['flow_regions']['anchors']
+                       for pair in anchor['nodes'])
+            other = invariant_bound_input('bound', 0, {'EXIT_OFFSET': 1})
+            changed = compare(prefix + '-bound', a, other, invariant_bound_profile)
+            changed_graph = changed['dataflow']['secondary']['entries'][0]['graph']
+            assert changed_graph['progress']['kind'] == 'counter_loops'
+            assert changed_graph['nodes'] != graph['nodes']
+            for level in (0, 2):
+                other = invariant_bound_input(f'infinite-O{level}', level, {'COUNT_STEP': 2})
+                negative = compare(prefix + f'-infinite-O{level}', a, other, invariant_bound_profile, False)
+                unproved = negative['dataflow']['secondary']['entries'][0]['graph']['progress']
+                assert unproved['kind'] == 'unproven' and not unproved['loops']
+                assert unproved['source_contract'] == unproved['observed_contract']
+                assert negative['flow_regions']['anchor_count'] == 0
     manifest['status'] = 'passed'
     save_manifest()
     print(f"{len(manifest['comparisons'])} compiler/patch fixture comparisons; artifacts: {root}")

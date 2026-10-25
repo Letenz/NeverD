@@ -40,6 +40,35 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
               : NdVar::reg(a64reg::X0 + Instruction->index() *
                                             kAddressMemoryPointerBytes,
                            Instruction->indexBytes());
+      if (Instruction->isVector()) {
+        const NdVar Register = NdVar::reg(a64reg::V(Instruction->destination()),
+                                          kAddressMemoryVectorBytes);
+        if (!Instruction->isLoad()) {
+          NdVar Data = Register;
+          if (Instruction->accessBytes() < kAddressMemoryVectorBytes) {
+            Data = S.makeTemp(Instruction->accessBytes());
+            S.emit(NdOp::SUBBYTES, Data,
+                   {Register, NdVar::scalar(0, kAddressMemoryWordBytes)});
+          }
+          S.emitIntrinsic(
+              Instruction->operation().Id, NdVar{},
+              {Base, Index,
+               NdVar::cst(Instruction->Word, kAddressMemoryWordBytes), Data});
+          return true;
+        }
+        // Publish the encoded B/H/S/D view before its whole-V zero extension.
+        // A narrow read in a successor must see this lifetime, not a scalar
+        // view written before the load.
+        const NdVar Data =
+            NdVar::reg(Register.Offset, Instruction->accessBytes());
+        S.emitIntrinsic(
+            Instruction->operation().Id, Data,
+            {Base, Index,
+             NdVar::cst(Instruction->Word, kAddressMemoryWordBytes)});
+        if (Data.Size < kAddressMemoryVectorBytes)
+          S.emit(NdOp::INT_ZEXT, Register, {Data});
+        return true;
+      }
       if (!Instruction->isLoad()) {
         NdVar Data =
             Instruction->destination() == kAddressMemoryRegisterMask

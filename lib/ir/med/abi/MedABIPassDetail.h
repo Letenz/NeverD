@@ -59,6 +59,13 @@ bool recoverI386RegistrationCookieCall(const MedFunc &Func,
                                        const TargetRegInfo &TRI,
                                        MedCallInfo &Info);
 
+/// Physical pre-call SP definitions, using the shared ABI recovery walk.
+/// Source clients charge all walks to one budget and prove entry offsets
+/// separately. Missing or ambiguous bases provide no stack location.
+std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
+                                                        Arch Architecture,
+                                                        size_t &Remaining);
+
 struct AbiSpillContext {
   const MedFunc &Func;
   const TargetRegInfo &TRI;

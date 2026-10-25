@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QFontInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -164,7 +165,7 @@ public:
     // From the right: origin, size, the pointer's place, the fit.
     const QFont font = item.font;
     QFont small = font;
-    small.setPointSizeF(std::max(7.0, font.pointSizeF() - 1));
+    small.setPointSizeF(std::max(7.0, QFontInfo(font).pointSizeF() - 1));
     const QFontMetrics metrics(font), smallMetrics(small);
     int right = rect.right();
     const auto rightText = [&](const QString &shown, const QFont &face,
@@ -307,7 +308,7 @@ TypePickerDialog::TypePickerDialog(Session &session, QJsonObject query,
   member_->setObjectName(QStringLiteral("typePickerMember"));
   QFont code = Theme::instance().codeFont();
   QFont large = code;
-  large.setPointSizeF(code.pointSizeF() + 2);
+  large.setPointSizeF(QFontInfo(code).pointSizeF() + 2);
   large.setBold(true);
   member_->setFont(large);
   member_->setTextInteractionFlags(Qt::TextSelectableByMouse);

@@ -163,6 +163,10 @@ struct LocalRegisterEffect {
   /// this to the solver, which knows the prototypes (RegisterStep::
   /// ImportCallee).
   bool UnknownEntryReads = false;
+  /// Independent entries, exceptional edges or malformed successors are not
+  /// represented by the ordinary register-flow graph. They forbid an absence
+  /// of observations proof without changing the argument-inference contract.
+  bool UnknownObservers = false;
   /// Liveness skeleton; block 0 is the entry.
   std::vector<RegisterBlock> Blocks;
   /// Positional arguments implied by the incoming stack-argument slots the
@@ -225,6 +229,12 @@ struct CallRegisterSummaries {
   /// entry, including through callees.  A pass-through argument counts; a
   /// register a nested call merely receives does not.
   std::map<va_t, GPRReadWidths> EntryReads;
+  /// Non-result/control GPR families whose incoming values no path can observe.
+  /// Preserved-register exit transport still needs the caller's ABI check.
+  /// Unlike argument inference, this proof treats opaque calls as reading every
+  /// register and
+  /// never uses a nested call's may-write mask as a definite overwrite.
+  std::map<va_t, GPRFamilyMask> Unread;
   /// Positional arguments implied by the incoming stack slots a function
   /// reads, including through tail calls (0 when none), for functions whose
   /// stack reads are bounded, and for the imports whose counts are fixed.
@@ -264,6 +274,12 @@ CallRegisterSummaries solveCallRegisterEffects(
 /// Each function's local effect, by entry, where another owner keeps it (as
 /// a cache of callee effects does).
 using LocalRegisterEffectRefs = std::map<va_t, const LocalRegisterEffect *>;
+
+/// Prove unobserved incoming GPR families from the same register-flow bodies.
+/// Opaque effects, partial writes and exhausted work retain the input. Argument
+/// counts and pointer-variable initializer hints cannot establish this fact.
+std::map<va_t, GPRFamilyMask>
+proveUnreadCallRegisters(const LocalRegisterEffectRefs &Funcs);
 
 /// As above, over effects \p Funcs points at.
 CallRegisterSummaries solveCallRegisterEffects(

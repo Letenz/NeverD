@@ -283,11 +283,13 @@ private:
 
   std::optional<int64_t> resolve(const MedVar &Value, unsigned Depth) {
     Deepest = std::max(Deepest, Depth);
+    const bool WideAddress =
+        FollowJoins && TRI.PointerSize == 4 && Value.Size == sizeof(uint64_t);
     // Keep the per-query work limit even when shared inputs reuse a proof.
     if (++Steps > kMaxProofSteps)
       return std::nullopt;
     if (Depth > ::neverd::limits::ir::kMedStackAlignmentResolveDepthLimit ||
-        Value.Size != TRI.PointerSize ||
+        (Value.Size != TRI.PointerSize && !WideAddress) ||
         (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp) ||
         (AllowedDefinitions && Value.TheArch != Architecture))
       return std::nullopt;
@@ -304,6 +306,23 @@ private:
          Definition->Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
          !Definition->Op->IntrinsicOutputs.empty()))
       return std::nullopt;
+    if (WideAddress) {
+      // The lifter carries native 32-bit memory addresses in a zero-extended
+      // 64-bit address container. This preserves the target pointer; it is
+      // not a truncation of a 64-bit SP or an eight-byte incoming SP seed.
+      const MedOp *Op = Definition ? Definition->Op : nullptr;
+      if (!Op || Definition->Active || !sameOccurrence(Op->Output, Value) ||
+          Op->Opcode != NdOp::INT_ZEXT || Op->NumInputs != 1 ||
+          Op->Inputs[0].Size != TRI.PointerSize ||
+          Op->MemoryOrdering != NdMemoryOrdering::None ||
+          Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          !Op->IntrinsicOutputs.empty())
+        return std::nullopt;
+      Definition->Active = true;
+      const auto Result = resolve(Op->Inputs[0], Depth + 1);
+      Definition->Active = false;
+      return Result;
+    }
     if (Value.Kind == MedVar::Reg && Value.RegOff == TRI.StackPointer &&
         (authenticatedEntryLiveIn(Value, Definition) ||
          (FollowJoins && Value.SSAVer == 0 &&

@@ -153,7 +153,7 @@ bool MedLLVMEmitter::emitAArch64Exception(const MedOp &Op, Intrinsic IC,
 
 bool MedLLVMEmitter::emitAArch64Sideeffect(const MedOp &Op, Intrinsic IC,
                                            llvm::IRBuilder<> &Builder) {
-  if (IC == Intrinsic::A64_StoreRegisterOffset) {
+  if (isAArch64AddressStoreIntrinsic(IC)) {
     // Original memory shares one validated machine contract. A void store
     // must reach it before the generic dispatcher refuses unknown effects.
     (void)emitAArch64IntrinsicValue(Op, IC, Builder);

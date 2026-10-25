@@ -14,8 +14,10 @@
 
 #include <array>
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 namespace neverd::types {
 /// lib/types/headers/<File>.h, as the build embeds it, each in a unit of its
@@ -199,7 +201,8 @@ const TypeLibrary *headerLibrary(HeaderLibrary Library, std::string *Error) {
   return Entry.Types ? &*Entry.Types : nullptr;
 }
 
-HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers) {
+HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers,
+                             std::optional<HeaderLibrary> Provider) {
   HeaderMerge Merge;
   std::vector<std::string> Added;
   for (const LocalType *Type : Headers.types()) {
@@ -207,6 +210,45 @@ HeaderMerge mergeHeaderTypes(TypeLibrary &Library, const TypeLibrary &Headers) {
       continue;
     LocalType Copy = *Type;
     Copy.Origin = TypeOrigin::Header;
+    // ntifs.h uses the opaque kernel prefix for these executive pointers;
+    // wdm.h/ntddk.h also declare their executive names. A program PDB can
+    // supply the complete executive record, including that same prefix.
+    // Keep this Windows provider fact out of generic name-based merging.
+    if (Provider == HeaderLibrary::WindowsKernelX64 ||
+        Provider == HeaderLibrary::WindowsKernelX86 ||
+        Provider == HeaderLibrary::WindowsKernelARM64) {
+      struct Alias {
+        llvm::StringRef Name;
+        llvm::StringRef Prefix;
+        llvm::StringRef Record;
+      };
+      for (const Alias &A : {Alias{"PEPROCESS", "_KPROCESS", "_EPROCESS"},
+                             Alias{"PETHREAD", "_KTHREAD", "_ETHREAD"}}) {
+        if (Copy.Name != A.Name || Copy.Kind != TypeKind::Typedef ||
+            !Copy.Target || Copy.Target->Kind != TypeExprKind::Pointer ||
+            Copy.Target->Reference || !Copy.Target->Element ||
+            Copy.Target->Element->Kind != TypeExprKind::Named ||
+            Copy.Target->Element->NamedKind != TypeKind::Struct ||
+            Copy.Target->Element->Name != A.Prefix)
+          continue;
+        const LocalType *Record = Library.find(A.Record);
+        if (!Record || Record->Origin != TypeOrigin::PDB ||
+            Record->Kind != TypeKind::Struct || !Record->Record ||
+            !Record->Record->Defined || Record->Record->Members.empty())
+          continue;
+        const Member &Prefix = Record->Record->Members.front();
+        if (Prefix.BitOffset != 0 || Prefix.BitWidth || !Prefix.Type ||
+            Prefix.Type->Kind != TypeExprKind::Named ||
+            Prefix.Type->NamedKind != TypeKind::Struct ||
+            Prefix.Type->Name != A.Prefix)
+          continue;
+        auto Pointer = std::make_shared<TypeExpr>(*Copy.Target);
+        auto Pointee = std::make_shared<TypeExpr>(*Pointer->Element);
+        Pointee->Name = A.Record.str();
+        Pointer->Element = std::move(Pointee);
+        Copy.Target = std::move(Pointer);
+      }
+    }
     Library.define(std::move(Copy));
     Added.push_back(Type->Name);
   }

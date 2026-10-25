@@ -16,6 +16,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QFontDatabase>
+#include <QFontInfo>
 #include <QPalette>
 #include <QRegularExpression>
 #include <QSettings>
@@ -202,8 +203,11 @@ void Theme::setMode(Mode mode) {
 
 QFont Theme::defaultCodeFont() {
   loadFonts();
-  QFont font(QStringLiteral("JetBrains Mono NL"));
-  font.setPointSize(::neverd::limits::gui_config::kThemeDefaultCodePointSize);
+  // A point has different logical-pixel sizes on Cocoa and other desktops.
+  // Use the platform's normal reading size for code too: Cocoa's FixedFont
+  // defaults to 10 pt even when its interface font is 13 pt.
+  QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+  font.setFamily(QStringLiteral("JetBrains Mono NL"));
   font.setStyleHint(QFont::Monospace, QFont::PreferAntialias);
   font.setFixedPitch(true);
   return withWorkbenchMetrics(font);
@@ -223,16 +227,21 @@ void Theme::setCodeFont(const QFont &font) {
 
 void Theme::zoomCodeFont(int steps) {
   QFont font = codeFont_;
-  font.setPointSize(
-      std::clamp(font.pointSize() + steps,
-                 ::neverd::limits::gui_config::kThemeMinimumCodePointSize,
-                 ::neverd::limits::gui_config::kThemeMaximumCodePointSize));
+  const qreal points =
+      font.pointSizeF() > 0 ? font.pointSizeF() : QFontInfo(font).pointSizeF();
+  font.setPointSizeF(std::clamp<qreal>(
+      points + steps, ::neverd::limits::gui_config::kThemeMinimumCodePointSize,
+      ::neverd::limits::gui_config::kThemeMaximumCodePointSize));
   setCodeFont(font);
 }
 
 void Theme::resetCodeFontSize() {
   QFont font = codeFont_;
-  font.setPointSize(::neverd::limits::gui_config::kThemeDefaultCodePointSize);
+  const auto defaults = defaultCodeFont();
+  if (defaults.pixelSize() > 0)
+    font.setPixelSize(defaults.pixelSize());
+  else
+    font.setPointSizeF(defaults.pointSizeF());
   setCodeFont(font);
 }
 
@@ -254,15 +263,18 @@ void Theme::apply() {
     emit changed();
     return;
   }
+  // Qt's macOS default hides action icons even in application-painted menus.
+  // Apply after QApplication initializes the platform's defaults.
+  QCoreApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
   // Under the application style sheet, the workbench style is the base of the
   // style sheet's style.
   if (QStyle *style = application->style();
       !qobject_cast<WorkbenchStyle *>(style) &&
       !style->findChild<WorkbenchStyle *>(Qt::FindDirectChildrenOnly))
     application->setStyle(new WorkbenchStyle);
-  application->setFont(withWorkbenchMetrics(
-      QFont(configureFontFallbacks(),
-            ::neverd::limits::gui_config::kThemeDefaultUiPointSize)));
+  QFont uiFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+  uiFont.setFamilies(configureFontFallbacks());
+  application->setFont(withWorkbenchMetrics(uiFont));
   QPalette palette;
   for (const auto &entry : PaletteRoles)
     palette.setColor(entry.role,
@@ -286,14 +298,16 @@ void Theme::apply() {
       const QString name = match.captured(1);
       if (name == QLatin1String(ModePlaceholder))
         resolved += modeName(mode_);
-      else if (name == QLatin1String(CodeFontPlaceholder))
+      else if (name == QLatin1String(CodeFontPlaceholder)) {
         // Zooming the code views leaves text fields alone.
-        resolved +=
-            QStringLiteral("%1pt \"%2\"")
-                .arg(::neverd::limits::gui_config::kThemeDefaultCodePointSize)
-                .arg(codeFont_.family());
-      else if (const auto color = chrome_.constFind(name);
-               color != chrome_.cend())
+        const auto font = defaultCodeFont();
+        resolved += QStringLiteral("%1%2 \"%3\"")
+                        .arg(font.pixelSize() > 0 ? font.pixelSize()
+                                                  : font.pointSizeF())
+                        .arg(font.pixelSize() > 0 ? "px" : "pt")
+                        .arg(codeFont_.family());
+      } else if (const auto color = chrome_.constFind(name);
+                 color != chrome_.cend())
         // A translucent color keeps its alpha.
         resolved += color->alpha() == 255
                         ? color->name()

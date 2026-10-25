@@ -48,14 +48,31 @@ bool validateAArch64AddressMemoryCall(Arch TheArch,
                                       const llvm::CallInst &Call) {
   const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
   if (!Asm || (Asm->getAsmString() != kAddressLoadAsm &&
-               Asm->getAsmString() != kAddressStoreAsm))
+               Asm->getAsmString() != kAddressStoreAsm &&
+               Asm->getAsmString() != kAddressVectorLoadAsm &&
+               Asm->getAsmString() != kAddressVectorStoreAsm))
     return false;
-  const bool Store = Asm->getAsmString() == kAddressStoreAsm;
+  const bool Store = Asm->getAsmString() == kAddressStoreAsm ||
+                     Asm->getAsmString() == kAddressVectorStoreAsm;
+  const bool Vector = Asm->getAsmString() == kAddressVectorLoadAsm ||
+                      Asm->getAsmString() == kAddressVectorStoreAsm;
+  const auto ValueType = [&](llvm::Type *Type) {
+    if (!Vector)
+      return Type->isIntegerTy(kAddressMemoryPointerBits);
+    const auto *VectorType = llvm::dyn_cast<llvm::FixedVectorType>(Type);
+    return VectorType &&
+           VectorType->getNumElements() ==
+               kAddressMemoryVectorBytes / kAddressMemoryPointerBytes &&
+           VectorType->getElementType()->isIntegerTy(kAddressMemoryPointerBits);
+  };
   const unsigned Count =
       Store ? kAddressStoreOperandCount : kAddressLoadOperandCount;
   if (TheArch != Arch::AArch64 ||
       Asm->getConstraintString() !=
-          (Store ? kAddressStoreConstraints : kAddressLoadConstraints) ||
+          (Vector ? (Store ? kAddressVectorStoreConstraints
+                           : kAddressVectorLoadConstraints)
+                  : (Store ? kAddressStoreConstraints
+                           : kAddressLoadConstraints)) ||
       !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
       Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
       Call.arg_size() != Count || Call.getFunctionType()->isVarArg() ||
@@ -63,8 +80,7 @@ bool validateAArch64AddressMemoryCall(Arch TheArch,
       Call.getCallingConv() != llvm::CallingConv::C || Call.doesNotReturn() ||
       Call.hasFnAttr(llvm::Attribute::Speculatable) ||
       Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
-      (Store ? !Call.getType()->isVoidTy()
-             : !Call.getType()->isIntegerTy(kAddressMemoryPointerBits)) ||
+      (Store ? !Call.getType()->isVoidTy() : !ValueType(Call.getType())) ||
       !Call.getArgOperand(kAddressMemoryBaseOperand)
            ->getType()
            ->isIntegerTy(kAddressMemoryPointerBits) ||
@@ -75,9 +91,8 @@ bool validateAArch64AddressMemoryCall(Arch TheArch,
            ->getType()
            ->isIntegerTy(kAddressMemoryWordBytes * CHAR_BIT))
     throw std::invalid_argument(kAddressMemoryMalformed);
-  if (Store && !Call.getArgOperand(kAddressMemoryDataOperand)
-                    ->getType()
-                    ->isIntegerTy(kAddressMemoryPointerBits))
+  if (Store &&
+      !ValueType(Call.getArgOperand(kAddressMemoryDataOperand)->getType()))
     throw std::invalid_argument(kAddressMemoryMalformed);
   const auto *Word = llvm::dyn_cast<llvm::ConstantInt>(
       Call.getArgOperand(kAddressMemoryWordOperand));
@@ -85,6 +100,7 @@ bool validateAArch64AddressMemoryCall(Arch TheArch,
       Word ? aarch64AddressMemoryInstruction(Word->getZExtValue())
            : std::nullopt;
   if (!Instruction || Instruction->isLoad() == Store ||
+      Instruction->isVector() != Vector ||
       Instruction->base() != kAddressMemoryScratchBase ||
       Instruction->index() != kAddressMemoryScratchIndex ||
       Instruction->destination() != kAddressMemoryScratchValue)
@@ -106,13 +122,20 @@ renderAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call,
     throw std::invalid_argument(kAddressMemoryMalformed);
   const auto *Word = llvm::cast<llvm::ConstantInt>(
       Call.getArgOperand(kAddressMemoryWordOperand));
-  const auto Value = aarch64AddressMemoryC(
-      *aarch64AddressMemoryInstruction(Word->getZExtValue()),
-      Args[kAddressMemoryBaseOperand], Args[kAddressMemoryIndexOperand],
-      Store ? Args[kAddressMemoryDataOperand] : llvm::StringRef{});
+  const auto Instruction =
+      *aarch64AddressMemoryInstruction(Word->getZExtValue());
+  std::string Data = Store ? Args[kAddressMemoryDataOperand] : std::string{};
+  if (Store && Instruction.isVector())
+    Data = llvm::formatv(kAddressVectorToBitsC, Data).str();
+  const auto Value =
+      aarch64AddressMemoryC(Instruction, Args[kAddressMemoryBaseOperand],
+                            Args[kAddressMemoryIndexOperand], Data);
+  const auto Result = !Store && Instruction.isVector()
+                          ? llvm::formatv(kAddressVectorFromBitsC, Value).str()
+                          : Value;
   return InlineAsmRender{
       ResultLive && !ResultName.empty()
-          ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Value).str()
+          ? llvm::formatv(kAArch64PointerCAssignment, ResultName, Result).str()
           : llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(),
       false};
 }

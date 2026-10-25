@@ -668,6 +668,170 @@ TEST(SignatureDBReferences, ACOFFImportThunkSettlesNothing) {
   EXPECT_EQ(Database.buildCandidateNameMap().count(0x1000), 0u);
 }
 
+namespace {
+
+std::string importCallerLine(llvm::StringRef Name, llvm::StringRef Reference) {
+  return ("90909090FF15........90909090909090909090909090909090909090909090"
+          " 00 0000 0020 :0000 " +
+          Name + " ^0006 " + Reference + "\n")
+      .str();
+}
+
+neverd::BinaryImage makeIndirectImportImage(neverd::Arch Arch) {
+  neverd::BinaryImage Image;
+  Image.Format = neverd::BinaryFormat::COFF;
+  Image.Arch = Arch;
+  Image.Bits = Arch == neverd::Arch::X64 ? neverd::Bitness::Bits64
+                                         : neverd::Bitness::Bits32;
+  neverd::Segment Code;
+  Code.VA = 0x1000;
+  Code.Size = Code.FileSz = 32;
+  Code.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Code.Data.assign(32, 0x90);
+  Code.Data[4] = 0xff;
+  Code.Data[5] = 0x15;
+  const uint32_t Field = Arch == neverd::Arch::X64 ? 0x2000 - 0x100a : 0x2000;
+  std::memcpy(Code.Data.data() + 6, &Field, sizeof(Field));
+  Image.Segments.push_back(std::move(Code));
+  neverd::Segment Slots;
+  Slots.VA = 0x2000;
+  Slots.Size = Slots.FileSz = 8;
+  Slots.Flags = neverd::SegmentFlags::Readable;
+  Slots.Data.assign(8, 0);
+  Image.Segments.push_back(std::move(Slots));
+  neverd::Import Imp;
+  Imp.Module = "runtime.dll";
+  Imp.Name = "RuntimeB";
+  Imp.IATAddr = 0x2000;
+  Image.Imports.push_back(Imp);
+  return Image;
+}
+
+} // namespace
+
+TEST(SignatureDBReferences, COFFImportSlotsDisambiguateCandidatesNotIdentity) {
+  for (const auto Arch : {neverd::Arch::X86, neverd::Arch::X64}) {
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(
+        importCallerLine("wrapper_a", "__imp_RuntimeA") +
+            importCallerLine("wrapper_b", "__imp_RuntimeB"),
+        "imports"));
+    auto Image = makeIndirectImportImage(Arch);
+    Database.apply(Image, {0x1000});
+    ASSERT_EQ(Database.matches().size(), 2u);
+    EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "wrapper_b");
+    for (const SigMatch &Match : Database.matches())
+      EXPECT_EQ(Match.Confirmed, Match.Name == "wrapper_b");
+    EXPECT_TRUE(Database.buildNameMap().empty());
+    // The new evidence is withdrawn when the import spelling changes.
+    Image.Imports.front().Name = "unresolved_alias";
+    Database.apply(Image, {0x1000});
+    EXPECT_TRUE(Database.buildCandidateNameMap().empty());
+    for (const SigMatch &Match : Database.matches())
+      EXPECT_FALSE(Match.Confirmed);
+  }
+}
+
+TEST(SignatureDBReferences, COFFImportSlotRequiresExactMappedEvidence) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      importCallerLine("wrapper", "__imp_RuntimeB"), "imports"));
+  const auto Unconfirmed = [&](const neverd::BinaryImage &Image) {
+    Database.apply(Image, {0x1000});
+    ASSERT_EQ(Database.matches().size(), 1u);
+    EXPECT_FALSE(Database.matches().front().Confirmed);
+    EXPECT_TRUE(Database.buildNameMap().empty());
+  };
+  auto Image = makeIndirectImportImage(neverd::Arch::X64);
+  Image.Imports.front().Name.clear();
+  Unconfirmed(Image);
+  Image = makeIndirectImportImage(neverd::Arch::X64);
+  Image.Imports.front().Name = "runtimeb";
+  Unconfirmed(Image);
+  Image = makeIndirectImportImage(neverd::Arch::X64);
+  Image.Imports.front().IATAddr += 1;
+  Unconfirmed(Image);
+  Image = makeIndirectImportImage(neverd::Arch::X64);
+  Image.Segments.pop_back();
+  Unconfirmed(Image);
+  Image = makeIndirectImportImage(neverd::Arch::X64);
+  Image.Imports.push_back(Image.Imports.front());
+  Image.Imports.back().Name = "different_import";
+  Unconfirmed(Image);
+  Image = makeIndirectImportImage(neverd::Arch::X64);
+  Image.Format = neverd::BinaryFormat::ELF;
+  Unconfirmed(Image);
+}
+
+TEST(SignatureDBReferences, COFFImportJumpsAndNegativeDisplacements) {
+  for (const auto Arch : {neverd::Arch::X86, neverd::Arch::X64}) {
+    for (bool Jump : {false, true}) {
+      auto Image = makeIndirectImportImage(Arch);
+      // Put the slot below the caller: x64 must sign-extend its displacement.
+      Image.Segments.back().VA = Image.Imports.front().IATAddr = 0x800;
+      const uint32_t Field = Arch == neverd::Arch::X64
+                                 ? uint32_t(0x800 - 0x100a)
+                                 : uint32_t(0x800);
+      std::memcpy(Image.Segments.front().Data.data() + 6, &Field,
+                  sizeof(Field));
+      std::string Pattern = importCallerLine("wrapper", "__imp_RuntimeB");
+      if (Jump) {
+        Image.Segments.front().Data[5] = 0x25;
+        Pattern[10] = '2';
+      }
+      SignatureDB Database;
+      ASSERT_FALSE(Database.loadPatternText(Pattern, "imports"));
+      Database.apply(Image, {0x1000});
+      ASSERT_EQ(Database.matches().size(), 1u);
+      EXPECT_TRUE(Database.matches().front().Confirmed);
+      EXPECT_TRUE(Database.buildNameMap().empty());
+    }
+  }
+}
+
+TEST(SignatureDBReferences, COFFImportPrefixesRemainUnconfirmed) {
+  for (uint8_t Prefix : {0x64, 0x65, 0x66, 0x67, 0x48}) {
+    auto Image = makeIndirectImportImage(neverd::Arch::X64);
+    Image.Segments.front().Data[3] = Prefix;
+    std::string Pattern = importCallerLine("wrapper", "__imp_RuntimeB");
+    // Keep a byte match while refusing to assign unprefixed slot semantics.
+    Pattern[6] = Pattern[7] = '.';
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(Pattern, "imports"));
+    Database.apply(Image, {0x1000});
+    ASSERT_EQ(Database.matches().size(), 1u);
+    EXPECT_FALSE(Database.matches().front().Confirmed);
+    EXPECT_TRUE(Database.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDBReferences, EveryImportReferenceMustBeConfirmed) {
+  auto Image = makeIndirectImportImage(neverd::Arch::X64);
+  auto &Code = Image.Segments.front().Data;
+  Code[16] = 0xff;
+  Code[17] = 0x15;
+  const int32_t Field = 0x2008 - 0x1016;
+  std::memcpy(Code.data() + 18, &Field, sizeof(Field));
+  Image.Segments.back().Data.resize(16, 0);
+  Image.Segments.back().Size = Image.Segments.back().FileSz = 16;
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "90909090FF15........909090909090FF15........90909090909090909090"
+      " 00 0000 0020 :0000 wrapper ^0006 __imp_RuntimeB ^0012 __imp_Other\n",
+      "imports"));
+  Database.apply(Image, {0x1000});
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_FALSE(Database.matches().front().Confirmed);
+  Image.Imports.push_back(Image.Imports.front());
+  Image.Imports.back().IATAddr = 0x2008;
+  Image.Imports.back().Name = "Other";
+  Database.apply(Image, {0x1000});
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_TRUE(Database.matches().front().Confirmed);
+  EXPECT_TRUE(Database.buildNameMap().empty());
+}
+
 TEST(SignatureDBReferences, WhatReferencesNameSettlesTheirCallersInTurn) {
   // outer (0x1000) calls inner (0x1100), which calls import_a's stub
   // (0x1200).  Each has a twin with its bytes; inner's twins are told apart

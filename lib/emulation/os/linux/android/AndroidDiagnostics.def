@@ -94,6 +94,7 @@ NEVERD_ANDROID_DIAGNOSTIC(InactiveProviderPrefix,
 NEVERD_ANDROID_DIAGNOSTIC(GuestCalledPrefix, "guest called ")
 NEVERD_ANDROID_DIAGNOSTIC(MemcpyOverlap, "overlapping memcpy operands")
 NEVERD_ANDROID_DIAGNOSTIC(StringCopyOverlap, "overlapping strncpy operands")
+NEVERD_ANDROID_DIAGNOSTIC(SizedStringCopyOverlap, "overlapping strlcpy operands")
 NEVERD_ANDROID_DIAGNOSTIC(StringAddressOverflow, "string address overflows")
 NEVERD_ANDROID_DIAGNOSTIC(StringScanLimit, "string scan exceeds memory limit")
 NEVERD_ANDROID_DIAGNOSTIC(
@@ -102,6 +103,10 @@ NEVERD_ANDROID_DIAGNOSTIC(FortifyReadPrefix,
                           "FORTIFY read exceeds object bounds in ")
 NEVERD_ANDROID_DIAGNOSTIC(FortifyWritePrefix,
                           "FORTIFY destination extent exceeded: ")
+NEVERD_ANDROID_DIAGNOSTIC(FortifiedReadCount,
+                          "fortified read exceeds the signed byte-count limit")
+NEVERD_ANDROID_DIAGNOSTIC(FortifiedReadBounds,
+                          "fortified read extent exceeds destination bounds")
 NEVERD_ANDROID_DIAGNOSTIC(StringCompareLimit,
                           "string comparison exceeds memory limit")
 NEVERD_ANDROID_DIAGNOSTIC(ReallocationOwnership,
@@ -237,6 +242,10 @@ NEVERD_ANDROID_DIAGNOSTIC(AuxiliaryVectorInput,
                           "invalid or excessive auxiliary vector entries")
 NEVERD_ANDROID_DIAGNOSTIC(AuxiliaryVectorUnspecified,
                           "getauxval requires an explicit auxiliary vector")
+NEVERD_ANDROID_DIAGNOSTIC(EnvironmentUnspecified,
+                          "getenv requires an explicit environment vector")
+NEVERD_ANDROID_DIAGNOSTIC(EnvironmentScanLimit,
+                          "environment lookup exceeds the memory scan budget")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneInput, "invalid fixed calendar time zone")
 NEVERD_ANDROID_DIAGNOSTIC(CalendarZoneUnspecified,
                           "localtime requires an explicit fixed time zone")

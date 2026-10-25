@@ -6437,6 +6437,10 @@ Coverage: %7</source>
         <source>Optimized SSA with parameter-bound loop analysis</source>
         <translation>优化 SSA（含参数边界循环分析）</translation>
     </message>
+    <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>带表达式边界循环分析的优化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6609,8 +6613,16 @@ Progress does not establish equal loop counts or function results.</source>
         <translation>优化 SSA（含参数边界循环分析）</translation>
     </message>
     <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>带表达式边界循环分析的优化 SSA</translation>
+    </message>
+    <message>
         <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
         <translation>证明依据：每个计数周期都会到达相对于输入参数的共同出口。退出前仍可能发生未定义行为。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input-derived expression. Undefined behavior may occur before exit.</source>
+        <translation>证明：每个计数器循环都会到达相对于输入派生表达式的共同出口。退出前可能发生未定义行为。</translation>
     </message>
 </context>
 <context>

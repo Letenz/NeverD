@@ -258,6 +258,10 @@ class DockTabBar final : public KDDockWidgets::QtWidgets::TabBar {
 public:
   DockTabBar(KDDockWidgets::Core::TabBar *controller, QWidget *parent)
       : TabBar(controller, parent) {
+    // The library's local proxy can pick the native macOS style, bypassing
+    // our Fusion metrics and shrinking the close glyph. Inherit the workbench
+    // style; its animation hint keeps the library's tab-removal workaround.
+    setStyle(nullptr);
     connect(this, &QTabBar::currentChanged, this,
             [this] { updateCloseButtons(); });
   }

@@ -18,6 +18,14 @@
 
 namespace neverd::limits::emulation {
 
+/// Future regular-file objects, including generations whose names retire.
+inline constexpr uint32_t kMaxLinuxFileCreations = 64;
+/// Explicit parent grants and successful operations for each namespace policy.
+inline constexpr uint32_t kMaxLinuxFileRenameParents = 64;
+inline constexpr uint32_t kMaxLinuxFileRenames = 64;
+inline constexpr uint32_t kMaxLinuxFileUnlinkParents = 64;
+inline constexpr uint32_t kMaxLinuxFileUnlinks = 64;
+
 /// Offline stream and datagram connections admitted together.
 inline constexpr int kMaxNetworkConnections = 256;
 /// Receive and expected-send event entries admitted per connection.
@@ -103,6 +111,11 @@ inline constexpr int kDarwinImageInitializerRecordsLimit = 65536;
 // lib/emulation/os/linux/android/AndroidAuxv.cpp
 inline constexpr int
     kAndroidAuxvValidateAuxiliaryVectorOptionsAuxiliaryVectorSizeLimit = 128;
+
+// Bionic error text placement is model policy, not a library virtual address.
+inline constexpr uint64_t kAndroidErrorStringsBase = 0x7040000000;
+// Per-thread storage beyond dlerror and ABI TLS slots.
+inline constexpr uint64_t kAndroidErrorBufferOffset = 0x800;
 
 // lib/emulation/os/linux/android/AndroidCalendar.cpp
 inline constexpr int kAndroidCalendarValidateCalendarZNameSizeLimit = 32;

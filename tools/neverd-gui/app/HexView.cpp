@@ -604,10 +604,8 @@ void HexView::completeCopy() {
 }
 
 void HexView::wheelEvent(QWheelEvent *event) {
-  if (event->modifiers() & Qt::ControlModifier) {
-    Theme::instance().zoomCodeFont(event->angleDelta().y() > 0 ? 1 : -1);
+  if (wheel_.zoomCodeFont(*event, lineHeight_))
     return;
-  }
   QAbstractScrollArea::wheelEvent(event);
 }
 

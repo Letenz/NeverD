@@ -131,6 +131,15 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+`CallRegisterUnread` proves absent GPR input observations independently of
+argument inference. Opaque calls read every candidate family, and a nested
+call's may-write mask never kills a later input observation. Partial writes,
+exceptional entries, malformed successors and exhausted work remain conservative.
+Low-to-Med binds this evidence to the original direct-call occurrence and target;
+omitted-callee memoization includes it. Source scratch-restore liveness can cross
+only a still-matching call. Private-byte overwrite and escape checks stay in
+`MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
+
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.
 This keeps SSA promotion from recomputing whole-function dominance frontiers
@@ -369,7 +378,10 @@ feature availability. These operations preserve call argument setup and frame ta
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
-`AArch64AddressMemory.def` owns original ordinary-memory operations. Its GPR
+`AArch64AddressMemory.def` owns original ordinary-memory encodings and shapes.
+`AArch64AddressMemoryOperations.def` owns their identities, direction and
+register class. Its frozen scalar and vector lists occupy separate append
+positions, preserving previously published scalar and x86 identities. The GPR
 register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
 STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
 The raw index and original word remain one effectful operation through LowIR,
@@ -380,10 +392,21 @@ only their accessed data bytes, with no invented return value.
 Byte and halfword stores slice the encoded W value explicitly; the tracer
 requires those source bytes to be known before publishing the slice. Unknown
 unused upper bytes do not prevent a known narrow store.
+The SIMD/FP register-offset inventory also covers B/H/S/D/Q loads and stores
+with all four extensions and both encoded scales. A load publishes the encoded
+physical register view before explicitly zeroing its upper V bytes; a later
+S/D read across a branch cannot reuse an older scalar definition. V31 remains
+data, rather than acquiring X31's zero-register meaning. Stores consume only
+the selected vector bytes. Native LLVM and C use V17 for that data while
+keeping the base and index in separate GPRs. Validated scalar S/D loads also
+participate in the common floating-return inference. AAPCS64 interfaces use
+native float/double parameters only when the existing byte-demand proof
+establishes the scalar width; full vector inputs retain their wide LLVM type.
 The real load retains AddressAdd's access-EL checks and any internal
 AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
 The address is unknown to generic memory proofs, and discarding the result
-cannot discard the access or its possible fault. The scalar operations preserve local Z/P values. Validated loads also preserve
+cannot discard the access or its possible fault. The operations preserve local
+Z/P values only when their physical vector registers are disjoint. Validated loads also preserve
 earlier call arguments other than their explicit outputs.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
@@ -396,7 +419,8 @@ mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
 Swift receiver proofs consume a validated read with an explicit result, without
 granting purity or removing the access. Jump-table recovery
 requires the same control-independent address proof for every admitted physical
-slot and an exact table base/index identity. A monotonic address interval may
+slot and an exact table base/index identity. SIMD loads do not acquire the
+GPR table-transport proof. A monotonic address interval may
 certify the entire zero-extended W input domain without a branch proof; a full
 X input first needs an explicit zero-extension proof at the exact load use.
 Otherwise a complete native-width bound retains its compound unsigned path
@@ -422,8 +446,12 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Immediate, pre/post-index, pair and SIMD/FP ordinary-memory families remain
-unqualified for CPA2, as does controlled native execution with CPTA enabled.
+identity. Immediate, pre/post-index, pair and other ordinary-memory families
+remain unqualified for CPA2, as does controlled native execution with CPTA
+enabled. Native half and whole-vector C entry/return ABI and DWARF vector
+declarations remain separate, unqualified interfaces; integer bridges do not certify those native
+interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
+profile, and does not qualify native Apple SVE or LLVMC scalable carriers.
 The owner follows the pinned
 [Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
@@ -885,6 +913,39 @@ Schema 10 strictly gates `parameter_modular`. Saved validation rederives it;
 fresh native binding rejects changed parameters even when the changed graph
 still has a valid progress proof. CLI/SDK/worker/Qt only select or present this
 core contract, with no independent proof logic or new resource policy.
+`llvm-progress-ssa-v7` adds input-derived invariant expression bounds. The
+private `FlowInvariantBounds` helper observes only structurally validated,
+finite scalar graphs admitted by `LLVMFlowSemantics`. Its iterative memoized
+walk requires every dependency to terminate in parameters, constants or exact
+typed undef/poison leaves. Every PHI, freeze, control node and dependency cycle
+is a barrier, even in an unselected arm or outside the loop. It does not attempt
+general invariant analysis or duplicate LLVM verification. Fresh source binding
+remains the authority for authenticating saved attributes and expressions.
+
+For each admitted node, the helper caches its basis node identity and affine
+offset. Exact typed add/sub literal translations B+K, K+B and B-K are peeled
+with the source-width arithmetic and valid nowrap flag mask. K-B, casts and
+other operators can be complete bases but are not peeled. Different terminal
+nodes are not equated algebraically. Parameter translations remain whole nodes;
+the existing v6 proof is attempted first for **every** candidate counter in a
+group. Only if all legacy candidates fail may v7 allocate or charge its cache.
+Consequently existing-proof successes retain the same witnesses and charge
+sequence, including when the second comparison operand supplies the proof.
+
+Choose coherent fixed input/undef leaves: a pure freeze-free bound evaluates to
+a fixed B or UB/poison. Select can suppress an unselected poison operand; the
+argument concerns the resulting bound, not universal poison propagation.
+In coordinates X=counter-B, all strict EQ/NE guards over the same basis use the
+existing exact common-exit residue proof. Every recurrence arm must retain the
+same nonzero delta. Original entry inventories, complete PHIs, atomic backedge
+cuts, nested rounds and the final residual DAG check remain authoritative.
+No noundef, implicit freeze, trip count or normal-return promise is introduced.
+The cache charges initialization, visited nodes/edges, semantic bytes and affine
+normalization under the existing work/cancel allowance. Acceptance and rejection
+are both memoized, so shared DAG traversal is linear and independent of depth.
+Schema 11 gates `invariant_modular`; v1-v6 cannot accept it and retain exact
+saved encodings. All adapters expose this same derived core evidence.
+
 Fresh source binding first compares exact graph records. If LLVM PHI numbering
 changed, `FlowBinding` anchors every non-PHI operation in its existing order and
 block, then propagates a bidirectional map through ordered inputs. Every node
@@ -1399,6 +1460,14 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
+`IntegerCallArguments` adapts those placements to physical integer and stack
+positions. The LLVM call-contract owner maps them to actual operands using
+the call's recorded register-bank sizes and stack byte offsets. LLVMC shares
+that binding for record construction, scalar types and argument limits, so
+omitting unused register operands cannot shift a record's stack fields.
+Missing or ambiguous carriers fail before source emission.
+The small `LLVMCallContract` component owns metadata readers and writers for
+both backends; using it from C emission does not depend on machine lifting.
 Independent declaration providers use `types::importPrototypes` at generation
 time, through `neverd_types_convert` and the standalone CLI. It imports missing
 prototypes with their dependency closure, shares structurally identical types,
@@ -1409,6 +1478,14 @@ dependency closure; absent selected names and provider parse errors prevent
 an import. This owner
 is separate from the runtime priority merge of system and program types; the
 flattened generated headers add no provider merge during decompilation.
+When the runtime merge knows its Windows kernel provider, the `ntifs.h`
+opaque `PEPROCESS`/`PETHREAD` aliases can use a complete PDB executive record
+whose first member is the corresponding kernel prefix at offset zero. This
+preserves the [documented opaque pointer identity](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle)
+while recovering the program's actual members. Existing program typedefs,
+`PKPROCESS`/`PKTHREAD`, unrelated providers and incomplete or mismatched records
+keep their original identity. The shared type library owns this association;
+both source emitters and the local-type views consume it.
 Callback types retain their source calling convention when local declarations
 become `NdType` values. The lightweight `CallingConvention.h` and existing
 `CallingConventions.def` own that identity; CodeView imports share one mapping.
@@ -7958,9 +8035,23 @@ duplicate conversion rules for checked imports, dynamic providers, SDK or CLI.
 Fortify paths requiring unmodeled process-abort effects stop before publishing
 output. Existing memory, deadline and representable-result limits still apply.
 
+`AndroidStrings` owns bounded copies, including `strlcpy` source scanning,
+termination and atomic refusal. `__read_chk` owns only the Bionic extent checks;
+descriptor state and suspended reads stay in the shared Linux read owner.
+Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
+`fstatat` service rather than duplicating pathname resolution or status layouts.
+All these entries retain the common dynamic-provider lifetime boundary.
+
+`AndroidQueries` owns Bionic error text: one pinned process catalog and a
+separate reusable buffer in each guest thread's TLS allocation. Image setup
+creates the catalog for static imports and declared dynamic providers. Known
+lookups return a borrowed pointer; only unknown formatting performs a guest
+write. Placement policy lives with the emulation limits, and no host locale or
+libc owns guest-visible text or lifetime.
+
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
-Mutable bytes are one object per granted catalogue path; independent opens
+Mutable bytes belong to stable file objects; independent opens
 have independent offsets, while dup shares its open description. Without a metadata provider, mutation
 invalidates captured stat observations, retaining only unchanged block-size
 facts for libc buffer selection. Opt-in tracked memory files keep complete
@@ -7974,6 +8065,19 @@ metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
 the common string owner with bounded linear search and provider lifetime checks.
 See [directory creation contracts](android-directory-creation.md).
+
+`LinuxFiles` also owns the explicit file creation, rename and unlink grants.
+`LinuxFileMutation` maintains live names separately from object keys; creation
+uses unique internal keys, while initial objects keep their original keys.
+Descriptions, mutable bytes, write reservations and metadata attach to those
+objects. Directory entries, status, proc FD links and fdinfo resolve the same
+names, so pathname reuse cannot revive the previous object's inode or grant.
+Retired objects retain their charged reservation. Input validation bounds all
+creation generations and shared file bytes before execution; JSON only imports
+the options. Namespace checks and clock availability precede publication.
+`LinuxFilePaths` owns open's component walk and its directory-FD origin;
+creation must not recheck ancestors already outside that walk. Unsupported
+mapping, link, open-parent and replacement lifetimes remain explicit boundaries.
 
 `LinuxFiles` also owns explicit device open descriptions in the file/link
 namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
@@ -8231,6 +8335,15 @@ the scheduler records a per-thread continuation at the import's post-trap PC
 and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
 restored raw result, including guest edits, to errno/-1. A guest PC redirect
 bypasses that adapter without fabricating a returned native-call event.
+`AndroidEnvironment` owns Bionic lookup over an explicitly supplied guest
+environment vector. It reads live guest storage through the existing bounded
+memory helpers and returns borrowed value pointers. Imported and named calls,
+constructors and threads use that same owner; no host string map, cached
+environment copy or additional process state is maintained. The vector's
+presence is a public input fact, while pointer validity is checked only when
+the API needs to read it. Linux ELF startup still owns its independent initial
+stack construction; there is no kernel getenv service.
+
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use
@@ -11660,3 +11773,20 @@ Entry-stack offset recovery accepts a narrower scalar displacement only when
 its nonnegative value is independent of sign or zero extension. Pointer
 provenance and negative narrow constants cannot certify a frame offset. The
 same proof supplies stack annotations and saved-register recovery.
+
+Shared source stack preparation rejects exact entry-relative loads reached by
+an x86 CALL return-slot write that the reconstructed C frame does not contain.
+It reuses the ABI owner's current-SP walk and original call/jump encoding
+policy; a synthetic tail call supplies no push. Explicit later stores kill only
+the bytes they write on each incoming path. Unknown call positions, incomplete
+candidate graphs and exhausted observation budgets cannot grant separation.
+Both source routes receive the same conversion diagnostic before cleanup can
+forward an old constant. This guard neither materializes a relocatable return
+PC nor certifies unresolved addresses, callee memory effects or other targets.
+
+The shared entry-stack offset proof follows the lifter's exact zero-extension
+of a native 32-bit address into its 64-bit memory-address container. It does
+not authenticate a wider incoming SP, a signed extension, a truncated 64-bit
+pointer or an ambiguous definition. Alignment rewrites keep their existing
+native-width rules. Source call-slot observation therefore sees the same frame
+bytes for direct pointer-width addresses and canonical widened addresses.

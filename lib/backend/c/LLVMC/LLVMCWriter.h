@@ -26,6 +26,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/libc/LibCRecordArguments.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolDecoration.h"
 
@@ -104,6 +105,9 @@ public:
   const FunctionSym *sourceImportCallee(const llvm::CallBase &Call) const;
   bool groupedFloatingCall(const llvm::CallBase &Call,
                            const FunctionSym &Function) const;
+  std::optional<libc::RecordCallArguments>
+  recordCallArguments(const llvm::CallBase &Call,
+                      const FunctionSym &Function) const;
   std::string sourceImportDeclaration(const FunctionSym &Function,
                                       llvm::StringRef Name);
   std::map<std::string, FunctionSym> SourceImportPrototypes;

@@ -424,6 +424,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           return invalid(Name);
         Out.Properties.emplace(Key.str(), std::move(*S));
       }
+    } else if (Name == field::EnvironmentVector) {
+      auto Address = number(V, Name);
+      if (!Address)
+        return Address.takeError();
+      Out.EnvironmentVector = *Address;
     } else if (Name == field::AuxiliaryVector) {
       const auto *Entries = V.getAsArray();
       if (!Entries)

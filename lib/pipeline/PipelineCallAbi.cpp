@@ -120,6 +120,9 @@ OmittedCalleeMemo::readAt(const PipelineResult &Result, va_t Key) {
   if (const auto It = Result.CallEntryReadGPRs.find(Key);
       It != Result.CallEntryReadGPRs.end())
     Read.EntryReads = It->second;
+  if (const auto It = Result.CallUnreadGPRs.find(Key);
+      It != Result.CallUnreadGPRs.end())
+    Read.Unread = It->second;
   const auto &StackArgs = omittedCalleeStackArgs(Result);
   if (const auto It = StackArgs.find(Key); It != StackArgs.end())
     Read.StackArgs = It->second;
@@ -499,6 +502,7 @@ public:
       Converter.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
       Converter.setCallExitConstants(&Result.CallExitConstants);
       Converter.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
+      Converter.setCallUnreadGPRs(&Result.CallUnreadGPRs);
       Converter.setCallArgumentSources(&Result.CallArgumentSources);
       Converter.setCallEntryStackArgs(&omittedCalleeStackArgs(Result));
       Converter.setCallEntryStackSlots(&omittedCalleeStackSlots(Result));

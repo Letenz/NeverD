@@ -23,6 +23,10 @@ user's current instructions.
 For other products, use the general guidance without importing NeverD's palette
 or screen dimensions.
 
+For macOS Qt work, also read [macOS rendering and input](references/macos-qt.md)
+for platform font sizes, menu defaults, precision scrolling, Retina captures
+and native test limits.
+
 Before producing UI output, confirm you know: target platform, screen geometry, design system, content priority, viewing distance, locale, and input methods. Run the seven items below as a check against the conversation and the project state; ask only the items that are genuinely missing. When the user cannot answer an item, choose a sensible Qt default and name it in your response so the user can correct it.
 
 Small edits to an existing design — for example *"move the OK button to the right"*, *"change this label"*, *"make this red"* — do not trigger the checklist. Apply section 1 silently and verify section 2 (contrast, hit-target) where relevant.

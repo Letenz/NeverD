@@ -6473,6 +6473,10 @@ Cobertura: %7</translation>
         <source>Optimized SSA with parameter-bound loop analysis</source>
         <translation>SSA optimizada con análisis de bucles con límite paramétrico</translation>
     </message>
+    <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles limitados por expresiones</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6645,8 +6649,16 @@ La terminación no demuestra que coincidan los números de iteraciones ni los re
         <translation>SSA optimizada con análisis de bucles con límite paramétrico</translation>
     </message>
     <message>
+        <source>Optimized SSA with expression-bound loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles limitados por expresiones</translation>
+    </message>
+    <message>
         <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
         <translation>Prueba: cada ciclo del contador alcanza una salida común relativa a un parámetro de entrada. Puede producirse un comportamiento indefinido antes de salir.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input-derived expression. Undefined behavior may occur before exit.</source>
+        <translation>Demostración: cada ciclo del contador alcanza una salida común relativa a una expresión derivada de las entradas. Puede producirse comportamiento indefinido antes de salir.</translation>
     </message>
 </context>
 <context>

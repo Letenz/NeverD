@@ -65,8 +65,6 @@ inline constexpr int kQuickStartDialogMaximumSideWidth = 440;
 inline constexpr qreal kStyledTextGridTolerance = 0.01;
 
 // tools/neverd-gui/app/Theme.cpp
-inline constexpr int kThemeDefaultUiPointSize = 10;
-inline constexpr int kThemeDefaultCodePointSize = 10;
 inline constexpr int kThemeMinimumCodePointSize = 6;
 inline constexpr int kThemeMaximumCodePointSize = 48;
 
@@ -119,6 +117,9 @@ inline constexpr qreal kGraphViewArrowHalfWidth = 4.5;
 
 // tools/neverd-gui/app/HexView.cpp
 inline constexpr int kHexViewMargin = 6;
+
+// tools/neverd-gui/app/WheelInput.cpp
+inline constexpr int kTextViewWheelLinesPerNotch = 3;
 
 // tools/neverd-gui/app/ListingView.cpp
 inline constexpr int kListingViewPrefetchMargin = 80;
