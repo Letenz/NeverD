@@ -35,6 +35,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/med/AArch64/AArch64SVEState.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedRawEnvironment.h"
@@ -791,6 +792,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
           if (isAArch64ExceptionReturnIntrinsic(Id))
             throw std::runtime_error(kAArch64ExceptionReturnUnsupported);
+          if (const char *Reason = x86NonlocalControlTransferReason(Id))
+            throw std::runtime_error(Reason);
           if (isAArch64AddressMemoryIntrinsic(Id)) {
             if (TheArch != Arch::AArch64 ||
                 !aarch64AddressMemoryMedShapeIsValid(Op))

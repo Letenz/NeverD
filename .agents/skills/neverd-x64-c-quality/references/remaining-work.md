@@ -44,7 +44,11 @@ Full-state x86 interrupt/far returns and kernel context-switch exits remain
 open. An ordinary C return, a bare `iret` assembly statement, or an opaque call
 with only a stack-pointer operand loses observable machine state. The latest
 SDK must be inspected for the required state contract instead of assuming a
-newer intrinsic inventory closes this gap. Known fixed argument positions now
+newer intrinsic inventory closes this gap. SYSENTER/SYSEXIT/SYSRET and RSM now
+retain the same explicit refusal in permissive decoding and both source
+routes; old RSM/SYSEXITQ/SYSRETQ IR cannot bypass it through direct emission.
+This closes an incorrect-success path, not the missing state-transfer model.
+Known fixed argument positions now
 survive an interior stack-setup gap, including selected LLVMC recovery; missing
 values remain explicit rather than becoming zero. Unknown incoming stack-pointer
 escapes still prevent a complete stack-argument bound: do not cap calls

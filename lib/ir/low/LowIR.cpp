@@ -10,6 +10,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 
@@ -71,6 +72,8 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
   if (isAArch64ExceptionReturnIntrinsic(Id))
     return invalid(kAArch64ExceptionReturnUnsupported);
+  if (const char *Reason = x86NonlocalControlTransferReason(Id))
+    return invalid(Reason);
   // The lifter publishes PACM as a pending instruction prefix. CFG resolves
   // its executed successor before MedIR, where this marker is not admissible.
   if (Id == Intrinsic::A64_PACMPending) {
