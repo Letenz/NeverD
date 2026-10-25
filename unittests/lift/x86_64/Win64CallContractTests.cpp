@@ -4359,6 +4359,16 @@ BinaryImage registerQueryImage(unsigned Mutation = 0) {
   Caller.insert(Caller.end(), {0x4C, 0x31, 0xC0, // xor rax,r8
                                0x48, 0x31, 0xC8, // xor rax,rcx
                                0x48, 0x83, 0xC4, 0x28, 0xC3});
+  if (Mutation == 9) {
+    Caller.erase(Caller.begin() + 12, Caller.begin() + 15);
+    Caller.insert(Caller.begin() + 12, {0x0F, 0xB6, 0xD5,   // movzx edx,ch
+                                        0x48, 0x31, 0xD0}); // xor rax,rdx
+  } else if (Mutation == 10) {
+    std::vector<uint8_t> Again{0xE8};
+    const auto Next = rel32(Text + 14, Producer);
+    Again.insert(Again.end(), Next.begin(), Next.end());
+    Caller.insert(Caller.begin() + 9, Again.begin(), Again.end());
+  }
   if (Mutation == 7)
     Caller.insert(Caller.end() - 5, {0x48, 0x8B, 0x44, 0x24, 0xF8});
   put(Code, Text, Caller);
@@ -4395,50 +4405,55 @@ BinaryImage registerQueryImage(unsigned Mutation = 0) {
 TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
-    for (bool LLVM : {false, true})
-      for (bool NoOpt : {false, true}) {
-        SCOPED_TRACE(static_cast<unsigned>(Format));
-        SCOPED_TRACE(LLVM);
-        SCOPED_TRACE(NoOpt);
-        auto Image = registerQueryImage();
-        Image.Format = Format;
-        llvm::LLVMContext Context;
-        PipelineOptions Options;
-        Options.EmitDumpOutput = false;
-        Options.OnlyFunctionEntries = {Text};
-        Options.LiftMode = LLVM;
-        Options.SourceProjection = true;
-        Options.NoOpt = NoOpt;
-        auto Result = Pipeline().run(Image, Context, Options);
-        ASSERT_TRUE(Result.Success) << Result.Error;
-        std::string Source;
-        llvm::raw_string_ostream Output(Source);
-        CEmitterOptions COptions;
-        COptions.TheArch = Image.Arch;
-        // Recover the original format's ABI, then emit GNU intrinsics for
-        // this host execution oracle. The image and recovered IR stay intact.
-        COptions.Format = BinaryFormat::ELF;
-        COptions.Image = &Image;
-        if (LLVM) {
-          ASSERT_TRUE(Result.LlvmModule);
-          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
-          ASSERT_TRUE(
-              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
-        } else
-          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
-        ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-        unsigned Queries = 0, Calls = 0;
-        for (const auto &Function : Result.MedFuncs)
-          for (const auto &Block : Function.Blocks)
-            for (const auto &Op : Block.Ops) {
-              Calls += Op.Opcode == NdOp::CALL;
-              Queries += Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
-                         Op.Inputs[0].isConst() &&
-                         Op.Inputs[0].ConstVal == unsigned(Intrinsic::Cpuid);
-            }
-        EXPECT_EQ(Calls, 0u);
-        EXPECT_EQ(Queries, 1u);
-        const std::string Oracle = R"(
+    for (unsigned Mutation : {0u, 9u, 10u}) {
+      auto Image = registerQueryImage(Mutation);
+      Image.Format = Format;
+      PipelineAnalysisCache Cache;
+      for (bool LLVM : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Format));
+          SCOPED_TRACE(LLVM);
+          SCOPED_TRACE(NoOpt);
+          SCOPED_TRACE(Mutation);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text};
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = true;
+          Options.AnalysisCache = &Cache;
+          Options.NoOpt = NoOpt;
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          // Recover the original format's ABI, then emit GNU intrinsics for
+          // this host execution oracle. The image and recovered IR stay intact.
+          COptions.Format = BinaryFormat::ELF;
+          COptions.Image = &Image;
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+            ASSERT_TRUE(
+                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+          } else
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+          unsigned Queries = 0, Calls = 0;
+          for (const auto &Function : Result.MedFuncs)
+            for (const auto &Block : Function.Blocks)
+              for (const auto &Op : Block.Ops) {
+                Calls += Op.Opcode == NdOp::CALL;
+                Queries += Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                           Op.Inputs[0].isConst() &&
+                           Op.Inputs[0].ConstVal == unsigned(Intrinsic::Cpuid);
+              }
+          EXPECT_EQ(Calls, 0u);
+          EXPECT_EQ(Queries, Mutation == 10 ? 2u : 1u);
+          std::string Oracle = R"(
 int main(void) {
   unsigned a = 0, b, c = 0, d;
   __asm__ volatile("cpuid" : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
@@ -4447,11 +4462,17 @@ int main(void) {
   return (uint64_t)observe_cpu_words() != expected;
 }
 )";
-        for (llvm::StringRef Level : {"-O0", "-O2"})
-          source_call_execution_test::compileAndRun(
-              Source + Oracle,
-              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
-      }
+          if (Mutation == 9) {
+            const std::string Whole = "(c ^ UINT32_C(0xFEDCBA98))";
+            Oracle.replace(Oracle.find(Whole), Whole.size(),
+                           "(((c ^ UINT32_C(0xFEDCBA98)) >> 8) & 255)");
+          }
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Oracle,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+    }
 }
 
 TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
