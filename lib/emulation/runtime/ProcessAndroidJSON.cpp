@@ -401,8 +401,38 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       mobile::dalvik::AndroidApplicationSnapshot Snapshot;
       bool HasPhase = false;
       for (const auto &[Key, Value] : *Input) {
-        if (Key == field::ApplicationLoaderPaths ||
-            Key == field::SystemLoaderPaths) {
+        if (Key == field::ApplicationInitialMainQueue) {
+          const auto *Queue = Value.getAsObject();
+          if (!Queue || !Queue->getBoolean("blocked"))
+            return invalid(Key);
+          for (const auto &Member : *Queue)
+            if (Member.first != "blocked" &&
+                Member.first != field::ApplicationQueueNativeCallbacksEmpty)
+              return invalid(Key);
+          auto &State = Snapshot.initial_main_queue.emplace();
+          State.blocked = *Queue->getBoolean("blocked");
+          if (const auto *Callbacks =
+                  Queue->get(field::ApplicationQueueNativeCallbacksEmpty)) {
+            const auto Empty = Callbacks->getAsBoolean();
+            if (!Empty)
+              return invalid(Key);
+            State.native_callbacks_empty = *Empty;
+          }
+          continue;
+        } else if (Key == field::ApplicationMessagePoolEmpty) {
+          auto Empty = Value.getAsBoolean();
+          if (!Empty)
+            return invalid(Key);
+          Snapshot.initial_message_pool_empty = *Empty;
+          continue;
+        } else if (Key == field::ApplicationMainLooperPrepared) {
+          auto Prepared = Value.getAsBoolean();
+          if (!Prepared)
+            return invalid(Key);
+          Snapshot.main_looper_prepared = *Prepared;
+          continue;
+        } else if (Key == field::ApplicationLoaderPaths ||
+                   Key == field::SystemLoaderPaths) {
           const auto *Paths = Value.getAsObject();
           if (!Paths || Paths->size() != 3)
             return invalid(Key);
@@ -638,6 +668,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       }
       try {
         mobile::dalvik::validateAndroidClassLoaderPaths(Snapshot);
+        mobile::dalvik::validateAndroidMessageQueue(Snapshot);
       } catch (const mobile::Error &) {
         return invalid(field::ApplicationSnapshot);
       }
@@ -1003,6 +1034,23 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
         {field::ApplicationInstrumentation,
          F.instrumentation ? llvm::json::Value(bits(*F.instrumentation))
                            : nullptr}};
+    if (F.main_message_queue) {
+      const auto &Queue = *F.main_message_queue;
+      llvm::json::Array Messages;
+      for (const auto &Message : Queue.messages)
+        Messages.push_back(
+            llvm::json::Object{{"identity", bits(Message.identity)},
+                               {"target", bits(Message.target)},
+                               {"callback", bits(Message.callback)},
+                               {"next", bits(Message.next)},
+                               {"when", Message.when},
+                               {"flags", Message.flags}});
+      Framework[field::JavaMainMessageQueue] =
+          llvm::json::Object{{"identity", bits(Queue.identity)},
+                             {"blocked", Queue.blocked},
+                             {"complete", Queue.complete},
+                             {"messages", std::move(Messages)}};
+    }
     llvm::json::Array Classes;
     for (const auto &C : State.classes)
       Classes.push_back(llvm::json::Object{

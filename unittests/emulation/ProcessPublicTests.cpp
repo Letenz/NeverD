@@ -3837,6 +3837,121 @@ TEST_F(ProcessPublic, AndroidApplicationValuesMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidMessageQueuesMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const char *Diagnostics[] = {nullptr,
+                               "native callback state is not empty or known",
+                               "native callback state is not empty or known",
+                               "blocking wait is unmodeled",
+                               "MessageQueue state is not supplied",
+                               "Message pool state is not supplied",
+                               "no explicit linux_time input",
+                               "MessageQueue.nativeWake is unmodeled"};
+  for (const char *Variant :
+       {"message_queue-O0-none", "message_queue-O2-relr"}) {
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string(Variant) + ".so"))
+               .string();
+    for (unsigned Case = 0; Case != 8; ++Case) {
+      SCOPED_TRACE(Variant);
+      SCOPED_TRACE(Case);
+      auto Request = llvm::cantFail(llvm::json::parse(R"({
+        "backend":"unicorn","instruction_quantum":7,
+        "instruction_limit":50000,"event_limit":5000,
+        "linux_time":{"advance_on_idle":true,
+          "clocks":[{"id":1,"seconds":10,"nanoseconds":123456789}]},
+        "android":{"entry_symbol":"message_queue","initialize":false,"jni":true,
+          "observe_java_state":true,"observe_memory_on_failure":true,
+          "read_memory":[{"address":"0x20000000","size":4096}],
+          "application_snapshot":{"phase":"unattached","main_looper_prepared":true,
+            "initial_message_pool_empty":true,
+            "initial_main_queue":{"blocked":false,"native_callbacks_empty":true}}}})"));
+      auto &OptionsObject = *Request.getAsObject();
+      auto &Android = *OptionsObject.getObject(field::Android);
+      auto &Snapshot = *Android.getObject(field::ApplicationSnapshot);
+      auto &Initial = *Snapshot.getObject(field::ApplicationInitialMainQueue);
+      if (Case == 1)
+        Initial.erase(field::ApplicationQueueNativeCallbacksEmpty);
+      if (Case == 2)
+        Initial[field::ApplicationQueueNativeCallbacksEmpty] = false;
+      if (Case == 5)
+        Snapshot.erase(field::ApplicationMessagePoolEmpty);
+      if (Case == 6)
+        OptionsObject.erase(field::LinuxTime);
+      if (Case == 7)
+        Initial["blocked"] = true;
+      Android[field::Arguments] =
+          llvm::json::Array{"0x20000000", Case == 3   ? 1
+                                          : Case == 4 ? 2
+                                                      : 0};
+      std::vector<uint8_t> Expected(4096, 0xa5);
+      Android[field::Memory] = llvm::json::Array{
+          llvm::json::Object{{field::Address, "0x20000000"},
+                             {field::Size, 4096},
+                             {"bytes_hex", llvm::toHex(Expected, true)}}};
+      const auto Options = jsonText(OptionsObject);
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+      const auto *Report = Parsed.getAsObject();
+      ASSERT_NE(Report, nullptr);
+      ASSERT_EQ(Report->getString(field::Stop),
+                Case ? "unsupported_service" : "returned");
+      if (Case) {
+        EXPECT_EQ(*Report->get(field::ReturnValue), llvm::json::Value(nullptr));
+        ASSERT_TRUE(Report->getString(field::Diagnostic));
+        EXPECT_NE(Report->getString(field::Diagnostic)->find(Diagnostics[Case]),
+                  llvm::StringRef::npos);
+      } else {
+        EXPECT_EQ(Report->getString(field::ReturnValue), "0");
+      }
+      if (Case == 0 || Case == 3)
+        for (unsigned I = 0; I != 8; ++I)
+          llvm::support::endian::write64le(Expected.data() + I * 8,
+                                           I == 7 ? 73 : 1);
+      const auto *Observed = Report->getObject(field::Android);
+      ASSERT_NE(Observed, nullptr);
+      const auto *Memory = Observed->getArray(field::Memory);
+      ASSERT_NE(Memory, nullptr);
+      ASSERT_EQ(Memory->size(), 1u);
+      EXPECT_EQ(Memory->front().getAsObject()->getString(field::Bytes),
+                llvm::toHex(Expected, true));
+      const auto *Java = Observed->getObject(field::JavaState);
+      ASSERT_NE(Java, nullptr);
+      const auto *Framework = Java->getObject(field::JavaFramework);
+      ASSERT_NE(Framework, nullptr);
+      const auto *Queue = Framework->getObject(field::JavaMainMessageQueue);
+      ASSERT_NE(Queue, nullptr);
+      EXPECT_EQ(Queue->getBoolean("complete"), true);
+      EXPECT_EQ(Queue->getBoolean("blocked"), Case == 7);
+      const auto *Messages = Queue->getArray("messages");
+      ASSERT_NE(Messages, nullptr);
+      EXPECT_EQ(Messages->size(), Case == 1 || Case == 2 || Case == 4 ? 2u
+                                  : Case == 7                         ? 1u
+                                                                      : 0u);
+      for (const auto &Message : *Messages) {
+        const auto *Value = Message.getAsObject();
+        ASSERT_NE(Value, nullptr);
+        EXPECT_EQ(Value->getString("callback"), "0");
+        EXPECT_EQ(Value->getInteger("flags"), 1);
+        EXPECT_EQ(Value->getInteger("when"), 10123);
+      }
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                Case ? process_cli::Incomplete : process_cli::Success);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidJNIObjectsAndThreadsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android fixtures unavailable";

@@ -11498,6 +11498,13 @@ boundary and heap; native thread detach never resets that process state. JSON
 supplies an optional snapshot, not inferred initialization or a second object
 owner. See [application snapshots](android-application-runtime.md) for the
 admitted methods, loader namespace and unsupported lifecycle transitions.
+AndroidFramework owns the prepared main queue's head; Message links and data
+remain ordinary fields in the shared heap. Posting and read-only snapshots
+consume that one list. RuntimeServices transports uptime observations from the
+existing LinuxClock, with cumulative ExecutionBudget accounting; it introduces
+no independent clock. The intrinsic catalog records final methods so Program
+admission can reject conflicting supplied declarations. Handler's virtual
+sendMessageAtTime override remains an explicit execution boundary.
 Program registers framework field ownership by declaration identity, independent
 of supplied source metadata. Runtime routes those instance fields to the same
 AndroidFramework state as library getters. Instrumentation starts from explicit
@@ -11965,3 +11972,13 @@ String arrays; per-result arrays are independently allocated in the shared
 heap, and JNI/DEX field and element writes retain reference identity. Missing
 paths are not inferred from sourceDir or the other array field, and no split APK bytes, package parsing
 or service execution are implied.
+
+Android message removal belongs to the same Dalvik framework owner as posting
+and queue inspection. Its private head and real Message fields are authoritative;
+JNI getters create ordinary references to these identities. A declared empty
+native callback set admits only a nonblocking initial poll and immediately due
+removal. The shared monotonic service supplies uptime, and the common Dalvik
+message-count limit bounds traversal. Unsupported waits or malformed state
+cannot partially unlink a message. Retrieval does not dispatch a callback or
+create a Java thread; JNI access to package-private next does not make that
+method public to application DEX.

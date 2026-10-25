@@ -16,6 +16,81 @@ shared Java heap. JNI and DEX use the same objects and methods. This is an
 explicit analysis input, not discovery of the installed application or execution
 of the Android framework's startup code.
 
+`main_looper_prepared` supplies stable API 28 `Looper.sMainLooper` state,
+independent of the Application phase. Omission is unknown, `false` returns
+null, and `true` retains one Looper and its MessageQueue identity.
+`Handler(Looper)` copies that exact queue and Looper into ordinary final
+instance fields, with null callback and synchronous delivery mode.
+A null constructor argument throws
+`NullPointerException`. JNI and DEX share these fields and identities.
+JNI `AllocObject` instead retains ordinary zero fields: its Looper has a known
+null queue, and its unconstructed Handler has a null Looper. An object without
+modeled queue storage remains unsupported. This projection does not run
+`prepareMainLooper` or assign a Java thread. Posting requires the additional
+state below; callback dispatch still requires separate execution.
+
+`Handler.post(Runnable)` admits an explicitly empty initial Message pool
+(`initial_message_pool_empty: true`) and main queue
+(`initial_main_queue: {"blocked": false}`, requiring
+`main_looper_prepared: true`). Missing state is unknown; a declared nonempty
+pool remains unsupported. These declarations are initial conditions, not fixed
+responses: each post allocates a distinct Message, retains its exact Handler and
+nullable Runnable, and changes the shared heap-linked queue. Message defaults
+include sendingUid -1. Equal nonzero deadlines preserve insertion order; zero
+goes to the front. At most 1024 pending messages are admitted.
+
+The native profile reads uptime through its existing Linux monotonic clock,
+including instruction and idle advancement. No second timestamp input or host
+clock is used. Standalone Runtime callers provide the same capability through
+`RuntimeServices::uptime_milliseconds`; omission stops at the clock boundary.
+Negative or overflowing native nanosecond observations remain unsupported.
+
+The final post declaration cannot be overridden by supplied DEX. Its virtual
+sendMessageAtTime boundary is preserved: supplied overrides stop explicitly
+until their invocation is modeled. A null queue stops at its logging boundary.
+An initially blocked queue enqueues, then stops at unmodeled nativeWake; the
+partial queue remains observable and is not reported as a successful post.
+The read-only `java_state.framework.main_message_queue` report traverses actual
+Message fields and marks malformed or cyclic lists incomplete. It contains
+model object identities, not JNI handles. Queue retention survives native thread
+detach. No accepted post executes the Runnable, creates a Java thread, removes
+messages, or implies startup completion. Message recycling, arbitrary initial
+queues, Looper dispatch, and Java monitor scheduling remain outside this scope.
+
+The independently written model follows API 28
+[Handler](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Handler.java),
+[Message](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Message.java),
+[MessageQueue](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/MessageQueue.java),
+and [SystemClock](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/libutils/SystemClock.cpp).
+Framework source bodies are not embedded in NeverD.
+
+`Looper.getQueue()`, `Message.getTarget()` and `Message.getCallback()` read
+the same retained typed fields as JNI and DEX. Their results are actual
+references, including known null fields of ordinary allocated objects.
+`MessageQueue.next()` is package-private in API 28. The modeled JNI method
+lookup can call it; ordinary application DEX invocation is explicitly
+unsupported rather than admitting it as a public framework method.
+
+Taking a message requires `initial_main_queue.native_callbacks_empty: true`
+in addition to the known initial queue. This input declares that the native
+poll with timeout zero has no callbacks, timers or descriptor listeners.
+Omission remains unknown and false remains unsupported. The model reads the
+shared uptime clock, validates the bounded retained chain, and removes only
+an immediately due message. A head synchronization barrier selects the first
+following asynchronous message; a future first candidate does not permit
+skipping to a later ready message. Removal clears its next link, marks it in
+use and clears the queue's blocked state without executing its callback.
+Unknown native state, malformed links, unknown fields and work exhaustion
+leave the queue links unchanged. Inspection, posting and removal use the
+single message-count policy in `neverd/dalvik/Limits.h`.
+
+Empty or delayed queues still stop at the unmodeled blocking/idle boundary;
+they do not return a fabricated null. Quit/dispose, recycling, idle handlers,
+native polling with callbacks and full `Looper.loop()` dispatch remain
+unmodeled. Returning a live message does not establish Android startup or
+callback execution. These semantics follow the API 28 sources cited above
+and [Looper](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Looper.java).
+
 ```json
 {
   "android": {

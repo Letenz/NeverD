@@ -2531,6 +2531,114 @@ TEST(ProcessReport, AndroidPackageInfoQueriesHaveStrictKeysAndOptionalFields) {
     }
   }
 }
+TEST(ProcessReport, AndroidHandlerPostRequiresExplicitPoolAndQueueState) {
+  auto wrap = [](std::string extra) {
+    return R"({"android":{"jni":true,"application_snapshot":{"phase":"unattached",)" +
+           extra + "}}}";
+  };
+  for (const char *blocked : {"true", "false"}) {
+    auto parsed = processOptionsFromJSON(wrap(
+        std::string(
+            R"("main_looper_prepared":true,"initial_main_queue":{"blocked":)") +
+        blocked + R"(},"initial_message_pool_empty":true)"));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    const auto &input = *parsed->Android->Application;
+    EXPECT_EQ(input.initial_message_pool_empty, true);
+    ASSERT_TRUE(input.initial_main_queue);
+    EXPECT_EQ(input.initial_main_queue->blocked,
+              std::string_view(blocked) == "true");
+    EXPECT_FALSE(input.initial_main_queue->native_callbacks_empty.has_value());
+  }
+  for (
+      auto input :
+      {R"("initial_main_queue":{"blocked":false})",
+       R"("main_looper_prepared":false,"initial_main_queue":{"blocked":false})",
+       R"("main_looper_prepared":true,"initial_main_queue":{})",
+       R"("main_looper_prepared":true,"initial_main_queue":{"blocked":0})",
+       R"("main_looper_prepared":true,"initial_main_queue":{"blocked":false,"empty":true})",
+       R"("main_looper_prepared":true,"initial_main_queue":null)",
+       R"("initial_message_pool_empty":null)",
+       R"("initial_message_pool_empty":1)"}) {
+    auto parsed = processOptionsFromJSON(wrap(input));
+    EXPECT_FALSE(bool(parsed)) << input;
+    llvm::consumeError(parsed.takeError());
+  }
+  auto nonempty =
+      processOptionsFromJSON(wrap(R"("initial_message_pool_empty":false)"));
+  ASSERT_TRUE(bool(nonempty)) << llvm::toString(nonempty.takeError());
+  EXPECT_EQ(nonempty->Android->Application->initial_message_pool_empty, false);
+  ProcessResult result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  result.JavaState.emplace();
+  auto &queue = result.JavaState->framework.main_message_queue.emplace();
+  queue.identity = 0x17;
+  queue.blocked = true;
+  queue.complete = false;
+  queue.messages.push_back({0x20, 0x11, 0x12, 0x20, -1, 3});
+  auto encoded = llvm::cantFail(llvm::json::parse(processResultJSON(result)));
+  const auto *out = encoded.getAsObject()
+                        ->getObject("android")
+                        ->getObject("java_state")
+                        ->getObject("framework")
+                        ->getObject("main_message_queue");
+  ASSERT_NE(out, nullptr);
+  EXPECT_EQ(out->getString("identity"), "17");
+  EXPECT_EQ(out->getBoolean("blocked"), true);
+  EXPECT_EQ(out->getBoolean("complete"), false);
+  const auto *message = out->getArray("messages")->front().getAsObject();
+  EXPECT_EQ(message->getString("identity"), "20");
+  EXPECT_EQ(message->getString("callback"), "12");
+  EXPECT_EQ(message->getString("next"), "20");
+  EXPECT_EQ(message->getInteger("when"), -1);
+  EXPECT_EQ(message->getInteger("flags"), 3);
+}
+
+TEST(ProcessReport, AndroidQueueNativeCallbacksRemainAnExplicitBoolean) {
+  auto wrap = [](std::string value) {
+    return R"({"android":{"jni":true,"application_snapshot":{"phase":"unattached","main_looper_prepared":true,"initial_main_queue":{"blocked":false,"native_callbacks_empty":)" +
+           value + "}}}}";
+  };
+  for (const char *value : {"true", "false"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    ASSERT_TRUE(parsed->Android->Application->initial_main_queue);
+    EXPECT_EQ(parsed->Android->Application->initial_main_queue
+                  ->native_callbacks_empty,
+              std::string_view(value) == "true");
+  }
+  for (const char *value : {"null", "0", "1", R"("true")", "{}", "[]",
+                            R"(true,"unexpected":false)"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    EXPECT_FALSE(bool(parsed)) << value;
+    llvm::consumeError(parsed.takeError());
+  }
+}
+TEST(ProcessReport, AndroidMainLooperRequiresAnExplicitBoolean) {
+  for (const auto *phase : {"unattached", "attached", "application"}) {
+    auto wrap = [&](const std::string &value) {
+      return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                         "\"phase\":\"") +
+             phase + "\"" +
+             (value.empty() ? "" : ",\"main_looper_prepared\":" + value) +
+             "}}}";
+    };
+    for (const auto *value : {"", "true", "false"}) {
+      auto parsed = processOptionsFromJSON(wrap(value));
+      ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+      const auto &state = parsed->Android->Application->main_looper_prepared;
+      EXPECT_EQ(state.has_value(), std::string_view(value) != "");
+      if (state)
+        EXPECT_EQ(*state, std::string_view(value) == "true");
+    }
+    for (const auto *value : {"null", "0", "1", "\"true\"", "{}", "[]"}) {
+      auto parsed = processOptionsFromJSON(wrap(value));
+      EXPECT_FALSE(bool(parsed));
+      llvm::consumeError(parsed.takeError());
+    }
+  }
+}
 TEST(ProcessReport, AndroidClassLoaderPathsRequireCompleteBoundedInventories) {
   auto wrap = [](const std::string &value, bool application) {
     return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"

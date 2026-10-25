@@ -12,12 +12,15 @@
 #include "neverd/dalvik/Limits.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace neverd::mobile::dalvik {
 namespace {
@@ -268,6 +271,11 @@ void validateAndroidClassLoaderPaths(const AndroidApplicationSnapshot &input) {
   }
 }
 
+void validateAndroidMessageQueue(const AndroidApplicationSnapshot &input) {
+  if (input.initial_main_queue && input.main_looper_prepared != true)
+    throw Error("Android initial main queue requires a prepared main Looper");
+}
+
 void Program::addAndroidFramework() {
   // Only the hierarchy needed by this projection. Unmodeled members are not
   // supplied as empty executable declarations.
@@ -286,6 +294,11 @@ void Program::addAndroidFramework() {
          "android/content/pm/PackageItemInfo"},
         {"android/content/pm/PackageInfo", "java/lang/Object"},
         {"android/os/Parcelable", "java/lang/Object"},
+        {"android/os/Handler", "java/lang/Object"},
+        {"android/os/Looper", "java/lang/Object"},
+        {"android/os/MessageQueue", "java/lang/Object"},
+        {"android/os/Message", "java/lang/Object"},
+        {"java/lang/Runnable", "java/lang/Object"},
         {"android/content/ContentResolver", "java/lang/Object"},
         {"android/app/ContextImpl$ApplicationContentResolver",
          "android/content/ContentResolver"},
@@ -324,6 +337,9 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "android/provider/Settings$Secure" ||
         std::string_view(name) == "java/lang/StringBuilder" ||
         std::string_view(name) == "java/util/Locale" ||
+        std::string_view(name) == "android/os/Looper" ||
+        std::string_view(name) == "android/os/MessageQueue" ||
+        std::string_view(name) == "android/os/Message" ||
         std::string_view(name) ==
             "android/app/ContextImpl$ApplicationContentResolver")
       type.access.insert("final");
@@ -339,6 +355,7 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "android/content/ComponentCallbacks2" ||
         std::string_view(name) == "java/io/Serializable" ||
         std::string_view(name) == "java/lang/Cloneable" ||
+        std::string_view(name) == "java/lang/Runnable" ||
         std::string_view(name) == "java/lang/CharSequence" ||
         std::string_view(name) == "java/lang/Appendable" ||
         std::string_view(name) == "java/lang/Comparable")
@@ -348,7 +365,8 @@ void Program::addAndroidFramework() {
     if (std::string_view(name) == "android/app/Application")
       type.interfaces.push_back("Landroid/content/ComponentCallbacks2;");
     if (std::string_view(name) == "android/content/pm/ApplicationInfo" ||
-        std::string_view(name) == "android/content/pm/PackageInfo")
+        std::string_view(name) == "android/content/pm/PackageInfo" ||
+        std::string_view(name) == "android/os/Message")
       type.interfaces.push_back("Landroid/os/Parcelable;");
     if (std::string_view(name) == "java/io/File")
       type.interfaces = {"Ljava/io/Serializable;", "Ljava/lang/Comparable;"};
@@ -361,6 +379,54 @@ void Program::addAndroidFramework() {
     if (std::string_view(name) == "android/provider/Settings$NameValueTable")
       type.interfaces = {"Landroid/provider/BaseColumns;"};
     type.source_id = "android-api28-framework";
+    if (std::string_view(name) == "android/os/Message") {
+      for (auto [field_name, field_type] :
+           {std::pair{"what", "I"},
+            {"arg1", "I"},
+            {"arg2", "I"},
+            {"obj", "Ljava/lang/Object;"},
+            {"replyTo", "Landroid/os/Messenger;"},
+            {"sendingUid", "I"},
+            {"flags", "I"},
+            {"when", "J"},
+            {"data", "Landroid/os/Bundle;"},
+            {"target", "Landroid/os/Handler;"},
+            {"callback", "Ljava/lang/Runnable;"},
+            {"next", "Landroid/os/Message;"}}) {
+        Field field;
+        field.reference = {type.name, field_name, field_type};
+        if (std::string_view(field_name) == "what" ||
+            std::string_view(field_name) == "arg1" ||
+            std::string_view(field_name) == "arg2" ||
+            std::string_view(field_name) == "obj" ||
+            std::string_view(field_name) == "replyTo" ||
+            std::string_view(field_name) == "sendingUid")
+          field.access.insert("public");
+        type.fields.push_back(std::move(field));
+      }
+    }
+    if (std::string_view(name) == "java/lang/Runnable") {
+      Method run;
+      run.reference = {type.name, "run", {}, "V"};
+      run.access = {"public", "abstract"};
+      type.methods.push_back(std::move(run));
+    }
+    if (std::string_view(name) == "android/os/Handler" ||
+        std::string_view(name) == "android/os/Looper") {
+      for (auto [field_name, field_type] :
+           {std::pair{"mLooper", "Landroid/os/Looper;"},
+            {"mQueue", "Landroid/os/MessageQueue;"},
+            {"mCallback", "Landroid/os/Handler$Callback;"},
+            {"mAsynchronous", "Z"}}) {
+        if (std::string_view(name) == "android/os/Looper" &&
+            std::string_view(field_name) != "mQueue")
+          continue;
+        Field field;
+        field.reference = {type.name, field_name, field_type};
+        field.access = {"final"};
+        type.fields.push_back(std::move(field));
+      }
+    }
     if (std::string_view(name) == "android/app/ActivityThread") {
       Field field;
       field.reference = {type.name, "mInstrumentation",
@@ -432,8 +498,9 @@ bool Program::androidFrameworkField(const Field &field) const {
 }
 
 AndroidFramework::AndroidFramework(
-    std::optional<AndroidApplicationSnapshot> input, const Program &program)
-    : snapshot(std::move(input)) {
+    std::optional<AndroidApplicationSnapshot> input, const Program &program,
+    RuntimeServices services)
+    : snapshot(std::move(input)), services(std::move(services)) {
   if (!snapshot)
     return;
   validateAndroidClassLookupFailures(*snapshot);
@@ -445,6 +512,9 @@ AndroidFramework::AndroidFramework(
   validateAndroidPackageResourcePath(*snapshot);
   validateAndroidDefaultLocale(*snapshot);
   validateAndroidClassLoaderPaths(*snapshot);
+  validateAndroidMessageQueue(*snapshot);
+  if (snapshot->initial_main_queue)
+    main_queue_blocked = snapshot->initial_main_queue->blocked;
   for (const auto &failure : snapshot->class_lookup_failures) {
     std::string type = "L" + failure.binary_name + ";";
     std::replace(type.begin(), type.end(), '.', '/');
@@ -815,7 +885,8 @@ ExecutionResult AndroidFramework::field(Heap &heap, const Field &field,
           "Android framework field is not modeled"};
 }
 
-AndroidFrameworkState AndroidFramework::inspect() const {
+AndroidFrameworkState AndroidFramework::inspect(const Heap &heap,
+                                                const Program &program) const {
   AndroidFrameworkState result;
   if (snapshot) {
     result.declared_phase = snapshot->phase;
@@ -829,7 +900,303 @@ AndroidFrameworkState AndroidFramework::inspect() const {
   result.system_loader = system_loader;
   result.application_loader = app_loader;
   result.instrumentation = instrumentation;
+  if (main_queue && snapshot->initial_main_queue) {
+    auto &queue = result.main_message_queue.emplace();
+    queue.identity = main_queue;
+    queue.blocked = main_queue_blocked;
+    std::set<uint64_t> seen;
+    uint64_t current = message_head;
+    while (current) {
+      auto message = heap.get(current);
+      if (!message || message->ClassName != "android/os/Message" ||
+          !seen.insert(current).second ||
+          seen.size() > ::neverd::limits::dalvik::kMaxQueuedMessages) {
+        queue.complete = false;
+        break;
+      }
+      auto value = [&](const char *name, const char *type) {
+        auto field =
+            program.findField({"Landroid/os/Message;", name, type}, false);
+        auto entry = message->Fields.find(field);
+        if (entry == message->Fields.end()) {
+          queue.complete = false;
+          return uint64_t(0);
+        }
+        return entry->second;
+      };
+      AndroidMessageState row;
+      row.identity = message->Identity;
+      row.target = value("target", "Landroid/os/Handler;");
+      row.callback = value("callback", "Ljava/lang/Runnable;");
+      row.next = value("next", "Landroid/os/Message;");
+      row.when = std::bit_cast<int64_t>(value("when", "J"));
+      row.flags = uint32_t(value("flags", "I"));
+      queue.messages.push_back(row);
+      if (!queue.complete)
+        break;
+      current = row.next;
+    }
+  }
   return result;
+}
+
+ExecutionResult AndroidFramework::post(Heap &heap, const Program &program,
+                                       uint64_t receiver, uint64_t callback,
+                                       const AdmitInstruction &admit) {
+  struct Stop {
+    ExecutionResult result;
+  };
+  auto fail = [](ExecutionStop reason, const char *message) -> void {
+    throw Stop{{reason, 0, {}, message}};
+  };
+  auto tick = [&] {
+    if (auto reason = admit(); reason != ExecutionStop::Returned)
+      fail(reason, "Android message work budget exhausted");
+  };
+  auto field = [&](const char *owner, const char *name, const char *type) {
+    auto result = program.findField({owner, name, type}, false);
+    if (!result)
+      fail(ExecutionStop::Unsupported, "Android message declaration is absent");
+    return result;
+  };
+  auto read = [&](const std::shared_ptr<Object> &object, const Field *entry) {
+    if (!object || !object->Fields.contains(entry))
+      fail(ExecutionStop::Unsupported,
+           "Android message field storage is unknown");
+    return object->Fields.at(entry);
+  };
+  try {
+    if (!snapshot || !snapshot->initial_message_pool_empty)
+      fail(ExecutionStop::Unsupported,
+           "Android Message pool state is not supplied");
+    if (!*snapshot->initial_message_pool_empty)
+      fail(ExecutionStop::Unsupported,
+           "Android nonempty Message pool is unmodeled");
+    // Only the explicitly empty pool reaches Message's real zeroed allocation
+    // and sendingUid initializer. No recycled object's previous data is
+    // guessed.
+    tick();
+    const auto &fields = program.findClass("Landroid/os/Message;")->fields;
+    auto message = heap.allocate(
+        Object::Instance, "android/os/Message", 0,
+        fields.size() * ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
+    if (!message)
+      fail(ExecutionStop::HeapLimit,
+           "Android Message storage budget exhausted");
+    for (const auto &entry : fields)
+      message->Fields.emplace(&entry, 0);
+    auto member = [&](const char *name, const char *type) {
+      return field("Landroid/os/Message;", name, type);
+    };
+    message->Fields.at(member("sendingUid", "I")) = UINT32_MAX;
+    message->Fields.at(member("callback", "Ljava/lang/Runnable;")) = callback;
+    tick();
+    if (!services.uptime_milliseconds)
+      fail(ExecutionStop::Unsupported,
+           "Android uptime service is not supplied");
+    auto time = services.uptime_milliseconds();
+    if (time.stop != ExecutionStop::Returned)
+      return time;
+    if (time.value > INT64_MAX)
+      fail(ExecutionStop::Unsupported,
+           "Android uptime is outside the modeled range");
+    auto handler = heap.get(receiver);
+    if (auto reason = program.unsupportedClass(objectDescriptor(*handler)))
+      fail(ExecutionStop::Unsupported, reason->c_str());
+    // post is final, but its sendMessageAtTime call is virtual. Preserve that
+    // boundary instead of selecting the platform body for a supplied override.
+    const MethodRef send{"Landroid/os/Handler;",
+                         "sendMessageAtTime",
+                         {"Landroid/os/Message;", "J"},
+                         "Z"};
+    if (program.virtualMethod(send, objectDescriptor(*handler)))
+      fail(ExecutionStop::Unsupported,
+           "Android Handler.sendMessageAtTime override requires execution");
+    const auto queue = read(handler, field("Landroid/os/Handler;", "mQueue",
+                                           "Landroid/os/MessageQueue;"));
+    if (!queue)
+      fail(ExecutionStop::Unsupported,
+           "Android Handler null-queue warning requires logging");
+    if (queue != main_queue || !snapshot->initial_main_queue)
+      fail(ExecutionStop::Unsupported,
+           "Android Handler queue state is not supplied");
+    const auto asynchronous =
+        read(handler, field("Landroid/os/Handler;", "mAsynchronous", "Z"));
+    auto next_field = member("next", "Landroid/os/Message;");
+    auto when_field = member("when", "J");
+    auto target_field = member("target", "Landroid/os/Handler;");
+    auto flags_field = member("flags", "I");
+    // Traverse the retained heap list, not a second copied queue. Every link
+    // and ordering decision is bounded and charged before queue mutation.
+    std::vector<std::shared_ptr<Object>> pending;
+    std::set<uint64_t> seen;
+    uint64_t current = message_head;
+    while (current) {
+      tick();
+      if (!seen.insert(current).second)
+        fail(ExecutionStop::Invalid, "Android Message queue contains a cycle");
+      if (pending.size() >= ::neverd::limits::dalvik::kMaxQueuedMessages - 1)
+        fail(ExecutionStop::HeapLimit, "Android Message queue limit exhausted");
+      auto item = heap.get(current);
+      if (!item || !item->Initialized ||
+          item->ClassName != "android/os/Message")
+        fail(ExecutionStop::Invalid,
+             "Android Message queue contains an invalid link");
+      (void)read(item, when_field);
+      (void)read(item, target_field);
+      (void)read(item, flags_field);
+      current = read(item, next_field);
+      pending.push_back(std::move(item));
+    }
+    size_t at = 0;
+    if (time.value)
+      while (at < pending.size() &&
+             int64_t(time.value) >=
+                 std::bit_cast<int64_t>(pending[at]->Fields.at(when_field)))
+        ++at;
+    bool wake = main_queue_blocked && at == 0;
+    if (main_queue_blocked && at && asynchronous &&
+        !pending.front()->Fields.at(target_field)) {
+      wake = true;
+      for (size_t i = 1; i < at; ++i)
+        if (pending[i]->Fields.at(flags_field) & 2)
+          wake = false;
+    }
+    tick();
+    message->Fields.at(target_field) = receiver;
+    message->Fields.at(flags_field) = asynchronous ? 3 : 1;
+    message->Fields.at(when_field) = time.value;
+    message->Fields.at(next_field) =
+        at < pending.size() ? pending[at]->Identity : 0;
+    if (at)
+      pending[at - 1]->Fields.at(next_field) = message->Identity;
+    else
+      message_head = message->Identity;
+    // API 28 enqueues before nativeWake. Preserve the partial state on this
+    // unsupported path; neither wake nor Runnable dispatch is fabricated.
+    if (wake)
+      fail(ExecutionStop::Unsupported,
+           "Android MessageQueue.nativeWake is unmodeled");
+    return {ExecutionStop::Returned, 1};
+  } catch (Stop &stopped) {
+    return std::move(stopped.result);
+  }
+}
+
+ExecutionResult AndroidFramework::nextMessage(Heap &heap,
+                                              const Program &program,
+                                              uint64_t receiver,
+                                              const AdmitInstruction &admit) {
+  // API 28 MessageQueue.next first polls with timeout zero. The explicit
+  // native-callback input admits only its no-callback path. Empty/future
+  // queues still require blocking native polling and are refused below.
+  if (!snapshot || !snapshot->initial_main_queue || !main_queue ||
+      receiver != main_queue)
+    return {ExecutionStop::Unsupported,
+            0,
+            {},
+            "Android MessageQueue state is not supplied"};
+  if (snapshot->initial_main_queue->native_callbacks_empty != true)
+    return {ExecutionStop::Unsupported,
+            0,
+            {},
+            "Android MessageQueue native callback state is not empty or known"};
+  struct Stop {
+    ExecutionResult result;
+  };
+  auto fail = [](ExecutionStop reason, const char *message) -> void {
+    throw Stop{{reason, 0, {}, message}};
+  };
+  auto tick = [&] {
+    if (auto reason = admit(); reason != ExecutionStop::Returned)
+      fail(reason, "Android message work budget exhausted");
+  };
+  auto field = [&](const char *name, const char *type) {
+    const auto *entry =
+        program.findField({"Landroid/os/Message;", name, type}, false);
+    if (!entry)
+      fail(ExecutionStop::Unsupported, "Android message declaration is absent");
+    return entry;
+  };
+  try {
+    tick();
+    if (!services.uptime_milliseconds)
+      fail(ExecutionStop::Unsupported,
+           "Android uptime service is not supplied");
+    auto time = services.uptime_milliseconds();
+    if (time.stop != ExecutionStop::Returned)
+      return time;
+    if (time.value > INT64_MAX)
+      fail(ExecutionStop::Unsupported,
+           "Android uptime is outside the modeled range");
+    const auto *next = field("next", "Landroid/os/Message;");
+    const auto *when = field("when", "J");
+    const auto *target = field("target", "Landroid/os/Handler;");
+    const auto *flags = field("flags", "I");
+    // Retain the same bounded heap links inspected and populated by post.
+    // Validate and charge the complete chain before changing any link.
+    std::vector<std::shared_ptr<Object>> pending;
+    std::set<uint64_t> seen;
+    uint64_t current = message_head;
+    while (current) {
+      tick();
+      if (!seen.insert(current).second)
+        fail(ExecutionStop::Invalid, "Android Message queue contains a cycle");
+      if (pending.size() >= ::neverd::limits::dalvik::kMaxQueuedMessages)
+        fail(ExecutionStop::HeapLimit, "Android Message queue limit exhausted");
+      auto item = heap.get(current);
+      if (!item || !item->Initialized || item->Type != Object::Instance ||
+          item->ClassName != "android/os/Message")
+        fail(ExecutionStop::Invalid,
+             "Android Message queue contains an invalid link");
+      for (const auto *entry : {next, when, target, flags})
+        if (!item->Fields.contains(entry))
+          fail(ExecutionStop::Unsupported,
+               "Android message field storage is unknown");
+      if (const auto id = item->Fields.at(target)) {
+        auto handler = heap.get(id);
+        if (!handler || !handler->Initialized ||
+            !program.assignable(objectDescriptor(*handler),
+                                "Landroid/os/Handler;"))
+          fail(ExecutionStop::Invalid,
+               "Android Message queue has an invalid target");
+      }
+      if (item->Fields.at(flags) > UINT32_MAX)
+        fail(ExecutionStop::Invalid, "Android Message flags are not an int");
+      current = item->Fields.at(next);
+      pending.push_back(std::move(item));
+    }
+    size_t selected = 0;
+    if (!pending.empty() && !pending.front()->Fields.at(target)) {
+      // A synchronization barrier blocks synchronous messages, including
+      // later targets. Only the first following asynchronous message wins.
+      selected = 1;
+      while (selected < pending.size() &&
+             !(pending[selected]->Fields.at(flags) & 2)) {
+        tick();
+        ++selected;
+      }
+    }
+    if (selected == pending.size())
+      fail(ExecutionStop::Unsupported,
+           "Android MessageQueue blocking wait is unmodeled");
+    auto &message = pending[selected];
+    if (std::bit_cast<int64_t>(message->Fields.at(when)) > int64_t(time.value))
+      fail(ExecutionStop::Unsupported,
+           "Android MessageQueue delayed wait is unmodeled");
+    const auto following = message->Fields.at(next);
+    tick();
+    if (selected)
+      pending[selected - 1]->Fields.at(next) = following;
+    else
+      message_head = following;
+    message->Fields.at(next) = 0;
+    message->Fields.at(flags) |= 1;
+    main_queue_blocked = false;
+    return {ExecutionStop::Returned, message->Identity};
+  } catch (Stop &stopped) {
+    return std::move(stopped.result);
+  }
 }
 
 std::optional<AndroidApplicationSnapshot::ClassLookupFailure::Loader>
@@ -860,6 +1227,10 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
                                           const AdmitInstruction &admit) {
   if (method.Op == ThreadInstrumentation)
     return instrumentationValue(heap, receiver, {}, admit);
+  if (method.Op == HandlerPost)
+    return post(heap, program, receiver, arguments[0], admit);
+  if (method.Op == MessageQueueNext)
+    return nextMessage(heap, program, receiver, admit);
   struct Stop {
     ExecutionResult result;
   };
@@ -908,6 +1279,99 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
     return value.value;
   };
   auto execute = [&]() -> uint64_t {
+    if (method.Op == LooperQueue || method.Op == MessageCallback ||
+        method.Op == MessageTarget) {
+      const bool looper = method.Op == LooperQueue;
+      const bool callback = method.Op == MessageCallback;
+      const auto *entry = program.findField(
+          {looper ? "Landroid/os/Looper;" : "Landroid/os/Message;",
+           looper     ? "mQueue"
+           : callback ? "callback"
+                      : "target",
+           looper     ? "Landroid/os/MessageQueue;"
+           : callback ? "Ljava/lang/Runnable;"
+                      : "Landroid/os/Handler;"},
+          false);
+      auto object = heap.get(receiver);
+      if (!entry || !object || !object->Fields.contains(entry))
+        return unsupported("Android framework reference field is not supplied");
+      const auto id = object->Fields.at(entry);
+      if (id) {
+        auto value = heap.get(id);
+        if (!value || !value->Initialized ||
+            !program.assignable(objectDescriptor(*value),
+                                entry->reference.type))
+          return stop(ExecutionStop::Invalid,
+                      "Android framework reference field has an invalid value");
+      }
+      tick();
+      return id;
+    }
+    // These ordinary instance operations use real retained field storage.
+    // In particular, JNI AllocObject has known zero fields even without an
+    // application snapshot; it is not a fabricated prepared main Looper.
+    if (method.Op == Construct) {
+      auto field = [&](const char *owner, const char *name, const char *type) {
+        const auto *result = program.findField(
+            {"L" + std::string(owner) + ";", name, type}, false);
+        if (!result)
+          unsupported("Android Handler declaration is not supplied");
+        return result;
+      };
+      const auto *looper_field =
+          field("android/os/Handler", "mLooper", "Landroid/os/Looper;");
+      const auto *queue_field =
+          field("android/os/Handler", "mQueue", "Landroid/os/MessageQueue;");
+      const auto *callback_field = field("android/os/Handler", "mCallback",
+                                         "Landroid/os/Handler$Callback;");
+      const auto *async_field =
+          field("android/os/Handler", "mAsynchronous", "Z");
+      auto handler = heap.get(receiver);
+      if (handler && (handler->Type != Object::Instance ||
+                      !program.assignable(objectDescriptor(*handler),
+                                          "Landroid/os/Handler;") ||
+                      !handler->Fields.contains(looper_field) ||
+                      !handler->Fields.contains(queue_field) ||
+                      !handler->Fields.contains(callback_field) ||
+                      !handler->Fields.contains(async_field)))
+        return stop(ExecutionStop::Invalid,
+                    "Android Handler receiver has invalid field storage");
+      if (handler && handler->Initialized)
+        return stop(ExecutionStop::Invalid,
+                    "Android Handler receiver is already initialized");
+      if (!arguments[0])
+        throw Stop{{ExecutionStop::Thrown, 0, "java/lang/NullPointerException",
+                    "Handler requires a nonnull Looper"}};
+      const auto *source_queue =
+          field("android/os/Looper", "mQueue", "Landroid/os/MessageQueue;");
+      auto looper = heap.get(arguments[0]);
+      if (!looper->Fields.contains(source_queue))
+        return unsupported("Android Looper queue field is not supplied");
+      const auto queue = looper->Fields.at(source_queue);
+      if (queue) {
+        auto object = heap.get(queue);
+        if (!object || !object->Initialized ||
+            objectDescriptor(*object) != "Landroid/os/MessageQueue;")
+          return stop(ExecutionStop::Invalid,
+                      "Android Looper queue field has invalid identity");
+      }
+      tick();
+      if (!handler) {
+        const auto &fields = program.findClass("Landroid/os/Handler;")->fields;
+        handler = heap.allocate(
+            Object::Instance, "android/os/Handler", 0,
+            fields.size() *
+                ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
+        ref(handler);
+        for (const auto &entry : fields)
+          handler->Fields.emplace(&entry, 0);
+      }
+      handler->Fields.at(looper_field) = arguments[0];
+      handler->Fields.at(queue_field) = queue;
+      handler->Fields.at(callback_field) = 0;
+      handler->Fields.at(async_field) = 0;
+      return handler->Identity;
+    }
     if ((method.Op == SecureSettingString ||
          method.Op == SecureSettingIntDefault) &&
         !arguments[0])
@@ -918,6 +1382,28 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
           "Android application lifecycle snapshot is not supplied");
     using Phase = AndroidApplicationSnapshot::Phase;
     switch (method.Op) {
+    case MainLooper: {
+      if (!snapshot->main_looper_prepared)
+        return unsupported("Android main Looper state is not supplied");
+      if (!*snapshot->main_looper_prepared)
+        return 0;
+      if (!main_looper) {
+        tick();
+        const auto queue =
+            ref(heap.allocate(Object::Instance, "android/os/MessageQueue", 0));
+        const auto *field = program.findField(
+            {"Landroid/os/Looper;", "mQueue", "Landroid/os/MessageQueue;"},
+            false);
+        auto looper =
+            heap.allocate(Object::Instance, "android/os/Looper", 0,
+                          ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
+        ref(looper);
+        looper->Fields.emplace(field, queue);
+        main_queue = queue;
+        main_looper = looper->Identity;
+      }
+      return main_looper;
+    }
     case ClassLoaderString: {
       const std::optional<AndroidApplicationSnapshot::ClassLoaderPaths> *state;
       if (receiver && receiver == app_loader)

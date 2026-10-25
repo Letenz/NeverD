@@ -26,6 +26,109 @@ static Handle attach(void) {
   return env;
 }
 static Ref locale_saved, locale_type, locale_get_default;
+static Ref posted_handler, post_method;
+static void *post_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  U64 arguments[] = {0};
+  int result = C(e, int, 39, posted_handler, post_method, arguments);
+  return (void *)(U64)(result != 1 || C(vm, int, 5));
+}
+int jni_handler_post(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref looper_type = C(e, Ref, 6, "android/os/Looper");
+  Ref main =
+      C(e, Ref, 113, looper_type, "getMainLooper", "()Landroid/os/Looper;");
+  Ref looper = C(e, Ref, 114, looper_type, main);
+  Ref handler_type = C(e, Ref, 6, "android/os/Handler");
+  Ref init = C(e, Ref, 33, handler_type, "<init>", "(Landroid/os/Looper;)V");
+  Ref handler = C(e, Ref, 28, handler_type, init, looper);
+  if (mode == 1)
+    handler = C(e, Ref, 27, handler_type);
+  post_method = C(e, Ref, 33, handler_type, "post", "(Ljava/lang/Runnable;)Z");
+  CHECK(handler && post_method);
+  CHECK(C(e, int, 37, handler, post_method, (Ref)0) == 1);
+  CHECK(usleep(2000) == 0);
+  U64 arguments[] = {0};
+  CHECK(C(e, int, 39, handler, post_method, arguments) == 1);
+  posted_handler = C(e, Ref, 21, handler);
+  CHECK(C(vm, int, 5) == 0);
+  U64 child = 0;
+  void *result = (void *)1;
+  CHECK(pthread_create(&child, (void *)0, post_thread, (void *)0) == 0);
+  CHECK(pthread_join(child, &result) == 0 && !result);
+  e = attach();
+  CHECK(e);
+  C(e, void, 22, posted_handler);
+  return C(vm, int, 5);
+}
+static Ref main_looper_type, main_looper_get, main_looper_saved;
+static void *main_looper_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  Ref value = C(e, Ref, 114, main_looper_type, main_looper_get);
+  int mismatch = !value || !C(e, int, 24, value, main_looper_saved);
+  return (void *)(U64)(mismatch || C(vm, int, 5));
+}
+int jni_main_looper(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/Looper");
+  main_looper_type = C(e, Ref, 21, type);
+  main_looper_get =
+      C(e, Ref, 113, type, "getMainLooper", "()Landroid/os/Looper;");
+  Ref value = C(e, Ref, 114, type, main_looper_get);
+  Ref handler = C(e, Ref, 6, "android/os/Handler");
+  Ref init = C(e, Ref, 33, handler, "<init>", "(Landroid/os/Looper;)V");
+  if (mode == 1) {
+    CHECK(!value);
+    CHECK(!C(e, Ref, 28, handler, init, (Ref)0));
+    CHECK(C(e, int, 228));
+    C(e, void, 17);
+    return C(vm, int, 5);
+  }
+  CHECK(value);
+  main_looper_saved = C(e, Ref, 21, value);
+  Ref again = C(e, Ref, 116, type, main_looper_get, (void *)0);
+  CHECK(C(e, int, 24, value, again));
+  if (mode == 2)
+    value = C(e, Ref, 27, type);
+  Ref first = C(e, Ref, 28, handler, init, value);
+  U64 args[] = {value};
+  Ref second = C(e, Ref, 30, handler, init, args);
+  CHECK(first && second && !C(e, int, 24, first, second));
+  Ref stored_looper = C(e, Ref, 94, handler, "mLooper", "Landroid/os/Looper;");
+  Ref first_looper = C(e, Ref, 95, first, stored_looper);
+  Ref second_looper = C(e, Ref, 95, second, stored_looper);
+  CHECK(C(e, int, 24, value, first_looper));
+  CHECK(C(e, int, 24, value, second_looper));
+  Ref source_queue = C(e, Ref, 94, type, "mQueue", "Landroid/os/MessageQueue;");
+  Ref queue = C(e, Ref, 95, value, source_queue);
+  CHECK((mode == 2) == !queue);
+  Ref destination_queue =
+      C(e, Ref, 94, handler, "mQueue", "Landroid/os/MessageQueue;");
+  Ref retained_queue = C(e, Ref, 95, first, destination_queue);
+  CHECK(C(e, int, 24, queue, retained_queue));
+  Ref callback =
+      C(e, Ref, 94, handler, "mCallback", "Landroid/os/Handler$Callback;");
+  Ref async = C(e, Ref, 94, handler, "mAsynchronous", "Z");
+  CHECK(!C(e, Ref, 95, first, callback));
+  CHECK(!C(e, int, 96, first, async));
+  Ref blank = C(e, Ref, 27, handler);
+  CHECK(!C(e, Ref, 95, blank, stored_looper));
+  U64 child = 0;
+  void *result = (void *)1;
+  CHECK(pthread_create(&child, (void *)0, main_looper_thread, (void *)0) == 0);
+  CHECK(pthread_join(child, &result) == 0 && !result);
+  C(e, void, 22, main_looper_saved);
+  C(e, void, 22, main_looper_type);
+  return C(vm, int, 5);
+}
 int jni_classloader_paths(int mode) {
   Handle e = attach();
   CHECK(e);

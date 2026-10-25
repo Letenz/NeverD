@@ -67,12 +67,22 @@ enum LibraryOperation {
   LocaleDefault,
   LocaleLanguage,
   LocaleCountry,
-  ClassLoaderString
+  ClassLoaderString,
+  MainLooper,
+  HandlerPost,
+  LooperQueue,
+  MessageQueueNext,
+  MessageCallback,
+  MessageTarget
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;
   LibraryOperation Op;
   bool Static = false;
+  bool Final = false;
+  // JNI may resolve nonpublic methods. Direct DEX library dispatch must not
+  // turn that permission into public Java access.
+  bool Public = true;
 };
 
 std::span<const LibraryMethod> libraryMethods();

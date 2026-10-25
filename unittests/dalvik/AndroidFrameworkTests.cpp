@@ -40,6 +40,550 @@ protected:
 using Instrumentation = AndroidApplicationSnapshot::Instrumentation;
 using LookupFailure = AndroidApplicationSnapshot::ClassLookupFailure;
 using Loader = LookupFailure::Loader;
+const LibraryMethod &handlerConstructor() {
+  return *libraryMethod(
+      {"Landroid/os/Handler;", "<init>", {"Landroid/os/Looper;"}, "V"}, false);
+}
+AndroidApplicationSnapshot messageInput() {
+  AndroidApplicationSnapshot input;
+  input.main_looper_prepared = true;
+  input.initial_main_queue.emplace();
+  input.initial_message_pool_empty = true;
+  return input;
+}
+uint64_t makeHandler(Runtime &state) {
+  auto looper = state.library(operation(MainLooper), 0, {}, Admit);
+  EXPECT_EQ(looper.stop, ExecutionStop::Returned) << looper.diagnostic;
+  auto handler = state.library(handlerConstructor(), 0,
+                               std::array<uint64_t, 1>{looper.value}, Admit);
+  EXPECT_EQ(handler.stop, ExecutionStop::Returned) << handler.diagnostic;
+  return handler.value;
+}
+const Field *messageField(const Program &program, const char *name,
+                          const char *type) {
+  return program.findField({"Landroid/os/Message;", name, type}, false);
+}
+TEST_F(AndroidFrameworkTest, HandlerPostInputsKeepUnknownAndNullBoundaries) {
+  for (unsigned mode = 0; mode != 5; ++mode) {
+    auto input = messageInput();
+    RuntimeServices services;
+    unsigned reads = 0;
+    if (mode != 2)
+      services.uptime_milliseconds = [&] {
+        ++reads;
+        return ExecutionResult{ExecutionStop::Returned, 123};
+      };
+    if (mode == 0)
+      input.initial_message_pool_empty.reset();
+    if (mode == 1)
+      input.initial_message_pool_empty = false;
+    if (mode == 3)
+      input.initial_main_queue.reset();
+    Runtime state(program, heap, input, std::move(services));
+    auto handler =
+        mode == 4
+            ? state.allocate("Landroid/os/Handler;", true, Admit, 65536).value
+            : makeHandler(state);
+    auto result = state.library(operation(HandlerPost), handler,
+                                std::array<uint64_t, 1>{0}, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+    const char *diagnostics[] = {
+        "Android Message pool state is not supplied",
+        "Android nonempty Message pool is unmodeled",
+        "Android uptime service is not supplied",
+        "Android Handler queue state is not supplied",
+        "Android Handler null-queue warning requires logging"};
+    EXPECT_EQ(result.diagnostic, diagnostics[mode]);
+    EXPECT_EQ(reads, mode >= 3 ? 1u : 0u);
+    EXPECT_TRUE(state.snapshot().terminal);
+    auto snapshot = state.snapshot().framework;
+    if (snapshot.main_message_queue)
+      EXPECT_TRUE(snapshot.main_message_queue->messages.empty());
+  }
+  auto bad = messageInput();
+  bad.main_looper_prepared = false;
+  EXPECT_THROW(Runtime(program, heap, bad), Error);
+}
+TEST_F(AndroidFrameworkTest, HandlerPostKeepsStableOrderAndMessageFields) {
+  uint64_t now = 1200;
+  Runtime state(program, heap, messageInput(), {[&] {
+                  return ExecutionResult{ExecutionStop::Returned, now};
+                }});
+  auto first = makeHandler(state), second = makeHandler(state);
+  std::vector<uint32_t> identities;
+  for (auto [time, target] : {std::pair{1200u, first},
+                              {1200u, second},
+                              {900u, first},
+                              {0u, second}}) {
+    now = time;
+    auto result = state.library(operation(HandlerPost), target,
+                                std::array<uint64_t, 1>{0}, Admit);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, 1u);
+    auto messages = state.snapshot().framework.main_message_queue->messages;
+    auto it = std::find_if(messages.begin(), messages.end(), [&](auto row) {
+      return std::find(identities.begin(), identities.end(), row.identity) ==
+             identities.end();
+    });
+    ASSERT_NE(it, messages.end());
+    identities.push_back(it->identity);
+  }
+  const auto queue = *state.snapshot().framework.main_message_queue;
+  ASSERT_EQ(queue.messages.size(), 4u);
+  EXPECT_TRUE(queue.complete);
+  EXPECT_FALSE(queue.blocked);
+  const unsigned order[] = {3, 2, 0, 1};
+  const int64_t times[] = {0, 900, 1200, 1200};
+  for (unsigned i = 0; i != 4; ++i) {
+    const auto &row = queue.messages[i];
+    EXPECT_EQ(row.identity, identities[order[i]]);
+    EXPECT_EQ(row.when, times[i]);
+    EXPECT_EQ(row.flags, 1u);
+    EXPECT_EQ(row.callback, 0u);
+    EXPECT_EQ(row.next, i == 3 ? 0u : identities[order[i + 1]]);
+    auto object = heap->get(row.identity);
+    ASSERT_EQ(object->Fields.size(), 12u);
+    for (const auto &[field, value] : object->Fields) {
+      const auto &name = field->reference.name;
+      if (name == "sendingUid")
+        EXPECT_EQ(value, UINT32_MAX);
+      else if (name != "flags" && name != "when" && name != "target" &&
+               name != "next")
+        EXPECT_EQ(value, 0u) << name;
+    }
+  }
+  EXPECT_EQ(queue.messages[0].target, second);
+  EXPECT_EQ(queue.messages[1].target, first);
+  EXPECT_EQ(queue.messages[2].target, first);
+  EXPECT_EQ(queue.messages[3].target, second);
+}
+TEST_F(AndroidFrameworkTest, HandlerPostBlockedQueueRetainsEnqueueBeforeWake) {
+  auto input = messageInput();
+  input.initial_main_queue->blocked = true;
+  Runtime state(program, heap, input,
+                {[] { return ExecutionResult{ExecutionStop::Returned, 77}; }});
+  const auto handler = makeHandler(state);
+  auto result = state.library(operation(HandlerPost), handler,
+                              std::array<uint64_t, 1>{0}, Admit);
+  EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+  EXPECT_EQ(result.diagnostic, "Android MessageQueue.nativeWake is unmodeled");
+  const auto snapshot = state.snapshot();
+  EXPECT_TRUE(snapshot.terminal);
+  const auto &queue = *snapshot.framework.main_message_queue;
+  ASSERT_EQ(queue.messages.size(), 1u);
+  EXPECT_TRUE(queue.complete);
+  EXPECT_TRUE(queue.blocked);
+  EXPECT_EQ(queue.messages[0].target, handler);
+  EXPECT_EQ(queue.messages[0].when, 77);
+  EXPECT_EQ(queue.messages[0].flags, 1u);
+}
+TEST_F(AndroidFrameworkTest,
+       HandlerPostAdmitsFinalMethodAndRefusesOverrideBypass) {
+  for (bool final : {false, true}) {
+    Class type;
+    type.name = "Ltest/HandlerSubclass;";
+    type.superclass = "Landroid/os/Handler;";
+    type.access = {"public"};
+    Method override;
+    override.reference =
+        final ? MethodRef{type.name, "post", {"Ljava/lang/Runnable;"}, "Z"}
+              : MethodRef{type.name,
+                          "sendMessageAtTime",
+                          {"Landroid/os/Message;", "J"},
+                          "Z"};
+    override.access = {"public", "native"};
+    type.methods.push_back(override);
+    Program declarations({type}, Properties{});
+    EXPECT_EQ(declarations.unsupportedClass(type.name).has_value(), final);
+    if (final)
+      continue;
+    Runtime state(declarations, heap, messageInput(),
+                  {[] { return ExecutionResult{ExecutionStop::Returned, 1}; }});
+    auto looper = state.library(operation(MainLooper), 0, {}, Admit).value;
+    auto handler = state.allocate(type.name, false, Admit, 65536);
+    ASSERT_EQ(handler.stop, ExecutionStop::Returned);
+    auto made = state.library(handlerConstructor(), handler.value,
+                              std::array<uint64_t, 1>{looper}, Admit);
+    ASSERT_EQ(made.stop, ExecutionStop::Returned);
+    heap->get(handler.value)->Initialized = true;
+    auto result = state.library(operation(HandlerPost), handler.value,
+                                std::array<uint64_t, 1>{0}, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+    EXPECT_EQ(result.diagnostic,
+              "Android Handler.sendMessageAtTime override requires execution");
+    EXPECT_TRUE(
+        state.snapshot().framework.main_message_queue->messages.empty());
+  }
+}
+TEST_F(AndroidFrameworkTest, HandlerPostDexRetainsRunnableWithoutExecutingIt) {
+  Class action;
+  action.name = "Ltest/PostedAction;";
+  action.superclass = "Ljava/lang/Object;";
+  action.interfaces = {"Ljava/lang/Runnable;"};
+  action.access = {"public"};
+  Field called;
+  called.reference = {action.name, "called", "I"};
+  called.access = {"public", "static"};
+  action.fields.push_back(called);
+  Method run;
+  run.reference = {action.name, "run", {}, "V"};
+  run.access = {"public"};
+  run.registers = 2;
+  Instruction constant;
+  constant.pc = 0;
+  constant.opcode = "const/4";
+  constant.registers = {0};
+  constant.literal = int64_t(1);
+  Instruction store;
+  store.pc = 1;
+  store.opcode = "sput";
+  store.registers = {0};
+  store.reference = called.reference;
+  Instruction ret;
+  ret.pc = 3;
+  ret.opcode = "return-void";
+  run.instructions = {constant, store, ret};
+  run.code_end = 4;
+  action.methods.push_back(run);
+  Method post;
+  post.reference = {action.name,
+                    "postIt",
+                    {"Landroid/os/Handler;", "Ljava/lang/Runnable;"},
+                    "Z"};
+  post.access = {"public", "static"};
+  post.registers = 3;
+  Instruction invoke;
+  invoke.pc = 0;
+  invoke.opcode = "invoke-virtual";
+  invoke.registers = {1, 2};
+  invoke.reference =
+      MethodRef{"Landroid/os/Handler;", "post", {"Ljava/lang/Runnable;"}, "Z"};
+  Instruction move;
+  move.pc = 3;
+  move.opcode = "move-result";
+  move.registers = {0};
+  ret.pc = 4;
+  ret.opcode = "return";
+  ret.registers = {0};
+  post.instructions = {invoke, move, ret};
+  post.code_end = 5;
+  action.methods.push_back(post);
+  Program declarations({action}, Properties{});
+  Runtime state(declarations, heap, messageInput(),
+                {[] { return ExecutionResult{ExecutionStop::Returned, 555}; }});
+  const auto callback = state.allocate(action.name, true, Admit, 65536).value;
+  const auto handler = makeHandler(state);
+  uint64_t args[] = {handler, callback};
+  auto result = state.execute(*declarations.findStatic(post.reference), args,
+                              Admit, 65536);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  EXPECT_EQ(result.value, 1u);
+  const auto *flag = declarations.findStaticField(called.reference);
+  EXPECT_EQ(state.field(*flag, 0, {}, Admit, 65536).value, 0u);
+  const auto queue = *state.snapshot().framework.main_message_queue;
+  ASSERT_EQ(queue.messages.size(), 1u);
+  EXPECT_EQ(queue.messages[0].callback, callback);
+  EXPECT_EQ(queue.messages[0].target, handler);
+  auto direct = state.execute(*declarations.findMethod(run.reference, false),
+                              {&callback, 1}, Admit, 65536);
+  EXPECT_EQ(direct.stop, ExecutionStop::Returned) << direct.diagnostic;
+  EXPECT_EQ(state.field(*flag, 0, {}, Admit, 65536).value, 1u);
+  EXPECT_EQ(state.snapshot().framework.main_message_queue->messages,
+            queue.messages);
+}
+TEST_F(AndroidFrameworkTest,
+       HandlerPostUsesMutableHeapLinksAndBoundsSnapshots) {
+  Runtime state(program, heap, messageInput(),
+                {[] { return ExecutionResult{ExecutionStop::Returned, 5}; }});
+  auto handler = makeHandler(state);
+  ASSERT_EQ(state
+                .library(operation(HandlerPost), handler,
+                         std::array<uint64_t, 1>{0}, Admit)
+                .stop,
+            ExecutionStop::Returned);
+  auto id = state.snapshot().framework.main_message_queue->messages[0].identity;
+  auto *next = messageField(program, "next", "Landroid/os/Message;");
+  ASSERT_EQ(state.field(*next, id, id, Admit, 65536).stop,
+            ExecutionStop::Returned);
+  auto snapshot = state.snapshot();
+  EXPECT_FALSE(snapshot.framework.main_message_queue->complete);
+  EXPECT_EQ(snapshot.framework.main_message_queue->messages[0].next, id);
+  auto result = state.library(operation(HandlerPost), handler,
+                              std::array<uint64_t, 1>{0}, Admit);
+  EXPECT_EQ(result.stop, ExecutionStop::Invalid);
+  EXPECT_EQ(result.diagnostic, "Android Message queue contains a cycle");
+  EXPECT_TRUE(state.snapshot().terminal);
+}
+TEST_F(AndroidFrameworkTest, HandlerPostPreservesLimitsAndClockFailures) {
+  for (auto stop : {ExecutionStop::InstructionLimit, ExecutionStop::Timeout,
+                    ExecutionStop::HeapLimit}) {
+    Runtime state(program, heap, messageInput(),
+                  {[=] { return ExecutionResult{stop, 0, {}, "clock stop"}; }});
+    auto handler = makeHandler(state);
+    auto result = state.library(operation(HandlerPost), handler,
+                                std::array<uint64_t, 1>{0}, Admit);
+    EXPECT_EQ(result.stop, stop);
+    EXPECT_TRUE(
+        state.snapshot().framework.main_message_queue->messages.empty());
+    EXPECT_EQ(state
+                  .library(operation(HandlerPost), handler,
+                           std::array<uint64_t, 1>{0}, Admit)
+                  .stop,
+              stop);
+  }
+  Runtime limited(program, heap, messageInput(),
+                  {[] { return ExecutionResult{ExecutionStop::Returned, 4}; }});
+  auto handler = makeHandler(limited);
+  unsigned ticks = 0;
+  auto result = limited.library(
+      operation(HandlerPost), handler, std::array<uint64_t, 1>{0}, [&] {
+        return ++ticks < 4 ? ExecutionStop::Returned
+                           : ExecutionStop::InstructionLimit;
+      });
+  EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+  EXPECT_TRUE(
+      limited.snapshot().framework.main_message_queue->messages.empty());
+}
+TEST_F(AndroidFrameworkTest, HandlerPostQueueCapacityIsNotSuccessOrDispatch) {
+  Runtime state(program, heap, messageInput(),
+                {[] { return ExecutionResult{ExecutionStop::Returned, 3}; }});
+  auto handler = makeHandler(state);
+  for (unsigned i = 0; i < 1024; ++i) {
+    auto result = state.library(operation(HandlerPost), handler,
+                                std::array<uint64_t, 1>{0}, Admit);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << i << result.diagnostic;
+  }
+  auto result = state.library(operation(HandlerPost), handler,
+                              std::array<uint64_t, 1>{0}, Admit);
+  EXPECT_EQ(result.stop, ExecutionStop::HeapLimit);
+  EXPECT_EQ(result.diagnostic, "Android Message queue limit exhausted");
+  EXPECT_EQ(state.snapshot().framework.main_message_queue->messages.size(),
+            1024u);
+}
+TEST_F(AndroidFrameworkTest,
+       HandlerPostRejectsWrongReferencesAndExhaustedHeap) {
+  {
+    Runtime state(program, heap, messageInput());
+    auto result = state.library(operation(HandlerPost), 0,
+                                std::array<uint64_t, 1>{0}, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Thrown);
+    EXPECT_EQ(result.exception, "java/lang/NullPointerException");
+    EXPECT_FALSE(state.snapshot().terminal);
+  }
+  {
+    Runtime state(program, heap, messageInput());
+    auto handler = makeHandler(state);
+    auto text = heap->literal("not a Runnable");
+    auto result = state.library(operation(HandlerPost), handler,
+                                std::array<uint64_t, 1>{text->Identity}, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Invalid);
+    EXPECT_TRUE(
+        state.snapshot().framework.main_message_queue->messages.empty());
+  }
+  {
+    auto small = std::make_shared<Heap>(4096, 3);
+    Runtime state(program, small, messageInput(),
+                  {[] { return ExecutionResult{ExecutionStop::Returned, 1}; }});
+    auto handler = makeHandler(state);
+    auto result = state.library(operation(HandlerPost), handler,
+                                std::array<uint64_t, 1>{0}, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::HeapLimit);
+    EXPECT_TRUE(
+        state.snapshot().framework.main_message_queue->messages.empty());
+  }
+}
+TEST_F(AndroidFrameworkTest, MainLooperStatesDoNotInferApplicationReadiness) {
+  for (auto phase : {Phase::Unattached, Phase::Attached, Phase::Application}) {
+    AndroidApplicationSnapshot input{phase};
+    Runtime unknown(program, heap, input);
+    auto missing = unknown.library(operation(MainLooper), 0, {}, Admit);
+    EXPECT_EQ(missing.stop, ExecutionStop::Unsupported);
+    EXPECT_EQ(missing.diagnostic, "Android main Looper state is not supplied");
+    input.main_looper_prepared = false;
+    Runtime unprepared(program, heap, input);
+    auto absent = unprepared.library(operation(MainLooper), 0, {}, Admit);
+    EXPECT_EQ(absent.stop, ExecutionStop::Returned);
+    EXPECT_EQ(absent.value, 0u);
+    input.main_looper_prepared = true;
+    Runtime prepared(program, heap, input);
+    auto looper = prepared.library(operation(MainLooper), 0, {}, Admit);
+    ASSERT_EQ(looper.stop, ExecutionStop::Returned);
+    ASSERT_NE(looper.value, 0u);
+    EXPECT_EQ(heap->get(looper.value)->ClassName, "android/os/Looper");
+    EXPECT_EQ(prepared.library(operation(MainLooper), 0, {}, Admit).value,
+              looper.value);
+    Runtime other(program, heap, input);
+    EXPECT_NE(other.library(operation(MainLooper), 0, {}, Admit).value,
+              looper.value);
+  }
+}
+TEST_F(AndroidFrameworkTest, MainLooperHandlerConstructionRetainsExactFields) {
+  AndroidApplicationSnapshot input;
+  input.main_looper_prepared = true;
+  Runtime state(program, heap, input);
+  const auto looper = state.library(operation(MainLooper), 0, {}, Admit).value;
+  const uint64_t args[] = {looper};
+  auto first = state.library(handlerConstructor(), 0, args, Admit);
+  auto second = state.library(handlerConstructor(), 0, args, Admit);
+  ASSERT_EQ(first.stop, ExecutionStop::Returned) << first.diagnostic;
+  ASSERT_EQ(second.stop, ExecutionStop::Returned);
+  EXPECT_NE(first.value, second.value);
+  const auto *queue = program.findField(
+      {"Landroid/os/Looper;", "mQueue", "Landroid/os/MessageQueue;"}, false);
+  const auto queue_id = heap->get(looper)->Fields.at(queue);
+  ASSERT_NE(queue_id, 0u);
+  EXPECT_EQ(heap->get(queue_id)->ClassName, "android/os/MessageQueue");
+  for (const auto id : {first.value, second.value}) {
+    EXPECT_TRUE(heap->get(id)->Initialized);
+    for (const auto &[name, type, expected] :
+         {std::tuple{"mLooper", "Landroid/os/Looper;", looper},
+          {"mQueue", "Landroid/os/MessageQueue;", queue_id},
+          {"mCallback", "Landroid/os/Handler$Callback;", uint64_t(0)},
+          {"mAsynchronous", "Z", uint64_t(0)}}) {
+      const auto *field =
+          program.findField({"Landroid/os/Handler;", name, type}, false);
+      ASSERT_NE(field, nullptr);
+      EXPECT_EQ(heap->get(id)->Fields.at(field), expected);
+    }
+  }
+}
+TEST_F(AndroidFrameworkTest, MainLooperHandlerDistinguishesNullZeroAndUnknown) {
+  Runtime zero(program, heap);
+  auto blank = zero.allocate("Landroid/os/Looper;", true, Admit, 65536);
+  ASSERT_EQ(blank.stop, ExecutionStop::Returned);
+  const uint64_t args[] = {blank.value};
+  auto handler = zero.library(handlerConstructor(), 0, args, Admit);
+  ASSERT_EQ(handler.stop, ExecutionStop::Returned) << handler.diagnostic;
+  const auto *looper_field = program.findField(
+      {"Landroid/os/Handler;", "mLooper", "Landroid/os/Looper;"}, false);
+  EXPECT_EQ(zero.field(*looper_field, handler.value, {}, Admit, 65536).value,
+            blank.value);
+  const auto *queue = program.findField(
+      {"Landroid/os/Handler;", "mQueue", "Landroid/os/MessageQueue;"}, false);
+  EXPECT_EQ(heap->get(handler.value)->Fields.at(queue), 0u);
+  auto blank_handler =
+      zero.allocate("Landroid/os/Handler;", true, Admit, 65536);
+  ASSERT_EQ(blank_handler.stop, ExecutionStop::Returned);
+  EXPECT_EQ(
+      zero.field(*looper_field, blank_handler.value, {}, Admit, 65536).value,
+      0u);
+  const uint64_t null_args[] = {0};
+  auto null = zero.library(handlerConstructor(), 0, null_args, Admit);
+  EXPECT_EQ(null.stop, ExecutionStop::Thrown);
+  EXPECT_EQ(null.exception, "java/lang/NullPointerException");
+  Runtime foreign(program, heap);
+  auto opaque = heap->allocate(Object::Instance, "android/os/Looper", 0);
+  ASSERT_TRUE(opaque);
+  const uint64_t unknown_args[] = {opaque->Identity};
+  auto missing = foreign.library(handlerConstructor(), 0, unknown_args, Admit);
+  EXPECT_EQ(missing.stop, ExecutionStop::Unsupported);
+  EXPECT_EQ(missing.diagnostic, "Android Looper queue field is not supplied");
+}
+TEST_F(AndroidFrameworkTest, MainLooperPreservesTerminalResourceLimits) {
+  for (auto stop : {ExecutionStop::InstructionLimit, ExecutionStop::Timeout}) {
+    AndroidApplicationSnapshot input;
+    input.main_looper_prepared = true;
+    Runtime state(program, heap, input);
+    auto result =
+        state.library(operation(MainLooper), 0, {}, [=] { return stop; });
+    EXPECT_EQ(result.stop, stop);
+    EXPECT_EQ(state.library(operation(MainLooper), 0, {}, Admit).stop, stop);
+    EXPECT_TRUE(state.snapshot().terminal);
+  }
+  AndroidApplicationSnapshot input;
+  input.main_looper_prepared = true;
+  auto limited = std::make_shared<Heap>(65536, 1);
+  Runtime state(program, limited, input);
+  EXPECT_EQ(state.library(operation(MainLooper), 0, {}, Admit).stop,
+            ExecutionStop::HeapLimit);
+  EXPECT_EQ(state.library(operation(MainLooper), 0, {}, Admit).stop,
+            ExecutionStop::HeapLimit);
+  EXPECT_TRUE(state.snapshot().terminal);
+}
+TEST_F(AndroidFrameworkTest, MainLooperDexConstructorUsesTheSharedOwner) {
+  Class caller;
+  caller.name = "Ltest/HandlerCaller;";
+  caller.superclass = "Ljava/lang/Object;";
+  caller.access = {"public"};
+  Method method;
+  method.reference = {caller.name, "make", {}, "Landroid/os/Handler;"};
+  method.access = {"public", "static"};
+  method.registers = 3;
+  Instruction allocation;
+  allocation.pc = 0;
+  allocation.opcode = "new-instance";
+  allocation.registers = {0};
+  allocation.reference = std::string("Landroid/os/Handler;");
+  Instruction main;
+  main.pc = 2;
+  main.opcode = "invoke-static";
+  main.reference = MethodRef{
+      "Landroid/os/Looper;", "getMainLooper", {}, "Landroid/os/Looper;"};
+  Instruction move;
+  move.pc = 5;
+  move.opcode = "move-result-object";
+  move.registers = {1};
+  Instruction construct;
+  construct.pc = 6;
+  construct.opcode = "invoke-direct";
+  construct.registers = {0, 1};
+  construct.reference =
+      MethodRef{"Landroid/os/Handler;", "<init>", {"Landroid/os/Looper;"}, "V"};
+  Instruction ret;
+  ret.pc = 9;
+  ret.opcode = "return-object";
+  ret.registers = {0};
+  method.instructions = {allocation, main, move, construct, ret};
+  method.code_end = 10;
+  caller.methods.push_back(method);
+  Program declarations({caller}, Properties{});
+  for (bool prepared : {false, true}) {
+    AndroidApplicationSnapshot input;
+    input.main_looper_prepared = prepared;
+    Runtime state(declarations, heap, input);
+    auto execution = state.execute(*declarations.findStatic(method.reference),
+                                   {}, Admit, 65536);
+    if (prepared) {
+      ASSERT_EQ(execution.stop, ExecutionStop::Returned)
+          << execution.diagnostic;
+      const auto *field = declarations.findField(
+          {"Landroid/os/Handler;", "mLooper", "Landroid/os/Looper;"}, false);
+      EXPECT_EQ(state.field(*field, execution.value, {}, Admit, 65536).value,
+                state.library(operation(MainLooper), 0, {}, Admit).value);
+    } else {
+      EXPECT_EQ(execution.stop, ExecutionStop::Thrown);
+      EXPECT_EQ(execution.exception, "java/lang/NullPointerException");
+    }
+  }
+}
+TEST_F(AndroidFrameworkTest, MainLooperDeclarationsKeepPlatformAccess) {
+  const auto *handler = program.findClass("Landroid/os/Handler;");
+  ASSERT_NE(handler, nullptr);
+  EXPECT_TRUE(has(handler->access, "public"));
+  EXPECT_FALSE(has(handler->access, "final"));
+  for (const auto &field : handler->fields) {
+    EXPECT_TRUE(has(field.access, "final"));
+    EXPECT_FALSE(has(field.access, "public"));
+  }
+  for (const auto *name :
+       {"Landroid/os/Looper;", "Landroid/os/MessageQueue;"}) {
+    const auto *type = program.findClass(name);
+    ASSERT_NE(type, nullptr);
+    EXPECT_TRUE(has(type->access, "public"));
+    EXPECT_TRUE(has(type->access, "final"));
+  }
+  const auto *runnable = program.findClass("Ljava/lang/Runnable;");
+  ASSERT_NE(runnable, nullptr);
+  EXPECT_TRUE(has(runnable->access, "interface"));
+  ASSERT_EQ(runnable->methods.size(), 1u);
+  EXPECT_TRUE(has(runnable->methods[0].access, "abstract"));
+  EXPECT_TRUE(has(runnable->methods[0].access, "public"));
+  EXPECT_EQ(runnable->methods[0].reference.signature(), "()V");
+  const auto *post = libraryMethod(
+      {"Landroid/os/Handler;", "post", {"Ljava/lang/Runnable;"}, "Z"}, false);
+  ASSERT_NE(post, nullptr);
+  EXPECT_TRUE(post->Final);
+}
 TEST_F(AndroidFrameworkTest, LocaleHierarchyPreservesFinalAndMarkerInterfaces) {
   const auto *locale = program.findClass("Ljava/util/Locale;");
   ASSERT_NE(locale, nullptr);

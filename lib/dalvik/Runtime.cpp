@@ -295,9 +295,9 @@ struct Runtime::State::Engine {
       for (const auto &field : base->fields)
         if (!has(field.access, "static"))
           fields.push_back(&field);
-    auto value =
-        state.heap->allocate(Object::Instance, name.substr(1, name.size() - 2),
-                             0, fields.size() * 64);
+    auto value = state.heap->allocate(
+        Object::Instance, name.substr(1, name.size() - 2), 0,
+        fields.size() * ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
     if (!value)
       fail(ExecutionStop::HeapLimit, "Java object storage budget exhausted");
     value->Initialized = initialized;
@@ -1061,6 +1061,10 @@ struct Runtime::State::Engine {
             if (!library)
               fail(ExecutionStop::Unsupported,
                    "unmodeled method " + reference->identity());
+            if (!library->Public)
+              fail(ExecutionStop::Unsupported,
+                   "nonpublic library method access requires an explicit JNI "
+                   "call");
             if (direct != ctor && !static_call)
               frame.invalid("invalid library invoke kind");
             auto args = std::span<const uint64_t>(values).subspan(!static_call);
@@ -1475,6 +1479,24 @@ Program::unsupportedClass(std::string_view name) const {
            !referenceType(field.reference.type)) ||
           has(field.access, "volatile"))
         return "DEX floating or volatile field is unsupported";
+    for (const auto &method : klass->methods) {
+      for (const auto &inherited : libraryMethods()) {
+        if (!inherited.Final || method.reference.name != inherited.Name ||
+            method.reference.signature() != inherited.Signature)
+          continue;
+        auto parent_name = *klass->superclass;
+        const auto owner = "L" + std::string(inherited.Class) + ";";
+        for (unsigned i = 0;
+             i < ::neverd::limits::dalvik::
+                     kRuntimeProgramUnsupportedClassCheckDepthLimit &&
+             !parent_name.empty();
+             ++i) {
+          if (parent_name == owner)
+            return "DEX declaration conflicts with a final library method";
+          parent_name = parent(parent_name);
+        }
+      }
+    }
     visiting.erase(klass->name);
     done.insert(klass->name);
     return std::nullopt;
@@ -1514,10 +1536,11 @@ ExecutionResult Program::execute(const Method &method,
   return runtime.execute(method, args, admit, stack_bytes);
 }
 Runtime::Runtime(const Program &program, std::shared_ptr<Heap> heap,
-                 std::optional<AndroidApplicationSnapshot> application)
+                 std::optional<AndroidApplicationSnapshot> application,
+                 RuntimeServices services)
     : state(std::make_unique<State>(
           program, heap ? std::move(heap) : std::make_shared<Heap>(),
-          AndroidFramework(application, program))) {
+          AndroidFramework(application, program, std::move(services)))) {
   if (application && !program.containsClass("Landroid/app/ActivityThread;"))
     throw Error("Android application snapshot requires an Android program");
 }
@@ -1525,7 +1548,7 @@ Runtime::~Runtime() = default;
 RuntimeSnapshot Runtime::snapshot() const {
   RuntimeSnapshot result;
   result.terminal = state->stopped.has_value();
-  result.framework = state->framework.inspect();
+  result.framework = state->framework.inspect(*state->heap, state->program);
   for (const auto &[name, declaration] : state->program.classes) {
     JavaClassState row;
     row.descriptor = name;

@@ -21,6 +21,8 @@ namespace neverd::limits::dalvik {
 // include/neverd/dalvik/Heap.h
 inline constexpr uint64_t kHeapByteLimit = 8 * 1024 * 1024;
 inline constexpr uint32_t kHeapObjectLimit = 4096;
+// Conservative byte budget per retained ordinary instance-field map entry.
+inline constexpr uint64_t kInstanceFieldStorageBytes = 64;
 
 // Explicit framework observations; independent limits for distinct providers.
 inline constexpr int kMaxAndroidSettingsValueBytes = 4096;
@@ -34,6 +36,8 @@ inline constexpr int kMaxAndroidLocaleComponentBytes = 1024;
 inline constexpr uint32_t kMaxAndroidClassLoaderPaths = 64;
 inline constexpr uint32_t kMaxAndroidClassLoaderPathBytes = 4096;
 inline constexpr uint32_t kMaxAndroidClassLoaderPathTotalBytes = 16384;
+// Retained messages traversed or enqueued in one modeled queue.
+inline constexpr uint32_t kMaxQueuedMessages = 1024;
 // Conservative per-entry bookkeeping in addition to the retained state value.
 inline constexpr uint64_t kFrameworkFieldStateOverheadBytes = 64;
 inline constexpr uint64_t kAndroidApplicationInfoStateOverheadBytes =

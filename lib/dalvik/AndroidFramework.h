@@ -1,10 +1,16 @@
-//===- AndroidFramework.h - Workload-owned framework identities --*- C++
-//-*-===//
+//===- AndroidFramework.h - Framework object identities -------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#pragma once
+///
+/// \file
+/// Shared framework objects, retained queue links and lifecycle inputs.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_DALVIK_ANDROID_FRAMEWORK_H
+#define NEVERD_DALVIK_ANDROID_FRAMEWORK_H
 
 #include "neverd/dalvik/Library.h"
 
@@ -19,7 +25,7 @@ namespace neverd::mobile::dalvik {
 class AndroidFramework {
 public:
   AndroidFramework(std::optional<AndroidApplicationSnapshot> input,
-                   const Program &program);
+                   const Program &program, RuntimeServices services = {});
   ExecutionResult execute(Heap &heap, const Program &program,
                           const LibraryMethod &method, uint64_t receiver,
                           std::span<const uint64_t> arguments,
@@ -27,11 +33,15 @@ public:
   ExecutionResult field(Heap &heap, const Field &field, uint64_t receiver,
                         std::optional<uint64_t> write,
                         const AdmitInstruction &admit);
-  AndroidFrameworkState inspect() const;
+  AndroidFrameworkState inspect(const Heap &heap, const Program &program) const;
   std::optional<AndroidApplicationSnapshot::ClassLookupFailure::Loader>
   definingLoader(std::string_view type, const Program &program) const;
 
 private:
+  ExecutionResult nextMessage(Heap &heap, const Program &program,
+                              uint64_t receiver, const AdmitInstruction &admit);
+  ExecutionResult post(Heap &heap, const Program &program, uint64_t receiver,
+                       uint64_t callback, const AdmitInstruction &admit);
   ExecutionResult stringValue(Heap &heap, std::string_view text,
                               const AdmitInstruction &admit);
   ExecutionResult stringArrayValue(
@@ -64,6 +74,7 @@ private:
                                         std::optional<uint64_t> write,
                                         const AdmitInstruction &admit);
   std::optional<AndroidApplicationSnapshot> snapshot;
+  RuntimeServices services;
   std::optional<uint64_t> instrumentation;
   uint32_t thread = 0, application = 0, context = 0;
   uint32_t boot_loader = 0, system_loader = 0, app_loader = 0, package = 0;
@@ -74,6 +85,9 @@ private:
   uint32_t secure_android_id = 0, global_adb_enabled = 0;
   uint32_t application_info = 0;
   uint32_t default_locale = 0, locale_language = 0, locale_country = 0;
+  uint32_t main_looper = 0;
+  uint32_t main_queue = 0, message_head = 0;
+  bool main_queue_blocked = false;
   struct ApplicationInfoState {
     // Query results refer to immutable input by source/index, so framework
     // moves do not invalidate pointers or alias separate parcel objects.
@@ -97,3 +111,5 @@ private:
   std::map<uint64_t, PackageInfoState> package_info_states;
 };
 } // namespace neverd::mobile::dalvik
+
+#endif // NEVERD_DALVIK_ANDROID_FRAMEWORK_H

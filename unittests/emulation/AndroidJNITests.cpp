@@ -433,6 +433,84 @@ TEST_P(AndroidJNI,
   EXPECT_NE(Field.Diagnostic.find("nativeLibraryDir is not supplied"),
             std::string::npos);
 }
+TEST_P(AndroidJNI, HandlerPostSharesQueueClockAndThreadLifetime) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  Options.Android->Application = Snapshot{};
+  auto &input = *Options.Android->Application;
+  input.main_looper_prepared = true;
+  input.initial_main_queue.emplace();
+  Options.Android->ObserveJavaState = true;
+  auto unknown = run("jni_handler_post");
+  EXPECT_EQ(unknown.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(unknown.Diagnostic, "Android Message pool state is not supplied");
+  input.initial_message_pool_empty = true;
+  auto missing_clock = run("jni_handler_post");
+  EXPECT_EQ(missing_clock.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(missing_clock.Diagnostic.find("no explicit linux_time input"),
+            std::string::npos);
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->Clocks = {{1, {10, 123456789}}};
+  Options.LinuxTime->AdvanceOnIdle = true;
+  auto returned = run("jni_handler_post");
+  ASSERT_EQ(returned.Stop, ProcessStopReason::Returned) << returned.Diagnostic;
+  EXPECT_EQ(returned.ReturnValue, 0u);
+  ASSERT_TRUE(returned.JavaState);
+  ASSERT_TRUE(returned.JavaState->framework.main_message_queue);
+  const auto &queue = *returned.JavaState->framework.main_message_queue;
+  EXPECT_TRUE(queue.complete);
+  EXPECT_FALSE(queue.blocked);
+  ASSERT_EQ(queue.messages.size(), 3u);
+  for (unsigned i = 0; i != 3; ++i) {
+    EXPECT_EQ(queue.messages[i].when, i ? 10125 : 10123);
+    EXPECT_EQ(queue.messages[i].callback, 0u);
+    EXPECT_EQ(queue.messages[i].flags, 1u);
+    EXPECT_EQ(queue.messages[i].target, queue.messages[0].target);
+    EXPECT_EQ(queue.messages[i].next,
+              i == 2 ? 0u : queue.messages[i + 1].identity);
+  }
+  input.initial_main_queue->blocked = true;
+  auto blocked = run("jni_handler_post");
+  EXPECT_EQ(blocked.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(blocked.Diagnostic, "Android MessageQueue.nativeWake is unmodeled");
+  ASSERT_TRUE(blocked.JavaState->framework.main_message_queue);
+  EXPECT_EQ(blocked.JavaState->framework.main_message_queue->messages.size(),
+            1u);
+  input.initial_main_queue->blocked = false;
+  Options.Android->Arguments = {1};
+  auto null_queue = run("jni_handler_post");
+  EXPECT_EQ(null_queue.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(null_queue.Diagnostic,
+            "Android Handler null-queue warning requires logging");
+  Options.Android->Arguments = {0};
+  for (auto seconds : {int64_t(-1), int64_t(9223372037)}) {
+    Options.LinuxTime->Clocks.at(1).Seconds = seconds;
+    auto out_of_range = run("jni_handler_post");
+    EXPECT_EQ(out_of_range.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(out_of_range.Diagnostic,
+              "Android monotonic time exceeds its range");
+  }
+}
+TEST_P(AndroidJNI, MainLooperKeepsNullIdentityAndHandlerFieldsDistinct) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  Options.Android->Application = Snapshot{};
+  auto &input = *Options.Android->Application;
+  auto unknown = run("jni_main_looper");
+  EXPECT_EQ(unknown.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(unknown.Diagnostic, "Android main Looper state is not supplied");
+  input.main_looper_prepared = false;
+  Options.Android->Arguments = {1};
+  auto absent = run("jni_main_looper");
+  EXPECT_EQ(absent.Stop, ProcessStopReason::Returned) << absent.Diagnostic;
+  EXPECT_EQ(absent.ReturnValue, 0u);
+  input.main_looper_prepared = true;
+  for (unsigned mode : {0u, 2u}) {
+    Options.Android->Arguments = {mode};
+    auto prepared = run("jni_main_looper");
+    EXPECT_EQ(prepared.Stop, ProcessStopReason::Returned)
+        << prepared.Diagnostic;
+    EXPECT_EQ(prepared.ReturnValue, 0u);
+  }
+}
 TEST_P(AndroidJNI, ClassLoaderPathsKeepApplicationAndSystemStateSeparate) {
   using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
   Options.Android->Application = Snapshot{Snapshot::Phase::Application};

@@ -329,6 +329,14 @@ NEVERD_PROCESS_REPORT_FIELD(DexImages, "dex_images")
 NEVERD_PROCESS_REPORT_FIELD(JNIClassLookupFailures, "jni_class_lookup_failures")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationSnapshot, "application_snapshot")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationDefaultLocale, "default_locale")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationMainLooperPrepared,
+                            "main_looper_prepared")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationInitialMainQueue, "initial_main_queue")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationQueueNativeCallbacksEmpty,
+                            "native_callbacks_empty")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationMessagePoolEmpty,
+                            "initial_message_pool_empty")
+NEVERD_PROCESS_REPORT_FIELD(JavaMainMessageQueue, "main_message_queue")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationLoaderPaths, "application_loader_paths")
 NEVERD_PROCESS_REPORT_FIELD(SystemLoaderPaths, "system_loader_paths")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationInfo, "application_info")

@@ -141,6 +141,24 @@ struct AndroidApplicationSnapshot {
   };
   std::optional<ClassLoaderPaths> application_loader_paths;
   std::optional<ClassLoaderPaths> system_loader_paths;
+  // Stable sMainLooper state, independent of Application attachment. Absent
+  // is unknown, false is known null, true retains one Looper and its queue.
+  // This supplies identities only, not thread execution or queue contents.
+  std::optional<bool> main_looper_prepared;
+  // Initial state of the prepared main queue: empty and not quitting. The
+  // blocked flag is independent of emptiness; waking a blocked queue requires
+  // a native event-loop service. Absence leaves queue contents unknown.
+  struct EmptyMessageQueue {
+    bool blocked = false;
+    // True explicitly excludes native callbacks/timers and descriptor
+    // listeners from a nonblocking nativePollOnce. Missing is unknown;
+    // false retains an unsupported native event-loop boundary.
+    std::optional<bool> native_callbacks_empty;
+  };
+  std::optional<EmptyMessageQueue> initial_main_queue;
+  // Message.obtain's process-wide pool. Only an explicitly empty pool can
+  // allocate a fresh Message; false preserves an unmodeled nonempty pool.
+  std::optional<bool> initial_message_pool_empty;
 };
 std::optional<bool>
 androidApplicationLoaderState(const AndroidApplicationSnapshot &input);
@@ -160,4 +178,5 @@ void validateAndroidPackageResourcePath(
 void validateAndroidPackageInfoQueries(const AndroidApplicationSnapshot &input);
 void validateAndroidDefaultLocale(const AndroidApplicationSnapshot &input);
 void validateAndroidClassLoaderPaths(const AndroidApplicationSnapshot &input);
+void validateAndroidMessageQueue(const AndroidApplicationSnapshot &input);
 } // namespace neverd::mobile::dalvik

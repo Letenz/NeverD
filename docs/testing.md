@@ -54,6 +54,22 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`*HandlerPost*` checks initial-state validation, nullable Runnable transport,
+retained Message fields, stable ordering, zero deadlines, thread detach,
+actual Linux clock advancement, final-method admission, override refusal,
+blocked-queue partial effects, cyclic links, bounded observation, and terminal
+resource failures. DEX verifies the Runnable remains unexecuted after post;
+independent JNI ordinary/array calls share the queue across native threads.
+Run full Dalvik, Android JNI and ProcessReport suites. Queue dispatch,
+message recycling and Java monitor scheduling are not covered.
+
+`*MainLooper*` checks unknown/null/prepared state in every application phase,
+retained process identity, Handler constructor fields, zero-initialized JNI
+allocations, null exceptions, malformed objects and terminal budgets. DEX
+constructors and independent JNI ordinary/array calls share the owner; another
+native thread checks the retained main Looper. Run Dalvik, Android JNI and
+ProcessReport suites. Queue dispatch and Java thread execution are not covered.
+
 `*ClassLoaderPaths*` covers application/system ownership, unknown versus empty
 inventories, exact ordering and spelling, fresh String identities, lifecycle,
 malformed wire input and terminal resource limits. DEX and JNI ordinary/array
@@ -13557,3 +13573,20 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`AndroidMessageQueueTest.*` checks FIFO removal, exact Runnable identity and
+separate execution, synchronization barriers, future asynchronous candidates,
+unknown native callbacks and clocks, malformed complete chains, work-stop
+atomicity, capacity reuse and nonpublic method access. The independently
+written JNI fixture in `AndroidMessageQueueTests.cpp` exercises ordinary and
+array-form calls across O0/O2 and three relocation packings, retaining actual
+global references across detach/reattach. It compares every byte of a guarded
+output page and preserves the queue on unknown native state, foreign queues
+and empty blocking waits. ProcessReport tests distinguish an omitted
+`native_callbacks_empty` from both booleans and reject every non-boolean shape.
+
+`ProcessPublic.AndroidMessageQueuesMatchSDKAndCLI` compares 16 complete reports
+across O0/ordinary and O2/RELR native callers. Guarded output, retained message
+counts, monotonic timestamps and the unchanged terminal reason cover successful
+removal, unknown/nonempty native callbacks, empty/foreign queues, missing pool
+or clock observations, and the post-before-nativeWake boundary.

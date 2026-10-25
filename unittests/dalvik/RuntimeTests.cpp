@@ -51,7 +51,7 @@ ExecutionResult run(Class c, uint64_t budget = 32, uint64_t stack = 65536) {
 TEST(DalvikRuntime, LibraryCatalogKeepsPublishedMethodPositions) {
   // JNI library method identities retain these published catalog positions.
   const auto methods = libraryMethods();
-  ASSERT_GE(methods.size(), 107u);
+  ASSERT_GE(methods.size(), 114u);
   struct Expected {
     size_t index;
     const char *owner, *name, *signature;
@@ -79,6 +79,16 @@ TEST(DalvikRuntime, LibraryCatalogKeepsPublishedMethodPositions) {
       {104, "java/util/Locale", "getDefault", "()Ljava/util/Locale;", true},
       {105, "java/util/Locale", "getLanguage", "()Ljava/lang/String;", false},
       {106, "java/util/Locale", "getCountry", "()Ljava/lang/String;", false},
+      {107, "android/os/Looper", "getMainLooper", "()Landroid/os/Looper;",
+       true},
+      {108, "android/os/Handler", "<init>", "(Landroid/os/Looper;)V", false},
+      {109, "android/os/Handler", "post", "(Ljava/lang/Runnable;)Z", false},
+      {110, "android/os/Looper", "getQueue", "()Landroid/os/MessageQueue;",
+       false},
+      {111, "android/os/MessageQueue", "next", "()Landroid/os/Message;", false},
+      {112, "android/os/Message", "getCallback", "()Ljava/lang/Runnable;",
+       false},
+      {113, "android/os/Message", "getTarget", "()Landroid/os/Handler;", false},
   };
   for (const auto &entry : expected) {
     SCOPED_TRACE(entry.index);

@@ -184,6 +184,19 @@ static const LibraryMethod Methods[] = {
      true},
     {"java/util/Locale", "getLanguage", "()Ljava/lang/String;", LocaleLanguage},
     {"java/util/Locale", "getCountry", "()Ljava/lang/String;", LocaleCountry},
+    {"android/os/Looper", "getMainLooper", "()Landroid/os/Looper;", MainLooper,
+     true},
+    {"android/os/Handler", "<init>", "(Landroid/os/Looper;)V", Construct},
+    {"android/os/Handler", "post", "(Ljava/lang/Runnable;)Z", HandlerPost,
+     false, true},
+    {"android/os/Looper", "getQueue", "()Landroid/os/MessageQueue;",
+     LooperQueue},
+    {"android/os/MessageQueue", "next", "()Landroid/os/Message;",
+     MessageQueueNext, false, false, false},
+    {"android/os/Message", "getCallback", "()Ljava/lang/Runnable;",
+     MessageCallback},
+    {"android/os/Message", "getTarget", "()Landroid/os/Handler;",
+     MessageTarget},
 };
 
 struct LibraryStop {
@@ -300,7 +313,12 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == PackageApplicationLabel || M.Op == PackageResourcePath ||
         M.Op == PackageInfoQuery || M.Op == LocaleDefault ||
         M.Op == LocaleLanguage || M.Op == LocaleCountry ||
-        M.Op == ClassLoaderString) {
+        M.Op == ClassLoaderString || M.Op == MainLooper ||
+        M.Op == HandlerPost || M.Op == LooperQueue ||
+        M.Op == MessageQueueNext || M.Op == MessageCallback ||
+        M.Op == MessageTarget ||
+        (M.Op == Construct &&
+         std::string_view(M.Class) == "android/os/Handler")) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,
