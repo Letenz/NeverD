@@ -10,6 +10,70 @@
 #include <limits>
 
 namespace neverd::emulation {
+llvm::ArrayRef<CPURegister> architectureRegisters(GuestArchitecture Arch) {
+  static constexpr CPURegister All[] = {
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  CPURegister::Arch##Name,
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend)                           \
+  CPURegister::Arch##V##Index,
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_SCALAR_REGISTER
+  };
+  auto Select = [](GuestArchitecture A) {
+    std::vector<CPURegister> Out;
+    for (CPURegister R : All)
+      if (registerMatches(R, A))
+        Out.push_back(R);
+    return Out;
+  };
+  static const auto X64 = Select(GuestArchitecture::X64);
+  static const auto AArch64 = Select(GuestArchitecture::AArch64);
+  switch (Arch) {
+  case GuestArchitecture::X64:
+    return X64;
+  case GuestArchitecture::AArch64:
+    return AArch64;
+  }
+  return {};
+}
+const char *registerName(CPURegister R) {
+  switch (R) {
+#define NEVERD_SCALAR_REGISTER(Arch, Name, Width, Backend)                     \
+  case CPURegister::Arch##Name:                                                \
+    return #Name;
+#define NEVERD_VECTOR_REGISTER(Arch, Index, Backend)                           \
+  case CPURegister::Arch##V##Index:                                            \
+    return "V" #Index;
+#define NEVERD_EXTENDED_REGISTER NEVERD_SCALAR_REGISTER
+#include "neverd/emulation/Registers.def"
+#undef NEVERD_EXTENDED_REGISTER
+#undef NEVERD_VECTOR_REGISTER
+#undef NEVERD_SCALAR_REGISTER
+  case CPURegister::Invalid:
+    return nullptr;
+  }
+  return nullptr;
+}
+llvm::Expected<std::vector<RegisterSnapshot>>
+ExecutionBackend::readRegisters() {
+  const auto Registers = architectureRegisters(architecture());
+  if (Registers.empty())
+    return diagnostic::error(diagnostic::Register);
+  std::vector<RegisterSnapshot> Out;
+  Out.reserve(Registers.size());
+  for (CPURegister R : Registers) {
+    auto Value = readRegister(R);
+    if (!Value)
+      return Value.takeError();
+    if (!registerValueFits(R, *Value))
+      return diagnostic::error(diagnostic::Register);
+    Out.push_back({R, *Value});
+  }
+  return Out;
+}
 llvm::Expected<RegisterValue>
 ExecutionBackend::supportedControlBits(CPURegister) const {
   return diagnostic::error(diagnostic::Register);

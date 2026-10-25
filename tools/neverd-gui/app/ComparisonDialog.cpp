@@ -305,6 +305,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
       ::neverd::limits::diff::kLLVMMultiBlockProgressSSAProfile);
   FlowProfile->addItem(tr("Optimized SSA with nested loop analysis"),
                        ::neverd::limits::diff::kLLVMNestedProgressSSAProfile);
+  FlowProfile->addItem(tr("Optimized SSA with branching loop analysis"),
+                       ::neverd::limits::diff::kLLVMBranchProgressSSAProfile);
   FlowProfile->setEnabled(false);
   FlowProfile->setToolTip(
       tr("Optimized SSA reduces compiler scaffolding for comparison. Functions "

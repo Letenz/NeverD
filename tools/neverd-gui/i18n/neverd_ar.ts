@@ -6585,6 +6585,10 @@ Coverage: %7</source>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>SSA محسّنة مع تحليل الحلقات المتداخلة</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>SSA محسّنة مع تحليل الحلقات المتفرعة</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6727,6 +6731,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>حلقة مثبتة: كتلة البداية %1 → كتلة العودة %2 · العداد #%3 → التحديث #%4 · الشرط #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>SSA محسّنة مع تحليل الحلقات المتفرعة</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>تم إثبات التقدم نحو العودة · حلقات العدّاد: %1 · حواف الرجوع: %2 · الشروط الحارسة: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>حلقة مثبتة: كتلة الرأس %1 → كتلة الرجوع %2 · العدّاد #%3 → التحديث #%4 · الشرط الحارس #%5 في الكتلة %6</translation>
     </message>
 </context>
 <context>

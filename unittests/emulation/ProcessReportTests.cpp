@@ -26,6 +26,53 @@
 
 namespace neverd::emulation {
 TEST(ProcessReport,
+     CPUStateObservationIsStrictLosslessAndKeepsFailureSeparate) {
+  auto Default = llvm::cantFail(processOptionsFromJSON(R"({"android":{}})"));
+  EXPECT_FALSE(Default.Android->ObserveCPUState);
+  for (auto Value : {"true", "false"}) {
+    auto Parsed = llvm::cantFail(processOptionsFromJSON(
+        std::string(R"({"android":{"observe_cpu_state":)") + Value + "}}"));
+    EXPECT_EQ(Parsed.Android->ObserveCPUState, std::string(Value) == "true");
+  }
+  for (auto Value : {"1", "null", "[]", "{}", "\"true\""}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"android":{"observe_cpu_state":)") + Value + "}}");
+    ASSERT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  ProcessResult R{ProcessProfile::AndroidNativeAArch64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  R.Stop = ProcessStopReason::CPUFailure;
+  R.Diagnostic = "original CPU fault";
+  auto JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_FALSE(JSON.getAsObject()->getObject("android")->get("cpu_state"));
+  auto &State = R.CPUState.emplace();
+  State.ThreadID = 1007;
+  State.Diagnostic = "register transport unavailable";
+  JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_EQ(JSON.getAsObject()->getString("stop_reason"), "cpu_failure");
+  EXPECT_EQ(JSON.getAsObject()->getString("diagnostic"), "original CPU fault");
+  const auto *S =
+      JSON.getAsObject()->getObject("android")->getObject("cpu_state");
+  EXPECT_EQ(S->getInteger("thread_id"), 1007);
+  EXPECT_EQ(*S->get("registers"), llvm::json::Value(nullptr));
+  EXPECT_EQ(S->getString("diagnostic"), "register transport unavailable");
+  State.Diagnostic.clear();
+  State.Registers = std::vector<RegisterSnapshot>{
+      {CPURegister::AArch64X0, {UINT64_MAX, 0}},
+      {CPURegister::AArch64V31,
+       {0x0123456789abcdefull, 0xfedcba9876543210ull}}};
+  JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  S = JSON.getAsObject()->getObject("android")->getObject("cpu_state");
+  const auto *Registers = S->getObject("registers");
+  ASSERT_NE(Registers, nullptr);
+  EXPECT_EQ((*Registers->getArray("X0"))[0].getAsString(), "ffffffffffffffff");
+  EXPECT_EQ((*Registers->getArray("V31"))[0].getAsString(), "123456789abcdef");
+  EXPECT_EQ((*Registers->getArray("V31"))[1].getAsString(), "fedcba9876543210");
+}
+TEST(ProcessReport,
      SignalTerminationIsDistinctFromExitAndCompletedEntryReturn) {
   ProcessResult R{ProcessProfile::AndroidNativeAArch64,
                   GuestArchitecture::AArch64,

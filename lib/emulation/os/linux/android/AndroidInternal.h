@@ -15,6 +15,7 @@
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <array>
 #include <map>
 #include <variant>
 
@@ -72,12 +73,16 @@ struct LinkedImage {
   std::vector<uint8_t> JNIImage;
   uint64_t JNIThunkBegin = 0, JNIThunkEnd = 0;
   std::optional<uint64_t> JNIOnLoad;
+  std::map<uint64_t, std::array<uint64_t, 4>> DladdrObservations;
 };
 llvm::Error validateAuxiliaryVector(const AndroidNativeOptions &Options);
 llvm::Error validateCalendar(const AndroidNativeOptions &Options);
 llvm::Error initializeCalendar(AddressSpace &Space,
                                const AndroidNativeOptions &Options,
                                const LinkedImage &Linked);
+llvm::Error initializeDladdrObservations(AddressSpace &Space,
+                                         const AndroidNativeOptions &Options,
+                                         LinkedImage &Linked);
 llvm::Error initializeJNI(AddressSpace &Space, LinkedImage &Linked);
 llvm::Expected<PropertyTable>
 initializeProperties(AddressSpace &Space, const ProcessOptions &Options,
@@ -279,6 +284,7 @@ private:
   BionicResult lookupSymbol(NativeCallEvent &Call);
   BionicResult closeLibrary(NativeCallEvent &Call);
   BionicResult getLinkerError(NativeCallEvent &Call);
+  BionicResult queryDladdr(const NativeCallEvent &Call);
   BionicResult unsupportedImport(const NativeCallEvent &Call);
   BionicResult failCall(const NativeCallEvent &Call);
   struct DirectoryStream {

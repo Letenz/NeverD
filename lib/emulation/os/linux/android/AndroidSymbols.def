@@ -35,6 +35,7 @@ NEVERD_ANDROID_CALL(DLOpen, "dlopen", openLibrary)
 NEVERD_ANDROID_CALL(DLSym, "dlsym", lookupSymbol)
 NEVERD_ANDROID_CALL(DLClose, "dlclose", closeLibrary)
 NEVERD_ANDROID_CALL(DLError, "dlerror", getLinkerError)
+NEVERD_ANDROID_CALL(DLAddr, "dladdr", queryDladdr)
 NEVERD_ANDROID_CALL(LoggerListAlloc, "android_logger_list_alloc", logCall)
 NEVERD_ANDROID_CALL(LoggerListAllocTime, "android_logger_list_alloc_time",
                     logCall)

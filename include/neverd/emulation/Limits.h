@@ -111,6 +111,9 @@ inline constexpr int kAndroidCalendarValidateCalendarZNameSizeLimit = 32;
 inline constexpr int kAndroidDexBionicInitializeDexNameSizeLimit = 1024;
 
 // lib/emulation/os/linux/android/AndroidDlfcn.cpp
+inline constexpr unsigned kAndroidDladdrObservationCount = 256;
+inline constexpr unsigned kAndroidDladdrStringBytes = 4096;
+inline constexpr unsigned kAndroidDladdrSnapshotBytes = 1024 * 1024;
 inline constexpr int kAndroidDlfcnBionicLinkerErrorMessageSizeLimit = 1024;
 inline constexpr int kAndroidDlfcnBionicOpenLibrarySizeLimit = 1024;
 inline constexpr int kAndroidDlfcnBionicLookupSymbolSizeLimit = 1024;
@@ -122,6 +125,7 @@ inline constexpr uint64_t kAndroidJNIMethodsBionicJniMethodsRemaining = 4096;
 inline constexpr int kAndroidJavaLibraryValidJavaLibraryNameNameSizeLimit = 255;
 
 // lib/emulation/os/linux/android/AndroidNative.cpp
+inline constexpr unsigned kAndroidFailureMemoryDiagnosticBytes = 256;
 inline constexpr int kAndroidNativeRunNativeLibrariesSizeLimit = 256;
 inline constexpr int kAndroidNativeRunNativeLibrarySizeLimit = 1024;
 inline constexpr int kAndroidNativeRunNativeSymbolCountLimit = 4096;
