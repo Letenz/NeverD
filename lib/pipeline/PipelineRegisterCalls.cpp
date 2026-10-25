@@ -17,6 +17,7 @@
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
@@ -30,24 +31,24 @@ using Key = std::tuple<MedVar::VarKind, int, int>;
 Key key(const MedVar &Value) { return {Value.Kind, Value.Id, Value.SSAVer}; }
 
 std::optional<std::vector<MedOp>>
-expand(const MedFunc &Caller, const MedOp &Call, const BinaryImage &Image,
-       const std::vector<LowOp> &Body, int &NextId, size_t &Remaining) {
-  if (Call.SourceCallHint || Call.ScalarCallSignature ||
-      Call.IntegerCallSignature || Call.DoesNotReturn ||
-      Call.Output.Kind != MedVar::Reg || Call.Output.RegOff != x86reg::RAX ||
-      Call.Output.Size != sizeof(uint64_t))
+expand(llvm::ArrayRef<const MedCallClobber *> Clobbers, const MedOp &Call,
+       const BinaryImage &Image, const std::vector<LowOp> &Body, int &NextId,
+       size_t &Remaining) {
+  if (Body.size() > Remaining || Call.SourceCallHint ||
+      Call.ScalarCallSignature || Call.IntegerCallSignature ||
+      Call.DoesNotReturn || Call.Output.Kind != MedVar::Reg ||
+      Call.Output.RegOff != x86reg::RAX || Call.Output.Size != sizeof(uint64_t))
     return {};
   std::vector<MedVar> Outputs{Call.Output};
-  for (const auto &Clobber : Caller.CallClobbers)
-    if (Clobber.CallSiteId == Call.CallSiteId) {
-      const auto Family = gprFamilyOf(Image.Arch, Clobber.Value.RegOff);
-      if (!Family || Clobber.PreservedPrefixSize ||
-          Clobber.Value.RegOff % sizeof(uint64_t) + Clobber.Value.Size >
-              sizeof(uint64_t))
-        return {};
-      Outputs.push_back(Clobber.Value);
-    }
-  if (Outputs.size() == 1 || Body.size() > Remaining)
+  for (const auto *Clobber : Clobbers) {
+    const auto Family = gprFamilyOf(Image.Arch, Clobber->Value.RegOff);
+    if (!Family || Clobber->PreservedPrefixSize ||
+        Clobber->Value.RegOff % sizeof(uint64_t) + Clobber->Value.Size >
+            sizeof(uint64_t))
+      return {};
+    Outputs.push_back(Clobber->Value);
+  }
+  if (Outputs.size() == 1)
     return {};
   Remaining -= Body.size();
 
@@ -209,8 +210,11 @@ void expandSourceRegisterCalls(
     Note(Value);
   for (const auto &Value : Function.Locals)
     Note(Value);
-  for (const auto &Clobber : Function.CallClobbers)
+  std::map<uint32_t, std::vector<const MedCallClobber *>> Clobbers;
+  for (const auto &Clobber : Function.CallClobbers) {
     Note(Clobber.Value);
+    Clobbers[Clobber.CallSiteId].push_back(&Clobber);
+  }
   size_t Remaining = limits::ir::kSourceRegisterCallOps;
   std::set<uint32_t> Removed;
   std::map<std::pair<int, int>, int> Positions;
@@ -222,8 +226,8 @@ void expandSourceRegisterCalls(
           Op.Inputs[0].isConst()) {
         const auto Body = Leaves.find(Op.Inputs[0].ConstVal);
         if (Body != Leaves.end())
-          if (auto Expanded = expand(Function, Op, Image, *Body->second, NextId,
-                                     Remaining)) {
+          if (auto Expanded = expand(Clobbers[Op.CallSiteId], Op, Image,
+                                     *Body->second, NextId, Remaining)) {
             NewOps.insert(NewOps.end(), Expanded->begin(), Expanded->end());
             Removed.insert(Op.CallSiteId);
             continue;
