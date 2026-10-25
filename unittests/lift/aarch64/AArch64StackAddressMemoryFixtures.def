@@ -32,6 +32,11 @@ STACK_MEMORY_TEXT(kStackArtifactEnvironment,
                   "NEVERD_ARM64E_CPTA_STACK_ARTIFACT_DIR")
 STACK_MEMORY_TEXT(kStackArtifactPrefix, "stack-memory")
 STACK_MEMORY_TEXT(kStackArtifactProperty, "cpta_stack_memory_artifacts")
+STACK_MEMORY_TEXT(kStackRegisterArtifactPrefix, "stack-register-memory")
+STACK_MEMORY_TEXT(kStackRegisterArtifactProperty,
+                  "cpta_stack_register_memory_artifacts")
+STACK_MEMORY_TEXT(kRegisterArtifactPrefix, "register-memory")
+STACK_MEMORY_TEXT(kRegisterArtifactProperty, "cpta_register_memory_artifacts")
 
 #undef STACK_MEMORY_VALUE
 #undef STACK_MEMORY_TEXT

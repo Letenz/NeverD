@@ -2649,20 +2649,27 @@ TEST(AArch64ImmediateMemory,
 
 namespace {
 void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
-                                    bool Stack, bool Export) {
+                                    bool Stack, bool Immediate) {
   llvm::SmallString<kVectorPathStorage> ArtifactDirectory;
-  if (const auto *Root = std::getenv(Stack ? kStackArtifactEnvironment
-                                           : kImmediateArtifactEnvironment);
-      Export && Root) {
+  if (const auto *Root =
+          std::getenv(Stack || !Immediate ? kStackArtifactEnvironment
+                                          : kImmediateArtifactEnvironment);
+      Root) {
     ASSERT_FALSE(llvm::sys::fs::create_directories(Root));
     llvm::SmallString<kVectorPathStorage> Prefix(Root);
-    llvm::sys::path::append(Prefix, Stack ? kStackArtifactPrefix
-                                          : kImmediateArtifactPrefix);
+    llvm::sys::path::append(
+        Prefix,
+        Stack
+            ? (Immediate ? kStackArtifactPrefix : kStackRegisterArtifactPrefix)
+            : (Immediate ? kImmediateArtifactPrefix : kRegisterArtifactPrefix));
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory(Prefix, ArtifactDirectory));
-    ::testing::Test::RecordProperty(Stack ? kStackArtifactProperty
-                                          : kImmediateArtifactProperty,
-                                    ArtifactDirectory.str().str());
+    ::testing::Test::RecordProperty(
+        Stack ? (Immediate ? kStackArtifactProperty
+                           : kStackRegisterArtifactProperty)
+              : (Immediate ? kImmediateArtifactProperty
+                           : kRegisterArtifactProperty),
+        ArtifactDirectory.str().str());
   }
   auto SaveArtifact = [&](llvm::StringRef Name, llvm::StringRef Bytes) {
     if (ArtifactDirectory.empty())
@@ -2788,9 +2795,14 @@ TEST(AArch64StackAddressMemory,
 
 TEST(AArch64StackAddressMemory,
      BothCProjectionsAndLLVMExecuteEveryRegisterFamily) {
-  const auto Cases = stackMemoryCases(false);
+  auto Cases = stackMemoryCases(false);
   ASSERT_EQ(Cases.size(), kStackRegisterCaseCount);
   executeImmediateMemoryFamilies(Cases, true, false);
+  for (auto &Case : Cases) {
+    Case.Word = (Case.Word & ~kStackBaseMask) | kStackGeneralBaseBits;
+    Case.Scratch = (Case.Scratch & ~kStackBaseMask) | kStackGeneralBaseBits;
+  }
+  executeImmediateMemoryFamilies(Cases, false, false);
 }
 
 TEST(AArch64ImmediateMemory, TracingUsesTheEncodedOffsetAndExactDataSlice) {

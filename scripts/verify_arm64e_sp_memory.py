@@ -69,7 +69,10 @@ def main():
     parser.add_argument("--sdk", required=True, type=Path)
     parser.add_argument("--compiler", default=CONFIG["compiler"])
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--profile", default=CONFIG["default_profile"],
+                        choices=CONFIG["profiles"])
     args = parser.parse_args()
+    profile = CONFIG["profiles"][args.profile]
     if [platform.system(), platform.machine()] != CONFIG["required_host"]:
         parser.error(CONFIG["errors"]["host"])
     if (len(args.neverd_revision) != CONFIG["revision_hex_length"] or
@@ -82,9 +85,11 @@ def main():
     compiler = shutil.which(args.compiler)
     if compiler is None:
         raise FileNotFoundError(args.compiler)
-    flags = [*CONFIG["flags"], CONFIG["sdk_flag"], str(args.sdk.resolve())]
+    flags = [*CONFIG["flags"], *profile["flags"],
+             CONFIG["sdk_flag"], str(args.sdk.resolve())]
     summary = {"passed": False, "neverd_revision": args.neverd_revision,
-               "scope": CONFIG["scope"], "native_apple_cpta_qualified": False,
+               "scope": profile["scope"], "profile": args.profile,
+               "native_apple_cpta_qualified": False,
                "stack_abi_qualified": False, "inputs": {}, "results": []}
     summary["verifier_sha256"] = {
         path.name: digest(path) for path in (
@@ -103,7 +108,8 @@ def main():
     for kind, artifacts, test_report in (
             ("stack", args.stack_artifacts, args.stack_report),
             ("control", args.control_artifacts, args.control_report)):
-        origin = validate_report(json.loads(test_report.read_text()), kind)
+        origin = validate_report(json.loads(test_report.read_text()),
+                                 profile["test_reports"][kind])
         work = output / kind
         inputs = work / "inputs"
         inputs.mkdir(parents=True)
@@ -151,7 +157,7 @@ def main():
             result = execute([str(executable)], directory, "execute",
                              CONFIG["execution_timeout_seconds"], env)
             observation = json.loads(result.stdout) if kind == "stack" else {}
-            if kind == "stack" and observation != CONFIG["fault_observations"]:
+            if kind == "stack" and observation != profile["fault_observations"]:
                 raise ValueError(CONFIG["errors"]["observations"])
             summary["results"].append({"kind": kind, "route": route["name"],
                                        "passed": True, "observation": observation,

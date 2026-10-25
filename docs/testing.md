@@ -487,7 +487,9 @@ literal SP, signed/extended indices and both halves of Q results. The same
 Unknown or expired inputs, joins/independent roots, hidden invalid source
 bases and malformed assembly/clobber contracts retain their refusal.
 `NEVERD_ARM64E_CPTA_STACK_ARTIFACT_DIR` exports the immediate SP matrix under
-the `cpta_stack_memory_artifacts` property. The native exception verifier
+the `cpta_stack_memory_artifacts` property, the register-offset SP matrix under
+`cpta_stack_register_memory_artifacts` and its matching GPR controls under
+`cpta_register_memory_artifacts`. The native exception verifier
 consumes successful complete seven-test SP and seven-test immediate reports:
 
 ```sh
@@ -502,14 +504,22 @@ python3 scripts/verify_arm64e_sp_memory.py \
 ```
 
 The verifier compiles each C route at O0/O2 and also links the actual Mach-O
-object. Every one of the 177 SP accesses must raise a native SP-alignment
+object. In the default immediate profile, every one of the 177 SP accesses must raise a native SP-alignment
 exception, report exactly the supplied raw SP and leave all 66,064 guarded
 bytes unchanged. Five independent GPR routes execute at the same eight-byte
 misalignment and check their complete byte results. Inputs, commands, compiler
 version, verifier hashes and failed observations are retained. This is a native
 single-access exception check, not Apple CPA2 or stack-ABI qualification.
+Use `--profile register` with the register-offset SP/GPR exports and the same
+complete seven-test SP report for both report arguments to require all 184
+register-offset faults and matching GPR results. Signed W/X indices, each
+encoded extension/scale and all scalar/vector access widths remain in the
+original generated functions.
 The controlled FVP driver's `--profile stack` additionally requires all four
-SA=1 readbacks and 83 guest checks per route. Reconstructed source stacks,
+SA=1 readbacks and 83 guest checks per route. Its `--profile stack-register`
+requires the same controls for all 184 register-offset SP samples;
+`--profile register` separately checks the 184 matching GPR samples.
+Reconstructed source stacks,
 image-backed SP values, tagging and asynchronous unwind remain unqualified.
 
 Local Z/P state

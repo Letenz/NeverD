@@ -9,7 +9,11 @@
 #define SP_TEST_MEMORY_BYTES 66064
 #define SP_TEST_ALIGNMENT 16
 #define SP_TEST_BASE_OFFSET 264
+#if defined(SP_TEST_REGISTER_MEMORY)
+#define SP_TEST_CASE_COUNT 184
+#else
 #define SP_TEST_CASE_COUNT 177
+#endif
 #define SP_TEST_CASE_COUNT_ERROR                                               \
   "SP oracle requires the complete memory inventory"
 #define SP_TEST_LOW 0xfedcba9876543210ULL
