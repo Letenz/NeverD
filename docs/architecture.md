@@ -156,6 +156,27 @@ omitted-callee memoization includes it. Source scratch-restore liveness can cros
 only a still-matching call. Private-byte overwrite and escape checks stay in
 `MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
 
+After shared call-signature recovery, `MedPrologueSaves` also checks complete
+Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
+use the resulting byte-read intervals to suppress private stores that cannot
+be observed. Negative offsets count; pointer capture, lossy transforms,
+exceptional edges, nested calls and incoming stack parameters refuse the proof.
+Implicit register inputs are checked independently of inferred source arity.
+An SSA version of zero is not itself an entry input: a first load or arithmetic
+definition can also have that version. Call home areas and released frame bytes
+remain observable without explicit pointer arguments. This proof annotates only
+the source projection; it neither changes native memory effects nor supplies a
+general pointer-escape or kernel continuation contract.
+The omitted-callee reader also visits scalar direct calls carrying a proven
+private-frame address. Existing operation and extra-lift budgets still bound
+those bodies; an arity-only summary cannot stand in for their pointer effects.
+HighIR consumes a direct call's recovered argument list as a whole, including
+empty lists and unavailable interior slots. Its local setup scan cannot append
+adjacent frame variables or replace those unknown operands with stale stores.
+Module call recovery finalizes this boundary for both C routes.
+HighIR adds this recovery for positional register/stack conventions. Independent
+register banks retain their source variadic and floating-return preparation.
+
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.
 This keeps SSA promotion from recomputing whole-function dominance frontiers
@@ -11897,6 +11918,23 @@ candidate graphs and exhausted observation budgets cannot grant separation.
 Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
+
+Exceptional memory histories follow the source instruction's possible prefixes,
+including before and after a throwing CALL or STORE. A complete local store
+ends only its own bytes. Completed byte histories are shared across later
+queries within the same immutable function, keeping repeated reads bounded
+without publishing a partially explored cycle. Exceptional predecessor and
+successor identities must agree.
+
+Immediately after conversion, the guard can bind complete PE32 SEH state facts
+from that exact LowIR input. Current source occurrences locate restored ESP
+definitions and prove unreachable calls; the shared stack-offset proof carries
+those definitions through synthetic stack cleanup and joins. These facts stay
+local to the query and never become reusable annotations on mutable MedIR.
+Checked SEH callback ownership separates a CALL below its private callback ESP
+from the parent frame. A relative-origin query rejects joins with the parent
+stack, another callback, or an unresolved restore. Native memory effects and
+the emitted source operations remain intact.
 
 Source register-call recovery runs after that original CALL-slot guard. The
 callee-effect owner retains a bounded, complete, straight-line x64 scalar/CPUID

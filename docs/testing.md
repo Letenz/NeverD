@@ -1951,16 +1951,19 @@ independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
 AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
 pass. The acceleration CI also runs installed binaries on each native host.
 
-`SortedSearch.*` compares ranks against independent counts, checks every
-insertion point across narrowed tails, and puts read-only input against an
-inaccessible page. It exercises every supported/generated Highway target,
+`SortedSearch.*` compares ranks against independent counts and membership
+against linear search, checks every insertion point across narrowed tails,
+and puts read-only input against an inaccessible page for both operations.
+Membership includes a possible match at the narrowed interval's upper bound.
+It exercises every supported/generated Highway target,
 including unsigned high-bit addresses and duplicate keys. Test XML records the
 targets and, on Linux ARM64 with SVE, the actual vector length. For example,
 QEMU's `-cpu max,sve-max-vq=3` exercises 384-bit SVE, whose lane count does not
 divide the fixed tail. Emulation checks correctness, not native speed.
 
-The optional `neverd-sorted-search-bench` target accepts `std`, `simd`, or, in
-the full build, `owner`, followed by sorted keys and query files containing
+The optional `neverd-sorted-search-bench` target accepts `std`/`simd` for lower
+bounds, `std-contains`/`contains` for membership, or, in the full build, `owner`,
+followed by sorted keys and query files containing
 hexadecimal unsigned integers. An optional final Highway target name selects
 a supported implementation. It validates the complete result vector and
 reports warm lookup wall/process CPU time; parsing, reference computation,
@@ -2730,9 +2733,12 @@ and Output's dynamically created context menu after theme application. The
 menu-column case measures the painted icon-to-label gap, checks that plain,
 checkable and submenu labels align, and that a checked icon's border does not
 move its glyph. Optional captures include File, Edit and Options menus in both
-themes. Screenshot color checks convert logical points using the captured
-image's device-pixel ratio. Cocoa native-pointer docking cases skip when
-`CGPreflightPostEventAccess()` denies event posting; report that missing coverage
+themes. The long-menu case exceeds the current screen's full height and
+checks a single column bounded by the screen, wheel movement in both directions,
+arrow interaction without triggering a command, and Home/End access to the
+first and last commands. Screenshot color checks convert logical points using
+the captured image's device-pixel ratio. Cocoa native-pointer docking cases skip
+when `CGPreflightPostEventAccess()` denies event posting; report that missing coverage
 separately from passing offscreen behavior.
 
 `nativeFrameKeepsTheTitleBarOnScreen` checks native maximize/full-screen/restore
@@ -7284,6 +7290,19 @@ lift, patch and analysis requests on ARM32 and x64, including a restore the
 body consumes. The Mach-O ARM/Thumb five-input MBA source tests execute both
 C routes at O0/O2 after wide-return recovery reconverts the caller; its saved
 R8 must not become an unknown-register trap.
+
+`SourceFrameBorrows.ReadExtentsAndEscapesBoundPrivateStoreRemoval` checks the
+post-recovery Win64 leaf-borrow proof, including negative and wide reads,
+implicit incoming registers, pointer capture, home-area storage and refusal
+boundaries. High-byte GPR inputs, scalar vector lanes and callee-SP aliases are
+negative controls too. `Win64CallContract.BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes`
+executes both source routes at O0/O2 with UBSan, with optimization enabled or
+disabled and with the callee selected or omitted. Its observing negative control
+must retain the unknown-value guard. These checks do not qualify nested borrows,
+incoming pointer stack arguments or undocumented external pointer effects.
+`MissingInteriorStackSlotCannotDiscardLaterArguments` also places known local
+words beyond the seven recovered arguments. Both routes must retain the missing
+interior operand and seventh argument without appending those neighboring words.
 
 `MedStackAlignment.BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals`
 checks four architectures and three formats in both query orders. Accepted and
@@ -13433,6 +13452,18 @@ return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
 optimization on and off. Variant 8 supplies a complete later store and executes
 both generated C routes at O0/O2 with an independent provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
+
+The call-slot suite also covers complete and partial handler stores, exact
+throwing instructions versus protected ranges, mismatched exceptional edges,
+and restored-stack facts bound to fresh LowIR occurrences. Repeated reads must
+fit a bounded shared history while a later CALL observation still fails.
+`MedStackAlignment.ProvenDefinitionsComposeOnlyWithinTheirQuery` rejects
+foreign, contradictory and narrow seeds without changing ordinary queries.
+`RelativeQueriesNeverInheritTheParentStackOrigin` rejects mixed parent/callback
+origins and unresolved exceptional inputs. The real PE32 `xcpt4` filter and
+`seh_probe` handler regressions in `NeverDCPointerProjectionTests` cover their
+interaction with source SEH rendering; run both source routes and the complete
+C-pointer, Win64, SysV and i386 call-contract suites after changing this boundary.
 
 `I386CallContract.PhysicalCallReturnSlotsDoNotKeepOldSourceConstants` checks
 four-byte CALL slots across the same three formats, both source routes and

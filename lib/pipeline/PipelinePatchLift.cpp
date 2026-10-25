@@ -14,6 +14,7 @@
 #include "PipelineLLVMDetail.h"
 #include "PipelineMedAudit.h"
 #include "PipelineReturnModelingDetail.h"
+#include "PipelineSourceStackAccesses.h"
 
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -297,6 +298,9 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   if (Opts.MedAnalysisOnly)
     return true;
+
+  if (medStackProjection(Opts) == MedStackProjection::Source)
+    prepareRecoveredSourceStackAccesses(Img, Result);
 
   std::vector<std::pair<va_t, std::string>> ImportMap;
   for (const auto &[Addr, Name] : Img.getImportAddressNames())
