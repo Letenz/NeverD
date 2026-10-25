@@ -2304,8 +2304,8 @@ independently named/addressed functions with changed immediate returns. A chain,
 shortcuts and a reverse comparison exercise cyclic and parallel association
 paths. The harness verifies every generated match, complete paged function and
 trace inventories, independently calculated shortest distances, every original
-edge, current cache budgets, cancelled metadata replacement and exact source
-export before accepting a timing sample.
+edge for the first/middle/last function, current cache budgets, cancelled metadata
+replacement and exact source export before accepting a timing sample.
 
 ```sh
 python3 scripts/benchmark_binary_lineage.py generate \

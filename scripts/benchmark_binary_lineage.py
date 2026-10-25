@@ -250,6 +250,25 @@ def sample(args: argparse.Namespace) -> None:
             require(graph.status()["operation_state"] == "resource_limited", "wrong budget refusal")
         else:
             raise ValueError("trace cache bypassed the current work budget")
+
+        def check_other_seeds():
+            for index in sorted({count // 2, count - 1} - {0}):
+                address = index * FUNCTION_STRIDE
+                selected = {"version": start, "address": hex(address)}
+                other_nodes = rows("trace_nodes", **selected)
+                require(len(other_nodes) == versions and
+                        {(by_id[n["version"]], int(n["address"], 0), n["distance"]) for n in other_nodes} ==
+                        {(i, address, distance) for i, distance in enumerate(distances_by_index)},
+                        "changing the trace seed reused another function or lost a large-index node")
+                other_versions = {n["node"]: by_id[n["version"]] for n in other_nodes}
+                other_edges = rows("trace_edges", **selected)
+                require(Counter((other_versions[e["primary"]], other_versions[e["secondary"]], e["report"])
+                                for e in other_edges) ==
+                        Counter((r["pair"][0], r["pair"][1], r["sha256"]) for r in manifest["reports"]),
+                        "middle or last function lost original association evidence")
+                require(not rows("trace_conflicts", **selected), "unexpected conflict after changing trace seed")
+
+        timed("other_seed_traces_seconds", check_other_seeds)
         candidate = json.loads(document)
         candidate["versions"] = [{"id": start, "label": "Cancelled benchmark replacement", "branch": ""}]
         candidate_text = json.dumps(candidate)
