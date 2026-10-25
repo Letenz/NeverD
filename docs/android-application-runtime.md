@@ -50,6 +50,101 @@ both objects' `getApplicationContext()` return the same Application and their
 deletion, local frames, native thread attachment and detachment do not reset
 these workload-owned identities. Two native threads see the same objects.
 
+`package_manager_available` optionally declares stable package-service
+availability for this Context. Absence is unknown and stops
+`Context.getPackageManager()`; false returns null. True permits one retained
+`android.app.ApplicationPackageManager`, shared by the Application and its
+base Context across JNI/DEX calls and native thread detach/reattach. This
+concrete class extends the abstract `android.content.pm.PackageManager`.
+Availability does not create an Application or authorize foreign Context
+instances. Service acquisition and Binder transactions remain unsupported;
+supplying APK bytes does not establish this input.
+The contract follows API 28
+[ContextImpl.getPackageManager](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java)
+and [ApplicationPackageManager](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ApplicationPackageManager.java).
+
+`application_info_queries` supplies up to 64 distinct positive responses to
+`PackageManager.getApplicationInfo(String,int)` for that Context's own user.
+Each entry has exactly `package_name`, signed 32-bit `flags`, and `info`.
+Flags accept exact JSON integers or decimal strings through the shared integer
+reader; booleans, fractional values and out-of-range values are rejected.
+Names contain 1–1024 UTF-8 bytes without NUL. `info` uses the same required
+nullable `source_dir` and optional nullable `native_library_dir` schema as
+`application_info`; each String is limited to 4096 UTF-8 bytes. The shared
+validator requires an Application and known available package service for any
+nonempty inventory. Responses declare the final API 28 result after ABI path
+adjustment. They do not run a package service or infer responses from APK files.
+The method matches the exact UTF-16 name and Java int flags. An unknown key,
+null name or foreign manager stops explicitly; a missing record is not a
+negative lookup or `NameNotFoundException`.
+
+Each positive query creates an independent ApplicationInfo parcel result.
+Mutable field writes remain attached to that returned object across DEX/JNI
+calls and native thread detach; they do not affect later query results or the
+Context's retained ApplicationInfo. Unknown optional fields stay unknown until
+an explicit guest write supplies them. Query matching, object allocation and
+field materialization use the existing work and storage budgets.
+
+An optional `application_info` object with a required `source_dir` member
+supplies the initial Java `ApplicationInfo.sourceDir` field. It requires the
+application phase. The member is null or a UTF-8/WTF-8 string of at most 4096
+bytes; missing outer input means unknown. The String is preserved exactly,
+including empty values, without path normalization or filesystem inference.
+An optional `native_library_dir` member independently supplies `nativeLibraryDir`
+under the same nullable String and byte-limit rules. Its absence is unknown even
+when sourceDir is known; no library directory is derived from the APK path.
+`Context.getApplicationInfo()` retains one ApplicationInfo shared by the
+Application and its base Context. JNI and DEX reads/writes access the same
+mutable fields and String identities. A guest write may establish an initially
+unknown value. Foreign instances and all other ApplicationInfo fields,
+constructors and parcel operations remain unsupported. No APK, package-manager
+transaction or framework startup is executed by this projection.
+The contract follows API 28 [ApplicationInfo](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/content/pm/ApplicationInfo.java),
+[ContextImpl](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java)
+and [LoadedApk](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
+The implementation and tests are independently authored.
+
+An optional `secure_settings_cache` object with exactly one `android_id` member
+declares an already populated, generation-stable API 28 settings cache for the
+attached resolver's own process user. Its value is a string or JSON null; an
+absent cache is unknown. The same typed snapshot validates at most 4096 UTF-8
+bytes and requires the Application phase. This explicit cache precondition is
+consumed by `Settings.Secure.getString(resolver, "android_id")`: known absence
+returns null, while a string keeps one retained identity across DEX/JNI calls.
+Empty and null are distinct. A null resolver throws NullPointerException.
+Foreign resolvers, undeclared keys, cache invalidation, user switching, writes and
+provider acquisition remain unsupported. No identifier is generated by the
+runtime and no Binder or settings-provider exchange is inferred.
+
+An independent `global_settings_cache` object with exactly one `adb_enabled`
+member declares the equivalent Global cache state. API 28 routes this deprecated
+Secure key to Global; it cannot read `secure_settings_cache.android_id`.
+The same nullable string, lifecycle, encoding and size rules apply.
+`Settings.Secure.getInt(resolver, key, default)` reads the same cached string and
+supports ASCII decimal int32 conversion: optional sign, leading zeros and both
+signed bounds. Known null, empty or invalid ASCII text and overflow return the
+caller's int32 default. Unknown state still stops, regardless of that default.
+Non-ASCII integer conversion remains unsupported because it requires the
+platform's versioned `Character.digit` tables. String reads retain those values.
+The two-argument throwing overload and all unlisted keys remain unsupported.
+
+`Settings.Secure.ADB_ENABLED` and `ANDROID_ID` are API 28 public static final
+String keys, `"adb_enabled"` and `"android_id"`. They use Runtime's existing
+static-field initialization and shared literal pool, without application or
+provider input. Reading a key does not supply the setting's value. Writes to
+these final fields and undeclared fields retain the ordinary refusal paths.
+
+`Context.getContentResolver()` returns the retained resolver of that attached
+ContextImpl. Calls through the Application and its base context share the same
+`android.app.ContextImpl$ApplicationContentResolver` instance, a subclass of
+the abstract `android.content.ContentResolver`. Resolving it requires no
+package-name or files-directory input. It does not acquire a content provider,
+perform a Binder transaction, supply settings values, or execute framework
+constructors. Those operations remain unsupported. Unknown lifecycle state
+and foreign Context instances cannot borrow this resolver. JNI reference
+deletion, detach/reattach and DEX invocation preserve its workload identity.
+Allocation and work limits remain terminal, as for the other framework objects.
+
 Three loader identities are separate: the boot loader, the system PathClassLoader
 and the application PathClassLoader. System and application loaders have the
 boot loader as parent; the boot parent is null. On API 28 a platform class's
@@ -109,6 +204,7 @@ Behavior references are Android's
 [ActivityThread](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ActivityThread.java),
 [ContextImpl](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java),
 [ContextWrapper](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/content/ContextWrapper.java),
+[ContentResolver](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/content/ContentResolver.java),
 [ApplicationLoaders](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ApplicationLoaders.java),
 [Class](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/Class.java)
 and [ClassLoader](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/ClassLoader.java)

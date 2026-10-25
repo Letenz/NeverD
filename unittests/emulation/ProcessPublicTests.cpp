@@ -3653,6 +3653,98 @@ TEST_F(ProcessPublic, AndroidErrorTextMatchesSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidApplicationValuesMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  struct Case {
+    const char *Entry, *Arguments, *Snapshot, *Diagnostic;
+  };
+  const Case Cases[] = {
+      {"jni_content_resolver", "[0]", R"({"phase":"application"})", nullptr},
+      {"jni_content_resolver", "[1]", R"({"phase":"application"})",
+       "ContentResolver.getType"},
+      {"jni_string_builder", "[0]", R"({"phase":"application"})", nullptr},
+      {"jni_secure_settings", "[0]", R"({"phase":"application"})",
+       "cache is not supplied"},
+      {"jni_secure_settings", "[0]",
+       R"({"phase":"application","secure_settings_cache":{"android_id":"fixture"}})",
+       nullptr},
+      {"jni_secure_settings", "[1]",
+       R"({"phase":"application","secure_settings_cache":{"android_id":null}})",
+       nullptr},
+      {"jni_settings_int", "[2147483648,0]",
+       R"({"phase":"application","secure_settings_cache":{"android_id":"99"},"global_settings_cache":{"adb_enabled":"-2147483648"}})",
+       nullptr},
+      {"jni_settings_int", "[4294967273,0]",
+       R"({"phase":"application","secure_settings_cache":{"android_id":"99"},"global_settings_cache":{"adb_enabled":null}})",
+       nullptr},
+      {"jni_application_info", "[0,0]",
+       R"({"phase":"application","application_info":{"source_dir":"/test/base.apk"}})",
+       nullptr},
+      {"jni_application_info", "[0,1]",
+       R"({"phase":"application","application_info":{"source_dir":"/test/base.apk"}})",
+       "nativeLibraryDir is not supplied"},
+      {"jni_application_info", "[1,1]",
+       R"({"phase":"application","application_info":{"source_dir":null,"native_library_dir":null}})",
+       nullptr},
+      {"jni_package_manager", "[2]",
+       R"({"phase":"application","package_manager_available":false})", nullptr},
+      {"jni_package_application_info", "[0]",
+       R"({"phase":"application","package_manager_available":true,"application_info":{"source_dir":"/context.apk"},"application_info_queries":[{"package_name":"test.app","flags":"0","info":{"source_dir":"/query.apk","native_library_dir":null}}]})",
+       nullptr},
+      {"jni_package_application_info", "[0]",
+       R"({"phase":"application","package_manager_available":true,"application_info":{"source_dir":"/context.apk"}})",
+       "query is not supplied"},
+  };
+  for (const char *Variant : {"jni-O0-none", "jni-O2-relr"}) {
+    Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
+            (std::string(Variant) + ".so"))
+               .string();
+    for (const auto &Test : Cases) {
+      SCOPED_TRACE(Variant);
+      SCOPED_TRACE(Test.Entry);
+      SCOPED_TRACE(Test.Snapshot);
+      auto Request = llvm::cantFail(llvm::json::parse(
+          R"({"backend":"unicorn","instruction_quantum":83,"android":{"initialize":false,"thread_limit":2,"jni":true}})"));
+      auto &Android = *Request.getAsObject()->getObject(field::Android);
+      Android[field::EntrySymbol] = Test.Entry;
+      Android[field::Arguments] =
+          llvm::cantFail(llvm::json::parse(Test.Arguments));
+      Android[field::ApplicationSnapshot] =
+          llvm::cantFail(llvm::json::parse(Test.Snapshot));
+      const auto Options = jsonText(*Request.getAsObject());
+      const auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::cantFail(llvm::json::parse(Text));
+      auto *Object = Report.getAsObject();
+      ASSERT_NE(Object, nullptr);
+      ASSERT_EQ(Object->getString(field::Stop),
+                Test.Diagnostic ? "unsupported_service" : "returned")
+          << Text;
+      if (Test.Diagnostic) {
+        EXPECT_EQ(*Object->get(field::ReturnValue), llvm::json::Value(nullptr));
+        ASSERT_TRUE(Object->getString(field::Diagnostic));
+        EXPECT_NE(Object->getString(field::Diagnostic)->find(Test.Diagnostic),
+                  llvm::StringRef::npos);
+      } else {
+        EXPECT_EQ(Object->getString(field::ReturnValue), "0");
+      }
+      EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
+                Test.Diagnostic ? process_cli::Incomplete
+                                : process_cli::Success);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidJNIObjectsAndThreadsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android fixtures unavailable";

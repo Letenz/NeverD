@@ -328,6 +328,10 @@ NEVERD_PROCESS_REPORT_FIELD(JNI, "jni")
 NEVERD_PROCESS_REPORT_FIELD(DexImages, "dex_images")
 NEVERD_PROCESS_REPORT_FIELD(JNIClassLookupFailures, "jni_class_lookup_failures")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationSnapshot, "application_snapshot")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationInfo, "application_info")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationInfoQueries, "application_info_queries")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationPackageManagerAvailable,
+                            "package_manager_available")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationPhase, "phase")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationPackage, "package_name")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationFilesDirectory, "files_directory")
@@ -336,6 +340,10 @@ NEVERD_PROCESS_REPORT_FIELD(ApplicationLoaderEstablished,
                             "application_loader_established")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationClassLookupFailures,
                             "class_lookup_failures")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationSecureSettingsCache,
+                            "secure_settings_cache")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationGlobalSettingsCache,
+                            "global_settings_cache")
 NEVERD_PROCESS_REPORT_FIELD(JNIRegistrations, "jni_registrations")
 NEVERD_PROCESS_REPORT_FIELD(ObserveJavaState, "observe_java_state")
 NEVERD_PROCESS_REPORT_FIELD(JavaLibrary, "java_library")
