@@ -97,6 +97,8 @@ inline constexpr size_t kSourceRegisterLeafOps = 256;
 inline constexpr size_t kSourceRegisterCallOps = 4096;
 // Shared per-function budget for implicit CALL return-slot observations.
 inline constexpr size_t kSourceCallReturnReadWork = 262144;
+// Per-function work for complete noncapturing frame/pointee use proofs.
+inline constexpr size_t kSourceFrameBorrowWork = 262144;
 /// Closed internal-call return proofs are bounded independently of general
 /// CFG discovery. Larger groups retain the ordinary conservative admission.
 inline constexpr size_t kOwnInteriorReturnProofFunctions = 32;

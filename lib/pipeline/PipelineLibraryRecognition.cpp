@@ -198,6 +198,13 @@ void Pipeline::recognizeLibraries(const BinaryImage &Img,
     BytesByEntry[Byte.Function].push_back(std::move(Byte));
   for (const MedFunc &Function : Result.MedFuncs) {
     Result.LibraryRecognitionsByFunction.try_emplace(Function.Entry);
+    if (Img.functionHasBytePatch(Function.Entry) ||
+        llvm::any_of(Function.Blocks, [&](const auto &Block) {
+          return Block.EndAddr > Block.StartAddr &&
+                 Img.hasBytePatchIn(Block.StartAddr,
+                                    Block.EndAddr - Block.StartAddr);
+        }))
+      continue;
     auto Evidence = recognizeMedLibraryOperations(
         Function, Img, *Opts.LibraryFeatures, Receivers.at(Function.Entry),
         250000, &Identities);

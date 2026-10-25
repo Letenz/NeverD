@@ -82,6 +82,9 @@ the code font (Command on macOS); precision events accumulate until a font
 point is reached, and empty gesture begin/end events do not change the size.
 Menus and context menus show their action icons on every platform, including
 macOS, where Qt otherwise hides them by default.
+Menus taller than the screen's available area stay in a single column on all
+desktop platforms. Use the arrows at the top and bottom or the mouse wheel to
+scroll; keyboard navigation also brings offscreen commands into view.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
@@ -1477,3 +1480,100 @@ the [benchmark harness](../tools/neverd-gui/benchmarks/README.md).
 See the [packaging guide](../tools/neverd-gui/PACKAGING.md) for dependency and
 license inputs, and the [qualification record](gui-qualification.md) for
 measured evidence and remaining release criteria.
+
+## Interactive byte patches
+
+Press **J** in an analysis view or Hex to open Patch. Fixed second keys are J (NOP),
+A (assemble), B (bytes), F (fill a selected instruction range), G (always
+branch), N (never branch), I (invert), S (skip call), K (skip with a return
+value), C (immediate), W (rewrite function), R (restore), P (patched bytes),
+and E (export). They apply only while the menu is open. The same actions appear
+under Edit → Patch and in the context menu, filtered by engine evidence.
+IDA 9.5 Hex-Rays uses Z for `hx:JmpStrucDef`; J avoids that conflict.
+
+In disassembly and Hex, **JJ** applies NOP immediately; **JG**, **JN**, **JI**
+and **JS** also apply the selected single-instruction change after engine
+validation. **Ctrl+Z** undoes it; **Ctrl+Shift+Z** redoes it. Value edits,
+selected-range fills and source edits retain their confirmation preview.
+Fast second taps are retained while the menu loads its available actions;
+Escape cancels them, and holding a key does not repeat a patch. A session
+change closes the menu. **JR** restores the changed runs intersecting the
+current instruction, including changes confined to its operands.
+
+Keyboard Patch menus open beside the caret in the active listing, graph,
+pseudocode/IR or Hex pane, including floating panes. They do not follow a
+mouse pointer left in another pane. The originating view is retained while
+the worker prepares the menu or editor.
+
+Assembly edits appear in the listing with a live encoding and instruction
+coverage preview. Intel and AT&T syntax, the current PC and the loaded ARM or
+Thumb mode come from the engine. Shorter encodings are padded with NOPs;
+replacing following instructions requires the explicit overlap checkbox.
+Pasted frame-variable names use the listing’s explicit displacement bindings;
+unknown or ambiguous names are refused. SDK and Python callers can supply their
+own `symbols` map, and CLI callers can pass `--symbols` JSON.
+Enter applies, Escape cancels, and Up/Down moves between loaded listing rows.
+The blue Apply button uses the same primary-action style as Jump. The top-right
+Close button and Cancel discard the editor's uncommitted input and return focus
+to the originating view; Enter on either focused dismissal button also cancels.
+The editor opens below the current row when it fits, or above it near the
+bottom edge, and stays inside its pane. Drag its title to move it; preview
+updates retain that position, and resizing the pane keeps it within reach.
+The preview area is sized before the first paint and retains its size when
+results or errors arrive. Longer output scrolls inside it without resizing
+or moving the editor.
+The title, buttons and other controls use the ordinary arrow pointer; text
+fields and selectable preview text use the text cursor.
+In Hex, **F2** edits the current byte; Enter or F2 applies and advances.
+No editor commits a stale preview after the session revision changes.
+
+Patch commits, undo, redo and restore retain the Functions and Names tables
+while fresh pages are compared in the background. An unchanged inventory
+does not reset the table, selection or scroll position. Actual name, order or
+inventory changes are still published; opening another project discards the
+previous project's rows. Analysis caches remain revision-fenced.
+
+Patched listing rows have a marker and tint; patched hex bytes are underlined
+and tinted. The patch tint remains visible on the current row and selected
+bytes immediately after a successful edit. Output records the committed
+address, byte count, before/after bytes and available decoded instructions;
+restore, undo, redo and binary production also report their results. Previews
+and cancelled edits do not produce a success entry. Long byte and instruction
+summaries are bounded; the Patched bytes table retains the full details.
+**Ctrl+Alt+P** opens original/current bytes and the action kind.
+Select rows and use Delete or Restore selected original bytes to revert them
+as one history command. Undo/redo, reopening and NDDB packing retain the
+optional `patches.json` overlay. The input file remains unchanged.
+
+Pseudocode constant edits currently admit direct scalar assignments or returns from an x86 MOV immediate. Folded arithmetic, casts and lines with several literals are refused. Pseudocode literal edits require one canonical instruction, one encoded
+immediate and an exact value match. Branch actions require a unique mapped
+conditional transfer. NOP requires complete instruction-effect coverage;
+ambiguous, folded or unmapped source is refused. Source edits offer before and
+after C in the preview details, or the decompilation failure with machine bytes.
+
+Rewrite function in C prepares HighC, an entry mapping and original symbol
+bindings. Choose clang, NeverC or GCC and optionally its executable. An optional
+original-body binding names a declaration that calls the saved original
+function. Compilation produces a new binary and a receipt, with Open and
+Compare actions. Export and reopen existing byte patches before this operation.
+
+Produce patched binary replays the overlay from the immutable input snapshot
+into a new, exclusively created file. Existing destinations are refused. PE
+checksums are recomputed when originally present. Authenticode and Mach-O code
+signatures require explicit unsigned export, which removes their metadata;
+this operation does not re-sign. Relocations, zero-fill, ambiguous mappings,
+dyld shared-cache images and ELF load metadata are refused. The overlay limits
+are defined in `include/neverd/patch/Limits.h`; the worker also bounds its
+history payload. Edits made outside the worker require reloading its history.
+
+```sh
+neverd patch-bytes program --address 0x401000 --kind nop
+neverd patch-bytes program --address 0x401000 --kind nop --apply
+neverd patch-bytes program --address 0x401000 --revert
+neverd patch-bytes program --export -o program.patched
+```
+
+Python exposes `preview_byte_patch`, `apply_byte_patch`, `revert_byte_patch`,
+`byte_patches`, `save_byte_patches`, `load_byte_patches`, `assemble` and
+`export_byte_patches`. Applying changes memory; saving is explicit. Saving
+refuses an externally modified patch sidecar instead of overwriting it.

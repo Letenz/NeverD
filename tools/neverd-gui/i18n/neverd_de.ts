@@ -1143,6 +1143,126 @@
         <source>Export data...</source>
         <translation>Daten exportieren...</translation>
     </message>
+    <message>
+        <source>Always branch</source>
+        <translation>Immer verzweigen</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>Assemblieren…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>Einen eindeutig codierten Direktoperanden ändern</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>Bytes ändern…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>Direktwert ändern…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>Eine Ersatzfunktion in eine neue Binärdatei kompilieren</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>Eine Anweisung mit laufender Bytevorschau bearbeiten</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>Die Bytes an der aktuellen Adresse bearbeiten</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>Einen Bereich ganzer Anweisungen mit NOPs füllen</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>Auswahl mit NOPs füllen</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>Byteänderungen prüfen und gezielt zurücknehmen</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>Bedingung umkehren</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>Anweisung durch NOPs ersetzen</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>Nie verzweigen</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>Patch-Menü öffnen</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Patch</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>Gepatchte Binärdatei…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>Gepatchte Bytes</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>Den Aufruf durch NOPs ersetzen</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>Den Aufruf durch eine Zuweisung an das Rückgaberegister ersetzen</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>Den bedingten Sprung durch NOPs ersetzen</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>Die aktuelle Anweisung durch NOPs ersetzen</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>Alle Byteänderungen in eine neue Binärdatei übertragen</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>Originalbytes wiederherstellen</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>Die Eingabebytes dieses Patches wiederherstellen</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>Den bedingten Sprung umkehren</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>Funktion in C umschreiben…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>Aufruf überspringen</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>Aufruf überspringen und Wert zurückgeben…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>Den bedingten Sprung unbedingt ausführen</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1277,6 +1397,18 @@
     <message>
         <source>Disassembly</source>
         <translation>Disassemblierung</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>Aktion</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>Originalbytes</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>Gepatchte Bytes</translation>
     </message>
 </context>
 <context>
@@ -1518,6 +1650,10 @@
     <message>
         <source>Operand &amp;type</source>
         <translation>Operanden&amp;typ</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Patch</translation>
     </message>
 </context>
 <context>
@@ -3038,6 +3174,72 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
         <source>Delete types…</source>
         <translation>Typen löschen…</translation>
     </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>Byteänderung anwenden</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>Vorher:
+%1
+Nachher:
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>Verfügbare Patches werden geprüft…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>Unsignierte Binärdatei exportieren</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>Ungültiger Patch-Wert.</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>Original: %1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>Patch</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>Patch-Wert</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>Gepatchte Binärdatei nach %1 geschrieben</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>Gepatcht: %1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>Gepatchte Binärdatei erzeugen</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>Signaturmetadaten entfernen und eine unsignierte Kopie exportieren?</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>Ausgewählte Originalbytes wiederherstellen</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>Unsignierte gepatchte Binärdatei nach %1 geschrieben</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>Vorzeichenloser Wert (dezimal oder hexadezimal mit 0x):</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3393,6 +3595,34 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
             <numerusform>%n Operand als Feld von %1 angezeigt</numerusform>
             <numerusform>%n Operanden als Felder von %1 angezeigt</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>Patch bei %1 angewendet (%2 Bytes): %3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>Anweisungen: %1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>Ursprüngliche Bytes bei %1 wiederhergestellt (%2 Bereiche).</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>Der Patch bei %1 hat nichts geändert.</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>Bearbeitung bei %1 rückgängig gemacht.</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>Bearbeitung bei %1 wiederholt.</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>Neu geschriebene Funktion bei %1 in %2 gespeichert</translation>
     </message>
 </context>
 <context>
@@ -8445,6 +8675,156 @@ Sekundäre SHA-256: %3
     <message>
         <source>Start address:</source>
         <translation>Startadresse:</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>Patch anwenden</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>Assemblerdialekt</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>Assembleranweisung</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>Byteanzeige gekürzt; der vollständige Bereich umfasst %1 Bytes.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Abbrechen</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>Mit NOPs auffüllen</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>Hexadezimale Bytes</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>Neu: %1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>Original: %1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>Patch bei %1 — Eingabe wendet an, Esc bricht ab</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>Vorschau wird vorbereitet…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>Nachfolgende Anweisungen ersetzen</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>Prüfen Sie die betroffenen Anweisungen und erlauben Sie zum Anwenden deren Ersetzung.</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>Die Eingabe wurde geändert. Öffnen Sie den Patch-Editor erneut.</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Schließen</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>%1 Bindungen ursprünglicher Symbole vorbereitet. Ausgabe in eine neue Datei.</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>Mit Original vergleichen</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>In neue Binärdatei kompilieren…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>Compilerpfad:</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>Compiler:</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>Ersatz wird kompiliert und geprüft…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>Leer lassen, um die einzige externe Definition zu wählen</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>Programmname oder vollständiger Pfad</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>Neue Binärdatei öffnen</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>Optionaler externer Funktionsname zum Aufrufen des gesicherten Originalrumpfs</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>Bindung des Originalrumpfs:</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>Kompilierbares C und ursprüngliche Bindungen werden vorbereitet…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>Ersatzbinärdatei erzeugen</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>Veröffentlichungsbeleg</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>C-Ersatzquelltext</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>Ersatzfunktion:</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>Ersatz unter %1 veröffentlicht</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>Funktion in C umschreiben</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>Die Analyse wurde geändert. Öffnen Sie diesen Editor vor dem Kompilieren erneut.</translation>
     </message>
 </context>
 </TS>

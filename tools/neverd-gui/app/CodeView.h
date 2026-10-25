@@ -83,6 +83,7 @@ public:
   QString representation() const { return representation_; }
   /// The assembly-selected address on the cursor line, or its primary mapping.
   std::optional<Address> currentAddress() const;
+  QRect cursorViewportRect() const;
   QVector<Address> currentAddresses() const;
   /// Select the first row mapped to \p address, waiting for all pages and
   /// expanding its fold if needed. A new load or cursor move cancels the wait.

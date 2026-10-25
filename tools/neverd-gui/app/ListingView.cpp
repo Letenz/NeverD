@@ -53,6 +53,8 @@ ListingView::ListingView(Session &session, const AddressSpace &space,
                          QWidget *parent)
     : QAbstractScrollArea(parent), session_(session), space_(space) {
   setFocusPolicy(Qt::StrongFocus);
+  connect(&session_, &Session::bytePatchesChanged, viewport(),
+          qOverload<>(&QWidget::update));
   setFrameShape(QFrame::NoFrame);
   viewport()->setAttribute(Qt::WA_OpaquePaintEvent);
   viewport()->setCursor(Qt::IBeamCursor);
@@ -941,8 +943,17 @@ void ListingView::paintEvent(QPaintEvent *) {
     const auto &line = lines_[i];
     const int y = (i - top_) * lineHeight_;
     const QRect row(arrowsWidth_, y, area.width() - arrowsWidth_, lineHeight_);
+    const bool patched =
+        contentKind(line.kind) &&
+        session_.hasBytePatch(line.item, std::max<Address>(1, line.itemSize));
     if (i == cursorLine_)
       painter.fillRect(row, theme.color(ColorRole::ListingCurrentLine));
+    // The active row must reveal a committed patch without moving the cursor.
+    if (patched) {
+      painter.fillRect(row, theme.color(ColorRole::ListingPatched));
+      painter.setPen(theme.color(ColorRole::ListingPlain));
+      painter.drawText(QPointF(arrowsWidth_, y + ascent_), QStringLiteral("*"));
+    }
     if (!SearchHighlight.Text.isEmpty()) {
       const QString text =
           (showPrefixes_ ? line.prefix + u' ' : QString()) + line.styled.text;
@@ -962,11 +973,13 @@ void ListingView::paintEvent(QPaintEvent *) {
     const int end = selected && i == selectionLast.first
                         ? selectionLast.second
                         : int(line.styled.text.size());
+    const auto selectionColor =
+        theme.color(patched ? ColorRole::ListingPatchedSelection
+                            : ColorRole::ListingSelection);
     if (selected && begin < 0) {
       const qreal x0 = columnX(line, std::max(begin, firstColumn(line)));
       const qreal x1 = columnX(line, std::min(end, 0));
-      painter.fillRect(QRectF(x0, y, x1 - x0, lineHeight_),
-                       theme.color(ColorRole::ListingSelection));
+      painter.fillRect(QRectF(x0, y, x1 - x0, lineHeight_), selectionColor);
     }
     if (showPrefixes_) {
       painter.setPen(theme.prefixColor(line.cls));
@@ -988,7 +1001,7 @@ void ListingView::paintEvent(QPaintEvent *) {
       QTextLayout::FormatRange range;
       range.start = std::max(0, begin);
       range.length = std::max(0, end - range.start);
-      range.format.setBackground(theme.color(ColorRole::ListingSelection));
+      range.format.setBackground(selectionColor);
       selection.append(range);
     }
     layout.draw(&painter, QPointF(left, y), selection);
@@ -1299,6 +1312,13 @@ void ListingView::showHint(const QPoint &position) {
         QToolTip::showText(global, html, viewport());
       },
       [](const QString &, const QString &) {});
+}
+
+QRect ListingView::cursorViewportRect() const {
+  const int x = cursorLine_ >= 0 && cursorLine_ < lines_.size()
+                    ? qRound(columnX(lines_[cursorLine_], cursorColumn_))
+                    : textLeft();
+  return QRect(x, (cursorLine_ - top_) * lineHeight_, 1, lineHeight_);
 }
 
 } // namespace neverd::gui

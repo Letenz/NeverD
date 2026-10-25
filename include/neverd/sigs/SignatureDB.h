@@ -140,6 +140,10 @@ public:
     return FeaturePacks;
   }
   uint64_t featureGeneration() const { return FeatureGeneration; }
+  /// Freeze admitted identities, match observations and semantic feature
+  /// policy for isolated analysis. Pattern storage and matching indexes are
+  /// deliberately absent: the snapshot cannot rescan or borrow mapped files.
+  SignatureDB snapshotForAnalysis() const;
   /// Byte features share the existing matching and reference/ambiguity engine.
   /// The caller independently authenticates each candidate's identity first.
   using FeatureIdentityVerifier = std::function<std::string(

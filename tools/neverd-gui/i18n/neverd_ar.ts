@@ -1143,6 +1143,126 @@
         <source>Export data...</source>
         <translation>تصدير البيانات...</translation>
     </message>
+    <message>
+        <source>Always branch</source>
+        <translation>الانتقال دائمًا</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>تجميع…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>تغيير معامل فوري ذي ترميز وحيد</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>تغيير البايتات…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>تغيير المعامل الفوري…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>ترجمة دالة بديلة إلى ملف ثنائي جديد</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>تحرير تعليمة مع معاينة مباشرة للبايتات</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>تحرير البايتات عند العنوان الحالي</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>ملء نطاق من التعليمات الكاملة بتعليمات NOP</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>ملء التحديد بتعليمات NOP</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>فحص تعديلات البايتات والتراجع عنها انتقائيًا</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>عكس الشرط</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>استبدال التعليمة بتعليمات NOP</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>عدم الانتقال مطلقًا</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>فتح قائمة التعديل</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>تعديل</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>ملف ثنائي معدل…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>البايتات المعدلة</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>استبدال الاستدعاء بتعليمات NOP</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>استبدال الاستدعاء بإسناد إلى سجل الإرجاع</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>استبدال الانتقال الشرطي بتعليمات NOP</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>استبدال التعليمة الحالية بتعليمات NOP</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>تطبيق جميع تعديلات البايتات على ملف ثنائي جديد</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>استعادة البايتات الأصلية</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>استعادة بايتات الإدخال لهذا التعديل</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>عكس الانتقال الشرطي</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>إعادة كتابة الدالة بلغة C…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>تخطي الاستدعاء</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>تخطي الاستدعاء وإرجاع قيمة…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>تنفيذ الانتقال الشرطي دون شرط</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1277,6 +1397,18 @@
     <message>
         <source>Disassembly</source>
         <translation>التفكيك</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>الإجراء</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>البايتات الأصلية</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>البايتات المعدلة</translation>
     </message>
 </context>
 <context>
@@ -1518,6 +1650,10 @@
     <message>
         <source>Operand &amp;type</source>
         <translation>نوع المعامل(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>تعديل</translation>
     </message>
 </context>
 <context>
@@ -3062,6 +3198,72 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Delete types…</source>
         <translation>حذف الأنواع…</translation>
     </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>تطبيق تعديل البايتات</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>قبل:
+%1
+بعد:
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>جارٍ فحص التعديلات المتاحة…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>تصدير ملف ثنائي غير موقع</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>قيمة التعديل غير صالحة.</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>الأصل: %1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>تعديل</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>قيمة التعديل</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>كُتب الملف الثنائي المعدل في %1</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>المعدل: %1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>إنشاء ملف ثنائي معدل</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>هل تريد إزالة بيانات التوقيع الوصفية وتصدير نسخة غير موقعة؟</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>استعادة البايتات الأصلية المحددة</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>كُتب الملف الثنائي المعدل غير الموقع في %1</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>قيمة غير موقعة (عشرية أو سداسية عشرية ببادئة 0x):</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3421,6 +3623,34 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
             <numerusform>عُرض %n معاملًا كأعضاء في %1</numerusform>
             <numerusform>عُرض %n معامل كأعضاء في %1</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>تم تطبيق التصحيح عند %1 (%2 بايت): %3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>التعليمات: %1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>تمت استعادة البايتات الأصلية عند %1 (%2 نطاقات).</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>لم يُحدث التصحيح عند %1 أي تغييرات.</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>تم التراجع عن التعديل عند %1.</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>تمت إعادة التعديل عند %1.</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>تم حفظ الدالة المعاد كتابتها عند %1 في %2</translation>
     </message>
 </context>
 <context>
@@ -8589,6 +8819,156 @@ SHA-256 الثانوي: %3
     <message>
         <source>Start address:</source>
         <translation>عنوان البداية:</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>تطبيق التعديل</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>صيغة لغة التجميع</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>تعليمة تجميع</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>اختُصر عرض البايتات؛ يحتوي النطاق الكامل على %1 بايت.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>الملء بتعليمات NOP</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>بايتات سداسية عشرية</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>الجديد: %1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>الأصل: %1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>تعديل عند %1 — Enter للتطبيق وEsc للإلغاء</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>جارٍ إعداد المعاينة…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>استبدال التعليمات التالية</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>راجع التعليمات المتأثرة وفعّل استبدالها لتطبيق التعديل.</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>تغير الإدخال. أعد فتح محرر التعديلات.</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>إغلاق</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>أُعدّ %1 من روابط الرموز الأصلية. يُحفظ الناتج في ملف جديد.</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>مقارنة بالأصل</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>ترجمة إلى ملف ثنائي جديد…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>مسار المترجم:</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>المترجم:</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>جارٍ ترجمة البديل والتحقق منه…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>اتركه فارغًا لاختيار التعريف الخارجي الوحيد</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>اسم الملف التنفيذي أو مساره الكامل</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>فتح الملف الثنائي الجديد</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>اسم دالة خارجية اختياري لاستدعاء جسم الدالة الأصلي المحفوظ</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>رابط الجسم الأصلي:</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>جارٍ إعداد كود C القابل للترجمة والروابط الأصلية…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>إنشاء ملف ثنائي بديل</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>إيصال النشر</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>مصدر C البديل</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>الدالة البديلة:</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>نُشر البديل في %1</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>إعادة كتابة الدالة بلغة C</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>تغير التحليل. أعد فتح هذا المحرر قبل الترجمة.</translation>
     </message>
 </context>
 </TS>

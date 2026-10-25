@@ -156,6 +156,27 @@ omitted-callee memoization includes it. Source scratch-restore liveness can cros
 only a still-matching call. Private-byte overwrite and escape checks stay in
 `MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
 
+After shared call-signature recovery, `MedPrologueSaves` also checks complete
+Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
+use the resulting byte-read intervals to suppress private stores that cannot
+be observed. Negative offsets count; pointer capture, lossy transforms,
+exceptional edges, nested calls and incoming stack parameters refuse the proof.
+Implicit register inputs are checked independently of inferred source arity.
+An SSA version of zero is not itself an entry input: a first load or arithmetic
+definition can also have that version. Call home areas and released frame bytes
+remain observable without explicit pointer arguments. This proof annotates only
+the source projection; it neither changes native memory effects nor supplies a
+general pointer-escape or kernel continuation contract.
+The omitted-callee reader also visits scalar direct calls carrying a proven
+private-frame address. Existing operation and extra-lift budgets still bound
+those bodies; an arity-only summary cannot stand in for their pointer effects.
+HighIR consumes a direct call's recovered argument list as a whole, including
+empty lists and unavailable interior slots. Its local setup scan cannot append
+adjacent frame variables or replace those unknown operands with stale stores.
+Module call recovery finalizes this boundary for both C routes.
+HighIR adds this recovery for positional register/stack conventions. Independent
+register banks retain their source variadic and floating-return preparation.
+
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.
 This keeps SSA promotion from recomputing whole-function dominance frontiers
@@ -400,7 +421,7 @@ results remain return values; discarded C expressions retain the instruction.
 
 `AArch64AddressMemory.def` owns original ordinary-memory encodings and shapes.
 `AArch64AddressMemoryOperations.def` owns their identities, direction and
-register class. Its frozen scalar and vector lists occupy separate append
+register class. Its frozen scalar, vector and immediate lists occupy separate append
 positions, preserving previously published scalar and x86 identities. The GPR
 register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
 STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
@@ -428,6 +449,17 @@ The address is unknown to generic memory proofs, and discarding the result
 cannot discard the access or its possible fault. The operations preserve local
 Z/P values only when their physical vector registers are disjoint. Validated loads also preserve
 earlier call arguments other than their explicit outputs.
+The shared raw-operation contract also describes GPR and B/H/S/D/Q unsigned
+and unscaled immediate accesses, including the GPR unprivileged variants.
+These operations retain the raw base and encoded displacement; their index
+operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
+leaving every immediate bit and the access-EL variant intact. Explicit IR can
+execute these forms through LLVM and either C route without an image model.
+Automatic lifting still selects only register-offset operations. Image-backed
+immediate source projection fails explicitly until exact page/relocation
+occurrences, accessed-byte ownership and raw-base rebasing agree; source body
+filtering cannot bypass that requirement. This is not automatic immediate
+CPA2 lifting coverage.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
 execution projection refuses it without its alignment and tagging environment.
@@ -456,7 +488,10 @@ Source emission keeps these original reads even after recovering a switch.
 When a relocatable table read has no observable result, a bounded original-byte
 copy preserves the access without demanding callable identities for unreachable
 physical slots. The shared byte-storage descriptor grants no address or flow
-proof. HighC requires every use of the exact expression in its function to be
+proof. A common 64-bit byte-span query includes negative displacements and
+the original raw base, without shortening the maximum 65,536-byte unsigned-Q
+span. Alignment padding is not original prefix content. HighC requires every
+use of the exact expression in its function to be
 unobserved, together with a complete source-range proof; LLVM requires the
 existing exact-occurrence, storage-role and terminal-use closure. Observable
 reads still use the normal relocation-aware memory owner. Table-relative data
@@ -466,8 +501,8 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Immediate, pre/post-index, pair and other ordinary-memory families
-remain unqualified for CPA2, as does controlled native execution with CPTA
+identity. Automatic immediate, pre/post-index, pair and other ordinary-memory
+lifting remains unqualified for CPA2, as does controlled native execution with CPTA
 enabled. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
@@ -766,6 +801,13 @@ request. Navigation keeps the requested byte address separately from its owner.
 GUI refreshes retain loaded context within the per-side query budget and keep a
 prefetch margin, so replacing unchanged rows does not shrink and regrow the
 window used to route branch arrows. Revision and navigation fences still apply.
+
+<!-- i18n-section: interactive-patch-ownership -->
+## Interactive patch ownership
+
+`lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
+
+Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
 ## Structural comparison ownership
 
@@ -11854,6 +11896,23 @@ candidate graphs and exhausted observation budgets cannot grant separation.
 Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
+
+Exceptional memory histories follow the source instruction's possible prefixes,
+including before and after a throwing CALL or STORE. A complete local store
+ends only its own bytes. Completed byte histories are shared across later
+queries within the same immutable function, keeping repeated reads bounded
+without publishing a partially explored cycle. Exceptional predecessor and
+successor identities must agree.
+
+Immediately after conversion, the guard can bind complete PE32 SEH state facts
+from that exact LowIR input. Current source occurrences locate restored ESP
+definitions and prove unreachable calls; the shared stack-offset proof carries
+those definitions through synthetic stack cleanup and joins. These facts stay
+local to the query and never become reusable annotations on mutable MedIR.
+Checked SEH callback ownership separates a CALL below its private callback ESP
+from the parent frame. A relative-origin query rejects joins with the parent
+stack, another callback, or an unresolved restore. Native memory effects and
+the emitted source operations remain intact.
 
 Source register-call recovery runs after that original CALL-slot guard. The
 callee-effect owner retains a bounded, complete, straight-line x64 scalar/CPUID

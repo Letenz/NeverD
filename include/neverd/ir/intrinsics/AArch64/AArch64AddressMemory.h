@@ -64,11 +64,25 @@ inline unsigned aarch64AddressMemoryOperandCount(Intrinsic Id) {
                                             : kAddressLoadOperandCount;
 }
 
+enum class AArch64AddressMemoryMode {
+  Register,
+  UnsignedImmediate,
+  UnscaledImmediate
+};
+
 struct AArch64AddressMemoryOperation {
   Intrinsic Id;
   unsigned AccessBytes;
   unsigned ResultBytes;
   bool Signed;
+  AArch64AddressMemoryMode Mode = AArch64AddressMemoryMode::Register;
+};
+
+/// The complete half-open byte span, including the raw base used to rebase
+/// the original instruction. This is address arithmetic evidence only.
+struct AArch64AddressMemorySpan {
+  uint64_t Begin;
+  uint64_t Bytes;
 };
 
 inline std::optional<AArch64AddressMemoryOperation>
@@ -81,8 +95,31 @@ aarch64AddressMemoryOperation(uint64_t Word) {
     return AArch64AddressMemoryOperation{Intrinsic::Id, Access, Result, Signed};
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
   default:
-    return std::nullopt;
+    break;
   }
+  switch (Word & kAddressMemoryUnsignedOpcodeMask) {
+#define NEVERD_A64_ADDRESS_UNSIGNED_MEMORY_ENCODING(Id, Word, Access, Result,  \
+                                                    Signed)                    \
+  case Word:                                                                   \
+    return AArch64AddressMemoryOperation{                                      \
+        Intrinsic::Id, Access, Result, Signed,                                 \
+        AArch64AddressMemoryMode::UnsignedImmediate};
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+  default:
+    break;
+  }
+  switch (Word & kAddressMemoryUnscaledOpcodeMask) {
+#define NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(Id, Word, Access, Result,  \
+                                                    Signed)                    \
+  case Word:                                                                   \
+    return AArch64AddressMemoryOperation{                                      \
+        Intrinsic::Id, Access, Result, Signed,                                 \
+        AArch64AddressMemoryMode::UnscaledImmediate};
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.def"
+  default:
+    break;
+  }
+  return std::nullopt;
 }
 
 struct AArch64AddressMemoryInstruction {
@@ -96,7 +133,12 @@ struct AArch64AddressMemoryInstruction {
     return isAArch64AddressVectorIntrinsic(operation().Id);
   }
   unsigned accessBytes() const { return operation().AccessBytes; }
-  bool usesFullWidthIndex() const { return Word & kAddressMemoryWideIndexBit; }
+  bool hasRegisterIndex() const {
+    return operation().Mode == AArch64AddressMemoryMode::Register;
+  }
+  bool usesFullWidthIndex() const {
+    return !hasRegisterIndex() || (Word & kAddressMemoryWideIndexBit);
+  }
   unsigned indexBytes() const {
     return usesFullWidthIndex() ? kAddressMemoryPointerBytes
                                 : kAddressMemoryNarrowIndexBytes;
@@ -115,11 +157,33 @@ struct AArch64AddressMemoryInstruction {
     return (Word >> kAddressMemoryBaseShift) & kAddressMemoryRegisterMask;
   }
   unsigned index() const {
-    return (Word >> kAddressMemoryIndexShift) & kAddressMemoryRegisterMask;
+    return hasRegisterIndex()
+               ? (Word >> kAddressMemoryIndexShift) & kAddressMemoryRegisterMask
+               : kAddressMemoryRegisterMask;
   }
   bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
   unsigned indexShift() const {
-    return Word & kAddressMemoryScaleMask ? std::countr_zero(accessBytes()) : 0;
+    return hasRegisterIndex() && (Word & kAddressMemoryScaleMask)
+               ? std::countr_zero(accessBytes())
+               : 0;
+  }
+  uint64_t addressOffset(uint64_t Index) const {
+    switch (operation().Mode) {
+    case AArch64AddressMemoryMode::Register:
+      return extendIndex(Index) << indexShift();
+    case AArch64AddressMemoryMode::UnsignedImmediate:
+      return ((Word >> kAddressMemoryUnsignedOffsetShift) &
+              kAddressMemoryUnsignedOffsetMask) *
+             uint64_t(accessBytes());
+    case AArch64AddressMemoryMode::UnscaledImmediate: {
+      const uint64_t Offset = (Word >> kAddressMemoryUnscaledOffsetShift) &
+                              kAddressMemoryUnscaledOffsetMask;
+      return Offset & kAddressMemoryUnscaledOffsetSign
+                 ? Offset | ~kAddressMemoryUnscaledOffsetMask
+                 : Offset;
+    }
+    }
+    return 0;
   }
   /// Return an address only when CPTA on/off and every CPACHECK choice for
   /// the entire access have identical bits. This grants no mapping, tagging,
@@ -129,7 +193,7 @@ struct AArch64AddressMemoryInstruction {
     if (!aarch64AddressMemoryOperation(Word) || stackBase() ||
         (index() == kAddressMemoryRegisterMask && Index))
       return std::nullopt;
-    const uint64_t Address = Base + (extendIndex(Index) << indexShift());
+    const uint64_t Address = Base + addressOffset(Index);
     const bool PreviousDetection = bool(Base & kAddressMemorySignBit) !=
                                    bool(Base & kAddressMemoryPoisonBit);
     const bool Detected =
@@ -153,8 +217,17 @@ struct AArch64AddressMemoryInstruction {
   /// the final accessed byte. This grants no memory or selector-domain proof.
   bool controlIndependentAddressRange(uint64_t Base,
                                       uint64_t MaximumIndex) const {
-    if (!aarch64AddressMemoryOperation(Word) ||
-        (index() == kAddressMemoryRegisterMask && MaximumIndex) ||
+    if (!aarch64AddressMemoryOperation(Word))
+      return false;
+    constexpr uint64_t Region =
+        kAddressMemoryPreservedMask | kAddressMemoryPoisonBit;
+    if (!hasRegisterIndex()) {
+      const auto Address = controlIndependentAddress(Base, 0);
+      return MaximumIndex == 0 && Address &&
+             !(((Base ^ *Address) | (Base ^ (*Address + accessBytes() - 1))) &
+               Region);
+    }
+    if ((index() == kAddressMemoryRegisterMask && MaximumIndex) ||
         (!usesFullWidthIndex() && MaximumIndex > kAddressMemoryNarrowMask) ||
         extendIndex(MaximumIndex) != MaximumIndex ||
         MaximumIndex > (std::numeric_limits<uint64_t>::max() >> indexShift()))
@@ -165,13 +238,30 @@ struct AArch64AddressMemoryInstruction {
         Base + Offset > std::numeric_limits<uint64_t>::max() - LastByte)
       return false;
     const uint64_t End = Base + Offset + LastByte;
-    const uint64_t Region =
-        kAddressMemoryPreservedMask | kAddressMemoryPoisonBit;
     return !((Base ^ End) & Region) &&
            controlIndependentAddress(Base, 0).has_value() &&
            controlIndependentAddress(Base, MaximumIndex).has_value();
   }
+  std::optional<AArch64AddressMemorySpan>
+  controlIndependentSpan(uint64_t Base, uint64_t MaximumIndex) const {
+    if (!controlIndependentAddressRange(Base, MaximumIndex))
+      return std::nullopt;
+    const uint64_t First = *controlIndependentAddress(Base, 0);
+    const uint64_t Last = *controlIndependentAddress(Base, MaximumIndex);
+    if (Last > std::numeric_limits<uint64_t>::max() - accessBytes())
+      return std::nullopt;
+    const uint64_t Begin = First < Base ? First : Base;
+    const uint64_t End =
+        Last + accessBytes() > Base ? Last + accessBytes() : Base;
+    return AArch64AddressMemorySpan{Begin, End - Begin};
+  }
   uint32_t scratchWord() const {
+    // Immediate fields belong to the original instruction, including bits
+    // that the register-offset form uses for Rm or the extension option.
+    if (!hasRegisterIndex())
+      return (Word & ~kAddressMemoryBaseDestinationMask) |
+             kAddressMemoryScratchValue |
+             (kAddressMemoryScratchBase << kAddressMemoryBaseShift);
     // Replacing XZR's index with a zero-valued GPR preserves its value. The
     // original shift stays encoded and is applied exactly once by the load.
     return (Word & ~kAddressMemoryRegistersMask) | kAddressMemoryScratchValue |
