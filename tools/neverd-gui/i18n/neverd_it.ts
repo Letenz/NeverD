@@ -6445,6 +6445,10 @@ Copertura: %7</translation>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>SSA ottimizzata con analisi dei cicli ramificati</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli a ritorno modulare</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6603,18 @@ La terminazione non dimostra che il numero di iterazioni o i risultati delle fun
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Ciclo dimostrato: blocco iniziale %1 → blocco di ritorno %2 · contatore #%3 → aggiornamento #%4 · guardia #%5 nel blocco %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli a ritorno modulare</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Prova: un contatore monotono con un contratto senza overflow.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Prova: ogni ciclo del contatore raggiunge un’uscita comune, anche dopo un ritorno modulare.</translation>
     </message>
 </context>
 <context>
