@@ -926,6 +926,13 @@ TEST(AArch64AddressMemory, DispatchUsesTheAuthenticatedLoadInputLifetime) {
     ++Function.JumpTables.front().AuthenticatedTableLoads.front().Seq;
     EXPECT_FALSE(Find());
     Function.JumpTables.front() = Table;
+    Function.JumpTables.front().AuthenticatedTableLoads.push_back(
+        Table.AuthenticatedTableLoads.front());
+    EXPECT_FALSE(Find());
+    Function.JumpTables.front() = Table;
+    Function.JumpTables.front().MutatedUnsafe = true;
+    EXPECT_FALSE(Find());
+    Function.JumpTables.front() = Table;
     Function.JumpTables.push_back(Table);
     EXPECT_FALSE(Find());
     Function.JumpTables.clear();

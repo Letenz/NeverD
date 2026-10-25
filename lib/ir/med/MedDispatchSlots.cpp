@@ -150,7 +150,9 @@ std::optional<MedVar> findTableSwitchIndex(const MedDispatchContext &C,
         if (!Blk.Ops.empty() && Blk.Ops.back().Opcode == NdOp::INDIR_BR &&
             JT.InsnAddr != Blk.Ops.back().Addr)
           continue;
-        if (JT.IsRelative || !JT.HasDispatchSlotMap ||
+        if (JT.MutatedUnsafe || JT.IsRelative || JT.HasTargetBase ||
+            JT.PreScaledIndex || JT.TwoLevelIndex || JT.TwoTableSelect ||
+            !JT.HasDispatchSlotMap ||
             JT.EntrySize != kAddressMemoryPointerBytes ||
             (JT.EntryStride && JT.EntryStride != kAddressMemoryPointerBytes))
           continue;
