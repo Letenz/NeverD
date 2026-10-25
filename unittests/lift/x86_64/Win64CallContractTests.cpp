@@ -4425,7 +4425,17 @@ TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
         } else
           ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
         ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-        ASSERT_EQ(Source.find("cpu_words("), std::string::npos) << Source;
+        unsigned Queries = 0, Calls = 0;
+        for (const auto &Function : Result.MedFuncs)
+          for (const auto &Block : Function.Blocks)
+            for (const auto &Op : Block.Ops) {
+              Calls += Op.Opcode == NdOp::CALL;
+              Queries += Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                         Op.Inputs[0].isConst() &&
+                         Op.Inputs[0].ConstVal == unsigned(Intrinsic::Cpuid);
+            }
+        EXPECT_EQ(Calls, 0u);
+        EXPECT_EQ(Queries, 1u);
         const std::string Oracle = R"(
 int main(void) {
   unsigned a = 0, b, c = 0, d;
