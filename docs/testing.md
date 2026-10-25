@@ -18,6 +18,12 @@ The latter does not execute privileged or tile-state instructions.
 transport and original-image byte-storage identity. The image test preserves
 mutable pointer slots and overlapping fields across COFF/ELF/Mach-O; native
 and relocatable output retain their stricter address rules.
+`Win64CallContract.MissingInteriorStackSlotCannotDiscardLaterArguments`
+checks whole-module and selected-function recovery through both C routes.
+Missing fixed stack positions remain unavailable while later arguments survive;
+the defined-input variant executes against an independent sum at O0/O2 with
+UBSan. Run the System V and other call-contract owners after changing the
+shared omitted-callee signature policy.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 

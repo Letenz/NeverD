@@ -26,8 +26,10 @@ Full-state x86 interrupt/far returns and kernel context-switch exits remain
 open. An ordinary C return, a bare `iret` assembly statement, or an opaque call
 with only a stack-pointer operand loses observable machine state. The latest
 SDK must be inspected for the required state contract instead of assuming a
-newer intrinsic inventory closes this gap. Unknown incoming stack-pointer
-escapes also still prevent a complete stack-argument bound: do not cap calls
+newer intrinsic inventory closes this gap. Known fixed argument positions now
+survive an interior stack-setup gap, including selected LLVMC recovery; missing
+values remain explicit rather than becoming zero. Unknown incoming stack-pointer
+escapes still prevent a complete stack-argument bound: do not cap calls
 by a private routine's name or treat a sparse outgoing slot as proof that
 later arguments are absent.
 

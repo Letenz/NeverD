@@ -43,7 +43,9 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <array>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <map>
 #include <set>
@@ -927,6 +929,116 @@ int main(void) {
             Source + Oracle,
             {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
     }
+}
+
+TEST(Win64CallContract, MissingInteriorStackSlotCannotDiscardLaterArguments) {
+  constexpr va_t Consumer = Text + 0x80;
+  for (bool Initialized : {false, true}) {
+    SCOPED_TRACE(Initialized);
+    std::vector<uint8_t> Code(0xC0, 0xCC);
+    std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38,    // sub rsp,38h
+                                   0xB9, 1,    0,    0,    0, // mov ecx,1
+                                   0xBA, 2,    0,    0,    0, // mov edx,2
+                                   0x41, 0xB8, 3,    0,    0,    0, // mov r8d,3
+                                   0x41, 0xB9, 4,    0,    0,    0, // mov r9d,4
+                                   0x48, 0xC7, 0x44, 0x24, 0x20, 13, 0, 0, 0,
+                                   0x48, 0xC7, 0x44, 0x24, 0x30, 29, 0, 0, 0};
+    if (Initialized) {
+      const std::array<uint8_t, 9> Middle = {0x48, 0xC7, 0x44, 0x24, 0x28,
+                                             99,   0,    0,    0};
+      Caller.insert(Caller.end(), Middle.begin(), Middle.end());
+    }
+    Caller.push_back(0xE8);
+    const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
+    Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+    for (uint8_t Byte : {0x48, 0x83, 0xC4, 0x38, 0xC3})
+      Caller.push_back(Byte);
+    put(Code, Text, Caller);
+    put(Code, Consumer,
+        {0x48, 0x83, 0xEC, 0x28,       // sub rsp,28h
+         0x48, 0x8D, 0x44, 0x24, 0x58, // lea rax,[rsp+58h]
+         0x48, 0x89, 0x44, 0x24, 0x20, // spill address of sixth slot
+         0x48, 0x8B, 0x44, 0x24, 0x50, // mov rax,[rsp+50h] (fifth)
+         0x48, 0x03, 0x44, 0x24, 0x60, // add rax,[rsp+60h] (seventh)
+         0x48, 0x01, 0xC8,             // add rax,rcx
+         0x48, 0x01, 0xD0,             // add rax,rdx
+         0x4C, 0x01, 0xC0,             // add rax,r8
+         0x4C, 0x01, 0xC8,             // add rax,r9
+         0x48, 0x83, 0xC4, 0x28, 0xC3});
+    auto Image = makeImage(
+        Code, {{Text, "call_sparse_stack"}, {Consumer, "read_sparse_stack"}},
+        {});
+    for (bool Selected : {false, true})
+      for (bool LLVM : {false, true}) {
+        SCOPED_TRACE(Selected);
+        SCOPED_TRACE(LLVM);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries =
+            Selected ? std::set<va_t>{Text} : std::set<va_t>{Text, Consumer};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        bool Observed = false;
+        for (const auto &Function : Result.MedFuncs)
+          if (Function.Entry == Text)
+            for (const auto &Call : Function.CallInfos)
+              if (Call.TargetAddr == Consumer) {
+                Observed = true;
+                EXPECT_EQ(Call.Args.size(), 7u);
+                if (Call.Args.size() == 7u) {
+                  EXPECT_EQ(Call.Args[6].ConstVal, 29u);
+                  if (!Initialized)
+                    EXPECT_EQ(Call.Args[5].Kind, MedVar::Unspecified);
+                }
+              }
+        if (!LLVM) {
+          std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+            if (!E)
+              return;
+            if (E->Kind == ExprKind::Call && E->CallAddr == Consumer) {
+              Observed = true;
+              EXPECT_EQ(E->Operands.size(), 7u);
+            }
+            for (const auto &Operand : E->Operands)
+              Visit(Operand);
+          };
+          for (const auto &Function : Result.HighFuncs)
+            if (Function.Entry == Text)
+              walkStmts(Function.Body,
+                        [&](const HighStmt &S) { forEachExpr(S, Visit); });
+        }
+        EXPECT_TRUE(Observed);
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        }
+        // An unwritten slot is unavailable, not invented padding. Execute the
+        // same caller with defined bytes to check that the seventh value
+        // reaches the independent arithmetic oracle on both source routes.
+        if (Initialized && !Selected) {
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          if (LLVM)
+            ASSERT_TRUE(
+                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+          else
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source +
+                    "\nint main(void) { return call_sparse_stack() != 52; }\n",
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+      }
+  }
 }
 
 TEST(Win64CallContract, UnreadRegisterHolesBeforeStackArgumentsStayUnread) {
