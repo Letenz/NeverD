@@ -192,7 +192,8 @@ TEST(IncomingHomeSource, ExplicitStackCarrierReachesBothCPaths) {
                 << Source;
             const std::string Oracle =
                 Floating
-                    ? "\nint main(void) { double value = 71.0; uint64_t bits; "
+                    ? "\n#include <string.h>\n"
+                      "int main(void) { double value = 71.0; uint64_t bits; "
                       "memcpy(&bits, &value, sizeof(bits)); "
                       "return caller_home() != 42 || read_home(value) != bits; "
                       "}\n"
