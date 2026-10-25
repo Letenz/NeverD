@@ -726,8 +726,8 @@ private slots:
     const int nameWidth = functions->table()->header()->sectionSize(0);
     const int keyboardStep =
         ::neverd::limits::gui_config::kFocusSidebarKeyboardResizeStep;
-    // The sidebar stays inside the disassembly pane, which is only half of a
-    // small native CI screen. Leave room for the later keyboard expansion.
+    // Keep the initial growth within the disassembly pane on small CI screens,
+    // leaving room for the later keyboard expansion.
     const int grownWidth =
         std::min(initialWidth + 180,
                  assemblyGeometry.right() - sidebar->x() + 1 - keyboardStep);
@@ -753,6 +753,10 @@ private slots:
                  ::neverd::limits::gui_config::kFocusSidebarMinimumWidth);
     resizeBy(workspace->width() * 2);
     QVERIFY(sidebar->geometry().right() <= workspace->rect().right());
+    QVERIFY(
+        !WindowFrame::edgesAt(handle->mapTo(workspace, handle->rect().center()),
+                              workspace->size(), {})
+             .testFlag(Qt::RightEdge));
     resizeBy(grownWidth - sidebar->width());
     QTRY_COMPARE(sidebar->width(), grownWidth);
     handle->setFocus(Qt::TabFocusReason);

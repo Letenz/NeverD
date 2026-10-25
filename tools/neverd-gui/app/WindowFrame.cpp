@@ -196,10 +196,14 @@ void WindowFrame::setWindowState(Qt::WindowStates states) {
       fullScreenScreenGeometry_ = fullScreenScreen_->geometry();
     }
   } else if (window_.isFullScreen() && states == Qt::WindowMaximized &&
-             QGuiApplication::platformName() == QLatin1String("cocoa")) {
+             (QGuiApplication::platformName() == QLatin1String("cocoa") ||
+              QGuiApplication::platformName() == QLatin1String("windows"))) {
     // Cocoa restores the window before the Dock's work area. Requesting
     // maximization in the same transition makes Qt zoom against that temporary
     // area and overwrite the normal geometry with the old maximized frame.
+    // Windows shares the saved geometry for frameless maximization and full
+    // screen, then clears it on full-screen exit. Passing through normal size
+    // also lets its next maximization retain the right restore geometry.
     restoreMaximized_ = true;
     window_.setWindowState(Qt::WindowNoState);
     restoreTimer_->start(

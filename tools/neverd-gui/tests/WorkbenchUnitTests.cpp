@@ -1906,7 +1906,8 @@ private slots:
       QTest::qWait(300);
       report(step);
       return nativeFinished && confirmed &&
-             effectiveState(applied.states) == effectiveState(states);
+             effectiveState(applied.states) == effectiveState(states) &&
+             effectiveState(window.windowState()) == effectiveState(states);
     };
     report("normal");
     const QSize normal = window.size();
