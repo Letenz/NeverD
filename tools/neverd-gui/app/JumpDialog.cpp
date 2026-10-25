@@ -9,6 +9,7 @@
 #include "Theme.h"
 
 #include <QDialogButtonBox>
+#include <QFontInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -52,7 +53,7 @@ JumpDialog::JumpDialog(Session &session, QWidget *parent)
   matches_->setUniformItemSizes(true);
   // Names read in the list's font; their addresses line up at the right.
   QFont addresses = Theme::instance().codeFont();
-  addresses.setPointSize(matches_->font().pointSize());
+  addresses.setPointSizeF(QFontInfo(matches_->font()).pointSizeF());
   matches_->setItemDelegate(new SecondaryTextDelegate(addresses, matches_));
   layout->addWidget(matches_, 1);
   layout->addWidget(hint_);

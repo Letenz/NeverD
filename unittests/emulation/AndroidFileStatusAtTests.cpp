@@ -72,6 +72,151 @@ protected:
   }
 };
 
+TEST_P(AndroidFileStatusAt, PathnameAliasesPreserveCompleteBytesAndErrorOrder) {
+  Options.Android->Libraries["libfiles.so"] = {"stat", "stat64", "lstat",
+                                               "lstat64"};
+  struct Case {
+    const char *Text;
+    uint64_t PathAddress, Destination, Error;
+  };
+  const Case Cases[] = {{"/fixture/data", Name, Output, 0},
+                        {"/fixture/data", Name, Name, 0},
+                        {"/fixture/./data", Name, Output, 0},
+                        {"/missing", Name, 1, 2},
+                        {"", Name, Output, 2},
+                        {"/fixture/data/child", Name, 1, 20},
+                        {"/fixture/data/", Name, Output, 20},
+                        {"/fixture/data", 0, Output, 14},
+                        {"/fixture/data", Buffer + 8192, Output, 14},
+                        {"/fixture/data", Name, 1, 14}};
+  const uint64_t Words[] = {0xfe12cd34,
+                            0xfedcba9876543210ULL,
+                            0x89abcdef000081a4ULL,
+                            0xfedcba9887654321ULL,
+                            0,
+                            0,
+                            0,
+                            16384,
+                            0x1234567890ULL,
+                            0x8000000000000001ULL,
+                            123456789,
+                            4294967297,
+                            987654321,
+                            0x7fffffffffffffffULL,
+                            999999999,
+                            0};
+  const char *Names[] = {"stat", "stat64", "lstat", "lstat64"};
+  for (uint64_t Alias = 0; Alias != 4; ++Alias) {
+    for (uint64_t Dynamic : {0u, 1u}) {
+      for (const auto &C : Cases) {
+        SCOPED_TRACE(testing::Message() << Names[Alias] << ':' << Dynamic << ':'
+                                        << C.Text << ':' << C.Error);
+        setPath(C.Text);
+        auto Expected = Options.Android->Memory[0].Bytes;
+        llvm::support::endian::write64le(Expected.data(),
+                                         C.Error ? C.Error : 83);
+        if (!C.Error)
+          for (unsigned I = 0; I != 16; ++I)
+            llvm::support::endian::write64le(
+                Expected.data() + C.Destination - Buffer + I * 8, Words[I]);
+        auto R = run("files_path_status_call",
+                     {Alias, C.PathAddress, C.Destination, Buffer, Dynamic});
+        ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+        EXPECT_EQ(R.ReturnValue, C.Error ? UINT64_MAX : 0);
+        ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+        EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+        // Named libc wrappers retain native events; only actual guest traps
+        // publish raw service events.
+        EXPECT_TRUE(R.Services.empty());
+        unsigned Calls = 0;
+        for (const auto &Call : R.NativeCalls)
+          if (Call.Name == Names[Alias]) {
+            EXPECT_EQ(Call.Arguments[0], C.PathAddress);
+            EXPECT_EQ(Call.Arguments[1], C.Destination);
+            EXPECT_EQ(Call.Library, Dynamic ? "libfiles.so" : "");
+            ++Calls;
+          }
+        EXPECT_EQ(Calls, 1u);
+      }
+    }
+  }
+}
+
+TEST_P(AndroidFileStatusAt, PathnameAliasesKeepUnsupportedCallsPending) {
+  Options.Android->Libraries["libfiles.so"] = {"stat", "stat64", "lstat",
+                                               "lstat64"};
+  Options.LinuxFiles->SymbolicLinks["/link"] = {'/', 'f'};
+  const auto Files = Options.LinuxFiles;
+  for (unsigned Mode = 0; Mode != 8; ++Mode) {
+    Options.LinuxFiles = Files;
+    if (Mode == 0)
+      Options.LinuxFiles.reset();
+    if (Mode == 1)
+      Options.LinuxFiles->Metadata.clear();
+    setPath(Mode == 2   ? "/fixture"
+            : Mode == 3 ? "fixture/data"
+            : Mode == 4 ? "/link"
+            : Mode == 5 ? "/link/child"
+                        : "/fixture/data");
+    for (uint64_t Alias = 0; Alias != 4; ++Alias) {
+      SCOPED_TRACE(testing::Message() << Mode << ':' << Alias);
+      auto R = run("files_path_status_call",
+                   {Alias, Name, Mode == 6 ? Buffer + 8192 - 64 : Output,
+                    Buffer, Mode == 7 ? 2u : 0u});
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+      EXPECT_FALSE(R.ReturnValue);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Options.Android->Memory[0].Bytes);
+      ASSERT_FALSE(R.NativeCalls.empty());
+      EXPECT_FALSE(R.NativeCalls.back().Result);
+      if (Mode == 7) {
+        EXPECT_EQ(R.NativeCalls.back().Library, "libfiles.so");
+        EXPECT_NE(R.Diagnostic.find("inactive dynamic library"),
+                  std::string::npos);
+      }
+    }
+  }
+}
+
+TEST_P(AndroidFileStatusAt, PathnameAliasesMatchNativeTransport) {
+  Options.Android->Libraries["libfiles.so"] = {"stat", "stat64", "lstat",
+                                               "lstat64"};
+  bool Compared = false;
+  for (auto Backend : {ExecutionBackendKind::KVM, ExecutionBackendKind::WHP,
+                       ExecutionBackendKind::HVF}) {
+    ExecutionConfiguration C;
+    C.Backend = Backend;
+    C.Architecture = GuestArchitecture::AArch64;
+    C.Contract = ExecutionContract::CheckedUserAArch64;
+    auto Probe = probeExecutionBackend(C);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    if (Probe->Availability != BackendAvailability::Available)
+      continue;
+    for (const char *Text : {"/fixture/data", "/missing", "/fixture"}) {
+      setPath(Text);
+      for (uint64_t Alias = 0; Alias != 4; ++Alias) {
+        SCOPED_TRACE(testing::Message() << Text << ':' << Alias);
+        auto Args =
+            std::vector<uint64_t>{Alias, Name, Output, Buffer, Alias % 2};
+        Options.Backend = ExecutionBackendKind::Unicorn;
+        auto Software = run("files_path_status_call", Args);
+        ASSERT_EQ(Software.Stop, llvm::StringRef(Text) == "/fixture"
+                                     ? ProcessStopReason::UnsupportedService
+                                     : ProcessStopReason::Returned);
+        ASSERT_FALSE(Software.TraceTruncated);
+        Options.Backend = Backend;
+        auto Native = run("files_path_status_call", Args);
+        Native.SelectedBackend = Software.SelectedBackend;
+        Native.BackendSelectionReason = Software.BackendSelectionReason;
+        EXPECT_EQ(processResultJSON(Native), processResultJSON(Software));
+        Compared = true;
+      }
+    }
+  }
+  if (!Compared)
+    GTEST_SKIP() << "native AArch64 transports unavailable";
+}
+
 TEST_P(AndroidFileStatusAt, ParentWalkCallsPreserveErrnoAndCompleteGuards) {
   Options.LinuxFiles->Directories.push_back("/fixture/sub");
   const char BasePath[] = "/fixture/sub";

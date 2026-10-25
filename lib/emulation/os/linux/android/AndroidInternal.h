@@ -83,6 +83,8 @@ llvm::Error initializeCalendar(AddressSpace &Space,
 llvm::Error initializeDladdrObservations(AddressSpace &Space,
                                          const AndroidNativeOptions &Options,
                                          LinkedImage &Linked);
+llvm::Error initializeErrorStrings(AddressSpace &Space,
+                                   const LinkedImage &Linked);
 llvm::Error initializeJNI(AddressSpace &Space, LinkedImage &Linked);
 llvm::Expected<PropertyTable>
 initializeProperties(AddressSpace &Space, const ProcessOptions &Options,
@@ -286,6 +288,7 @@ private:
                 const ProcessServiceEvent &Event);
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
+  BionicResult checkedRead(const NativeCallEvent &Call);
   BionicResult usleep(const NativeCallEvent &Call);
   BionicResult sleep(const NativeCallEvent &Call);
   BionicResult sleepResult(uint64_t Returned,
@@ -362,6 +365,7 @@ private:
                llvm::function_ref<llvm::Expected<uint8_t>(uint64_t)> ReadByte);
   BionicResult compareString(const NativeCallEvent &Call);
   BionicResult getErrno(const NativeCallEvent &Call);
+  BionicResult errorString(const NativeCallEvent &Call);
   BionicResult getPageSize(const NativeCallEvent &Call);
   BionicResult getAPILevel(const NativeCallEvent &Call);
   BionicResult queryConfiguration(const NativeCallEvent &Call);
