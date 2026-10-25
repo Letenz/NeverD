@@ -17,11 +17,16 @@ GPRS = ("EAX", "ECX", "EDX", "EBX", "ESP", "EBP", "ESI", "EDI")
 
 def object_image(oracle, binary, text, patched):
     if not isinstance(binary, oracle.lief.MachO.Binary):
+        if isinstance(binary, oracle.lief.ELF.Binary):
+            assert all(not r.has_section or r.section.name != text.name
+                       for r in binary.relocations), "unresolved ELF code relocation"
+        else:
+            assert not list(text.relocations), "unresolved COFF code relocation"
         return bytes(patched)
     # Darwin's i386 ctpop lowering can read __literal16 through a local
     # call/pop PC anchor. Preserve the object's section layout: a uniformly
     # rebased LOCAL_SECTDIFF/PAIR needs no patch, but the constants must exist.
-    sections = [s for s in binary.sections if s.content]
+    sections = [s for s in binary.sections if s.content and s.name != "__eh_frame"]
     assert text.virtual_address == 0
     assert all(s.name in ("__text", "__literal16") for s in sections)
     image = bytearray(max(s.virtual_address + len(s.content) for s in sections))

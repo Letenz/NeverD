@@ -94,17 +94,26 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
-`X86APXAtomic.h` owns the APX atomic native API names, operand widths,
+`X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
 condition/segment controls and exact assembly fallback. The existing
 `ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
-routes preserve a native EVEX RAO-INT or CMPccXADD transaction, including dead
-results and false-condition write-back; no ordinary load/store expansion is
+routes preserve the original legacy/VEX/EVEX RAO-INT or CMPccXADD transaction,
+including dead results and false-condition write-back; no ordinary load/store expansion is
 permitted. Normalized offsets retain DS/FS/GS selection, with address-size
 wrapping performed by the existing effective-address owner. Default-stack
 RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
 the segment: the normalized offset cannot yet retain their distinct #SS fault
 class. `Codegen` treats LLVM error diagnostics as compilation failures and
 does not publish the parseable but incomplete objects LLVM can leave behind.
+Legacy RAO also supports i386; normalized addresses remain eight bytes while
+the native i386 carrier is four bytes. A complete narrow absolute displacement
+is wrapped and published as a full address at the lifter boundary. LLVM's
+shared atomic address-role map defers only the address to memory resolution;
+stored/comparator values remain ordinary address-fragment escape sinks.
+Native memory emission uses the same writable-data, pointer-table and
+immutable-data address owners as ordinary memory operations. Selected or
+recurrent immutable bases must retain relocation; segment-relative offsets
+and live-image storage bypass this process-image rebasing.
 
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature

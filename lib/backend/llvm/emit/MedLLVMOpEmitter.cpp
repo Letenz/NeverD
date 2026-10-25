@@ -91,8 +91,20 @@ llvm::Value *MedLLVMEmitter::resolveAtomicMemoryPtr(
   if (AddressSpace == NdMemoryAddressSpace::Default && Img)
     Address = tryResolveDirectGlobalDataAddress(AddressVar, AccessBytes);
   if (!Address && AddressSpace == NdMemoryAddressSpace::Default && Img &&
-      !usesOriginalImageStorage())
+      !usesOriginalImageStorage()) {
     Address = tryResolveWritableData(AddressVar, AccessBytes, Builder);
+    if (!Address)
+      Address = tryResolveCodePtrTablePtr(AddressVar, Builder);
+    if (!Address)
+      Address = tryResolveI386GotRelativeReadOnlyPtr(AddressVar, AccessBytes,
+                                                     Builder);
+    if (!Address)
+      // Native memory operations need the same all-arms address proof as an
+      // ordinary load. A selected or recurrent immutable base must not fall
+      // back to an integer address in the original image.
+      Address = tryResolveReadOnlyDataPtr(AddressVar, AccessBytes,
+                                          /*FailClosed=*/true, Builder);
+  }
   if (!Address) {
     rejectEscapingAddressFragment(AddressVar,
                                   "an unresolved atomic memory address");

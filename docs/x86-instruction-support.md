@@ -1709,6 +1709,21 @@ generator tests pass. LLVM's four new legacy tests and nineteen neighboring
 codegen/assembler tests pass, including APX-only inputs copied into encodable
 registers and invalid i386 mode/address controls.
 
+For each pinned/native SDK, NeverD exports 360 x86-64 wrappers and 504 decoded
+pipeline cases, including original flags, addressing and returned values.
+The wrapper qualification passes 37 compiled programs and 159,840 controlled
+completions per SDK. The pipeline matrix covers 504 production objects and
+4,032 HighC/LLVMC compilations with Clang and NeverC at O0/O2. Native pipeline
+C and case metadata match the qualified pinned exports byte-for-byte; only
+that exact source work is reused, with all native production objects checked.
+
+i386 adds 112 wrappers per format, 21 compiled programs and 35,280 controlled
+completions per SDK. Its 144 decoded pipeline cases pass all 720 production/C
+objects, including 576 Clang compilations per SDK. The test loader validates
+ELF/COFF code relocations and Mach-O local section-difference pairs rather
+than executing unresolved object bytes. These results qualify operand
+transport, effects, flags and ABI preservation, not physical atomicity.
+
 ## Native compact-memory qualification
 
 The twelve compress-store/expand-load families retain their original opcode

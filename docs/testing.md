@@ -423,7 +423,7 @@ they do not qualify native execution or standalone cache reconstruction.
 `NeverDDebugInfoTests` rejects automatic container companion discovery while
 retaining explicit per-image debug-file diagnostics.
 
-`HighCPointerAddresses.CompilerDispatchDoesNotDependOnIncludes` checks all five
+`HighCPointerAddresses.CompilerDispatchDoesNotDependOnIncludes` checks seven
 x86 compiler-dispatch families through HighC and LLVMC, across COFF/ELF/Mach-O.
 Disabling includes must retain the required definitions; each unmodified source
 unit is syntax-checked for the Windows x64 target with externally supplied
@@ -447,6 +447,28 @@ sequence. `--pipeline-only` reruns that stage without repeating the wrappers.
 These controlled completions do not qualify physical atomicity or hardware
 faults. `NeverDCodegenDiagnosticTests` requires an allocation error to reject
 an otherwise parseable object, retaining the caller's diagnostic handler.
+
+`NeverDX86LegacyEncodingSourceTests` reuses the atomic boundary fixtures with
+the legacy RAO/VEX CMPccXADD inventory. Set `NEVERD_LEGACY_ATOMIC_EXPORT_DIR`
+and pass `--legacy` to `verify_x86_apx_atomic.py` for the x86-64 wrappers and
+504 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
+and 144 decoded pipelines. `scripts/verify_x86_legacy_atomic_i386.py` checks
+their production/LLVM objects and Clang C output at O0/O2, including 16-bit
+effective addressing, all explicit segment controls, aliased ordinary
+memory, repeated transactions, cdecl preservation and returned flags.
+Its Mach-O test loader retains literal-pool layout and validates local
+section-difference relocation pairs before controlled execution.
+
+The atomic semantic suite checks legacy/VEX raw-detail disagreement,
+address wrapping, every CMPccXADD condition and unknown-input refusal.
+Both source inventories reject incomplete address fragments in addresses
+and stored/comparator values. i386 decoded absolute-address fixtures also
+check that a complete narrow displacement is normalized as a full address,
+without disguising an unresolved relocation fragment as one.
+Selected image-address tests check both atomic encoding inventories across
+ELF/COFF/Mach-O, including both orders of an incomplete arm and raw FS offsets.
+The shared native memory owner is also covered by the AArch64/x86-64 ELF/PE
+rematerialized-table recurrence in `NeverDNativePointerRelocationBoundaryTests`.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent

@@ -19,6 +19,7 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
@@ -26,6 +27,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 #include <array>
 #include <cstdlib>
@@ -341,6 +343,127 @@ TEST(X86APXAtomicSource, IncompleteAddressesAndStoredValuesRemainRejected) {
       EXPECT_FALSE(MedLLVMEmitter().emit({F}, Context, "fragment", Arch::X64));
     }
   }
+}
+
+TEST(X86APXAtomicSource, SelectedImageAddressesUseTheSharedMemoryOwner) {
+  constexpr va_t DataAddress = 0x4000;
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (auto Id : AtomicInventory)
+      for (unsigned Variant = 0; Variant != 5; ++Variant) {
+        SCOPED_TRACE(std::to_string(unsigned(Format)) + "/" +
+                     std::to_string(unsigned(Id)) + "/" +
+                     std::to_string(Variant));
+        const auto P = *x86APXAtomicPlan(Id, 8, 64, Variant == 4 ? 0x64 : 0);
+        auto F = med(P);
+        MedVar Condition = temporary(0, 1);
+        Condition.Kind = MedVar::Param;
+        F.Params.push_back(Condition);
+        MedOp Select;
+        Select.Opcode = NdOp::SELECT;
+        Select.Output = temporary(10, 8);
+        Select.Output.SSAVer = 1;
+        Select.addInput(Condition);
+        auto Address = MedVar::makeConst(DataAddress, 8);
+        auto Other = Address;
+        if (Variant == 1)
+          Other.ConstVal += 8;
+        else if (Variant == 2 || Variant == 3)
+          Other.Provenance = ConstantAddressProvenance::AddressFragment;
+        Select.addInput(Variant == 3 ? Other : Address);
+        Select.addInput(Variant == 3 ? Address : Other);
+        F.Blocks[0].Ops[0].Inputs[1] = Select.Output;
+        F.Blocks[0].Ops.insert(F.Blocks[0].Ops.begin(), Select);
+
+        BinaryImage Image;
+        Image.Arch = Arch::X64;
+        Image.Bits = Bitness::Bits64;
+        Image.Format = Format;
+        Segment Data;
+        Data.Name = Format == BinaryFormat::ELF    ? ".rodata"
+                    : Format == BinaryFormat::COFF ? ".rdata"
+                                                   : "__const";
+        Data.VA = DataAddress;
+        Data.Flags = SegmentFlags::Readable;
+        Data.Data.assign(32, 0x79);
+        Data.Size = Data.Data.size();
+        Image.Segments.push_back(std::move(Data));
+        llvm::LLVMContext Context;
+        auto M = MedLLVMEmitter().emit({F}, Context, "selected", Arch::X64, {},
+                                       &Image, Format);
+        if (Variant == 2 || Variant == 3) {
+          EXPECT_FALSE(M);
+          continue;
+        }
+        ASSERT_TRUE(M);
+        ASSERT_FALSE(llvm::verifyModule(*M, &llvm::errs()));
+        // Inspect the actual native input after eliminating local transport
+        // slots, so an unused global cannot satisfy the relocation check.
+        for (auto &Function : *M) {
+          if (Function.isDeclaration())
+            continue;
+          llvm::SmallVector<llvm::AllocaInst *, 4> Locals;
+          for (auto &I : Function.getEntryBlock())
+            if (auto *Local = llvm::dyn_cast<llvm::AllocaInst>(&I);
+                Local && llvm::isAllocaPromotable(Local))
+              Locals.push_back(Local);
+          llvm::DominatorTree Dominators(Function);
+          llvm::PromoteMemToReg(Locals, Dominators);
+        }
+        unsigned Transactions = 0;
+        for (auto &Function : *M)
+          for (auto &Block : Function)
+            for (auto &I : Block)
+              if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&I))
+                if (const auto Emitted =
+                        x86APXAtomicCallPlan(Arch::X64, *Call)) {
+                  ++Transactions;
+                  EXPECT_EQ(Emitted->Id, Id);
+                  EXPECT_EQ(Emitted->SegmentPrefix, P.SegmentPrefix);
+                  auto *Pointer = llvm::dyn_cast<llvm::PtrToIntOperator>(
+                      Call->getArgOperand(0));
+                  ASSERT_NE(Pointer, nullptr);
+                  // A native image access must use relocated storage. FS
+                  // instead receives the selected raw offset, even when its
+                  // numeric bits coincide with a mapped image address.
+                  if (Variant == 4) {
+                    auto *Offset = llvm::dyn_cast<llvm::IntToPtrInst>(
+                        Pointer->getPointerOperand());
+                    ASSERT_NE(Offset, nullptr);
+                    auto *Selected =
+                        llvm::dyn_cast<llvm::SelectInst>(Offset->getOperand(0));
+                    ASSERT_NE(Selected, nullptr);
+                    for (unsigned Arm : {1u, 2u}) {
+                      auto *Value = llvm::dyn_cast<llvm::ConstantInt>(
+                          Selected->getOperand(Arm));
+                      ASSERT_NE(Value, nullptr);
+                      EXPECT_EQ(Value->getZExtValue(), DataAddress);
+                    }
+                  } else {
+                    const auto Relocated = [](auto &&Self,
+                                              llvm::Value *Value) -> bool {
+                      if (llvm::isa<llvm::GlobalVariable>(Value))
+                        return true;
+                      if (auto *Cast =
+                              llvm::dyn_cast<llvm::PtrToIntOperator>(Value))
+                        return Self(Self, Cast->getPointerOperand());
+                      if (auto *Cast =
+                              llvm::dyn_cast<llvm::IntToPtrInst>(Value))
+                        return Self(Self, Cast->getOperand(0));
+                      if (auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Value))
+                        return Self(Self, GEP->getPointerOperand());
+                      if (auto *Choice =
+                              llvm::dyn_cast<llvm::SelectInst>(Value))
+                        return Self(Self, Choice->getTrueValue()) &&
+                               Self(Self, Choice->getFalseValue());
+                      return false;
+                    };
+                    EXPECT_TRUE(
+                        Relocated(Relocated, Pointer->getPointerOperand()));
+                  }
+                }
+        EXPECT_EQ(Transactions, 1u);
+      }
 }
 
 TEST(X86APXAtomicSource, ExportsLiveDeadAndRepeatedTransactions) {
