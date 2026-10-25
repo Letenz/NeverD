@@ -26,6 +26,8 @@ class AArch64Lifter {
 public:
   explicit AArch64Lifter(Arch TargetArch);
 
+  /// Direct callers own fresh, complete operand detail. Decoder::liftToLow
+  /// additionally checks occurrence evidence and borrowed-buffer lifetime.
   void lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
             bool ScalarWideImmediate = false,
             std::optional<uint32_t> FollowingWord = std::nullopt);

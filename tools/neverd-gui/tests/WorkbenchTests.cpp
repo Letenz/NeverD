@@ -48,7 +48,6 @@
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "WindowFrame.h"
-#include "WindowFramePlatform.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -719,10 +718,10 @@ private slots:
     QTRY_VERIFY(functions->model().total() > 0 &&
                 !functions->model().loading());
     QVERIFY(capture(QStringLiteral("open")));
-    auto *handle = sidebar->findChild<QWidget *>(
+    auto *handle = workspace->findChild<QWidget *>(
         QStringLiteral("focusSidebarResizeHandle"));
     QVERIFY(handle && handle->isVisible());
-    QCOMPARE(handle->cursor().shape(), Qt::SizeHorCursor);
+    QCOMPARE(handle->cursor().shape(), Qt::SplitHCursor);
     const int initialWidth = sidebar->width();
     const int nameWidth = functions->table()->header()->sectionSize(0);
     const auto resizeBy = [&](int delta) {
@@ -932,8 +931,7 @@ private slots:
       auto *minimize =
           bar->findChild<QAbstractButton *>(QStringLiteral("minimizeButton"));
       QVERIFY(maximize && minimize);
-      if (platform::drawsWindowControls())
-        QVERIFY(maximize->isVisible() && minimize->isVisible());
+      QVERIFY(maximize->isVisible() && minimize->isVisible());
       if (maximize->isVisible()) {
         QTest::mouseClick(maximize, Qt::LeftButton);
         QTRY_VERIFY(dialog->isMaximized());
@@ -1632,15 +1630,17 @@ private slots:
       QVERIFY(palette);
       QCOMPARE(QApplication::activePopupWidget(), palette.data());
       QVERIFY(!QApplication::activeModalWidget());
-      QVERIFY(activateTestWindow(palette));
-      QTRY_COMPARE(QGuiApplication::focusWindow(), palette->windowHandle());
       auto *input = palette->findChild<QLineEdit *>();
       QVERIFY(input);
       QTRY_VERIFY(input->hasFocus());
       input->setText(bench.action(ActionId::JumpAnywhere)->text().remove('&'));
       QSignalSpy operand(bench.action(ActionId::JumpOperand),
                          &QAction::triggered);
-      QTest::keyClick(input, accept ? Qt::Key_Return : Qt::Key_Escape);
+      // Cocoa popups can receive keys through their owner's native key
+      // window. Exercise that routing instead of requiring a separate one.
+      QVERIFY(QGuiApplication::focusWindow());
+      QTest::keyClick(QGuiApplication::focusWindow(),
+                      accept ? Qt::Key_Return : Qt::Key_Escape);
       QVERIFY(operand.isEmpty());
       QTRY_VERIFY(!palette);
       if (accept) {
