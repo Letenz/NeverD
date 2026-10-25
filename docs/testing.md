@@ -11012,6 +11012,13 @@ sections D6.15–16, D6.246 and D6.279–281.
 
 `NeverDAArch64StateTests` checks all 71 complete-state read positions at both privileges, including width normalization, missing readers and retry. `NeverDAArch64FPTests` executes original `AArch64FPCases.def` instructions: all vector lanes, packed arithmetic, scalar/vector floating results, four rounding modes, FZ/DN, cumulative FPSR, context state and rejected extensions/control bits. `NeverDAArch64MemoryTests` tests every crossing offset, ordered observers, stops, denied pages, aliases and restored vector inputs. `NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) injects every scalar/vector read failure after real execution. Unavailable native transports skip explicitly; these tests and cross-compilation do not replace native ARM64 KVM/WHP evidence.
 
+`NeverDUnicornStateReuseTests` checks consecutive steps, every changed scalar
+and vector input, cancelled entry, mapping changes and host code writes at both
+privileges. Linux's wrapped `NeverDUnicornStateTransferTests` also counts avoided
+EL0 packet installs and injects every capture failure after a successful warm
+step: retry must restore the complete original input and execute exactly once.
+The portable state checks do not replace this Linux-only fault injection.
+
 `NeverDAArch64MemoryTests` covers 18 scalar/pair forms at both privilege levels with Unicorn, KVM and WHP. It checks every crossing offset, sign/width results, observer ordering, denied/unmapped second pages, explicit fault consumption and retry, repeated physical aliases, and context restoration after alias replacement. The former valid crossing-load rejection is reproduced before the change. Unavailable transports skip explicitly; portable Unicorn verification and cross-compilation do not replace native ARM64 KVM/WHP evidence.
 
 `NeverDDriverGuardMetadataTests` (`DriverGuardCases.def`) checks zero-flag dormant CFG metadata, unchanged fallback pointers at both load addresses, invalid slots/targets and missing relocations. Its execution cases use `driver-strict` and `checked-x64-v1` on explicit Unicorn/KVM/WHP transports; unavailable transports skip separately. `DriverPublicCLICases.def` selects `--backend unicorn` for the CLI comparisons with the compatible v1 C API. Native and `auto` selection retain their separate public coverage and never silently fall back when the host API is unavailable.

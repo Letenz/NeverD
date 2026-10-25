@@ -7978,6 +7978,13 @@ and NZCV normalization. Retrying a failed transfer reinstalls the entire input;
 instruction admission, RAM transactions and translation-cache invalidation
 retain their existing boundaries.
 
+After a successful EL0 capture, an identical input packet may reuse the engine's
+registers while its address space, mapping generation and transport base remain
+unchanged. The comparison includes every scalar and vector field from the raw
+capture; normalization remains owned by `captureAArch64State`. Any changed input,
+mapping change or failed step requires a complete install. Supervisor steps keep
+complete installs, and every step still captures the complete output packet.
+
 Serial checked ARM64 steps reuse Unicorn's one-instruction translation only
 after comparing all four executable bytes with a bounded transport cache.
 Host and guest writes through any alias are therefore visible without relying

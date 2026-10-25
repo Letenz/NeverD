@@ -555,11 +555,18 @@ public:
   llvm::Error step(AArch64MachineState &State,
                    MachineRunControl Control) override {
     Control = Control.forNativeStep();
-    if (auto E = CPU.synchronize())
+    if (auto E = CPU.synchronize()) {
+      UserSpace.reset();
       return E;
-    const bool UserReady = UserSpace.lock() == CPU.Memory.addressSpace() &&
+    }
+    const auto PreviousSpace = UserSpace.lock();
+    const bool UserReady = PreviousSpace &&
+                           PreviousSpace == CPU.Memory.addressSpace() &&
                            UserGeneration == CPU.Memory.mappingGeneration() &&
                            UserTransportBase == CPU.Memory.transportPhysical(0);
+    const bool RegistersReady = UserReady &&
+                                LastCapture.Registers == State.Registers &&
+                                LastCapture.Vectors == State.Vectors;
     // A failed step may leave the engine in a partially installed state.
     // Reuse EL0 only after a complete, successful capture on this mapping.
     UserSpace.reset();
@@ -600,8 +607,12 @@ public:
                            &Control))
         return E;
     }
-    if (auto E = AArch64RegisterPacket(State).write(CPU.Engine))
-      return E;
+    // Only an identical, fully captured packet on the same established EL0
+    // mapping can reuse engine registers. Callbacks, thread switches and other
+    // input changes still install the entire packet before guest entry.
+    if (!RegistersReady)
+      if (auto E = AArch64RegisterPacket(State).write(CPU.Engine))
+        return E;
     if (auto E = CPU.run(State.reg(AArch64Register::PC), 1, &Control, true))
       return E;
     // The engine may write only a narrow register or fail after a prefix.
@@ -631,12 +642,14 @@ public:
       UserSpace = CPU.Memory.addressSpace();
       UserGeneration = CPU.Memory.mappingGeneration();
       UserTransportBase = CPU.Memory.transportPhysical(0);
+      LastCapture = Captured;
     }
     State = Next;
     return llvm::Error::success();
   }
 
 private:
+  AArch64MachineState LastCapture;
   std::weak_ptr<AddressSpace> UserSpace;
   uint64_t UserGeneration = 0, UserTransportBase = 0;
 };

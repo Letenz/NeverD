@@ -555,6 +555,12 @@ if(NEVERD_EMULATION_BACKEND_UNICORN)
   set_tests_properties(UnicornDecode.RegisterU UnicornDecode.RoundMemory PROPERTIES
     LABELS NeverDUnicornDecodeTests TIMEOUT 15)
   target_compile_definitions(NeverDExecutionConfigurationTests PRIVATE NEVERD_TEST_UNICORN=1)
+  add_neverd_unittest(NeverDUnicornStateReuseTests
+    UnicornStateReuseTests.cpp
+    TIMEOUT 15
+    LINK_COMPONENTS EmulationCPU)
+  target_include_directories(NeverDUnicornStateReuseTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/lib/emulation)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_neverd_unittest(NeverDUnicornStateTransferTests
       UnicornStateTransferTests.cpp
