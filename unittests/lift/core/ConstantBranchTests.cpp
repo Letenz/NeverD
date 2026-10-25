@@ -380,6 +380,25 @@ TEST(ConstantBranch, ANewIncomingEdgeWithdrawsAnEarlierConstantProof) {
   EXPECT_TRUE(Function.UnsafeIndirectBranchAddresses.count(0x100c));
 }
 
+TEST(ConstantBranch, CachedBytesDoNotSurviveALostAddressProof) {
+  auto Image = scalarLoadImage(Arch::X64, BinaryFormat::COFF);
+  auto &Text = Image.Segments.front();
+  Text.Data = {0x85, 0xff, 0x74, 0x0c,    // test edi,edi; jz 0x1010
+               0xb8, 0x00, 0x20, 0,    0, // mov eax,0x2000
+               0x8b, 0x00,                // mov eax,[rax]
+               0xff, 0xe0,                // jmp rax
+               0xe9, 0xc3, 0x90, 0xb9, 0x09, 0x10, 0, 0, // mov ecx,0x1009
+               0xff, 0xe1,                               // jmp rcx
+               0xe9, 0x90, 0xc3};
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = Text.Size;
+  writeLE<uint32_t>(Image.Segments.back().Data.data(), 0x1019);
+  const auto Function = build(Image);
+  EXPECT_TRUE(addresses(Function).count(0x1009));
+  EXPECT_FALSE(addresses(Function).count(0x1019));
+  EXPECT_TRUE(Function.UnsafeIndirectBranchAddresses.count(0x100b));
+}
+
 TEST(ConstantBranch, AnOpcodeReachedByAnotherPathRemainsCode) {
   const auto Function =
       build({0x74, 0x0a, 0xb8, 0x0d, 0x10, 0x00, 0x00, 0x90, 0x90, 0x90, 0xff,
