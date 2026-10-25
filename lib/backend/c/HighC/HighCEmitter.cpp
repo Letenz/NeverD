@@ -695,6 +695,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
           (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
            x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
            isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
+           isApxAtomicIntrinsic(E.IntrinsicId) ||
            E.IntrinsicId == Intrinsic::X86AMXState);
       // A read MSVC's <intrin.h> spells for Windows, as __readgsqword.
       if (!MsvcSegmentedScalar && !InstructionMemory)

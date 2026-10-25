@@ -137,3 +137,47 @@ cost. The current file cache stores parsed data, not the decision index.
 Investigate those costs and coverage gaps with the measurements above before
 adding another database format or claiming a general recognition/performance
 lead.
+
+## Reference evidence withdrawal
+
+Reference checking must withdraw evidence as well as discover it. A candidate
+whose own calls contradict its identity cannot keep confirming callers through
+its original byte hit. That invalidation is specific to the module and input
+address: another viable version of the same named routine can still confirm a
+reference. An ambiguous target's raw-pattern availability can change even when
+its settled name stays absent.
+
+Callers rejected using provisional evidence are reconsidered when that evidence
+changes. Otherwise a short-lived name at one level can permanently discard a
+correct alternative higher in the call graph. Checking still uses a worklist
+of affected callers, rather than rescanning the database after every round.
+Small proposal groups use inline storage. Changed addresses are sorted and
+deduplicated in contiguous buffers, and a reusable queue with one byte per
+match admits each dependent candidate at most once per round. Its length is
+bounded by the match count, independent of how many references reach it.
+An unchanged settled name does not requeue callers merely because an unused
+raw pattern disappeared. Single-public-name hits also bypass temporary name
+grouping allocations; multiple names retain the existing alias ordering and
+intersection rules.
+The bounds remain in `lib/sigs/ReferenceCheckLimits.def`. If propagation reaches
+the round limit, all proposals at the unresolved addresses and their dependent
+callers are suppressed; an unchecked alternative cannot win by elimination.
+This conservative fallback runs only when work remains at the limit.
+
+`SignatureDBReferences.*` covers withdrawn raw hits, recovery through multiple
+call levels, a surviving same-name version, unresolved cycles with unrelated
+functions, and 4,096 callers checked with one/four workers in different entry
+orders. The synthetic regressions establish the evidence rules independently
+of any particular library name or evaluation address.
+
+The [reference-check measurement record](evidence/signature-references-2026-10-24.json)
+compares eight MSVC compatibility probes. The VS2019 x86 debug probe gains
+26 correctly named library functions (996 to 1,022 of 1,800); none of the eight
+loses a correct name or acquires a new wrong name. Existing naming errors remain
+visible. In the paired one/four-worker measurements, seven probes reduce median
+CPU time for matching, reference checking and name settlement by about 0.8–4.2%.
+The debug probe that gains names needs about 1.2–1.3 ms more CPU time in that
+stage (about 8%). End-to-end wall timings varied substantially with host load;
+the record retains that uncertainty and does not claim a universal speedup.
+These results do not establish generalization to held-out programs or
+comparative accuracy against another tool.

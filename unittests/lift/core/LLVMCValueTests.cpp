@@ -15,12 +15,17 @@
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
+#include "neverd/backend/llvm/X86/X86APXAtomic.h"
+#include "neverd/backend/llvm/X86/X86RepStateAsm.h"
+#include "neverd/backend/llvm/X86/X86SgxAsm.h"
+#include "neverd/backend/llvm/X86/X86SystemStateAsm.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Metadata.h"
@@ -232,61 +237,168 @@ int main(void) {
     compileAndRun(Source, Level, {}, true);
 }
 
-TEST(LLVMCValues, SHAFeaturesComposeWithSGXAMXAndREPSourceFallbacks) {
+TEST(LLVMCValues, SHAFeaturesComposeWithNativeInstructionFallbacks) {
   for (bool SGX : {false, true})
     for (bool AMX : {false, true})
-      for (bool REP : {false, true}) {
-        SCOPED_TRACE(SGX);
-        SCOPED_TRACE(AMX);
-        SCOPED_TRACE(REP);
-        llvm::LLVMContext Context;
-        llvm::Module Module("mixed_native_features", Context);
-        Module.setDataLayout("e-p:64:64-i64:64");
-        llvm::IRBuilder<> B(Context);
-        auto *F = llvm::Function::Create(
-            llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
-            llvm::GlobalValue::ExternalLinkage, "mixed_features", Module);
-        B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
-        if (SGX)
-          B.CreateIntrinsic(
-              llvm::Intrinsic::x86_encls, {},
-              {B.getInt64(0), B.getInt64(0), B.getInt64(0), B.getInt64(0)});
-        if (AMX)
-          B.CreateIntrinsic(llvm::Intrinsic::x86_tilezero, {}, {B.getInt8(0)});
-        if (REP) {
-          const auto ID =
-              llvm::Intrinsic::lookupIntrinsicID("llvm.x86.rep.cmps.state");
-          ASSERT_NE(ID, llvm::Intrinsic::not_intrinsic);
-          auto *Address = B.CreatePtrToInt(F->getArg(0), B.getInt64Ty());
-          B.CreateIntrinsic(ID, {},
-                            {B.getInt64(0), Address, Address, B.getInt8(0),
-                             B.getInt16(0x4000), B.getInt32(1), B.getInt32(64),
-                             B.getInt32(0), B.getInt32(0)});
+      for (bool REP : {false, true})
+        for (bool Atomic : {false, true}) {
+          SCOPED_TRACE(SGX);
+          SCOPED_TRACE(AMX);
+          SCOPED_TRACE(REP);
+          SCOPED_TRACE(Atomic);
+          llvm::LLVMContext Context;
+          llvm::Module Module("mixed_native_features", Context);
+          Module.setDataLayout("e-p:64:64-i64:64");
+          llvm::IRBuilder<> B(Context);
+          auto *F = llvm::Function::Create(
+              llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+              llvm::GlobalValue::ExternalLinkage, "mixed_features", Module);
+          B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+          if (SGX) {
+            const auto ID =
+                llvm::Intrinsic::lookupIntrinsicID("llvm.x86.encls");
+            if (ID)
+              B.CreateIntrinsic(
+                  ID, {},
+                  {B.getInt64(0), B.getInt64(0), B.getInt64(0), B.getInt64(0)});
+            else {
+              const auto P = *neverd::x86SgxAsm(neverd::Intrinsic::X86Encls,
+                                                neverd::Arch::X64);
+              auto *Result = llvm::StructType::get(
+                  Context, {B.getInt64Ty(), B.getInt64Ty(), B.getInt16Ty()});
+              auto *Type =
+                  llvm::FunctionType::get(Result,
+                                          {B.getInt64Ty(), B.getInt64Ty(),
+                                           B.getInt64Ty(), B.getInt64Ty()},
+                                          false);
+              auto *Asm =
+                  llvm::InlineAsm::get(Type, P.Text, P.Constraints, true);
+              B.CreateCall(Asm, {B.getInt64(0), B.getInt64(0), B.getInt64(0),
+                                 B.getInt64(0)});
+            }
+          }
+          if (AMX)
+            B.CreateIntrinsic(llvm::Intrinsic::x86_tilezero, {},
+                              {B.getInt8(0)});
+          if (REP) {
+            const auto ID =
+                llvm::Intrinsic::lookupIntrinsicID("llvm.x86.rep.cmps.state");
+            auto *Address = B.CreatePtrToInt(F->getArg(0), B.getInt64Ty());
+            if (ID)
+              B.CreateIntrinsic(ID, {},
+                                {Address, Address, B.getInt64(0), B.getInt8(0),
+                                 B.getInt16(0x4000), B.getInt32(1),
+                                 B.getInt32(64), B.getInt32(0), B.getInt32(0)});
+            else {
+              const auto Kind = neverd::Intrinsic::X86RepCmpsState;
+              const auto Descriptor = *neverd::x86RepDescriptor(
+                  Kind, neverd::Arch::X64, 1, 8, 0, false);
+              const auto P =
+                  *neverd::x86RepAsm(Kind, neverd::Arch::X64, Descriptor);
+              auto *Result = llvm::StructType::get(
+                  Context, {B.getInt64Ty(), B.getInt64Ty(), B.getInt64Ty(),
+                            B.getInt64Ty()});
+              auto *Type = llvm::FunctionType::get(
+                  Result,
+                  {B.getInt64Ty(), B.getInt64Ty(), B.getInt64Ty(),
+                   B.getInt32Ty(), B.getInt64Ty()},
+                  false);
+              auto *Asm =
+                  llvm::InlineAsm::get(Type, P.Text, P.Constraints, true);
+              B.CreateCall(Asm, {Address, Address, B.getInt64(0), B.getInt32(0),
+                                 B.getInt64(0x4000)});
+            }
+          }
+          if (Atomic) {
+            const auto P = *neverd::x86APXAtomicPlan(
+                neverd::Intrinsic::ApxRaoAdd, 8, 64, 0);
+            const auto ID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName());
+            auto *Address = B.CreatePtrToInt(F->getArg(0), B.getInt64Ty());
+            if (ID)
+              B.CreateIntrinsic(
+                  ID, {},
+                  {Address, B.getInt64(1), B.getInt32(64), B.getInt32(0)});
+            else {
+              auto *Type = llvm::FunctionType::get(
+                  B.getVoidTy(), {B.getInt64Ty(), B.getInt64Ty()}, false);
+              auto *Asm = llvm::InlineAsm::get(Type, P.assembly(),
+                                               P.constraints(), true);
+              B.CreateCall(Asm, {Address, B.getInt64(1)});
+            }
+          }
+          auto *Vector = llvm::FixedVectorType::get(B.getInt32Ty(), 4);
+          auto *Input =
+              B.CreateAlignedLoad(Vector, F->getArg(0), llvm::Align(1));
+          auto *Result = B.CreateIntrinsic(llvm::Intrinsic::x86_sha256msg1, {},
+                                           {Input, Input});
+          B.CreateAlignedStore(Result, F->getArg(0), llvm::Align(1));
+          B.CreateRetVoid();
+          ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+          neverd::CEmitterOptions Options;
+          Options.TheArch = neverd::Arch::X64;
+          Options.Format = neverd::BinaryFormat::ELF;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Output, Options));
+          EXPECT_EQ(Source.find("NEVERD_X86_APX_ATOMIC") != std::string::npos,
+                    Atomic);
+          EXPECT_NE(
+              Source.find(REP ? "target(\"sha,sahf\")" : "target(\"sha\")"),
+              std::string::npos);
+          if (SGX && AMX)
+            EXPECT_NE(Source.find(REP ? "target(\"sha,amx-tile,sgx,sahf\")"
+                                      : "target(\"sha,amx-tile,sgx\")"),
+                      std::string::npos);
+          // Every capability branch must retain SHA and REP comparison flags,
+          // including SGX/AMX assembly fallbacks. These functions are not run.
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            compileAndRun(Source + "\nint main(void) { return 0; }\n", Level);
         }
-        auto *Vector = llvm::FixedVectorType::get(B.getInt32Ty(), 4);
-        auto *Input = B.CreateAlignedLoad(Vector, F->getArg(0), llvm::Align(1));
-        auto *Result = B.CreateIntrinsic(llvm::Intrinsic::x86_sha256msg1, {},
-                                         {Input, Input});
-        B.CreateAlignedStore(Result, F->getArg(0), llvm::Align(1));
-        B.CreateRetVoid();
-        ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
-        neverd::CEmitterOptions Options;
-        Options.TheArch = neverd::Arch::X64;
-        Options.Format = neverd::BinaryFormat::ELF;
-        std::string Source;
-        llvm::raw_string_ostream Output(Source);
-        ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Output, Options));
-        EXPECT_NE(Source.find(REP ? "target(\"sha,sahf\")" : "target(\"sha\")"),
-                  std::string::npos);
-        if (SGX && AMX)
-          EXPECT_NE(Source.find(REP ? "target(\"sha,amx-tile,sgx,sahf\")"
-                                    : "target(\"sha,amx-tile,sgx\")"),
-                    std::string::npos);
-        // Every capability branch must retain SHA and REP comparison flags,
-        // including SGX/AMX assembly fallbacks. These functions are not run.
-        for (llvm::StringRef Level : {"-O0", "-O2"})
-          compileAndRun(Source + "\nint main(void) { return 0; }\n", Level);
-      }
+}
+
+TEST(LLVMCValues, RtmFeaturesComposeWithShaAcrossNativeAndAssemblyCalls) {
+  for (const bool Native : {false, true}) {
+    SCOPED_TRACE(Native);
+    llvm::LLVMContext Context;
+    llvm::Module Module("mixed_rtm_features", Context);
+    Module.setDataLayout("e-p:64:64-i64:64");
+    llvm::IRBuilder<> B(Context);
+    auto *F = llvm::Function::Create(
+        llvm::FunctionType::get(B.getVoidTy(), {B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, "mixed_rtm_features", Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+    if (Native) {
+      B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, llvm::Intrinsic::x86_xend));
+    } else {
+      const auto P =
+          *neverd::x86SystemStateAsm(neverd::Intrinsic::Xend, neverd::Arch::X64,
+                                     0, neverd::NdMemoryAddressSpace::Default);
+      auto *Type = llvm::FunctionType::get(B.getVoidTy(), false);
+      auto *Asm = llvm::InlineAsm::get(Type, P.Text, P.Constraints, true);
+      B.CreateCall(Asm);
+    }
+    auto *Vector = llvm::FixedVectorType::get(B.getInt32Ty(), 4);
+    auto *Input = B.CreateAlignedLoad(Vector, F->getArg(0), llvm::Align(1));
+    auto *Result =
+        B.CreateIntrinsic(llvm::Intrinsic::x86_sha256msg1, {}, {Input, Input});
+    B.CreateAlignedStore(Result, F->getArg(0), llvm::Align(1));
+    B.CreateRetVoid();
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    neverd::CEmitterOptions Options;
+    Options.TheArch = neverd::Arch::X64;
+    Options.Format = neverd::BinaryFormat::ELF;
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Output, Options));
+    EXPECT_NE(Source.find("target(\"rtm,sha\")"), std::string::npos) << Source;
+    // Select the builtin branch even on a stock compiler. Compile the body,
+    // but do not attempt XEND without a hardware transaction.
+    Source = "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n" + Source +
+             "\nint main(void) { return 0; }\n";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source, Level);
+  }
 }
 
 TEST(LLVMCValues, ByteShufflesKeepLaneBoundariesAndEveryMaskBit) {

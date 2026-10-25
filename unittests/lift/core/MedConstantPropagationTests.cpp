@@ -1,3 +1,13 @@
+//===- MedConstantPropagationTests.cpp - Stable MedIR value propagation ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file Checks SSA value identity, widths, and bounded propagation.
+///
+//===----------------------------------------------------------------------===//
+
 #include "gtest/gtest.h"
 
 #include "neverd/ir/TargetRegInfo.h"
@@ -293,5 +303,72 @@ TEST(MedConstantPropagation,
       ASSERT_EQ(Return.NumInputs, 1U);
       EXPECT_EQ(Return.Inputs[0], MedVar::makeConst(73, TRI.PointerSize));
     }
+}
+
+TEST(MedConstantPropagation,
+     DefaultWordAbsorptionRequiresTheSameSSAValueAndWidth) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (auto Outer : {NdOp::INT_AND, NdOp::INT_OR})
+        for (bool Reverse : {false, true})
+          for (unsigned Mutation = 0; Mutation < 3; ++Mutation) {
+            SCOPED_TRACE(testing::Message()
+                         << unsigned(Architecture) << ':' << unsigned(Format)
+                         << ':' << unsigned(Outer) << ':' << Reverse << ':'
+                         << Mutation);
+            const auto &TRI = getTargetRegInfo(Architecture);
+            const auto Width = TRI.PointerSize;
+            const auto Arguments = TRI.integerArgumentLayout(Format).Registers;
+            const auto Input = NdVar::reg(Arguments.empty() ? TRI.IntReturnReg
+                                                            : Arguments.front(),
+                                          Width);
+            const auto Result = NdVar::reg(TRI.IntReturnReg, Width);
+            LowFunc Low;
+            Low.Entry = 0x1000;
+            Low.Name = "word_absorption";
+            Low.Blocks.resize(1);
+            auto &Block = Low.Blocks.front();
+            Block.Id = 0;
+            Block.StartAddr = Low.Entry;
+            Block.EndAddr = Low.Entry + 4;
+            const auto Add = [&](NdOp Opcode, NdVar Output,
+                                 std::initializer_list<NdVar> Inputs) {
+              LowOp Op;
+              Op.Opcode = Opcode;
+              Op.Output = Output;
+              Op.Addr = Low.Entry;
+              for (const auto &Value : Inputs)
+                Op.addInput(Value);
+              Block.Ops.push_back(Op);
+            };
+            const auto Other = NdVar::tmp(0, Width);
+            const auto Nested = NdVar::tmp(1, Width);
+            Add(NdOp::INT_ADD, Other, {Input, Input});
+            Add(Outer == NdOp::INT_AND ? NdOp::INT_OR : NdOp::INT_AND, Nested,
+                {Reverse ? Other : Input, Reverse ? Input : Other});
+            auto NestedOperand = Nested;
+            if (Mutation == 1)
+              Add(NdOp::INT_XOR, Input, {Input, NdVar::cst(0x55, Width)});
+            if (Mutation == 2) {
+              const auto Narrow = NdVar::tmp(2, Width / 2);
+              NestedOperand = NdVar::tmp(3, Width);
+              Add(NdOp::SUBBYTES, Narrow, {Nested, NdVar::cst(0, Width)});
+              Add(NdOp::INT_ZEXT, NestedOperand, {Narrow});
+            }
+            Add(Outer, Result,
+                {Reverse ? Input : NestedOperand,
+                 Reverse ? NestedOperand : Input});
+            Add(NdOp::RETURN, {}, {Result});
+            const auto Med =
+                LowToMedConverter().convert(Low, Architecture, Format);
+            ASSERT_TRUE(verifyMedFunc(Med, "default-word-absorption"));
+            bool RetainsOuter = false;
+            for (const auto &B : Med.Blocks)
+              for (const auto &Op : B.Ops)
+                if (!Op.Dead)
+                  RetainsOuter |= Op.Opcode == Outer;
+            EXPECT_EQ(RetainsOuter, Mutation != 0);
+          }
 }
 } // namespace

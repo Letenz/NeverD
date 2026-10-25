@@ -94,6 +94,18 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
+`X86APXAtomic.h` owns the APX atomic native API names, operand widths,
+condition/segment controls and exact assembly fallback. The existing
+`ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
+routes preserve a native EVEX RAO-INT or CMPccXADD transaction, including dead
+results and false-condition write-back; no ordinary load/store expansion is
+permitted. Normalized offsets retain DS/FS/GS selection, with address-size
+wrapping performed by the existing effective-address owner. Default-stack
+RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
+the segment: the normalized offset cannot yet retain their distinct #SS fault
+class. `Codegen` treats LLVM error diagnostics as compilation failures and
+does not publish the parseable but incomplete objects LLVM can leave behind.
+
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
 sets; the function writer emits one combined attribute for the native APIs in

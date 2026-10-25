@@ -1,0 +1,42 @@
+//===- X86APXAtomic.h - APX atomic C projection ---------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Both C routes consume the native APX transaction contract.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LIB_BACKEND_C_RENDER_X86_X86APXATOMIC_H
+#define NEVERD_LIB_BACKEND_C_RENDER_X86_X86APXATOMIC_H
+
+#include "neverd/backend/llvm/X86/X86APXAtomic.h"
+#include "neverd/ir/high/HighIR.h"
+
+#include <functional>
+#include <vector>
+
+namespace llvm {
+class CallInst;
+}
+namespace neverd {
+inline constexpr const char X86APXAtomicCompilerDispatch[] =
+    "#ifndef NEVERD_X86_APX_ATOMIC\n"
+    "#if defined(__NEVERC_X86_APX_ATOMIC__) && __NEVERC_X86_APX_ATOMIC__ >= 1\n"
+    "#define NEVERD_X86_APX_ATOMIC(native, ...) native\n"
+    "#else\n"
+    "#define NEVERD_X86_APX_ATOMIC(native, ...) __VA_ARGS__\n"
+    "#endif\n#endif\n";
+
+std::optional<X86APXAtomicPlan>
+x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call);
+std::string renderX86APXAtomicExpression(
+    Arch A, const HighExpr &E,
+    const std::function<std::string(const HighExpr &)> &Expr);
+std::optional<std::string>
+renderX86APXAtomicCall(Arch A, const llvm::CallInst &Call,
+                       const std::string &Result, bool ResultLive,
+                       const std::vector<std::string> &Arguments);
+} // namespace neverd
+
+#endif // NEVERD_LIB_BACKEND_C_RENDER_X86_X86APXATOMIC_H
