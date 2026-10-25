@@ -97,3 +97,20 @@ host and persistence costs, and no significant improvement is claimed for them.
 These are NeverD before/after measurements. They do not rank IDA, Binary Ninja,
 Ghidra or other products. Native Windows/macOS input and performance remain
 unmeasured by this campaign.
+
+### Delivery qualification prerequisites
+
+Integrating current `dev` exposed a Clang 23/libstdc++ 15 failure constructing a
+nested Android queue snapshot through zero-argument `optional::emplace`. Explicit
+value emplacement preserves the existing field defaults and aggregate API. The
+SDK adapter and its four test-fixture call sites use the same form; driver and
+Z3 support stay enabled in the delivery build.
+
+The native-pipeline CI audit also rejected the decoder's explicit native-x87
+hardware skip on Windows and ARM hosts. It now accepts only that named test,
+its exact return-code/reason and declared unsupported runner platforms. Native
+x64 POSIX hosts still require execution; every error, unexpected skip, missing
+test or duplicate inventory entry remains a failure. The summary reports passes
+and unavailable hardware tests separately. The three original Actions JUnit
+reports were replayed with additional controls for native-host skips, renamed
+tests, wrong reasons, disabled tests and failures hidden inside skipped cases.
