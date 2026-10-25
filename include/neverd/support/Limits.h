@@ -65,6 +65,18 @@ inline constexpr size_t kTextEvidenceMinTextBeyondASCII = 3;
 // lib/support/ByteScan.cpp
 inline constexpr int kByteScanLongTextASCIIPrefixSizeLimit = 32;
 
+// lib/support/SortedSearch.cpp
+// Keep short searches inline; compare a bounded 128-byte tail in-place.
+#if defined(__clang__)
+inline constexpr size_t kSortedSearchMinimumSIMDEntries = 64;
+#else
+// Keep medium ordered inputs on predictable scalar bisection.
+inline constexpr size_t kSortedSearchMinimumSIMDEntries = 4096;
+#endif
+inline constexpr size_t kSortedSearchSIMDTailEntries = 16;
+// Narrow x86 targets lose to scalar binary search on medium/ordered inputs.
+inline constexpr size_t kSortedSearchMinimumX86SIMDLanes = 4;
+
 // lib/support/TextEncoding.cpp
 inline constexpr int kTextEncodingEscapeInvalidUTF8TextSizeLimit = 64;
 

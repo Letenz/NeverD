@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--minimum", type=int, default=14)
+    parser.add_argument("--minimum", type=int, default=19)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--tbb-runtimes", type=int, choices=(0, 1))
     args = parser.parse_args()
