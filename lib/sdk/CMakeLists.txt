@@ -309,6 +309,21 @@ add_custom_command(TARGET neverd_shared POST_BUILD
         "${NEVERD_STAGED_SDK_DIRECTORY}"
     COMMENT "Copying SDK headers and legal notices next to libneverd")
 
+if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
+  foreach(_neverd_bionic_notices_dir
+      "$<TARGET_FILE_DIR:neverd_shared>/licenses/android-bionic"
+      "${NEVERD_STAGED_SDK_DIRECTORY}/licenses/android-bionic")
+    add_custom_command(TARGET neverd_shared POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+          "${CMAKE_SOURCE_DIR}/LICENSES/android-bionic"
+          "${_neverd_bionic_notices_dir}"
+      COMMENT "Copying pinned Android error catalog notices"
+      VERBATIM)
+  endforeach()
+  install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/android-bionic/"
+    DESTINATION share/neverd/licenses/android-bionic)
+endif()
+
 foreach(_neverd_sqlite_notices_dir
     "$<TARGET_FILE_DIR:neverd_shared>/licenses/sqlite"
     "${NEVERD_STAGED_SDK_DIRECTORY}/licenses/sqlite")

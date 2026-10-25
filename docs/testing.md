@@ -13189,3 +13189,13 @@ checks exact zero-extended x86/ARM32 frame addresses across all three formats.
 Signed extensions, mixed-width copies and duplicate definitions are rejected;
 `WiderSeedsAndTruncatedPointersAreNotNativeAddresses` protects the entry-SP
 and native pointer-width boundaries.
+
+`AndroidErrors.*` checks signed argument narrowing, catalog holes, complete
+text and guarded bytes, process/thread borrow lifetimes, errno and `dlerror`
+isolation, read-only storage, provider-only imports and provider closure.
+Known pointers remain returnable after unmapping their text; guest reads own
+the resulting memory faults. `AndroidErrorMemory.*` checks unknown-format
+refusals and exact writes against complete TLS backing, and known pointer
+returns under a small copy budget. `ProcessPublic.AndroidErrorTextMatchesSDKAndCLI`
+compares complete reports through both public entrypoints. Run these alongside
+thread, environment, calendar, dynamic-loader and string regressions.

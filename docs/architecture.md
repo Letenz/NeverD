@@ -8042,6 +8042,13 @@ Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
 `fstatat` service rather than duplicating pathname resolution or status layouts.
 All these entries retain the common dynamic-provider lifetime boundary.
 
+`AndroidQueries` owns Bionic error text: one pinned process catalog and a
+separate reusable buffer in each guest thread's TLS allocation. Image setup
+creates the catalog for static imports and declared dynamic providers. Known
+lookups return a borrowed pointer; only unknown formatting performs a guest
+write. Placement policy lives with the emulation limits, and no host locale or
+libc owns guest-visible text or lifetime.
+
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
 Mutable bytes belong to stable file objects; independent opens

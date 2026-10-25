@@ -112,6 +112,11 @@ inline constexpr int kDarwinImageInitializerRecordsLimit = 65536;
 inline constexpr int
     kAndroidAuxvValidateAuxiliaryVectorOptionsAuxiliaryVectorSizeLimit = 128;
 
+// Bionic error text placement is model policy, not a library virtual address.
+inline constexpr uint64_t kAndroidErrorStringsBase = 0x7040000000;
+// Per-thread storage beyond dlerror and ABI TLS slots.
+inline constexpr uint64_t kAndroidErrorBufferOffset = 0x800;
+
 // lib/emulation/os/linux/android/AndroidCalendar.cpp
 inline constexpr int kAndroidCalendarValidateCalendarZNameSizeLimit = 32;
 
