@@ -307,6 +307,23 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=F
     return elf(code), f"x+y+z+{scale}U*" + "*".join(factors)
 
 
+def residue_power_elf(degree, observed):
+    # Original x64 instructions keep z independent of the repeated x group.
+    # The scalar C oracle multiplies every original factor at complete width.
+    split = (observed + 2) // 3
+    scale = 3 << (32 - observed)
+    code = bytearray.fromhex("b8") + struct.pack("<I", scale)
+    code += bytes.fromhex("89f1 c1e1") + bytes([split])
+    factors = []
+    for i in range(degree):
+        offset = i << split
+        code += bytes.fromhex("4189f8 4181c0") + struct.pack("<I", offset)
+        code += bytes.fromhex("4131c8 410fafc0")
+        factors.append(f"((x+{offset}U)^(y<<{split}))")
+    code += bytes.fromhex("0fafc2 01f8 01f0 01d0 c3")
+    return elf(code), f"x+y+z+{scale}U*z*" + "*".join(factors)
+
+
 def elf(code):
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     header = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1, ENTRY,
@@ -408,6 +425,9 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             # The original-product execution oracle checks the retained
             # nonzero residual without prescribing a particular spelling.
             pass
+        elif kind.startswith("power-group-"):
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert code.count("*") < int(kind.rsplit("-", 1)[1]) // 2, text
         elif kind.startswith("residue-"):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert "*" not in code and "<<" not in code, text
@@ -464,7 +484,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith(("residue-", "multiple-residual-", "carry-product-", "carry-cofactor-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
+                    if kind.startswith(("residue-", "multiple-residual-", "carry-product-", "carry-cofactor-", "power-group-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -550,6 +570,8 @@ if __name__ == "__main__":
             ("carry-product-interleaved-mask-128", *carry_product_elf(128, False, 8, 3, interleaved=True)),
             ("carry-cofactor-zero-witness-96", *carry_product_elf(96, True, 6, 2, complemented=True)),
             ("carry-cofactor-zero-witness-mask-96", *carry_product_elf(96, True, 6, 3, complemented=True)),
+            ("power-group-16", *residue_power_elf(16, 4)),
+            ("power-group-64", *residue_power_elf(64, 6)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

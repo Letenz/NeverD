@@ -967,6 +967,29 @@ def complemented_carry_product_corpus(width, count):
     return rows
 
 
+def residue_power_corpus(width, count):
+    """Degree-16–512 grouped powers with an independent-parity multiplier.
+
+    Period boundaries and their immediate neighbors retain all even inputs;
+    the final flavor changes the low residue of exactly one factor.
+    """
+    rows = []
+    for index in range(count):
+        kind = index % 81
+        degree = (16, 17, 32, 33, 64, 65, 128, 129, 512)[kind // 9]
+        observed = (4, 6, 8)[kind % 9 // 3]
+        split = (observed + 2) // 3
+        mode = kind % 3
+        base = ("x", "(~x)", "(x^1)")[mode]
+        factors = [f"(({base}+{(i << split) + int(mode == 2 and i == 0)})"
+                   f"^(y<<{split}))" for i in range(degree)]
+        if mode == 1:
+            factors.reverse()
+        rows.append(f"({3 << (width-observed)}*z*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def sparse_linear_mixed_degree_corpus(width, count):
     """Degree-4–18 products with disjoint constant, linear and perturbed tails.
 
@@ -1140,6 +1163,7 @@ def main():
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
                  "distributed-prefix", "multiple-residual", "carry-product",
                  "permuted-carry-product", "complemented-carry-product",
+                 "residue-power",
                  "sparse-linear-mixed-degree"),
         default="complement",
     )
@@ -1180,6 +1204,7 @@ def main():
                 "carry-product": carry_product_corpus,
                 "permuted-carry-product": permuted_carry_product_corpus,
                 "complemented-carry-product": complemented_carry_product_corpus,
+                "residue-power": residue_power_corpus,
                 "sparse-linear-mixed-degree": sparse_linear_mixed_degree_corpus,
             }[args.family]
             expressions = generate(width, args.count)

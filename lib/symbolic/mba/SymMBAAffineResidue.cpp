@@ -2052,6 +2052,22 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
           Ctx, Root, Factors, Operands, Scale, Bits, Needed, Res,
           DecisionAttempted, DecisionResult, DecisionRequested,
           IncompatibleBase, DecisionComplete);
+      if (IncompatibleBase && !DecisionAttempted && Operands.size() > Needed &&
+          (Operands.size() - 1) % residueUnitPeriod(Needed) == 0) {
+        // A different affine coordinate can still multiply a parity group
+        // whose even branch vanishes. The bounded bit proof retains every
+        // other coordinate instead of forcing it into the first base.
+        DecisionAttempted = DecisionRequested = true;
+        if (!Res.OptionalStart) {
+          Res.OptionalStart = Res.Budget.used();
+          ++Res.Budget.MultipleResidueAttempts;
+        }
+        const auto Exact = foldResidueDecisions(
+            Ctx, Root, Res.Budget, Res.Storage, true, Res.optionalRemaining(),
+            Res.StorageLimited, &DecisionComplete);
+        if (Exact != Root)
+          DecisionResult = Exact;
+      }
       if (DecisionResult &&
           readingScore(Ctx, DecisionResult) < readingScore(Ctx, Best))
         Best = DecisionResult;

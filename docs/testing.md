@@ -1484,6 +1484,15 @@ earlier corpora as performance and output-cost controls. The CLI and GUI worker
 source tests execute both degree-96 witness fixtures through all six source
 routes at O0/O2.
 
+`SymMBAResiduePowers.*` checks modular power periods, even inputs, small
+exponents, independent multiplier parity and exact/short resource accounts.
+It uses complete-word multiplication through 257 bits and independent native
+width solver proofs. `--family residue-power --count 81` adds 324 degree-16–512
+cases, including immediate period neighbors and one-factor disturbances.
+These controls retain bounded refusals as results. The real CLI and worker
+source matrix also executes degree-16/64 groups with an independent multiplier
+through all six source routes at O0/O2.
+
 Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage

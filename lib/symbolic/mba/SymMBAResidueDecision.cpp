@@ -891,6 +891,37 @@ class LowWordDecisions {
   }
 
   Bits power(Bits Value, size_t Exponent) {
+    const size_t Width = Value.size();
+    if (Exponent >= Width) {
+      // Words have at most kMaxAffineResidueTableBits bits. Odd residues have
+      // period 2^(Width-2), with periods one and two for widths one and two.
+      // Even residues vanish only once the exponent reaches Width: retain
+      // that lower bound instead of reducing the exponent modulo the period.
+      const size_t Period = residueUnitPeriod(Width);
+      const size_t Residue = Exponent % Period;
+      if (!Residue) {
+        if (!charge(1 + Width))
+          return Bits(Width, 0);
+        std::fill(Value.begin() + 1, Value.end(), 0);
+        return Value;
+      }
+      if (Residue == 1) {
+        // On odd inputs this is the original word; on even inputs it is
+        // zero. Gate every bit rather than treating all inputs as units.
+        if (!charge(1 + Width))
+          return Bits(Width, 0);
+        for (size_t I = 1; I < Width && !Failed; ++I)
+          Value[I] = apply(And, Value.front(), Value[I]);
+        return Value;
+      }
+      const size_t Reduced =
+          Value.front() == 1 ? Residue : Width + (Exponent - Width) % Period;
+      if (Reduced < Exponent) {
+        if (!charge())
+          return Bits(Width, 0);
+        Exponent = Reduced;
+      }
+    }
     Bits Term(Value.size(), 0);
     Term.front() = 1;
     for (; Exponent && !Failed; Exponent >>= 1) {
@@ -1681,6 +1712,7 @@ public:
     }
     if (Selector || Nonconstant >= Observed) {
       std::optional<uint32_t> Common;
+      bool CoversAll = !Selector;
       if (Selector)
         Common = Selector;
       else
@@ -1692,19 +1724,55 @@ public:
             return Root;
           if (Common && *Common != Low) {
             Common.reset();
+            CoversAll = false;
             break;
           }
           Common = Low;
         }
+      if (OddProductOnly && !Common && !Failed && Nonconstant > Observed &&
+          (Nonconstant - 1) % residueUnitPeriod(Observed) == 0) {
+        // Admit one independent multiplier beside a common low-prefix group.
+        // A complete unit period collapses the group's leading power; broader
+        // unmatched groups can spend the budget before producing a reading.
+        const unsigned Split = (Observed + 2) / 3;
+        if (!charge(1, 2 * (sizeof(Bits) + Split * sizeof(uint32_t))))
+          return Root;
+        std::array<Bits, 2> Prefixes;
+        std::array<size_t, 2> Counts{};
+        bool Compatible = true;
+        for (auto Factor : Factors) {
+          if (Ctx.isConst(Factor))
+            continue;
+          const auto &Low = word(Factor, Split);
+          if (Failed || !charge(1 + 2 * Split))
+            return Root;
+          const size_t Group = !Counts[0] || Low == Prefixes[0] ? 0 : 1;
+          if (Counts[Group] && Low != Prefixes[Group]) {
+            Compatible = false;
+            break;
+          }
+          if (!Counts[Group])
+            Prefixes[Group] = Low;
+          ++Counts[Group];
+          if (Counts[0] > 1 && Counts[1] > 1) {
+            Compatible = false;
+            break;
+          }
+        }
+        if (Compatible)
+          for (size_t I = 0; I < Counts.size(); ++I)
+            if (Counts[I] + 1 == Nonconstant)
+              Common = Prefixes[I].front();
+      }
       if (Common && *Common > 1) {
         const auto D = decision(*Common);
         if (D.Low <= 1 && D.High <= 1) {
-          // All N factors are even in the other branch, so their product
-          // is zero modulo 2^Observed when N >= Observed. Build only the
-          // odd branch and restore its exact selector after multiplication.
+          // The selected subgroup has at least Observed even factors in the
+          // other branch, or an explicit selector makes that branch zero.
+          // Restore its exact selector after multiplying all retained words.
           Parity = *Common;
           Assumption = std::make_pair(D.Variable, D.High == 1);
-          AssumptionCoversFactors = !Selector;
+          AssumptionCoversFactors = CoversAll;
           PriorityInput = uint32_t(D.Variable);
           Words.clear();
           Arithmetic.clear();
