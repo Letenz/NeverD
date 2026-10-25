@@ -453,6 +453,31 @@ private slots:
       QVERIFY(View.grab().save(Output + "/large-page-recovered.png"));
   }
 
+  void largeReportDiagramsCanZoomAfterFitting() {
+    LineageGraph Graph;
+    Graph.resize(400, 240);
+    Graph.show();
+    QJsonArray Edges;
+    for (int I = 0; I < 200; ++I)
+      Edges.append(
+          QJsonObject{{"id", QString("report-%1").arg(I)},
+                      {"primary_version", "origin"},
+                      {"secondary_version", QString("snapshot-%1").arg(I)}});
+    Graph.setReports(Edges);
+    QTRY_VERIFY_WITH_TIMEOUT(Graph.transform().m11() < 1, Timeout);
+    const auto Fitted = Graph.transform();
+    Graph.zoom(false);
+    QCOMPARE(Graph.transform(), Fitted);
+    Graph.zoom(true);
+    const auto First = Graph.transform().m11();
+    QVERIFY(First > Fitted.m11());
+    Graph.zoom(true);
+    const auto Second = Graph.transform().m11();
+    QVERIFY(Second > First);
+    Graph.zoom(false);
+    QVERIFY(Graph.transform().m11() < Second);
+  }
+
   void replacementResetsNavigationButAppendAndFailureKeepIt() {
     LineageDialog View(TEST_LINEAGE_WORKER);
     View.setAttribute(Qt::WA_DeleteOnClose, false);
