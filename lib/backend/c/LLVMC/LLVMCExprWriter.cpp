@@ -159,20 +159,31 @@ std::string unsignedCmpOperand(const std::string &S) {
   return looksUnsignedCExpr(S) ? S : "(unsigned)" + S;
 }
 
+unsigned signedIntegerCarrierWidth(unsigned Width) {
+  if (Width > limits::kMaxCIntegerBits)
+    throw std::runtime_error("LLVMC signed operand exceeds " +
+                             std::to_string(limits::kMaxCIntegerBits) +
+                             "-bit carrier");
+  return Width <= 8     ? 8
+         : Width <= 16  ? 16
+         : Width <= 32  ? 32
+         : Width <= 64  ? 64
+         : Width <= 128 ? 128
+                        : Width;
+}
+
+std::string signedIntegerCarrier(const llvm::Type *Type) {
+  const unsigned Width = signedIntegerCarrierWidth(Type->getIntegerBitWidth());
+  if (Width > 128)
+    return "_BitInt(" + std::to_string(Width) + ")";
+  return Width == 128 ? "__int128_t" : "int" + std::to_string(Width) + "_t";
+}
+
 std::string signedIntegerOperand(const llvm::Type *Type,
                                  const std::string &Text) {
   const unsigned Width = Type->getIntegerBitWidth();
-  if (Width > 512)
-    throw std::runtime_error("LLVMC signed operand exceeds 512-bit carrier");
-  if (Width > 128)
-    return "(_BitInt(" + std::to_string(Width) + "))(" + Text + ")";
-  const unsigned Carrier = Width <= 8    ? 8
-                           : Width <= 16 ? 16
-                           : Width <= 32 ? 32
-                           : Width <= 64 ? 64
-                                         : 128;
-  const std::string Signed =
-      Carrier == 128 ? "__int128_t" : "int" + std::to_string(Carrier) + "_t";
+  const unsigned Carrier = signedIntegerCarrierWidth(Width);
+  const std::string Signed = signedIntegerCarrier(Type);
   if (Width == Carrier)
     return "(" + Signed + ")(" + Text + ")";
   const std::string Unsigned =
@@ -3684,12 +3695,15 @@ LLVMCWriter::lowBitsMaskCast(const llvm::BinaryOperator &Op) {
 std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
                                  llvm::Type *SrcTy, llvm::Type *DstTy) {
   const std::string Dst = typeToCLLVM(DstTy);
-  if (!SrcTy->isIntegerTy() || !DstTy->isIntegerTy())
-    return "(" + Dst + ")" + Src;
-  const unsigned SrcWidth = SrcTy->getIntegerBitWidth();
-  const unsigned DstWidth = DstTy->getIntegerBitWidth();
-  if (SrcWidth > 512 || DstWidth > 512)
-    throw std::runtime_error("LLVMC integer cast exceeds 512-bit carrier");
+  const unsigned SrcWidth =
+      SrcTy->isIntegerTy() ? SrcTy->getIntegerBitWidth() : 0;
+  const unsigned DstWidth =
+      DstTy->isIntegerTy() ? DstTy->getIntegerBitWidth() : 0;
+  if (SrcWidth > limits::kMaxCIntegerBits ||
+      DstWidth > limits::kMaxCIntegerBits)
+    throw std::runtime_error("LLVMC integer cast exceeds " +
+                             std::to_string(limits::kMaxCIntegerBits) +
+                             "-bit carrier");
 
   auto Cast = [](const std::string &Type, const std::string &Text) {
     return "(" + Type + ")(" + Text + ")";
@@ -3712,6 +3726,24 @@ std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
                std::to_string(Width) + ") - 1))";
     return Result;
   };
+  // LLVM integer values have no signed type; their C storage is unsigned.
+  // Interpret the source bits before a numeric floating conversion, and
+  // convert a signed floating result before normalizing its integer bits.
+  // Casting a negative floating value straight to unsigned is not equivalent.
+  if (SrcTy->isIntegerTy() && DstTy->isFloatingPointTy()) {
+    if (Opcode == llvm::Instruction::SIToFP)
+      return Cast(Dst, signedIntegerOperand(SrcTy, Src));
+    if (Opcode == llvm::Instruction::UIToFP)
+      return Cast(Dst, Normalize(Src, SrcTy));
+  }
+  if (SrcTy->isFloatingPointTy() && DstTy->isIntegerTy()) {
+    if (Opcode == llvm::Instruction::FPToSI)
+      return Normalize(Cast(signedIntegerCarrier(DstTy), Src), DstTy);
+    if (Opcode == llvm::Instruction::FPToUI)
+      return Normalize(Src, DstTy);
+  }
+  if (!SrcTy->isIntegerTy() || !DstTy->isIntegerTy())
+    return "(" + Dst + ")" + Src;
   switch (Opcode) {
   case llvm::Instruction::Trunc:
     return Normalize(Src, DstTy);

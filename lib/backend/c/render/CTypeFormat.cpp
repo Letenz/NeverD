@@ -592,7 +592,7 @@ std::string extendedIntegerType(unsigned Bytes, bool Signed) {
            "_t";
   // C23 _BitInt covers every non-power-of-two slice up to the widest
   // register (a 512-bit ZMM value); e.g. a 224-bit YMM byte-shift window.
-  if (Bytes == 0 || Bytes > 64)
+  if (Bytes == 0 || Bytes > limits::kMaxCIntegerBits / 8)
     throw std::invalid_argument("C integer of " + std::to_string(Bytes) +
                                 " bytes exceeds the supported bit width");
   return std::string(Signed ? "" : "unsigned ") + "_BitInt(" +
@@ -954,10 +954,11 @@ std::string typeToCLLVM(llvm::Type *Ty) {
       return "uint64_t";
     if (Bits <= 128)
       return "__uint128_t";
-    if (Bits <= 512)
+    if (Bits <= limits::kMaxCIntegerBits)
       return "unsigned _BitInt(" + std::to_string(Bits) + ")";
-    throw std::invalid_argument(
-        "LLVM C integer exceeds supported 512-bit carrier");
+    throw std::invalid_argument("LLVM C integer exceeds supported " +
+                                std::to_string(limits::kMaxCIntegerBits) +
+                                "-bit carrier");
   }
   if (Ty->isBFloatTy())
     return "__bf16";
