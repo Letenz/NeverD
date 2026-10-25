@@ -2108,8 +2108,10 @@ void MainWindow::connectActions() {
                     0);
   });
   on(ActionId::ViewCalculator, [this] { showCalculator(); });
-  on(ActionId::ViewFullScreen,
-     [this] { setWindowState(windowState() ^ Qt::WindowFullScreen); });
+  on(ActionId::ViewFullScreen, [this] {
+    if (frame_)
+      frame_->toggleFullScreen();
+  });
   on(ActionId::ViewZoomIn, [] { Theme::instance().zoomCodeFont(1); });
   on(ActionId::ViewZoomOut, [] { Theme::instance().zoomCodeFont(-1); });
   on(ActionId::ViewZoomReset, [] { Theme::instance().resetCodeFontSize(); });
