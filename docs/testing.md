@@ -2533,9 +2533,11 @@ input-field sizes with the platform's GeneralFont reading size, preserve
 explicit choices across theme changes, and exercise fractional/pixel-sized
 zoom and resetting to the platform default. These cases run in the existing
 Windows/macOS native 100% and 150% appearance jobs as well as offscreen.
-The tab-close check measures the visible glyph in logical pixels on both plain
-and actual docking tabs, in both themes. This catches a docking-local native
-style shrinking only the close button, which a plain-widget screenshot misses.
+The tab-close check measures the visible glyph and its distance from the tab's
+right edge in logical pixels on both plain and actual docking tabs, in both
+themes. This catches a docking-local native style shrinking only the close
+button, which a plain-widget screenshot misses, and a correctly sized glyph
+crowded against the edge despite padding around the tab text.
 
 The menu case injects macOS's hidden-icon default and checks registry actions
 and Output's dynamically created context menu after theme application. Screenshot
