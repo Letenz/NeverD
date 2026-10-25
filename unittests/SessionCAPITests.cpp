@@ -5157,9 +5157,11 @@ TEST_F(SessionCAPIKernelInputs, TheKernelsTypesJoinTheHeadersOfItsDrivers) {
     const char *Raw = neverd_local_type_json(Session, Name.c_str(), nullptr);
     if (!Raw)
       continue; // A dependent alias of a removed record may be absent.
-    const auto Type = parse(Raw);
-    EXPECT_EQ(Type.getBoolean("defined"), false) << Name;
-    EXPECT_EQ(Type.getString("origin"), "header") << Name;
+    auto Type = llvm::json::parse(takeString(Raw));
+    ASSERT_TRUE(static_cast<bool>(Type)) << Name;
+    ASSERT_NE(Type->getAsObject(), nullptr) << Name;
+    EXPECT_EQ(Type->getAsObject()->getBoolean("defined"), false) << Name;
+    EXPECT_EQ(Type->getAsObject()->getString("origin"), "header") << Name;
   }
   // A record the PDB has stays the PDB's.
   auto Thread = llvm::json::parse(
