@@ -922,21 +922,17 @@ int main(void) {
 int main(void) {
   uint64_t input[4] = {0x7FF8123456789ABCULL, 0x8000000000000000ULL,
                        0x3FF0000000000000ULL, 0xFFF8DEADBEEF0123ULL};
-  typedef uint64_t carrier __attribute__((vector_size(16)));
-  carrier vectors[4] = {{0,0},{0,0},{0,0},{0,0}};
   double scalars[4];
-  for (unsigned i = 0; i < 4; ++i) {
-    __builtin_memcpy(&vectors[i], &input[i], 8);
+  for (unsigned i = 0; i < 4; ++i)
     __builtin_memcpy(&scalars[i], &input[i], 8);
-  }
   uint64_t output[4] = {0x1122334455667788ULL, 0, 0, 0x8877665544332211ULL};
   record_probe()";
           NativeOracle += Source.find("record_probe(void*") == std::string::npos
                               ? "(uintptr_t)&output[1], "
                               : "(void*)&output[1], ";
-          NativeOracle +=
-              LLVM ? "vectors[0], vectors[1], vectors[2], vectors[3]"
-                   : "scalars[0], scalars[1], scalars[2], scalars[3]";
+          // AAPCS64 assigns each HFA member to a scalar FP input. Both source
+          // routes retain that interface, independent of the V-register width.
+          NativeOracle += "scalars[0], scalars[1], scalars[2], scalars[3]";
           NativeOracle += R"();
   return calls != EXPECTED_CALLS || output[1] != 0xFEDCBA9876543210ULL ||
          output[2] != 0x0123456789ABCDEFULL ||
