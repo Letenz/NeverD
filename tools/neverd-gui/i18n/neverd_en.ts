@@ -5622,6 +5622,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</trans
         <source>Applying saved analysis</source>
         <translation>Applying saved analysis</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Checking saved evidence</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Reading saved comparison</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Checking saved comparison</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Recomputing saved measurements</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Restoring comparison</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7771,6 +7791,18 @@ Supersedes: %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>This worker does not support binary comparison.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Restore stopped. Ready to try again.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Restore stopped. Your previous comparison is still available.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Could not restore the comparison. Your previous comparison is still available. %1</translation>
     </message>
 </context>
 <context>

@@ -5622,6 +5622,26 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <source>Applying saved analysis</source>
         <translation>Application de l’analyse enregistrée</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Vérification des éléments enregistrés</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Lecture de la comparaison enregistrée</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Vérification de la comparaison enregistrée</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Nouveau calcul des mesures enregistrées</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Restauration de la comparaison</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7771,6 +7791,18 @@ Remplace : %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Ce processus ne prend pas en charge la comparaison binaire.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Restauration arrêtée. Vous pouvez réessayer.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Restauration arrêtée. Votre comparaison précédente reste disponible.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Impossible de restaurer la comparaison. Votre comparaison précédente reste disponible. %1</translation>
     </message>
 </context>
 <context>

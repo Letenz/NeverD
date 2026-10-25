@@ -93,9 +93,18 @@ void writeFunctions(llvm::json::OStream &J, const Program &P) {
 /// Reads typed fields of one JSON object, recording the first problem.
 class Reader {
 public:
-  explicit Reader(std::string &Error) : Error(Error) {}
+  explicit Reader(std::string &Error, const ComparisonControl &Control)
+      : Error(Error), Control(Control) {}
 
-  bool failed() const { return !Error.empty(); }
+  bool failed() const {
+    Control.check();
+    return !Error.empty();
+  }
+  void record() {
+    Control.check();
+    if (++Records % limits::diff::kSavedComparisonProgressRecords == 0)
+      Control.report("records", Records);
+  }
   bool fail(const llvm::Twine &Message) {
     if (Error.empty())
       Error = Message.str();
@@ -171,6 +180,8 @@ public:
 
 private:
   std::string &Error;
+  const ComparisonControl &Control;
+  uint64_t Records = 0;
 };
 
 void readIdentity(Reader &In, const llvm::json::Object &O, ProgramIdentity &I) {
@@ -228,6 +239,7 @@ void readCoverage(Reader &In, const llvm::json::Object &O, SideCoverage &C) {
 void readFunctions(Reader &In, const llvm::json::Array &A,
                    std::vector<SavedFunction> &Out) {
   for (const llvm::json::Value &V : A) {
+    In.record();
     const llvm::json::Array *Row = V.getAsArray();
     if (!Row || Row->size() != 6) {
       In.fail("a function must be [address, size, name, traits, blocks, "
@@ -405,25 +417,32 @@ void writeComparison(llvm::raw_ostream &OS, const ComparisonResult &R,
   });
 }
 
-std::optional<SavedComparison> readComparison(llvm::StringRef Text,
-                                              std::string &Error) {
+std::optional<SavedComparison>
+readComparison(llvm::StringRef Text, std::string &Error,
+               const ComparisonControl &Control) {
   Error.clear();
   if (Text.size() > limits::diff::kMaxSavedComparisonBytes) {
     Error = "the saved comparison is larger than " +
             std::to_string(limits::diff::kMaxSavedComparisonBytes) + " bytes";
     return std::nullopt;
   }
+  Control.report("parse", 0, Text.size());
   llvm::Expected<llvm::json::Value> Parsed = llvm::json::parse(Text);
   if (!Parsed) {
     Error = "not JSON: " + llvm::toString(Parsed.takeError());
+    Control.report("parse", Text.size(), Text.size());
     return std::nullopt;
   }
+  // Consume a parser failure (or check its success) before a stop can unwind
+  // the Expected. LLVM's checked-error builds reject an unchecked destructor.
+  Control.report("parse", Text.size(), Text.size());
   const llvm::json::Object *Root = Parsed->getAsObject();
   if (!Root) {
     Error = "a saved comparison must be a JSON object";
     return std::nullopt;
   }
-  Reader In(Error);
+  Control.report("records");
+  Reader In(Error, Control);
   SavedComparison C;
   if (In.string(*Root, "schema") != ComparisonSchema) {
     if (Error.empty() || Error.find("schema") != std::string::npos) {
@@ -468,6 +487,8 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
     if (const auto *Regions = O->get("regions")) {
       try {
         C.Settings.Regions = readRegionSettings(*Regions);
+      } catch (const ComparisonInterrupted &) {
+        throw;
       } catch (const std::exception &E) {
         In.fail(E.what());
       }
@@ -475,6 +496,8 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
     if (const auto *Flow = O->get("dataflow")) {
       try {
         C.Settings.DataFlow = readDataFlowSettings(*Flow);
+      } catch (const ComparisonInterrupted &) {
+        throw;
       } catch (const std::exception &E) {
         In.fail(E.what());
       }
@@ -482,6 +505,8 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
     if (const auto *FlowRegions = O->get("flow_regions")) {
       try {
         C.Settings.FlowRegions = readFlowRegionSettings(*FlowRegions);
+      } catch (const ComparisonInterrupted &) {
+        throw;
       } catch (const std::exception &E) {
         In.fail(E.what());
       }
@@ -512,7 +537,9 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
     if (const auto *Regions = Root->get("flow_regions")) {
       try {
         C.FlowRegions =
-            readFlowRegionAnalysis(*Regions, C.Settings.FlowRegions);
+            readFlowRegionAnalysis(*Regions, C.Settings.FlowRegions, Control);
+      } catch (const ComparisonInterrupted &) {
+        throw;
       } catch (const std::exception &E) {
         In.fail(E.what());
       }
@@ -544,6 +571,7 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
   llvm::DenseSet<uint64_t> PairedP, PairedS;
   if (const llvm::json::Array *A = In.array(*Root, "matches"))
     for (const llvm::json::Value &V : *A) {
+      In.record();
       const llvm::json::Object *O = V.getAsObject();
       if (!O) {
         In.fail("a match must be an object");
@@ -595,6 +623,7 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
     }
   if (const llvm::json::Array *A = In.array(*Root, "ambiguities"))
     for (const llvm::json::Value &V : *A) {
+      In.record();
       const llvm::json::Object *O = V.getAsObject();
       if (!O) {
         In.fail("an ambiguity must be an object");
@@ -642,6 +671,7 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
       In.fail("more than " + llvm::Twine(limits::diff::kMaxSavedOverrides) +
               " overrides");
     for (const llvm::json::Value &V : *A) {
+      In.record();
       if (In.failed())
         break;
       const llvm::json::Object *O = V.getAsObject();
@@ -662,6 +692,7 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
   }
   if (const llvm::json::Array *A = In.array(*Root, "warnings"))
     for (const llvm::json::Value &V : *A) {
+      In.record();
       if (const auto S = V.getAsString())
         C.Warnings.push_back(S->str());
       else {
@@ -671,6 +702,7 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
     }
   if (const llvm::json::Array *A = In.array(*Root, "timings"))
     for (const auto &V : *A) {
+      In.record();
       const auto *O = V.getAsObject();
       if (!O) {
         In.fail("a timing must be an object");
@@ -686,7 +718,9 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
   if (!In.failed())
     if (const auto *Regions = Root->get("regions")) {
       try {
-        C.Regions = readRegionAnalysis(*Regions, C.Settings.Regions);
+        C.Regions = readRegionAnalysis(*Regions, C.Settings.Regions, Control);
+      } catch (const ComparisonInterrupted &) {
+        throw;
       } catch (const std::exception &E) {
         In.fail(E.what());
       }
@@ -702,11 +736,13 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
         if (!Flow->get("primary") || !Flow->get("secondary"))
           In.fail("dataflow requires both saved collections");
         else {
-          C.PrimaryDataFlow =
-              readDataFlowEvidence(*Flow->get("primary"), C.Settings.DataFlow);
-          C.SecondaryDataFlow = readDataFlowEvidence(*Flow->get("secondary"),
-                                                     C.Settings.DataFlow);
+          C.PrimaryDataFlow = readDataFlowEvidence(
+              *Flow->get("primary"), C.Settings.DataFlow, Control);
+          C.SecondaryDataFlow = readDataFlowEvidence(
+              *Flow->get("secondary"), C.Settings.DataFlow, Control);
         }
+      } catch (const ComparisonInterrupted &) {
+        throw;
       } catch (const std::exception &E) {
         In.fail(E.what());
       }
@@ -721,8 +757,8 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
       In.fail("saved comparison requires review history");
     } else {
       std::string ReviewError;
-      if (auto Journal =
-              readReviewJournal(*Reviews, C.Primary, C.Secondary, ReviewError))
+      if (auto Journal = readReviewJournal(*Reviews, C.Primary, C.Secondary,
+                                           ReviewError, Control))
         C.Reviews = std::move(*Journal);
       else
         In.fail(ReviewError);
@@ -730,6 +766,7 @@ std::optional<SavedComparison> readComparison(llvm::StringRef Text,
   }
   if (In.failed())
     return std::nullopt;
+  Control.check();
   return C;
 }
 
@@ -747,11 +784,11 @@ llvm::StringRef bindFailureName(BindFailure Failure) {
   return {};
 }
 
-std::optional<std::string> bindComparison(const SavedComparison &Saved,
-                                          const Program &Primary,
-                                          const Program &Secondary,
-                                          ComparisonResult &R,
-                                          BindFailure *Failure) {
+std::optional<std::string>
+bindComparison(const SavedComparison &Saved, const Program &Primary,
+               const Program &Secondary, ComparisonResult &R,
+               BindFailure *Failure, const ComparisonControl &Control) {
+  Control.report("identity");
   const auto Fail = [&](BindFailure Why, std::string Message) {
     if (Failure)
       *Failure = Why;
@@ -787,11 +824,12 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
                       Now->Analysis + "\", the comparison used \"" +
                       Was->Analysis + "\"");
   }
-  const auto InventoryAgrees = [](const std::vector<SavedFunction> &Was,
-                                  const Program &Now) {
+  const auto InventoryAgrees = [&](const std::vector<SavedFunction> &Was,
+                                   const Program &Now) {
     if (Was.size() != Now.Functions.size())
       return false;
     for (size_t I = 0; I < Was.size(); ++I) {
+      Control.check();
       const auto &A = Was[I];
       const auto &B = Now.Functions[I];
       if (A.Address != B.Address || A.Size != B.Size ||
@@ -805,15 +843,17 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
       !InventoryAgrees(Saved.SecondaryFunctions, Secondary))
     return Fail(BindFailure::InvalidEvidence,
                 "saved function inventory disagrees with decoded evidence");
+  Control.report("dataflow");
   for (const auto &[Was, Now] :
        {std::pair{Saved.PrimaryDataFlow.get(), &Primary},
         {Saved.SecondaryDataFlow.get(), &Secondary}})
-    if (auto Error = bindDataFlowEvidence(Was, Now->DataFlow.get(),
-                                          Saved.Settings.DataFlow, *Now))
+    if (auto Error = bindDataFlowEvidence(
+            Was, Now->DataFlow.get(), Saved.Settings.DataFlow, *Now, Control))
       return Fail(BindFailure::InvalidEvidence, *Error);
+  Control.report("reviews");
   ComparisonResult Out;
   if (const auto Error = validateReviewJournal(Saved.Reviews, Primary.Identity,
-                                               Secondary.Identity))
+                                               Secondary.Identity, Control))
     return Fail(BindFailure::InvalidEvidence, *Error);
   for (const auto &Record : Saved.Reviews.Records)
     if (!Primary.functionAt(Record.Primary) ||
@@ -829,8 +869,9 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
   Out.Reviews = Saved.Reviews;
   Out.Warnings = Saved.Warnings;
   Out.Timings = Saved.Timings;
+  Control.report("regions");
   if (auto Error = validateRegions(Saved.Regions, Saved.Settings.Regions,
-                                   Primary, Secondary))
+                                   Primary, Secondary, Control))
     return Fail(BindFailure::StaleAnalysis, *Error);
   Out.Regions = Saved.Regions;
   if (Saved.Settings.FlowRegions.Enabled &&
@@ -838,13 +879,15 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
       Saved.FlowRegions.State != ComparisonState::Complete)
     return Fail(BindFailure::InvalidEvidence,
                 "completed comparison has no completed SSA region analysis");
+  Control.report("flow_regions");
   if (auto Error = validateFlowRegions(
           Saved.FlowRegions, {Primary, Saved.PrimaryDataFlow.get()},
           {Secondary, Saved.SecondaryDataFlow.get()}, Saved.Settings.DataFlow,
-          Saved.Settings.FlowRegions))
+          Saved.Settings.FlowRegions, Control))
     return Fail(BindFailure::InvalidEvidence, *Error);
   Out.FlowRegions = Saved.FlowRegions;
   for (const SavedMatch &M : Saved.Matches) {
+    Control.check();
     const auto A = Primary.functionAt(M.Primary);
     const auto B = Secondary.functionAt(M.Secondary);
     if (!A || !B)
@@ -857,9 +900,11 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
     Out.Matches.push_back(Match);
   }
   for (const SavedAmbiguity &Saved : Saved.Ambiguities) {
+    Control.check();
     Ambiguity Amb;
     Amb.Step = Saved.Step;
     for (uint64_t Address : Saved.Primary) {
+      Control.check();
       const auto F = Primary.functionAt(Address);
       if (!F)
         return Fail(BindFailure::MissingFunction,
@@ -868,6 +913,7 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
       Amb.Primary.push_back(*F);
     }
     for (uint64_t Address : Saved.Secondary) {
+      Control.check();
       const auto F = Secondary.functionAt(Address);
       if (!F)
         return Fail(BindFailure::MissingFunction,
@@ -881,12 +927,14 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
     Out.Warnings.push_back("the comparison was made by matcher version " +
                            std::to_string(Saved.MatcherVersion) +
                            "; comparing again may pair functions differently");
-  llvm::sort(Out.Matches, [](const FunctionMatch &L, const FunctionMatch &M) {
+  llvm::sort(Out.Matches, [&](const FunctionMatch &L, const FunctionMatch &M) {
+    Control.check();
     return L.Primary < M.Primary;
   });
   Out.PrimaryMatch.assign(Primary.Functions.size(), NoIndex);
   Out.SecondaryMatch.assign(Secondary.Functions.size(), NoIndex);
   for (uint32_t I = 0; I < Out.Matches.size(); ++I) {
+    Control.check();
     if (Out.PrimaryMatch[Out.Matches[I].Primary] != NoIndex ||
         Out.SecondaryMatch[Out.Matches[I].Secondary] != NoIndex)
       return Fail(BindFailure::InvalidEvidence, "a function is paired twice");
@@ -898,19 +946,31 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
   std::vector<uint32_t> PMap(Primary.Functions.size(), NoIndex),
       SMap(Secondary.Functions.size(), NoIndex);
   for (const auto &M : Out.Matches) {
+    Control.check();
     PMap[M.Primary] = M.Secondary;
     SMap[M.Secondary] = M.Primary;
   }
-  const auto PK = mnemonicKeys(Primary), SK = mnemonicKeys(Secondary);
+  Control.report("measure", 0, Out.Matches.size());
+  const auto PK = mnemonicKeys(Primary, Control),
+             SK = mnemonicKeys(Secondary, Control);
+  auto WorkerControl = Control;
+  WorkerControl.Progress = {};
   std::vector<uint8_t> Invalid(Out.Matches.size());
   parallelForEach(Out.Matches.size(), [&](auto Claim, size_t Count) {
     for (size_t I = Claim(); I < Count; I = Claim()) {
       const auto &M = Out.Matches[I];
+      WorkerControl.check();
       FunctionMatch Actual;
-      if (M.Measured)
-        measure(Actual,
-                compareFunctionsWithKeys(Primary, M.Primary, Secondary,
-                                         M.Secondary, {PMap, SMap}, PK, SK));
+      if (M.Measured) {
+        const auto Delta =
+            compareFunctionsWithKeys(Primary, M.Primary, Secondary, M.Secondary,
+                                     {PMap, SMap}, PK, SK, WorkerControl);
+        if (Delta.State == ComparisonState::Cancelled ||
+            Delta.State == ComparisonState::TimedOut)
+          throw ComparisonInterrupted(Delta.State);
+        WorkerControl.check();
+        measure(Actual, Delta);
+      }
       Invalid[I] = Actual.Measured != M.Measured ||
                    Actual.IdentityOnly != M.IdentityOnly ||
                    Actual.AnalysisComplete != M.AnalysisComplete ||
@@ -922,6 +982,7 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
                    (!M.Measured && Out.State == ComparisonState::Complete);
     }
   });
+  Control.report("measure", Out.Matches.size(), Out.Matches.size());
   for (size_t I = 0; I < Invalid.size(); ++I)
     if (Invalid[I])
       return Fail(
@@ -932,12 +993,14 @@ std::optional<std::string> bindComparison(const SavedComparison &Saved,
   Out.PrimaryAmbiguity.assign(Primary.Functions.size(), NoIndex);
   Out.SecondaryAmbiguity.assign(Secondary.Functions.size(), NoIndex);
   for (uint32_t I = 0; I < Out.Ambiguities.size(); ++I) {
+    Control.check();
     for (uint32_t F : Out.Ambiguities[I].Primary)
       Out.PrimaryAmbiguity[F] = I;
     for (uint32_t F : Out.Ambiguities[I].Secondary)
       Out.SecondaryAmbiguity[F] = I;
   }
   summarize(Out, Primary, Secondary);
+  Control.report("publish", 0, 1);
   R = std::move(Out);
   return std::nullopt;
 }

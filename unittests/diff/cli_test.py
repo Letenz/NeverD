@@ -79,6 +79,50 @@ def cancel_input_loading(args, root, small):
     run([args.neverd, "diff", "--structural", "-a", str(root / "missing.exe"), "-b", small], {1})
 
 
+def cancel_saved_restore(args, root, base, saved):
+    report = root / "恢复-取消.nddiff"
+    document = json.loads(saved.read_text())
+    document["warnings"].append("retained diagnostic " + "x" * (64 * 1024 * 1024))
+    report.write_text(json.dumps(document))
+    target = root / "已有-比较.nddiff"
+    for stage in ("restore:read", "restore:parse", "restore:write"):
+        target.write_text("existing review must survive\n")
+        process = subprocess.Popen(base + ["--json", "--reopen", str(report), "--save", str(target)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        messages, captured = queue.Queue(), []
+
+        def drain():
+            for line in process.stderr:
+                captured.append(line)
+                messages.put(line)
+            messages.put(None)
+
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        try:
+            deadline = time.monotonic() + 20
+            while True:
+                line = messages.get(timeout=max(0.1, deadline - time.monotonic()))
+                assert line is not None and time.monotonic() < deadline, captured
+                if line.startswith(f"diff: {stage} "):
+                    process.send_signal(signal.SIGINT)
+                    break
+            process.wait(timeout=20)
+            output = process.stdout.read()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=15)
+            reader.join(timeout=5)
+            process.stderr.close()
+            process.stdout.close()
+        assert process.returncode == 3, (stage, process.returncode, captured)
+        assert "restore cancelled; no output was published" in "".join(captured), captured
+        assert output == "", output
+        assert target.read_text() == "existing review must survive\n"
+    assert json.loads(run(base + ["--json", "--reopen", str(saved)], {2, 3}).stdout) == json.loads(saved.read_text())
+
+
 def ambiguity_pages(args, root):
     source = root / "copies.c"
     source.write_text("\n".join(f"int copy_{index:02d}(void) {{ return 7; }}" for index in range(40))
@@ -150,6 +194,7 @@ def main():
         assert "diff:" in result.stderr
         reopen = json.loads(run(base + ["--json", "--reopen", str(saved)], {2, 3}).stdout)
         assert reopen == doc
+        cancel_saved_restore(args, root, base, saved)
         functions = json.loads(run(base + ["--list", "all", "--limit", "1"], {2, 3}).stdout)
         assert len(functions["items"]) == 1 and functions["next_offset"] == 1
         next_page = json.loads(run(base + ["--list", "all", "--offset", "1", "--limit", "1"], {2, 3}).stdout)

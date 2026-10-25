@@ -68,6 +68,56 @@ def ambiguity_pages(client, root):
         assert client.call("comparison_functions", {**query, "ambiguous_with": source})["status"] == "error"
 
 
+def cancellable_restore(client, root, start):
+    """The restored result is transactional across read, bind and replacement."""
+    original = ok(client, "comparison_start", start)
+    rows = ok(client, "comparison_functions")["items"]
+    pair = next(row for row in rows if row.get("counterpart"))
+    address, counterpart = pair["address"], pair["counterpart"]
+    if isinstance(counterpart, dict):
+        counterpart = counterpart["address"]
+    ok(client, "comparison_override", {"kind": "confirm", "primary": address,
+                                        "secondary": counterpart})
+    saved = root / "restore-cancel.nddiff"
+    ok(client, "comparison_save", {"path": str(saved)})
+    document = ok(client, "comparison_export")
+    with saved.open("a") as out:
+        out.write(" " * (64 * 1024 * 1024))
+    # Keep a redo record as well as selected-row queries across both paths.
+    ok(client, "comparison_undo")
+    before = ok(client, "comparison_export")
+    summary = ok(client, "comparison_summary")
+    rows = ok(client, "comparison_functions")
+    for operation, payload in (("comparison_restore", {"path": str(saved)}),
+                               ("comparison_start", {**start, "restore_path": str(saved)})):
+        request = client.send(operation, payload)
+        client.next(lambda m: m.get("request_id") == request and m.get("status") == "progress"
+                    and m.get("payload", {}).get("phase") == "restore:read", timeout=30)
+        ack = ok(client, "cancel", {"request_id": request})
+        assert ack["accepted"] and not ack["requires_restart"], ack
+        stopped = client.response(request)
+        assert stopped["status"] == "error" and stopped["error"]["code"] == "cancelled", stopped
+        assert stopped["calculation_stopped"] and not stopped["completed_before_cancellation"], stopped
+        assert not stopped["partial_result_retained"], stopped
+        assert ok(client, "comparison_export") == before
+        assert ok(client, "comparison_functions") == rows
+        after = ok(client, "comparison_summary")
+        assert after["comparison_revision"] == summary["comparison_revision"]
+        assert after["can_redo"] and after["counts"] == summary["counts"]
+    ok(client, "comparison_redo")
+    assert ok(client, "comparison_export") == document
+    # Old result state describes the saved computation, not this new restore.
+    for state in ("complete", "cancelled", "timed_out", "resource_limited"):
+        historical = {**document, "state": state, "stopped_phase": "" if state == "complete" else "measure"}
+        saved.write_text(json.dumps(historical))
+        restored = ok(client, "comparison_restore", {"path": str(saved)})
+        assert restored["restore_completed"] and restored["job"]["restore_state"] == "complete", restored
+        assert restored["state"] == state
+        replaced = ok(client, "comparison_start", {**start, "restore_path": str(saved)})
+        assert replaced["restore_completed"] and replaced["state"] == state
+    ok(client, "comparison_start", start)
+
+
 def aarch64_profiles(client, args, root, fixture):
     """Qualified object-format cells, original evidence and CLI/worker parity."""
     for target, format_name in (("aarch64-unknown-linux-gnu", "elf"),
@@ -451,7 +501,7 @@ def main():
             assert "comparison_start" in client.hello["capabilities"]
             assert {"comparison_start", "comparison_slice", "comparison_impact", "comparison_observations",
                     "comparison_function_page", "comparison_function",
-                    "comparison_cfg_summary", "comparison_cfg_viewport", "comparison_cfg_focus"}.issubset(
+                    "comparison_cfg_summary", "comparison_cfg_viewport", "comparison_cfg_focus", "comparison_restore"}.issubset(
                         client.hello["comparison_cancellable_operations"])
             assert client.call("comparison_functions")["error"]["code"] == "comparison_not_loaded"
             ambiguity_pages(client, root)
@@ -679,6 +729,7 @@ def main():
                 assert ok(client, "comparison_summary") == retained_summary
                 assert ok(client, "comparison_functions") == retained_rows
                 print(f"{side} input loading stop and retained comparison: {time.monotonic() - load_stop_began:.3f}s")
+            cancellable_restore(client, root, start)
             retried = ok(client, "comparison_start", start)
             assert retried["state"] == "complete", retried
             # Actual cooperative cancellation: acknowledge request while work is running;

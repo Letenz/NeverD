@@ -858,11 +858,15 @@ FunctionDelta compareFunctionsWithKeys(const Program &Primary, uint32_t PF,
   }
 }
 
-std::vector<uint64_t> mnemonicKeys(const Program &P) {
+std::vector<uint64_t> mnemonicKeys(const Program &P,
+                                   const ComparisonControl &Control) {
+  Control.check();
   std::vector<uint64_t> Keys;
   Keys.reserve(P.Mnemonics.size());
-  for (const std::string &M : P.Mnemonics)
+  for (const std::string &M : P.Mnemonics) {
+    Control.check();
     Keys.push_back(hashText(M));
+  }
   return Keys;
 }
 
