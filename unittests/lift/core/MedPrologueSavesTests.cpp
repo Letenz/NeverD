@@ -624,4 +624,50 @@ TEST(SourceFrameReads, GeneralPartialLoadsKeepTheirInitializedBits) {
   EXPECT_EQ(Func.Blocks[0].Ops[6].Opcode, NdOp::LOAD);
 }
 
+TEST(SourceStackSpills, NontrappingBitCountsDoNotObserveScratchBytes) {
+  for (unsigned Mode = 0; Mode < 3; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func = pushedRbx();
+    auto &Ops = Func.Blocks[0].Ops;
+    Ops.resize(5);
+    Ops[4].Inputs[1] = MedVar::makeUnspecified(8, Arch::X64);
+    if (Mode == 2)
+      Ops.push_back(op(NdOp::LOAD, temp(20), {sp(1)}));
+    Ops.push_back(op(Mode == 1 ? NdOp::INT_DIV : NdOp::POPCOUNT, temp(21),
+                     {Mode == 2 ? temp(20) : rcx(0)}));
+    if (Mode == 1)
+      Ops.back().addInput(MedVar::makeConst(0, 8));
+    Ops.push_back(op(NdOp::STORE, none(), {sp(1), MedVar::makeConst(19, 8)}));
+    Ops.push_back(op(NdOp::RETURN, none(), {temp(21)}));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+    EXPECT_EQ(save(Func).PrologueSave, Mode == 0);
+    EXPECT_FALSE(Ops[Ops.size() - 3].Dead);
+  }
+}
+
+TEST(SourceStackSpills, ImplicitCallWritesAreNotProjectedFrameStores) {
+  for (unsigned Mode = 0; Mode < 3; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func = pushedRbx();
+    auto &Ops = Func.Blocks[0].Ops;
+    Ops.resize(5);
+    Ops[4].Inputs[1] = MedVar::makeUnspecified(8, Arch::X64);
+    Ops.push_back(op(NdOp::INT_ADD, sp(2), {sp(1), MedVar::makeConst(8, 8)}));
+    Ops.push_back(op(NdOp::CALL, temp(20), {MedVar::makeConst(0x2000, 8)}));
+    if (Mode == 2)
+      Ops.back().addInput(sp(1));
+    if (Mode == 0)
+      Ops.push_back(op(NdOp::LOAD, temp(21), {sp(1)}));
+    Ops.push_back(op(NdOp::RETURN, none(),
+                     {Mode == 0   ? temp(21)
+                      : Mode == 1 ? sp(1)
+                                  : MedVar::makeConst(19, 8)}));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+    // CALL replaced the old bytes in the machine, but the C frame has no
+    // corresponding store. A later load, returned frame address or callee
+    // observation must not turn an unavailable value into uninitialized C.
+    EXPECT_FALSE(save(Func).PrologueSave);
+  }
+}
+
 } // namespace
