@@ -54,6 +54,19 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`*ClassLoaderPaths*` covers application/system ownership, unknown versus empty
+inventories, exact ordering and spelling, fresh String identities, lifecycle,
+malformed wire input and terminal resource limits. DEX and JNI ordinary/array
+calls use the shared formatter. Run Dalvik, Android JNI and ProcessReport suites;
+these checks do not execute DEX loading, filesystem probes or native searches.
+
+`*DefaultLocale*` covers unknown, partial and empty state, normalization,
+application-phase independence, retained identity and interned components.
+DEX and JNI ordinary/array calls share the owner; the native fixture also
+checks another thread. Foreign/null receivers and terminal resource limits
+remain covered. Run Dalvik, Android JNI and ProcessReport suites. Constructors,
+setters, category defaults and Locale startup are outside this projection.
+
 `*TargetSdkVersion*` covers unknown versus explicit int32 state, independence
 from platform version properties, Context/query isolation, mutation, DEX
 execution, JNI detach/thread retention, foreign receivers and work limits.
@@ -63,6 +76,10 @@ service execution is implied by these field tests.
 
 `*PackageInfo*` covers exact positive package queries, absent versus null fields,
 per-result mutations, lifecycle validation and terminal work/storage limits.
+`*PackageInfoApplication*` checks the nested reference's unknown/null/object
+states, independent parcel/Context/query objects, inherited label fields,
+reference replacement, DEX writes, native thread/detach retention and nested
+schema validation. Declaration lookup alone does not require response input.
 DEX and JNI exercise String fields and 32-bit versionCode through the shared
 field owner; the native fixture includes array calls, detach and another thread.
 Run full Dalvik, Android JNI and ProcessReport suites because primitive field
@@ -13468,12 +13485,22 @@ after changing connection admission. All transport tests are offline.
 SDK/CLI reports and guarded memory across O0/O2 callers, exhausted providers and
 failed-description reuse.
 
-`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 46 complete
+`ProcessPublic.AndroidApplicationValuesMatchSDKAndCLI` compares 84 complete
 SDK/CLI reports across O0/O2 JNI callers. Resolver identity, UTF-16 builders,
 missing and null settings, signed integer defaults, mutable application fields,
-package-manager availability, package metadata, labels, resource paths, target
-SDK fields and exact package queries retain the same shared
-semantics through typed and public wire entrypoints.
+package-manager availability, nested package metadata, labels, resource paths,
+target SDK fields, split arrays, default Locale, class loader paths and exact
+package queries retain the same shared semantics through typed and public wire
+entrypoints.
+
+`*SplitSourceDirs*` verifies both split fields, independent identities and
+unknown/null/empty arrays, exact order and String
+contents, nullable elements, separate Context/query/parcel arrays, retained
+reference replacement, DEX element mutation, JNI array access across detach
+and another thread, strict wire types, typed count/byte bounds and terminal
+work/storage failures. Run full Dalvik, Android JNI and ProcessReport suites
+for this shared public layout. Split APK parsing, file lookup, package
+services and ART loading are not covered.
 
 <!-- i18n-section: interactive-byte-patches -->
 ## Interactive patch ownership

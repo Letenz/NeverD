@@ -34,12 +34,24 @@ public:
 private:
   ExecutionResult stringValue(Heap &heap, std::string_view text,
                               const AdmitInstruction &admit);
+  ExecutionResult stringArrayValue(
+      Heap &heap,
+      const AndroidApplicationSnapshot::ApplicationInfo::SplitSourceDirectories
+          &values,
+      const AdmitInstruction &admit);
   enum class ApplicationInfoField {
     SourceDirectory,
     NativeLibraryDirectory,
     NonLocalizedLabel,
-    TargetSdkVersion
+    TargetSdkVersion,
+    SplitSourceDirectories,
+    SplitPublicSourceDirectories
   };
+  enum class ApplicationInfoSource { Context, ApplicationQuery, PackageQuery };
+  ExecutionResult createApplicationInfo(Heap &heap,
+                                        ApplicationInfoSource source,
+                                        size_t query,
+                                        const AdmitInstruction &admit);
   ExecutionResult applicationInfoFieldValue(Heap &heap, uint64_t receiver,
                                             ApplicationInfoField selected,
                                             std::optional<uint64_t> write,
@@ -61,14 +73,18 @@ private:
   uint32_t package_manager = 0;
   uint32_t secure_android_id = 0, global_adb_enabled = 0;
   uint32_t application_info = 0;
+  uint32_t default_locale = 0, locale_language = 0, locale_country = 0;
   struct ApplicationInfoState {
-    // No index denotes the Context's retained object. Query results refer to
-    // immutable input by index, so framework moves do not invalidate pointers.
-    std::optional<size_t> query;
+    // Query results refer to immutable input by source/index, so framework
+    // moves do not invalidate pointers or alias separate parcel objects.
+    ApplicationInfoSource source = ApplicationInfoSource::Context;
+    size_t query = 0;
     std::optional<uint64_t> source_directory;
     std::optional<uint64_t> native_library_directory;
     std::optional<uint64_t> non_localized_label;
     std::optional<uint64_t> target_sdk_version;
+    std::optional<uint64_t> split_source_directories;
+    std::optional<uint64_t> split_public_source_directories;
   };
   std::map<uint64_t, ApplicationInfoState> application_info_states;
   struct PackageInfoState {
@@ -76,6 +92,7 @@ private:
     std::optional<uint64_t> package_name;
     std::optional<uint64_t> version_name;
     std::optional<uint64_t> version_code;
+    std::optional<uint64_t> application_info;
   };
   std::map<uint64_t, PackageInfoState> package_info_states;
 };

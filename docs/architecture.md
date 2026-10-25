@@ -11499,6 +11499,12 @@ decodes and validates the explicit Context or query response.
 PackageInfo queries share exact query-key validation and matching, while
 retaining their own response inventory and per-object field slots. Their
 packageName, versionName and versionCode inputs are independently optional.
+Their nullable applicationInfo field retains one nested object per parcel
+result. It uses the existing ApplicationInfo field owner, with an immutable
+response source/index instead of aliasing the Context or a separate package
+query. Missing input remains unknown; explicit null and later reference writes
+are retained in the PackageInfo slot. JSON reuses the ApplicationInfo decoder
+and typed validation, and materialization charges the shared heap budget.
 Runtime validates reference writes and narrows primitive writes before
 dispatching to either ordinary DEX storage or framework field storage; field
 owners cannot introduce a second JNI-specific integer conversion.
@@ -11914,3 +11920,10 @@ not authenticate a wider incoming SP, a signed extension, a truncated 64-bit
 pointer or an ambiguous definition. Alignment rewrites keep their existing
 native-width rules. Source call-slot observation therefore sees the same frame
 bytes for direct pointer-width addresses and canonical widened addresses.
+
+ApplicationInfo.splitSourceDirs and splitPublicSourceDirs are owned by the existing shared framework
+field state. Explicit input distinguishes unknown, null and ordered nullable
+String arrays; per-result arrays are independently allocated in the shared
+heap, and JNI/DEX field and element writes retain reference identity. Missing
+paths are not inferred from sourceDir or the other array field, and no split APK bytes, package parsing
+or service execution are implied.

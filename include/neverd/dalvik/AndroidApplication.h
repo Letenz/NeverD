@@ -75,6 +75,14 @@ struct AndroidApplicationSnapshot {
     std::optional<std::optional<std::string>> non_localized_label;
     // Independent Java int field; not inferred from the platform SDK property.
     std::optional<int32_t> target_sdk_version;
+    // Unknown, known null, or an ordered String array. Values do not imply
+    // split APK files exist. Array and element references are mutable.
+    using SplitSourceDirectories = std::vector<std::optional<std::string>>;
+    std::optional<std::optional<SplitSourceDirectories>> split_source_dirs;
+    // Independently supplied resource paths. No alias or fallback to the
+    // private split paths is inferred, even when the contents are equal.
+    std::optional<std::optional<SplitSourceDirectories>>
+        split_public_source_dirs;
   };
   std::optional<ApplicationInfo> application_info;
   // Stable availability of the package service for this Context. Unknown when
@@ -104,6 +112,9 @@ struct AndroidApplicationSnapshot {
     std::optional<std::optional<std::string>> package_name;
     std::optional<std::optional<std::string>> version_name;
     std::optional<int32_t> version_code;
+    // Absent is unknown; an engaged null is a known null applicationInfo.
+    // Each parcel result owns a distinct mutable ApplicationInfo when supplied.
+    std::optional<std::optional<ApplicationInfo>> application_info;
   };
   struct PackageInfoQuery {
     std::string package_name;
@@ -111,6 +122,25 @@ struct AndroidApplicationSnapshot {
     PackageInfo info;
   };
   std::vector<PackageInfoQuery> package_info_queries;
+  // Stable process default Locale, independent of application attachment.
+  // Components are already-normalized API 28 BaseLocale values, not inputs
+  // to a constructor. Absent object/components are unknown; empty is known.
+  struct Locale {
+    std::optional<std::string> language;
+    std::optional<std::string> country;
+  };
+  std::optional<Locale> default_locale;
+  // Stable API 28 DexPathList fields of the retained PathClassLoader. Every
+  // admitted DEX element has a nonnull DexFile and nonnull ZIP File path, so
+  // its toString does not depend on a filesystem isDirectory observation.
+  // These are File.getPath values, not a request to open/load any DEX or ELF.
+  struct ClassLoaderPaths {
+    std::vector<std::string> dex_zip_files;
+    std::vector<std::string> native_library_directories;
+    std::vector<std::string> system_native_library_directories;
+  };
+  std::optional<ClassLoaderPaths> application_loader_paths;
+  std::optional<ClassLoaderPaths> system_loader_paths;
 };
 std::optional<bool>
 androidApplicationLoaderState(const AndroidApplicationSnapshot &input);
@@ -128,4 +158,6 @@ void validateAndroidApplicationInfoQueries(
 void validateAndroidPackageResourcePath(
     const AndroidApplicationSnapshot &input);
 void validateAndroidPackageInfoQueries(const AndroidApplicationSnapshot &input);
+void validateAndroidDefaultLocale(const AndroidApplicationSnapshot &input);
+void validateAndroidClassLoaderPaths(const AndroidApplicationSnapshot &input);
 } // namespace neverd::mobile::dalvik

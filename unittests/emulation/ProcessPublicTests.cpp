@@ -3726,6 +3726,73 @@ TEST_F(ProcessPublic, AndroidApplicationValuesMatchSDKAndCLI) {
        nullptr},
       {"jni_target_sdk", "[0]", R"({"phase":"application"})",
        "targetSdkVersion is not supplied"},
+      {"jni_package_application", "[0]",
+       R"({"phase":"application","package_manager_available":true,"application_info":{"source_dir":"context.apk"},)"
+       R"("package_info_queries":[{"package_name":"test.app","flags":"0","info":{"application_info":{"source_dir":"parcel.apk"}}}]})",
+       nullptr},
+      {"jni_package_application", "[2]",
+       R"({"phase":"application","package_manager_available":true,"application_info":{"source_dir":"context.apk"},)"
+       R"("package_info_queries":[{"package_name":"test.app","flags":"0","info":{"application_info":null}}]})",
+       nullptr},
+      {"jni_package_application", "[0]",
+       R"({"phase":"application","package_manager_available":true,"application_info":{"source_dir":"context.apk"},)"
+       R"("package_info_queries":[{"package_name":"test.app","flags":"0","info":{}}]})",
+       "applicationInfo is not supplied"},
+      {"jni_split_source_dirs", "[0]",
+       R"({"phase":"application","package_manager_available":true,"application_info":{"source_dir":"base.apk","split_source_dirs":["first.apk",null,)"
+       R"("","first.apk"],"split_public_source_dirs":["other.apk"]},"application_info_queries":[{"package_name":"test.app","flags":"0",)"
+       R"("info":{"source_dir":"base.apk","split_source_dirs":["first.apk",null,"","first.apk"],"split_public_source_dirs":["other.apk"]}}]})",
+       nullptr},
+      {"jni_split_source_dirs", "[2]",
+       R"({"phase":"application","application_info":{"source_dir":"base.apk","split_source_dirs":null}})",
+       nullptr},
+      {"jni_split_source_dirs", "[3]",
+       R"({"phase":"application","application_info":{"source_dir":"base.apk","split_source_dirs":[]}})",
+       nullptr},
+      {"jni_split_source_dirs", "[0]",
+       R"({"phase":"application","application_info":{"source_dir":"base.apk"}})",
+       "splitSourceDirs is not supplied"},
+      {"jni_split_public_source_dirs", "[0]",
+       R"({"phase":"application","package_manager_available":true,"application_info":{"source_dir":"base.apk","split_public_source_dirs":["first.apk",)"
+       R"(null,"","first.apk"],"split_source_dirs":["other.apk"]},"application_info_queries":[{"package_name":"test.app","flags":"0",)"
+       R"("info":{"source_dir":"base.apk","split_public_source_dirs":["first.apk",null,"","first.apk"],"split_source_dirs":["other.apk"]}}]})",
+       nullptr},
+      {"jni_split_public_source_dirs", "[2]",
+       R"({"phase":"application","application_info":{"source_dir":"base.apk","split_public_source_dirs":null}})",
+       nullptr},
+      {"jni_split_public_source_dirs", "[3]",
+       R"({"phase":"application","application_info":{"source_dir":"base.apk","split_public_source_dirs":[]}})",
+       nullptr},
+      {"jni_split_public_source_dirs", "[0]",
+       R"({"phase":"application","application_info":{"source_dir":"base.apk"}})",
+       "splitPublicSourceDirs is not supplied"},
+      {"jni_default_locale", "[0]",
+       R"({"phase":"unattached","default_locale":{"language":"en","country":"US"}})",
+       nullptr},
+      {"jni_default_locale", "[1]",
+       R"({"phase":"unattached","default_locale":{"language":"","country":""}})",
+       nullptr},
+      {"jni_default_locale", "[0]", R"({"phase":"unattached"})",
+       "default Locale is not supplied"},
+      {"jni_default_locale", "[0]",
+       R"({"phase":"unattached","default_locale":{}})",
+       "Locale language is not supplied"},
+      {"jni_classloader_paths", "[0]",
+       R"({"phase":"application","application_loader_paths":{"dex_zip_files":["/one.apk"],"native_library_directories":["/app/lib"],)"
+       R"("system_native_library_directories":["/system/lib"]},"system_loader_paths":{"dex_zip_files":[],"native_library_directories":[],)"
+       R"("system_native_library_directories":["/system/lib"]}})",
+       nullptr},
+      {"jni_classloader_paths", "[0]", R"({"phase":"application"})",
+       "application loader paths are not supplied"},
+      {"jni_classloader_paths", "[1]",
+       R"({"phase":"application","application_loader_paths":{"dex_zip_files":["/one.apk"],"native_library_directories":["/app/lib"],)"
+       R"("system_native_library_directories":["/system/lib"]},"system_loader_paths":{"dex_zip_files":[],"native_library_directories":[],)"
+       R"("system_native_library_directories":["/system/lib"]}})",
+       "unmodeled Android PathClassLoader instance"},
+      {"jni_classloader_paths", "[2]",
+       R"({"phase":"application","application_loader_paths":{"dex_zip_files":["/one.apk"],"native_library_directories":["/app/lib"],)"
+       R"("system_native_library_directories":["/system/lib"]}})",
+       "system loader paths are not supplied"},
   };
   for (const char *Variant : {"jni-O0-none", "jni-O2-relr"}) {
     Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /

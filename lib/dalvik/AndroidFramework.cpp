@@ -60,6 +60,19 @@ void validateApplicationInfoFields(
     check(*info.native_library_dir, "nativeLibraryDir");
   if (info.non_localized_label)
     check(*info.non_localized_label, "nonLocalizedLabel");
+  for (auto [name, field] :
+       {std::pair{"splitSourceDirs", &info.split_source_dirs},
+        {"splitPublicSourceDirs", &info.split_public_source_dirs}}) {
+    if (!*field || !**field)
+      continue;
+    const auto &values = ***field;
+    if (values.size() >
+        ::neverd::limits::dalvik::kMaxAndroidApplicationSplitSources)
+      throw Error(std::string("Android ApplicationInfo ") + name +
+                  " exceeds its count budget");
+    for (const auto &value : values)
+      check(value, name);
+  }
 }
 void validatePackageInfoFields(
     const AndroidApplicationSnapshot::PackageInfo &info) {
@@ -71,6 +84,8 @@ void validatePackageInfoFields(
         throw Error("Android PackageInfo String exceeds its budget");
       (void)javaStringBytes(text);
     }
+  if (info.application_info && *info.application_info)
+    validateApplicationInfoFields(**info.application_info);
 }
 template <class Query, class Validate>
 void validatePackageQueries(const AndroidApplicationSnapshot &input,
@@ -202,6 +217,57 @@ void validateAndroidPackageResourcePath(
   }
 }
 
+void validateAndroidDefaultLocale(const AndroidApplicationSnapshot &input) {
+  if (!input.default_locale)
+    return;
+  const auto &locale = *input.default_locale;
+  for (const auto *component : {&locale.language, &locale.country}) {
+    if (!*component)
+      continue;
+    const auto &text = **component;
+    if (text.size() > ::neverd::limits::dalvik::kMaxAndroidLocaleComponentBytes)
+      throw Error("Android default Locale component exceeds its budget");
+    (void)javaStringBytes(text);
+    const bool language = component == &locale.language;
+    for (unsigned char byte : text)
+      if ((language && byte >= 'A' && byte <= 'Z') ||
+          (!language && byte >= 'a' && byte <= 'z'))
+        throw Error("Android default Locale component is not normalized");
+    if (language && (text == "he" || text == "yi" || text == "id"))
+      throw Error(
+          "Android default Locale requires API 28 legacy language codes");
+  }
+}
+
+void validateAndroidClassLoaderPaths(const AndroidApplicationSnapshot &input) {
+  if (input.application_loader_paths &&
+      androidApplicationLoaderState(input) != true)
+    throw Error(
+        "Android application loader paths require an established loader");
+  for (const auto *state :
+       {&input.application_loader_paths, &input.system_loader_paths}) {
+    if (!*state)
+      continue;
+    const auto &paths = **state;
+    size_t remaining =
+        ::neverd::limits::dalvik::kMaxAndroidClassLoaderPathTotalBytes;
+    for (const auto *list :
+         {&paths.dex_zip_files, &paths.native_library_directories,
+          &paths.system_native_library_directories}) {
+      if (list->size() > ::neverd::limits::dalvik::kMaxAndroidClassLoaderPaths)
+        throw Error("Android class loader path inventory exceeds its budget");
+      for (const auto &path : *list) {
+        if (path.size() >
+                ::neverd::limits::dalvik::kMaxAndroidClassLoaderPathBytes ||
+            path.size() > remaining)
+          throw Error("Android class loader paths exceed their byte budget");
+        (void)javaStringBytes(path);
+        remaining -= path.size();
+      }
+    }
+  }
+}
+
 void Program::addAndroidFramework() {
   // Only the hierarchy needed by this projection. Unmodeled members are not
   // supplied as empty executable declarations.
@@ -229,6 +295,8 @@ void Program::addAndroidFramework() {
          "android/provider/Settings$NameValueTable"},
         {"java/io/File", "java/lang/Object"},
         {"java/io/Serializable", "java/lang/Object"},
+        {"java/lang/Cloneable", "java/lang/Object"},
+        {"java/util/Locale", "java/lang/Object"},
         {"java/lang/Comparable", "java/lang/Object"},
         {"java/lang/CharSequence", "java/lang/Object"},
         {"java/lang/Appendable", "java/lang/Object"},
@@ -255,6 +323,7 @@ void Program::addAndroidFramework() {
     if (std::string_view(name) == "android/app/ActivityThread" ||
         std::string_view(name) == "android/provider/Settings$Secure" ||
         std::string_view(name) == "java/lang/StringBuilder" ||
+        std::string_view(name) == "java/util/Locale" ||
         std::string_view(name) ==
             "android/app/ContextImpl$ApplicationContentResolver")
       type.access.insert("final");
@@ -269,6 +338,7 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "android/provider/BaseColumns" ||
         std::string_view(name) == "android/content/ComponentCallbacks2" ||
         std::string_view(name) == "java/io/Serializable" ||
+        std::string_view(name) == "java/lang/Cloneable" ||
         std::string_view(name) == "java/lang/CharSequence" ||
         std::string_view(name) == "java/lang/Appendable" ||
         std::string_view(name) == "java/lang/Comparable")
@@ -282,6 +352,8 @@ void Program::addAndroidFramework() {
       type.interfaces.push_back("Landroid/os/Parcelable;");
     if (std::string_view(name) == "java/io/File")
       type.interfaces = {"Ljava/io/Serializable;", "Ljava/lang/Comparable;"};
+    if (std::string_view(name) == "java/util/Locale")
+      type.interfaces = {"Ljava/lang/Cloneable;", "Ljava/io/Serializable;"};
     if (std::string_view(name) == "java/lang/AbstractStringBuilder")
       type.interfaces = {"Ljava/lang/Appendable;", "Ljava/lang/CharSequence;"};
     if (std::string_view(name) == "java/lang/StringBuilder")
@@ -316,22 +388,29 @@ void Program::addAndroidFramework() {
     }
     if (std::string_view(name) == "android/content/pm/ApplicationInfo") {
       for (const char *field_name :
-           {"sourceDir", "nativeLibraryDir", "targetSdkVersion"}) {
+           {"sourceDir", "nativeLibraryDir", "targetSdkVersion",
+            "splitSourceDirs", "splitPublicSourceDirs"}) {
         Field field;
-        field.reference = {type.name, field_name,
-                           std::string_view(field_name) == "targetSdkVersion"
-                               ? "I"
-                               : "Ljava/lang/String;"};
+        field.reference = {
+            type.name, field_name,
+            (std::string_view(field_name) == "splitSourceDirs" ||
+             std::string_view(field_name) == "splitPublicSourceDirs")
+                ? "[Ljava/lang/String;"
+            : std::string_view(field_name) == "targetSdkVersion"
+                ? "I"
+                : "Ljava/lang/String;"};
         field.access = {"public"};
         type.fields.push_back(std::move(field));
       }
     }
     if (std::string_view(name) == "android/content/pm/PackageInfo") {
       for (const char *field_name :
-           {"packageName", "versionName", "versionCode"}) {
+           {"packageName", "versionName", "versionCode", "applicationInfo"}) {
         Field field;
         field.reference = {type.name, field_name,
-                           std::string_view(field_name) == "versionCode"
+                           std::string_view(field_name) == "applicationInfo"
+                               ? "Landroid/content/pm/ApplicationInfo;"
+                           : std::string_view(field_name) == "versionCode"
                                ? "I"
                                : "Ljava/lang/String;"};
         field.access = {"public"};
@@ -364,6 +443,8 @@ AndroidFramework::AndroidFramework(
   validateAndroidApplicationInfoQueries(*snapshot);
   validateAndroidPackageInfoQueries(*snapshot);
   validateAndroidPackageResourcePath(*snapshot);
+  validateAndroidDefaultLocale(*snapshot);
+  validateAndroidClassLoaderPaths(*snapshot);
   for (const auto &failure : snapshot->class_lookup_failures) {
     std::string type = "L" + failure.binary_name + ";";
     std::replace(type.begin(), type.end(), '.', '/');
@@ -430,6 +511,57 @@ ExecutionResult AndroidFramework::stringValue(Heap &heap, std::string_view text,
   return {ExecutionStop::Returned, object->Identity, {}, {}};
 }
 
+ExecutionResult AndroidFramework::stringArrayValue(
+    Heap &heap,
+    const AndroidApplicationSnapshot::ApplicationInfo::SplitSourceDirectories
+        &values,
+    const AdmitInstruction &admit) {
+  auto array = heap.allocate(Object::ObjectArray, "[Ljava/lang/String;", 0,
+                             values.size() * sizeof(std::weak_ptr<Object>));
+  if (!array)
+    return {ExecutionStop::HeapLimit,
+            0,
+            {},
+            "Android framework storage budget exhausted"};
+  array->Length = values.size();
+  array->ElementSize = sizeof(std::weak_ptr<Object>);
+  array->Elements.resize(values.size());
+  for (size_t i = 0; i != values.size(); ++i) {
+    auto budget = admit();
+    if (budget != ExecutionStop::Returned)
+      return {budget, 0, {}, "Android framework work budget exhausted"};
+    if (!values[i])
+      continue;
+    auto value = stringValue(heap, *values[i], admit);
+    if (value.stop != ExecutionStop::Returned)
+      return value;
+    array->Elements[i] = heap.get(value.value);
+  }
+  return {ExecutionStop::Returned, array->Identity, {}, {}};
+}
+
+ExecutionResult AndroidFramework::createApplicationInfo(
+    Heap &heap, ApplicationInfoSource source, size_t query,
+    const AdmitInstruction &admit) {
+  auto budget = admit();
+  if (budget != ExecutionStop::Returned)
+    return {budget, 0, {}, "Android framework work budget exhausted"};
+  auto object = heap.allocate(
+      Object::Instance, "android/content/pm/ApplicationInfo", 0,
+      sizeof(ApplicationInfoState) +
+          ::neverd::limits::dalvik::kFrameworkFieldStateOverheadBytes);
+  if (!object)
+    return {ExecutionStop::HeapLimit,
+            0,
+            {},
+            "Android framework storage budget exhausted"};
+  ApplicationInfoState state;
+  state.source = source;
+  state.query = query;
+  application_info_states.emplace(object->Identity, std::move(state));
+  return {ExecutionStop::Returned, object->Identity, {}, {}};
+}
+
 ExecutionResult AndroidFramework::applicationInfoFieldValue(
     Heap &heap, uint64_t receiver, ApplicationInfoField selected,
     std::optional<uint64_t> write, const AdmitInstruction &admit) {
@@ -443,21 +575,56 @@ ExecutionResult AndroidFramework::applicationInfoFieldValue(
   if (budget != ExecutionStop::Returned)
     return {budget, 0, {}, "Android framework work budget exhausted"};
   auto &state = found->second;
-  auto &retained = selected == ApplicationInfoField::NativeLibraryDirectory
-                       ? state.native_library_directory
-                   : selected == ApplicationInfoField::NonLocalizedLabel
-                       ? state.non_localized_label
-                   : selected == ApplicationInfoField::TargetSdkVersion
-                       ? state.target_sdk_version
-                       : state.source_directory;
+  auto &retained =
+      selected == ApplicationInfoField::NativeLibraryDirectory
+          ? state.native_library_directory
+      : selected == ApplicationInfoField::NonLocalizedLabel
+          ? state.non_localized_label
+      : selected == ApplicationInfoField::TargetSdkVersion
+          ? state.target_sdk_version
+      : selected == ApplicationInfoField::SplitSourceDirectories
+          ? state.split_source_directories
+      : selected == ApplicationInfoField::SplitPublicSourceDirectories
+          ? state.split_public_source_directories
+          : state.source_directory;
   if (write)
     retained = *write;
   if (!retained) {
     const std::optional<std::string> *text = nullptr;
     const auto *info =
-        state.query ? &snapshot->application_info_queries[*state.query].info
+        state.source == ApplicationInfoSource::ApplicationQuery
+            ? &snapshot->application_info_queries[state.query].info
+        : state.source == ApplicationInfoSource::PackageQuery
+            ? &**snapshot->package_info_queries[state.query]
+                     .info.application_info
         : snapshot->application_info ? &*snapshot->application_info
                                      : nullptr;
+    if (selected == ApplicationInfoField::SplitSourceDirectories ||
+        selected == ApplicationInfoField::SplitPublicSourceDirectories) {
+      bool public_sources =
+          selected == ApplicationInfoField::SplitPublicSourceDirectories;
+      const auto *initial = !info            ? nullptr
+                            : public_sources ? &info->split_public_source_dirs
+                                             : &info->split_source_dirs;
+      if (!initial || !*initial)
+        return {
+            ExecutionStop::Unsupported,
+            0,
+            {},
+            public_sources
+                ? "Android ApplicationInfo splitPublicSourceDirs is not "
+                  "supplied"
+                : "Android ApplicationInfo splitSourceDirs is not supplied"};
+      if (!**initial)
+        retained = 0;
+      else {
+        auto value = stringArrayValue(heap, ***initial, admit);
+        if (value.stop != ExecutionStop::Returned)
+          return value;
+        retained = value.value;
+      }
+      return {ExecutionStop::Returned, *retained, {}, {}};
+    }
     if (selected == ApplicationInfoField::TargetSdkVersion) {
       if (!info || !info->target_sdk_version)
         return {ExecutionStop::Unsupported,
@@ -511,9 +678,10 @@ ExecutionResult AndroidFramework::packageInfoFieldValue(
   if (budget != ExecutionStop::Returned)
     return {budget, 0, {}, "Android framework work budget exhausted"};
   auto &state = found->second;
-  auto &retained = field == "packageName"   ? state.package_name
-                   : field == "versionName" ? state.version_name
-                                            : state.version_code;
+  auto &retained = field == "applicationInfo" ? state.application_info
+                   : field == "packageName"   ? state.package_name
+                   : field == "versionName"   ? state.version_name
+                                              : state.version_code;
   if (write)
     retained = *write; // Runtime owns primitive narrowing and reference checks.
   if (!retained) {
@@ -524,7 +692,19 @@ ExecutionResult AndroidFramework::packageInfoFieldValue(
               {},
               "Android PackageInfo " + std::string(field) + " is not supplied"};
     };
-    if (field == "versionCode") {
+    if (field == "applicationInfo") {
+      if (!info.application_info)
+        return unknown();
+      if (!*info.application_info)
+        retained = 0;
+      else {
+        auto value = createApplicationInfo(
+            heap, ApplicationInfoSource::PackageQuery, state.query, admit);
+        if (value.stop != ExecutionStop::Returned)
+          return value;
+        retained = value.value;
+      }
+    } else if (field == "versionCode") {
       if (!info.version_code)
         return unknown();
       retained = uint32_t(*info.version_code);
@@ -612,8 +792,19 @@ ExecutionResult AndroidFramework::field(Heap &heap, const Field &field,
       !has(field.access, "static"))
     return applicationInfoFieldValue(
         heap, receiver, ApplicationInfoField::TargetSdkVersion, write, admit);
+  if (ref.owner == "Landroid/content/pm/ApplicationInfo;" &&
+      (ref.name == "splitSourceDirs" || ref.name == "splitPublicSourceDirs") &&
+      ref.type == "[Ljava/lang/String;" && !has(field.access, "static"))
+    return applicationInfoFieldValue(
+        heap, receiver,
+        ref.name == "splitPublicSourceDirs"
+            ? ApplicationInfoField::SplitPublicSourceDirectories
+            : ApplicationInfoField::SplitSourceDirectories,
+        write, admit);
   if (ref.owner == "Landroid/content/pm/PackageInfo;" &&
-      ((ref.name == "versionCode" && ref.type == "I") ||
+      ((ref.name == "applicationInfo" &&
+        ref.type == "Landroid/content/pm/ApplicationInfo;") ||
+       (ref.name == "versionCode" && ref.type == "I") ||
        ((ref.name == "packageName" || ref.name == "versionName") &&
         ref.type == "Ljava/lang/String;")) &&
       !has(field.access, "static"))
@@ -727,6 +918,68 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
           "Android application lifecycle snapshot is not supplied");
     using Phase = AndroidApplicationSnapshot::Phase;
     switch (method.Op) {
+    case ClassLoaderString: {
+      const std::optional<AndroidApplicationSnapshot::ClassLoaderPaths> *state;
+      if (receiver && receiver == app_loader)
+        state = &snapshot->application_loader_paths;
+      else if (receiver && receiver == system_loader)
+        state = &snapshot->system_loader_paths;
+      else
+        return unsupported("unmodeled Android PathClassLoader instance");
+      if (!*state)
+        return unsupported(
+            receiver == app_loader
+                ? "Android application loader paths are not supplied"
+                : "Android system loader paths are not supplied");
+      const auto &paths = **state;
+      std::string result = "dalvik.system.PathClassLoader[DexPathList[[";
+      bool first = true;
+      for (const auto &path : paths.dex_zip_files) {
+        tick();
+        if (!first)
+          result += ", ";
+        first = false;
+        result += "zip file \"" + path + "\"";
+      }
+      result += "],nativeLibraryDirectories=[";
+      first = true;
+      for (const auto *list : {&paths.native_library_directories,
+                               &paths.system_native_library_directories})
+        for (const auto &path : *list) {
+          tick();
+          if (!first)
+            result += ", ";
+          first = false;
+          result += path;
+        }
+      result += "]]]";
+      return string(result);
+    }
+    case LocaleDefault:
+      if (!snapshot->default_locale)
+        return unsupported("Android default Locale is not supplied");
+      return identity(default_locale, "java/util/Locale");
+    case LocaleLanguage:
+    case LocaleCountry: {
+      if (!default_locale || receiver != default_locale)
+        return unsupported("unmodeled Android Locale instance");
+      const bool language = method.Op == LocaleLanguage;
+      const auto &value = language ? snapshot->default_locale->language
+                                   : snapshot->default_locale->country;
+      if (!value)
+        return unsupported(language ? "Android Locale language is not supplied"
+                                    : "Android Locale country is not supplied");
+      auto &retained = language ? locale_language : locale_country;
+      if (!retained) {
+        const auto bytes = javaStringBytes(*value);
+        for (size_t i = 0; i < bytes.size(); i += 2)
+          tick();
+        // API 28 BaseLocale retains interned components. The same heap pool
+        // is used by DEX literals and String.intern reached through JNI.
+        retained = ref(heap.literal(*value));
+      }
+      return retained;
+    }
     case SecureSettingString:
     case SecureSettingIntDefault: {
       if (!content_resolver || arguments[0] != content_resolver)
@@ -828,12 +1081,14 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
         return package_resource_path;
       }
       if (method.Op == ContextApplicationInfo) {
-        auto value = identity(
-            application_info, "android/content/pm/ApplicationInfo",
-            sizeof(ApplicationInfoState) +
-                ::neverd::limits::dalvik::kFrameworkFieldStateOverheadBytes);
-        application_info_states.try_emplace(value);
-        return value;
+        if (!application_info) {
+          auto result = createApplicationInfo(
+              heap, ApplicationInfoSource::Context, 0, admit);
+          if (result.stop != ExecutionStop::Returned)
+            throw Stop{std::move(result)};
+          application_info = result.value;
+        }
+        return application_info;
       }
       if (method.Op == ContextPackageManager) {
         if (!snapshot->package_manager_available)
@@ -905,14 +1160,11 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
           package_info_states.emplace(result, std::move(state));
           return result;
         }
-        auto result = ref(heap.allocate(
-            Object::Instance, "android/content/pm/ApplicationInfo", 0,
-            sizeof(ApplicationInfoState) +
-                ::neverd::limits::dalvik::kFrameworkFieldStateOverheadBytes));
-        ApplicationInfoState state;
-        state.query = *index;
-        application_info_states.emplace(result, std::move(state));
-        return result;
+        auto result = createApplicationInfo(
+            heap, ApplicationInfoSource::ApplicationQuery, *index, admit);
+        if (result.stop != ExecutionStop::Returned)
+          throw Stop{std::move(result)};
+        return result.value;
       }
       return unsupported(method.Op == PackageApplicationInfo
                              ? "Android application info query is not supplied"

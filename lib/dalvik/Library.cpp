@@ -178,6 +178,12 @@ static const LibraryMethod Methods[] = {
      "()Ljava/lang/String;", PackageResourcePath},
     {"android/content/pm/PackageManager", "getPackageInfo",
      "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;", PackageInfoQuery},
+    {"dalvik/system/BaseDexClassLoader", "toString", "()Ljava/lang/String;",
+     ClassLoaderString},
+    {"java/util/Locale", "getDefault", "()Ljava/util/Locale;", LocaleDefault,
+     true},
+    {"java/util/Locale", "getLanguage", "()Ljava/lang/String;", LocaleLanguage},
+    {"java/util/Locale", "getCountry", "()Ljava/lang/String;", LocaleCountry},
 };
 
 struct LibraryStop {
@@ -292,7 +298,9 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == SecureSettingIntDefault || M.Op == ContextApplicationInfo ||
         M.Op == ContextPackageManager || M.Op == PackageApplicationInfo ||
         M.Op == PackageApplicationLabel || M.Op == PackageResourcePath ||
-        M.Op == PackageInfoQuery) {
+        M.Op == PackageInfoQuery || M.Op == LocaleDefault ||
+        M.Op == LocaleLanguage || M.Op == LocaleCountry ||
+        M.Op == ClassLoaderString) {
       if (!program || !framework)
         return {ExecutionStop::Unsupported,
                 0,

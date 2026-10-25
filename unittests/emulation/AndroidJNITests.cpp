@@ -433,6 +433,69 @@ TEST_P(AndroidJNI,
   EXPECT_NE(Field.Diagnostic.find("nativeLibraryDir is not supplied"),
             std::string::npos);
 }
+TEST_P(AndroidJNI, ClassLoaderPathsKeepApplicationAndSystemStateSeparate) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  Options.Android->Application = Snapshot{Snapshot::Phase::Application};
+  auto &input = *Options.Android->Application;
+  auto unknown = run("jni_classloader_paths");
+  EXPECT_EQ(unknown.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(
+      unknown.Diagnostic.find("application loader paths are not supplied"),
+      std::string::npos);
+  input.system_loader_paths =
+      Snapshot::ClassLoaderPaths{{}, {}, {"/system/lib"}};
+  auto system_only = run("jni_classloader_paths");
+  EXPECT_EQ(system_only.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(
+      system_only.Diagnostic.find("application loader paths are not supplied"),
+      std::string::npos);
+  input.application_loader_paths =
+      Snapshot::ClassLoaderPaths{{"/one.apk"}, {"/app/lib"}, {"/system/lib"}};
+  auto known = run("jni_classloader_paths");
+  EXPECT_EQ(known.Stop, ProcessStopReason::Returned) << known.Diagnostic;
+  EXPECT_EQ(known.ReturnValue, 0u);
+  Options.Android->Arguments = {1};
+  auto foreign = run("jni_classloader_paths");
+  EXPECT_EQ(foreign.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(
+      foreign.Diagnostic.find("unmodeled Android PathClassLoader instance"),
+      std::string::npos);
+  Options.Android->Arguments = {2};
+  input.system_loader_paths.reset();
+  auto app_only = run("jni_classloader_paths");
+  EXPECT_EQ(app_only.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(app_only.Diagnostic.find("system loader paths are not supplied"),
+            std::string::npos);
+}
+TEST_P(AndroidJNI, DefaultLocaleRequiresExplicitStateAndRetainsThreadIdentity) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  Options.Android->Application = Snapshot{};
+  auto &input = *Options.Android->Application;
+  auto unknown = run("jni_default_locale");
+  EXPECT_EQ(unknown.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(unknown.Diagnostic.find("default Locale is not supplied"),
+            std::string::npos);
+  input.default_locale.emplace();
+  auto component = run("jni_default_locale");
+  EXPECT_EQ(component.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(component.Diagnostic.find("Locale language is not supplied"),
+            std::string::npos);
+  input.default_locale = Snapshot::Locale{"en", "US"};
+  auto known = run("jni_default_locale");
+  EXPECT_EQ(known.Stop, ProcessStopReason::Returned) << known.Diagnostic;
+  EXPECT_EQ(known.ReturnValue, 0u);
+  for (unsigned mode : {2u, 3u}) {
+    Options.Android->Arguments = {mode};
+    auto refused = run("jni_default_locale");
+    EXPECT_EQ(refused.Stop, ProcessStopReason::UnsupportedService)
+        << refused.Diagnostic;
+  }
+  Options.Android->Arguments = {1};
+  input.default_locale = Snapshot::Locale{"", ""};
+  auto empty = run("jni_default_locale");
+  EXPECT_EQ(empty.Stop, ProcessStopReason::Returned) << empty.Diagnostic;
+  EXPECT_EQ(empty.ReturnValue, 0u);
+}
 TEST_P(AndroidJNI, TargetSdkVersionRetainsContextAndQueryFieldState) {
   using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
   Options.Android->Application = Snapshot{Snapshot::Phase::Application};
@@ -502,6 +565,45 @@ TEST_P(AndroidJNI, PackageInfoQueriesRetainFieldsAcrossNativeThreads) {
   EXPECT_EQ(field.Stop, ProcessStopReason::UnsupportedService);
   EXPECT_NE(field.Diagnostic.find("versionName is not supplied"),
             std::string::npos);
+}
+TEST_P(AndroidJNI, PackageInfoApplicationSharesReferencesAcrossThreads) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  Options.Android->Arguments = {1};
+  auto declaration = run("jni_package_application");
+  EXPECT_EQ(declaration.Stop, ProcessStopReason::Returned)
+      << declaration.Diagnostic;
+  EXPECT_EQ(declaration.ReturnValue, 0u);
+  Options.Android->Arguments.clear();
+  Options.Android->Application = Snapshot{Snapshot::Phase::Application};
+  auto &input = *Options.Android->Application;
+  input.package_manager_available = true;
+  input.application_info =
+      Snapshot::ApplicationInfo{std::string("context.apk")};
+  input.package_info_queries = {{"test.app", 0, {}}};
+  auto unknown = run("jni_package_application");
+  EXPECT_EQ(unknown.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(unknown.Diagnostic.find("applicationInfo is not supplied"),
+            std::string::npos);
+  input.package_info_queries[0].info.application_info =
+      Snapshot::ApplicationInfo{std::string("parcel.apk")};
+  auto known = run("jni_package_application");
+  EXPECT_EQ(known.Stop, ProcessStopReason::Returned) << known.Diagnostic;
+  EXPECT_EQ(known.ReturnValue, 0u);
+  Options.Android->Arguments = {3};
+  auto foreign = run("jni_package_application");
+  EXPECT_EQ(foreign.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(foreign.Diagnostic.find("unmodeled Android PackageInfo instance"),
+            std::string::npos);
+  Options.Android->Arguments = {2};
+  input.package_info_queries[0].info.application_info.emplace();
+  auto null = run("jni_package_application");
+  EXPECT_EQ(null.Stop, ProcessStopReason::Returned) << null.Diagnostic;
+  EXPECT_EQ(null.ReturnValue, 0u);
+  Options.Android->Arguments = {4};
+  input.package_info_queries[0].info.application_info.reset();
+  auto written = run("jni_package_application");
+  EXPECT_EQ(written.Stop, ProcessStopReason::Returned) << written.Diagnostic;
+  EXPECT_EQ(written.ReturnValue, 0u);
 }
 TEST_P(AndroidJNI, SecureSettingsCachePreservesUnknownNullAndStringValues) {
   using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
@@ -1092,6 +1194,65 @@ TEST_P(AndroidJNI, EnvironmentIsExplicitlyEnabled) {
   Options.Android->JNI = false;
   auto R = run("jni_vm_lifecycle");
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+}
+TEST_P(AndroidJNI, SplitSourceDirsSharesMutableArraysAcrossThreads) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  using Sources = Snapshot::ApplicationInfo::SplitSourceDirectories;
+  for (bool public_sources : {false, true}) {
+    SCOPED_TRACE(public_sources);
+    const char *entry = public_sources ? "jni_split_public_source_dirs"
+                                       : "jni_split_source_dirs";
+    Options.Android->Arguments = {1};
+    auto declaration = run(entry);
+    EXPECT_EQ(declaration.Stop, ProcessStopReason::Returned)
+        << declaration.Diagnostic;
+    EXPECT_EQ(declaration.ReturnValue, 0u);
+    Options.Android->Arguments.clear();
+    Options.Android->Application = Snapshot{Snapshot::Phase::Application};
+    auto &input = *Options.Android->Application;
+    input.package_manager_available = true;
+    input.application_info.emplace().source_dir = "base.apk";
+    auto unknown = run(entry);
+    EXPECT_EQ(unknown.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(unknown.Diagnostic.find(
+                  public_sources ? "splitPublicSourceDirs is not supplied"
+                                 : "splitSourceDirs is not supplied"),
+              std::string::npos);
+    auto &field = public_sources
+                      ? input.application_info->split_public_source_dirs
+                      : input.application_info->split_source_dirs;
+    auto &other = public_sources
+                      ? input.application_info->split_source_dirs
+                      : input.application_info->split_public_source_dirs;
+    other = Sources{"other.apk"};
+    field = Sources{"first.apk", std::nullopt, "", "first.apk"};
+    input.application_info_queries = {{"test.app", 0, *input.application_info}};
+    auto positive = run(entry);
+    EXPECT_EQ(positive.Stop, ProcessStopReason::Returned)
+        << positive.Diagnostic;
+    EXPECT_EQ(positive.ReturnValue, 0u);
+    Options.Android->Arguments = {6};
+    auto foreign = run(entry);
+    EXPECT_EQ(foreign.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(
+        foreign.Diagnostic.find("unmodeled Android ApplicationInfo instance"),
+        std::string::npos);
+    Options.Android->Arguments = {2};
+    field.emplace();
+    auto null = run(entry);
+    EXPECT_EQ(null.Stop, ProcessStopReason::Returned) << null.Diagnostic;
+    EXPECT_EQ(null.ReturnValue, 0u);
+    Options.Android->Arguments = {3};
+    field = Sources{};
+    auto empty = run(entry);
+    EXPECT_EQ(empty.Stop, ProcessStopReason::Returned) << empty.Diagnostic;
+    EXPECT_EQ(empty.ReturnValue, 0u);
+    Options.Android->Arguments = {5};
+    field.reset();
+    auto written = run(entry);
+    EXPECT_EQ(written.Stop, ProcessStopReason::Returned) << written.Diagnostic;
+    EXPECT_EQ(written.ReturnValue, 0u);
+  }
 }
 INSTANTIATE_TEST_SUITE_P(
     Backends, AndroidJNI,

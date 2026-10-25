@@ -17,6 +17,7 @@
 #include "gtest/gtest.h"
 #include "os/linux/kernel/LinuxFiles.h"
 
+#include "neverd/dalvik/Limits.h"
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessReportFields.h"
 
@@ -2355,6 +2356,70 @@ TEST(ProcessReport, AndroidPackageApplicationInfoQueriesHaveStrictTypedKeys) {
   }
 }
 
+TEST(ProcessReport, AndroidPackageInfoApplicationReusesExplicitNullableSchema) {
+  auto wrap = [](const std::string &info) {
+    return std::string(
+               R"({"android":{"jni":true,"application_snapshot":{)"
+               R"("phase":"application","package_manager_available":true,)"
+               R"("package_info_queries":[{"package_name":"test.app",)"
+               R"("flags":0,"info":)") +
+           info + "}]}}}";
+  };
+  auto unknown = processOptionsFromJSON(wrap("{}"));
+  ASSERT_TRUE(bool(unknown)) << llvm::toString(unknown.takeError());
+  EXPECT_FALSE(unknown->Android->Application->package_info_queries[0]
+                   .info.application_info);
+  auto null = processOptionsFromJSON(wrap(R"({"application_info":null})"));
+  ASSERT_TRUE(bool(null)) << llvm::toString(null.takeError());
+  const auto &empty =
+      null->Android->Application->package_info_queries[0].info.application_info;
+  ASSERT_TRUE(empty);
+  EXPECT_FALSE(*empty);
+  auto object = processOptionsFromJSON(
+      wrap(R"({"application_info":{"source_dir":"parcel.apk",)"
+           R"("native_library_dir":null,"non_localized_label":"label",)"
+           R"("target_sdk_version":-2147483648}})"));
+  ASSERT_TRUE(bool(object)) << llvm::toString(object.takeError());
+  const auto &nested = object->Android->Application->package_info_queries[0]
+                           .info.application_info;
+  ASSERT_TRUE(nested);
+  ASSERT_TRUE(*nested);
+  EXPECT_EQ((*nested)->source_dir, "parcel.apk");
+  ASSERT_TRUE((*nested)->native_library_dir);
+  EXPECT_FALSE(*(*nested)->native_library_dir);
+  EXPECT_EQ((*nested)->non_localized_label,
+            std::optional<std::string>{"label"});
+  EXPECT_EQ((*nested)->target_sdk_version, INT32_MIN);
+  auto null_source = processOptionsFromJSON(
+      wrap(R"({"application_info":{"source_dir":null}})"));
+  ASSERT_TRUE(bool(null_source)) << llvm::toString(null_source.takeError());
+  const auto &known = null_source->Android->Application->package_info_queries[0]
+                          .info.application_info;
+  ASSERT_TRUE(known && *known);
+  EXPECT_FALSE((*known)->source_dir);
+  EXPECT_FALSE((*known)->native_library_dir);
+  for (const char *bad :
+       {"1", "false", "[]", "{}", R"("text")", R"({"source_dir":false})",
+        R"({"source_dir":null,"extra":0})",
+        R"({"source_dir":null,"native_library_dir":1})",
+        R"({"source_dir":null,"non_localized_label":true})",
+        R"({"source_dir":null,"target_sdk_version":2147483648})"}) {
+    auto rejected = processOptionsFromJSON(
+        wrap(std::string(R"({"application_info":)") + bad + "}"));
+    EXPECT_FALSE(bool(rejected)) << bad;
+    llvm::consumeError(rejected.takeError());
+  }
+  for (const char *field :
+       {"source_dir", "native_library_dir", "non_localized_label"}) {
+    std::string prefix = R"({"application_info":{)";
+    if (std::string(field) != "source_dir")
+      prefix += R"("source_dir":null,)";
+    auto rejected = processOptionsFromJSON(wrap(
+        prefix + "\"" + field + "\":\"" + std::string(4097, 'x') + "\"}}"));
+    EXPECT_FALSE(bool(rejected)) << field;
+    llvm::consumeError(rejected.takeError());
+  }
+}
 TEST(ProcessReport, AndroidPackageInfoQueriesHaveStrictKeysAndOptionalFields) {
   auto wrap = [](const std::string &queries, const char *available = "true",
                  const char *phase = "application") {
@@ -2464,6 +2529,81 @@ TEST(ProcessReport, AndroidPackageInfoQueriesHaveStrictKeysAndOptionalFields) {
       if (!parsed)
         llvm::consumeError(parsed.takeError());
     }
+  }
+}
+TEST(ProcessReport, AndroidClassLoaderPathsRequireCompleteBoundedInventories) {
+  auto wrap = [](const std::string &value, bool application) {
+    return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                       "\"phase\":\"") +
+           (application ? "application" : "unattached") + "\"" +
+           (value.empty() ? ""
+                          : std::string(",\"") +
+                                (application ? "application_loader_paths"
+                                             : "system_loader_paths") +
+                                "\":" + value) +
+           "}}}";
+  };
+  const std::string empty =
+      R"({"dex_zip_files":[],"native_library_directories":[],"system_native_library_directories":[]})";
+  for (bool application : {false, true}) {
+    for (
+        const auto &value :
+        {std::string{}, empty,
+         std::string(
+             R"({"dex_zip_files":["/one.apk","/two.apk"],"native_library_directories":[""],"system_native_library_directories":["/system/lib"]})")}) {
+      auto parsed = processOptionsFromJSON(wrap(value, application));
+      ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+      const auto &state = *parsed->Android->Application;
+      const auto &paths = application ? state.application_loader_paths
+                                      : state.system_loader_paths;
+      EXPECT_EQ(paths.has_value(), !value.empty());
+      if (value == empty)
+        EXPECT_TRUE(paths->dex_zip_files.empty());
+    }
+    for (
+        const auto &value : std::vector<std::string>{
+            "null", "false", "[]", "{}",
+            R"({"dex_zip_files":[],"native_library_directories":[]})",
+            R"({"dex_zip_files":[null],"native_library_directories":[],"system_native_library_directories":[]})",
+            R"({"dex_zip_files":[],"native_library_directories":[],"unknown":[]})",
+            "{\"dex_zip_files\":[\"" + std::string(4097, 'a') +
+                "\"],\"native_library_directories\":[],\"system_native_library_"
+                "directories\":[]}"}) {
+      auto parsed = processOptionsFromJSON(wrap(value, application));
+      EXPECT_FALSE(bool(parsed));
+      llvm::consumeError(parsed.takeError());
+    }
+  }
+}
+TEST(ProcessReport, AndroidDefaultLocaleRequiresCanonicalExplicitState) {
+  auto wrap = [](const std::string &value, const char *phase = "unattached") {
+    return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                       "\"phase\":\"") +
+           phase + "\"" +
+           (value.empty() ? "" : ",\"default_locale\":" + value) + "}}}";
+  };
+  for (const auto *phase : {"unattached", "attached", "application"}) {
+    for (const auto *value : {"", "{}", R"({"language":"","country":""})",
+                              R"({"language":"iw","country":"419"})"}) {
+      auto parsed = processOptionsFromJSON(wrap(value, phase));
+      ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+      const auto &locale = parsed->Android->Application->default_locale;
+      EXPECT_EQ(locale.has_value(), *value != '\0');
+      if (std::string_view(value) == "{}") {
+        ASSERT_TRUE(locale);
+        EXPECT_FALSE(locale->language);
+        EXPECT_FALSE(locale->country);
+      }
+    }
+  }
+  for (const auto &value : std::vector<std::string>{
+           "null", "false", "[]", R"({"language":null})", R"({"country":1})",
+           R"({"language":"he"})", R"({"language":"EN"})",
+           R"({"country":"us"})", R"({"unexpected":""})",
+           "{\"language\":\"" + std::string(1025, 'a') + "\"}"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    EXPECT_FALSE(bool(parsed)) << value;
+    llvm::consumeError(parsed.takeError());
   }
 }
 TEST(ProcessReport, AndroidTargetSdkVersionUsesAnExplicitInt32Field) {
@@ -5643,5 +5783,103 @@ TEST(ProcessReport, DirectFileMetadataUsesTheSameValidationBoundary) {
               std::string::npos);
   }
 }
+TEST(ProcessReport, AndroidSplitSourceDirsHasStrictNullableArraySchema) {
+  using Info = mobile::dalvik::AndroidApplicationSnapshot::ApplicationInfo;
+  auto wrap = [](const std::string &members, unsigned origin) {
+    std::string info = R"({"source_dir":"base.apk")" + members + "}";
+    std::string prefix =
+        R"({"android":{"jni":true,"application_snapshot":{"phase":"application","package_manager_available":true,)";
+    if (origin == 0)
+      return prefix + R"("application_info":)" + info + "}}}";
+    if (origin == 1)
+      return prefix +
+             R"("application_info_queries":[{"package_name":"test.app","flags":0,"info":)" +
+             info + "}]}}}";
+    return prefix +
+           R"("package_info_queries":[{"package_name":"test.app","flags":0,"info":{"application_info":)" +
+           info + "}}]}}}";
+  };
+  auto info = [](const ProcessOptions &options,
+                 unsigned origin) -> const Info & {
+    const auto &input = *options.Android->Application;
+    return origin == 0 ? *input.application_info
+           : origin == 1
+               ? input.application_info_queries[0].info
+               : **input.package_info_queries[0].info.application_info;
+  };
+  for (auto [name, field] :
+       {std::pair{"split_source_dirs", &Info::split_source_dirs},
+        {"split_public_source_dirs", &Info::split_public_source_dirs}}) {
+    auto member = [name](std::string value) {
+      return ",\"" + std::string(name) + "\":" + value;
+    };
+    for (unsigned origin = 0; origin != 3; ++origin) {
+      SCOPED_TRACE(name);
+      SCOPED_TRACE(origin);
+      auto absent = processOptionsFromJSON(wrap("", origin));
+      ASSERT_TRUE(bool(absent)) << llvm::toString(absent.takeError());
+      EXPECT_FALSE(info(*absent, origin).*field);
+      auto null = processOptionsFromJSON(wrap(member("null"), origin));
+      ASSERT_TRUE(bool(null)) << llvm::toString(null.takeError());
+      ASSERT_TRUE(info(*null, origin).*field);
+      EXPECT_FALSE(*(info(*null, origin).*field));
+      auto empty = processOptionsFromJSON(wrap(member("[]"), origin));
+      ASSERT_TRUE(bool(empty)) << llvm::toString(empty.takeError());
+      ASSERT_TRUE(info(*empty, origin).*field);
+      ASSERT_TRUE(*(info(*empty, origin).*field));
+      EXPECT_TRUE((**(info(*empty, origin).*field)).empty());
+      auto array = processOptionsFromJSON(
+          wrap(member(R"(["one",null,"","a\u0000b","\u732b.apk"])"), origin));
+      ASSERT_TRUE(bool(array)) << llvm::toString(array.takeError());
+      const auto &values = **(info(*array, origin).*field);
+      ASSERT_EQ(values.size(), 5u);
+      EXPECT_EQ(values[0], "one");
+      EXPECT_FALSE(values[1]);
+      EXPECT_EQ(values[2], "");
+      EXPECT_EQ(values[3], std::string("a\0b", 3));
+      EXPECT_EQ(values[4], "\xe7\x8c\xab.apk");
+      for (const char *bad :
+           {"1", "true", "{}", R"("text")", "[1]", "[false]", "[[]]", "[{}]"}) {
+        auto rejected = processOptionsFromJSON(wrap(member(bad), origin));
+        EXPECT_FALSE(bool(rejected)) << bad;
+        llvm::consumeError(rejected.takeError());
+      }
+      std::string entries;
+      for (unsigned i = 0;
+           i != ::neverd::limits::dalvik::kMaxAndroidApplicationSplitSources;
+           ++i) {
+        if (i)
+          entries += ',';
+        entries += "null";
+      }
+      auto accepted =
+          processOptionsFromJSON(wrap(member("[" + entries + "]"), origin));
+      ASSERT_TRUE(bool(accepted)) << llvm::toString(accepted.takeError());
+      auto too_many = processOptionsFromJSON(
+          wrap(member("[" + entries + ",null]"), origin));
+      EXPECT_FALSE(bool(too_many));
+      llvm::consumeError(too_many.takeError());
+      auto too_long = processOptionsFromJSON(
+          wrap(member("[\"" +
+                      std::string(::neverd::limits::dalvik::
+                                          kMaxAndroidApplicationInfoFieldBytes +
+                                      1,
+                                  'x') +
+                      "\"]"),
+               origin));
+      EXPECT_FALSE(bool(too_long));
+      llvm::consumeError(too_long.takeError());
+      auto independent = processOptionsFromJSON(wrap(
+          R"(,"split_source_dirs":["code.apk"],"split_public_source_dirs":["resources.apk"])",
+          origin));
+      ASSERT_TRUE(bool(independent)) << llvm::toString(independent.takeError());
+      EXPECT_EQ((**info(*independent, origin).split_source_dirs)[0],
+                "code.apk");
+      EXPECT_EQ((**info(*independent, origin).split_public_source_dirs)[0],
+                "resources.apk");
+    }
+  }
+}
+
 } // namespace
 } // namespace neverd::emulation

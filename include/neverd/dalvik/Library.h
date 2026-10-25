@@ -63,7 +63,11 @@ enum LibraryOperation {
   PackageApplicationInfo,
   PackageApplicationLabel,
   PackageResourcePath,
-  PackageInfoQuery
+  PackageInfoQuery,
+  LocaleDefault,
+  LocaleLanguage,
+  LocaleCountry,
+  ClassLoaderString
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

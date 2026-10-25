@@ -1,5 +1,16 @@
 # Android application and class loader snapshots
 
+`application_info.split_source_dirs` and `split_public_source_dirs` each
+accept an omitted field (unknown),
+`null` (known null array), or an ordered array of nullable Strings, including
+an empty array. The same shape applies to application queries and nested
+PackageInfo responses. The bounded projection admits at most 64 elements of at
+most 4096 UTF-8 bytes each. These are model input limits, not Android package
+limits. Array objects and elements are retained and mutable; separate parcel
+responses and the two fields have independent arrays. No public/private
+path fallback or implicit alias is inferred. Values do not assert file existence,
+canonicalize paths or execute split loading.
+
 The API 28 native profile can project a declared process lifecycle into the
 shared Java heap. JNI and DEX use the same objects and methods. This is an
 explicit analysis input, not discovery of the installed application or execution
@@ -103,15 +114,23 @@ field materialization use the existing work and storage budgets.
 `PackageManager.getPackageInfo(String, int)` results. It uses the same exact
 `package_name`, int32 `flags` and `info` record keys, query matching, lifecycle
 requirements and budgets as ApplicationInfo queries. Its `info` object admits
-only `package_name`, `version_name` and `version_code`, all optional. String
-fields distinguish unknown, known null and exact UTF-8/WTF-8 text up to 4096
-bytes; version_code is an explicit signed int32. Empty info leaves all three
+`package_name`, `version_name`, `version_code` and `application_info`, all optional.
+String fields distinguish unknown, known null and exact UTF-8/WTF-8 text up to 4096
+bytes; version_code is an explicit signed int32. Empty info leaves all four
 fields unknown. A query key does not infer its returned packageName field.
 
 Each result is a fresh Parcelable PackageInfo with independently mutable
-`packageName`, `versionName` and `versionCode` fields. JNI and DEX share Runtime
-reference validation and primitive narrowing before the field owner stores a
+`packageName`, `versionName`, `versionCode` and `applicationInfo` fields. JNI and
+DEX share Runtime reference validation and primitive narrowing before the field owner stores a
 write. Guest writes can establish unknown fields and survive native detach.
+The `application_info` member is null or an object using the ApplicationInfo
+schema below, including its required `source_dir`. Omission leaves the field
+unknown. A supplied object is retained within that PackageInfo result; separate
+queries create independent nested objects and mutable fields. It is not the
+Context's retained ApplicationInfo or an ApplicationInfo query result. Its
+fields and inherited label behavior use the same shared owner, and replacing
+the parent reference does not rewrite the previous child. Field declaration
+lookup itself does not require a supplied response or field value.
 There is no APK parsing or package-service execution in this projection.
 Missing query records, foreign instances, all other PackageInfo members and
 negative lookups remain explicit unsupported cases. This contract follows API 28
@@ -146,6 +165,42 @@ The contract follows API 28 [ApplicationInfo](https://android.googlesource.com/p
 [ContextImpl](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java)
 and [LoadedApk](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
 The implementation and tests are independently authored.
+
+Optional `default_locale` supplies a stable process default Locale independently
+of application attachment. The object may contain `language` and `country`,
+each an already-normalized API 28 BaseLocale UTF-8/WTF-8 string of at most 1024
+bytes. Missing object or components remain unknown; empty strings are known
+values and null is invalid. Language rejects ASCII uppercase and the modern
+codes `he`, `yi`, `id` (API 28 stores `iw`, `ji`, `in`); country rejects ASCII
+lowercase. This validates a snapshot rather than running a Locale constructor.
+`Locale.getDefault()` retains one nonnull object across JNI threads and DEX
+calls. Its `getLanguage()` and `getCountry()` return the shared heap's interned
+component Strings. No locale is inferred from the host, properties, APK or
+application phase. Foreign instances, constructors, setters, category-specific
+defaults, other Locale methods and initialization remain unsupported.
+The contract follows API 28
+[Locale](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/Locale.java)
+and [BaseLocale](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/sun/util/locale/BaseLocale.java);
+the implementation and tests are independently authored.
+
+Optional `application_loader_paths` and `system_loader_paths` independently
+supply the retained PathClassLoader's stable DexPathList state. Each object
+requires all three String arrays: `dex_zip_files`,
+`native_library_directories`, and `system_native_library_directories`.
+Empty inventories are known; absent outer objects remain unknown. The application
+input requires an established application loader, including the explicit
+attached-phase condition. Each array is limited to 64 entries, each File path to
+4096 UTF-8/WTF-8 bytes, and the combined three arrays to 16384 bytes. Path spelling
+and ordering are preserved.
+`BaseDexClassLoader.toString()` and `PathClassLoader.toString()` use this shared
+owner and return a fresh String. This subset admits ZIP elements with a nonnull
+DexFile and nonnull File path, so it does not require a directory probe when
+formatting an element. Native directories precede system directories. File paths
+are explicit state; opening DEX files, library searches, loader construction,
+other element forms and path-list mutation are outside this projection.
+The format follows API 28
+[BaseDexClassLoader](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/dalvik/src/main/java/dalvik/system/BaseDexClassLoader.java)
+and [DexPathList](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/dalvik/src/main/java/dalvik/system/DexPathList.java).
 
 `package_item_force_safe_labels` declares the stable API 28 PackageItemInfo
 static mode. Its absence is unknown. `PackageManager.getApplicationLabel(info)`

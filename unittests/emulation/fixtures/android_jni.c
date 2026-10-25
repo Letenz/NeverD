@@ -25,6 +25,105 @@ static Handle attach(void) {
     return 0;
   return env;
 }
+static Ref locale_saved, locale_type, locale_get_default;
+int jni_classloader_paths(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref thread = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current = C(e, Ref, 113, thread, "currentApplication",
+                  "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, thread, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref get_loader =
+      C(e, Ref, 33, context, "getClassLoader", "()Ljava/lang/ClassLoader;");
+  Ref app_loader = C(e, Ref, 34, app, get_loader);
+  Ref loader_type = C(e, Ref, 6, "java/lang/ClassLoader");
+  Ref get_system = C(e, Ref, 113, loader_type, "getSystemClassLoader",
+                     "()Ljava/lang/ClassLoader;");
+  Ref system = C(e, Ref, 114, loader_type, get_system);
+  Ref actual_type = C(e, Ref, 31, app_loader);
+  Ref render = C(e, Ref, 33, actual_type, "toString", "()Ljava/lang/String;");
+  Ref base_type = C(e, Ref, 6, "dalvik/system/BaseDexClassLoader");
+  CHECK(render == C(e, Ref, 33, base_type, "toString", "()Ljava/lang/String;"));
+  if (mode == 1)
+    app_loader = C(e, Ref, 27, actual_type);
+  if (mode == 2)
+    app_loader = system;
+  Ref first = C(e, Ref, 34, app_loader, render);
+  Ref second = C(e, Ref, 36, app_loader, render, (void *)0);
+  CHECK(first && second && !C(e, int, 24, first, second));
+  Ref system_text = C(e, Ref, 34, system, render);
+  const char *expected[] = {
+      "dalvik.system.PathClassLoader[DexPathList[[zip file \"/one.apk\"],"
+      "nativeLibraryDirectories=[/app/lib, /system/lib]]]",
+      "dalvik.system.PathClassLoader[DexPathList[[],"
+      "nativeLibraryDirectories=[/system/lib]]]"};
+  Ref values[] = {first, system_text};
+  for (unsigned n = 0; n != 2; ++n) {
+    const char *bytes = C(e, const char *, 169, values[n], (void *)0);
+    CHECK(bytes);
+    for (unsigned i = 0;; ++i) {
+      CHECK(bytes[i] == expected[n][i]);
+      if (!bytes[i])
+        break;
+    }
+    C(e, void, 170, values[n], bytes);
+  }
+  return C(vm, int, 5);
+}
+static int check_locale_thread(void) {
+  Handle e = attach();
+  CHECK(e);
+  Ref value = C(e, Ref, 114, locale_type, locale_get_default);
+  CHECK(value && C(e, int, 24, value, locale_saved));
+  return C(vm, int, 5);
+}
+static void *locale_thread(void *unused) {
+  (void)unused;
+  return (void *)(U64)check_locale_thread();
+}
+int jni_default_locale(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "java/util/Locale");
+  locale_get_default =
+      C(e, Ref, 113, type, "getDefault", "()Ljava/util/Locale;");
+  Ref value = C(e, Ref, 114, type, locale_get_default);
+  CHECK(value);
+  Ref again = C(e, Ref, 116, type, locale_get_default, (void *)0);
+  CHECK(C(e, int, 24, value, again));
+  Ref actual = C(e, Ref, 31, value);
+  CHECK(C(e, int, 24, actual, type));
+  if (mode == 3)
+    value = C(e, Ref, 27, type);
+  Ref language = C(e, Ref, 33, type, "getLanguage", "()Ljava/lang/String;");
+  Ref country = C(e, Ref, 33, type, "getCountry", "()Ljava/lang/String;");
+  Ref lang = C(e, Ref, 34, value, language);
+  Ref region = C(e, Ref, 36, value, country, (void *)0);
+  CHECK(lang && region);
+  Ref strings = C(e, Ref, 6, "java/lang/String");
+  Ref intern = C(e, Ref, 33, strings, "intern", "()Ljava/lang/String;");
+  const char *names[] = {mode == 1 ? "" : "en", mode == 1 ? "" : "US"};
+  Ref values[] = {lang, region};
+  for (unsigned i = 0; i != 2; ++i) {
+    Ref expected = C(e, Ref, 167, names[i]);
+    expected = C(e, Ref, 34, expected, intern);
+    CHECK(C(e, int, 24, expected, values[i]));
+  }
+  if (mode == 2) {
+    C(e, Ref, 113, type, "setDefault", "(Ljava/util/Locale;)V");
+    return __LINE__;
+  }
+  locale_saved = C(e, Ref, 21, value);
+  locale_type = C(e, Ref, 21, type);
+  U64 child = 0;
+  void *result = (void *)1;
+  CHECK(!pthread_create(&child, 0, locale_thread, 0));
+  CHECK(!pthread_join(child, &result) && !result);
+  C(e, void, 22, locale_saved);
+  C(e, void, 22, locale_type);
+  return C(vm, int, 5);
+}
 static Ref info_app, info_saved, info_value, info_getter, info_field;
 static int check_info_thread(void) {
   Handle e = attach();
@@ -604,6 +703,118 @@ int jni_package_info(int mode) {
   C(e, void, 22, package_info_manager);
   C(e, void, 22, package_info_first);
   C(e, void, 22, package_info_name);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+static Ref package_application_manager, package_application_name;
+static Ref package_application_first, package_application_child;
+static Ref package_application_getter, package_application_field;
+static Ref package_application_source;
+static void *package_application_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  Ref old = C(e, Ref, 95, package_application_first, package_application_field);
+  Ref changed =
+      C(e, Ref, 95, package_application_child, package_application_source);
+  Ref fresh = C(e, Ref, 34, package_application_manager,
+                package_application_getter, package_application_name, 0);
+  Ref nested = C(e, Ref, 95, fresh, package_application_field);
+  Ref source = C(e, Ref, 95, nested, package_application_source);
+  int ok = !old && nested &&
+           !C(e, int, 24, nested, package_application_child) &&
+           query_text(e, changed, "changed.apk") &&
+           query_text(e, source, "parcel.apk");
+  C(e, void, 104, package_application_first, package_application_field, nested);
+  int detach = C(vm, int, 5);
+  return (void *)(U64)(!ok || detach);
+}
+int jni_package_application(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref info = C(e, Ref, 6, "android/content/pm/PackageInfo");
+  package_application_field = C(e, Ref, 94, info, "applicationInfo",
+                                "Landroid/content/pm/ApplicationInfo;");
+  CHECK(package_application_field);
+  if (mode == 1)
+    return C(vm, int, 5);
+  Ref thread = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current = C(e, Ref, 113, thread, "currentApplication",
+                  "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, thread, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref manager_id = C(e, Ref, 33, context, "getPackageManager",
+                     "()Landroid/content/pm/PackageManager;");
+  Ref manager = C(e, Ref, 34, app, manager_id);
+  Ref cls = C(e, Ref, 31, manager);
+  package_application_getter =
+      C(e, Ref, 33, cls, "getPackageInfo",
+        "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;");
+  Ref name = C(e, Ref, 167, "test.app");
+  Ref first = C(e, Ref, 34, manager, package_application_getter, name, 0);
+  CHECK(first);
+  if (mode == 3)
+    first = C(e, Ref, 27, info);
+  Ref context_id = C(e, Ref, 33, context, "getApplicationInfo",
+                     "()Landroid/content/pm/ApplicationInfo;");
+  Ref retained = C(e, Ref, 34, app, context_id);
+  CHECK(retained);
+  if (mode == 4) {
+    C(e, void, 104, first, package_application_field, retained);
+    Ref written = C(e, Ref, 95, first, package_application_field);
+    CHECK(C(e, int, 24, written, retained));
+    C(e, void, 104, first, package_application_field, (Ref)0);
+    CHECK(!C(e, Ref, 95, first, package_application_field));
+    return C(vm, int, 5);
+  }
+  Ref child = C(e, Ref, 95, first, package_application_field);
+  if (mode == 2) {
+    CHECK(!child);
+    return C(vm, int, 5);
+  }
+  CHECK(child && !C(e, int, 24, child, retained));
+  Ref again = C(e, Ref, 95, first, package_application_field);
+  CHECK(C(e, int, 24, child, again));
+  U64 arguments[] = {name, 0};
+  Ref second = C(e, Ref, 36, manager, package_application_getter, arguments);
+  Ref separate = C(e, Ref, 95, second, package_application_field);
+  CHECK(separate && !C(e, int, 24, child, separate));
+  Ref application_info = C(e, Ref, 6, "android/content/pm/ApplicationInfo");
+  package_application_source =
+      C(e, Ref, 94, application_info, "sourceDir", "Ljava/lang/String;");
+  Ref source = C(e, Ref, 95, child, package_application_source);
+  CHECK(query_text(e, source, "parcel.apk"));
+  Ref changed = C(e, Ref, 167, "changed.apk");
+  C(e, void, 104, child, package_application_source, changed);
+  Ref untouched = C(e, Ref, 95, separate, package_application_source);
+  Ref context_source = C(e, Ref, 95, retained, package_application_source);
+  CHECK(query_text(e, untouched, "parcel.apk"));
+  CHECK(query_text(e, context_source, "context.apk"));
+  C(e, void, 104, first, package_application_field, retained);
+  Ref replaced = C(e, Ref, 95, first, package_application_field);
+  CHECK(C(e, int, 24, replaced, retained));
+  C(e, void, 104, first, package_application_field, (Ref)0);
+  package_application_manager = C(e, Ref, 21, manager);
+  package_application_name = C(e, Ref, 21, name);
+  package_application_first = C(e, Ref, 21, first);
+  package_application_child = C(e, Ref, 21, child);
+  C(e, void, 23, first);
+  CHECK(!C(vm, int, 5));
+  U64 tid = 0;
+  void *result = (void *)1;
+  CHECK(!pthread_create(&tid, 0, package_application_thread, 0));
+  CHECK(!pthread_join(tid, &result) && !result);
+  e = attach();
+  CHECK(e);
+  Ref from_thread =
+      C(e, Ref, 95, package_application_first, package_application_field);
+  Ref after = C(e, Ref, 95, from_thread, package_application_source);
+  CHECK(query_text(e, after, "parcel.apk"));
+  C(e, void, 22, package_application_manager);
+  C(e, void, 22, package_application_name);
+  C(e, void, 22, package_application_first);
+  C(e, void, 22, package_application_child);
   CHECK(!C(e, int, 228));
   return C(vm, int, 5);
 }
@@ -2679,4 +2890,130 @@ int jni_java_resume(unsigned mode) {
   CHECK(!C(e, int, 228) && resume_loads == 1 &&
         C(e, int, 150, type, count) == 2);
   return C(vm, int, 5);
+}
+static Ref split_info, split_array, split_field;
+static void *split_sources_thread(void *unused) {
+  (void)unused;
+  Handle e = attach();
+  if (!e)
+    return (void *)1;
+  Ref array = C(e, Ref, 95, split_info, split_field);
+  if (!C(e, int, 24, array, split_array))
+    return (void *)2;
+  Ref first = C(e, Ref, 173, array, 0);
+  if (!query_text(e, first, "changed"))
+    return (void *)3;
+  Ref value = C(e, Ref, 167, "thread");
+  C(e, void, 174, array, 1, value);
+  Ref string = C(e, Ref, 6, "java/lang/String");
+  Ref replacement = C(e, Ref, 172, 1, string, value);
+  C(e, void, 104, split_info, split_field, replacement);
+  return (void *)(U64)C(vm, int, 5);
+}
+static int jni_split_directories(int mode, int public_sources) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/content/pm/ApplicationInfo");
+  split_field = C(e, Ref, 94, type,
+                  public_sources ? "splitPublicSourceDirs" : "splitSourceDirs",
+                  "[Ljava/lang/String;");
+  CHECK(split_field);
+  if (mode == 1)
+    return C(vm, int, 5);
+  Ref thread = C(e, Ref, 6, "android/app/ActivityThread");
+  Ref current = C(e, Ref, 113, thread, "currentApplication",
+                  "()Landroid/app/Application;");
+  Ref app = C(e, Ref, 114, thread, current);
+  Ref context = C(e, Ref, 6, "android/content/Context");
+  Ref getter = C(e, Ref, 33, context, "getApplicationInfo",
+                 "()Landroid/content/pm/ApplicationInfo;");
+  Ref info = C(e, Ref, 34, app, getter);
+  CHECK(info);
+  if (mode == 6)
+    info = C(e, Ref, 27, type);
+  if (mode == 5) {
+    Ref string = C(e, Ref, 6, "java/lang/String");
+    Ref array = C(e, Ref, 172, 0, string, (Ref)0);
+    C(e, void, 104, info, split_field, array);
+    Ref read = C(e, Ref, 95, info, split_field);
+    CHECK(C(e, int, 24, read, array));
+    C(e, void, 104, info, split_field, (Ref)0);
+    CHECK(!C(e, Ref, 95, info, split_field));
+    return C(vm, int, 5);
+  }
+  Ref array = C(e, Ref, 95, info, split_field);
+  if (mode == 2) {
+    CHECK(!array);
+    return C(vm, int, 5);
+  }
+  CHECK(array);
+  Ref same = C(e, Ref, 95, info, split_field);
+  CHECK(C(e, int, 24, array, same));
+  if (mode == 3) {
+    CHECK(C(e, int, 171, array) == 0);
+    return C(vm, int, 5);
+  }
+  CHECK(C(e, int, 171, array) == 4);
+  Ref other_field =
+      C(e, Ref, 94, type,
+        public_sources ? "splitSourceDirs" : "splitPublicSourceDirs",
+        "[Ljava/lang/String;");
+  CHECK(other_field);
+  Ref other = C(e, Ref, 95, info, other_field);
+  CHECK(other && !C(e, int, 24, other, array));
+  CHECK(C(e, int, 171, other) == 1);
+  CHECK(query_text(e, C(e, Ref, 173, other, 0), "other.apk"));
+  Ref retained_other = C(e, Ref, 21, other);
+  Ref first = C(e, Ref, 173, array, 0);
+  Ref empty = C(e, Ref, 173, array, 2);
+  Ref repeated = C(e, Ref, 173, array, 3);
+  CHECK(query_text(e, first, "first.apk") && query_text(e, empty, "") &&
+        query_text(e, repeated, "first.apk"));
+  CHECK(!C(e, Ref, 173, array, 1));
+  Ref changed = C(e, Ref, 167, "changed");
+  C(e, void, 174, array, 0, changed);
+  Ref manager_id = C(e, Ref, 33, context, "getPackageManager",
+                     "()Landroid/content/pm/PackageManager;");
+  Ref manager = C(e, Ref, 34, app, manager_id);
+  Ref manager_type = C(e, Ref, 31, manager);
+  Ref query = C(e, Ref, 33, manager_type, "getApplicationInfo",
+                "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;");
+  Ref name = C(e, Ref, 167, "test.app");
+  U64 arguments[] = {name, 0};
+  Ref separate = C(e, Ref, 36, manager, query, arguments);
+  Ref separate_array = C(e, Ref, 95, separate, split_field);
+  CHECK(!C(e, int, 24, array, separate_array));
+  Ref untouched = C(e, Ref, 173, separate_array, 0);
+  CHECK(query_text(e, untouched, "first.apk"));
+  split_info = C(e, Ref, 21, info);
+  split_array = C(e, Ref, 21, array);
+  C(e, void, 23, array);
+  CHECK(!C(vm, int, 5));
+  U64 tid = 0;
+  void *result = (void *)1;
+  CHECK(!pthread_create(&tid, 0, split_sources_thread, 0));
+  CHECK(!pthread_join(tid, &result) && !result);
+  e = attach();
+  CHECK(e);
+  Ref from_thread = C(e, Ref, 95, split_info, split_field);
+  CHECK(!C(e, int, 24, from_thread, split_array));
+  CHECK(C(e, int, 171, from_thread) == 1);
+  Ref thread_value = C(e, Ref, 173, from_thread, 0);
+  Ref old_array_value = C(e, Ref, 173, split_array, 1);
+  CHECK(query_text(e, thread_value, "thread") &&
+        query_text(e, old_array_value, "thread"));
+  Ref unchanged_other = C(e, Ref, 95, split_info, other_field);
+  CHECK(C(e, int, 24, unchanged_other, retained_other));
+  CHECK(C(e, int, 171, unchanged_other) == 1);
+  CHECK(query_text(e, C(e, Ref, 173, unchanged_other, 0), "other.apk"));
+  C(e, void, 22, retained_other);
+  C(e, void, 22, split_info);
+  C(e, void, 22, split_array);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+
+int jni_split_source_dirs(int mode) { return jni_split_directories(mode, 0); }
+int jni_split_public_source_dirs(int mode) {
+  return jni_split_directories(mode, 1);
 }
