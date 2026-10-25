@@ -91,6 +91,11 @@ jobs:
             toolbarButtonsKeepKeysInTooltips \
             -o build-gui/ci-diagnostics/native-frame.txt,txt
           frame_status=$?
+          if [ "$frame_status" -ne 0 ]; then
+            QT_LOGGING_RULES='qt.qpa.window=true' \
+              build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
+              -o build-gui/ci-diagnostics/native-frame-trace.txt,txt
+          fi
           cat build-gui/ci-diagnostics/native-appearance.txt
           cat build-gui/ci-diagnostics/native-frame.txt
           if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
@@ -103,6 +108,7 @@ jobs:
           path: |
             build-gui/ci-diagnostics/native-appearance.txt
             build-gui/ci-diagnostics/native-frame.txt
+            build-gui/ci-diagnostics/native-frame-trace.txt
             build-gui/ci-diagnostics/appearance/
           if-no-files-found: warn
           retention-days: 7
