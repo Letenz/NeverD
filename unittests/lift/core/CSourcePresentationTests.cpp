@@ -9,6 +9,7 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/backend/LLVMOriginalImageStorage.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -69,6 +70,67 @@ TEST(CSourcePresentation, AggregateStorageIsNotAnIntegerVariable) {
       if (SourceVariableTypes::compatible(Variable.Type, Variable.Bytes))
         EXPECT_NO_THROW((void)declarationToC(Variable.Type, ""));
   }
+}
+
+TEST(CSourcePresentation, GlobalTypesFollowLoadsFromSharedImageStorage) {
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (const bool Volatile : {false, true}) {
+      SCOPED_TRACE(unsigned(Format));
+      SCOPED_TRACE(Volatile);
+      llvm::LLVMContext Context;
+      llvm::SMDiagnostic Diagnostic;
+      const std::string IR =
+          "target datalayout = \"e-p:64:64-i64:64-n8:16:32:64-S128\"\n"
+          "@__nd_data_2000 = external global [32 x i8]\n"
+          "define i32 @read_field() {\n"
+          "  %slot = getelementptr i8, ptr @__nd_data_2000, i64 8\n"
+          "  %value = load " +
+          std::string(Volatile ? "volatile " : "") +
+          "i64, ptr %slot, align 1\n"
+          "  %field = add i64 %value, 4\n"
+          "  %pointer = inttoptr i64 %field to ptr\n"
+          "  %result = load i32, ptr %pointer, align 1\n"
+          "  ret i32 %result\n}\n";
+      auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
+      ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+      llvm_original_image::mark(*Module->getGlobalVariable("__nd_data_2000"));
+      rewrite_source::setOriginalVA(*Module->getFunction("read_field"), 0x1000);
+      auto Record = NdType::makeNamedRecord("ObservedRecord", 8);
+      Record->FieldDisplayNames = {"State", "Length"};
+      Record->FieldDisplayOffsets = {0, 4};
+      Record->FieldDisplayTypes = {NdType::makeInt(4, false),
+                                   NdType::makeInt(4, false)};
+      for (const bool MatchingWidth : {true, false}) {
+        SCOPED_TRACE(MatchingWidth);
+        auto PointerType = NdType::makePtr(Record);
+        if (!MatchingWidth)
+          PointerType->Size = 4;
+        SourceVariableTypes Types;
+        Types.Globals[0x2008] = PointerType;
+        CSourceMap Map;
+        CEmitterOptions Options;
+        Options.TheArch = Arch::X64;
+        Options.Format = Format;
+        Options.SourceMap = &Map;
+        Options.VariableTypes = &Types;
+        std::string Text;
+        llvm::raw_string_ostream Stream(Text);
+        ASSERT_TRUE(LLVMCEmitter().emit(*Module, Stream, Options));
+        // A type describes the loaded pointer, never the backing array's
+        // address or a replacement scalar with independent storage.
+        EXPECT_NE(Text.find("extern uint8_t unk_2000[32]"), std::string::npos)
+            << Text;
+        EXPECT_EQ(Text.find("->Length") != std::string::npos, MatchingWidth)
+            << Text;
+        EXPECT_EQ(Text.find("uint64_t qword_2008;"), std::string::npos) << Text;
+        const auto Global = Map.Variables.find({0x1000, "global:8200"});
+        ASSERT_NE(Global, Map.Variables.end()) << Text;
+        EXPECT_EQ(Global->second.Address, 0x2008u);
+        EXPECT_EQ(Global->second.Bytes, 8u);
+        EXPECT_FALSE(Global->second.Ambiguous);
+      }
+    }
 }
 
 TEST(CSourcePresentation, WideImageReadsShowTextInBothCRoutes) {
