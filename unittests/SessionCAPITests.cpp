@@ -3,13 +3,17 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Verify session C ABI failures, analysis results and source contracts.
+///
+//===----------------------------------------------------------------------===//
 
 #include "InstructionFlow.h"
 #include "LLVMFunctionView.h"
 #include "NativeMobileSession.h"
 #include "SessionImpl.h"
 #include "SessionTestAccess.h"
-#include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFException.h"
@@ -45,6 +49,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <gtest/gtest.h>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -572,16 +577,27 @@ protected:
     return Path;
   }
 
-  /// Build the C files \p Texts as one position-independent executable
-  /// named \p Name with the host compiler; empty if it does not build.
+  /// Build the C files \p Texts as one native executable named \p Name with
+  /// the host compiler, retaining its symbol names; empty if it does not build.
   std::string buildProgramFrom(const std::string &Name,
                                const std::vector<std::string_view> &Texts) {
     std::vector<std::string> Sources;
     for (size_t I = 0; I < Texts.size(); ++I)
       Sources.push_back(write(Name + std::to_string(I) + ".c", Texts[I]));
-    const std::string Binary = (Directory / Name).string();
+    std::string Binary = (Directory / Name).string();
     std::vector<llvm::StringRef> Arguments = {NEVERD_RUNTIME_FIXTURE_COMPILER,
-                                              "-O1", "-fPIE", "-pie"};
+                                              "-O1"};
+#ifdef _WIN32
+    Binary += ".exe";
+    // The MSVC target does not accept ELF PIE options. A matching linker MAP
+    // supplies the function and data names a PE executable otherwise omits,
+    // without introducing debug types into these signature-inference tests.
+    const std::string Map =
+        "-Wl,/map:" + (Directory / (Name + ".map")).string();
+    Arguments.push_back(Map);
+#else
+    Arguments.insert(Arguments.end(), {"-fPIE", "-pie"});
+#endif
     Arguments.insert(Arguments.end(), Sources.begin(), Sources.end());
     Arguments.insert(Arguments.end(), {"-o", Binary});
     std::string Message;
@@ -592,19 +608,9 @@ protected:
     return Built == 0 ? Binary : std::string();
   }
 
-  /// Build the C program \p Text as a position-independent executable named
-  /// \p Name with the host compiler; empty if it does not build.
+  /// Build one source through the same host-format contract as multiple files.
   std::string buildProgram(const std::string &Name, std::string_view Text) {
-    const auto Source = write(Name + ".c", Text);
-    const std::string Binary = (Directory / Name).string();
-    std::string Message;
-    const int Built =
-        llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER,
-                                  {NEVERD_RUNTIME_FIXTURE_COMPILER, "-O1",
-                                   "-fPIE", "-pie", Source, "-o", Binary},
-                                  std::nullopt, {}, 60, 0, &Message);
-    EXPECT_EQ(Built, 0) << Message;
-    return Built == 0 ? Binary : std::string();
+    return buildProgramFrom(Name, {Text});
   }
 
   void expectSignatureJSONName(const std::string &Name,
@@ -2027,6 +2033,9 @@ TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
     if (neverd_func_find_by_addr(Session, Main + Offset) < 0)
       ASSERT_EQ(neverd_func_create(Session, Main + Offset), 0)
           << takeString(neverd_last_error(Session));
+  const auto CandidatePattern = write(
+      "call-candidate.pat", "E801000000C3 00 0000 0006 :0000 library_guess\n");
+  ASSERT_EQ(neverd_apply_signature_file(Session, CandidatePattern.c_str()), 2);
   const auto Hex = [](uint64_t Address) {
     return "0x" + llvm::utohexstr(Address);
   };
@@ -2121,6 +2130,15 @@ TEST_F(SessionCAPITest, CallPathsFollowTheDirectReferencesBetweenFunctions) {
   EXPECT_EQ(Reply.getBoolean("depth_limited"), false);
   EXPECT_EQ(Strings(Reply.getArray("bottom_up")),
             (std::vector<std::string>{C, B, A, D, M}));
+  // Same-byte candidates for a and b cannot classify them as library code:
+  // doing so would stop traversal at a and hide b from the default tree.
+  Reply =
+      Query(neverd_call_tree_json, "{\"root\":\"" + M + "\",\"max_depth\":2}");
+  EXPECT_EQ(Strings(Reply.getArray("bottom_up")),
+            (std::vector<std::string>{C, B, A, D, M}));
+  ASSERT_NE(Reply.getArray("nodes"), nullptr);
+  for (const auto &Node : *Reply.getArray("nodes"))
+    EXPECT_FALSE(Node.getAsObject()->getBoolean("library").value_or(false));
   // And the callers.
   Reply = Query(neverd_call_tree_json, "{\"root\":\"" + C +
                                            "\",\"direction\":\"callers\","
@@ -3240,9 +3258,57 @@ TEST_F(SessionCAPITest, DataTakesItsListingNameWhereOnlyItsAddressIsTaken) {
           << HighC;
     const std::string LLVMC =
         takeString(neverd_decompile_llvm(Names, DataELFEntry));
-    EXPECT_NE(LLVMC.find(Prefix + Data), std::string::npos)
+    // LLVMC's loaded-image view keeps one external storage identity. Naming
+    // this interior address as a separate object would lose that relation.
+    EXPECT_NE(LLVMC.find("/* neverd.image: 0x400000 "), std::string::npos)
+        << LLVMC << takeString(neverd_last_error(Names));
+    EXPECT_NE(LLVMC.find("extern uint8_t unk_400000[4104];"), std::string::npos)
         << LLVMC << takeString(neverd_last_error(Names));
     neverd_session_destroy(Names);
+  }
+}
+
+TEST_F(SessionCAPITest, ReturnedDataAddressKeepsOriginalImageStorage) {
+  if (std::string_view(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "native C fixture compiler unavailable";
+  std::string Code = "\x48\x8d\x05";
+  const auto Displacement =
+      static_cast<uint32_t>(DataELFData - (DataELFEntry + 7));
+  for (unsigned I = 0; I < 4; ++I)
+    Code += static_cast<char>(Displacement >> (8 * I));
+  Code += '\xc3';
+  const auto Input =
+      write("returned-storage.elf", makeDataELF(std::string(8, '\x11'), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  constexpr std::string_view Harness = R"(
+#include <stdint.h>
+uint8_t unk_400000[4104];
+uint64_t sub_4000B0(void);
+int main(void) {
+  uint8_t *returned = (uint8_t *)(uintptr_t)sub_4000B0();
+  if (returned != unk_400000 + 4096) return 1;
+  unk_400000[4096] = 0xa7;
+  if (returned[0] != 0xa7) return 2;
+  returned[1] = 0x5c;
+  if (unk_400000[4097] != 0x5c) return 3;
+  return 0;
+}
+)";
+  for (int NoOpt : {0, 1}) {
+    SCOPED_TRACE(NoOpt);
+    const auto Source =
+        takeString(neverd_decompile_llvm_ex(Session, DataELFEntry, NoOpt));
+    ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+    const auto Binary = buildProgramFrom(
+        "returned-storage-" + std::to_string(NoOpt), {Source, Harness});
+    ASSERT_FALSE(Binary.empty());
+    std::string Message;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Binary, {Binary}, std::nullopt, {}, 60,
+                                        0, &Message),
+              0)
+        << Message << Source;
   }
 }
 
@@ -7184,7 +7250,23 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
         << HighC;
     // A call through a member passes the parameters its type declares: on
     // x86 the word the caller pushed to make room on the stack is none.
-    EXPECT_EQ(HighC.find("unknown register"), std::string::npos) << HighC;
+    // These fixture arguments contain no commas inside a nested expression.
+    for (const auto &[Callee, Count] :
+         {std::pair{"(SystemTable->ConOut->OutputString))(", 2u},
+          std::pair{"(SystemTable->BootServices->HandleProtocol))(", 3u}}) {
+      const auto Begin = HighC.find(Callee);
+      ASSERT_NE(Begin, std::string::npos) << HighC;
+      const auto Call = HighC.substr(Begin, HighC.find('\n', Begin) - Begin);
+      EXPECT_EQ(std::count(Call.begin(), Call.end(), ','), Count - 1) << Call;
+      EXPECT_EQ(Call.find("unknown register"), std::string::npos) << Call;
+    }
+    // The x86 allocation pushes incoming EAX into the later protocol-output
+    // slot. Its address escapes to an external body, so the signature alone
+    // cannot prove that the saved bytes are unobserved. Keep that diagnostic
+    // instead of dropping a real store or inventing an initial value.
+    EXPECT_EQ(HighC.find("unknown register") != std::string::npos,
+              std::string_view(P.File) == "uefi_calls_x86.efi")
+        << HighC;
     const std::string LLVMC = takeString(
         neverd_decompile_llvm(Uefi, neverd_session_entry_addr(Uefi)));
     EXPECT_NE(LLVMC.find("(SystemTable->ConOut->OutputString))("),
@@ -8921,7 +9003,10 @@ TEST_F(SessionCAPITest, SelectionsKeepTheFunctionListARebuildWouldMake) {
 
   // The detector's entries and the user's function edits.
   ASSERT_GT(neverd_session_discover_functions(Session), 0);
-  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  // Completed discovery reconciles provisional loader guesses immediately;
+  // its published list already equals a rebuild from the current evidence.
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
   Select(Entry);
   EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
   EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
@@ -10903,8 +10988,7 @@ TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
                    "puts(\"big\"); }\n"
                    "int main(int argc, char **argv) { (void)argv; stop(argc); "
                    "return 7; }\n");
-  if (Binary.empty())
-    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_FALSE(Binary.empty());
   ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
 #if defined(__APPLE__)
   // The host linker exports C symbols with Mach-O's leading underscore.
@@ -10966,8 +11050,7 @@ TEST_F(SessionCAPITest, AStatedNoReturnReachesTheCallersOfItsCallers) {
       "  puts(\"after\");\n"
       "  return 7;\n"
       "}\n");
-  if (Binary.empty())
-    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_FALSE(Binary.empty());
   ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
 #if defined(__APPLE__)
   const std::string Prefix = "_";
@@ -11027,8 +11110,7 @@ TEST_F(SessionCAPITest, ANameLeadsToOneAddress) {
                "return counter; }\n"
                "int main(int argc, char **argv) { (void)argv; puts(\"x\"); "
                "return bump(argc); }\n");
-  if (Binary.empty())
-    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_FALSE(Binary.empty());
   ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
 #if defined(__APPLE__)
   const std::string Prefix = "_";
@@ -11228,7 +11310,7 @@ TEST_F(SessionCAPITest, SignatureCannotReplaceAStatedHexPlaceholderName) {
 }
 
 TEST_F(SessionCAPITest,
-       SignatureIdentitySurvivesDiscoveryAndWithdrawsOnReload) {
+       SignatureCandidatesStaySeparateFromNamesAcrossDiscoveryAndReload) {
   const auto Input = write("stripped-identity.elf", makeNativeELF(false));
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
   const auto Entry = neverd_session_entry_addr(Session);
@@ -11239,11 +11321,12 @@ TEST_F(SessionCAPITest,
       << takeString(neverd_last_error(Session));
   const int Index = neverd_func_find_by_addr(Session, Entry);
   ASSERT_GE(Index, 0);
-  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
-  ASSERT_EQ(neverd_rename_func(Session, "library_guess", "user_choice"), 0);
+  const auto Original = "sub_" + llvm::utohexstr(Entry);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), Original);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry, "user_choice"), 0);
   write("stripped-identity.elf.neverd/renames.json", "[]");
   ASSERT_EQ(neverd_renames_load(Session), 0);
-  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), "library_guess");
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)), Original);
   write("identity.pat", "B809000000C3 00 0000 0006 :0000 other_guess\n");
   ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Index)),
@@ -11255,7 +11338,7 @@ TEST_F(SessionCAPITest,
 TEST_F(SessionCAPITest, SignaturesMatchARoutineOnlyACallReveals) {
   // A stripped program without sections lists no function at all; its entry
   // calls a routine no table names.  Signatures are tried where the
-  // pipeline's detector would find functions, so the routine is still named.
+  // pipeline's detector would find functions, so its candidate is still found.
   const std::string Body("\xe8\x01\x00\x00\x00\xc3"  // call helper; ret
                          "\xb8\x2a\x00\x00\x00\xc3", // helper: mov eax, 42
                          12);

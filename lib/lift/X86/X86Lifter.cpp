@@ -820,6 +820,26 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
   if (!Detail)
     return;
 
+  // These instructions leave the ordinary call/return domain. Refuse before
+  // publishing any operations, including when permissive lifting was asked
+  // for: a NOP or generic SYSCALL loses the architectural continuation.
+  switch (Insn->id) {
+  case X86_INS_RETF:
+  case X86_INS_RETFQ:
+  case X86_INS_IRET:
+  case X86_INS_IRETD:
+  case X86_INS_IRETQ:
+  case X86_INS_SYSENTER:
+  case X86_INS_SYSEXIT:
+  case X86_INS_SYSEXITQ:
+  case X86_INS_SYSRET:
+  case X86_INS_SYSRETQ:
+  case X86_INS_RSM:
+    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
+  default:
+    break;
+  }
+
   auto &X86 = Detail->x86;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
   LowInstructionUndefinedEffects EffectsDraft;

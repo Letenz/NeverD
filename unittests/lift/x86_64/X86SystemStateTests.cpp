@@ -77,6 +77,103 @@ TEST(X86SystemState, InstructionsHaveValidatedEffectsAndNoInventedResult) {
     }
 }
 
+TEST(X86SystemState, CacheZeroReadsTheAddressWithoutLoadingOrChangingFlags) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto &E : test::cacheZeroEncodings()) {
+      const auto Ops = lift(A, E.Bytes);
+      ASSERT_FALSE(Ops.empty());
+      const auto &Last = Ops.back();
+      ASSERT_EQ(Last.Opcode, NdOp::INTRINSIC);
+      const auto Shape = x86SystemStateLowShape(Last, A);
+      ASSERT_TRUE(x86SystemStateShapeIsValid(Intrinsic::Clzero, Shape));
+      ASSERT_EQ(Last.NumInputs, 2u);
+      EXPECT_EQ(Last.Output.Size, 0);
+      EXPECT_EQ(Last.Inputs[1].Size, 8);
+      const bool Narrow =
+          std::find(E.Bytes.begin(), E.Bytes.end(), 0x67) != E.Bytes.end();
+      const unsigned Width =
+          A == Arch::X64 ? (Narrow ? 4 : 8) : (Narrow ? 2 : 4);
+      const uint64_t Input = 0x11223344ffeecdbb;
+      const uint64_t Expected =
+          Width == 8 ? Input : Input & ((uint64_t{1} << (8 * Width)) - 1);
+      BinaryImage Image;
+      Image.Arch = A;
+      NdOpEmulator Emu(Image);
+      Emu.setRegister(x86reg::RAX, Input);
+      for (size_t I = 0; I + 1 < Ops.size(); ++I) {
+        EXPECT_EQ(Ops[I].Opcode, NdOp::INT_ZEXT);
+        ASSERT_TRUE(Emu.step(Ops[I]));
+      }
+      LowOp Read;
+      Read.Opcode = NdOp::COPY;
+      Read.Output = NdVar::reg(x86reg::RDX, 8);
+      Read.NumInputs = 1;
+      Read.Inputs[0] = Last.Inputs[1];
+      ASSERT_TRUE(Emu.step(Read));
+      EXPECT_EQ(Emu.getRegister(x86reg::RDX), Expected);
+      EXPECT_FALSE(Emu.step(Last));
+      EXPECT_EQ(Emu.getRegister(x86reg::RAX), Input);
+      const auto Plan =
+          x86SystemStateAsm(Intrinsic::Clzero, A, 0, Last.MemoryAddressSpace);
+      ASSERT_TRUE(Plan);
+      EXPECT_EQ(Plan->InputConstraints, std::vector<std::string>{"{ax}"});
+      EXPECT_FALSE(Plan->ChangesFlags);
+      EXPECT_NE(Plan->Constraints.find("~{memory}"), std::string::npos);
+      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+        auto Bad = Shape;
+        if (Mutation == 0)
+          Bad.Arguments = 0;
+        else if (Mutation == 1)
+          Bad.InputSizes[0] = 4;
+        else if (Mutation == 2)
+          Bad.OutputSize = 4;
+        else if (Mutation == 3)
+          Bad.MemoryOrdering = NdMemoryOrdering::Acquire;
+        else
+          Bad.TargetArch = Arch::AArch64;
+        EXPECT_FALSE(x86SystemStateShapeIsValid(Intrinsic::Clzero, Bad));
+      }
+    }
+}
+
+TEST(X86SystemState, CacheZeroRejectsForgedOperandAndPrefixDetails) {
+  for (const auto A : {Arch::X86, Arch::X64}) {
+    Decoder D;
+    ASSERT_TRUE(D.init(A));
+    for (const auto &E : test::cacheZeroEncodings()) {
+      DecodedInsn I{};
+      ASSERT_EQ(D.decodeOneForLift(E.Bytes.data(), E.Bytes.size(), 0x1000, I),
+                E.Bytes.size());
+      for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+        auto Raw = *I.Raw;
+        auto Detail = *Raw.detail;
+        Raw.detail = &Detail;
+        if (Mutation == 0)
+          Raw.bytes[Raw.size - 1] ^= 1;
+        else if (Mutation == 1)
+          Detail.x86.op_count = 1;
+        else if (Mutation == 2)
+          Detail.x86.addr_size = 1;
+        else if (Mutation == 3)
+          Detail.x86.eflags = X86_EFLAGS_MODIFY_CF;
+        else if (Mutation == 4)
+          Detail.regs_read_count = 1;
+        else if (Mutation == 5)
+          Detail.x86.prefix[1] ^= 1;
+        else if (Mutation == 6)
+          Detail.x86.encoding.modrm_offset = 0;
+        else
+          Detail.x86.opcode[1] ^= 1;
+        X86Lifter L(A);
+        L.setStrict(true);
+        std::vector<LowOp> Ops;
+        EXPECT_THROW(L.lift(&Raw, Ops), UnliftedInstruction);
+        EXPECT_TRUE(Ops.empty());
+      }
+    }
+  }
+}
+
 TEST(X86SystemState, SmapAccessControlsHaveNoScalarOperandsOrFlagResult) {
   for (const auto A : {Arch::X86, Arch::X64})
     for (const auto Id : {Intrinsic::Clac, Intrinsic::Stac}) {

@@ -23,6 +23,21 @@ struct SystemEncoding {
   const char *Mnemonic;
 };
 
+inline std::vector<SystemEncoding> cacheZeroEncodings() {
+  std::vector<SystemEncoding> E;
+  for (uint8_t Segment : {0, 0x64, 0x65})
+    for (bool AddressOverride : {false, true}) {
+      std::vector<uint8_t> Bytes;
+      if (Segment)
+        Bytes.push_back(Segment);
+      if (AddressOverride)
+        Bytes.push_back(0x67);
+      Bytes.insert(Bytes.end(), {0x0f, 0x01, 0xfc});
+      E.push_back({Bytes, Intrinsic::Clzero, "clzero"});
+    }
+  return E;
+}
+
 inline std::vector<SystemEncoding> directStoreEncodings(Arch A) {
   std::vector<SystemEncoding> E;
   for (uint8_t Segment : {0, 0x64, 0x65})
@@ -163,6 +178,8 @@ inline std::vector<SystemEncoding> systemEncodings(Arch A) {
        Intrinsic::X86LoadSegmentLimitMemory,
        "lsl"},
   };
+  const auto Zero = cacheZeroEncodings();
+  E.insert(E.end(), Zero.begin(), Zero.end());
   const auto Extensions = systemExtensionEncodings(A);
   E.insert(E.end(), Extensions.begin(), Extensions.end());
   if (A == Arch::X86) {

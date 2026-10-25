@@ -86,17 +86,20 @@ inline bool aarch64SVECPAMedShapeIsValid(const MedOp &Op) {
 
 inline bool aarch64AddressMemoryMedShapeIsValid(const MedOp &Op) {
   if (!hasValidMedIntrinsicId(Op) ||
-      Op.NumInputs != kAddressLoadOperandCount + 1 ||
+      Op.NumInputs != aarch64AddressMemoryOperandCount(
+                          static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) +
+                          1 ||
       Op.Inputs[0].Size != kAddressMemoryIdentifierBytes ||
       Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
       !Op.IntrinsicOutputs.empty() ||
-      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      (Op.Output.Size && Op.Output.Kind != MedVar::Reg &&
+       Op.Output.Kind != MedVar::Temp) ||
       (Op.Output.TheArch != Arch::Unknown &&
        Op.Output.TheArch != Arch::AArch64) ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
-  for (unsigned I = 1; I != kAddressLoadOperandCount; ++I)
+  for (unsigned I = 1; I != Op.NumInputs; ++I)
     if ((!Op.Inputs[I].isConst() && Op.Inputs[I].Kind != MedVar::Reg &&
          Op.Inputs[I].Kind != MedVar::Temp &&
          Op.Inputs[I].Kind != MedVar::Param) ||
@@ -115,7 +118,19 @@ inline bool aarch64AddressMemoryMedShapeIsValid(const MedOp &Op) {
       Op.Inputs[kAddressMemoryIndexOperand + 1].isConst()
           ? std::optional<uint64_t>(
                 Op.Inputs[kAddressMemoryIndexOperand + 1].ConstVal)
+          : std::nullopt,
+      Op.NumInputs == kAddressStoreOperandCount + 1
+          ? Op.Inputs[kAddressMemoryDataOperand + 1].Size
+          : 0,
+      Op.NumInputs == kAddressStoreOperandCount + 1 &&
+              Op.Inputs[kAddressMemoryDataOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kAddressMemoryDataOperand + 1].ConstVal)
           : std::nullopt);
+}
+
+inline bool aarch64AddressLoadMedShapeIsValid(const MedOp &Op) {
+  return Op.Output.Size && aarch64AddressMemoryMedShapeIsValid(Op);
 }
 
 inline bool aarch64PAuthLoadMedShapeIsValid(const MedOp &Op) {
@@ -604,7 +619,7 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
   return !preservesCallSetup(Id) && !onlyChecksForAFault(Id) &&
          !aarch64PAuthMedShapeIsValid(Op) &&
          !aarch64PAuthLoadMedShapeIsValid(Op) &&
-         !aarch64AddressMemoryMedShapeIsValid(Op) &&
+         !aarch64AddressLoadMedShapeIsValid(Op) &&
          !aarch64CPAMedShapeIsValid(Op) && !aarch64SVECPAMedShapeIsValid(Op) &&
          !aarch64SVEPrefixMedShapeIsValid(Op) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));

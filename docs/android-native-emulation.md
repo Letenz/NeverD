@@ -204,9 +204,20 @@ The supported Bionic subset is:
   model stages all bytes and refuses overlapping accessed ranges, inaccessible
   memory or an expired budget before committing guest writes. This atomic
   refusal is a model diagnostic, not native fault/undefined-behavior emulation.
-  Checked `__strncpy_chk`/`__strncpy_chk2` entry points remain unsupported.
   The valid-call contract follows the pinned API 28
   [Bionic implementation](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strncpy.c).
+- `__strncpy_chk` and `__strncpy_chk2` share that copy owner. Both require the
+  requested count to fit the full LP64 destination extent before any memory
+  access or copy limit check. `__strncpy_chk2` additionally checks the actual
+  source bytes read after the scan, including a consumed NUL but excluding
+  destination padding. An inaccessible source byte can therefore fail before
+  the source-extent check, even when that extent is zero. A truncated copy needs
+  only its count of source bytes, without a terminator. Zero count touches
+  neither pointer; large object extents do not relax the process memory limit.
+  Fortify violations use a non-returning `runtime_failure`. The shared model
+  stages all writes and rejects atomically, so native pre-abort writes, logging
+  and abort-triggered signal delivery are not simulated. The checks follow the
+  pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
 - `__FD_SET_chk`, `__FD_CLR_chk`, `__FD_ISSET_chk`, using the Bionic LP64
   1024-bit descriptor bitmap. The signed low 32-bit descriptor must be 0..1023,
   then the full-width object extent must be at least 128 bytes. Invalid values

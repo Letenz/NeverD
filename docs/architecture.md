@@ -369,14 +369,22 @@ feature availability. These operations preserve call argument setup and frame ta
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
-`AArch64AddressMemory.def` owns original ordinary-memory operations. The first
-owned family is 64-bit `LDR Xt, [Xn, Xm, LSL #0/#3]`: its raw index and original
-word remain one effectful operation through LowIR, MedIR, LLVM and both C routes.
+`AArch64AddressMemory.def` owns original ordinary-memory operations. Its GPR
+register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
+STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
+The raw index and original word remain one effectful operation through LowIR,
+MedIR, LLVM and both C routes. W indices consume exactly four bytes. A load
+returns its accessed bytes; explicit IR sign/zero extends through the encoded
+W/X result width before publishing the complete X register. Stores consume
+only their accessed data bytes, with no invented return value.
+Byte and halfword stores slice the encoded W value explicitly; the tracer
+requires those source bytes to be known before publishing the slice. Unknown
+unused upper bytes do not prevent a known narrow store.
 The real load retains AddressAdd's access-EL checks and any internal
 AddressIncrement choice; an unchecked sum or current-EL ADDPT cannot replace it.
 The address is unknown to generic memory proofs, and discarding the result
-cannot discard the access or its possible fault. The scalar operation preserves
-local Z/P values and earlier call arguments other than its explicit output.
+cannot discard the access or its possible fault. The scalar operations preserve local Z/P values. Validated loads also preserve
+earlier call arguments other than their explicit outputs.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
 execution projection refuses it without its alignment and tagging environment.
@@ -388,17 +396,35 @@ mapped. This proves no translation, tagging or no-fault behavior. Source ABI and
 Swift receiver proofs consume a validated read with an explicit result, without
 granting purity or removing the access. Jump-table recovery
 requires the same control-independent address proof for every admitted physical
-slot, an exact table base and a full-width bound on the raw index. Its existing
-root, mutation and storage audits still apply. Both source routes consume the
+slot and an exact table base/index identity. A monotonic address interval may
+certify the entire zero-extended W input domain without a branch proof; a full
+X input first needs an explicit zero-extension proof at the exact load use.
+Otherwise a complete native-width bound retains its compound unsigned path
+predicates. None of these address proofs grants runtime coordinates, mapping,
+storage ownership or finite-join authority. The common selector/storage fixed
+point remains mandatory. Compact byte/halfword and word-relative tables retain
+their entry width and signed target transforms, including a data anchor for
+word-relative entries. The encoded read never becomes an unchecked effective
+address; existing root, mutation and storage audits still apply. Both source routes consume the
 authenticated load's input occurrence, preserving zero indices and an index
 register overwritten by the load.
+Source emission keeps these original reads even after recovering a switch.
+When a relocatable table read has no observable result, a bounded original-byte
+copy preserves the access without demanding callable identities for unreachable
+physical slots. The shared byte-storage descriptor grants no address or flow
+proof. HighC requires every use of the exact expression in its function to be
+unobserved, together with a complete source-range proof; LLVM requires the
+existing exact-occurrence, storage-role and terminal-use closure. Observable
+reads still use the normal relocation-aware memory owner. Table-relative data
+layout also observes original reads through unique local definitions.
 Private-copy source replay recomputes stack-access annotations from the current
 MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Other ordinary-memory families remain unqualified for CPA2, as does
-controlled native execution with CPTA enabled. The owner follows the pinned
+identity. Immediate, pre/post-index, pair and SIMD/FP ordinary-memory families remain
+unqualified for CPA2, as does controlled native execution with CPTA enabled.
+The owner follows the pinned
 [Arm 2025-09 AddressAdd and LDR specification](https://documentation-service.arm.com/documentation/ddi0602/2025-09?lang=en&rev=1).
 
 The loader decodes arm64e chained pointer formats 1, 7, 9, 10, 12 and 14, including
@@ -1709,8 +1735,13 @@ of the name each is shown under, as the kernel's exports are typed from
 the image states (`BinaryImage::statedFunctionNameAt`, as
 `getFunctionNameAt` chooses it): the export at the entry, else a symbol a
 producer stated, a PDB's function names among them; else the debug
-information's; else the name signatures recognized the function's bytes by
-(`SignatureDB::buildNameMap`). A name analysis or the user gave otherwise
+information's; else a signature identity admitted by independent image-symbol
+or exception-personality context (`SignatureDB::buildNameMap`). Byte/reference
+agreement alone remains a candidate (`buildCandidateNameMap`) and cannot
+authorize type lookup, safety sinks, automatic renaming or library folding.
+The signature database owns this decision; SDK, CLI and worker consume it.
+The separately gated library-feature path retains its independent identity
+verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
 which GNU ld keeps at each object's first function or variable
 (`Symbol::IsSection`), name nothing there or in `findSymbolAt`; they only
@@ -2396,6 +2427,13 @@ scale; off-diagonal entries partition the remaining minterms between the two
 factors. It checks every matrix entry, including absent edges and coefficients
 that wrap to zero, within shared work and storage limits. The independent
 polynomial difference verifier still authorizes the replacement.
+Polynomial synthesis also restricts the linear remainder's corner table to
+the inputs that remainder actually uses. Variables confined to higher-degree
+products no longer replicate its coefficients or dilute its synthesis budget.
+Support discovery consumes the shared work allowance, and constants keep a
+single coefficient with the minterm basis's negative sign. Projection does
+not authorize a replacement: the complete polynomial difference must still
+be proved before CLI or GUI source output uses the result.
 Cubic recovery uses a minterm shared by all three factors as an anchor. Its
 diagonal coefficient fixes the scale; coefficients with two copies of the
 anchor identify how many factors select each other minterm. Coefficients with
@@ -2600,6 +2638,13 @@ Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
 All signature, pairing and reconstruction work uses the existing cumulative
 work/storage allowances and decision-node limit.
+Full-block two-bit admission caches structural identities before constructing
+Boolean corrections. Partial cache entries can answer only identity queries
+and must be completed before arithmetic reads their correction. A full block
+can search past a failed positional probe without repeatedly materializing
+upper carries. Partial factor blocks retain complete probes, preserving their
+existing work headroom. These rules remain in the shared symbolic owner used
+by CLI and GUI source optimization.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding
@@ -5057,6 +5102,10 @@ otherwise print as an unassigned local or a zero.
 
 The pipeline runs both annotations through `markSourceStackAccesses`, sharing
 one batch of entry-stack offset proofs and the resulting load/store ranges.
+Nontrapping scalar parity counts may precede an explicit scratch overwrite.
+A physical CALL return-slot write cannot substitute for a represented store:
+source C does not yet materialize that write, and later reads or escaping frame
+pointers could observe the missing value. Calls remain observation barriers.
 Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
@@ -6184,6 +6233,31 @@ scalar result and remain ordered memory effects in both source routes. SMAP
 controls change hidden AC state while preserving arithmetic flags; transaction
 commit and its possible abort remain native. Native LLVM uses the corresponding
 intrinsics, and RTM intrinsic names select the code generator's RTM feature.
+CLZERO also retains its implicit address-sized AX/EAX/RAX input. The lifter
+wraps the offset before FS/GS base addition, and the shared instruction contract
+preserves the native cache-line effect and arithmetic flags. The CPU owns line
+size, alignment, store checks and weak ordering; an ordinary fixed-size clear
+cannot substitute for it. Native LLVM and C select the CLZERO target feature.
+
+Compact-memory shape and operand observation belong to
+`ir/intrinsics/X86/X86CompressExpand.h`; the LowIR/MedIR adapters and native
+LLVM/C renderers remain in their respective component's `X86/` directory.
+Native calls preserve original integer/FP kind, lane width, merging/zeroing
+and segment-relative addresses. Unknown observed inputs are retained during
+emission and rejected before executable publication. Suppressed inputs use
+the same shared observation rule in concrete execution and source projection.
+Their unknown-size volatile memory effects keep even zero-mask instructions.
+Stack-default fault provenance remains an explicit unsupported boundary.
+
+Both source routes retain a complete constant carried by an integer RETURN
+after copy propagation. A later synthetic low-register read is not another
+machine write and cannot truncate that reaching value. The shared
+`MedReturnValue` decision still requires the operand to cover the return width;
+narrow operands retain the existing ABI reconstruction checks.
+Med-to-High also retains a narrowing machine `COPY` as an explicit byte slice
+before substituting its expression. Removing the original assignment must not
+remove its truncation or widen a later zero extension.
+Unrepresented segment identities and malformed decode details are refused.
 The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
 INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
 returns CF and the lifter clears its other arithmetic flags. LKGS selector and
@@ -6212,6 +6286,10 @@ ENCLU's entry, exit, resume and asynchronous continuation remain unsupported.
 Far/interrupt returns do not use the bounded system contract or ordinary ABI
 RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
 and its nonlocal continuation are represented.
+The same boundary excludes SYSENTER/SYSEXIT/SYSRET and RSM, including permissive
+decoding. Legacy nonlocal intrinsic IDs retain their serialized identities;
+LowIR validation, MedIR conversion, verification and both source routes reject
+them before an ordinary return, generic syscall or bare assembly can be emitted.
 The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
 Their historical intrinsic IDs remain stable. Both enqueue operands are
 addresses; only the command-source address inherits FS/GS, while the portal
@@ -9326,10 +9404,12 @@ original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and
-bytes remain unchanged. Unknown or overlapping writes invalidate facts;
-calls, ordered memory, malformed graphs and control-flow joins prevent this
-proof. Replayed operations must be total and explicitly typed, store/load
-truncation is retained, and budgets count rendered trees including repeated
+bytes remain unchanged. Unknown or overlapping writes invalidate facts. A
+statement's outermost direct call can consume forwarded arguments, then clears
+all stored-memory facts. Nested calls, indirect targets, ordered memory,
+malformed graphs and control-flow joins prevent this proof. Replayed operations
+must be total and explicitly typed; store/load truncation and the read's signed
+interpretation are retained. Budgets count rendered trees including repeated
 DAG edges. The proof applies to both 32-bit and 64-bit targets.
 HighIR's scalar-definition proof also survives an ordinary store whose address
 and value contain no hidden effects: the store changes memory, not an

@@ -14,9 +14,8 @@
 
 #include "../CodeGenDetail.h"
 
+#include "neverd/backend/llvm/X86/X86CompressExpandNative.h"
 #include "neverd/backend/llvm/X86/X86SystemStateNative.h"
-
-#include <algorithm>
 
 namespace neverd {
 
@@ -67,11 +66,12 @@ detectTargetFeaturesX86(const std::set<std::string> &Names) {
   // (no native fp16 ALU) suffices.
   bool Half = Has(kUsesHalfMarker);
   bool AVX2 = Has("avx2"),
-       AVX = Has("avx") || AVX2 || Has("avx512") || Has("vround") ||
-             Has("vcvt") || Has("vrcp") || Has("vrsqrt") || Has("vadd") ||
-             Has("vsub") || Has("vmul") || Has("vdiv") || Has("vsqrt") ||
-             Has("vmin") || Has("vmax") || Has("vhadd") || Has("vhsub") ||
-             Has("vcmp") || Has("vcomi") || Has("vucomi") || FMA || Half;
+       AVX = Has("avx") || AVX2 || Has("avx512") ||
+             Has(X86CompactAsmMarker.data()) || Has("vround") || Has("vcvt") ||
+             Has("vrcp") || Has("vrsqrt") || Has("vadd") || Has("vsub") ||
+             Has("vmul") || Has("vdiv") || Has("vsqrt") || Has("vmin") ||
+             Has("vmax") || Has("vhadd") || Has("vhsub") || Has("vcmp") ||
+             Has("vcomi") || Has("vucomi") || FMA || Half;
 
   std::string F = "+sse,+sse2,+cx16";
   if (SSE3)
@@ -107,8 +107,12 @@ detectTargetFeaturesX86(const std::set<std::string> &Names) {
     F += ",+lzcnt";
   if (SHA)
     F += ",+sha";
-  if (std::any_of(Names.begin(), Names.end(), isX86RtmNativeName))
-    F += ",+rtm";
+  std::set<std::string> SystemFeatures;
+  for (const auto &Name : Names)
+    if (const auto *Feature = x86SystemNativeTargetFeature(Name))
+      SystemFeatures.insert(Feature);
+  for (const auto &Feature : SystemFeatures)
+    F += ",+" + Feature;
   return {AVX ? kX86CpuAvx : kX86CpuBaseline, F};
 }
 

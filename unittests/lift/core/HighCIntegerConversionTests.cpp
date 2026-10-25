@@ -8,7 +8,9 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/MedToHigh.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
@@ -166,6 +168,68 @@ static const uint64_t xs[] = {0, 1, 0x7F, 0x80, 0xFF, 0x7FFFFFFF, 0x80000000,
                               0x8000000000000000ull, 0xFFFFFFFFFFFF8001ull,
                               0xFFFFFFFFFFFFFFFFull};
 )";
+
+TEST(HighCIntegerConversion, NarrowCopyKeepsLowBytesThroughSourceProjection) {
+  for (const auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    std::vector<HighFunc> Functions;
+    std::string Checks;
+    for (uint16_t Bytes : {1, 2, 4}) {
+      const auto &Registers = getTargetRegInfo(Architecture);
+      MedFunc F;
+      F.Name = "copy_low_" + std::to_string(Bytes);
+      F.Entry = 0x1000;
+      F.ReturnType = integer(Registers.PointerSize, false);
+      MedVar Input;
+      Input.Kind = MedVar::Param;
+      Input.Id = 0;
+      Input.Size = Registers.PointerSize;
+      Input.TheArch = Architecture;
+      Input.RegOff =
+          Registers.IntParamRegs.empty() ? 0 : Registers.IntParamRegs[0];
+      F.Params = {Input};
+      MedVar Narrow;
+      Narrow.Id = 1;
+      Narrow.Size = Bytes;
+      Narrow.TheArch = Architecture;
+      MedVar Wide = Narrow;
+      Wide.Kind = MedVar::Reg;
+      Wide.Id = 2;
+      Wide.SSAVer = 1;
+      Wide.RegOff = Registers.IntReturnReg;
+      Wide.Size = Registers.PointerSize;
+      MedOp Copy;
+      Copy.Opcode = NdOp::COPY;
+      Copy.Output = Narrow;
+      Copy.addInput(Input);
+      MedOp Extend;
+      Extend.Opcode = NdOp::INT_ZEXT;
+      Extend.Output = Wide;
+      Extend.addInput(Narrow);
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.addInput(Wide);
+      MedBlock B;
+      B.Id = 0;
+      B.StartAddr = F.Entry;
+      B.EndAddr = F.Entry + 1;
+      B.Ops = {Copy, Extend, Return};
+      F.Blocks = {B};
+      Functions.push_back(MedToHighConverter().convert(F, Architecture));
+      Checks += "if (" + F.Name + "(xs[i]) != (uint" +
+                std::to_string(Bytes * 8) + "_t)xs[i]) return 1;\n";
+    }
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    compileAndRun(Source + Inputs +
+                  "\nint main(void) {\n"
+                  "for (unsigned i=0; i<sizeof xs/sizeof xs[0]; ++i) {\n" +
+                  Checks + "} return 0; }\n");
+  }
+}
 
 TEST(HighCIntegerConversion, ASignedCompareOfShiftsComparesSigned) {
   // AArch64 `cmp w14, w13, lsl #24; cset lt` compares two bytes as signed

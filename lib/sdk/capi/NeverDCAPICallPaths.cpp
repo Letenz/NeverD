@@ -29,7 +29,6 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 using namespace neverd;
@@ -65,7 +64,7 @@ struct CallReferenceGraph {
     std::string Name;
     std::string Module;
     bool Import = false;
-    /// Byte signatures name the function as library code.
+    /// An independently admitted signature identity names library code.
     bool Library = false;
   };
   struct Edge {
@@ -106,10 +105,6 @@ std::shared_ptr<const CallReferenceGraph> buildGraph(Session &S) {
   G->Count = S.Functions.size();
   G->ImportCount = S.Img.Imports.size();
   const BinaryImage &Img = S.Img;
-
-  std::unordered_set<va_t> Library;
-  for (const auto &Match : S.SigDB.matches())
-    Library.insert(Match.Address);
 
   std::unordered_map<const Import *, uint32_t> ImportNodes;
   const auto ImportNode = [&](const Import &Imported, va_t Veneer) {
@@ -154,7 +149,7 @@ std::shared_ptr<const CallReferenceGraph> buildGraph(Session &S) {
     CallReferenceGraph::Node Node;
     Node.Address = F->Entry;
     Node.Name = F->Name;
-    Node.Library = Library.count(F->Entry) != 0;
+    Node.Library = S.SigDB.nameDecision(F->Entry) != nullptr;
     const uint32_t Index = G->Nodes.size();
     G->Nodes.push_back(std::move(Node));
     G->NodeAt.try_emplace(F->Entry, Index);

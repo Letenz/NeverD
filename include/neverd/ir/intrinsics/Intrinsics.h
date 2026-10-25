@@ -497,7 +497,8 @@ enum class X86SystemStateKind : uint8_t {
   LoadKernelGs,
   HistoryReset,
   InvalidateBroadcast,
-  SegmentedBlock
+  SegmentedBlock,
+  CacheZero
 };
 
 struct X86SystemStateContract {
@@ -850,6 +851,8 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   if (isX86SystemStateIntrinsic(Id))
     return x86SystemStateContract(Id).MemoryArgument >= 0;
   switch (Id) {
+  case Intrinsic::EVEXCompressStore:
+  case Intrinsic::EVEXExpandLoad:
   case Intrinsic::X86AMXState:
     return true;
   case Intrinsic::X86FPRoundMemoryState:
@@ -1068,6 +1071,13 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize, uint16_t AddressSize,
     uint16_t MaskSize, uint16_t DataSize) {
   switch (Id) {
+  case Intrinsic::EVEXCompressStore:
+  case Intrinsic::EVEXExpandLoad:
+    // Control, architecture and scalar kinds are validated by X86CompactShape.
+    return NumInputs == 5 && AddressSize == 8 && MaskSize && MaskSize <= 8 &&
+           (DataSize == 16 || DataSize == 32 || DataSize == 64) &&
+           OutputSize == (Id == Intrinsic::EVEXExpandLoad ? DataSize : 0);
+
   case Intrinsic::X86AMXState:
     // [id, base, versioned descriptor, optional stride]. The shared AMX
     // shape additionally validates the descriptor and owns non-memory forms.

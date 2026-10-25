@@ -1,4 +1,14 @@
-#pragma once
+//===- WindowFrame.h - Owned window frame and resize gestures ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Application frame ownership across native window transitions.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_TOOLS_NEVERD_GUI_APP_WINDOWFRAME_H
+#define NEVERD_TOOLS_NEVERD_GUI_APP_WINDOWFRAME_H
 
 #include <QMargins>
 #include <QObject>
@@ -7,6 +17,8 @@
 
 class QApplication;
 class QDialog;
+class QScreen;
+class QTimer;
 class QWidget;
 class QWindow;
 
@@ -47,9 +59,9 @@ public:
   /// both edges.
   static Qt::Edges edgesAt(QPoint at, QSize size, QMargins shadow);
 
-  /// Toggle full screen while retaining the preceding normal/maximized state.
-  /// Cocoa reports full screen alone and exposes the desktop after its exit
-  /// animation; reapply maximization only when that desktop is available.
+  /// Apply a state after any native full-screen exit has restored its screen.
+  void setWindowState(Qt::WindowStates states);
+  /// Keep the state and normal geometry from before entering full screen.
   void toggleFullScreen();
 
   ~WindowFrame() override;
@@ -61,6 +73,7 @@ private:
   WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar);
   bool resizable() const;
   void syncWindowState();
+  void restoreAfterFullScreen();
   /// Draw the shadow outside the visible window and its surface inside.
   void paint();
   /// Give the shadow band its size, which a maximized or full-screen window
@@ -85,7 +98,14 @@ private:
   /// The window states the window system last applied.
   Qt::WindowStates states_;
   Qt::WindowStates beforeFullScreen_ = Qt::WindowNoState;
-  bool restoreAfterFullScreen_ = false;
+  QPointer<QScreen> fullScreenScreen_;
+  QRect fullScreenAvailable_;
+  QRect fullScreenScreenGeometry_;
+  QRect normalBeforeFullScreen_;
+  QMetaObject::Connection screenGeometryConnection_;
+  QTimer *restoreTimer_ = nullptr;
+  bool restoreMaximized_ = false;
+  bool restoreScreenTimedOut_ = false;
   Qt::Edges shown_;
   Qt::Edges resizing_;
   QPoint resizeOrigin_;
@@ -93,3 +113,5 @@ private:
 };
 
 } // namespace neverd::gui
+
+#endif // NEVERD_TOOLS_NEVERD_GUI_APP_WINDOWFRAME_H

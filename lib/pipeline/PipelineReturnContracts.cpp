@@ -629,7 +629,7 @@ private:
                                 (aarch64PAuthMedShapeIsValid(Op) ||
                                  aarch64CPAMedShapeIsValid(Op) ||
                                  aarch64PAuthLoadMedShapeIsValid(Op) ||
-                                 aarch64AddressMemoryMedShapeIsValid(Op))
+                                 aarch64AddressLoadMedShapeIsValid(Op))
                             ? ReturnedValue::Other
                             : ReturnedValue::Undefined);
         return;

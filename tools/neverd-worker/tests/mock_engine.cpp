@@ -3090,10 +3090,22 @@ const char *neverd_entrypoints_json(neverd_session_t) {
           {{{"addr", hexAddress(Base)}, {"name", "start"}, {"type", "entry"}}})
           .dump());
 }
-// The fixture's "library" match names the second function.
+// An admitted library identity and a reference-confirmed candidate. Older
+// engines without an explicit admission decision also remain candidates.
 const char *neverd_sig_matches_json(neverd_session_t) {
   return copy(Json::array({{{"addr", hexAddress(Base + 16)},
                             {"name", "function_1"},
+                            {"auto_name", "function_1"},
+                            {"name_evidence", "image_symbol"},
+                            {"source", "mock"}},
+                           {{"addr", hexAddress(Base + 32)},
+                            {"name", "guessed_library_routine"},
+                            {"auto_name", ""},
+                            {"name_evidence", "none"},
+                            {"confirmed", true},
+                            {"source", "mock"}},
+                           {{"addr", hexAddress(Base + 48)},
+                            {"name", "legacy_guess"},
                             {"source", "mock"}}})
                   .dump());
 }

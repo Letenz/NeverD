@@ -26,6 +26,7 @@
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "../render/X86/X86AmxState.h"
+#include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
 #include "../render/X86/X86ScalarSystem.h"
@@ -2645,6 +2646,9 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (x86CompactCallPlan(TheArch, *Call))
+      return true;
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (isX86AmxNativeRowCall(*Call, TheArch))
       return true;
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
@@ -2834,8 +2838,10 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   for (const auto &Function : Mod)
     for (const auto &Block : Function)
       for (const auto &Instruction : Block)
-        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
           (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
+          (void)x86CompactCallPlan(Opts.TheArch, *Call);
+        }
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(
         "C projection references unsupported vector global storage");

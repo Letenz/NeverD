@@ -362,14 +362,29 @@ def main():
                 assert graphs[0]['progress']['kind'] == 'counter_loops'
                 assert graphs[0]['progress']['loop_count'] == loop_count
                 if version == 4:
-                    # The other optimization level loses a proof premise. Its
-                    # different observed contract must not create anchors.
-                    crossed = compare(prefix + '-cross-level', a, b, progress_profile, False)
+                    cross_report = root / f'{prefix}-cross-level.nddiff'
+                    crossed = compare(prefix + '-cross-level', a, b,
+                                      [*progress_profile, '--save', str(cross_report)], False)
                     other = crossed['dataflow']['secondary']['entries'][0]['graph']['progress']
-                    assert other['kind'] == 'unproven'
-                    assert other['source_contract'] == other['observed_contract']
+                    if family == 5:
+                        # O2 retains the bounded unsigned decrement, either at
+                        # a common latch or in both selected arms. Recovering
+                        # that proof is valid: the source takes at most eight
+                        # iterations. Require and authenticate its witnesses.
+                        assert other['kind'] == 'counter_loops', (prefix, other)
+                        assert other['loop_count'] == 1 and other['backedge_count'] == 1, (prefix, other)
+                        assert other['guard_count'] == len(other['loops']) > 0, (prefix, other)
+                        assert 'willreturn' not in other['source_contract'], (prefix, other)
+                        assert 'willreturn' in other['observed_contract'], (prefix, other)
+                    else:
+                        # The common-update O0 shape still lacks a proof
+                        # premise; its unchanged contract cannot add anchors.
+                        assert other['kind'] == 'unproven', (prefix, other)
+                        assert other['source_contract'] == other['observed_contract'], (prefix, other)
+                        assert crossed['flow_regions']['anchor_count'] == 0, prefix
                     assert crossed['dataflow']['primary']['entries'][0]['graph'] == graphs[0]
-                    assert crossed['flow_regions']['anchor_count'] == 0
+                    assert compare(prefix + '-cross-level-reopen', a, b,
+                                   ['--reopen', str(cross_report)], False) == crossed
                     proof = graphs[0]['progress']
                     assert proof['backedge_count'] == 1 and proof['guard_count'] == 2
                     assert len({loop['latch'] for loop in proof['loops']}) == 1

@@ -35,9 +35,11 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/med/AArch64/AArch64SVEState.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedRawEnvironment.h"
+#include "neverd/ir/med/X86/X86CompactShape.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
@@ -789,8 +791,14 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
               "intrinsic has an invalid intrinsic ID shape");
         if (Op.Opcode == NdOp::INTRINSIC) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isX86CompactMemory(Id) &&
+              ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
+               !x86CompactShapeIsValid(Id, x86CompactMedShape(Op, TheArch))))
+            throw std::invalid_argument(X86CompactMalformed);
           if (isAArch64ExceptionReturnIntrinsic(Id))
             throw std::runtime_error(kAArch64ExceptionReturnUnsupported);
+          if (const char *Reason = x86NonlocalControlTransferReason(Id))
+            throw std::runtime_error(Reason);
           if (isAArch64AddressMemoryIntrinsic(Id)) {
             if (TheArch != Arch::AArch64 ||
                 !aarch64AddressMemoryMedShapeIsValid(Op))
@@ -1390,7 +1398,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     if (Func.Name.empty())
       continue;
     ActiveCxxContinuationPlan = I;
-    emitFunc(Func);
+    if (!tryEmitX86CompactFunction(Func))
+      emitFunc(Func);
     ActiveCxxContinuationPlan.reset();
   }
   ActiveCxxContinuationPlan.reset();

@@ -27,12 +27,14 @@
 #include "neverd/ir/intrinsics/RuntimeRoutineIntrinsics.h"
 #include "neverd/ir/intrinsics/X86/X64Syscall.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/low/X86/X86CompactShape.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
@@ -802,6 +804,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
         if (isAArch64ExceptionReturnIntrinsic(Id))
           throw LowToMedConversionError(kAArch64ExceptionReturnUnsupported);
+        if (const char *Reason = x86NonlocalControlTransferReason(Id))
+          throw LowToMedConversionError(Reason);
         if (isX86BoundedLeafPending(Id))
           throw LowToMedConversionError(X86BoundedLeafUnproven);
         if (isX86BoundedLeafIntrinsic(Id)) {
@@ -812,6 +816,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         }
         if (Id == Intrinsic::A64_PACMPending)
           throw LowToMedConversionError(kAArch64PAuthMalformedOperation);
+        if (isX86CompactMemory(Id)) {
+          if (!x86CompactShapeIsValid(Id, x86CompactLowShape(Op, TheArch)))
+            throw LowToMedConversionError(X86CompactMalformed);
+          continue;
+        }
         if (isApxAtomicIntrinsic(Id)) {
           if (!intrinsicApxAtomicShapeIsValid(Id,
                                               apxAtomicLowShape(Op, TheArch)))
