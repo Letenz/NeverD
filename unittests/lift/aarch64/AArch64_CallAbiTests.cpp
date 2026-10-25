@@ -128,9 +128,13 @@ TEST_F(AArch64_CallAbi, IndirectFPCallUsesV0ForArgumentAndReturn) {
 
   auto Opt = liftToLLVMIR(callAbiObj());
   ASSERT_EQ(Opt.exitCode, 0) << Opt.err;
+  const llvm::StringRef Output(Opt.out);
+  const size_t ModuleBegin = Output.find(kCallABIModuleStart);
+  ASSERT_NE(ModuleBegin, llvm::StringRef::npos) << Opt.out;
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;
-  const auto Module = llvm::parseAssemblyString(Opt.out, Diagnostic, Context);
+  const auto Module = llvm::parseAssemblyString(Output.drop_front(ModuleBegin),
+                                                Diagnostic, Context);
   ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
   ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
   const auto *Function = Module->getFunction(kCallABIIndirectDouble);

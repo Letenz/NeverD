@@ -23,6 +23,7 @@ CALL_ABI_TEXT(kCallABIVectorCall, "call <2 x i64> %")
 CALL_ABI_TEXT(kCallABIVectorArgument, "(<2 x i64>")
 CALL_ABI_TEXT(kCallABIPointerArgument, "i64 %arg0")
 CALL_ABI_TEXT(kCallABIScalarReturn, "ret double ")
+CALL_ABI_TEXT(kCallABIModuleStart, "; ModuleID")
 
 #undef CALL_ABI_TEXT
 #undef CALL_ABI_VALUE
