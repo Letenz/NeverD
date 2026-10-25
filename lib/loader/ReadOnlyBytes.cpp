@@ -9,6 +9,7 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <set>
 
 namespace neverd {
@@ -145,6 +146,22 @@ bool hasConflictingFixups(const BinaryImage &Image, va_t Address,
   };
   auto Set = [](va_t Slot) { return Slot; };
   auto Map = [](const auto &Slot) { return Slot.first; };
+  auto TouchesOperands = [&](const auto &Operands) {
+    // Operand widths are uint8_t, not necessarily the target's pointer width.
+    // In particular, malformed wide metadata cannot hide an overlapping tail
+    // before the lower_bound. Preserve the existing pointer-width exclusion
+    // for narrow/incomplete records while covering every wider field.
+    constexpr uint64_t MaximumWidth = UINT8_MAX;
+    auto It = Operands.lower_bound(
+        Address >= MaximumWidth - 1 ? Address - (MaximumWidth - 1) : 0);
+    for (; It != Operands.end() &&
+           (It->first < Address || It->first - Address < Extent);
+         ++It)
+      if (overlaps(Address, Extent, It->first,
+                   std::max<uint64_t>(PointerWidth, It->second.Width)))
+        return true;
+    return false;
+  };
   if (Touches(Image.CodePtrRelocSlots, Set, CodePointer) ||
       Touches(Image.MachOAuthenticatedPointers, Map) ||
       Touches(Image.DataPtrRelocSlots, Set, Pointer) ||
@@ -158,8 +175,8 @@ bool hasConflictingFixups(const BinaryImage &Image, va_t Address,
       Touches(Image.ImportStorageSlots, Map, Import) ||
       Touches(Image.DyldBindSlots, Map, Import) ||
       Touches(Image.ObjCSourceReferences, Map, ObjCReference) ||
-      Touches(Image.DataAddressRelocOperands, Map) ||
-      Touches(Image.CodeAddressRelocOperands, Map))
+      TouchesOperands(Image.DataAddressRelocOperands) ||
+      TouchesOperands(Image.CodeAddressRelocOperands))
     return true;
   for (const auto &Relocation : Image.Relocations)
     if (overlaps(Address, Extent, Relocation.Address, 8))

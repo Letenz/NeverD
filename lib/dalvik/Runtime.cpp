@@ -295,9 +295,9 @@ struct Runtime::State::Engine {
       for (const auto &field : base->fields)
         if (!has(field.access, "static"))
           fields.push_back(&field);
-    auto value =
-        state.heap->allocate(Object::Instance, name.substr(1, name.size() - 2),
-                             0, fields.size() * 64);
+    auto value = state.heap->allocate(
+        Object::Instance, name.substr(1, name.size() - 2), 0,
+        fields.size() * ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
     if (!value)
       fail(ExecutionStop::HeapLimit, "Java object storage budget exhausted");
     value->Initialized = initialized;
@@ -389,6 +389,8 @@ struct Runtime::State::Engine {
                  ref.type); // Constructor escape is outside this profile.
     if (write && ref.type == "Z" && *write > 1)
       fail(ExecutionStop::Invalid, "noncanonical boolean field store");
+    if (write)
+      write = narrow(*write, ref.type);
     uint64_t *value;
     if (is_static) {
       if (receiver)
@@ -405,12 +407,12 @@ struct Runtime::State::Engine {
             state.framework.field(*state.heap, field, receiver, write, admit);
         if (result.stop != ExecutionStop::Returned)
           throw Halt{std::move(result)};
-        co_return result.value;
+        co_return narrow(result.value, ref.type);
       }
       value = &instance->Fields.at(&field);
     }
     if (write)
-      *value = narrow(*write, ref.type);
+      *value = *write;
     co_return *value;
   }
   bool accessible(const std::string &owner, const Access &access,
@@ -424,10 +426,15 @@ struct Runtime::State::Engine {
       const auto slash = name.rfind('/');
       return slash == name.npos ? std::string_view() : name.substr(0, slash);
     };
-    // Package/protected/private member resolution remains outside this subset;
-    // a public member still cannot expose an inaccessible declaring class.
-    return klass && has(access, "public") &&
-           (has(klass->access, "public") || package(owner) == package(caller));
+    const bool same_package = package(owner) == package(caller);
+    // Supplied classes occupy one Program namespace. Admit package-visible
+    // static members without changing virtual/protected resolution or JNI's
+    // separate access rules. A public member still cannot expose an
+    // inaccessible declaring class.
+    const bool member = has(access, "public") ||
+                        (same_package && has(access, "static") &&
+                         !has(access, "private") && !has(access, "protected"));
+    return member && (has(klass->access, "public") || same_package);
   }
   ExecutionTask initialize(std::string_view name, unsigned depth) {
     auto fail = [&](ExecutionStop stop, std::string message,
@@ -1059,6 +1066,10 @@ struct Runtime::State::Engine {
             if (!library)
               fail(ExecutionStop::Unsupported,
                    "unmodeled method " + reference->identity());
+            if (!library->Public)
+              fail(ExecutionStop::Unsupported,
+                   "nonpublic library method access requires an explicit JNI "
+                   "call");
             if (direct != ctor && !static_call)
               frame.invalid("invalid library invoke kind");
             auto args = std::span<const uint64_t>(values).subspan(!static_call);
@@ -1473,6 +1484,24 @@ Program::unsupportedClass(std::string_view name) const {
            !referenceType(field.reference.type)) ||
           has(field.access, "volatile"))
         return "DEX floating or volatile field is unsupported";
+    for (const auto &method : klass->methods) {
+      for (const auto &inherited : libraryMethods()) {
+        if (!inherited.Final || method.reference.name != inherited.Name ||
+            method.reference.signature() != inherited.Signature)
+          continue;
+        auto parent_name = *klass->superclass;
+        const auto owner = "L" + std::string(inherited.Class) + ";";
+        for (unsigned i = 0;
+             i < ::neverd::limits::dalvik::
+                     kRuntimeProgramUnsupportedClassCheckDepthLimit &&
+             !parent_name.empty();
+             ++i) {
+          if (parent_name == owner)
+            return "DEX declaration conflicts with a final library method";
+          parent_name = parent(parent_name);
+        }
+      }
+    }
     visiting.erase(klass->name);
     done.insert(klass->name);
     return std::nullopt;
@@ -1512,10 +1541,11 @@ ExecutionResult Program::execute(const Method &method,
   return runtime.execute(method, args, admit, stack_bytes);
 }
 Runtime::Runtime(const Program &program, std::shared_ptr<Heap> heap,
-                 std::optional<AndroidApplicationSnapshot> application)
+                 std::optional<AndroidApplicationSnapshot> application,
+                 RuntimeServices services)
     : state(std::make_unique<State>(
           program, heap ? std::move(heap) : std::make_shared<Heap>(),
-          AndroidFramework(application, program))) {
+          AndroidFramework(application, program, std::move(services)))) {
   if (application && !program.containsClass("Landroid/app/ActivityThread;"))
     throw Error("Android application snapshot requires an Android program");
 }
@@ -1523,7 +1553,7 @@ Runtime::~Runtime() = default;
 RuntimeSnapshot Runtime::snapshot() const {
   RuntimeSnapshot result;
   result.terminal = state->stopped.has_value();
-  result.framework = state->framework.inspect();
+  result.framework = state->framework.inspect(*state->heap, state->program);
   for (const auto &[name, declaration] : state->program.classes) {
     JavaClassState row;
     row.descriptor = name;
