@@ -1617,7 +1617,7 @@ bytes and offsets within each function are compared; alignment padding and
 independent function order do not define instruction semantics. The LLVM
 neighbor matrix passes 22 tests, and NeverC's 76 focused frontend tests pass.
 
-NeverD's pinned and native SDK matrices register 740 tests: 734 pass and six
+The initial pinned and native SDK matrices register 740 tests: 734 pass and six
 skip unavailable SDK/platform interfaces. Each SDK passes 159,840 controlled
 wrapper completions across 37 programs. Both additionally qualify 504
 production pipeline objects, checking offsets, operands, return flags and
@@ -1627,6 +1627,24 @@ Clang/NeverC compilations at O0/O2 supply 28,224 controlled completions, reused
 only after byte-for-byte source comparison. Production pipeline objects add
 3,528 completions per SDK. A separate Codegen regression prevents recoverable
 LLVM errors from publishing parseable but incomplete objects.
+
+The subsequent `dev` integration at `101544392` registers 752 tests across
+the two SDKs: 746 pass and six skip unavailable SDK/platform interfaces. The
+feature-composition regression now covers all sixteen combinations of SHA,
+SGX, AMX, REP and optional APX atomics, using native interfaces or the shared
+owned-assembly templates according to SDK availability. Both SDKs again pass
+37 wrapper programs and 504 production pipeline objects. All 1,008 pipeline
+C sources match between SDKs; 396 changed since the initial qualification
+and were recompiled 1,584 times, while the other 612 reuse the prior evidence
+only after comparing source and case metadata.
+
+LLVM `698a418beac3` and NeverC `6efa5e2a6` additionally correct the older
+pointer-taking atomic APIs: an integer width of 32/64 bits must not become a
+32/64-byte pointer-alignment promise. Machine memory descriptors retain byte
+alignment and volatile read/write effects. LLVM checks 48 combinations at
+O0/O2 and with APX register allocation enabled; NeverC's x86 backend test
+checks the same 48 signatures, alongside 76 passing frontend tests. This
+does not change the production SDK pin or qualify physical atomicity.
 
 The remaining row above is deliberately narrower than full RAO/CMPccXADD
 support. Legacy RAO and VEX CMPccXADD still need strict admission. Unoverridden
