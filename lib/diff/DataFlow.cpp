@@ -183,7 +183,9 @@ std::optional<std::string> DataFlowOptions::validate() const {
   return {};
 }
 std::optional<std::string>
-DataFlowGraph::validate(const DataFlowOptions &Options) const {
+DataFlowGraph::validate(const DataFlowOptions &Options,
+                        const ComparisonControl &Control) const {
+  Control.check();
   if (auto Error = Options.validate())
     return Error;
   if (Nodes.size() > Options.MaxNodes || Blocks.size() > Options.MaxBlocks)
@@ -198,6 +200,7 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
   uint64_t Inputs = 0;
   try {
     if (auto Error = validateParameterViews(*this, Options, [&](uint64_t N) {
+          Control.check();
           if (N > Options.MaxWork - Inputs)
             throw DataFlowInterrupted(ComparisonState::ResourceLimited);
           Inputs += N;
@@ -207,6 +210,7 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
     return "parameter views exceed the work allowance";
   }
   for (uint32_t BI = 0; BI < Blocks.size(); ++BI) {
+    Control.check();
     const auto &B = Blocks[BI];
     if (B.Gaps & ~AllFlowGaps)
       return "dataflow block has an unknown gap mask";
@@ -222,6 +226,7 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
         return "dataflow CFG has an invalid successor";
   }
   for (const auto &N : Nodes) {
+    Control.check();
     Inputs += N.Semantics.size() + N.Origins.size();
     if (Inputs > Options.MaxWork ||
         N.Semantics.size() > limits::kMaxFlowSemanticsBytes)
@@ -248,6 +253,7 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
     if (Inputs > Options.MaxWork)
       return "dataflow operands exceed the work allowance";
     for (const auto &I : N.Inputs) {
+      Control.check();
       Inputs += I.Semantics.size();
       if (Inputs > Options.MaxWork ||
           I.Semantics.size() > limits::kMaxFlowSemanticsBytes ||
@@ -277,6 +283,7 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
   }
   try {
     if (auto Error = validateFlowProgress(*this, Options, [&](uint64_t N) {
+          Control.check();
           if (N > Options.MaxWork - Inputs)
             throw DataFlowInterrupted(ComparisonState::ResourceLimited);
           Inputs += N;
@@ -291,10 +298,10 @@ DataFlowGraph::validate(const DataFlowOptions &Options) const {
 FlowFingerprints fingerprintDataFlow(const DataFlowGraph &G,
                                      const DataFlowOptions &Options,
                                      const ComparisonControl &Control) {
-  if (auto Error = G.validate(Options))
-    throw std::invalid_argument(*Error);
   FlowFingerprints R;
   try {
+    if (auto Error = G.validate(Options, Control))
+      throw std::invalid_argument(*Error);
     WorkBudget Work(R.Work, Options, Control);
     std::vector<uint64_t> Local, Keys, BlockKeys(G.Blocks.size());
     std::vector<uint8_t> Closed(G.Nodes.size());
@@ -388,6 +395,8 @@ FlowFingerprints fingerprintDataFlow(const DataFlowGraph &G,
     }
     Work.poll();
   } catch (const Stopped &Stop) {
+    R.State = Stop.State;
+  } catch (const ComparisonInterrupted &Stop) {
     R.State = Stop.State;
   }
   return R;

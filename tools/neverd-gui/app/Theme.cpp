@@ -1,3 +1,12 @@
+//===- Theme.cpp - Workbench colors and bundled fonts ---------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Apply the owned palette and font families across desktop platforms.
+//===----------------------------------------------------------------------===//
+
 #include "Theme.h"
 
 #include "../Config.h"
@@ -89,7 +98,7 @@ void loadFonts() {
   Q_UNUSED(loaded);
 }
 
-void configureFontFallbacks() {
+QStringList configureFontFallbacks() {
   loadFonts();
   const QString language = currentLanguage();
   const auto cjk = language == QLatin1String("ja")      ? "Noto Sans CJK JP"
@@ -106,7 +115,9 @@ void configureFontFallbacks() {
     QStringList families{QLatin1String(family)};
     families.append(symbols);
     families.removeDuplicates();
-    QFontDatabase::setApplicationFallbackFontFamilies(script, families);
+    // Qt clears the font cache even when the fallback list is unchanged.
+    if (QFontDatabase::applicationFallbackFontFamilies(script) != families)
+      QFontDatabase::setApplicationFallbackFontFamilies(script, families);
   };
   fallback(QChar::Script_Han, cjk);
   fallback(QChar::Script_Hiragana, "Noto Sans CJK JP");
@@ -115,8 +126,15 @@ void configureFontFallbacks() {
   fallback(QChar::Script_Arabic, "Noto Sans Arabic");
   fallback(QChar::Script_Cyrillic, "Noto Sans");
   fallback(QChar::Script_Greek, "Noto Sans");
-  QFontDatabase::setApplicationFallbackFontFamilies(QChar::Script_Common,
-                                                    symbols);
+  if (QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Common) !=
+      symbols)
+    QFontDatabase::setApplicationFallbackFontFamilies(QChar::Script_Common,
+                                                      symbols);
+  // CoreText shaping can also use the font's own fallback list.
+  return {QStringLiteral("Noto Sans"), QLatin1String(cjk),
+          QStringLiteral("Noto Sans Arabic"),
+          QStringLiteral("Noto Sans Symbols 2"),
+          QStringLiteral("JetBrains Mono NL")};
 }
 
 struct PaletteRole {
@@ -242,9 +260,8 @@ void Theme::apply() {
       !qobject_cast<WorkbenchStyle *>(style) &&
       !style->findChild<WorkbenchStyle *>(Qt::FindDirectChildrenOnly))
     application->setStyle(new WorkbenchStyle);
-  configureFontFallbacks();
   application->setFont(withWorkbenchMetrics(
-      QFont(QStringLiteral("Noto Sans"),
+      QFont(configureFontFallbacks(),
             ::neverd::limits::gui_config::kThemeDefaultUiPointSize)));
   QPalette palette;
   for (const auto &entry : PaletteRoles)

@@ -11,6 +11,7 @@
 #ifndef NEVERD_DIFF_FLOWREGIONSJSON_H
 #define NEVERD_DIFF_FLOWREGIONSJSON_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/FlowRegions.h"
 
 #include "llvm/Support/JSON.h"
@@ -27,8 +28,10 @@ flowRegionHypothesisJSON(const FlowRegionHypothesis &Hypothesis,
 void writeFlowRegionAnalysisFields(llvm::json::OStream &Out,
                                    const FlowRegionAnalysis &Regions,
                                    bool SummaryOnly);
-FlowRegionAnalysis readFlowRegionAnalysis(const llvm::json::Value &Value,
-                                          const FlowRegionSettings &Settings);
+FlowRegionAnalysis
+readFlowRegionAnalysis(const llvm::json::Value &Value,
+                       const FlowRegionSettings &Settings,
+                       const ComparisonControl &Control = {});
 } // namespace neverd::diff
 
 #endif // NEVERD_DIFF_FLOWREGIONSJSON_H

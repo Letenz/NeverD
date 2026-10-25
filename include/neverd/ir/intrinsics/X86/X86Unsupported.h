@@ -15,7 +15,24 @@
 
 namespace neverd {
 
+/// These legacy IDs do not carry the register banks, flags, stack and
+/// privilege/SMM state their nonlocal continuation observes. Keep their
+/// serialized identities, but admit neither an ABI return nor bare assembly.
+inline const char *x86NonlocalControlTransferReason(Intrinsic Id) {
+  switch (Id) {
+  case Intrinsic::Rsm:
+  case Intrinsic::Sysexitq:
+  case Intrinsic::Sysretq:
+    return "x86 nonlocal control transfer requires a complete machine-state "
+           "boundary";
+  default:
+    return nullptr;
+  }
+}
+
 inline const char *x86UnsupportedIntrinsicReason(Intrinsic Id) {
+  if (const char *Reason = x86NonlocalControlTransferReason(Id))
+    return Reason;
   switch (Id) {
   case Intrinsic::BndMk:
   case Intrinsic::BndMov:

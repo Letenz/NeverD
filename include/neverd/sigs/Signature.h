@@ -159,7 +159,7 @@ inline bool preferredAliasOrder(std::string_view A, std::string_view B) {
 
 struct SigMatch {
   uint64_t Address = 0;
-  /// The routine's name: of the names the module gives this offset, the one
+  /// The candidate name: of the names the module gives this offset, the one
   /// preferredAliasOrder puts first.
   std::string Name;
   /// The module's other names for the same offset, in that order.
@@ -167,8 +167,8 @@ struct SigMatch {
   std::string LibraryName;
   uint32_t FuncLen = 0;
   /// The module has references and the image confirmed every one of them;
-  /// see SignatureDB::apply.  Such a match settles an address that other
-  /// matches name differently.
+  /// see SignatureDB::apply. This can settle a candidate disputed by other
+  /// patterns, but does not prove its original name or nominal source types.
   bool Confirmed = false;
 };
 

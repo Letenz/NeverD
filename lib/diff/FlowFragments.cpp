@@ -232,10 +232,10 @@ public:
 FlowFragmentFingerprints
 fingerprintFlowFragments(const DataFlowGraph &G, const DataFlowOptions &Options,
                          const ComparisonControl &Control) {
-  if (auto Error = G.validate(Options))
-    throw std::invalid_argument(*Error);
   FlowFragmentFingerprints Out;
   try {
+    if (auto Error = G.validate(Options, Control))
+      throw std::invalid_argument(*Error);
     Budget Work(Out.Work, Options.MaxWork, Control);
     Work.poll();
     std::vector<uint64_t> Local;
@@ -286,15 +286,19 @@ fingerprintFlowFragments(const DataFlowGraph &G, const DataFlowOptions &Options,
   } catch (const Stopped &Stop) {
     Out.State = Stop.State;
     Out.Layers.clear();
+  } catch (const ComparisonInterrupted &Stop) {
+    Out.State = Stop.State;
+    Out.Layers.clear();
   }
   return Out;
 }
 
 FlowFragmentInput::FlowFragmentInput(const DataFlowGraph &G,
                                      const FlowFragmentFingerprints &K,
-                                     const DataFlowOptions &Options)
+                                     const DataFlowOptions &Options,
+                                     const ComparisonControl &Control)
     : Graph(G), Keys(K) {
-  if (auto Error = G.validate(Options))
+  if (auto Error = G.validate(Options, Control))
     throw std::invalid_argument(*Error);
   if (K.State != ComparisonState::Complete || K.Layers.size() != Options.Rounds)
     throw std::invalid_argument("fragment input needs completed depth keys");

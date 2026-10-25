@@ -44,7 +44,11 @@ Full-state x86 interrupt/far returns and kernel context-switch exits remain
 open. An ordinary C return, a bare `iret` assembly statement, or an opaque call
 with only a stack-pointer operand loses observable machine state. The latest
 SDK must be inspected for the required state contract instead of assuming a
-newer intrinsic inventory closes this gap. Known fixed argument positions now
+newer intrinsic inventory closes this gap. SYSENTER/SYSEXIT/SYSRET and RSM now
+retain the same explicit refusal in permissive decoding and both source
+routes; old RSM/SYSEXITQ/SYSRETQ IR cannot bypass it through direct emission.
+This closes an incorrect-success path, not the missing state-transfer model.
+Known fixed argument positions now
 survive an interior stack-setup gap, including selected LLVMC recovery; missing
 values remain explicit rather than becoming zero. Unknown incoming stack-pointer
 escapes still prevent a complete stack-argument bound: do not cap calls
@@ -71,6 +75,13 @@ restores require a register overwrite before a later call, or a normal exit;
 ABI-preserved/result registers, PHIs and implicit clobber readers keep their
 values. This bounded shared proof removes avoidable HighC/LLVMC traps but does
 not recover escaping VM state or authorize a dynamic code-address fallback.
+Pure POPCOUNT steps used to compute x86 parity no longer prevent an otherwise
+complete explicit scratch overwrite proof; trapping operations still do.
+Physical CALL return-slot writes remain barriers: they are absent from the C
+frame projection. Discarding an old save solely because CALL overwrites its
+bytes can turn a later return-slot read into an uninitialized C value. A full
+source projection of the new return-address value is required before admitting
+that optimization; runtime code-address relocation remains a separate proof.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by
@@ -97,6 +108,11 @@ Mixed integer PHIs carry availability separately in HighC and LLVMC. Copying
 an unknown incoming value, including across a loop edge or integer-width view,
 does not trap until it is read. `CallExitRegisters` executes guarded reads,
 parallel PHI swaps and native BSF/BSR loops with known and clobbered destinations.
+Pure local copy cycles now require a rendered observable reader to remain
+live. Unused void-call result copies disappear while the calls and their
+memory effects remain; returns, call arguments and indirect targets retain
+their input chains. A declared void call whose result is genuinely observed
+still needs a checked source/result contract.
 HighC store/assignment printing no longer overrides unknown expressions with
 zero. This exposes missing state; recovering its actual dynamic contract and
 partially preserved vector suffixes remains open. Generic FP/vector summary

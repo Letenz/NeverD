@@ -6,6 +6,56 @@ pattern count and raw match count are not recognition rates. Keep stronger
 existing packs when supplementing a library, and measure the supplement's
 net contribution after selection, reference checks and ambiguity resolution.
 
+## Strict identity and retained candidates
+
+The default policy separates byte candidates from names permitted to drive
+analysis. `matches()` and `buildCandidateNameMap()` retain byte, CRC, reference
+and ambiguity results. `buildNameMap()` admits only exact spellings independently
+stated by the image's function symbols/exports, plus the existing dedicated
+exception-personality recognizer's metadata and whole-function checks. A symbol
+for one alias does not certify a different alias. Analysis-generated names,
+user labels, data/section symbols and a matching name at another address cannot
+provide this evidence. Successful byte-pattern reloads/reapplication clear prior
+decisions; failed loads leave the previous transaction intact.
+
+This deliberately reduces automatic naming of stripped programs. An isolated
+legacy byte pattern cannot recover erased C++ types or prove that the database
+contains every function with those bytes. Even a completely confirmed callee
+graph is not independent proof of the caller's original source identity.
+Correct suggestions remain available for inspection; deferring a false name
+is an abstention, not an increase in recognition coverage. The separately gated
+library-feature recognizer retains its explicit identity verifier.
+
+`neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
+fields. Its additive `auto_name` field reports the address's admitted spelling,
+or an empty string. `name_evidence` is `image_symbol`, `exception_personality`,
+or `none`; a candidate without an admitted name reports
+`candidate_reason=independent_identity_missing`. Every row at one address
+reports the same decision, even if its own candidate disagrees. `confirmed`
+alone never authorizes a name. The CLI marks candidates explicitly and the
+worker and call graph no longer classify them as library functions or stop
+traversal at them. C API match counts
+continue to count candidates, not automatically named functions.
+
+The probe evaluator reports automatic and preferred-candidate accuracy
+separately. It reads `auto_name` directly for current engines, labels historical
+responses as `legacy`, and rejects mixed or inconsistent admission responses.
+Keep both correct and wrong candidate suggestions visible when reporting a
+policy change. Map/truth files are evaluation inputs only, never supplied to
+the tested `--no-debug` matching process.
+
+For comparison, the [FLIRT design](https://docs.hex-rays.com/user-guide/signatures/flirt/ida-f.l.i.r.t.-technology-in-depth)
+uses byte/CRC/reference discrimination and explicit collision handling, while
+acknowledging future false positives. [Binary Ninja WARP](https://docs.binary.ninja/guide/warp.html)
+separates automatic matches from possible functions for user selection; its
+[matcher](https://github.com/Vector35/binaryninja-api/blob/dev/plugins/warp/src/matcher.rs)
+accepts a unique nontrivial candidate and otherwise requires sufficient unique
+constraint support. [Ghidra Function ID](https://github.com/NationalSecurityAgency/ghidra/blob/master/Ghidra/Features/FunctionID/src/main/doc/fid.xml)
+uses scores, parent/child evidence and per-record mitigation, and documents the
+false-positive/false-negative tradeoff. These are design references, not
+comparative benchmark results. NeverD chooses the stronger identity boundary
+because names also affect type reconstruction and semantic analysis.
+
 ## Acceptance evidence
 
 | Dimension | Evidence required |
@@ -181,3 +231,30 @@ stage (about 8%). End-to-end wall timings varied substantially with host load;
 the record retains that uncertainty and does not claim a universal speedup.
 These results do not establish generalization to held-out programs or
 comparative accuracy against another tool.
+
+## Identity-admission measurements
+
+The [2026-10-25 identity record](evidence/signature-identity-2026-10-25.json)
+compares the strict policy with that earlier automatic-name policy on the same
+eight stripped MSVC probes. All ordered byte/reference candidates remain equal.
+The earlier 13,670 correct names and 66 wrong names remain preferred candidates;
+none becomes an automatic name because these inputs provide no independent
+identity evidence. Automatic coverage is therefore zero on this corpus, and
+automatic precision is undefined. The change prevents those false names from
+driving analysis; it does not recover more identities or repair the candidates.
+Separate SDK cases retain exact export identity and the dedicated personality
+recognizer, and reject data, analysis-generated and user labels as evidence for
+unrelated signature names. A call-tree regression also verifies that candidates
+cannot suppress traversal as library code.
+
+Paired warm matching, reference checking and candidate settlement used the same
+database, addresses and executable, with one/four workers. Median CPU changes
+ranged from about -1.0% to +3.3%; both raw-match and candidate-name digests agreed
+in every pair. Full-command measurements were less stable: a four-worker x86
+CPU increase repeated, whereas the initial ARM64 increase did not. A separate
+same-binary diagnostic localized the larger x86 increase to the unchanged
+signature-load/discovery phase; name refresh became cheaper and matching did
+not reproduce that increase. The record retains every trial, the extra JSON
+cost and the phase controls. Concurrent builds prevent an end-to-end latency
+guarantee; an idle-host qualification remains necessary. No pattern was removed
+or verification weakened to obtain these timings.

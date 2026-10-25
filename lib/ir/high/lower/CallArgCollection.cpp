@@ -219,14 +219,17 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
       const int64_t SlotOff = StackOff - Layout.CallStackBase;
       if (SlotOff % SlotBytes != 0)
         return;
-      // A slot the function reads back is a local stored before the call.
-      // A tail jump's slots are this function's own incoming arguments,
-      // which it may well have read before passing them on.
-      if (!Scan.TailJump && Scan.LoadedEntrySlots &&
-          Scan.LoadedEntrySlots->count(StackOff - Scan.FrameSize))
-        return;
       ArgPos = static_cast<int>(Layout.Registers.size()) +
                static_cast<int>(SlotOff / SlotBytes);
+      // A local can reuse the outgoing area between calls. A callee's
+      // stack-argument summary still requires its latest stored value,
+      // even when this function read or took the slot's address earlier.
+      // Without that summary, a read-back slot remains a local. A tail
+      // jump may pass its own incoming arguments after reading them.
+      if (ArgPos >= Scan.CalleeStackArgs && !Scan.TailJump &&
+          Scan.LoadedEntrySlots &&
+          Scan.LoadedEntrySlots->count(StackOff - Scan.FrameSize))
+        return;
     } else {
       if (StackOff >= Scan.MaxArgs * SlotBytes || StackOff % SlotBytes != 0)
         return;

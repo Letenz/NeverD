@@ -69,5 +69,24 @@ class WordOracleTests(unittest.TestCase):
                     self.equivalent(expression, "x+y+z+w", width)
 
 
+    def test_sparse_linear_tails_preserve_high_bit_controls(self):
+        for width in (8, 16, 32, 64):
+            rows = bench.sparse_linear_mixed_degree_corpus(width, 135)
+            self.assertEqual(len(rows), 135)
+            for block, degree in enumerate((4, 8, 12, 16, 18)):
+                product = "3*" + "*".join(f"v{i}" for i in range(2, degree + 2))
+                # Plain and partitioned products have the same independent
+                # arithmetic reading, regardless of their factor order.
+                for kind in (0, 2):
+                    for order in range(3):
+                        index = block * 27 + kind * 9 + order
+                        self.equivalent(rows[index], product + "+13", width)
+                        self.equivalent(rows[index + 3],
+                                        product + "+13+7*(v0+v1)", width)
+                        with self.assertRaises(AssertionError):
+                            self.equivalent(rows[index + 6],
+                                            product + "+13+7*(v0+v1)", width)
+
+
 if __name__ == "__main__":
     unittest.main()

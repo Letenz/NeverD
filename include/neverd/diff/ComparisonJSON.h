@@ -22,6 +22,7 @@
 #define NEVERD_DIFF_COMPARISONJSON_H
 
 #include "neverd/diff/Comparison.h"
+#include "neverd/diff/Control.h"
 #include "neverd/diff/Program.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -99,9 +100,11 @@ struct SavedComparison {
 };
 
 /// Reads a saved comparison, checking every field's type and range.  The
-/// error names the first problem.
-std::optional<SavedComparison> readComparison(llvm::StringRef Text,
-                                              std::string &Error);
+/// error names the first problem. Cancellation/deadline throws
+/// ComparisonInterrupted; the JSON DOM parser is one indivisible checkpoint.
+std::optional<SavedComparison>
+readComparison(llvm::StringRef Text, std::string &Error,
+               const ComparisonControl &Control = {});
 
 /// Why a saved comparison does not bind to two programs.
 enum class BindFailure : uint8_t {
@@ -121,11 +124,13 @@ llvm::StringRef bindFailureName(BindFailure Failure);
 /// Saved pairs and analyst decisions are kept; measured structural facts are
 /// recomputed and must agree before publication. On failure
 /// \p Failure says why and the returned message which input or function.
-std::optional<std::string> bindComparison(const SavedComparison &Saved,
-                                          const Program &Primary,
-                                          const Program &Secondary,
-                                          ComparisonResult &Result,
-                                          BindFailure *Failure = nullptr);
+/// Cancellation/deadline throws ComparisonInterrupted. Result is unchanged on
+/// failure or stop; progress callbacks run only on the calling thread.
+std::optional<std::string>
+bindComparison(const SavedComparison &Saved, const Program &Primary,
+               const Program &Secondary, ComparisonResult &Result,
+               BindFailure *Failure = nullptr,
+               const ComparisonControl &Control = {});
 
 } // namespace neverd::diff
 

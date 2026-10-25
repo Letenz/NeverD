@@ -59,12 +59,15 @@ struct DenseCarryFixture {
   }
 };
 
+enum class FactorOrder { Natural, Interleaved };
+
 DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
                                     unsigned HighBits, unsigned Degree = 48,
                                     unsigned Observed = 7,
                                     bool ComplementParity = false,
                                     bool MixedMasks = false,
-                                    uint64_t Coefficient = 3) {
+                                    uint64_t Coefficient = 3,
+                                    FactorOrder Order = FactorOrder::Natural) {
   // Preserve the public expression parser's construction order: the measured
   // cost/work bounds below belong to these two complete public-entry inputs.
   llvm::SmallString<96> Scale;
@@ -73,7 +76,11 @@ DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
       .toString(Scale, 10, false);
   std::string Expression = "(" + Scale.str().str();
   const std::string X = ComplementParity ? "(x^1)" : "x";
-  for (unsigned I = 0; I < Degree; ++I) {
+  for (unsigned Position = 0; Position < Degree; ++Position) {
+    const unsigned I =
+        Order == FactorOrder::Interleaved
+            ? 2 * (Position % (Degree / 2)) + Position / (Degree / 2)
+            : Position;
     std::string High = "((y+" + std::to_string(I) + ")&-" +
                        std::to_string(uint64_t(1) << HighBits) + ")";
     if (MixedMasks)
@@ -353,6 +360,56 @@ TEST(SymMBALazyPolynomial, PartialBlocksFinishDegree32MixedProducts) {
   }
 }
 
+TEST(SymMBALazyPolynomial, InterleavedProductsFindTheirExactPairs) {
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (unsigned HighBits : {2u, 3u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << HighBits);
+      SymContext Ctx;
+      const auto F = denseCarryFixture(Ctx, Width, HighBits, 128, 8, false,
+                                       false, 3, FactorOrder::Interleaved);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+      EXPECT_LT(Result.Work, Options.MaxWork);
+      EXPECT_LE(Result.SizeAfter, 17u);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      checkFullWidthOracle(Ctx, F, Result.Expr);
+    }
+}
+
+TEST(SymMBALazyPolynomial, PairProbesPreserveMixedProductHeadroom) {
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (const auto [Observed, HighBits] :
+         {std::pair{6u, 2u}, std::pair{7u, 2u}, std::pair{7u, 3u}}) {
+      SCOPED_TRACE(::testing::Message()
+                   << Width << ':' << Observed << ':' << HighBits);
+      SymContext Ctx;
+      const auto F =
+          denseCarryFixture(Ctx, Width, HighBits, 64, Observed, true, true);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+      EXPECT_LT(Result.Work, Options.MaxWork);
+      EXPECT_LE(Result.SizeAfter, 14u);
+      checkFullWidthOracle(Ctx, F, Result.Expr);
+    }
+}
+
+TEST(SymMBALazyPolynomial, UnfinishedPairProbesRetainEveryFactor) {
+  for (size_t Work : {512u, 8192u, 32768u}) {
+    SCOPED_TRACE(Work);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, 32, 2, 128, 8, false, false, 3,
+                                     FactorOrder::Interleaved);
+    MBAOptions Options;
+    Options.MaxWork = Work;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LE(Result.Work, Work);
+    EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
+}
+
 TEST(SymMBALazyPolynomial, PartialPairingBoundariesPreserveRefusedWords) {
   for (unsigned Degree : {16u, 17u, 31u, 32u, 33u})
     for (bool Complement : {false, true})
@@ -389,8 +446,10 @@ TEST(SymMBALazyPolynomial, BooleanRecipesShareTheFinalBitProjection) {
       solver::Z3SolverOptions VerifyOptions;
       VerifyOptions.TimeoutMs = 30000;
       solver::Z3Solver Verifier(Ctx, VerifyOptions);
-      EXPECT_EQ(Verifier.checkDistinct(F.Input, Result.Expr),
-                solver::SatResult::Unsat)
+      // This fresh verifier serves one formula. Asserting the difference
+      // permits Z3's one-shot preprocessing of the complete multiplication.
+      ASSERT_TRUE(Verifier.assertDistinct(F.Input, Result.Expr));
+      EXPECT_EQ(Verifier.check(), solver::SatResult::Unsat)
           << Verifier.reasonUnknown();
     }
   }

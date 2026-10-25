@@ -1390,12 +1390,12 @@ TEST(CallExitRegisters, EntrySpillProofKeepsObservedBytesAndEscapes) {
 class OverwrittenCallClobberSpills : public testing::TestWithParam<unsigned> {};
 
 INSTANTIATE_TEST_SUITE_P(SourceStackSpills, OverwrittenCallClobberSpills,
-                         testing::Values(0u, 1u, 2u));
+                         testing::Values(0u, 1u, 2u, 3u, 4u));
 
 TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
   const unsigned Variant = GetParam();
 #if !defined(__x86_64__) && !defined(_M_X64)
-  if (Variant)
+  if (Variant == 1 || Variant == 2 || Variant == 3)
     GTEST_SKIP() << "Native x64 flags-transfer execution requires an x64 host";
 #endif
   for (BinaryFormat Format :
@@ -1405,21 +1405,49 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
     const auto Call = throughSlot(Text + 4, slot(0));
     std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
     Code.insert(Code.end(), Call.begin(), Call.end());
-    const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
-    Code.insert(Code.end(), Save.begin(), Save.end());
-    if (Variant)
-      Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
-    if (Variant == 2)
-      Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
-    const std::vector<uint8_t> Body = {
-        0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
-        0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
-        0x48, 0x83, 0xC4, 0x28, 0xC3};
-    Code.insert(Code.end(), Body.begin(), Body.end());
-    auto Image = makeImage(Code, {{Text, "reused_scratch"}}, {"rand"});
+    if (Variant >= 3) {
+      // PUSHF explicitly overwrites the released push slot after ADD.
+      // Passing another frame member to strlen keeps the frame observable.
+      Code.insert(Code.end(), {0x66, 0xc7, 0x44, 0x24, 0x10, 97, 0, 0x41,
+                               0x53}); // push r11
+      if (Variant == 3)
+        // ADD's parity calculation is a nontrapping POPCOUNT. PUSHF's
+        // explicit write then replaces the saved bytes before the CALL.
+        Code.insert(Code.end(), {0x48, 0x83, 0xc4, 8, 0x9c, 0x9d});
+      else
+        Code.insert(Code.end(), {0x48, 0x8d, 0x64, 0x24, 8});
+      Code.insert(Code.end(), {0x48, 0x8d,
+                               static_cast<uint8_t>(
+                                   Format == BinaryFormat::COFF ? 0x4c : 0x7c),
+                               0x24, 0x10});
+      const auto Read = throughSlot(Text + Code.size(), slot(1));
+      Code.insert(Code.end(), Read.begin(), Read.end());
+      if (Variant == 4)
+        // The machine reads the new return PC; source C has not represented
+        // that write. Retain the unavailable spill rather than read an
+        // uninitialized frame member after removing its only source store.
+        Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0xf8});
+      Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x28, 0xc3});
+    } else {
+      const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
+      Code.insert(Code.end(), Save.begin(), Save.end());
+      if (Variant)
+        Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
+      if (Variant == 2)
+        Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
+      const std::vector<uint8_t> Body = {
+          0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
+          0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
+          0x48, 0x83, 0xC4, 0x28, 0xC3};
+      Code.insert(Code.end(), Body.begin(), Body.end());
+    }
+    auto Image =
+        makeImage(Code, {{Text, "reused_scratch"}}, {"rand", "strlen"});
     Image.Format = Format;
     ASSERT_TRUE(Image.recordImportStorageSlot(
         Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        slot(1), "strlen", 0, ImportStorageEvidence::LoaderBind));
     for (bool LLVM : {false, true})
       for (bool NoOpt : {false, true}) {
         SCOPED_TRACE(testing::Message() << unsigned(Format) << ':' << Variant
@@ -1446,8 +1474,12 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
               LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
         } else
           ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        if (Variant == 4) {
+          EXPECT_NE(Source.find("__builtin_trap"), std::string::npos) << Source;
+          continue;
+        }
         EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-        if (Variant) {
+        if (Variant == 1 || Variant == 2 || Variant == 3) {
           EXPECT_NE(Source.find("__readeflags"), std::string::npos) << Source;
           EXPECT_NE(Source.find("__writeeflags"), std::string::npos) << Source;
         }
@@ -1467,13 +1499,21 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
               HighCEmitter().emit(Result.HighFuncs, NativeOutput, COptions));
         const std::string Provider = R"(
 #include <stdlib.h>
+#include <string.h>
 static unsigned calls;
 static int spill_provider(void) { ++calls; return 13; }
+static size_t spill_strlen_provider(const char *p) {
+  ++calls;
+  return p[0] == 97 && p[1] == 0 ? 1 : 99;
+}
 #define rand spill_provider
+#define strlen spill_strlen_provider
 )";
-        const std::string Oracle = R"(
-int main(void) { return reused_scratch() != 19 || calls != 1; }
-)";
+        const std::string Oracle =
+            Variant >= 3 ? "int main(void) { return reused_scratch() != 1 || "
+                           "calls != 2; }"
+                         : "int main(void) { return reused_scratch() != 19 || "
+                           "calls != 1; }";
         for (llvm::StringRef Level : {"-O0", "-O2"})
           source_call_execution_test::compileAndRun(
               Provider + Native + Oracle,
@@ -2889,6 +2929,107 @@ TEST(Win64CallContract, CallersPassWhatAnExportedRoutinesPrototypeDeclares) {
   EXPECT_EQ(Reads.at(Extra)[family(x86reg::R9)], 8u);
 }
 
+TEST(Win64CallContract, AnOutgoingArgumentMayReuseAnAddressTakenLocal) {
+  constexpr va_t Initialize = Text + 0x80, Consume = Text + 0xA0;
+  std::vector<uint8_t> Code(0xC0, 0xCC);
+  // sub rsp,38h; lea rcx,[rsp+20h]; call initialize_local
+  std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38, 0x48,
+                                 0x8D, 0x4C, 0x24, 0x20, 0xE8};
+  auto Displacement = rel32(Text + Caller.size() + 4, Initialize);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  // The same slot now supplies the fifth argument, with a new value.
+  // mov qword [rsp+20h],23; mov r9d,19; mov r8d,17; mov edx,13;
+  // mov ecx,11; call consume_values; add rsp,38h; ret
+  Caller.insert(Caller.end(),
+                {0x48, 0xC7, 0x44, 0x24, 0x20, 23,   0,  0, 0, 0x41, 0xB9,
+                 19,   0,    0,    0,    0x41, 0xB8, 17, 0, 0, 0,    0xBA,
+                 13,   0,    0,    0,    0xB9, 11,   0,  0, 0, 0xE8});
+  Displacement = rel32(Text + Caller.size() + 4, Consume);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x38, 0xC3});
+  put(Code, Text, Caller);
+  put(Code, Initialize, {0x48, 0xC7, 0x01, 37, 0, 0, 0, 0x31, 0xC0, 0xC3});
+  // Only the fifth parameter is read by this body; its prototype fixes
+  // all five positions, including the four registers.
+  put(Code, Consume, {0x48, 0x8B, 0x44, 0x24, 0x28, 0xC3});
+  BinaryImage Image = makeImage(Code, {{Text, "reuse_outgoing_slot"}}, {});
+  Image.Exports.push_back({"initialize_local", 1, Initialize});
+  Image.Exports.push_back({"consume_values", 2, Consume});
+  class Prototypes : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != Initialize && Address != Consume)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.PrototypeLibrary = "windows-user-x64";
+      const TypeRef Integer = NdType::makeInt(8, false);
+      if (Address == Initialize) {
+        Function.Name = "initialize_local";
+        Function.ReturnType = Integer;
+        Function.Params = {{"slot", Integer}};
+      } else {
+        Function.Name = "consume_values";
+        Function.ReturnType = Integer;
+        Function.Params = {{"a", Integer},
+                           {"b", Integer},
+                           {"c", Integer},
+                           {"d", Integer},
+                           {"e", Integer}};
+      }
+      return Function;
+    }
+  } Debug;
+  for (bool LLVM : {false, true})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      SCOPED_TRACE(NoOpt);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text};
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = true;
+      Options.NoOpt = NoOpt;
+      auto Result = Pipeline().run(Image, Context, Options, &Debug);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_TRUE(Result.CallEntryStackArgs.count(Consume));
+      ASSERT_EQ(Result.CallEntryStackArgs.at(Consume), 5);
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                        &Debug, &Image));
+      } else
+        ASSERT_TRUE(
+            HighCEmitter().emit(Result.HighFuncs, Output, COptions, &Debug));
+      const std::string Oracle = R"(
+static unsigned initialized;
+uint64_t initialize_local(uint64_t slot) {
+  *(uint64_t *)(uintptr_t)slot = 37;
+  ++initialized;
+  return 0;
+}
+uint64_t consume_values(uint64_t a, uint64_t b, uint64_t c,
+                        uint64_t d, uint64_t e) {
+  return a == 11 && b == 13 && c == 17 && d == 19 && e == 23;
+}
+int main(void) { return reuse_outgoing_slot() != 1 || initialized != 1; }
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+}
+
 TEST(Win64CallContract, TheStartupsKernel32CallsReadWhatTheyDeclare) {
   // MSVC's startup code calls these through their slots.  IsDebuggerPresent
   // takes no argument, GetModuleHandleW one, and RtlVirtualUnwind four in
@@ -3267,6 +3408,97 @@ TEST(Win64CallContract, AVoidSourceReturnDoesNotEraseAnObservedCallResult) {
 uint64_t fixture_qualified(uint64_t input, uint64_t output) { return input + output; }
 int main(void) { observe_result(); return observed != 42; }
 )");
+}
+
+TEST(Win64CallContract, UnobservedVoidCallResultsDoNotKeepLoopCopiesAlive) {
+  constexpr va_t Release = Text + 0x80;
+  std::vector<uint8_t> Code(0xA0, 0xCC);
+  // Save RBX/RDI and visit two pointers. A null pointer skips the void
+  // call, joining its unused result register with the previous iteration.
+  std::vector<uint8_t> Caller = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83,
+                                 0xEC, 0x20, 0x48, 0x8B, 0xD9, 0xBF, 0x02, 0,
+                                 0,    0,    0x48, 0x8B, 0x0B, 0x48, 0x85, 0xC9,
+                                 0x74, 0x09, 0x48, 0x83, 0xC1, 0x20, 0xE8};
+  const auto Displacement = rel32(Text + Caller.size() + 4, Release);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  Caller.insert(Caller.end(), {0x48, 0x83, 0xC3, 0x08, 0x48, 0x83, 0xEF,
+                               0x01, 0x75, 0xE5, 0x48, 0x8B, 0x5C, 0x24,
+                               0x30, 0x48, 0x83, 0xC4, 0x20, 0x5F, 0xC3});
+  put(Code, Text, Caller);
+  // A void routine can leave a computed scratch value in RAX.
+  put(Code, Release, {0x48, 0x89, 0xC8, 0x48, 0xFF, 0x09, 0xC3});
+  BinaryImage Image = makeImage(Code, {{Text, "release_pair"}}, {});
+  Image.Exports.push_back({"release_item", 1, Release});
+  class Prototypes : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != Release)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.Name = "release_item";
+      Function.ReturnType = NdType::makeVoid();
+      Function.Params = {{"object", NdType::makePtr(NdType::makeVoid())}};
+      Function.PrototypeLibrary = "windows-kernel-x64";
+      Function.PrototypeFromHeader = true;
+      return Function;
+    }
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      return Name == "release_item" ? resolveFunction(Release) : std::nullopt;
+    }
+  } Debug;
+  for (bool LLVM : {false, true})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      SCOPED_TRACE(NoOpt);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text};
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = true;
+      Options.NoOpt = NoOpt;
+      auto Result = Pipeline().run(Image, Context, Options, &Debug);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                        &Debug, &Image));
+      } else
+        ASSERT_TRUE(
+            HighCEmitter().emit(Result.HighFuncs, Output, COptions, &Debug));
+      EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+      const std::string Oracle = R"(
+static unsigned released;
+void release_item(void *object) { --*(uint64_t *)object; ++released; }
+int main(void) {
+  for (unsigned mask = 0; mask != 4; ++mask) {
+    struct { uint8_t padding[32]; uint64_t count; } a = {{0}, 3}, b = {{0}, 5};
+    uintptr_t pair[2] = {mask & 1 ? (uintptr_t)&a : 0,
+                         mask & 2 ? (uintptr_t)&b : 0};
+    released = 0;
+    release_pair((uintptr_t)pair);
+    if (a.count != 3 - (mask & 1) || b.count != 5 - ((mask >> 1) & 1) ||
+        released != (mask & 1) + ((mask >> 1) & 1))
+      return 1;
+  }
+  return 0;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
 }
 
 TEST(Win64CallContract, HeaderVoidReturnFactsAreSourceOnly) {

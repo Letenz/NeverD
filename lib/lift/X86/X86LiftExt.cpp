@@ -342,15 +342,9 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_SYSENTER:
   case X86_INS_SYSEXIT:
   case X86_INS_SYSRET:
-    S.emitIntrinsic(Intrinsic::Syscall);
-    break;
-
-  // --- RSM (return from SMM) ---
-  case X86_INS_RSM: {
-    uint16_t PtrSize = (TargetArch == Arch::X64) ? 8 : 4;
-    S.emit(NdOp::RETURN, {}, {NdVar::reg(x86reg::RAX, PtrSize)});
-    break;
-  }
+  case X86_INS_RSM:
+    // The ordinary syscall/return ABI cannot transport these continuations.
+    return false;
 
   // --- INT1 (ICEBP) ---
   case X86_INS_INT1:

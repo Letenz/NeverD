@@ -52,6 +52,9 @@ struct Comparison {
   std::mutex StatusMutex;
   std::atomic<bool> Started{false}, Running{false}, Cancel{false};
   std::string Phase = "idle", Error, Outcome = "idle";
+  std::string RestoreOutcome = "idle";
+  bool RestorePreviousRetained = false;
+  ComparisonState RestoreSnapshotState = ComparisonState::Complete;
   uint64_t Done = 0, Total = 0;
   bool Published = false;
   Program Primary, Secondary;
@@ -432,13 +435,19 @@ const char *neverd_comparison_last_error(neverd_comparison_t C) {
 const char *neverd_comparison_status_json(neverd_comparison_t C) {
   return guarded(C, [](Comparison &C) -> const char * {
     std::lock_guard Lock(C.StatusMutex);
+    const bool Restore = llvm::StringRef(C.Phase).starts_with("restore:");
     return dupStr(jsonToString(llvm::json::Object{
         {"schema", "neverd.bindiff.status"},
         {"version", 1},
         {"running", C.Running.load()},
         {"cancel_requested", C.Cancel.load()},
         {"computation_stopped", C.Started.load() && !C.Running.load()},
-        {"partial_result_retained", C.Published && C.Outcome != "complete"},
+        {"partial_result_retained",
+         C.Published &&
+             (Restore ? C.RestoreSnapshotState != ComparisonState::Complete
+                      : C.Outcome != "complete")},
+        {"restore_state", Restore ? C.RestoreOutcome : "idle"},
+        {"previous_result_retained", Restore && C.RestorePreviousRetained},
         {"result_available", C.Published},
         {"state", C.Outcome},
         {"phase", C.Phase},
@@ -657,29 +666,90 @@ const char *neverd_comparison_export_json(neverd_comparison_t Handle) {
 }
 int neverd_comparison_restore_json(neverd_comparison_t Handle,
                                    const char *Text) {
+  return neverd_comparison_restore_json_with_progress(Handle, Text, nullptr,
+                                                      nullptr);
+}
+
+int neverd_comparison_restore_json_with_progress(
+    neverd_comparison_t Handle, const char *Text,
+    neverd_comparison_progress_t Progress, void *Context) {
   return guarded(Handle, [&](Comparison &C) {
     auto Lock = ready(C);
     require(Text, "saved comparison JSON is required");
-    // Admission length check precedes construction of an unbounded StringRef.
-    (void)json(Text, diffLimits::kMaxSavedComparisonBytes);
-    std::string Error;
-    auto Saved = readComparison(Text, Error);
-    require(Saved.has_value(), Error);
-    ComparisonResult Next;
-    if (const auto E = bindComparison(*Saved, C.Primary, C.Secondary, Next))
-      throw std::runtime_error(*E);
-    C.CachedDetail.reset();
-    C.CachedSource.reset();
-    C.CachedObservations.reset();
-    C.CachedSlice.reset();
-    C.CachedImpact.reset();
-    C.InventoryKey.clear();
-    C.Result = std::move(Next);
-    C.Undo.clear();
-    C.Redo.clear();
-    std::lock_guard Status(C.StatusMutex);
-    C.Outcome = stateName(C.Result.State).str();
-    return 1;
+    {
+      std::lock_guard Status(C.StatusMutex);
+      C.Cancel = false;
+      C.Running = true;
+      C.Outcome = C.RestoreOutcome = "running";
+      C.Phase = "restore:scan";
+      C.Done = C.Total = 0;
+      C.Error.clear();
+      C.RestorePreviousRetained = true;
+      C.RestoreSnapshotState = C.Result.State;
+    }
+    auto Finished = llvm::scope_exit([&] {
+      std::lock_guard Status(C.StatusMutex);
+      C.Running = false;
+      if (C.RestoreOutcome == "running")
+        C.Outcome = C.RestoreOutcome = "failed";
+    });
+    ComparisonControl Control;
+    Control.Cancel = &C.Cancel;
+    Control.Progress = [&](llvm::StringRef Phase, uint64_t Done,
+                           uint64_t Total) {
+      const auto Name = "restore:" + Phase.str();
+      {
+        std::lock_guard Status(C.StatusMutex);
+        C.Phase = Name;
+        C.Done = Done;
+        C.Total = Total;
+      }
+      if (Progress)
+        Progress(Context, Name.c_str(), Done, Total);
+    };
+    try {
+      // Admit the C string without parsing a second DOM or reading past its
+      // NUL.
+      Control.report("scan");
+      size_t Bytes = 0;
+      while (Bytes <= diffLimits::kMaxSavedComparisonBytes && Text[Bytes]) {
+        ++Bytes;
+        if (Bytes % diffLimits::kSavedComparisonChunkBytes == 0)
+          Control.report("scan", Bytes);
+      }
+      require(Bytes <= diffLimits::kMaxSavedComparisonBytes,
+              "comparison JSON exceeds its byte allowance");
+      std::string Error;
+      auto Saved = readComparison(llvm::StringRef(Text, Bytes), Error, Control);
+      require(Saved.has_value(), Error);
+      ComparisonResult Next;
+      if (const auto E = bindComparison(*Saved, C.Primary, C.Secondary, Next,
+                                        nullptr, Control))
+        throw std::runtime_error(*E);
+      auto Outcome = stateName(Next.State).str();
+      std::lock_guard Status(C.StatusMutex);
+      Control.check();
+      C.Result = std::move(Next);
+      C.CachedDetail.reset();
+      C.CachedSource.reset();
+      C.CachedObservations.reset();
+      C.CachedSlice.reset();
+      C.CachedImpact.reset();
+      C.InventoryKey.clear();
+      C.Undo.clear();
+      C.Redo.clear();
+      C.Outcome = std::move(Outcome);
+      C.RestoreOutcome = "complete";
+      C.RestorePreviousRetained = false;
+      C.RestoreSnapshotState = C.Result.State;
+      C.Done = C.Total = 1;
+      return 1;
+    } catch (const ComparisonInterrupted &Stopped) {
+      std::lock_guard Status(C.StatusMutex);
+      C.Outcome = C.RestoreOutcome = stateName(Stopped.State).str();
+      C.Error = "saved comparison restore " + C.RestoreOutcome;
+      return 0;
+    }
   });
 }
 

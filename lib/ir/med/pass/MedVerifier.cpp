@@ -18,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
@@ -68,6 +69,8 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
           if (isAArch64ExceptionReturnIntrinsic(Id))
             Err(kAArch64ExceptionReturnUnsupported, Blk.Id, Op.Addr);
+          if (const char *Reason = x86NonlocalControlTransferReason(Id))
+            Err(Reason, Blk.Id, Op.Addr);
           if (isAArch64AddressMemoryIntrinsic(Id) &&
               !aarch64AddressMemoryMedShapeIsValid(Op))
             Err(kAddressMemoryMalformed, Blk.Id, Op.Addr);

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 
 
@@ -48,6 +49,46 @@ class ComparisonIntegrationTests(unittest.TestCase):
         self.assertTrue(handle.value)
         self.addCleanup(self.host.call, "neverd_comparison_destroy", handle)
         return handle
+
+    def test_restore_callback_retains_result_and_allows_retry(self) -> None:
+        from neverd_plugin import abi
+
+        left, right = self.session(), self.session()
+        for handle in (left, right):
+            self.assertEqual(self.host.call("neverd_session_load", handle,
+                                            str(self.binary).encode()), 1)
+        comparison = self.comparison()
+        self.assertEqual(self.host.call("neverd_comparison_run", comparison,
+            left, right, b'{"discover":false}', abi.ComparisonProgressCallback(), None), 1)
+        saved = self.host.owned_string("neverd_comparison_export_json", comparison)
+        self.assertEqual(self.host.call("neverd_comparison_override_json", comparison,
+            b'{"kind":"confirm","primary":"0x1000","secondary":"0x1000"}'), 1)
+        edited = self.host.owned_string("neverd_comparison_export_json", comparison)
+        self.assertNotEqual(saved, edited)
+        context = ctypes.c_void_p(0x12345678)
+        caller = threading.get_ident()
+        for target in (b"restore:scan", b"restore:publish"):
+            observations = []
+
+            def report(user, phase, done, total):
+                status = json.loads(self.host.owned_string("neverd_comparison_status_json", comparison))
+                observations.append((user, phase, threading.get_ident(), status["restore_state"]))
+                if phase == target:
+                    self.host.call("neverd_comparison_cancel", comparison)
+
+            callback = abi.ComparisonProgressCallback(report)
+            self.assertEqual(self.host.call("neverd_comparison_restore_json_with_progress",
+                comparison, saved.encode(), callback, context), 0)
+            self.assertTrue(any(row[1] == target for row in observations))
+            self.assertTrue(all(row[0] == context.value and row[2] == caller and row[3] == "running"
+                                for row in observations))
+            status = json.loads(self.host.owned_string("neverd_comparison_status_json", comparison))
+            self.assertEqual(status["restore_state"], "cancelled")
+            self.assertTrue(status["previous_result_retained"])
+            self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), edited)
+        self.assertEqual(self.host.call("neverd_comparison_restore_json_with_progress",
+            comparison, saved.encode(), abi.ComparisonProgressCallback(), None), 1)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), saved)
 
     def test_cancellation_callbacks_preserve_retry_and_context(self) -> None:
         from neverd_plugin import abi

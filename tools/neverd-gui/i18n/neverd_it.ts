@@ -5622,6 +5622,26 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <source>Applying saved analysis</source>
         <translation>Applicazione dell’analisi salvata</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Verifica delle evidenze salvate</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Lettura del confronto salvato</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Verifica del confronto salvato</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Ricalcolo delle misurazioni salvate</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Ripristino del confronto</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -7771,6 +7791,18 @@ Sostituisce: %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Questo processo non supporta il confronto binario.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Ripristino interrotto. È possibile riprovare.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Ripristino interrotto. Il confronto precedente è ancora disponibile.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Impossibile ripristinare il confronto. Il confronto precedente è ancora disponibile. %1</translation>
     </message>
 </context>
 <context>

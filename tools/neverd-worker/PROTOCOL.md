@@ -241,7 +241,7 @@ authentication. Recipes are `llvm-progress-neighborhoods-v5` and
 Fresh binding can authenticate a complete same-block PHI renumbering while
 retaining saved node IDs. Ordinary instruction order, source observations,
 ordered inputs and all proof metadata must still agree exactly; this does not
-weaken edited-report rejection or add public restore cancellation.
+weaken edited-report rejection.
 
 Schema 4 retains source/view bits, argument attributes, optional native site
 and elided truncation counts. Parameter rows consume the shared retained-item
@@ -259,6 +259,24 @@ unavailable with reasons. Med-only change associations report
 profile on fresh reopen, including early-cancelled reports.
 Unavailable records, graph origins, effect gaps and actual slice stop states are
 retained. Neither operation validates behavior or vulnerability elimination.
+`comparison_restore` is included in `comparison_cancellable_operations` only
+when the linked SDK exports `neverd_comparison_restore_json_with_progress`.
+Its `restore:*` progress covers chunked file reads, JSON parsing, validation and
+measurement. A stop/failure retains the previous result and edit history without
+advancing `comparison_revision`. Older engines keep synchronous restoration and
+do not advertise cooperative cancellation for that operation. Reading settings
+and the JSON DOM parser are indivisible checkpoints, not hard deadlines.
+
+Successful standalone restoration and `comparison_start` with `restore_path`
+return `restore_completed:true`. The payload's `state` still describes the saved
+computation; a historical `cancelled` state is not a stop of the new restore.
+`job.restore_state` describes the latter, and SDK status exposes
+`previous_result_retained` for an admitted restore. A successful standalone
+commit advances the revision even if cancellation arrives afterward; the
+terminal reply then reports `completed_before_cancellation:true`. A replacement
+handle remains disposable until the old session is swapped. Saved timeout
+settings do not become a deadline for restore validation.
+
 Restart with `restore_path` reuses the saved comparison settings before fresh
 projection. Input load/discovery/filter settings must still match the snapshot.
 
@@ -586,7 +604,7 @@ diagnostic; fixed-image authentication still requires its stricter evidence.
 | `disasm` | `{address,limit:128}`; limit 1–512 instructions. Returns `{items,address,next_address:hex|null,complete}`. Rows `{address,size,bytes,mnemonic,operands,comment}` may include backend decode status. `next_address` is computed from the last decoded instruction's size, with overflow checks. A full page's successor is a continuation candidate; an empty following page means decoding ended. |
 | `bytes` | `{address,size:256,text_encoding?}`; size 1–65536. Returns `{address,encoding:"hex",data,bytes_read,requested_size,mapping_status,next_address}`. Status is `mapped`, `partial`, or `unmapped_or_unmaterialized`; reading stops at the first unmapped byte. The legacy C ABI cannot distinguish BSS from unmapped bytes. Initial v1 carries bounded hex data in JSON, not separate binary attachments. With `text_encoding` (a `string_encodings` name) the reply adds `cells`, one per byte read, from the engine's `neverd_decode_text_json`: a character's text at its first byte, `""` at its later bytes, and `null` where no character is shown. The bytes decode from the first one, so a character cut by the range's ends shows as `null`. An unknown name is `unsupported_encoding`; an engine without the decoder returns `unsupported`. |
 | `analyze` | Computes the synchronous full-image pipeline once, publishes a new revision, invalidates adapter caches, and returns metadata. The listing then reads the jump tables the pipeline recovered (`neverd_switches_json`): a table is named `jpt_<dispatch>` and, in the form the engine verified, laid out a slot per line; its load and dispatch are commented, and every target is referred to from the dispatch (`j`) and the table (`o`). No function-level incremental analysis or cooperative cancellation is claimed. |
-| `signatures_load` | `{path,mode:"file"}` loads one `.pat` or library feature `.json`; `mode:"auto"` selects from a signature tree including `features/rules`. Returns `{loaded:true,byte_matches}` and advances the analysis revision. Invalid packs preserve the previous evidence and revision. Available on read-only images; it does not write annotations or the binary. |
+| `signatures_load` | `{path,mode:"file"}` loads one `.pat` or library feature `.json`; `mode:"auto"` selects from a signature tree including `features/rules`. Returns `{loaded:true,byte_matches}` and advances the analysis revision. `byte_matches` counts candidates, not renamed functions; library classification requires the SDK's admitted `auto_name`. Invalid packs preserve the previous evidence and revision. Available on read-only images; it does not write annotations or the binary. |
 | `decompile` | `{address,representation:"c",offset:0,limit:512}`; representation `c/llvmc/low/med/high/llvm/source/cpp/rust/go`, line limit 1–2048. Triggers analysis when needed. A known native chunk selects its recovered owner before analysis; `address` in the result is that entry. Explicit entries retain their identity, and unowned addresses retain the ordinary entry request. Returns `{address,representation,text,offset,total_lines,next_offset,complete,mapping_status,provenance_complete,rows,project_id,revision}`. Native Low/Med/High/LLVM/C/LLVMC use the optional bounded C ABI page API when present; other views retain one legacy function representation up to 32 MiB. C pages may also carry `byte_offset,function_identity,library_regions,prelude,recognition_budget_exhausted`. `cpp`, `rust` and `go` spell the HighC page in that language, for an image whose `language.pseudocode` lists it (otherwise `unavailable` with the engine's reason), and `source` in the function's own (C++, Rust, Go or C); they come only from the page API and add `dialect` (`c/cpp/rust/go`, what the page reads in), `unread` (why a declaration is shown as C) and `source_names` (`{begin_byte,end_byte,identifier,symbol,address?}` for each source name on the page, such as `core::fmt::write`, which splitting the text into identifiers would not find whole). A wire code page is capped at 2 MiB. See source mapping below. |
 | `cfg` | `{address}`. Uses the same function-owner selection as `decompile`. Triggers analysis, returns `{name?,entry?,nodes,edges,complete:true}`. Nodes have `{id:string,start,end,insn_count,disasm:[string],address:start,label:start,lines:disasm}`; edges `{from:string,to:string|null,type}`. More than 500 nodes or 2000 edges returns `budget_exceeded`, with no partial graph. |
 | `cfg_summary` | `{address,metrics?}`. Uses the same function-owner selection as `decompile`; layout keys and returned `address` use that entry. Builds one immutable graph snapshot on the executor; returns counts, bounds and an opaque `layout_revision`, without node/edge arrays. Up to 20000 nodes / 100000 edges. Optional `metrics:{char_width,line_height,padding,...}` size each node to its formatted listing rows; the layered layout routes edges around nodes. See viewport contract below. |
