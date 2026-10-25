@@ -23,6 +23,10 @@ evidence binds its identity. Switching the slot at runtime is covered on
 COFF and ELF. HighC call results use only an admitted declaration, including
 header-owned record argument adapters; a rejected debug prototype cannot
 silently change an integer carrier into a pointer result.
+Deferred unknown copies also preserve a declared void call as an effect and
+clear the destination availability. Both source routes execute the call once;
+an overwritten result becomes known, while reading an unavailable result
+retains the explicit guard.
 
 LLVM C prefetch rendering now checks the full owned assembly contract and
 retains computed memory operands and FS/GS overrides. All six hint forms

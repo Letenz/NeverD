@@ -528,6 +528,16 @@ bool HighCWriter::writeDeferredUnknownCopy(const HighStmt &Stmt, int Indent) {
   const auto Flag = DeferredUnknownFlags.find(Name);
   if (Flag == DeferredUnknownFlags.end())
     return false;
+  // A deferred destination can also be reused by a declared void call.
+  // Preserve the call's effects without manufacturing a known result or
+  // trying to assign its void C expression to the payload.
+  if (knownVoidCall(*Stmt.Val)) {
+    emitIndent(Indent);
+    OS << callStatementText(*Stmt.Val) << "\n";
+    emitIndent(Indent);
+    OS << Flag->second << " = 0;\n";
+    return true;
+  }
   if (isUnknownCallOperand(Stmt.Val.get())) {
     emitIndent(Indent);
     OS << Flag->second << " = 0;\n";
