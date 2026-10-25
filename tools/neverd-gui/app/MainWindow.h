@@ -161,6 +161,20 @@ private:
   void leaveFocusMode();
   void resetFocusSequence();
   void connectFunctions(ChooserView *view);
+  void connectPatchActions();
+  void preparePatchMenu(QMenu *menu);
+  void patchAction(const QString &kind);
+  struct PatchOrigin {
+    QPointer<QWidget> view, surface;
+    QRect anchor;
+  };
+  PatchOrigin patchOrigin() const;
+  void showPatchEditor(Address address, const QString &kind,
+                       const QString &initial, const PatchOrigin &origin);
+  void exportBytePatches();
+  void rewriteFunction();
+  QJsonObject patchRequest(const QString &kind) const;
+  void connectPatchedBytes(ChooserView *view);
   /// Title the pseudocode and IR windows by what they show, lettered apart.
   void retitleCodeDocks();
 
@@ -409,6 +423,9 @@ private:
   /// Code windows and the disassembly follow each other's cursor.
   bool synchronizeCode_ = true;
   bool hexActive_ = false;
+  /// An asynchronous listing jump following the byte cursor must not echo its
+  /// rounded instruction address back into Hex or discard its selection.
+  QPointer<DisassemblyView> hexFollower_;
   bool quitting_ = false;
   bool layoutInitialized_ = false;
   bool defaultSizesPending_ = false;

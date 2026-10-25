@@ -1143,6 +1143,126 @@
         <source>Export data...</source>
         <translation>データをエクスポート...</translation>
     </message>
+    <message>
+        <source>Always branch</source>
+        <translation>常に分岐</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>アセンブル…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>一意に符号化された即値オペランドを変更</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>バイトを変更…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>即値を変更…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>置換関数を新しいバイナリにコンパイル</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>バイトをライブプレビューしながら命令を編集</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>現在のアドレスのバイトを編集</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>命令単位の範囲を NOP で埋める</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>選択範囲を NOP で埋める</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>バイト変更を確認し、選択して元に戻す</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>条件を反転</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>NOP 命令</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>分岐しない</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>パッチメニューを開く</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>パッチ</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>パッチ済みバイナリ…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>変更済みバイト</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>呼び出しを NOP に置換</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>呼び出しを戻り値レジスタへの代入に置換</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>条件分岐を NOP に置換</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>現在の命令を NOP に置換</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>すべてのバイト変更を新しいバイナリに再適用</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>元のバイトに戻す</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>このパッチの入力バイトを復元</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>条件分岐を反転</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>C で関数を書き換え…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>呼び出しをスキップ</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>呼び出しをスキップして値を返す…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>条件分岐を無条件に実行</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1277,6 +1397,18 @@
     <message>
         <source>Disassembly</source>
         <translation>逆アセンブル</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>操作</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>元のバイト</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>変更済みバイト</translation>
     </message>
 </context>
 <context>
@@ -1518,6 +1650,10 @@
     <message>
         <source>Operand &amp;type</source>
         <translation>オペランドの表示形式(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>パッチ</translation>
     </message>
 </context>
 <context>
@@ -3032,6 +3168,72 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Delete types…</source>
         <translation>型を削除…</translation>
     </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>バイトパッチを適用</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>変更前:
+%1
+変更後:
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>利用可能なパッチを確認中…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>署名なしバイナリを出力</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>パッチの値が無効です。</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>元: %1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>パッチ</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>パッチの値</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>パッチ済みバイナリを %1 に保存しました</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>変更後: %1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>パッチ済みバイナリを生成</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>署名メタデータを削除し、署名なしのコピーを出力しますか？</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>選択した元のバイトを復元</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>署名なしのパッチ済みバイナリを %1 に保存しました</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>符号なしの値（10 進数または 0x 16 進数）:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3386,6 +3588,34 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>
             <numerusform>%n 個のオペランドを %1 のメンバーとして表示しました</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>%1 にパッチを適用しました（%2 バイト）：%3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>命令：%1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>%1 の元のバイトを復元しました（%2 範囲）。</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>%1 のパッチによる変更はありません。</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>%1 の編集を元に戻しました。</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>%1 の編集をやり直しました。</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>%1 の書き換えた関数を %2 に保存しました</translation>
     </message>
 </context>
 <context>
@@ -8409,6 +8639,156 @@ Secondary SHA-256: %3
     <message>
         <source>Start address:</source>
         <translation>開始アドレス：</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>パッチを適用</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>アセンブリ構文</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>アセンブリ命令</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>バイト表示を省略しています。全範囲は %1 バイトです。</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>NOP で埋める</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>16 進数のバイト</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>新: %1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>元: %1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>%1 のパッチ — Enter で適用、Esc でキャンセル</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>プレビューを準備中…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>後続の命令を置換</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>上書きする命令を確認し、置換を有効にして適用してください。</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>入力が変わりました。パッチエディターを開き直してください。</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>閉じる</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>元のシンボルのバインドを %1 件準備しました。出力には新しいファイルを使います。</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>元と比較</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>新しいバイナリにコンパイル…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>コンパイラーのパス:</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>コンパイラー:</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>置換をコンパイルして検証中…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>空欄の場合、一意の外部定義を選択</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>実行ファイル名または完全なパス</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>新しいバイナリを開く</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>保存した元の関数本体を呼ぶ外部関数名（任意）</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>元の関数本体のバインド:</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>コンパイル可能な C と元のバインドを準備中…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>置換バイナリを生成</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>公開結果</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>置換用の C ソース</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>置換関数:</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>置換を %1 に公開しました</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>C で関数を書き換え</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>解析が変わりました。コンパイル前にこのエディターを開き直してください。</translation>
     </message>
 </context>
 </TS>

@@ -40,6 +40,8 @@ namespace neverd {
 /// names no import, as for a slot holding `import + addend` or one that two
 /// imports claim.
 inline std::string importCalleeName(const BinaryImage &Img, va_t Addr) {
+  if (Img.functionHasBytePatch(Addr))
+    return {};
   const ImportStorageSlotCollection Storage =
       Img.collectImportStorageSlot(Addr);
   if (Storage.Conflicts.count(Addr))
@@ -61,6 +63,8 @@ inline std::string importCalleeName(const BinaryImage &Img, va_t Addr) {
 /// The C name of the import a call to \p Addr reaches, through its stub or
 /// its slot, or empty.
 inline std::string importCalleeCName(const BinaryImage &Img, va_t Addr) {
+  if (Img.functionHasBytePatch(Addr))
+    return {};
   std::string Name = importCalleeName(Img, Addr);
   if (Name.empty())
     if (const Import *Imp = Img.findImportStubAt(Addr))

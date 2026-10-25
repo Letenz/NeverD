@@ -63,6 +63,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdPaths.cpp
   cmd/NeverDCmdXrefs.cpp
   cmd/NeverDCmdDisasm.cpp
+  cmd/NeverDCmdBytePatch.cpp
   cmd/NeverDCmdMarkup.cpp
   cmd/NeverDCmdSearch.cpp
   cmd/NeverDCmdExport.cpp

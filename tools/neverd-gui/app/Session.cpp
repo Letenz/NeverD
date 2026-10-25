@@ -129,6 +129,8 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("function_delete"),
                                    QStringLiteral("function_edit"),
                                    QStringLiteral("item_define"),
+                                   QStringLiteral("patch_apply"),
+                                   QStringLiteral("patch_revert"),
                                    QStringLiteral("operand_format"),
                                    QStringLiteral("local_types_declare"),
                                    QStringLiteral("local_types_forget"),
@@ -144,12 +146,37 @@ bool silentFailure(const QString &status, const QString &code) {
          code == QLatin1String("worker_stopped") ||
          code == QLatin1String("session_changed");
 }
+
+QString patchLogBytes(const QString &bytes) {
+  const auto limit = ::neverd::limits::gui::kPatchLogHexCharacters;
+  return bytes.left(limit) +
+         (bytes.size() > limit ? QStringLiteral("…") : QString());
+}
+
+QString patchLogInstructions(const QJsonObject &plan, const QString &field) {
+  const auto rows = plan.value(field).toArray();
+  QStringList text;
+  for (const auto &value : rows) {
+    if (text.size() == ::neverd::limits::gui::kPatchLogInstructions)
+      break;
+    text.append(value.toObject().value("text").toString().simplified());
+  }
+  if (rows.size() > text.size() || plan.value(field + "_truncated").toBool())
+    text.append(QStringLiteral("…"));
+  return text.join(QStringLiteral("; "));
+}
 } // namespace
 
 Session::Session(QString workerPath, QObject *parent)
     : QObject(parent), queries_(&client_), analysis_(queries_, workerPath),
       workerPath_(std::move(workerPath)),
       sessionEpoch_(queries_.sessionEpoch()) {
+  connect(this, &Session::opened, this, &Session::refreshBytePatches);
+  connect(this, &Session::revisionChanged, this, &Session::refreshBytePatches);
+  connect(this, &Session::unloaded, this, [this] {
+    patchRanges_.clear();
+    emit bytePatchesChanged();
+  });
   queries_.setCacheBudgetMiB(::neverd::limits::gui::kSessionCacheMiB);
   connect(&analysis_, &AnalysisPool::diagnostic, this,
           [this](const QString &text) { emit message(text, 0); });
@@ -377,6 +404,30 @@ QueryService::SubscriptionId Session::read(const QString &operation,
           failed(code, text);
         else
           emit message(text, 1);
+      });
+}
+
+void Session::produceBinary(const QString &operation,
+                            const QJsonObject &payload, QObject *owner,
+                            Reply done, Failure failed) {
+  if (operation != "patch_export" && operation != "source_patch")
+    return;
+  const QPointer<QObject> alive(owner);
+  command(
+      operation, payload,
+      [this, operation, address = payload.value("address").toString(), alive,
+       done = std::move(done)](const QJsonObject &result) {
+        if (operation == "source_patch")
+          emit message(tr("Rewritten function at %1 saved to %2")
+                           .arg(address, result.value("path").toString()),
+                       0);
+        if (alive && done)
+          done(result);
+      },
+      [alive, failed = std::move(failed)](const QString &code,
+                                          const QString &message) {
+        if (alive && failed)
+          failed(code, message);
       });
 }
 
@@ -1161,6 +1212,48 @@ bool Session::acceptsEdit(std::optional<quint64> epoch) {
   return true;
 }
 
+void Session::editBytePatch(const QString &operation,
+                            const QJsonObject &request, quint64 epoch,
+                            std::function<void()> done, Failure failed) {
+  if ((operation != "patch_apply" && operation != "patch_revert") ||
+      !keepsBytePatches() || !acceptsEdit(epoch))
+    return;
+  if (dirty_)
+    save();
+  command(
+      operation, request,
+      [this, operation, request, done](const QJsonObject &result) {
+        const auto address = result.value("address").toString();
+        if (!result.value("saved").toBool()) {
+          emit message(tr("Patch at %1 made no changes.").arg(address), 0);
+        } else if (operation == "patch_revert") {
+          emit message(
+              tr("Restored original bytes at %1 (%2 ranges).")
+                  .arg(address)
+                  .arg(std::max(1,
+                                int(request.value("ranges").toArray().size()))),
+              0);
+        } else {
+          auto text =
+              tr("Applied patch at %1 (bytes: %2): %3 → %4")
+                  .arg(address)
+                  .arg(result.value("size").toInteger())
+                  .arg(patchLogBytes(result.value("original").toString()),
+                       patchLogBytes(result.value("current").toString()));
+          const auto before = patchLogInstructions(result, "covers");
+          const auto after = patchLogInstructions(result, "decoded");
+          if (!before.isEmpty() && !after.isEmpty())
+            text += '\n' + tr("Instructions: %1 → %2").arg(before, after);
+          emit message(text, 0);
+        }
+        refreshHistory();
+        emit functionsChanged();
+        if (done)
+          done();
+      },
+      std::move(failed));
+}
+
 void Session::editDataPresentation(const QString &operation,
                                    const QJsonObject &request, quint64 epoch) {
   if ((operation != "item_define" && operation != "operand_format") ||
@@ -1360,6 +1453,8 @@ void Session::undo() {
   if (!canUndo())
     return;
   command(QStringLiteral("undo"), {}, [this](const QJsonObject &payload) {
+    emit message(
+        tr("Undid edit at %1.").arg(payload.value("address").toString()), 0);
     history_ = payload;
     emit historyChanged();
   });
@@ -1369,6 +1464,8 @@ void Session::redo() {
   if (!canRedo())
     return;
   command(QStringLiteral("redo"), {}, [this](const QJsonObject &payload) {
+    emit message(
+        tr("Redid edit at %1.").arg(payload.value("address").toString()), 0);
     history_ = payload;
     emit historyChanged();
   });
@@ -1686,6 +1783,42 @@ void Session::executeContribution(const QString &id,
   // Contributions are declarative reads; they never mutate the project.
   read(QStringLiteral("contribution_execute"), payload, &reads_,
        [this](const QJsonObject &result) { emit contributionResult(result); });
+}
+
+bool Session::hasBytePatch(Address address, Address size) const {
+  if (!size)
+    return false;
+  auto it = std::lower_bound(
+      patchRanges_.begin(), patchRanges_.end(), address,
+      [](const auto &range, Address at) { return range.first < at; });
+  if (it != patchRanges_.end() && it->first - address < size)
+    return true;
+  if (it == patchRanges_.begin())
+    return false;
+  --it;
+  return address - it->first < it->second;
+}
+void Session::refreshBytePatches() {
+  patchRanges_.clear();
+  emit bytePatchesChanged();
+  if (!loaded_ || !keepsBytePatches())
+    return;
+  const auto before = revision();
+  const auto opened = epoch();
+  read("patches", {{"ranges_only", true}}, this,
+       [this, before, opened](const QJsonObject &rows) {
+         if (before != revision() || opened != epoch())
+           return;
+         for (const auto &value : rows.value("items").toArray()) {
+           const auto row = value.toObject();
+           const auto at = parseAddress(row.value("address").toString());
+           const auto size = row.value("size").toInteger();
+           if (at && size > 0)
+             patchRanges_.append({*at, Address(size)});
+         }
+         std::sort(patchRanges_.begin(), patchRanges_.end());
+         emit bytePatchesChanged();
+       });
 }
 
 } // namespace neverd::gui

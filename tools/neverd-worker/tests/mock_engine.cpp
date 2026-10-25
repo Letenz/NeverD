@@ -3,6 +3,7 @@
 #define NEVERD_EXPORTS 1
 #include "Protocol.h"
 
+#include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPILocalTypes.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
@@ -92,6 +93,7 @@ listedFunctions(const std::map<std::uint64_t, bool> &edits,
 constexpr std::uint64_t ChunkBegin = Base + 0x60;
 struct MockSession {
   std::string path, error;
+  std::map<uint64_t, Json> patches;
   /// Whether loading reads the debug information beside the input.
   bool debugInfo = true;
   /// Whether a load searches for the fixture PDB, and whether it found one.
@@ -421,6 +423,7 @@ int neverd_session_load(neverd_session_t s, const char *path) {
     return 0;
   }
   session(s)->path = path;
+  (void)neverd_byte_patches_load(s);
   project_files::migrate(std::filesystem::u8path(path));
   session(s)->loadedWith =
       session(s)->requestedLoad.is_null()
@@ -823,8 +826,8 @@ const char *neverd_resolve_addr(neverd_session_t s, neverd_va_t address) {
       {"linkage_name",
        name}}.dump());
 }
-int neverd_read_bytes(neverd_session_t, neverd_va_t address,
-                      unsigned char *buffer, int size) {
+int mock_original_bytes(neverd_session_t, neverd_va_t address,
+                        unsigned char *buffer, int size) {
   if (size >= 0 && address >= CodeBase &&
       address - CodeBase < sizeof(CodeBytes)) {
     const auto available = static_cast<int>(
@@ -3683,5 +3686,166 @@ const char *neverd_string_at(neverd_session_t s, neverd_va_t address,
                     .dump());
   session(s)->error = "no string starts at " + hexAddress(address);
   return nullptr;
+}
+int neverd_read_bytes(neverd_session_t s, neverd_va_t address,
+                      unsigned char *buffer, int size) {
+  const int n = mock_original_bytes(s, address, buffer, size);
+  for (int i = 0; i < n; ++i) {
+    const auto found = session(s)->patches.find(address + i);
+    if (found != session(s)->patches.end())
+      buffer[i] = std::stoul(found->second.at("current").get<std::string>(),
+                             nullptr, 16);
+  }
+  return n;
+}
+const char *neverd_byte_patch_preview(neverd_session_t s,
+                                      const neverd_byte_patch_options_v1 *o) {
+  if (!o || o->struct_size < sizeof(*o) || o->address < Base ||
+      o->address - Base >= CodeSize) {
+    session(s)->error = "unmapped patch";
+    return nullptr;
+  }
+  std::string hex = o->bytes ? o->bytes : "";
+  Json covers = Json::array();
+  // Fixed preview fixtures exercise UI consent, not an alternative assembler.
+  if (std::string(o->kind) == "assemble") {
+    const std::string text = o->text ? o->text : "";
+    if (text == "ret")
+      hex = "c390";
+    else if (text == "mov eax, 1") {
+      if (!o->allow_overlap) {
+        session(s)->error = "overlap requires consent";
+        return nullptr;
+      }
+      hex = "b8010000009090";
+      covers.push_back({{"address", hexAddress(o->address + 2)},
+                        {"size", 5},
+                        {"text", "mov eax, 48"}});
+    }
+    covers.push_back({{"address", hexAddress(o->address)},
+                      {"size", 2},
+                      {"text", "jne next"}});
+  }
+  if (std::string(o->kind) == "nop")
+    hex = "90";
+  if (hex.empty() || hex.size() % 2 ||
+      !std::all_of(hex.begin(), hex.end(),
+                   [](unsigned char c) { return std::isxdigit(c); }) ||
+      hex.size() / 2 > Base + CodeSize - o->address) {
+    session(s)->error = "invalid patch bytes";
+    return nullptr;
+  }
+  std::string before;
+  constexpr char digits[] = "0123456789abcdef";
+  for (size_t i = 0; i < hex.size() / 2; ++i) {
+    unsigned char b;
+    neverd_read_bytes(s, o->address + i, &b, 1);
+    before += digits[b >> 4];
+    before += digits[b & 15];
+  }
+  return copy(Json{{"address", hexAddress(o->address)},
+                   {"size", hex.size() / 2},
+                   {"kind", o->kind},
+                   {"original", before},
+                   {"current", hex},
+                   {"covers", covers},
+                   {"decoded", Json::array()},
+                   {"warnings", Json::array()}}
+                  .dump());
+}
+const char *neverd_byte_patch_apply(neverd_session_t s,
+                                    const neverd_byte_patch_options_v1 *o) {
+  const char *raw = neverd_byte_patch_preview(s, o);
+  if (!raw)
+    return nullptr;
+  const auto plan = Json::parse(raw);
+  if (o->expected && plan.at("original") != o->expected) {
+    std::free(const_cast<char *>(raw));
+    session(s)->error = "stale preview";
+    return nullptr;
+  }
+  const auto hex = plan.at("current").get<std::string>();
+  constexpr char digits[] = "0123456789abcdef";
+  for (size_t i = 0; i < hex.size() / 2; ++i) {
+    unsigned char b;
+    mock_original_bytes(s, o->address + i, &b, 1);
+    const std::string original{digits[b >> 4], digits[b & 15]};
+    const auto now = hex.substr(i * 2, 2);
+    if (original == now)
+      session(s)->patches.erase(o->address + i);
+    else
+      session(s)->patches[o->address + i] = {
+          {"addr", hexAddress(o->address + i - Base)},
+          {"file_off", hexAddress(o->address + i - Base)},
+          {"va", hexAddress(o->address + i)},
+          {"size", 1},
+          {"original", original},
+          {"current", now},
+          {"kind", o->kind}};
+  }
+  return raw;
+}
+int neverd_byte_patch_revert(neverd_session_t s, neverd_va_t address,
+                             uint64_t size) {
+  if (!size)
+    size = 1;
+  auto &rows = session(s)->patches;
+  for (auto it = rows.lower_bound(address);
+       it != rows.end() && it->first - address < size;)
+    it = rows.erase(it);
+  return 0;
+}
+const char *neverd_byte_patches_json(neverd_session_t s) {
+  Json rows = Json::array();
+  for (const auto &[at, row] : session(s)->patches)
+    rows.push_back(row);
+  return copy(rows.dump());
+}
+int neverd_byte_patches_load(neverd_session_t s) {
+  try {
+    std::map<uint64_t, Json> rows;
+    for (const auto &row :
+         read(projectFile(session(s)->path, project_files::File::Patches)))
+      rows.emplace(parseAddress(row.at("va").get<std::string>()), row);
+    session(s)->patches = std::move(rows);
+    return 0;
+  } catch (const std::exception &e) {
+    session(s)->error = e.what();
+    return -1;
+  }
+}
+int neverd_byte_patches_export(neverd_session_t s, const char *path, int) {
+  if (std::filesystem::exists(path)) {
+    session(s)->error = "output already exists";
+    return -1;
+  }
+  std::ifstream input(session(s)->path, std::ios::binary);
+  std::string data((std::istreambuf_iterator<char>(input)), {});
+  for (const auto &[at, row] : session(s)->patches) {
+    if (at - Base >= data.size()) {
+      session(s)->error = "invalid fixture export";
+      return -1;
+    }
+    data[at - Base] =
+        std::stoul(row.at("current").get<std::string>(), nullptr, 16);
+  }
+  std::ofstream(path, std::ios::binary).write(data.data(), data.size());
+  return 0;
+}
+const char *neverd_byte_patch_context_json(neverd_session_t s,
+                                           neverd_va_t address) {
+  unsigned char b;
+  if (neverd_read_bytes(s, address, &b, 1) != 1)
+    return nullptr;
+  constexpr char digits[] = "0123456789abcdef";
+  Json actions = {"bytes", "nop", "assemble"};
+  if (session(s)->patches.contains(address))
+    actions.push_back("revert");
+  return copy(Json{
+      {"address", hexAddress(address)},
+      {"bytes", std::string{digits[b >> 4], digits[b & 15]}},
+      {"text", "nop"},
+      {"actions",
+       actions}}.dump());
 }
 }

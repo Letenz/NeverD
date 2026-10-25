@@ -1143,6 +1143,126 @@
         <source>Export data...</source>
         <translation>导出数据...</translation>
     </message>
+    <message>
+        <source>Always branch</source>
+        <translation>始终跳转</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>汇编…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>修改唯一编码的立即数操作数</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>修改字节…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>修改立即数…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>将替换函数编译到新的二进制文件</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>编辑指令并实时预览字节</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>编辑当前地址的字节</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>将完整指令区间填充为 NOP</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>将选区填充为 NOP</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>查看字节补丁并选择性恢复</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>反转条件</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>NOP 指令</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>永不跳转</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>打开补丁菜单</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>补丁</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>已打补丁的二进制文件…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>已修改字节</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>将调用替换为 NOP</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>将调用替换为返回值寄存器赋值</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>将条件跳转替换为 NOP</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>将当前指令替换为 NOP</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>将全部字节补丁重放到新的二进制文件</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>恢复原始字节</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>恢复此补丁对应的输入字节</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>反转条件跳转</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>用 C 重写函数…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>跳过调用</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>跳过调用并返回指定值…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>无条件执行条件跳转</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1277,6 +1397,18 @@
     <message>
         <source>Disassembly</source>
         <translation>反汇编</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>操作</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>原始字节</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>已修改字节</translation>
     </message>
 </context>
 <context>
@@ -1518,6 +1650,10 @@
     <message>
         <source>Operand &amp;type</source>
         <translation>操作数类型(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>补丁</translation>
     </message>
 </context>
 <context>
@@ -3032,6 +3168,72 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Delete types…</source>
         <translation>删除类型…</translation>
     </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>应用字节补丁</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>修改前：
+%1
+修改后：
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>正在检查可用补丁…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>导出未签名二进制文件</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>补丁值无效。</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>原始：%1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>补丁</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>补丁值</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>已将打补丁的二进制文件写入 %1</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>修改后：%1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>生成已打补丁的二进制文件</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>移除签名元数据并导出未签名副本？</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>恢复所选原始字节</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>已将未签名的补丁文件写入 %1</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>无符号值（十进制或 0x 十六进制）：</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3386,6 +3588,34 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>
             <numerusform>已将 %n 个操作数显示为 %1 的成员</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>已在 %1 应用补丁（%2 字节）：%3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>指令：%1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>已恢复 %1 处的原始字节（%2 个范围）。</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>%1 处的补丁未产生变化。</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>已撤销 %1 处的修改。</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>已重做 %1 处的修改。</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>%1 处的重写函数已保存至 %2</translation>
     </message>
 </context>
 <context>
@@ -8409,6 +8639,156 @@ Secondary SHA-256: %3
     <message>
         <source>Start address:</source>
         <translation>起始地址：</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>应用补丁</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>汇编语法</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>汇编指令</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>字节显示已截断；完整范围为 %1 字节。</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>用 NOP 填充</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>十六进制字节</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>新值：%1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>原始：%1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>修改 %1 — Enter 应用，Esc 取消</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>正在准备预览…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>替换后续指令</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>检查覆盖到的指令，并启用替换后应用。</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>输入已更改，请重新打开补丁编辑器。</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>关闭</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>已准备 %1 个原始符号绑定，输出使用新文件。</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>与原件比较</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>编译为新的二进制文件…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>编译器路径：</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>编译器：</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>正在编译并验证替换函数…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>留空将选择唯一的外部定义</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>可执行文件名或完整路径</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>打开新二进制文件</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>可选的外部函数名称，用于调用保存的原函数体</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>原函数体绑定：</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>正在准备可编译的 C 和原始绑定…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>生成替换后的二进制文件</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>发布回执</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>替换函数的 C 源码</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>替换函数：</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>已将替换结果发布到 %1</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>用 C 重写函数</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>分析已更改，请在编译前重新打开此编辑器。</translation>
     </message>
 </context>
 </TS>

@@ -20,6 +20,7 @@
 #include "LinkDispatch.h"
 #include "LoadFileDialog.h"
 #include "NativeWindowStates.h"
+#include "PatchMenu.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
 #include "SymbolTablePromptDialog.h"
@@ -58,6 +59,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSet>
+#include <QSignalSpy>
 #include <QSplitter>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -517,6 +519,13 @@ private slots:
     for (auto *action : window.menuBar()->actions())
       if (action->menu())
         walk(action->menu());
+    // Patch is populated from the engine when opened. Its popup action and
+    // dynamic inventory share the production table; fixed keys/filtering are
+    // exercised by patchMenuUsesEngineChoicesAndFixedKeys below.
+    reachable.insert(registry.action(ActionId::EditPatchMenu));
+#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
+  reachable.insert(registry.action(ActionId::Id));
+#include "PatchMenu.def"
     for (auto *action : registry.allActions())
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
   }
@@ -748,7 +757,12 @@ private slots:
   for (const auto &key : idaKeys(QLatin1StringView(Shortcut)))                 \
     idaCommands.insert(key, QStringLiteral(IdaAction));
 #include "IdaActions.def"
-    QVERIFY(shared.size() > int(ActionId::Count) * 3 / 4);
+    int patchOnly = 1; // NeverD's menu opener, whose free key is tested below.
+#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
+  if (!shared.contains(registry.action(ActionId::Id)))                         \
+    ++patchOnly;
+#include "PatchMenu.def"
+    QVERIFY(shared.size() > (int(ActionId::Count) - patchOnly) * 3 / 4);
     for (auto *action : registry.allActions())
       if (!shared.contains(action) && !action->shortcut().isEmpty())
         QVERIFY2(!idaCommands.contains(action->shortcut()),
@@ -762,6 +776,61 @@ private slots:
              QList{QKeySequence(Qt::Key_Return)});
     QCOMPARE(idaKeys(QLatin1StringView("sys(ZoomOut)")),
              QKeySequence::keyBindings(QKeySequence::ZoomOut));
+  }
+
+  void patchShortcutsDoNotTakeHexRaysKeys() {
+    ActionRegistry registry;
+    QSet<QKeySequence> keys;
+#define NEVERD_HEXRAYS_KEY(Name, Key)                                          \
+  keys.insert(QKeySequence(QStringLiteral(Key)));
+#include "HexRaysShortcuts.def"
+    QVERIFY(keys.contains(QKeySequence("Z")));
+    const auto patch = registry.action(ActionId::EditPatchMenu)->shortcut();
+    QCOMPARE(patch, QKeySequence("J"));
+    QVERIFY(!keys.contains(patch));
+    QCOMPARE(registry.action(ActionId::EditPatchedBytes)->shortcut(),
+             QKeySequence("Ctrl+Alt+P"));
+    QVERIFY(registry.action(ActionId::EditPatchAssemble)->shortcut().isEmpty());
+  }
+
+  void patchMenuUsesEngineChoicesAndFixedKeys() {
+    ActionRegistry registry;
+    QMenu menu;
+    PatchMenu binding(&menu);
+    registry.action(ActionId::EditPatchNop)
+        ->setText(QString::fromUtf8("填充空指令"));
+    QSignalSpy nop(registry.action(ActionId::EditPatchNop),
+                   &QAction::triggered);
+    QSignalSpy rename(registry.action(ActionId::EditRename),
+                      &QAction::triggered);
+    binding.fill(registry, {"nop", "bytes"});
+    QCOMPARE(menu.actions().size(), 2);
+    menu.show();
+    QTest::keyClick(&menu, Qt::Key_N);
+    QCOMPARE(rename.size(), 0);
+    QTest::keyClick(&menu, Qt::Key_J);
+    QCOMPARE(nop.size(), 1);
+    QMenu pending;
+    PatchMenu waiting(&pending);
+    pending.show();
+    QTest::keyClick(&pending, Qt::Key_J);
+    waiting.fill(registry, {"nop"});
+    QCOMPARE(nop.size(), 2);
+  }
+
+  void cancelledPatchMenuDiscardsItsPendingKey() {
+    ActionRegistry registry;
+    QMenu menu;
+    PatchMenu binding(&menu);
+    menu.addAction(QStringLiteral("Checking available patches"));
+    QSignalSpy nop(registry.action(ActionId::EditPatchNop),
+                   &QAction::triggered);
+    menu.show();
+    QTest::keyClick(&menu, Qt::Key_J);
+    QTest::keyClick(&menu, Qt::Key_Escape);
+    QVERIFY(!menu.isVisible());
+    binding.fill(registry, {"nop"});
+    QCOMPARE(nop.size(), 0);
   }
 
   void everyIconRenders() {
@@ -1060,6 +1129,9 @@ private slots:
     QVERIFY(write(binary + ".neverd/debug.json", R"({"pdb":{"mode":"none"}})"));
     QVERIFY(write(binary + ".neverd/types.json", R"({"types":["struct T"]})"));
     QVERIFY(write(binary + ".neverd/items.json", "[]"));
+    QVERIFY(write(
+        binary + ".neverd/patches.json",
+        R"([{"addr":"0x0","file_off":"0x0","va":"0x0","size":1,"original":"90","current":"cc","kind":"bytes"}])"));
     // A workbench file is the user's own; a database keeps its own state.
     QVERIFY(write(binary + ".neverd/local/workbench.json", "{}"));
 
@@ -1087,6 +1159,8 @@ private slots:
              read(binary + ".neverd/bookmarks.json"));
     QCOMPARE(read(unpacked + ".neverd/debug.json"),
              read(binary + ".neverd/debug.json"));
+    QCOMPARE(read(unpacked + ".neverd/patches.json"),
+             read(binary + ".neverd/patches.json"));
 
     // A database written before it named the files it packs packed no local
     // types: unpacking it keeps the types beside the input, while a table it
