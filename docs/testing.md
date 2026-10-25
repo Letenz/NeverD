@@ -448,7 +448,7 @@ they do not qualify native execution or standalone cache reconstruction.
 `NeverDDebugInfoTests` rejects automatic container companion discovery while
 retaining explicit per-image debug-file diagnostics.
 
-`HighCPointerAddresses.CompilerDispatchDoesNotDependOnIncludes` checks all five
+`HighCPointerAddresses.CompilerDispatchDoesNotDependOnIncludes` checks seven
 x86 compiler-dispatch families through HighC and LLVMC, across COFF/ELF/Mach-O.
 Disabling includes must retain the required definitions; each unmodified source
 unit is syntax-checked for the Windows x64 target with externally supplied
@@ -472,6 +472,41 @@ sequence. `--pipeline-only` reruns that stage without repeating the wrappers.
 These controlled completions do not qualify physical atomicity or hardware
 faults. `NeverDCodegenDiagnosticTests` requires an allocation error to reject
 an otherwise parseable object, retaining the caller's diagnostic handler.
+
+`NeverDX86LegacyEncodingSourceTests` reuses the atomic boundary fixtures with
+the legacy RAO/VEX CMPccXADD inventory. Set `NEVERD_LEGACY_ATOMIC_EXPORT_DIR`
+and pass `--legacy` to `verify_x86_apx_atomic.py` for the x86-64 wrappers and
+504 decoded pipeline cases. Its i386 fixtures add 112 wrappers per format
+and 144 decoded pipelines. `scripts/verify_x86_legacy_atomic_i386.py` checks
+their production/LLVM objects and Clang C output at O0/O2, including 16-bit
+effective addressing, all explicit segment controls, aliased ordinary
+memory, repeated transactions, cdecl preservation and returned flags.
+Its Mach-O test loader retains literal-pool layout and validates local
+section-difference relocation pairs before controlled execution.
+
+The atomic semantic suite checks legacy/VEX raw-detail disagreement,
+address wrapping, every CMPccXADD condition and unknown-input refusal.
+Its HLE admission regression rejects 978 prefix/family/mode/decode combinations
+before any LowIR effects, including permissive requests. Unrelated repeat and
+mandatory prefixes remain valid. `NeverDPipelineOutcomeTests` checks that
+unsupported HLE bodies cannot yield successful empty lift/patch modules across
+x86/x64 and ELF/COFF/Mach-O, while read-only analysis retains its audit and
+intentional runtime exclusions remain valid.
+`X86SystemState.TransactionQueryDefinesAllArithmeticFlags` supplies both
+XTEST completions against every incoming arithmetic-flag combination in both
+code modes, retaining DF/GPRs and refusing invented ambient transaction state.
+The source suite carries those flags through LAHF/SETO and compiles native LLVM,
+HighC and LLVM-to-C across ELF/COFF/Mach-O at O0/O2, including NeverC on x64.
+The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
+whose original abort target and checkpoint are absent.
+Both source inventories reject incomplete address fragments in addresses
+and stored/comparator values. i386 decoded absolute-address fixtures also
+check that a complete narrow displacement is normalized as a full address,
+without disguising an unresolved relocation fragment as one.
+Selected image-address tests check both atomic encoding inventories across
+ELF/COFF/Mach-O, including both orders of an incomplete arm and raw FS offsets.
+The shared native memory owner is also covered by the AArch64/x86-64 ELF/PE
+rematerialized-table recurrence in `NeverDNativePointerRelocationBoundaryTests`.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -1740,8 +1775,8 @@ allocations after the active operand list shrinks.
 
 ## Acceleration libraries
 
-The bounded byte/Unicode, JSON and scheduler contracts can be checked without
-LLVM. This includes the default oneTBB scheduler and mimalloc:
+The bounded byte/Unicode, ordered integer search, JSON and scheduler contracts
+can be checked without LLVM. This includes the default oneTBB scheduler and mimalloc:
 
 ```bash
 cmake -S unittests/acceleration -B build-acceleration -G Ninja \
@@ -1755,6 +1790,24 @@ set to `OFF` for the native/scalar/parser baseline; allocator settings remain
 independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
 AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
 pass. The acceleration CI also runs installed binaries on each native host.
+
+`SortedSearch.*` compares ranks against independent counts, checks every
+insertion point across narrowed tails, and puts read-only input against an
+inaccessible page. It exercises every supported/generated Highway target,
+including unsigned high-bit addresses and duplicate keys. Test XML records the
+targets and, on Linux ARM64 with SVE, the actual vector length. For example,
+QEMU's `-cpu max,sve-max-vq=3` exercises 384-bit SVE, whose lane count does not
+divide the fixed tail. Emulation checks correctness, not native speed.
+
+The optional `neverd-sorted-search-bench` target accepts `std`, `simd`, or, in
+the full build, `owner`, followed by sorted keys and query files containing
+hexadecimal unsigned integers. An optional final Highway target name selects
+a supported implementation. It validates the complete result vector and
+reports warm lookup wall/process CPU time; parsing, reference computation,
+allocation and index construction are outside the clock. Compare `owner`
+between baseline and candidate builds to include the real
+`BinaryImage::hasFunctionSymbolAt` call. Use identical inputs and build settings,
+alternate process order, and keep builds/tests/profilers outside timing runs.
 
 `NeverDSharedSchedulerTests` reproduces the core, component-archive, CLI and
 plugin link boundaries. Its callbacks and exceptions must cross those
@@ -2506,14 +2559,19 @@ input-field sizes with the platform's GeneralFont reading size, preserve
 explicit choices across theme changes, and exercise fractional/pixel-sized
 zoom and resetting to the platform default. These cases run in the existing
 Windows/macOS native 100% and 150% appearance jobs as well as offscreen.
-The tab-close check measures the visible glyph in logical pixels on both plain
-and actual docking tabs, in both themes. This catches a docking-local native
-style shrinking only the close button, which a plain-widget screenshot misses.
+The tab-close check measures the visible glyph and its distance from the tab's
+right edge in logical pixels on both plain and actual docking tabs, in both
+themes. This catches a docking-local native style shrinking only the close
+button, which a plain-widget screenshot misses, and a correctly sized glyph
+crowded against the edge despite padding around the tab text.
 
 The menu case injects macOS's hidden-icon default and checks registry actions
-and Output's dynamically created context menu after theme application. Screenshot
-color checks convert logical points using the captured image's device-pixel
-ratio. Cocoa native-pointer docking cases skip when
+and Output's dynamically created context menu after theme application. The
+menu-column case measures the painted icon-to-label gap, checks that plain,
+checkable and submenu labels align, and that a checked icon's border does not
+move its glyph. Optional captures include File, Edit and Options menus in both
+themes. Screenshot color checks convert logical points using the captured
+image's device-pixel ratio. Cocoa native-pointer docking cases skip when
 `CGPreflightPostEventAccess()` denies event posting; report that missing coverage
 separately from passing offscreen behavior.
 

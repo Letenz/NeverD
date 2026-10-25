@@ -699,7 +699,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
           (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
            x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
            isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
-           isApxAtomicIntrinsic(E.IntrinsicId) ||
+           isX86AtomicIntrinsic(E.IntrinsicId) ||
            isX86CompactMemory(E.IntrinsicId) ||
            E.IntrinsicId == Intrinsic::X86FourSourceMemory ||
            E.IntrinsicId == Intrinsic::X86AMXState);

@@ -14,7 +14,7 @@ from pathlib import Path
 import sys
 
 
-def qualify_pipeline(oracle, obj, case, windows):
+def qualify_pipeline(oracle, obj, case, windows, legacy=False):
     """Compare the recovered return with original CMP/LAHF/SETO semantics."""
     binary = oracle.lief.parse(str(obj))
     text = oracle.text_section(binary)
@@ -24,6 +24,7 @@ def qualify_pipeline(oracle, obj, case, windows):
     native = oracle.decode(code)
     assert len(native) == 1, (obj, native)
     at, insn = next(iter(native.items()))
+    assert insn.get("legacy", False) == legacy, (obj, "encoding family changed")
     assert tuple(insn[k] for k in ("op", "bits", "segment", "cc")) == (
         case["operation"], case["bits"], case["segment"], case["condition"])
     # LowIR has already wrapped the effective offset. Its native operation
@@ -88,6 +89,7 @@ def main():
     parser.add_argument("--pipeline", action="store_true")
     parser.add_argument("--pipeline-only", action="store_true",
                         help="qualify decoded pipeline exports without repeating wrapper compilation")
+    parser.add_argument("--legacy", action="store_true")
     args = parser.parse_args()
     spec = importlib.util.spec_from_file_location("apx_reference", args.oracle)
     oracle = importlib.util.module_from_spec(spec)
@@ -99,7 +101,7 @@ def main():
     for name, triple in ([] if args.pipeline_only else zip(("elf", "coff", "macho"), oracle.TRIPLES)):
         obj = args.exports / ("atomic-" + name + ".o")
         reports.append({"route": "production-object", "triple": triple,
-                        **oracle.qualify(obj, matrix, name == "coff")})
+                        **oracle.qualify(obj, matrix, name == "coff", args.legacy)})
     for opt, triple in ([] if args.pipeline_only else itertools.product(("O0", "O2"), oracle.TRIPLES)):
         index = oracle.TRIPLES.index(triple)
         ir = args.exports / "atomic.ll"
@@ -111,7 +113,7 @@ def main():
         oracle.run([args.llc, "-mtriple=" + triple, "-" + opt,
                     "-verify-machineinstrs", "-filetype=obj", selected, "-o", obj])
         reports.append({"route": "llvm", "optimization": opt, "triple": triple,
-                        **oracle.qualify(obj, matrix, index == 1)})
+                        **oracle.qualify(obj, matrix, index == 1, args.legacy)})
         for route, compiler in itertools.product(("high", "llvm"), (args.clang, args.compiler, args.gcc)):
             gcc = compiler == args.gcc
             if gcc and index:
@@ -126,7 +128,7 @@ def main():
                 command += ["-fno-builtin-mimalloc", "-mllvm", "-verify-machineinstrs"]
             oracle.run(command)
             reports.append({"route": route, "compiler": str(compiler), "optimization": opt,
-                            "triple": triple, **oracle.qualify(output, matrix, index == 1)})
+                            "triple": triple, **oracle.qualify(output, matrix, index == 1, args.legacy)})
         print({"optimization": opt, "triple": triple, "qualified_programs": len(reports)}, flush=True)
     pipeline, pipeline_checks, pipeline_objects = 0, 0, 0
     if not args.pipeline_only:
@@ -140,7 +142,7 @@ def main():
         for obj in objects:
             triple = formats[obj.stem.split("-")[1]]
             case = json.loads(obj.with_suffix(".json").read_text())
-            pipeline_checks += qualify_pipeline(oracle, obj, case, "windows" in triple)
+            pipeline_checks += qualify_pipeline(oracle, obj, case, "windows" in triple, args.legacy)
             pipeline_objects += 1
         for source in sources:
             index, format_id, route = source.stem.split("-")
@@ -154,7 +156,7 @@ def main():
                 if compiler == args.compiler:
                     command += ["-fno-builtin-mimalloc", "-mllvm", "-verify-machineinstrs"]
                 oracle.run(command)
-                pipeline_checks += qualify_pipeline(oracle, output, case, "windows" in triple)
+                pipeline_checks += qualify_pipeline(oracle, output, case, "windows" in triple, args.legacy)
                 pipeline += 1
             if pipeline % 336 == 0:
                 print({"pipeline_source_compilations": pipeline, "pipeline_checks": pipeline_checks}, flush=True)
