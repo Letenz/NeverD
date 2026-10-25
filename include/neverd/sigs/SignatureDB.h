@@ -306,12 +306,16 @@ private:
   /// of \p Entries, the addresses the matches were looked for at.
   void applyCallerContext(const BinaryImage &Img,
                           llvm::ArrayRef<uint64_t> Entries);
+  void applyCallerContextRound(const BinaryImage &Img,
+                               llvm::ArrayRef<uint64_t> Entries,
+                               size_t FrozenMatches, size_t FirstParent);
   /// A nonzero FrozenMatches validates only later incoming candidates, against
   /// the frozen prefix. Their outcomes cannot change anchors or feed another
-  /// candidate: the same resolver performs one validation pass.
+  /// candidate: the same resolver performs one validation pass. FirstChecked
+  /// skips earlier validated incoming rows without making them evidence.
   void checkReferences(const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
                        std::vector<SignatureMatcher::Hit> Hits,
-                       size_t FrozenMatches = 0);
+                       size_t FrozenMatches = 0, size_t FirstChecked = 0);
 
   /// Add \p Mods, the modules of \p Src, in place of those of a source with
   /// the same path or after every other source.

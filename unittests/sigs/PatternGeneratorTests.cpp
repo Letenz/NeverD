@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <string>
@@ -649,7 +650,7 @@ TEST(PatternGeneratorCOFF, CanonicalIndirectImportsRetainTheirReferences) {
 
 TEST(PatternGeneratorCOFF, PrefixedOrTruncatedImportFieldsAreNotGuessed) {
   for (const uint8_t Prefix : {0xf0, 0xf2, 0xf3, 0x2e, 0x36, 0x3e, 0x26, 0x64,
-                               0x65, 0x66, 0x67, 0x48}) {
+                               0x65, 0x66, 0x67, 0x49, 0x4c, 0x4f}) {
     const std::vector<uint8_t> Code{Prefix, 0xff, 0x15, 0, 0, 0, 0};
     EXPECT_EQ(coffBranchReferenceOffset(COFF::IMAGE_FILE_MACHINE_AMD64,
                                         COFF::IMAGE_REL_AMD64_REL32, Code, 3,
@@ -662,6 +663,48 @@ TEST(PatternGeneratorCOFF, PrefixedOrTruncatedImportFieldsAreNotGuessed) {
                                         COFF::IMAGE_REL_AMD64_REL32,
                                         ArrayRef(Code).take_front(Size), 2, 0),
               std::nullopt);
+}
+
+TEST(PatternGeneratorCOFF, CanonicalREXWImportsUseTheSameSlotField) {
+  for (const uint8_t ModRM : {0x15, 0x25}) {
+    std::vector<uint8_t> Code(32, 0x90);
+    Code[3] = 0x48;
+    Code[4] = 0xff;
+    Code[5] = ModRM;
+    COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+    Builder.addFunction("caller", 0);
+    Builder.setRelocationTarget("__imp_RuntimeAPI");
+    Builder.addRelocation(6, COFF::IMAGE_REL_AMD64_REL32);
+    PatternGeneratorOptions Opts;
+    Opts.EmitReferences = true;
+    const auto Out = generate(Builder.build(), Opts);
+    ASSERT_EQ(Out.Lines.size(), 1u);
+    auto Mod = PatternParser::parseLine(Out.Lines.front());
+    ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+    ASSERT_EQ(Mod->References.size(), 1u);
+    EXPECT_EQ(Mod->References.front().Name, "__imp_RuntimeAPI");
+    EXPECT_EQ(Mod->References.front().Offset, 6u);
+
+    // Address/segment, mandatory and additional REX prefixes stay outside
+    // this canonical form. A truncated displacement is never an import.
+    for (uint8_t Prefix : {0x64, 0x65, 0x66, 0x67, 0xf2, 0xf3, 0x40, 0x48}) {
+      const uint8_t Prefixed[] = {Prefix, 0x48, 0xff, ModRM, 0, 0, 0, 0};
+      EXPECT_EQ(coffBranchReferenceOffset(COFF::IMAGE_FILE_MACHINE_AMD64,
+                                          COFF::IMAGE_REL_AMD64_REL32, Prefixed,
+                                          4, 0),
+                std::nullopt);
+    }
+    const uint8_t Bare[] = {0x48, 0xff, ModRM, 0, 0, 0, 0};
+    EXPECT_EQ(coffBranchReferenceOffset(COFF::IMAGE_FILE_MACHINE_AMD64,
+                                        COFF::IMAGE_REL_AMD64_REL32, Bare, 3,
+                                        0),
+              3u);
+    for (size_t Size = 3; Size < std::size(Bare); ++Size)
+      EXPECT_EQ(coffBranchReferenceOffset(
+                    COFF::IMAGE_FILE_MACHINE_AMD64, COFF::IMAGE_REL_AMD64_REL32,
+                    ArrayRef(Bare).take_front(Size), 3, 0),
+                std::nullopt);
+  }
 }
 
 TEST(PatternGeneratorCOFF, PrimaryVTableAddressesRetainExactTypeReferences) {

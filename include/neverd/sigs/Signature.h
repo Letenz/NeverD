@@ -69,7 +69,8 @@ struct PatternModule {
   bool RequireReferences : 1 = false;
   /// `!caller`: indexed by expected linkage name only. A complete, strong,
   /// settled caller must unanimously name this target at a reference site.
-  /// Such candidates never support further reference propagation.
+  /// A supported complete, strong body can extend a rooted incoming chain;
+  /// its descendants never confirm its outgoing references.
   bool RequireCaller : 1 = false;
 
   uint32_t TotalLen = 0;
@@ -88,7 +89,8 @@ struct PatternModule {
   /// the routines two builds of the same bytes call there -- and any of them
   /// confirms it.  The bytes there are wildcards, so matching checks the
   /// target separately; see SignatureDB::apply. COFF x86/x64 also supports
-  /// the four-byte field of unprefixed FF 15/FF 25 import calls/jumps, named
+  /// the four-byte field of FF 15/FF 25 import calls/jumps, either unprefixed
+  /// or with a single canonical REX.W prefix in x64, named
   /// `__imp_<export>`. Only an exact name at the addressed, mapped IAT slot
   /// confirms that reference; absent or different spellings are unknown.
   /// A COFF x64 RIP-relative LEA can reference a primary MSVC vftable by its
@@ -133,7 +135,8 @@ struct StoredModule {
   bool RequireReferences : 1 = false;
   /// `!caller`: indexed by expected linkage name only. A complete, strong,
   /// settled caller must unanimously name this target at a reference site.
-  /// Such candidates never support further reference propagation.
+  /// A supported complete, strong body can extend a rooted incoming chain;
+  /// its descendants never confirm its outgoing references.
   bool RequireCaller : 1 = false;
 
   bool isStated(size_t Byte) const {
@@ -193,7 +196,7 @@ struct SigMatch {
   /// A frozen, complete caller unanimously references this exact name at
   /// this address. Its outgoing constraints have no known contradiction.
   /// Multiple such incoming names are candidate aliases at the same target;
-  /// they cannot prove source identity or propagate to further candidates.
+  /// they cannot prove source identity or confirm an ancestor's references.
   bool CallerConfirmed = false;
 };
 

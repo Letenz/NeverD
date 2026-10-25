@@ -1067,16 +1067,33 @@ std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
 
 void SignatureDB::applyCallerContext(const BinaryImage &Img,
                                      llvm::ArrayRef<uint64_t> Entries) {
-  const auto &Idx = index();
-  if (!Idx.hasCallerModules() || Matches.empty())
+  if (!index().hasCallerModules() || Matches.empty())
     return;
+  const size_t FrozenMatches = Matches.size();
+  size_t FirstParent = 0;
+  for (size_t Round = 0; Round < MaxIncomingRounds; ++Round) {
+    const size_t Before = Matches.size();
+    applyCallerContextRound(Img, Entries, FrozenMatches, FirstParent);
+    if (Matches.size() == Before)
+      break;
+    FirstParent = Before;
+  }
+}
 
-  // Freeze the outgoing-reference result. Incoming evidence cannot certify
-  // its own anchor or propagate to another generation of weak candidates.
+void SignatureDB::applyCallerContextRound(const BinaryImage &Img,
+                                          llvm::ArrayRef<uint64_t> Entries,
+                                          size_t FrozenMatches,
+                                          size_t FirstParent) {
+  const auto &Idx = index();
+
+  // Extend only the latest supported frontier. All rounds validate their
+  // outgoing constraints against the same original result, so descendants
+  // cannot confirm or change the proof of an ancestor. A target already
+  // named by a preceding round is never a new request, including cycle edges.
   const auto Names = buildCandidateNameMap();
   const size_t OriginalMatches = Matches.size();
   std::map<uint64_t, std::vector<size_t>> At;
-  for (size_t I = 0; I < Matches.size(); ++I) {
+  for (size_t I = FirstParent; I < OriginalMatches; ++I) {
     const auto Name = Names.find(Matches[I].Address);
     if (Name != Names.end() &&
         (Matches[I].Name == Name->second ||
@@ -1090,9 +1107,10 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
         Anchored = false;
         break;
       }
+      const bool Incoming = I >= FrozenMatches && Matches[I].CallerConfirmed;
       I = MatchModules[I];
       const StoredModule &Mod = Modules[I];
-      if (Mod.RequireReferences || Mod.RequireCaller ||
+      if (((Mod.RequireReferences || Mod.RequireCaller) && !Incoming) ||
           !SignatureMatcher::isFullyVerified(Mod) ||
           SignatureMatcher::fixedByteCount(Mod) <
               SignatureMatcher::MinStatedBytes ||
@@ -1283,7 +1301,7 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
   // Validate incoming bodies' own references with the same resolver. Existing
   // candidates are frozen; new candidates cannot certify one another or feed
   // back into the caller that requested them.
-  checkReferences(Img, Entries, {}, OriginalMatches);
+  checkReferences(Img, Entries, {}, FrozenMatches, OriginalMatches);
   llvm::DenseSet<uint64_t> ValidRefinements;
   llvm::DenseSet<CandidateKey> Viable;
   for (size_t I = OriginalMatches; I < Matches.size(); ++I)
@@ -1339,9 +1357,10 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
 void SignatureDB::checkReferences(const BinaryImage &Img,
                                   llvm::ArrayRef<uint64_t> Entries,
                                   std::vector<SignatureMatcher::Hit> Hits,
-                                  size_t FrozenMatches) {
+                                  size_t FrozenMatches, size_t FirstChecked) {
+  const size_t First = std::max(FrozenMatches, FirstChecked);
   bool AnyReferences = false;
-  for (size_t I = FrozenMatches; I < MatchModules.size(); ++I)
+  for (size_t I = First; I < MatchModules.size(); ++I)
     AnyReferences |= MatchModules[I] != NoModule &&
                      Modules[MatchModules[I]].ReferenceCount != 0;
   if (!AnyReferences)
@@ -1407,7 +1426,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   std::vector<uint8_t> Unconfirmable;
   for (size_t I = 0; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
-    if (I < FrozenMatches)
+    if (I < First)
       continue;
     llvm::SmallVector<StoredName, 8> References(ReferencesOf(I).begin(),
                                                 ReferencesOf(I).end());
@@ -1529,6 +1548,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   llvm::DenseSet<Entry> DisprovedPatterns;
   std::vector<Entry> Calling, At;
   for (size_t I = 0; I < Matches.size(); ++I) {
+    if (I >= FrozenMatches && I < First)
+      continue;
     if (!Unconfirmable.empty() && Unconfirmable[I])
       continue;
     At.emplace_back(Matches[I].Address, I);
@@ -1602,7 +1623,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   llvm::DenseMap<uint64_t, const Import *> ImportStubs;
   std::vector<bool> Dropped(Matches.size(), false);
   for (size_t I = 0; I < Matches.size(); ++I)
-    Dropped[I] = I >= FrozenMatches && RequiresReferences(I);
+    Dropped[I] = I >= First && RequiresReferences(I);
   auto SettleAt = [&](uint64_t Address) {
     llvm::SmallVector<const SigMatch *, 4> Proposals;
     for (const Entry &Match : Range(At, Address))
@@ -1709,7 +1730,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // The first round checks every match with references; a round with many
   // to check checks them in parallel, against what the last one settled.
   std::vector<size_t> Work;
-  for (size_t I = FrozenMatches; I < Matches.size(); ++I)
+  for (size_t I = First; I < Matches.size(); ++I)
     if (!ReferencesOf(I).empty() &&
         (Unconfirmable.empty() || !Unconfirmable[I]))
       Work.push_back(I);

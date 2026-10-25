@@ -5861,8 +5861,12 @@ constraint; producer tests keep the ordinary byte floor and require complete
 bodies for contextual patterns. The Python supplement tests retain short and
 discarded counterclaims across independently selected packs.
 `SignatureDBCallerContext.*` checks incoming support, full-body disagreement,
-entry scope, variant consensus, and refusal of weak, partial, ambiguous,
-required or contradicted anchors. `SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
+entry scope, complete alternatives, variant consensus, and refusal of weak,
+partial, ambiguous, required or contradicted initial anchors. Rooted chains
+exercise both input orders, independent frozen validation, weak intermediate
+bodies, unrooted cycles and the depth budget. Cache tests run pieces in reverse
+order and reject invalid caller offsets and CRC coverage without depending on
+another worker's materialized names. `SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
 adds 4096 short records while retaining exactly one scheduled ordinary byte
 check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
 cache and generator tests preserve the caller constraint. The SDK profile
@@ -5878,7 +5882,8 @@ automatic load retains the previous successful database and statistics.
 public C SDK, including header JSON counts and their manual-load reset.
 Its naming cases exercise PE exports and stripped PE, ELF x64/ARM64 and Mach-O:
 candidates stay visible without replacing function names, and evidence for one
-alias does not certify the others. `SignatureDBIdentity.*` covers confirmed
+alias does not certify the others. Streamed candidate JSON retains escaping,
+UTF-8 repair, aliases and admission fields. `SignatureDBIdentity.*` covers confirmed
 references without source identity, stated names, data/analysis/user symbols,
 failed reloads and evidence withdrawal. `PersonalitySignatures.*` keeps the
 dedicated exception-context path. `SafetyCAPI.SignatureCandidateCannotInventSafetySinkIdentity`

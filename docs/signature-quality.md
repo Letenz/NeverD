@@ -34,6 +34,10 @@ unresolved aliases, ordinal imports, duplicate slots and different spellings
 remain unknown, and unsupported prefixed instructions are not guessed. The
 slot is data, so reference checking never scans it as a function. Confirmation
 still does not establish the caller's independent source identity.
+The x64 form also accepts one canonical REX.W prefix, including the indirect
+tail jumps emitted for Windows; LLVM describes this encoding in its
+[X86 control-flow definitions](https://github.com/llvm/llvm-project/blob/main/llvm/lib/Target/X86/X86InstrControl.td).
+Additional address, segment, mandatory or REX prefixes remain unsupported.
 
 For x64 COFF, a canonical RIP-relative address of a primary MSVC vftable
 can also supply its exact mangled type. The loader checks its complete-object
@@ -67,11 +71,19 @@ variant of that name must state the same complete set of alternatives at the
 same site. A site with several alternatives needs complete native bodies for
 every alternative and exactly one name surviving body and frozen reference
 checks. Missing alternatives or multiple surviving names leave it unresolved.
-Ambiguous, partial or context-dependent callers cannot anchor a request.
+Ambiguous or partial callers cannot anchor a request. Context-dependent
+callers cannot start a chain without a complete ordinary root.
 Only requested executable entries without a settled candidate are eligible.
-An incoming candidate cannot support another round of inference. Its own
-outgoing references are checked by the same resolver against the frozen prior
-result: contradictions reject it, and missing evidence remains unknown. Multiple
+An incoming candidate with complete coverage and the ordinary fixed-byte floor
+can extend a rooted chain. Each round visits only its new frontier, up to
+`MaxIncomingRounds` in `lib/sigs/ReferenceCheckLimits.def`; short bodies do not
+extend it. A previously named target cannot form a new edge back into the
+chain, so unrooted cycles cannot bootstrap it. Every generation checks its own
+outgoing references with the same resolver against the frozen prior
+result from before incoming inference: contradictions reject it, and missing
+evidence remains unknown. Descendants never confirm an ancestor's references
+or change its supporting proof. Reaching the depth budget leaves the supported
+prefix intact and its unexplored descendants unknown. Multiple
 validated incoming names at one target are retained as candidate aliases. Only
 names actually requested by those callers participate; matching bytes do not
 import additional nominal names from the source pattern. This adds suggestions, never

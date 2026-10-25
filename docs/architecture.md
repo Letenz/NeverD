@@ -1910,9 +1910,13 @@ The signature database owns this decision; SDK, CLI and worker consume it.
 Native `!refs` candidates require all outgoing context before settlement;
 `!caller` records are separate name-indexed bodies requested only after that
 settlement by a complete, strong and unambiguous ordinary caller. Incoming
-requests never change their anchors or feed another inference round. Both
+requests never change their anchors' outgoing evidence. Complete, strong
+incoming bodies can extend a bounded rooted chain, with every generation
+validated against the same original outgoing result. Only new frontiers are
+visited; short bodies and unrooted cycles cannot extend them. Both forms
 remain candidate evidence under the same identity boundary. The shared name
-index reuses existing and supplemental complete bodies. Source
+index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
+claims are not opted into incoming inference merely by loading them. Source
 refinements of ordinary anchors share the frozen reference validation pass;
 contradicted refinements withdraw only the incoming names they supported.
 The matcher owns byte/index behavior, the database owns reference settlement, and the COFF

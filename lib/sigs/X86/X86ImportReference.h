@@ -48,7 +48,8 @@ inline bool isX86ReferencePrefix(uint8_t Byte, bool Is64Bit) {
 }
 
 /// FF /2 and FF /4 with mod=00, r/m=101: an absolute 32-bit slot in i386,
-/// or a RIP-relative slot in x64. Offset names the four-byte address field.
+/// or a RIP-relative slot in x64, also with a single canonical REX.W prefix.
+/// Offset names the four-byte address field, including in Win64 tail jumps.
 inline bool isX86ImportReferenceField(llvm::ArrayRef<uint8_t> Code,
                                       size_t Offset, bool Is64Bit) {
   if (Offset < x86::kJmpIndirectDispOffset || Offset > Code.size() ||
@@ -62,6 +63,8 @@ inline bool isX86ImportReferenceField(llvm::ArrayRef<uint8_t> Code,
     return false;
   if (Opcode == 0)
     return true;
+  if (Is64Bit && Code[Opcode - 1] == 0x48)
+    return Opcode == 1 || !isX86ReferencePrefix(Code[Opcode - 2], true);
   // With no decoded boundary before FF, even a prefix-looking final byte
   // of the preceding instruction is conservatively left unsupported. In
   // particular, address/segment overrides must not acquire RIP semantics.
