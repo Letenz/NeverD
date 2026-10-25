@@ -12,6 +12,8 @@ the component level. The C renderer groups its architecture helpers, intrinsic
 spelling tables and HighC/LLVMC adapters together under `render/<architecture>/`;
 its route-independent interfaces retain `render/HighC/` and `render/LLVMC/`.
 LLVM architecture headers mirror the existing backend implementation directories.
+The shared LLVM-to-C intrinsic spelling table includes the x86 entries from
+`ir/intrinsics/X86/`; generic names remain in the common table.
 Decoder, lifter, IR state, ABI and translation files follow the same ownership.
 Execution models and unpacking adapters extend their existing `arch/<target>/`
 layout, including the public execution models.
@@ -126,6 +128,11 @@ SHA-256 vector projections participate in the same feature set, including the
 SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
 shape before selecting a compiler intrinsic.
 
+`X86SystemStateNative` also owns the RTM and CLZERO target requirements for
+native system calls. LLVM emission adds those requirements to the completed
+function without replacing its other family features, so standalone LLVM IR
+retains the instruction-selection contract used by the C routes.
+
 Source LLVM may retain loaded-image data in one external byte array, preserving
 overlapping scalar fields, pointer cells and original address differences.
 `LLVMOriginalImageStorage.h` owns the marker and its admission checks. This is
@@ -220,6 +227,10 @@ MedIR before LLVM emission. Automatically included exception callbacks cannot
 substitute for a rejected parent. Failures retain the entry's audit disposition
 and first decode or unsupported-instruction address; source views can still
 return their partial analysis.
+Whole-module lift/patch also fails when every attempted body was rejected;
+an empty LLVM module cannot stand in for unsupported instructions. Deliberate
+runtime/import exclusions and read-only machine analysis keep their separate
+outcomes.
 
 LLVM function-symbol lookup builds its eligible entry/end indexes lazily for
 each emission. It retains the last eligible symbol in image order and prefers

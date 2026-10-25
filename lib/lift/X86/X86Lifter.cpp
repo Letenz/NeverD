@@ -492,6 +492,41 @@ bool isLegacyEncodingPrefix(uint8_t Byte, bool Is64Bit) {
   }
 }
 
+// HLE belongs to the memory operation. Capstone can retain LOCK in prefix[0]
+// while dropping F2/F3 there, so inspect the original prefixes before any
+// ordinary atomic/move lowering can erase the transactional boundary.
+bool hasHardwareLockElisionPrefix(const cs_insn *Insn, bool Is64Bit) {
+  if (Insn->size > x86::kMaxInstructionLen)
+    return false;
+  bool Locked = false;
+  uint8_t Repeat = 0;
+  size_t Offset = 0;
+  while (Offset < Insn->size &&
+         isLegacyEncodingPrefix(Insn->bytes[Offset], Is64Bit)) {
+    const uint8_t Prefix = Insn->bytes[Offset++];
+    Locked |= Prefix == 0xf0;
+    if (Prefix == 0xf2 || Prefix == 0xf3)
+      Repeat = Prefix;
+  }
+  if (!Repeat || Offset == Insn->size)
+    return false;
+  if (Locked)
+    return true;
+  // XCHG is implicitly locked. XRELEASE also permits the ModRM
+  // register/immediate MOV stores; a MOV load or XACQUIRE MOV is not HLE.
+  if (Is64Bit && Insn->bytes[Offset] == 0xd5) {
+    if (Offset + 2 >= Insn->size || (Insn->bytes[Offset + 1] & 0x80) != 0)
+      return false;
+    Offset += 2;
+  }
+  if (Offset + 1 >= Insn->size || (Insn->bytes[Offset + 1] & 0xc0) == 0xc0)
+    return false;
+  const uint8_t Opcode = Insn->bytes[Offset];
+  return Opcode == 0x86 || Opcode == 0x87 ||
+         (Repeat == 0xf3 && (Opcode == 0x88 || Opcode == 0x89 ||
+                             Opcode == 0xc6 || Opcode == 0xc7));
+}
+
 // VEX.128 and EVEX.128 register destinations clear every modeled vector bit
 // above bit 127. Capstone exposes the decoded operands but not the encoded
 // vector length, so read L/LL directly from the prefix bytes. Legacy prefixes
@@ -835,6 +870,9 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
   if (!Detail)
     return;
 
+  if (hasHardwareLockElisionPrefix(Insn, TargetArch == Arch::X64))
+    throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
+
   // These instructions leave the ordinary call/return domain. Refuse before
   // publishing any operations, including when permissive lifting was asked
   // for: a NOP or generic SYSCALL loses the architectural continuation.
@@ -850,6 +888,9 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
   case X86_INS_SYSRET:
   case X86_INS_SYSRETQ:
   case X86_INS_RSM:
+  // The ordinary _xbegin() value contract has a compiler-local fallback. It
+  // cannot replace the original abort target and architectural checkpoint.
+  case X86_INS_XBEGIN:
     throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
   default:
     break;

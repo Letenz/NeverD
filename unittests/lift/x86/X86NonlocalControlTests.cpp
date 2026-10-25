@@ -94,8 +94,17 @@ TEST(X86NonlocalControl, RawTransitionsCannotBecomeReturnsOrSyscalls) {
         ASSERT_TRUE(D.init(Target));
         D.setStrict(Strict);
         std::vector<std::vector<uint8_t>> Encodings{
-            {0x0f, 0x34}, {0x0f, 0x35}, {0x0f, 0x07}, {0x0f, 0xaa},
-            {0xcf},       {0xcb},       {0xca, 8, 0}, {0x66, 0xcf}};
+            {0x0f, 0x34},
+            {0x0f, 0x35},
+            {0x0f, 0x07},
+            {0x0f, 0xaa},
+            {0xcf},
+            {0xcb},
+            {0xca, 8, 0},
+            {0x66, 0xcf},
+            {0xc7, 0xf8, 0, 0, 0, 0},
+            {0x66, 0xc7, 0xf8, 0, 0},
+            {0xc7, 0xf8, 0xfa, 0xff, 0xff, 0xff}};
         if (Target == Arch::X64)
           for (const auto &Encoding :
                std::vector<std::vector<uint8_t>>{{0x48, 0x0f, 0x35},
@@ -127,7 +136,8 @@ TEST(X86NonlocalControl, RawTransitionsCannotBecomeReturnsOrSyscalls) {
 }
 
 TEST(X86NonlocalControl, LegacyIRRequiresTheMissingStateBoundary) {
-  for (Intrinsic Id : {Intrinsic::Rsm, Intrinsic::Sysexitq, Intrinsic::Sysretq})
+  for (Intrinsic Id : {Intrinsic::Rsm, Intrinsic::Sysexitq, Intrinsic::Sysretq,
+                       Intrinsic::Xbegin})
     for (bool Result : {false, true}) {
       SCOPED_TRACE(testing::Message() << unsigned(Id) << Result);
       const auto Low = lowFunction(Id, Result);
@@ -146,7 +156,8 @@ TEST(X86NonlocalControl, LegacyIRRequiresTheMissingStateBoundary) {
 }
 
 TEST(X86NonlocalControl, LLVMAdmissionAlsoChecksMaskedFunctions) {
-  for (Intrinsic Id : {Intrinsic::Rsm, Intrinsic::Sysexitq, Intrinsic::Sysretq})
+  for (Intrinsic Id : {Intrinsic::Rsm, Intrinsic::Sysexitq, Intrinsic::Sysretq,
+                       Intrinsic::Xbegin})
     for (bool Result : {false, true})
       for (bool Masked : {false, true}) {
         const auto Function = medFunction(Id, Result);
@@ -161,7 +172,8 @@ TEST(X86NonlocalControl, LLVMAdmissionAlsoChecksMaskedFunctions) {
 }
 
 TEST(X86NonlocalControl, CRenderingCannotPublishBareAssembly) {
-  for (Intrinsic Id : {Intrinsic::Rsm, Intrinsic::Sysexitq, Intrinsic::Sysretq})
+  for (Intrinsic Id : {Intrinsic::Rsm, Intrinsic::Sysexitq, Intrinsic::Sysretq,
+                       Intrinsic::Xbegin})
     for (bool Gnu : {false, true}) {
       bool HasIntrinsics = false;
       EXPECT_THROW(renderX86IntrinsicCall(Id, {}, HasIntrinsics, Gnu),

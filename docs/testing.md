@@ -486,6 +486,19 @@ section-difference relocation pairs before controlled execution.
 
 The atomic semantic suite checks legacy/VEX raw-detail disagreement,
 address wrapping, every CMPccXADD condition and unknown-input refusal.
+Its HLE admission regression rejects 978 prefix/family/mode/decode combinations
+before any LowIR effects, including permissive requests. Unrelated repeat and
+mandatory prefixes remain valid. `NeverDPipelineOutcomeTests` checks that
+unsupported HLE bodies cannot yield successful empty lift/patch modules across
+x86/x64 and ELF/COFF/Mach-O, while read-only analysis retains its audit and
+intentional runtime exclusions remain valid.
+`X86SystemState.TransactionQueryDefinesAllArithmeticFlags` supplies both
+XTEST completions against every incoming arithmetic-flag combination in both
+code modes, retaining DF/GPRs and refusing invented ambient transaction state.
+The source suite carries those flags through LAHF/SETO and compiles native LLVM,
+HighC and LLVM-to-C across ELF/COFF/Mach-O at O0/O2, including NeverC on x64.
+The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
+whose original abort target and checkpoint are absent.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
 check that a complete narrow displacement is normalized as a full address,

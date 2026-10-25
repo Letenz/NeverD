@@ -852,6 +852,7 @@ void _start(void) {
       }
       const llvm::StringRef SourceCompiler =
           !IR && !NativeCCompiler.empty() ? NativeCCompiler : Compiler;
+      SCOPED_TRACE(SourceCompiler.str());
       std::vector<llvm::StringRef> Arguments = {
           SourceCompiler, Target, Optimization, "-c", Input, "-o", Output};
       if (!IR && !NativeCCompiler.empty())
@@ -2383,6 +2384,36 @@ TEST(X86SystemStateSource, TransactionCommitRetainsSurroundingMemory) {
                         false, false, {}, Instruction);
         if (::testing::Test::HasFailure())
           return;
+      }
+}
+
+TEST(X86SystemStateSource, TransactionQueryRetainsFlagsAcrossNativeAndCRoutes) {
+  const char *NeverC = std::getenv("NEVERD_TEST_NEVERC");
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(NoOpt);
+        // Seed OF/SF/PF/AF with signed overflow and CF with STC. Capture
+        // XTEST's six arithmetic flags through LAHF/SETO, then return them.
+        auto Image =
+            image(A, Format,
+                  {0xb8, 0xff, 0xff, 0xff, 0x7f, 0x83, 0xc0, 1,    0xf9, 0x0f,
+                   0x01, 0xd6, 0x9f, 0x0f, 0x90, 0xc2, 0x0f, 0xb6, 0xc4, 0x0f,
+                   0xb6, 0xd2, 0xc1, 0xe2, 8,    0x09, 0xd0, 0xc3});
+        const std::vector<uint8_t> Instruction{0x0f, 0x01, 0xd6};
+        compileRoutes(Image, NoOpt, Entry + 9, "xtest", std::nullopt, false,
+                      false, {}, Instruction, 4, true);
+        if (::testing::Test::HasFailure())
+          return;
+        if (A == Arch::X64 && NeverC && llvm::sys::fs::exists(NeverC)) {
+          compileRoutes(Image, NoOpt, Entry + 9, "xtest", std::nullopt, false,
+                        false, {}, Instruction, 4, true, NeverC);
+          if (::testing::Test::HasFailure())
+            return;
+        }
       }
 }
 

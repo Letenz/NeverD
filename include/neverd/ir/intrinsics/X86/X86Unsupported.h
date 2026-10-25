@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 /// \file
 /// Keep legacy intrinsic identities readable without inventing executable
-/// semantics. Specific SHA and RTM instructions have separate owned contracts.
+/// semantics. Specific SHA and bounded RTM operations have separate contracts.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_IR_INTRINSICS_X86_X86UNSUPPORTED_H
@@ -25,6 +25,9 @@ inline const char *x86NonlocalControlTransferReason(Intrinsic Id) {
   case Intrinsic::Sysretq:
     return "x86 nonlocal control transfer requires a complete machine-state "
            "boundary";
+  case Intrinsic::Xbegin:
+    return "x86 transaction begin requires the original abort continuation "
+           "and a complete machine-state checkpoint";
   default:
     return nullptr;
   }
