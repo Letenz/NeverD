@@ -2381,6 +2381,13 @@ scale; off-diagonal entries partition the remaining minterms between the two
 factors. It checks every matrix entry, including absent edges and coefficients
 that wrap to zero, within shared work and storage limits. The independent
 polynomial difference verifier still authorizes the replacement.
+Polynomial synthesis also restricts the linear remainder's corner table to
+the inputs that remainder actually uses. Variables confined to higher-degree
+products no longer replicate its coefficients or dilute its synthesis budget.
+Support discovery consumes the shared work allowance, and constants keep a
+single coefficient with the minterm basis's negative sign. Projection does
+not authorize a replacement: the complete polynomial difference must still
+be proved before CLI or GUI source output uses the result.
 Cubic recovery uses a minterm shared by all three factors as an anchor. Its
 diagonal coefficient fixes the scale; coefficients with two copies of the
 anchor identify how many factors select each other minterm. Coefficients with
@@ -2585,6 +2592,13 @@ Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
 All signature, pairing and reconstruction work uses the existing cumulative
 work/storage allowances and decision-node limit.
+Full-block two-bit admission caches structural identities before constructing
+Boolean corrections. Partial cache entries can answer only identity queries
+and must be completed before arithmetic reads their correction. A full block
+can search past a failed positional probe without repeatedly materializing
+upper carries. Partial factor blocks retain complete probes, preserving their
+existing work headroom. These rules remain in the shared symbolic owner used
+by CLI and GUI source optimization.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding
@@ -9331,10 +9345,12 @@ original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and
-bytes remain unchanged. Unknown or overlapping writes invalidate facts;
-calls, ordered memory, malformed graphs and control-flow joins prevent this
-proof. Replayed operations must be total and explicitly typed, store/load
-truncation is retained, and budgets count rendered trees including repeated
+bytes remain unchanged. Unknown or overlapping writes invalidate facts. A
+statement's outermost direct call can consume forwarded arguments, then clears
+all stored-memory facts. Nested calls, indirect targets, ordered memory,
+malformed graphs and control-flow joins prevent this proof. Replayed operations
+must be total and explicitly typed; store/load truncation and the read's signed
+interpretation are retained. Budgets count rendered trees including repeated
 DAG edges. The proof applies to both 32-bit and 64-bit targets.
 HighIR's scalar-definition proof also survives an ordinary store whose address
 and value contain no hidden effects: the store changes memory, not an

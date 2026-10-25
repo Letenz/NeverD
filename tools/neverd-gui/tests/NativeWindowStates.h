@@ -14,8 +14,16 @@
 #include <QGuiApplication>
 #include <QObject>
 #include <QWindow>
+#include <functional>
+
+class QWidget;
 
 namespace neverd::gui::test {
+
+bool setNativeFullScreen(QWidget &Window, bool FullScreen);
+bool setNativeWindowState(QWidget &Window, Qt::WindowStates States,
+                          const std::function<void()> &Apply = {});
+
 class NativeWindowStates final : public QObject {
 public:
   explicit NativeWindowStates(QWindow &window) : states(window.windowStates()) {
@@ -27,8 +35,10 @@ public:
               [this, &window] { record(window); });
   }
 
-  bool is(Qt::WindowStates expected) const {
-    return effective(states) == effective(expected);
+  bool is(Qt::WindowStates expected) const { return same(states, expected); }
+
+  static bool same(Qt::WindowStates lhs, Qt::WindowStates rhs) {
+    return effective(lhs) == effective(rhs);
   }
 
   Qt::WindowStates states;

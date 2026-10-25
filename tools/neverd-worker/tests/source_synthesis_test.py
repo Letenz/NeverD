@@ -272,14 +272,18 @@ def multiple_residual_elf(degree, neighbor=False):
     return elf(code), "x+y+z+" + str(scale) + "U*" + "*".join(factors)
 
 
-def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=False):
+def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=False,
+                      *, interleaved=False):
     # Retain the requested low bits, including observable residual cross terms.
     high_bits = high_bits or (3 if product else 2)
     mask = (0xffffffff << (high_bits - int(product))) & 0xffffffff
     scale = 3 << (32 - needed)
     code = bytearray.fromhex("b8") + struct.pack("<I", scale)
-    factors = []
-    for i in range(degree):
+    factors = [None] * degree
+    order = list(range(degree))
+    if interleaved:
+        order = order[::2] + order[1::2]
+    for i in order:
         code += bytes.fromhex("89f9 81c1") + struct.pack("<I", 2*i)
         code += bytes.fromhex("4189f0 4181c0") + struct.pack("<I", i)
         if product:
@@ -292,7 +296,9 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=F
             high = f"((y+{i}U)&{mask}U)"
         code += bytes.fromhex("4401c1" if additive else "4431c1")
         code += bytes.fromhex("0fafc1")
-        factors.append(f"((x+{2*i}U){'+' if additive else '^'}{high})")
+        # Keep the independent C oracle in natural order even when the
+        # original machine instructions construct the factors differently.
+        factors[i] = f"((x+{2*i}U){'+' if additive else '^'}{high})"
     code += bytes.fromhex("01f8 01f0 01d0 c3")
     return elf(code), f"x+y+z+{scale}U*" + "*".join(factors)
 
@@ -536,6 +542,8 @@ if __name__ == "__main__":
             ("carry-product-paired-128", *carry_product_elf(128, True, 8, 3)),
             ("carry-product-wide-128", *carry_product_elf(128, False, 8, 2)),
             ("carry-product-wide-mask-128", *carry_product_elf(128, False, 8, 3)),
+            ("carry-product-interleaved-128", *carry_product_elf(128, False, 8, 2, interleaved=True)),
+            ("carry-product-interleaved-mask-128", *carry_product_elf(128, False, 8, 3, interleaved=True)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

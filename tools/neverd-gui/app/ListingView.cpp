@@ -170,7 +170,6 @@ void ListingView::jumpTo(Address address) {
   pendingJump_ = address;
   request(Fetch::Jump, address, 0, JumpContextBefore,
           ::neverd::limits::gui::kListingViewPageLines);
-  emit searchDocumentChanged();
 }
 
 bool ListingView::rowsCurrent() const {
@@ -265,6 +264,9 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
   if (kind == Fetch::Jump || kind == Fetch::Refresh) {
     ++serial_;
     fetchingBefore_ = fetchingAfter_ = false;
+    // The old rows are no longer a searchable document while this request
+    // is pending. Retire matches at the same boundary as their row serial.
+    emit searchDocumentChanged();
   } else if (kind == Fetch::Before) {
     fetchingBefore_ = true;
   } else {
