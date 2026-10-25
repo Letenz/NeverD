@@ -438,13 +438,20 @@ def main():
                            for pair in anchor['nodes'])
                 if version == 4:
                     modular = compare(prefix + '-modular', a, b,
-                        ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments'],
-                        arch == 'aarch64' or family == 6)
-                    proof = modular['dataflow']['secondary']['entries'][0]['graph']['progress']
-                    if arch == 'x64' and family == 5:
-                        # This real O2 component still has multiple entries.
-                        assert proof['kind'] == 'unproven' and not proof['loops']
-                        assert modular['flow_regions']['anchor_count'] == 0
+                        ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments'])
+                    graph = modular['dataflow']['secondary']['entries'][0]['graph']
+                    proof = graph['progress']
+                    if family == 5:
+                        # The bounded decrement was already proved by v4 above.
+                        # The modular profile must retain that exact graph and
+                        # every existing nowrap witness, including a compiler
+                        # shape with one common latch instead of two guards.
+                        previous = crossed['dataflow']['secondary']['entries'][0]['graph']
+                        assert graph['nodes'] == previous['nodes'], prefix
+                        expected = {**previous['progress'], 'loops': [
+                            {**witness, 'proof': 'nowrap'}
+                            for witness in previous['progress']['loops']]}
+                        assert proof == expected, (prefix, proof, expected)
                     else:
                         assert proof['kind'] == 'counter_loops'
                         assert proof['loop_count'] == 1 and proof['guard_count'] == 2
@@ -493,13 +500,36 @@ def main():
                     assert old_proof['kind'] == 'counter_loops'
                 qualified = arch == 'aarch64' or shape == 'even'
                 cross = compare(prefix + '-cross-level', a, b, modular_profile, qualified)
-                optimized = cross['dataflow']['secondary']['entries'][0]['graph']['progress']
+                optimized_graph = cross['dataflow']['secondary']['entries'][0]['graph']
+                optimized = optimized_graph['progress']
+                literal_guards = set()
+                if not qualified:
+                    # Some compiler versions keep the direct 32-bit +3/zero
+                    # guard. Classify that retained graph independently of the
+                    # reported proof; the odd step visits every counter value.
+                    nodes = optimized_graph['nodes']
+                    literal_updates = {i for i, node in enumerate(nodes)
+                        if node['opcode'] == 'add' and node['result_bytes'] == 4
+                        and any(v[0] == 1 and v[3] == '0x3' for v in node['inputs'])
+                        and any(v[0] == 0 and nodes[v[1]]['phi']
+                                for v in node['inputs'])}
+                    literal_guards = {i for i, node in enumerate(nodes)
+                        if node['opcode'] == 'icmp' and ';predicate=32' in node['semantics']
+                        and any(v[0] == 1 and v[2] == 4 and v[3] == '0x0'
+                                for v in node['inputs'])
+                        and any(v[0] == 0 and v[1] in literal_updates
+                                for v in node['inputs'])}
+                    qualified = bool(literal_guards)
                 if qualified:
                     assert optimized['kind'] == 'counter_loops'
                     assert {w['proof'] for w in optimized['loops']} == {'modular'}
                     assert any(anchor['node_count'] >= 4 for anchor in cross['flow_regions']['anchors'])
+                    assert cross['flow_regions']['hypothesis_count'] == 1
+                    if literal_guards:
+                        assert {w['compare'] for w in optimized['loops']} == literal_guards
+                        assert all(w['update'] in literal_updates for w in optimized['loops'])
                 else:
-                    # Clang rewrites the x64 equality to a nonliteral bound.
+                    # A nonliteral x64 bound still retains the original contract.
                     assert optimized['kind'] == 'unproven'
                     assert optimized['source_contract'] == optimized['observed_contract']
                     assert cross['flow_regions']['anchor_count'] == 0
