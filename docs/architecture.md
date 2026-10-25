@@ -11241,7 +11241,12 @@ directly from GuestThreads through LinuxServices. It owns no second scheduler.
 fdinfo reads per-description flags/cursors plus descriptor-owned CLOEXEC.
 `LinuxProcMaps` intersects optional backing identities and device aliases with
 AddressSpace's live mapping/permission snapshot; LinuxMemory retires backing
-labels on unmap. JSON supplies explicit identity/provider declarations only.
+labels on unmap. `LinuxVMAName` owns the explicitly selected legacy Android
+anonymous-name intervals and lazy guest-pointer reads, without retaining RAM.
+Raw syscalls and Bionic wrappers share that state. GuestThreads retires its
+mappings through LinuxMemory's shared munmap path so names and backing metadata
+cannot survive address reuse. JSON supplies explicit identity/provider
+declarations only.
 See [live proc](linux-live-proc.md) for the supported fields and boundaries.
 
 `AndroidJNI` owns an opt-in workload VM, thread attachments and immutable JNI

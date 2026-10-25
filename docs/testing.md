@@ -10631,6 +10631,18 @@ boundaries, PROT_NONE and a mapped prefix before a hole without changing bytes,
 mapping generation or allocation counts. `LinuxProcessTests.cpp` executes the
 corresponding x64/ARM64 raw syscall callers and verifies the full output vector.
 
+`LinuxProc.Prctl*` checks the opt-in legacy anonymous VMA name contract through
+both LP64 syscall numbers: argument widths and error order, borrowed-pointer
+updates, pointer-identity splits/merges, holes, page faults, NAME_MAX truncation,
+proc buffer ownership and unmap/address reuse. `LinuxKernelAvailability` checks
+strict typed/JSON admission. `AndroidProc.Prctl*` executes O0/O2 callers with
+ordinary, APS2 and RELR relocations through Bionic, variadic syscall and raw SVC;
+it also names a real guest thread stack and verifies metadata retirement after
+join. `ProcessPublic.AndroidPrctlNamesAndThreadRetirementMatchSDKAndCLI`
+compares complete public reports. Run NeverDLinuxProcessTests, the Android proc,
+memory and thread tests, and NeverDProcessPublicTests when changing this owner;
+report unavailable CPU backends separately.
+
 `AndroidSnapshotTests.cpp` uses independent O0/O2 C fixtures with all three
 relocation packings to allocate and fill memory during a native call. It checks
 explicitly deferred snapshots against full byte expectations, preserves the
