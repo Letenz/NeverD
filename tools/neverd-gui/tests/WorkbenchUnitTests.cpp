@@ -1856,6 +1856,12 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     AppliedStates applied;
     window.windowHandle()->installEventFilter(&applied);
+    if (QGuiApplication::platformName() == QLatin1String("windows"))
+      connect(window.windowHandle(), &QWindow::windowStateChanged, &applied,
+              [&] {
+                applied.states = window.windowHandle()->windowStates();
+                ++applied.count;
+              });
     QScreen *screen = window.screen();
     const auto barRect = [&] {
       return QRect(bar->mapToGlobal(QPoint(0, 0)), bar->size());

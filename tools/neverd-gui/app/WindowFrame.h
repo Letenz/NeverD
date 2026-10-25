@@ -65,6 +65,7 @@ protected:
 private:
   WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar);
   bool resizable() const;
+  void applyWindowState();
   /// Draw the shadow outside the visible window and its surface inside.
   void paint();
   /// Give the shadow band its size, which a maximized or full-screen window

@@ -151,6 +151,12 @@ WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar)
     platform::configureFrame(handle_);
     updateMargins();
   });
+  // Windows applies programmatic states synchronously. Qt can then emit only
+  // this signal, without a WindowStateChange event on QWindow. Wayland and
+  // Cocoa still need their later native event, not the requested state signal.
+  if (QGuiApplication::platformName() == QLatin1String("windows"))
+    connect(&handle, &QWindow::windowStateChanged, this,
+            [this] { applyWindowState(); });
   updateMargins();
 }
 
@@ -201,6 +207,16 @@ bool WindowFrame::resizable() const {
   return window_.minimumSize() != window_.maximumSize();
 }
 
+void WindowFrame::applyWindowState() {
+  // A synchronous zoom notification caused by our own setGeometry is part
+  // of this gesture. Retain its grab so a reversal can leave the size bound.
+  if (!resizingGeometry_ ||
+      (handle_.windowStates() & (Qt::WindowFullScreen | Qt::WindowMinimized)))
+    finishResize();
+  states_ = handle_.windowStates();
+  updateMargins();
+}
+
 bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   if (object == &window_) {
     if (event->type() == QEvent::Hide || event->type() == QEvent::UngrabMouse)
@@ -220,13 +236,7 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   // applies it; the native window receives this event only when the window
   // system has applied a state, such as with a Wayland configure.
   if (event->type() == QEvent::WindowStateChange) {
-    // A synchronous zoom notification caused by our own setGeometry is part
-    // of this gesture. Retain its grab so a reversal can leave the size bound.
-    if (!resizingGeometry_ ||
-        (handle_.windowStates() & (Qt::WindowFullScreen | Qt::WindowMinimized)))
-      finishResize();
-    states_ = handle_.windowStates();
-    updateMargins();
+    applyWindowState();
     return false;
   }
   if (event->type() == QEvent::Leave) {

@@ -610,29 +610,23 @@ private slots:
       QTRY_VERIFY(!desktop.lockButton()->isChecked());
     }
     const QSize size = floating->size();
-    // Start just inside the visible edge, including the top caption corners.
-    // Previously only the extreme bottom-right corner was tested.
-    // Linux's drawn border has an eight-pixel interior hit area. The native
-    // Windows frame and macOS resize handler also accept the immediate edge.
-#ifdef Q_OS_LINUX
-    const int inset = (onWayland() ? 10 : 0) + 6;
-#else
-    const int inset = 1;
-#endif
+    // Hit the painted edge, not the transparent outer shadow. Windows passes
+    // fully transparent pixels through to whichever window lies underneath.
+    const QMargins shadow = floating->contentsMargins();
     QPoint start = floating->rect().center();
     QPoint delta;
     if (edges & Qt::LeftEdge) {
-      start.setX(inset);
+      start.setX(shadow.left() + 1);
       delta.setX(-60);
     } else if (edges & Qt::RightEdge) {
-      start.setX(size.width() - inset - 1);
+      start.setX(size.width() - shadow.right() - 2);
       delta.setX(60);
     }
     if (edges & Qt::TopEdge) {
-      start.setY(inset);
+      start.setY(shadow.top() + 1);
       delta.setY(-60);
     } else if (edges & Qt::BottomEdge) {
-      start.setY(size.height() - inset - 1);
+      start.setY(size.height() - shadow.bottom() - 2);
       delta.setY(60);
     }
     auto *area = desktop.Window.mainWindow()->dropArea();
@@ -848,12 +842,6 @@ private slots:
     QVERIFY(pointer.move(*source, start, false));
     QTest::qWait(50);
     QVERIFY(pointer.button(*source, start, true));
-#ifdef Q_OS_WIN
-    // SendInput queues native input. Start motion only after Qt has received
-    // the press, rather than letting timer events overtake that dispatch.
-    QTRY_COMPARE(QGuiApplication::mouseButtons(),
-                 Qt::MouseButtons(Qt::LeftButton));
-#endif
     bool moved = false;
     bool preview = false;
     bool released = false;
@@ -874,7 +862,8 @@ private slots:
             << "physical button" << bool(GetAsyncKeyState(VK_LBUTTON) & 0x8000);
 #endif
     };
-    // Separate timers can run in Wayland's nested QDrag event loop.
+    // Queue the whole gesture before dispatching the press: it may enter a
+    // native move loop. Separate timers also run in Wayland's QDrag loop.
     QTimer::singleShot(50, &desktop.Window, [&] {
       moved = pointer.move(*source, start + QPoint(0, 50), true);
     });

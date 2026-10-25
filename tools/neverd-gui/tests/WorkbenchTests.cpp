@@ -1556,7 +1556,11 @@ private slots:
       dialog = visibleDialog(QStringLiteral("addTypeLibraryDialog"));
       QVERIFY(dialog);
     }
+    // A revision arrives before the rename's write completion. Closing while
+    // that write is still pending opens the unsaved-edits confirmation.
+    QTRY_VERIFY(!bench.session.dirty());
     bench.session.closeFile();
+    QTRY_VERIFY(!bench.session.loaded());
     QTRY_VERIFY(!dialog);
   }
 
