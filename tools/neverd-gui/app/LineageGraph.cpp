@@ -23,6 +23,7 @@
 #include <QPainterPath>
 #include <QResizeEvent>
 #include <QWheelEvent>
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -54,13 +55,17 @@ void LineageGraph::fit() {
     resetTransform();
 }
 void LineageGraph::zoom(bool In) {
-  AutoFit = false;
   const auto Step = ::neverd::limits::gui::kComparisonZoomStep;
-  const auto Factor = In ? Step : 1 / Step;
-  const auto Scale = transform().m11() * Factor;
-  if (Scale >= ::neverd::limits::gui::kComparisonMinimumZoom &&
-      Scale <= ::neverd::limits::gui::kComparisonMaximumZoom)
-    scale(Factor, Factor);
+  const auto Current = transform().m11();
+  const auto Target = std::clamp(Current * (In ? Step : 1 / Step),
+                                 ::neverd::limits::gui::kComparisonMinimumZoom,
+                                 ::neverd::limits::gui::kComparisonMaximumZoom);
+  // Fitting a large page can go below the manual zoom range. Zooming in must
+  // reenter that range; zooming out must never enlarge the fitted diagram.
+  if ((In && Target <= Current) || (!In && Target >= Current))
+    return;
+  AutoFit = false;
+  scale(Target / Current, Target / Current);
 }
 void LineageGraph::rebuild() {
   scene()->clear();

@@ -2414,6 +2414,8 @@ row allowance recovers the complete snapshot inventory and source evidence;
 changing it again preserves the current offset and uses the new backward step.
 The original labels and collection remain intact. Ordinary, narrow and large-font
 captures include the page-size control.
+An independent 200-report display fixture checks that a fitted large diagram can
+zoom in again, and that Zoom out never enlarges an already fitted overview.
 
 `BinaryDiffSDK.ByteOverlaysBindDataOnlyChangesAndReopenedReports` checks that
 patching data outside decoded functions changes analysis identity, invalidates

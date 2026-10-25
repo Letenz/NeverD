@@ -31,8 +31,9 @@ one bounded page. **Rows** chooses each table's page size; reduce it when large
 labels or evidence exceed the page's byte allowance, then continue with
 Previous/Next through the complete admitted inventory. Changing the page size
 retains its starting offset and retries the query without changing the collection.
-The
-diagram shows the current source-report page, not an entire unbounded graph.
+The diagram shows the current source-report page, not an entire unbounded graph.
+Fit shows the complete page; Zoom in remains available after fitting a dense
+diagram into a small window.
 Keyboard activation and Copy copy original row evidence; context menus also copy
 full values. Long labels shorten only for display; headings and graph nodes use a single
 line for the label. Headings retain their full
