@@ -20,6 +20,8 @@ public:
   bool recovered() const { return recovered_; }
   const Json &committedState() const { return committedState_; }
   Json listing(std::size_t offset, std::size_t limit) const;
+  /// Navigation/logging uses a patch row's virtual address, not its file key.
+  static std::uint64_t displayAddress(const Json &command);
   /// Record an edit: {"kind","address","before","after"}, the row of the
   /// kind's table at that address on either side (null where none), and for
   /// a table of rows, optional "rows" [{"address","before","after"}]: the

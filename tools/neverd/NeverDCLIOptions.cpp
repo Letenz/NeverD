@@ -147,6 +147,8 @@ cl::opt<uint64_t> MobileMaxBytes("max-bytes",
                                  cl::sub(MobileCmd));
 cl::SubCommand DecompileCmd("decompile",
                             "Decompile binary to C, Rust, or Solidity");
+cl::SubCommand PatchBytesCmd("patch-bytes",
+                             "Preview, apply, revert and export byte patches");
 cl::SubCommand PatchCmd("patch", "Patch binary with modified IR");
 cl::SubCommand InfoCmd("info", "Show binary metadata summary");
 cl::SubCommand IdentifyCmd("identify",
@@ -276,27 +278,26 @@ cl::SubCommand TranslateObjectCmd(
 // Common options (registered with all subcommands)
 //===----------------------------------------------------------------------===//
 
-cl::opt<std::string>
-    InputFile(cl::Positional, cl::desc("<binary>"), cl::Required,
-              cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
-              cl::sub(InfoCmd), cl::sub(IdentifyCmd), cl::sub(StringsCmd),
-              cl::sub(XrefsCmd), cl::sub(PathsCmd), cl::sub(CallTreeCmd),
-              cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd),
-              cl::sub(HexCmd), cl::sub(ImportsCmd), cl::sub(ExportsCmd),
-              cl::sub(SegmentsCmd), cl::sub(ExportCmd), cl::sub(BookmarksCmd),
-              cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
-              cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
-              cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
-              cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-              cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-              cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-              cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
+cl::opt<std::string> InputFile(
+    cl::Positional, cl::desc("<binary>"), cl::Required, cl::sub(PatchBytesCmd),
+    cl::sub(LiftCmd), cl::sub(DecompileCmd), cl::sub(PatchCmd),
+    cl::sub(InfoCmd), cl::sub(IdentifyCmd), cl::sub(StringsCmd),
+    cl::sub(XrefsCmd), cl::sub(PathsCmd), cl::sub(CallTreeCmd),
+    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+    cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
+    cl::sub(ExportCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
+    cl::sub(CallGraphCmd), cl::sub(RenameCmd), cl::sub(FunctionEditsCmd),
+    cl::sub(ItemsCmd), cl::sub(OperandsCmd), cl::sub(SearchCmd),
+    cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
+    cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
+    cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
+    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
 
 cl::opt<std::string> OutputFile("o", cl::desc("Output file"), cl::init(""),
-                                cl::sub(LiftCmd), cl::sub(DecompileCmd),
-                                cl::sub(PatchCmd), cl::sub(AuditCmd),
-                                cl::sub(HuntCmd), cl::sub(MobileCmd),
-                                cl::sub(TypesCmd));
+                                cl::sub(PatchBytesCmd), cl::sub(LiftCmd),
+                                cl::sub(DecompileCmd), cl::sub(PatchCmd),
+                                cl::sub(AuditCmd), cl::sub(HuntCmd),
+                                cl::sub(MobileCmd), cl::sub(TypesCmd));
 
 cl::opt<bool>
     Verbose("v", cl::desc("Verbose output"), cl::sub(LiftCmd),

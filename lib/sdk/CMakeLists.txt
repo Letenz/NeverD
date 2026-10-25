@@ -5,6 +5,8 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIWeb.cpp
     capi/NeverDCAPIBytecode.cpp
     capi/NeverDCAPI.cpp
+    capi/NeverDCAPIBytePatch.cpp
+    capi/NeverDCAPIBytePatchSource.cpp
     capi/NeverDCAPICPU.cpp
     capi/NeverDCAPIX87.cpp
     capi/NeverDCAPIProcess.cpp
@@ -120,6 +122,7 @@ target_compile_features(neverd_shared PUBLIC cxx_std_20)
 target_link_libraries(neverd_shared PRIVATE
     NeverDProjectDatabase
     NeverDPipeline
+    NeverDPatch
     NeverDBackendC
     NeverDBackendSwift
     NeverDBackendLLVM
@@ -236,6 +239,7 @@ endif()
 # header so consumers can compile with `-I<libneverd_dir>/sdk` without reaching
 # back into the source tree, including with multi-configuration generators.
 set(NEVERD_SDK_HEADERS
+    ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIBytePatch.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIWeb.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPIBytecode.h
     ${CMAKE_SOURCE_DIR}/include/neverd/sdk/NeverDCAPI.h

@@ -1143,6 +1143,126 @@
         <source>Export data...</source>
         <translation>데이터 내보내기...</translation>
     </message>
+    <message>
+        <source>Always branch</source>
+        <translation>항상 분기</translation>
+    </message>
+    <message>
+        <source>Assemble…</source>
+        <translation>어셈블…</translation>
+    </message>
+    <message>
+        <source>Change a uniquely encoded immediate operand</source>
+        <translation>유일하게 인코딩된 즉시값 피연산자 변경</translation>
+    </message>
+    <message>
+        <source>Change bytes…</source>
+        <translation>바이트 변경…</translation>
+    </message>
+    <message>
+        <source>Change immediate…</source>
+        <translation>즉시값 변경…</translation>
+    </message>
+    <message>
+        <source>Compile a replacement function into a new binary</source>
+        <translation>대체 함수를 새 바이너리로 컴파일</translation>
+    </message>
+    <message>
+        <source>Edit an instruction with a live byte preview</source>
+        <translation>바이트를 실시간으로 미리 보며 명령어 편집</translation>
+    </message>
+    <message>
+        <source>Edit the bytes at the current address</source>
+        <translation>현재 주소의 바이트 편집</translation>
+    </message>
+    <message>
+        <source>Fill a whole instruction range with NOPs</source>
+        <translation>전체 명령어 범위를 NOP으로 채우기</translation>
+    </message>
+    <message>
+        <source>Fill selection with NOPs</source>
+        <translation>선택 영역을 NOP으로 채우기</translation>
+    </message>
+    <message>
+        <source>Inspect and selectively revert byte patches</source>
+        <translation>바이트 패치를 확인하고 선택적으로 복원</translation>
+    </message>
+    <message>
+        <source>Invert condition</source>
+        <translation>조건 반전</translation>
+    </message>
+    <message>
+        <source>NOP instruction</source>
+        <translation>NOP 명령어</translation>
+    </message>
+    <message>
+        <source>Never branch</source>
+        <translation>분기하지 않음</translation>
+    </message>
+    <message>
+        <source>Open the patch menu</source>
+        <translation>패치 메뉴 열기</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>패치</translation>
+    </message>
+    <message>
+        <source>Patched binary…</source>
+        <translation>패치된 바이너리…</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>수정된 바이트</translation>
+    </message>
+    <message>
+        <source>Replace the call with NOPs</source>
+        <translation>호출을 NOP으로 교체</translation>
+    </message>
+    <message>
+        <source>Replace the call with a return-register assignment</source>
+        <translation>호출을 반환값 레지스터 대입으로 교체</translation>
+    </message>
+    <message>
+        <source>Replace the conditional branch with NOPs</source>
+        <translation>조건 분기를 NOP으로 교체</translation>
+    </message>
+    <message>
+        <source>Replace the current instruction with NOPs</source>
+        <translation>현재 명령어를 NOP으로 교체</translation>
+    </message>
+    <message>
+        <source>Replay all byte patches into a new binary</source>
+        <translation>모든 바이트 패치를 새 바이너리에 재적용</translation>
+    </message>
+    <message>
+        <source>Restore original bytes</source>
+        <translation>원본 바이트 복원</translation>
+    </message>
+    <message>
+        <source>Restore the input bytes for this patch</source>
+        <translation>이 패치의 입력 바이트 복원</translation>
+    </message>
+    <message>
+        <source>Reverse the conditional branch</source>
+        <translation>조건 분기 반전</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C…</source>
+        <translation>C로 함수 다시 작성…</translation>
+    </message>
+    <message>
+        <source>Skip call</source>
+        <translation>호출 건너뛰기</translation>
+    </message>
+    <message>
+        <source>Skip call and return value…</source>
+        <translation>호출을 건너뛰고 값 반환…</translation>
+    </message>
+    <message>
+        <source>Take the conditional branch unconditionally</source>
+        <translation>조건 분기를 무조건 실행</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1277,6 +1397,18 @@
     <message>
         <source>Disassembly</source>
         <translation>디스어셈블리</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>작업</translation>
+    </message>
+    <message>
+        <source>Original bytes</source>
+        <translation>원본 바이트</translation>
+    </message>
+    <message>
+        <source>Patched bytes</source>
+        <translation>수정된 바이트</translation>
     </message>
 </context>
 <context>
@@ -1518,6 +1650,10 @@
     <message>
         <source>Operand &amp;type</source>
         <translation>피연산자 형식(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>패치</translation>
     </message>
 </context>
 <context>
@@ -3032,6 +3168,72 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Delete types…</source>
         <translation>형식 삭제…</translation>
     </message>
+    <message>
+        <source>Apply byte patch</source>
+        <translation>바이트 패치 적용</translation>
+    </message>
+    <message>
+        <source>Before:
+%1
+After:
+%2</source>
+        <translation>변경 전:
+%1
+변경 후:
+%2</translation>
+    </message>
+    <message>
+        <source>Checking available patches…</source>
+        <translation>사용 가능한 패치 확인 중…</translation>
+    </message>
+    <message>
+        <source>Export unsigned binary</source>
+        <translation>서명되지 않은 바이너리 내보내기</translation>
+    </message>
+    <message>
+        <source>Invalid patch value.</source>
+        <translation>잘못된 패치 값입니다.</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>원본: %1</translation>
+    </message>
+    <message>
+        <source>Patch</source>
+        <translation>패치</translation>
+    </message>
+    <message>
+        <source>Patch value</source>
+        <translation>패치 값</translation>
+    </message>
+    <message>
+        <source>Patched binary written to %1</source>
+        <translation>패치된 바이너리를 %1에 저장했습니다</translation>
+    </message>
+    <message>
+        <source>Patched: %1</source>
+        <translation>패치 후: %1</translation>
+    </message>
+    <message>
+        <source>Produce patched binary</source>
+        <translation>패치된 바이너리 생성</translation>
+    </message>
+    <message>
+        <source>Remove the signature metadata and export an unsigned copy?</source>
+        <translation>서명 메타데이터를 제거하고 서명되지 않은 복사본을 내보낼까요?</translation>
+    </message>
+    <message>
+        <source>Restore selected original bytes</source>
+        <translation>선택한 원본 바이트 복원</translation>
+    </message>
+    <message>
+        <source>Unsigned patched binary written to %1</source>
+        <translation>서명되지 않은 패치 바이너리를 %1에 저장했습니다</translation>
+    </message>
+    <message>
+        <source>Unsigned value (decimal or 0x hexadecimal):</source>
+        <translation>부호 없는 값(10진수 또는 0x 16진수):</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3386,6 +3588,34 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <translation>
             <numerusform>피연산자 %n개를 %1의 멤버로 표시했습니다</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Applied patch at %1 (bytes: %2): %3 → %4</source>
+        <translation>%1에 패치를 적용했습니다(%2바이트): %3 → %4</translation>
+    </message>
+    <message>
+        <source>Instructions: %1 → %2</source>
+        <translation>명령어: %1 → %2</translation>
+    </message>
+    <message>
+        <source>Restored original bytes at %1 (%2 ranges).</source>
+        <translation>%1의 원본 바이트를 복원했습니다(%2개 범위).</translation>
+    </message>
+    <message>
+        <source>Patch at %1 made no changes.</source>
+        <translation>%1의 패치로 변경된 내용이 없습니다.</translation>
+    </message>
+    <message>
+        <source>Undid edit at %1.</source>
+        <translation>%1의 편집을 실행 취소했습니다.</translation>
+    </message>
+    <message>
+        <source>Redid edit at %1.</source>
+        <translation>%1의 편집을 다시 실행했습니다.</translation>
+    </message>
+    <message>
+        <source>Rewritten function at %1 saved to %2</source>
+        <translation>%1의 재작성된 함수를 %2에 저장했습니다</translation>
     </message>
 </context>
 <context>
@@ -8409,6 +8639,156 @@ Secondary SHA-256: %3
     <message>
         <source>Start address:</source>
         <translation>시작 주소:</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PatchEditor</name>
+    <message>
+        <source>AT&amp;T</source>
+        <translation>AT&amp;T</translation>
+    </message>
+    <message>
+        <source>Apply patch</source>
+        <translation>패치 적용</translation>
+    </message>
+    <message>
+        <source>Assembly dialect</source>
+        <translation>어셈블리 문법</translation>
+    </message>
+    <message>
+        <source>Assembly instruction</source>
+        <translation>어셈블리 명령어</translation>
+    </message>
+    <message>
+        <source>Byte display truncated; the full range is %1 bytes.</source>
+        <translation>바이트 표시가 잘렸습니다. 전체 범위는 %1바이트입니다.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Fill with NOPs</source>
+        <translation>NOP으로 채우기</translation>
+    </message>
+    <message>
+        <source>Hexadecimal bytes</source>
+        <translation>16진수 바이트</translation>
+    </message>
+    <message>
+        <source>Intel</source>
+        <translation>Intel</translation>
+    </message>
+    <message>
+        <source>New: %1</source>
+        <translation>새 값: %1</translation>
+    </message>
+    <message>
+        <source>Original: %1</source>
+        <translation>원본: %1</translation>
+    </message>
+    <message>
+        <source>Patch at %1 — Enter applies, Esc cancels</source>
+        <translation>%1 패치 — Enter 적용, Esc 취소</translation>
+    </message>
+    <message>
+        <source>Preparing preview…</source>
+        <translation>미리 보기 준비 중…</translation>
+    </message>
+    <message>
+        <source>Replace following instructions</source>
+        <translation>다음 명령어 교체</translation>
+    </message>
+    <message>
+        <source>Review the covered instructions and enable replacement to apply.</source>
+        <translation>덮어쓸 명령어를 확인하고 교체를 활성화한 후 적용하세요.</translation>
+    </message>
+    <message>
+        <source>The input changed. Reopen the patch editor.</source>
+        <translation>입력이 변경되었습니다. 패치 편집기를 다시 여세요.</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>닫기</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::RewriteFunctionDialog</name>
+    <message>
+        <source>%1 original symbol bindings prepared. Output uses a new file.</source>
+        <translation>원본 심볼 바인딩 %1개를 준비했습니다. 출력은 새 파일을 사용합니다.</translation>
+    </message>
+    <message>
+        <source>Compare with original</source>
+        <translation>원본과 비교</translation>
+    </message>
+    <message>
+        <source>Compile to new binary…</source>
+        <translation>새 바이너리로 컴파일…</translation>
+    </message>
+    <message>
+        <source>Compiler path:</source>
+        <translation>컴파일러 경로:</translation>
+    </message>
+    <message>
+        <source>Compiler:</source>
+        <translation>컴파일러:</translation>
+    </message>
+    <message>
+        <source>Compiling and validating the replacement…</source>
+        <translation>대체 함수를 컴파일하고 검증하는 중…</translation>
+    </message>
+    <message>
+        <source>Empty selects the sole external definition</source>
+        <translation>비워 두면 유일한 외부 정의 선택</translation>
+    </message>
+    <message>
+        <source>Executable name or full path</source>
+        <translation>실행 파일 이름 또는 전체 경로</translation>
+    </message>
+    <message>
+        <source>Open new binary</source>
+        <translation>새 바이너리 열기</translation>
+    </message>
+    <message>
+        <source>Optional external function name to call the saved original body</source>
+        <translation>저장된 원본 함수 본문을 호출할 외부 함수 이름(선택 사항)</translation>
+    </message>
+    <message>
+        <source>Original-body binding:</source>
+        <translation>원본 함수 본문 바인딩:</translation>
+    </message>
+    <message>
+        <source>Preparing compilable C and original bindings…</source>
+        <translation>컴파일 가능한 C와 원본 바인딩 준비 중…</translation>
+    </message>
+    <message>
+        <source>Produce replacement binary</source>
+        <translation>대체 바이너리 생성</translation>
+    </message>
+    <message>
+        <source>Publication receipt</source>
+        <translation>게시 결과</translation>
+    </message>
+    <message>
+        <source>Replacement C source</source>
+        <translation>대체 C 소스</translation>
+    </message>
+    <message>
+        <source>Replacement function:</source>
+        <translation>대체 함수:</translation>
+    </message>
+    <message>
+        <source>Replacement published to %1</source>
+        <translation>대체 결과를 %1에 게시했습니다</translation>
+    </message>
+    <message>
+        <source>Rewrite function in C</source>
+        <translation>C로 함수 다시 작성</translation>
+    </message>
+    <message>
+        <source>The analysis changed. Reopen this editor before compiling.</source>
+        <translation>분석이 변경되었습니다. 컴파일 전에 이 편집기를 다시 여세요.</translation>
     </message>
 </context>
 </TS>

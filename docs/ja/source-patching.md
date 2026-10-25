@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
+<!-- i18n-source: dfc80a0bf5685db7576ab0eb49dc067cdc190a437a85b33c4a4186eed6915fce -->
 
 [← Documentation Index](README.md)
 
@@ -259,3 +259,10 @@ ELF ARM と Thumb は別プロファイルです。ソース生成器へ `-marm`
 Mach-O の修正は、ARM/Thumb 混在というイメージ全体の情報とは独立して選択した Thumb 関数を認証し、証拠のある Thumb エクスポートポインターと ARM32 アンワインドのコードアドレスを正規化します。データポインターや範囲長は変更しません。統合 LLVM ソースビルドでは、ローカルの CPU マトリクス 283 件と例外契約 258 件がすべて成功し、失敗もスキップもありませんでした。旧 Mach-O プローブには記録済みのオープンソースリンカーとアンワインド領域の予約を使用し、i386 には正しく整列した起動入口と 64 KiB のページゼロ領域を用意します。
 
 これらの結果が示すのは、指定したエミュレーターと互換レイヤーでの C コード実行です。Wine は Microsoft Windows ではなく、Darling は macOS ではありません。iOS HLE 内での ARMv7k 実行は watchOS、WatchKit、Apple 実機の検証にはなりません。旧 Apple SDK やネイティブ 32 ビットハードウェアの対応を推定せず、C++ 例外アンワインドの検証にも数えません。既存のネイティブ実行と互換モードの証拠は別に保持します。NeverC はビルドも変更もしていません。
+
+<!-- i18n-section: interactive-byte-patches -->
+## 対話的パッチの責務
+
+`lib/patch` はバイト変更の検証、LLVM MC による符号化、不変の入力スナップショット、正規化した変更記録、排他的な出力を担当します。SDK は実際の C 出力、正規の LowIR 発生箇所、デコード済みオペランドから編集対象を証明し、移動用アンカーだけでは変更を許可しません。worker は省略可能な `patches.json` を元に戻す・やり直しに統合し、編集後に解析を無効化します。シグネチャ名は元のバイトを参照し、変更済み関数では識別結果に由来するライブラリ効果を使いません。GUI、CLI、Python は同じ API を使用します。関数全体の置換は引き続き `neverd_patch_source` を使用し、バイト変更がある場合は先に出力して開き直します。
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`

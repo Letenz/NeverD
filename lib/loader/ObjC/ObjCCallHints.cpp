@@ -2606,8 +2606,11 @@ static std::map<va_t, SourceCallTypeHint> sourceCallCandidates(
             !Instruction->indexShift()) {
           const auto Field =
               Index->TheKind == Value::Kind::Number
-                  ? objcReceiverFieldTypeHint(Image, *Receiver, Index->Number)
-              : Index->TheKind == Value::Kind::IvarOffset
+                  ? objcReceiverFieldTypeHint(
+                        Image, *Receiver,
+                        Instruction->addressOffset(Index->Number))
+              : Instruction->hasRegisterIndex() &&
+                      Index->TheKind == Value::Kind::IvarOffset
                   ? objcReceiverIvarTypeHint(Image, *Receiver, Index->Number)
                   : std::nullopt;
           if (Field)

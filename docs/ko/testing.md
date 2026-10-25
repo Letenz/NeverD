@@ -2140,3 +2140,28 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
 
 `NeverDObjCSourceCallTests`의 `SourceFrameAnalysis.*`와 `NeverDCSourcePresentationTests`를 실행하여 바이트 출처, 경로 일치, 덮어쓰거나 이탈한 저장소, 불변 이미지 범위, 예산, 인코딩 및 메타데이터 경계를 확인합니다. `NeverDWorkerStackText`는 공개 x64/ARM64 PE 사례를 컴파일하고 알 수 없는 덮어쓰기를 포함하여 두 C 경로를 검증합니다. Clang과 lld-link가 필요하며 Windows 네이티브 실행은 별도로 검증해야 합니다.
+
+<!-- i18n-section: interactive-byte-patches -->
+## 대화형 패치의 책임
+
+`NeverDBytePatchTests`는 바이트 오버레이, 재배치 거부, PC 상대 어셈블리, PE 서명과 체크섬을 검사합니다. `NeverDWorkerPatch`는 미리 보기, 오래된 입력, 실행 취소와 다시 실행, 일괄 복원, 읽기 전용 복제본, 다시 열기, 독점 내보내기를 검사합니다.
+
+`NeverDWorkerNativePatch`는 실제 SDK에서도 같은 동작을 검증합니다. `NeverDWorkerSourceBytePatch`는 Linux에서 소스 증명, 독립된 미리보기, 스택 프레임 심볼 및 네이티브 C 함수 교체를 검증합니다.
+
+`NeverDGuiPatchKeys`는 `QWindow` 단축키 처리로 모든 두 번째 키, 로딩 중인 메뉴, 취소 및 편집기 입력을 검증합니다. `NeverDGuiNativePatchKeys`는 실제 SDK 바이트, Hex, 분리 창, 실행 취소·다시 실행·복원을 검증합니다. 같은 실행 파일을 X11에서 실행하면 네이티브 팝업 처리도 확인합니다.
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```

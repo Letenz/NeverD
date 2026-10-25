@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
+<!-- i18n-source: dfc80a0bf5685db7576ab0eb49dc067cdc190a437a85b33c4a4186eed6915fce -->
 
 [← Documentation Index](README.md)
 
@@ -259,3 +259,10 @@ ELF ARM과 Thumb는 별도 프로필입니다. 소스 생성기에 `-marm` 또�
 Mach-O 수정은 이미지 전체의 ARM/Thumb 혼합 정보와 별개로 선택된 Thumb 함수를 인증하고, 증거가 있는 Thumb 내보내기 포인터와 ARM32 언와인드 코드 주소를 정규화합니다. 데이터 포인터나 범위 길이는 바꾸지 않습니다. 통합 LLVM 소스 빌드는 로컬에서 CPU 매트릭스 검사 283개와 예외 계약 검사 258개를 모두 통과했으며 실패나 건너뛰기가 없습니다. 구형 Mach-O 테스트는 기록된 오픈 소스 링커와 예약된 언와인드 공간을 사용합니다. i386에는 올바르게 정렬된 시작 진입점과 64 KiB 페이지 제로 세그먼트가 있습니다.
 
 이 결과는 명시한 에뮬레이터와 호환 계층에서의 C 코드 실행을 입증합니다. Wine은 Microsoft Windows가 아니며 Darling은 macOS가 아닙니다. iOS HLE 안의 ARMv7k 실행은 watchOS, WatchKit 또는 Apple 실기기 검증이 아닙니다. 구형 Apple SDK나 네이티브 32비트 하드웨어 지원을 추론하지 않으며 C++ 예외 언와인드 검증으로도 간주하지 않습니다. 기존 네이티브 및 호환 모드 증거는 계속 분리해 기록합니다. NeverC는 빌드하거나 변경하지 않았습니다.
+
+<!-- i18n-section: interactive-byte-patches -->
+## 대화형 패치의 책임
+
+`lib/patch`는 바이트 변경 검증, LLVM MC 인코딩, 불변 입력 스냅샷, 정규화된 변경 기록과 배타적 내보내기를 담당합니다. SDK는 실제 C 출력, 정규 LowIR 출처와 디코딩된 피연산자로 소스 대상을 증명하며 탐색 앵커만으로 편집을 허용하지 않습니다. worker는 선택적 `patches.json`을 실행 취소와 다시 실행에 통합하고 변경 후 분석을 무효화합니다. 시그니처 이름은 원본 바이트를 읽고 수정된 함수에는 식별 결과로 추론한 라이브러리 효과를 적용하지 않습니다. GUI, CLI와 Python은 같은 API를 사용합니다. 전체 함수 교체는 계속 `neverd_patch_source`를 사용하며 바이트 변경은 먼저 내보내고 다시 열어야 합니다.
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`

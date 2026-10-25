@@ -20,6 +20,28 @@ The implementation is original C++ using NeverD's existing Highway dependency;
 no bbtree source or Rust runtime is incorporated. bbtree is dual MIT/Apache-2.0
 licensed. No LLVM fork or dependency revision change is required.
 
+## Scope inside LLVM
+
+Replacing LLVM containers wholesale with bbtree is not justified. The
+[LLVM container guide](https://llvm.org/docs/ProgrammersManual.html#picking-the-right-data-structure-for-a-task)
+selects containers by required operations and access patterns. In the checked
+LLVM fork (`06788fb1`), `GVN.cpp` uses `DenseMap` for block availability and
+`SmallVector` for worklists. An ordered tree adds traversal and maintenance
+cost where hashing or contiguous append/iteration already fits the operation.
+
+LLVM already has a compact B+ tree:
+[`IntervalMap`](https://llvm.org/doxygen/IntervalMap_8h.html) stores small maps
+inline, separates key/value columns and coalesces equal-valued intervals.
+`CodeGen/LiveIntervalUnion.h` uses it for live segments. A generic key/value
+tree does not replace its interval operations or iterator contract.
+
+An LLVM integration would need a profiled, sufficiently large ordered index,
+matching mutation/iterator semantics, and total workload measurements that
+include construction, updates, memory and destruction on supported hosts.
+No such LLVM hotspot or end-to-end gain has been established by this work.
+The NeverD primitive operates on existing sorted arrays without building a
+tree, and remains independent of LLVM.
+
 ## Cost model and implementation
 
 `neverd::sorted::lowerBound64` keeps small arrays on the inline standard-library
@@ -54,24 +76,39 @@ There are no prefetches, retained caches, locks or per-query allocations. The
 foundation target is independent of LLVM and the loader, avoiding a dependency
 cycle through `NeverDSupport`.
 
+Membership queries have their own SIMD reduction: OR equality masks and test
+whether any lane matches, instead of counting a rank and reloading that element.
+GCC retains the previous rank-based membership through the owning limits policy;
+the direct path changed small scalar caller loop generation unfavorably. This
+choice preserves the existing query path even when its data is below the SIMD
+threshold. The benchmark's `contains` mode includes this caller-level effect.
+Both operations share one narrowing implementation. Membership narrows to
+strictly fewer than the tail's keys before loading the fixed tail, because the
+lower-bound candidate may equal the narrowed interval's exclusive end. This
+includes that candidate without reading beyond the original array, even when
+duplicates straddle a pivot or the original input ends at a protected page.
+
 ## Measurement scope
 
 The benchmark validates every result against a standard-library reference and
 reports wall and process CPU time. Parsing, reference computation, allocation
-and index construction are untimed. Inputs include synthetic arrays of 16, 256
-and 4096 keys, plus 44,183 defined dynamic function addresses from the LLVM 23
-ELF shared library (SHA-256
-`7d53c9d91d53ab56c3cef98a64b74acad14a7f72acffe5e0903fed2bf95061e8`).
-Queries alternate exact addresses and address-plus-one probes, in seeded random
+and index construction are untimed. Exercise small, medium and large arrays,
+plus defined dynamic function addresses extracted from a real ELF shared
+library; record the input library's hash with the local evidence. The example
+below alternates exact addresses and address-plus-one probes, in seeded random
 and sorted order. These are synthetic query traces over real addresses, not a
 recorded decompilation trace.
 
-Local measurements use an i9-13900H, a Release build and CPU 0 affinity, with
-alternating process order. No own build, test or profiler overlaps timing.
-Other users' builds may contend; hardware performance counters are unavailable
-under the host's existing policy. No kernel settings were changed. Small
-control cases help expose scheduling and frequency noise. These component
-measurements do not establish whole-CLI/GUI or IDA/radare2 superiority.
+Use Release builds with matching compiler settings and dependency revisions,
+fixed CPU affinity and alternating process order. Keep builds, tests and
+profilers outside timing runs and record any external contention. Small control
+cases help expose scheduling and frequency noise. Compare the previous and
+candidate `owner` binaries for integration evidence, and their `contains`
+modes for the primitive; `std-contains` supplies a standard-library reference.
+These component measurements do not establish whole-CLI/GUI or IDA/radare2
+superiority. Keep raw samples, source/binary/input hashes, build receipts and
+machine-specific summaries in ignored build directories; summarize results in
+the pull request, as required by [the artifact policy](../CONTRIBUTING.md#documentation-and-local-artifacts).
 
 GPU offload has no demonstrated benefit for this single-query path. A future
 experiment would need a resident batch workload and must include transfer,
@@ -82,17 +119,18 @@ See [acceleration validation](testing.md#acceleration-libraries) for the
 standalone tests, optional benchmark target and native/scalar configurations.
 
 The local input generation is reproducible with Python's `random.Random` seed
-20261025. Extract `nm -D --defined-only -n LLVM_LIBRARY` into `llvm-symbols.txt`,
+20261025. Extract `nm -D --defined-only -n LLVM_LIBRARY` into
+`build-sorted-search/llvm-symbols.txt`,
 then run:
 
 ```python
 from pathlib import Path
 import random
 
-out = Path("search-inputs")
-out.mkdir(exist_ok=True)
+out = Path("build-sorted-search/inputs")
+out.mkdir(parents=True, exist_ok=True)
 real = sorted({int(p[0], 16)
-               for line in Path("llvm-symbols.txt").read_text().splitlines()
+               for line in Path("build-sorted-search/llvm-symbols.txt").read_text().splitlines()
                if len(p := line.split()) >= 3 and p[1] in "TtWwiI"})
 def write(name, values):
     (out / name).write_text("".join(f"{value:x}\n" for value in values))
@@ -108,23 +146,16 @@ for name, keys in [("small", [(1 << 63) + i * 32 for i in range(16)]),
     write(name + "-ordered-queries.hex", sorted(queries))
 ```
 
-## Measured results
+## Validation boundaries
 
-The complete [evidence record](evidence/bbtree-search-2026-10-25.json) contains input/source/binary hashes, dependency revisions, all samples and test inventories. Negative changes mean less CPU time.
+Run the acceleration tests with Clang and GCC, ASan/UBSan, and Highway disabled;
+run the code-owner integration owner in the full build. Include native x64 and
+ARM64 jobs for Linux, macOS and Windows. ARM64 emulation can additionally cover
+NEON and 384-bit SVE/SVE2, but does not qualify native speed. Use the test XML
+inventory to distinguish executed checks from skipped or unavailable checks.
 
-| Keys / query order | Clang lower bound | GCC lower bound | Clang actual owner call |
-| --- | ---: | ---: | ---: |
-| small-mixed | +8.8% | +3.5% | +5.5% |
-| small-ordered | +3.3% | +6.9% | -1.9% |
-| medium-mixed | -5.3% | +5.1% | -4.3% |
-| medium-ordered | -8.5% | +26.4% | -3.4% |
-| large-mixed | -10.7% | -28.1% | -3.2% |
-| large-ordered | -3.8% | +5.7% | -1.8% |
-| llvm-mixed | -22.4% | -15.2% | -20.4% |
-| llvm-ordered | +2.3% | -2.9% | +1.7% |
-
-The real `BinaryImage::hasFunctionSymbolAt` call over the 44,183-address random trace changed from 55.41 to 44.10 ns/query (process CPU medians). This is the primary integration evidence. Tiny inputs retain scalar search, but admission checks still have a cost; ordered controls are not uniformly faster. The full record includes wall times, which were noisier under external contention.
-
-Local checks passed: Clang 22, GCC 22, ASan/UBSan 19, scalar/system allocator 19, installed acceleration 22, installed scheduler 2, and code-owner integration 10 cases, all without failures or skips. ARM64 emulation passed all 3 sorted-search cases for NEON and for 384-bit SVE/SVE2. Native CI covers six ISA/OS combinations with eight compiler configurations; native results are not claimed here.
-
-The benchmark uses `GetProcessTimes` on Windows because [Microsoft documents that CRT `clock()` measures wall time](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/clock). On Unix it uses the process CPU clock exposed by `std::clock()`. The empty-array contract follows [C++20 pointer arithmetic](https://timsong-cpp.github.io/cppwp/n4861/expr.add) and is covered by explicit null-input and sanitizer checks.
+The benchmark uses `GetProcessTimes` on Windows because [Microsoft documents
+that CRT `clock()` measures wall time](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/clock).
+On Unix it uses the process CPU clock exposed by `std::clock()`. The empty-array
+contract follows [C++20 pointer arithmetic](https://timsong-cpp.github.io/cppwp/n4861/expr.add)
+and is covered by explicit null-input and sanitizer checks.

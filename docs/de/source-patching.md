@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
+<!-- i18n-source: dfc80a0bf5685db7576ab0eb49dc067cdc190a437a85b33c4a4186eed6915fce -->
 
 [← Documentation Index](README.md)
 
@@ -259,3 +259,10 @@ Die [Apple-Kompatibilitätsprüfungen](https://github.com/gmh5225/test_mac_intel
 Die Mach-O-Korrekturen authentifizieren ausgewählte Thumb-Funktionen unabhängig von der gemischten ARM/Thumb-Einstufung des gesamten Abbilds. Sie normalisieren belegte Thumb-Exportzeiger und ARM32-Unwind-Codeadressen, ohne Datenzeiger oder Bereichslängen zu ändern. Der Build mit integrierten LLVM-Quellen bestand lokal sämtliche 283 CPU-Matrixprüfungen und 258 Prüfungen der Ausnahmeverträge, ohne Fehler oder übersprungene Fälle. Die alten Mach-O-Proben verwenden einen dokumentierten quelloffenen Linker und reservieren Unwind-Speicher; i386 besitzt einen korrekt ausgerichteten Starteinstieg und ein 64-KiB-Page-Zero-Segment.
 
 Diese Ergebnisse belegen C-Ausführung in den genannten Emulatoren und Kompatibilitätsschichten. Wine ist kein Microsoft Windows, Darling kein macOS. ARMv7k-Ausführung in der iOS-HLE qualifiziert weder watchOS noch WatchKit oder Apple-Geräte. Daraus folgt keine Abdeckung alter Apple-SDKs oder nativer 32-Bit-Hardware; auch C++-Exception-Unwinding wird durch diese Proben nicht qualifiziert. Frühere native und Kompatibilitätsnachweise bleiben getrennt. NeverC wurde weder gebaut noch verändert.
+
+<!-- i18n-section: interactive-byte-patches -->
+## Zuständigkeit für interaktive Patches
+
+`lib/patch` verwaltet die Byteprüfung, LLVM-MC-Kodierung, den unveränderlichen Eingabeschnappschuss, normalisierte Änderungen und die exklusive Ausgabe. Das SDK prüft Quelltextziele anhand der exakten C-Ausgabe, kanonischer LowIR-Vorkommen und dekodierter Operanden; ein Navigationsanker genügt nicht. Der Worker nimmt die optionale Datei `patches.json` in Rückgängig/Wiederholen auf und verwirft danach die Analyse. Signaturen lesen Originalbytes; geänderte Funktionen verlieren aus ihrer Identität abgeleitete Bibliothekswirkungen. GUI, CLI und Python verwenden dieselben APIs. Vollständiger Funktionsersatz nutzt weiterhin `neverd_patch_source`; Byteänderungen müssen vorher exportiert und neu geöffnet werden.
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`
