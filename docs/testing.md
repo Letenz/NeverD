@@ -1531,6 +1531,9 @@ number boundaries, BOMs, depth and error precedence; nested/concurrent queues,
 thread limits, original exceptions and large stacks. The full build additionally
 runs `NeverDStringScanTests`, `NeverDTextEncodingTests`, pipeline, SDK and worker
 owners. Compare complete string metadata and output, not only throughput.
+`NeverDTextEncodingTests` also requires in-place normalization to retain valid
+string storage, including embedded NUL and Unicode noncharacters, while keeping
+the same malformed-byte escapes with SIMD validation enabled or disabled.
 Native pipeline CI repeats the complete selected owners and actual SDK/worker
 checks with both the default oneTBB backend and the explicit native-thread baseline.
 It also runs the pinned Capstone fork's x86 unit inventory, including guard-page
