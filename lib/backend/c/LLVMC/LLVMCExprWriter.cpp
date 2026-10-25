@@ -162,8 +162,9 @@ std::string unsignedCmpOperand(const std::string &S) {
 std::string signedIntegerOperand(const llvm::Type *Type,
                                  const std::string &Text) {
   const unsigned Width = Type->getIntegerBitWidth();
-  if (Width > 512)
-    throw std::runtime_error("LLVMC signed operand exceeds 512-bit carrier");
+  if (Width > limits::kMaxCSourceIntegerBytes * 8)
+    throw std::runtime_error(
+        "LLVMC signed operand exceeds source carrier width");
   if (Width > 128)
     return "(_BitInt(" + std::to_string(Width) + "))(" + Text + ")";
   const unsigned Carrier = Width <= 8    ? 8
@@ -1340,13 +1341,16 @@ std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
 } // namespace
 
 uint16_t LLVMCWriter::llvmAccessSize(const llvm::Type *Ty) const {
-  if (!Ty)
+  // Source-map discovery also visits EH tokens. They identify control-flow
+  // state and have no storage extent for DataLayout to measure.
+  if (!Ty || !Ty->isSized())
     return 0;
   if (CurMod) {
-    const uint64_t Size =
+    const auto Size =
         CurMod->getDataLayout().getTypeStoreSize(const_cast<llvm::Type *>(Ty));
-    if (Size && Size <= UINT16_MAX)
-      return static_cast<uint16_t>(Size);
+    if (!Size.isScalable() && Size.getFixedValue() <= UINT16_MAX)
+      return static_cast<uint16_t>(Size.getFixedValue());
+    return 0;
   }
   if (Ty->isIntegerTy())
     return static_cast<uint16_t>(Ty->getIntegerBitWidth() / 8);
@@ -3688,8 +3692,9 @@ std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
     return "(" + Dst + ")" + Src;
   const unsigned SrcWidth = SrcTy->getIntegerBitWidth();
   const unsigned DstWidth = DstTy->getIntegerBitWidth();
-  if (SrcWidth > 512 || DstWidth > 512)
-    throw std::runtime_error("LLVMC integer cast exceeds 512-bit carrier");
+  if (SrcWidth > limits::kMaxCSourceIntegerBytes * 8 ||
+      DstWidth > limits::kMaxCSourceIntegerBytes * 8)
+    throw std::runtime_error("LLVMC integer cast exceeds source carrier width");
 
   auto Cast = [](const std::string &Type, const std::string &Text) {
     return "(" + Type + ")(" + Text + ")";

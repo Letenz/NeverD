@@ -296,6 +296,7 @@ private:
   bool executeMisc(const LowOp &Op);
   bool executeIntrinsic(const LowOp &Op);
   bool executeX86Crypto(const LowOp &Op);
+  bool executeX86FourSource(const LowOp &Op);
   bool executeX86FPArith(const LowOp &Op, bool AlternateAddSubtract = false);
   bool executeX86ScalarFPState(const LowOp &Op);
   bool executeX86FPConvert(const LowOp &Op);

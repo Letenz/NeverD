@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace neverd {
@@ -98,7 +99,7 @@ public:
       uint8_t Offset = 0;
       size_t WildcardChild = kNoNode;
       std::vector<Edge> ExactChildren;
-      std::vector<size_t> Candidates;
+      llvm::ArrayRef<size_t> Candidates;
 
       bool isLeaf() const { return !Candidates.empty(); }
     };
@@ -114,6 +115,12 @@ public:
     /// Full pattern verifications scheduled for one input prefix.  This is a
     /// deterministic performance counter; it does not perform a match.
     size_t candidateCount(const uint8_t *Data, size_t Available) const;
+
+  private:
+    /// Leaves view one immutable permutation instead of allocating per leaf.
+    /// Copies retain its lifetime; rebuilding an index replaces only its own
+    /// storage, so copies and moved indexes keep valid views.
+    std::shared_ptr<const std::vector<size_t>> CandidateStorage;
   };
 
   static void scanRegion(const uint8_t *Data, size_t Size,

@@ -19,6 +19,7 @@
 #include "../render/X86/X86AmxState.h"
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86CompressExpand.h"
+#include "../render/X86/X86FourSource.h"
 #include "../render/X86/X86RepState.h"
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
@@ -299,8 +300,10 @@ std::string HighCWriter::rawVarName(const MedVar &V) const {
   case MedVar::EHSelector:
     return "eh_selector";
   case MedVar::SEHExceptionCode:
-    return V.SSAVer <= 1 ? std::string("exception_code")
-                         : "exception_code_" + std::to_string(V.SSAVer);
+    // <excpt.h> defines exception_code as an alias of _exception_code.
+    // A local with that spelling would shadow GetExceptionCode's intrinsic.
+    return V.SSAVer <= 1 ? std::string("seh_exception_code")
+                         : "seh_exception_code_" + std::to_string(V.SSAVer);
   case MedVar::Temp:
     return "t" + std::to_string(V.Id) +
            (V.SSAVer == 0 ? "" : "_" + std::to_string(V.SSAVer));
@@ -2000,6 +2003,16 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (E.IntrinsicId == Intrinsic::X86FourSourceMemory) {
+    std::vector<std::string> Args;
+    for (const auto &V : E.Operands) {
+      if (!V)
+        throw std::invalid_argument(X86FourSourceMalformed);
+      Args.push_back(intrinsicOperandStr(*V));
+    }
+    return renderX86FourSourceExpression(Opts.TheArch, E, Args,
+                                         typeToC(E.Type));
+  }
   if (isX86CompactMemory(E.IntrinsicId)) {
     std::vector<std::string> Args;
     for (const auto &V : E.Operands) {
@@ -3367,7 +3380,8 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
       Defined->second->SourceTypeHint)
     if (const auto Return = declaredFunctionReturnType(*Defined->second))
       return Return;
-  if (const auto Callee = debugCallee(E)) {
+  if (const auto Callee = debugCallee(E);
+      Callee && debugCallReturnIsDeclared(E, *Callee)) {
     // A result whose type C cannot spell is the register it arrives in.
     if (!hasCValueLayout(cDisplayType(Callee->ReturnType)))
       return {};

@@ -49,6 +49,12 @@ inline constexpr llvm::StringLiteral LLVMModularProgressFlowRegionProfile =
     "llvm-progress-neighborhoods-v5";
 inline constexpr llvm::StringLiteral LLVMModularProgressFlowFragmentProfile =
     "llvm-progress-fragments-v5";
+inline constexpr llvm::StringLiteral
+    LLVMParameterBoundProgressFlowRegionProfile =
+        "llvm-progress-neighborhoods-v6";
+inline constexpr llvm::StringLiteral
+    LLVMParameterBoundProgressFlowFragmentProfile =
+        "llvm-progress-fragments-v6";
 inline bool isFlowFragmentProfile(llvm::StringRef Profile) {
   return Profile == FlowFragmentProfile || Profile == LLVMFlowFragmentProfile ||
          Profile == LLVMParameterFlowFragmentProfile ||
@@ -56,7 +62,8 @@ inline bool isFlowFragmentProfile(llvm::StringRef Profile) {
          Profile == LLVMMultiBlockProgressFlowFragmentProfile ||
          Profile == LLVMNestedProgressFlowFragmentProfile ||
          Profile == LLVMBranchProgressFlowFragmentProfile ||
-         Profile == LLVMModularProgressFlowFragmentProfile;
+         Profile == LLVMModularProgressFlowFragmentProfile ||
+         Profile == LLVMParameterBoundProgressFlowFragmentProfile;
 }
 inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
   return Profile == LLVMFlowRegionProfile ||
@@ -67,12 +74,14 @@ inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
          Profile == LLVMNestedProgressFlowRegionProfile ||
          Profile == LLVMBranchProgressFlowRegionProfile ||
          Profile == LLVMModularProgressFlowRegionProfile ||
+         Profile == LLVMParameterBoundProgressFlowRegionProfile ||
          Profile == LLVMParameterFlowFragmentProfile ||
          Profile == LLVMProgressFlowFragmentProfile ||
          Profile == LLVMMultiBlockProgressFlowFragmentProfile ||
          Profile == LLVMNestedProgressFlowFragmentProfile ||
          Profile == LLVMBranchProgressFlowFragmentProfile ||
-         Profile == LLVMModularProgressFlowFragmentProfile;
+         Profile == LLVMModularProgressFlowFragmentProfile ||
+         Profile == LLVMParameterBoundProgressFlowFragmentProfile;
 }
 llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
                                   bool Fragments = false);

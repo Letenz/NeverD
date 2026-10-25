@@ -19,6 +19,7 @@
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86FPStateHelpers.h"
+#include "../render/X86/X86FourSource.h"
 #include "../render/X86/X86RepState.h"
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
@@ -3819,9 +3820,9 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   // carriers can contain padding: transfer the LLVM store size and byte
   // order, never the C object's representation. The x87 memory image has
   // its own exact-byte path.
-  const bool WideInteger = Type->isIntegerTy() &&
-                           Type->getIntegerBitWidth() > 128 &&
-                           Type->getIntegerBitWidth() <= 512;
+  const bool WideInteger =
+      Type->isIntegerTy() && Type->getIntegerBitWidth() > 128 &&
+      Type->getIntegerBitWidth() <= limits::kMaxCSourceIntegerBytes * 8;
   const bool Integer = Type->isIntegerTy(8) || Type->isIntegerTy(16) ||
                        Type->isIntegerTy(32) || Type->isIntegerTy(64) ||
                        Type->isIntegerTy(128) || WideInteger;
@@ -3959,6 +3960,21 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (x86FourSourceNativeName(Callee->getName().str())) {
+    const auto *I = llvm::dyn_cast<llvm::CallInst>(&Call);
+    if (!I)
+      throw std::invalid_argument(X86FourSourceMalformed);
+    std::vector<std::string> Args;
+    for (const auto &V : Call.args())
+      Args.push_back(valueStr(V.get()));
+    const bool Live =
+        !Call.getType()->isVoidTy() && valueFeedsPrintedUse(&Call);
+    emitIndent(Indent);
+    OS << *renderX86FourSourceCall(Opts.TheArch, *I, Args,
+                                   Live ? getName(&Call) : "", Live,
+                                   typeToCLLVM(Call.getType()));
+    return true;
+  }
   if (x86CompactNativeName(Callee->getName().str())) {
     const auto *I = llvm::dyn_cast<llvm::CallInst>(&Call);
     if (!I)
@@ -5280,6 +5296,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     OS << *Amx;
     return true;
   }
+  if (auto FourSource =
+          renderX86FourSourceCall(Opts.TheArch, Call, ArgStrs, Name, ResultLive,
+                                  typeToCLLVM(Call.getType()))) {
+    emitIndent(Indent);
+    OS << *FourSource;
+    return true;
+  }
   if (auto Compact =
           renderX86CompactCall(Opts.TheArch, Call, ArgStrs, Name, ResultLive,
                                typeToCLLVM(Call.getType()))) {
@@ -5316,6 +5339,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
           Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);
     OS << *Virtualization;
+    return true;
+  }
+
+  if (auto Prefetch = renderX86PrefetchCall(Opts.TheArch, Call, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Prefetch->Code;
     return true;
   }
 
@@ -7590,6 +7619,21 @@ std::string LLVMCWriter::importCalleeCName(const llvm::Value *Callee) const {
     Ptr = LI->getPointerOperand()->stripPointerCasts();
 
   auto nameFromSlot = [&](va_t Slot) -> std::string {
+    // A data object's debug name names its storage, not the function pointer
+    // currently loaded from it. Only a loader-bound import can replace that
+    // load with a fixed callee identity.
+    if (llvm::isa<llvm::LoadInst>(Op)) {
+      if (!Img)
+        return {};
+      const Import *Imported = Img->findImportAt(Slot);
+      const auto Bound = Img->ImportStorageSlots.find(Slot);
+      const bool BoundImport =
+          Bound != Img->ImportStorageSlots.end() &&
+          !Img->ConflictingImportStorageSlots.count(Slot) &&
+          Bound->second.Addend == 0;
+      if ((!Imported || Imported->IATAddr != Slot) && !BoundImport)
+        return {};
+    }
     if (Dbg) {
       if (auto Data = Dbg->resolveDataObject(Slot); Data && !Data->Name.empty())
         return canonicalizeCProjectionIdentifier(Data->Name, "nd_import");

@@ -43,18 +43,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: Linux ARM64 Clang, runner: ubuntu-24.04-arm, cc: clang, cxx: clang++}
-          - {name: Linux ARM64 GCC, runner: ubuntu-24.04-arm, cc: gcc, cxx: g++}
-          - {name: macOS ARM64, runner: macos-15, cc: clang, cxx: clang++}
-          - {name: Windows ARM64 MSVC, runner: windows-11-arm, cc: cl, cxx: cl}
-          - {name: Windows ARM64 clang-cl, runner: windows-11-arm, cc: clang-cl, cxx: clang-cl}
+          - {name: Linux ARM64 Clang, runner: ubuntu-24.04-arm, arch: arm64, cc: clang, cxx: clang++}
+          - {name: Linux ARM64 GCC, runner: ubuntu-24.04-arm, arch: arm64, cc: gcc, cxx: g++}
+          - {name: Linux x86-64 Clang, runner: ubuntu-24.04, arch: x64, cc: clang, cxx: clang++}
+          - {name: Linux x86-64 GCC, runner: ubuntu-24.04, arch: x64, cc: gcc, cxx: g++}
+          - {name: macOS ARM64, runner: macos-15, arch: arm64, cc: clang, cxx: clang++}
+          - {name: macOS x86-64, runner: macos-15-intel, arch: x64, cc: clang, cxx: clang++}
+          - {name: Windows ARM64 MSVC, runner: windows-11-arm, arch: arm64, cc: cl, cxx: cl}
+          - {name: Windows ARM64 clang-cl, runner: windows-11-arm, arch: arm64, cc: clang-cl, cxx: clang-cl}
+          - {name: Windows x86-64 MSVC, runner: windows-2025, arch: x64, cc: cl, cxx: cl}
+          - {name: Windows x86-64 clang-cl, runner: windows-2025, arch: x64, cc: clang-cl, cxx: clang-cl}
     defaults:
       run:
         shell: bash
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
-      NEVERD_TEST_SHA256_HARDWARE: '1'
+      DIGEST_ARCH: ${{ matrix.arch }}
       BASELINE_COMMIT: ${{ inputs.baseline_commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,7 +81,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         if: runner.os == 'Windows'
         with:
-          arch: arm64
+          arch: ${{ matrix.arch }}
       - name: Export the requested baseline owner and headers
         if: inputs.baseline_commit != ''
         run: |
@@ -89,15 +94,22 @@ jobs:
       - name: Build exact native owners and portable controls
         run: |
           set -euo pipefail
-          options=(-DCMAKE_BUILD_TYPE=Release -DNEVERD_DIGEST_REQUIRE_ARM64=ON)
+          options=(-DCMAKE_BUILD_TYPE=Release)
+          if [ "$DIGEST_ARCH" = arm64 ]; then
+            options+=(-DNEVERD_DIGEST_REQUIRE_ARM64=ON)
+          else
+            options+=(-DNEVERD_DIGEST_REQUIRE_X86_64=ON)
+          fi
           targets=(NeverDDigestTests NeverDPortableDigestTests NeverDDigestTestsBench NeverDPortableDigestTestsBench)
           if [ -n "${BASELINE_COMMIT:-}" ]; then
             options+=(-DNEVERD_DIGEST_BASELINE_ROOT="$PWD/build-digest/baseline")
             targets+=(NeverDBaselineDigestTests NeverDBaselineDigestTestsBench)
           fi
           if [ "$CXX" = clang-cl ]; then
-            options+=(-DCMAKE_C_COMPILER_TARGET=aarch64-pc-windows-msvc
-                      -DCMAKE_CXX_COMPILER_TARGET=aarch64-pc-windows-msvc)
+            compiler_target=aarch64-pc-windows-msvc
+            if [ "$DIGEST_ARCH" = x64 ]; then compiler_target=x86_64-pc-windows-msvc; fi
+            options+=(-DCMAKE_C_COMPILER_TARGET="$compiler_target"
+                      -DCMAKE_CXX_COMPILER_TARGET="$compiler_target")
           fi
           cmake -S unittests/digest -B build-digest -G Ninja "${options[@]}"
           python scripts/build.py build-digest --target "${targets[@]}" --parallel 3
@@ -106,12 +118,17 @@ jobs:
       - name: Verify identity, actual dispatch, guarded reads and cancellation
         run: |
           set -euo pipefail
+          if [ "$DIGEST_ARCH" = arm64 ]; then
+            export NEVERD_TEST_SHA256_HARDWARE=1
+          else
+            unset NEVERD_TEST_SHA256_HARDWARE
+          fi
           ctest --test-dir build-digest --output-on-failure --no-tests=error --output-junit tests.xml
           python - <<'PYTHON'
           import os
           import xml.etree.ElementTree as ET
           cases = list(ET.parse('build-digest/tests.xml').getroot().iter('testcase'))
-          expected = 24 if os.environ.get('BASELINE_COMMIT') else 16
+          expected = 26 if os.environ.get('BASELINE_COMMIT') else 18
           assert len(cases) == expected, len(cases)
           assert all(case.get('status') == 'run' for case in cases)
           assert not any(child.tag in {'failure', 'error', 'skipped'} for case in cases for child in case)
@@ -121,9 +138,16 @@ jobs:
           set -euo pipefail
           suffix=""
           if [ "$RUNNER_OS" = Windows ]; then suffix=.exe; fi
-          python unittests/digest/benchmark.py "build-digest/bin/NeverDDigestTestsBench$suffix" "build-digest/bin/NeverDPortableDigestTestsBench$suffix" build-digest/timings.json --require-hardware
+          measure() {
+            if [ "$DIGEST_ARCH" = arm64 ]; then
+              python unittests/digest/benchmark.py "$@" --require-hardware
+            else
+              python unittests/digest/benchmark.py "$@"
+            fi
+          }
+          measure "build-digest/bin/NeverDDigestTestsBench$suffix" "build-digest/bin/NeverDPortableDigestTestsBench$suffix" build-digest/timings.json
           if [ -n "${BASELINE_COMMIT:-}" ]; then
-            python unittests/digest/benchmark.py "build-digest/bin/NeverDDigestTestsBench$suffix" "build-digest/bin/NeverDBaselineDigestTestsBench$suffix" build-digest/baseline-timings.json --baseline --require-hardware
+            measure "build-digest/bin/NeverDDigestTestsBench$suffix" "build-digest/bin/NeverDBaselineDigestTestsBench$suffix" build-digest/baseline-timings.json --baseline
           fi
       - name: Retain native qualification evidence
         if: always()

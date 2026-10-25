@@ -564,7 +564,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
         return false;
       }
     }
-    if (isX86CompactMemory(Id))
+    if (isX86CompactMemory(Id) || Id == Intrinsic::X86FourSourceMemory)
       return executeIntrinsic(Op);
     // A scalar tracer has neither CPL/CR4/CPUID state nor a guest TLB.  Even a
     // structurally valid invalidation or MSR access must therefore stop here

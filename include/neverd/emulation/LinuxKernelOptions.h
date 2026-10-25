@@ -28,6 +28,8 @@ struct LinuxKernelTask {
 };
 /// The observed import order for getxattr/lgetxattr/fgetxattr requests.
 enum class LinuxXAttrQueryImport { TargetBeforeName, NameBeforeTarget };
+/// Legacy Android VMA names borrow a guest pointer until proc reads the name.
+enum class LinuxAnonymousVMANames { AndroidUserPointer };
 /// Explicit Linux kernel contracts and observed absent kernel interfaces.
 /// Unmodeled interfaces retain their unsupported execution boundary.
 struct LinuxKernelOptions {
@@ -44,6 +46,9 @@ struct LinuxKernelOptions {
   /// Independent of GKI: this supplies CPU-clock task identities, not pidfd
   /// release rules or observations for other services.
   std::optional<std::map<uint32_t, LinuxKernelTask>> Tasks;
+  /// Independent, opt-in anonymous VMA naming contract. Neither an Android
+  /// API level nor GKI selects this legacy user-pointer representation.
+  std::optional<LinuxAnonymousVMANames> AnonymousVMANames;
 };
 } // namespace neverd::emulation
 #endif

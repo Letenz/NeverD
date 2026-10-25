@@ -1736,7 +1736,11 @@ private slots:
     QCOMPARE(menus->parentWidget(), bar);
     QAction palette;
     int runs = 0;
-    connect(&palette, &QAction::triggered, &window, [&runs] { ++runs; });
+    QWidget *clicked = nullptr;
+    connect(&palette, &QAction::triggered, &window, [&] {
+      ++runs;
+      clicked = bar->clickedCommandCenter();
+    });
     bar->setCommandCenterAction(&palette);
     bar->setCommandCenterText(QStringLiteral("xxd"),
                               QStringLiteral("NeverD - xxd /tmp"));
@@ -1755,12 +1759,18 @@ private slots:
     QCOMPARE(button("maximizeButton")->accessibleName(),
              QStringLiteral("Maximize"));
 
-    // The command center names the file and runs its command.
+    // The command center names the file and runs its command, which can tell
+    // a click on the field, which it drops from, from its key.
     auto *center = button("commandCenter");
     QVERIFY(center && center->isVisible());
     QCOMPARE(center->text(), QStringLiteral("xxd"));
     QTest::mouseClick(center, Qt::LeftButton);
     QCOMPARE(runs, 1);
+    QCOMPARE(clicked, static_cast<QWidget *>(center));
+    QVERIFY(!bar->clickedCommandCenter());
+    palette.trigger();
+    QCOMPARE(runs, 2);
+    QVERIFY(!clicked);
 
     // The maximize button and a double click on the bar's empty part toggle
     // the maximized state, and the button then offers to restore.
@@ -2106,6 +2116,53 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(&alone));
     QTest::keyClick(&alone, Qt::Key_Return);
     QVERIFY(alone.isChecked());
+  }
+
+  void returnOnAListOfChoicesPressesTheDefaultButton() {
+    // The GNOME theme makes Return open a combo box's list as well, so
+    // Return after choosing a theme opened the list again.
+    class ReturnOpenedComboBox final : public QComboBox {
+    public:
+      using QComboBox::QComboBox;
+      int opened = 0;
+
+    protected:
+      void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+          ++opened;
+        else
+          QComboBox::keyPressEvent(event);
+      }
+    };
+    const std::unique_ptr<QObject> filter(acceptDialogsOnReturn(*qApp));
+    QDialog dialog;
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *choices = new ReturnOpenedComboBox(&dialog);
+    choices->addItems({QStringLiteral("Dark"), QStringLiteral("Light")});
+    auto *typed = new ReturnOpenedComboBox(&dialog);
+    typed->setEditable(true);
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    for (QWidget *widget :
+         {static_cast<QWidget *>(choices), static_cast<QWidget *>(typed),
+          static_cast<QWidget *>(buttons)})
+      layout->addWidget(widget);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    // A combo box that takes typing keeps Return for its text.
+    typed->setFocus();
+    QTest::keyClick(typed, Qt::Key_Return);
+    QCOMPARE(typed->opened, 1);
+    QVERIFY(dialog.isVisible());
+    choices->setFocus();
+    QTest::keyClick(choices, Qt::Key_Down);
+    QCOMPARE(choices->currentText(), QStringLiteral("Light"));
+    QTest::keyClick(choices, Qt::Key_Return);
+    QCOMPARE(choices->opened, 0);
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QVERIFY(!dialog.isVisible());
   }
 
   void themeDrawsFlatControls() {

@@ -51,6 +51,7 @@ complete instruction support or semantic test coverage.
 | VSHA512MSG1, VSHA512MSG2, VSHA512RNDS2 | Integer LowIR, independent scalar oracle, source aliasing, upper-lane clearing and executable LLVM/HighC/LLVMC tests without SHA512 hardware. |
 | VMASKMOVPS/PD and VPMASKMOVD/Q stores | A void output replaces an invalid zero-width RAX result. Tests cover both vector widths, both architectures and inactive lanes over unmapped memory. |
 | VPCOMPRESSB/W/D/Q, VCOMPRESSPS/PD, VPEXPANDB/W/D/Q and VEXPANDPS/PD memory forms | Native contiguous masked accesses across LLVM, HighC and LLVM-to-C. Integer/FP opcode identity, merging/zeroing, segment offsets and zero-mask effects are retained; the compact-memory section below records the address boundary and qualification. |
+| V4FMADDPS/SS, V4FNMADDPS/SS, VP4DPWSSD and VP4DPWSSDS | Four explicit source values and the accumulator survive native LLVM, HighC and LLVM-to-C. Native instructions retain the four arithmetic steps, masks, memory transaction and floating-point status. See the four-source qualification below for addressing and hardware limits. |
 | Shared 32-bit VEX3/EVEX register and address validators | Mode-aware register-bank selection for their callers, including F16C, FMA4, SHA512 and EVEX integer/vector families. Ignored extension fields select the low bank; reserved fields still fail clearly. |
 | REX2 and 32-bit VEX floating-point forms | Shared prefix validation replaces eight local parsers. The 13 previously failing REX2 and nine 32-bit VEX examples now strictly lift, retaining distinct GPR/vector/address extension rules. Concrete and executable source/native-route regressions cover the new behavior. |
 | WRSSD/Q, WRUSSD/Q, ENQCMD and ENQCMDS native output | The shared system contract emits the real instruction in LLVM, HighC and LLVM-to-C. Memory stays inside the instruction, enqueue returns its actual ZF, and FS/GS qualifies only the explicit memory operand. |
@@ -117,8 +118,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation; legacy standalone placeholder intrinsics cannot become NOPs. |
 | Remaining compact-memory address forms | Native LLVM and both C routes now support DS/FS/GS compact memory. A 64-bit RSP/RBP-based address without FS/GS still lacks its #SS fault provenance. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
-| V4FMADDPS/SS, V4FNMADDPS/SS | The exact four-iteration floating-point contract exists in LowIR; `X86FourFMA` still has no LLVM lowering. Native source groups, rounding/flags and memory completion need qualification. |
-| VP4DPWSSD, VP4DPWSSDS | LowIR owns the four-source word dot product; the LLVM backend still rejects both IDs. Native register grouping, saturation and memory/mask behavior remain open. |
+| Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD forms | EVEX AADD/AAND/AOR/AXOR and all sixteen CMPccXADD conditions now have native LLVM and both C routes. Legacy RAO-INT and VEX CMPccXADD still lack strict lifter admission. Default-stack RSP/RBP memory with 64-bit addressing and no FS/GS override remains refused until the normalized address retains its #SS fault class. Physical APX execution is not qualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
@@ -1733,3 +1733,66 @@ Those recorders do not certify physical
 AVX-512 execution, exception ordering, concurrency or device memory.
 The architectural reference is Intel's
 [December 2024 instruction-set manual, Volume 2](https://cdrdv2-public.intel.com/843829/325383-sdm-vol-2abcd-dec-24.pdf).
+
+## Native four-source qualification
+
+`X86FourSourceMemory` appends one stable intrinsic identity without renumbering
+older IDs. Its operands are a segment-relative address, accumulator, packed
+four-source value, lane mask and constant kind/zeroing control. SS forms pack
+only the low dword of each XMM source; packed forms retain all four ZMM values.
+The lifter snapshots those reads before any aliasing destination write.
+LowIR, MedIR, concrete execution and both source routes share shape and operand
+observation rules in `ir/intrinsics/X86/X86FourSource.h`. Unknown active operands
+remain unsupported; a zero mask does not observe the address or source group.
+Scalar upper 96 bits always come from the old destination.
+
+LLVM `588b19e45293` introduces six native interfaces. Every source is an LLVM
+operand, with XMM4..7 or ZMM4..7 materialized as a complete aligned physical
+group. The three unencoded members remain explicit machine-register uses.
+Native instructions own the four sequential rounding/saturation steps, MXCSR,
+full m128 access and hardware faults. The older SDK uses an exact checked
+assembly contract with the same complete register group. NeverC exposes six
+corresponding builtins in `336a54b88` and `__NEVERC_X86_FOUR_SOURCE__`; C output selects them
+when available and otherwise uses the owned ATT/Intel assembly form.
+
+The native pointer carrier is RBX/EBX, so the remaining default-stack and i386
+segment limitations match compact memory. LLVM and NeverD cover i386 and x64;
+NeverC's frontend remains x64-only. Compiler `avx512f` enables the carriers,
+but execution additionally requires AVX512_4FMAPS or AVX512_4VNNIW and the
+appropriate enabled extended state. Ordinary AVX512F hardware is insufficient.
+
+The numerical executors retain independent four-iteration FP and integer tests,
+including source/destination aliasing, mask suppression, saturation and memory
+completion. `NeverDX86FourSourceSourceTests` checks malformed effects and source
+groups, unknown operands, 36 wrapper variants and 36 raw pipeline variants.
+Set `NEVERD_FOUR_SOURCE_EXPORT_DIR` and run
+`scripts/verify_x86_four_source.py --exports DIR --keep AUDIT_DIR
+--llc LLVM/bin/llc --neverc NEVERC/bin/neverc` for O0/O2 ELF/COFF/Mach-O objects,
+both C routes, assembly dialects and executable independent operand recorders.
+The recorder compares each distinct source, accumulator, mask, segment and
+returned value without executing these uncommon instructions.
+
+`scripts/verify_x86_four_source_registers.py` additionally interprets the moves,
+spills, mask setup and returns of x64 ELF compiler probes. It checks all four
+native register inputs and uses independent result tokens to check return
+transport and preserved registers. NeverC probes can select the ordinary C
+stack ABI for wide vectors with `--stack-wide-args`; LLVM probes use vector
+register arguments. Unrecognized instructions fail. These bounded transport
+checks do not simulate native arithmetic or qualify Xeon Phi hardware faults.
+
+The pinned and native SDKs each pass 414 object checks covering 6,804 native
+encodings and sixteen executable C operand recorders, eight under Clang UBSan.
+Together, these qualify 828 objects, 13,608 instruction encodings and 32
+recorders. NeverC passes all 83 focused x86 tests; both its default stack ABI
+and AVX512F vector-register ABI pass separate O0/O2 transport probes. The
+integrated NeverD matrix registers 931 cases per SDK with zero failures:
+the pinned SDK skips three unavailable native descriptor/virtualization APIs,
+and both SDKs skip the Windows-only CPUID observer.
+
+The shared scalar C carrier limit is 256 bytes, sufficient for all four ZMM
+sources; the ordinary C vector limit remains 64 bytes. LLVM-to-C uses exact
+byte transfers throughout that scalar range. Executable O0/O2 UBSan tests cover
+513-, 1024-, 2047- and 2048-bit constants and copies, unaligned storage,
+little/big-endian layouts, surrounding guard bytes and rejection above the
+shared limit. Four-source and compact-memory exports remain byte-identical
+after this memory-path correction, retaining their prior object evidence.

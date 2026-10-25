@@ -2834,7 +2834,14 @@ CodeView::CodeView(Session &session, const QString &representation,
   bar->addWidget(fold_);
   lock_->setCheckable(true);
   lock_->setAutoRaise(true);
-  lock_->setIcon(icon(QStringLiteral("lock")));
+  // The padlock closes while the function is kept, as the floating windows'
+  // does; no fill repeats the state.
+  lock_->setProperty("glyphToggle", true);
+  lock_->setIcon(icon(QStringLiteral("lock_open")));
+  connect(lock_, &QToolButton::toggled, lock_, [this](bool locked) {
+    lock_->setIcon(
+        icon(locked ? QStringLiteral("lock") : QStringLiteral("lock_open")));
+  });
   lock_->setToolTip(tr("Keep this function while the disassembly moves on"));
   bar->addWidget(lock_);
   optimize_->setObjectName(QStringLiteral("sourceOptimization"));

@@ -6469,6 +6469,10 @@ Abdeckung: %7</translation>
         <source>Optimized SSA with wrapping loop analysis</source>
         <translation>Optimierte SSA mit Analyse von Schleifen mit Zahlenüberlauf</translation>
     </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>Optimierte SSA mit Schleifenanalyse für Parametergrenzen</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6635,6 +6639,14 @@ Terminierung belegt keine gleichen Schleifenzahlen oder Funktionsergebnisse.</tr
     <message>
         <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
         <translation>Beweis: Jeder Zählerzyklus erreicht einen gemeinsamen Ausgang, auch nach einem Zahlenüberlauf.</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with parameter-bound loop analysis</source>
+        <translation>Optimierte SSA mit Schleifenanalyse für Parametergrenzen</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit relative to an input parameter. Undefined behavior may occur before exit.</source>
+        <translation>Beweis: Jeder Zählerzyklus erreicht einen gemeinsamen Ausgang relativ zu einem Eingabeparameter. Vor dem Verlassen kann undefiniertes Verhalten auftreten.</translation>
     </message>
 </context>
 <context>
