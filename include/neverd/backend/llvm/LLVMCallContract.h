@@ -1,8 +1,12 @@
-//===- LLVMCallContract.h - resolved call signature validation ---*- C++
-//-*-===//
+//===- LLVMCallContract.h - Call argument contracts ------------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Preserve physical argument locations and validate resolved LLVM calls.
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_BACKEND_LLVM_LLVMCALLCONTRACT_H
@@ -15,6 +19,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace llvm {
@@ -29,6 +34,16 @@ namespace neverd {
 inline constexpr llvm::StringLiteral
     LLVMArgumentBanksAttribute("neverd.argument-banks");
 class LLVMSourceMap;
+std::optional<std::pair<unsigned, unsigned>>
+getLLVMArgumentBanks(const llvm::Function &Function);
+std::optional<std::pair<unsigned, unsigned>>
+getLLVMArgumentBanks(const llvm::CallBase &Call);
+/// Stack byte locations following the recorded register banks.
+struct LLVMArgumentStackLayout {
+  std::vector<int64_t> Offsets;
+  unsigned SlotBytes = 0;
+};
+LLVMArgumentStackLayout getLLVMArgumentStackLayout(const llvm::CallBase &Call);
 /// Record independent register banks before argument values lose their
 /// physical register identities to propagation or LLVM optimization.
 void setLLVMArgumentBanks(llvm::Function &Function, unsigned Integers,
@@ -76,4 +91,4 @@ bool validateResolvedLLVMCallSignatures(llvm::Module &Module,
                                         bool AnalystSourceProjection = false);
 } // namespace neverd
 
-#endif
+#endif // NEVERD_BACKEND_LLVM_LLVMCALLCONTRACT_H

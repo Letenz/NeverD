@@ -58,8 +58,6 @@
 namespace neverd {
 
 namespace {
-constexpr auto ArgumentBanks = LLVMArgumentBanksAttribute;
-
 /// A fixed header signature whose floating operands already have complete
 /// register summaries. SourceParameterPlacement owns the positions; this only
 /// verifies that ABI recovery retained those exact operands and scalar lanes.
@@ -85,65 +83,6 @@ bool floatingHeaderCall(const FunctionSym &Function, Arch Architecture,
         !(Call.Args[I] == Op.Inputs[I + 1]))
       return false;
   return true;
-}
-
-std::optional<std::pair<unsigned, unsigned>>
-argumentBanks(const llvm::Function &Function) {
-  const auto Attribute = Function.getFnAttribute(ArgumentBanks);
-  if (!Attribute.isStringAttribute())
-    return std::nullopt;
-  auto Parts = Attribute.getValueAsString().split(',');
-  unsigned Integers, Floating;
-  if (Parts.first.getAsInteger(10, Integers) ||
-      Parts.second.getAsInteger(10, Floating) ||
-      Integers > Function.arg_size() ||
-      Floating > Function.arg_size() - Integers)
-    return std::nullopt;
-  return std::pair{Integers, Floating};
-}
-
-std::optional<std::pair<unsigned, unsigned>>
-argumentBanks(const llvm::CallBase &Call) {
-  const auto *Node = Call.getMetadata(ArgumentBanks);
-  if (!Node || Node->getNumOperands() < 2)
-    return std::nullopt;
-  const auto *Integers =
-      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(0));
-  const auto *Floating =
-      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(1));
-  if (!Integers || !Floating || Integers->getBitWidth() != 32 ||
-      Floating->getBitWidth() != 32 ||
-      Integers->getZExtValue() > Call.arg_size() ||
-      Floating->getZExtValue() > Call.arg_size() - Integers->getZExtValue())
-    return std::nullopt;
-  return std::pair{static_cast<unsigned>(Integers->getZExtValue()),
-                   static_cast<unsigned>(Floating->getZExtValue())};
-}
-
-/// The slot size and stack value offsets a call records after its banks.
-struct ArgumentStackLayout {
-  std::vector<int64_t> Offsets;
-  unsigned SlotBytes = 0;
-};
-
-ArgumentStackLayout argumentStackLayout(const llvm::CallBase &Call) {
-  const auto *Node = Call.getMetadata(ArgumentBanks);
-  if (!Node || Node->getNumOperands() < 3)
-    return {};
-  const auto *Slot =
-      llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(2));
-  if (!Slot || Slot->getBitWidth() != 32)
-    return {};
-  ArgumentStackLayout Result;
-  for (unsigned I = 3; I < Node->getNumOperands(); ++I) {
-    const auto *Offset =
-        llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(I));
-    if (!Offset || Offset->getBitWidth() != 64)
-      return {};
-    Result.Offsets.push_back(Offset->getSExtValue());
-  }
-  Result.SlotBytes = static_cast<unsigned>(Slot->getZExtValue());
-  return Result;
 }
 
 llvm::GlobalValue *constantCallIdentity(llvm::Value *Value,
@@ -198,96 +137,11 @@ llvm::GlobalValue *constantCallIdentity(llvm::Value *Value,
 }
 } // namespace
 
-void setLLVMArgumentBanks(llvm::Function &Function, unsigned Integers,
-                          unsigned Floating) {
-  Function.addFnAttr(ArgumentBanks,
-                     std::to_string(Integers) + "," + std::to_string(Floating));
-}
-
-void setLLVMArgumentBanks(llvm::CallBase &Call, unsigned Integers,
-                          unsigned Floating,
-                          llvm::ArrayRef<int64_t> StackOffsets,
-                          unsigned SlotBytes) {
-  llvm::IRBuilder<> Builder(Call.getContext());
-  llvm::SmallVector<llvm::Metadata *> Operands = {
-      llvm::ConstantAsMetadata::get(Builder.getInt32(Integers)),
-      llvm::ConstantAsMetadata::get(Builder.getInt32(Floating))};
-  if (!StackOffsets.empty() && SlotBytes > 0) {
-    Operands.push_back(
-        llvm::ConstantAsMetadata::get(Builder.getInt32(SlotBytes)));
-    for (int64_t Offset : StackOffsets)
-      Operands.push_back(
-          llvm::ConstantAsMetadata::get(Builder.getInt64(Offset)));
-  }
-  Call.setMetadata(ArgumentBanks,
-                   llvm::MDNode::get(Call.getContext(), Operands));
-}
-
-std::optional<IntegerCallArguments>
-bindLLVMIntegerCallArguments(const llvm::CallBase &Call,
-                             const IntegerCallArguments &Layout, Arch A,
-                             BinaryFormat F) {
-  const auto *Metadata = Call.getMetadata(ArgumentBanks);
-  if (!Metadata)
-    return Layout.Positions <= Call.arg_size() ? std::optional(Layout)
-                                               : std::nullopt;
-  const auto Banks = argumentBanks(Call);
-  const auto Physical = getTargetRegInfo(A).integerArgumentLayout(F);
-  if (!Banks || Banks->second || !Physical.SlotBytes)
-    return std::nullopt;
-  const unsigned Registers = A == Arch::X86 ? 0 : Physical.Registers.size();
-  const auto Stack = argumentStackLayout(Call);
-  const bool Located = Metadata->getNumOperands() > 2;
-  if (Located && (Stack.SlotBytes != Physical.SlotBytes ||
-                  Stack.Offsets.size() != Call.arg_size() - Banks->first))
-    return std::nullopt;
-  IntegerCallArguments Bound = Layout;
-  Bound.Positions = 0;
-  const auto Bind = [&](unsigned &Index, unsigned Bytes) {
-    if (Index < Registers) {
-      if (Index >= Banks->first)
-        return false;
-    } else {
-      const uint64_t Offset = uint64_t(Index - Registers) * Physical.SlotBytes;
-      unsigned Slot = Index - Registers;
-      if (Located) {
-        const auto Found =
-            llvm::find(Stack.Offsets, static_cast<int64_t>(Offset));
-        if (Found == Stack.Offsets.end() ||
-            llvm::count(Stack.Offsets, static_cast<int64_t>(Offset)) != 1)
-          return false;
-        Slot = static_cast<unsigned>(Found - Stack.Offsets.begin());
-      }
-      if (Slot >= Call.arg_size() - Banks->first)
-        return false;
-      Index = Banks->first + Slot;
-    }
-    auto *Type = Call.getArgOperand(Index)->getType();
-    const unsigned Bits =
-        Type->isIntegerTy() ? Type->getIntegerBitWidth()
-        : Type->isPointerTy()
-            ? Call.getModule()->getDataLayout().getPointerTypeSizeInBits(Type)
-            : 0;
-    if (Bits < Bytes * 8 || Bits > Physical.SlotBytes * 8)
-      return false;
-    Bound.Positions = std::max(Bound.Positions, Index + 1);
-    return true;
-  };
-  if (Bound.ResultPointer &&
-      !Bind(*Bound.ResultPointer, getTargetRegInfo(A).PointerSize))
-    return std::nullopt;
-  for (auto &Parameter : Bound.Parameters)
-    for (auto &Piece : Parameter.Pieces)
-      if (Piece.Floating || !Bind(Piece.Argument, Piece.Bytes))
-        return std::nullopt;
-  return Bound;
-}
-
 std::optional<LLVMArgumentBinding> bindResolvedLLVMArguments(
     const llvm::Function &Target, llvm::ArrayRef<llvm::Value *> Values,
     unsigned Integers, unsigned Floating, llvm::IRBuilderBase &Builder,
     llvm::ArrayRef<int64_t> StackOffsets, unsigned SlotBytes) {
-  const auto Banks = argumentBanks(Target);
+  const auto Banks = getLLVMArgumentBanks(Target);
   const unsigned Count = Values.size();
   const unsigned Fixed = Target.arg_size();
   if (!Banks || Target.isVarArg() || Integers > Count ||
@@ -487,10 +341,10 @@ bool normalizeResolvedLLVMCalls(llvm::Module &Module, LLVMSourceMap *Sources,
       Indices.push_back(I);
       Values.push_back(Call->getArgOperand(I));
     }
-    const auto CallerBanks = argumentBanks(*Call);
-    const auto TargetBanks = argumentBanks(*Target);
+    const auto CallerBanks = getLLVMArgumentBanks(*Call);
+    const auto TargetBanks = getLLVMArgumentBanks(*Target);
     if (CallerBanks && TargetBanks && !Target->isVarArg()) {
-      const ArgumentStackLayout Stack = argumentStackLayout(*Call);
+      const LLVMArgumentStackLayout Stack = getLLVMArgumentStackLayout(*Call);
       auto Bound = bindResolvedLLVMArguments(
           *Target, Values, CallerBanks->first, CallerBanks->second, Builder,
           Stack.Offsets, Stack.SlotBytes);
@@ -1542,7 +1396,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     ArgumentIndices.push_back(I);
   bool BoundArgumentBanks = false;
   if (Target && Callee && CI && CI->IntegerRegisterArgCount >= 0 &&
-      CI->FloatingRegisterArgCount >= 0 && argumentBanks(*Callee) &&
+      CI->FloatingRegisterArgCount >= 0 && getLLVMArgumentBanks(*Callee) &&
       !Callee->isVarArg()) {
     // Recovery ends the register arguments at the register that holds the
     // call's own target (MedCallInfo::TargetRegisterArgIdx): no argument is
@@ -1555,7 +1409,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     std::optional<unsigned> HeldTarget;
     if (CI->TargetRegisterArgIdx >= 0 &&
         static_cast<unsigned>(CI->TargetRegisterArgIdx) == Integers &&
-        argumentBanks(*Callee)->first > Integers && Integers <= Values.size()) {
+        getLLVMArgumentBanks(*Callee)->first > Integers &&
+        Integers <= Values.size()) {
       HeldTarget = Integers;
       Values.insert(Values.begin() + Integers, GetInput(0));
       ++Integers;
@@ -1891,7 +1746,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   if (auto *Emitted = llvm::dyn_cast_or_null<llvm::CallBase>(Result)) {
     AttachSafetyCallsite(*Emitted);
     if (BoundArgumentBanks) {
-      const auto Banks = argumentBanks(*Callee);
+      const auto Banks = getLLVMArgumentBanks(*Callee);
       setLLVMArgumentBanks(*Emitted, Banks->first, Banks->second);
     } else if (CI && CI->IntegerRegisterArgCount >= 0 &&
                CI->FloatingRegisterArgCount >= 0 &&

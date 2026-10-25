@@ -1414,6 +1414,8 @@ the call's recorded register-bank sizes and stack byte offsets. LLVMC shares
 that binding for record construction, scalar types and argument limits, so
 omitting unused register operands cannot shift a record's stack fields.
 Missing or ambiguous carriers fail before source emission.
+The small `LLVMCallContract` component owns metadata readers and writers for
+both backends; using it from C emission does not depend on machine lifting.
 Independent declaration providers use `types::importPrototypes` at generation
 time, through `neverd_types_convert` and the standalone CLI. It imports missing
 prototypes with their dependency closure, shares structurally identical types,
