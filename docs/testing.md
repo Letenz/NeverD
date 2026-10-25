@@ -2738,6 +2738,10 @@ the shared renderer/dialog matching rules without involving the worker.
 `viewSearchWholeWordsRecognizesSupplementaryCharacters` verifies that UTF-16
 surrogate pairs preserve letter and combining-mark word boundaries while emoji
 remain delimiters.
+`findInViewSurvivesTargetDestruction` destroys the main window with a modeless
+search attached to source or assembly, both idle and with a pending search.
+It checks dialog retirement and drains deferred callbacks; instrumented runs
+can check the same ownership paths for invalid memory access.
 The large-source case selects among 20,000 hits without replacing the document.
 The optional native-input case uses NEVERD_FIND_WORKER, NEVERD_FIND_INPUT,
 NEVERD_FIND_TARGET and optional NEVERD_FIND_PDB / NEVERD_FIND_TEXT. It copies
@@ -7939,6 +7943,11 @@ and independently materialized SELECT arms. Both suites retain ambiguous
 relocatable comparisons and distinguish adjacent objects' one-past addresses.
 `MedConstantPropagation` also checks full SSA identities at maximum integer
 IDs/versions and atomic budget refusal on reverse-ordered width chains.
+`DefaultWordAbsorptionRequiresTheSameSSAValueAndWidth` checks default MedIR
+absorption on x86, x64, ARM and AArch64 in PE/COFF, ELF and Mach-O. Both operand
+orders simplify `x | (x & y)` and `x & (x | y)`, while a changed SSA version or
+an intervening narrowing conversion prevents the fold. The shared operation
+rewrite supplies both source routes without expanding an expression tree.
 `HighCSourceCalls.ReusedConverterRebuildsClobberIdentityAndOrder` checks first
 record precedence and clearing/restoring clobbers between conversions of the
 same function, against a fresh converter. The worker code-edit checks cover
