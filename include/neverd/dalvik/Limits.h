@@ -38,6 +38,9 @@ inline constexpr uint32_t kMaxAndroidClassLoaderPathBytes = 4096;
 inline constexpr uint32_t kMaxAndroidClassLoaderPathTotalBytes = 16384;
 // Retained messages traversed or enqueued in one modeled queue.
 inline constexpr uint32_t kMaxQueuedMessages = 1024;
+inline constexpr uint32_t kMaxJavaURLCodeUnits = 4096;
+inline constexpr uint32_t kMaxAndroidURLFailureHandlers = 2;
+inline constexpr uint32_t kMaxAndroidURLHandlerMessageBytes = 4096;
 // Conservative per-entry bookkeeping in addition to the retained state value.
 inline constexpr uint64_t kFrameworkFieldStateOverheadBytes = 64;
 inline constexpr uint64_t kAndroidApplicationInfoStateOverheadBytes =

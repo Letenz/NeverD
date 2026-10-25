@@ -33,6 +33,9 @@ public:
   ExecutionResult field(Heap &heap, const Field &field, uint64_t receiver,
                         std::optional<uint64_t> write,
                         const AdmitInstruction &admit);
+  // Library owns URL values and selects the already-validated scheme.
+  ExecutionResult openURL(Heap &heap, std::string_view scheme,
+                          const AdmitInstruction &admit);
   AndroidFrameworkState inspect(const Heap &heap, const Program &program) const;
   std::optional<AndroidApplicationSnapshot::ClassLookupFailure::Loader>
   definingLoader(std::string_view type, const Program &program) const;

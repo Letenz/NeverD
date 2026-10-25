@@ -276,6 +276,68 @@ void validateAndroidMessageQueue(const AndroidApplicationSnapshot &input) {
     throw Error("Android initial main queue requires a prepared main Looper");
 }
 
+void validateAndroidURLHandlers(const AndroidApplicationSnapshot &input) {
+  if (input.url_open_failure_handlers.size() >
+      ::neverd::limits::dalvik::kMaxAndroidURLFailureHandlers)
+    throw Error("Android URL handler inventory exceeds its budget");
+  std::set<std::string> schemes;
+  for (const auto &handler : input.url_open_failure_handlers) {
+    if ((handler.scheme != "http" && handler.scheme != "https") ||
+        !schemes.insert(handler.scheme).second)
+      throw Error("Android URL failure handler requires a unique HTTP scheme");
+    if (handler.message) {
+      if (handler.message->size() >
+          ::neverd::limits::dalvik::kMaxAndroidURLHandlerMessageBytes)
+        throw Error("Android URL handler message exceeds its byte budget");
+      (void)javaStringBytes(*handler.message);
+    }
+  }
+}
+
+ExecutionResult AndroidFramework::openURL(Heap &heap, std::string_view scheme,
+                                          const AdmitInstruction &admit) {
+  const AndroidApplicationSnapshot::URLHandlerFailure *selected = nullptr;
+  if (snapshot)
+    for (const auto &handler : snapshot->url_open_failure_handlers)
+      if (handler.scheme == scheme)
+        selected = &handler;
+  if (!selected)
+    return {ExecutionStop::Unsupported,
+            0,
+            {},
+            "Java URL.openConnection handler state is not supplied"};
+  auto bytes = selected->message ? javaStringBytes(*selected->message)
+                                 : std::vector<uint8_t>{};
+  // Charge all work before allocating or exposing a message/throwable. A model
+  // resource stop never becomes a catchable Java exception.
+  for (size_t i = 0; i < bytes.size() / 2 + 1; ++i) {
+    auto stop = admit();
+    if (stop != ExecutionStop::Returned)
+      return {stop, 0, {}, "Java URL handler work budget exhausted"};
+  }
+  uint32_t message = 0;
+  if (selected->message) {
+    auto value = heap.stringConstant("android.url_handler." + selected->scheme +
+                                         ":" + *selected->message,
+                                     std::move(bytes));
+    if (!value)
+      return {ExecutionStop::HeapLimit,
+              0,
+              {},
+              "Java URL handler message storage budget exhausted"};
+    message = value->Identity;
+  }
+  auto exception = heap.allocate(Object::Throwable, "java/io/IOException", 0);
+  if (!exception)
+    return {ExecutionStop::HeapLimit,
+            0,
+            {},
+            "Java URL handler throwable storage budget exhausted"};
+  exception->Message = message;
+  return {ExecutionStop::Thrown, 0, "java/io/IOException",
+          "explicit custom URL handler failure", exception->Identity};
+}
+
 void Program::addAndroidFramework() {
   // Only the hierarchy needed by this projection. Unmodeled members are not
   // supplied as empty executable declarations.
@@ -307,6 +369,8 @@ void Program::addAndroidFramework() {
         {"android/provider/Settings$Secure",
          "android/provider/Settings$NameValueTable"},
         {"java/io/File", "java/lang/Object"},
+        {"java/net/URL", "java/lang/Object"},
+        {"java/net/URLConnection", "java/lang/Object"},
         {"java/io/Serializable", "java/lang/Object"},
         {"java/lang/Cloneable", "java/lang/Object"},
         {"java/util/Locale", "java/lang/Object"},
@@ -326,7 +390,8 @@ void Program::addAndroidFramework() {
     type.name = "L" + std::string(name) + ";";
     type.superclass = "L" + std::string(base) + ";";
     type.access = {"public"};
-    if (std::string_view(name) == "android/content/Context" ||
+    if (std::string_view(name) == "java/net/URLConnection" ||
+        std::string_view(name) == "android/content/Context" ||
         std::string_view(name) == "android/content/ContentResolver" ||
         std::string_view(name) == "android/content/pm/PackageManager" ||
         std::string_view(name) == "java/lang/AbstractStringBuilder" ||
@@ -337,6 +402,7 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "android/provider/Settings$Secure" ||
         std::string_view(name) == "java/lang/StringBuilder" ||
         std::string_view(name) == "java/util/Locale" ||
+        std::string_view(name) == "java/net/URL" ||
         std::string_view(name) == "android/os/Looper" ||
         std::string_view(name) == "android/os/MessageQueue" ||
         std::string_view(name) == "android/os/Message" ||
@@ -370,6 +436,8 @@ void Program::addAndroidFramework() {
       type.interfaces.push_back("Landroid/os/Parcelable;");
     if (std::string_view(name) == "java/io/File")
       type.interfaces = {"Ljava/io/Serializable;", "Ljava/lang/Comparable;"};
+    if (std::string_view(name) == "java/net/URL")
+      type.interfaces = {"Ljava/io/Serializable;"};
     if (std::string_view(name) == "java/util/Locale")
       type.interfaces = {"Ljava/lang/Cloneable;", "Ljava/io/Serializable;"};
     if (std::string_view(name) == "java/lang/AbstractStringBuilder")
@@ -515,6 +583,7 @@ AndroidFramework::AndroidFramework(
   validateAndroidMessageQueue(*snapshot);
   if (snapshot->initial_main_queue)
     main_queue_blocked = snapshot->initial_main_queue->blocked;
+  validateAndroidURLHandlers(*snapshot);
   for (const auto &failure : snapshot->class_lookup_failures) {
     std::string type = "L" + failure.binary_name + ";";
     std::replace(type.begin(), type.end(), '.', '/');

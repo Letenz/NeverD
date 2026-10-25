@@ -401,7 +401,28 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       mobile::dalvik::AndroidApplicationSnapshot Snapshot;
       bool HasPhase = false;
       for (const auto &[Key, Value] : *Input) {
-        if (Key == field::ApplicationInitialMainQueue) {
+        if (Key == field::ApplicationURLFailureHandlers) {
+          const auto *Handlers = Value.getAsArray();
+          if (!Handlers ||
+              Handlers->size() >
+                  ::neverd::limits::dalvik::kMaxAndroidURLFailureHandlers)
+            return invalid(Key);
+          for (const auto &Entry : *Handlers) {
+            const auto *Handler = Entry.getAsObject();
+            if (!Handler || Handler->size() != 2 ||
+                !Handler->getString("scheme") || !Handler->get("message"))
+              return invalid(Key);
+            mobile::dalvik::AndroidApplicationSnapshot::URLHandlerFailure H;
+            H.scheme = Handler->getString("scheme")->str();
+            const auto &Message = *Handler->get("message");
+            if (auto Text = Message.getAsString())
+              H.message = Text->str();
+            else if (Message.kind() != llvm::json::Value::Null)
+              return invalid(Key);
+            Snapshot.url_open_failure_handlers.push_back(std::move(H));
+          }
+          continue;
+        } else if (Key == field::ApplicationInitialMainQueue) {
           const auto *Queue = Value.getAsObject();
           if (!Queue || !Queue->getBoolean("blocked"))
             return invalid(Key);
@@ -671,6 +692,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         mobile::dalvik::validateAndroidMessageQueue(Snapshot);
       } catch (const mobile::Error &) {
         return invalid(field::ApplicationSnapshot);
+      }
+      try {
+        mobile::dalvik::validateAndroidURLHandlers(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationURLFailureHandlers);
       }
       Out.Application = std::move(Snapshot);
     } else if (Name == field::JNIClassLookupFailures) {

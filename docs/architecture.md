@@ -11982,3 +11982,50 @@ message-count limit bounds traversal. Unsupported waits or malformed state
 cannot partially unlink a message. Retrieval does not dispatch a callback or
 create a Java thread; JNI access to package-private next does not make that
 method public to application DEX.
+
+The bounded Java URL value profile admits explicit lowercase `http://` and
+`https://` strings up to 4096 ASCII units, with a nonempty ASCII hostname,
+optional canonical decimal port 0–65535, and unchanged path/query/fragment.
+The shared Library owner retains independent UTF-16 bytes and renders them
+through `toString` and `toExternalForm`. Program declares URL's final Object /
+Serializable hierarchy. Other URL forms, null-input exception state, protocol
+handlers, successful connections, DNS, URL equality and hashing remain explicit
+unsupported boundaries unless separately declared below. Inherited virtual Object.equals must not become identity equality
+for URL; a deliberately nonvirtual Object.equals call retains identity semantics.
+JNI validates its nonvirtual lookup against the same method catalog. This value
+subset carries no host network or filesystem authority and does not claim full
+Android libcore behavior or physical-device equivalence.
+
+The optional application snapshot `url_open_failure_handlers` declares an
+already-installed custom URLStreamHandler for each listed lowercase HTTP scheme.
+It is synthetic initial handler state, independent of application attachment;
+it does not describe the default HTTP handler, network availability, or factory
+installation execution. Shared Library validates the retained URL and selects
+its scheme. AndroidFramework owns the immutable policy and retained nullable
+message; every invocation throws a fresh checked IOException with that message
+identity. Work/heap stops remain terminal resource stops. Missing schemes remain
+unsupported. URLConnection is an abstract type only; no connection, DNS or host
+network access is performed. The typed and JSON adapters share one validator:
+at most two distinct http/https entries, each with an explicit null or bounded
+4096-byte UTF-8/WTF-8 message. Empty, null and absent handler state are distinct.
+
+
+DEX member visibility has one Runtime owner shared by calls and field accesses.
+Within the single supplied-class namespace represented by Program,
+package-visible static methods and fields admit another caller in the exact
+same package, including compiler-generated static accessors. Declaring-class
+visibility remains required. Private access remains confined to the declaring
+class; protected resolution and nonpublic instance dispatch remain explicitly
+unsupported across classes. This does not merge independent class-loader
+namespaces or change JNI access and nonpublic framework-library restrictions.
+
+## Named UTF-8 String encoding
+
+`dalvik::Library` owns `String.getBytes(String)` for the ASCII case-insensitive
+canonical name `UTF-8`. It reads retained UTF-16 units, preserves NUL, combines
+valid surrogate pairs and replaces isolated surrogates with byte `0x3f`. DEX
+and JNI receive fresh mutable `[B` objects, including empty results. Both
+conversion passes are charged before allocating an exact-size heap array.
+Null names throw NullPointerException; other names, aliases and overloads
+remain explicit unsupported boundaries. No default charset or host codec is
+inferred, and this does not add a Java charset provider.

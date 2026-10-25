@@ -12,6 +12,7 @@
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -321,6 +322,91 @@ TEST_P(AndroidJNI, ApplicationPackageManagerSharesExplicitStateAcrossThreads) {
   EXPECT_EQ(Absent.Stop, ProcessStopReason::Returned) << Absent.Diagnostic;
   EXPECT_EQ(Absent.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, NamedUTF8ArraysPreserveGuardsAndReferenceLifetimes) {
+  auto Name = Path.filename().string();
+  ASSERT_EQ(Name.find("jni-"), 0u);
+  Path = Path.parent_path() / ("string_getbytes-" + Name.substr(4));
+  constexpr uint64_t Buffer = 0x20000000;
+  Options.Android->Memory = {{Buffer, 4096, std::vector<uint8_t>(4096, 0xa5)}};
+  Options.Android->ReadMemory = {{Buffer, 4096}};
+  Options.Android->ObserveMemoryOnFailure = true;
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Buffer, Mode};
+    auto Result = run("string_getbytes");
+    ASSERT_EQ(Result.Stop, Mode == 2 ? ProcessStopReason::UnsupportedService
+                                     : ProcessStopReason::Returned)
+        << Result.Diagnostic;
+    if (Mode == 2) {
+      EXPECT_FALSE(Result.ReturnValue);
+      EXPECT_NE(Result.Diagnostic.find("charset is unmodeled"),
+                std::string::npos);
+    } else {
+      EXPECT_EQ(Result.ReturnValue, 0u);
+    }
+    std::vector<uint8_t> Expected(4096, 0xa5);
+    if (Mode == 0)
+      for (unsigned I = 0; I != 6; ++I)
+        llvm::support::endian::write64le(Expected.data() + I * 8, 1);
+    if (Mode == 1)
+      llvm::support::endian::write64le(Expected.data(), 17);
+    ASSERT_EQ(Result.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(Result.MemorySnapshots[0].Bytes, Expected);
+  }
+}
+
+TEST_P(AndroidJNI, URLValuesPreserveTextAndOfflineBoundaries) {
+  for (unsigned mode : {0u, 4u, 5u}) {
+    SCOPED_TRACE(mode);
+    Options.Android->Arguments = {mode};
+    auto r = run("jni_url_values");
+    EXPECT_EQ(r.Stop, ProcessStopReason::Returned) << r.Diagnostic;
+    EXPECT_EQ(r.ReturnValue, 0u);
+  }
+  for (unsigned mode : {1u, 2u, 3u}) {
+    SCOPED_TRACE(mode);
+    Options.Android->Arguments = {mode};
+    auto r = run("jni_url_values");
+    EXPECT_EQ(r.Stop, ProcessStopReason::UnsupportedService) << r.Diagnostic;
+    EXPECT_FALSE(r.ReturnValue);
+    const char *reason = mode == 1   ? "bounded HTTP value contract"
+                         : mode == 2 ? "URL.openConnection"
+                                     : "handler-dependent equality";
+    EXPECT_NE(r.Diagnostic.find(reason), std::string::npos);
+  }
+  Options.Android->Arguments = {6};
+  auto r = run("jni_url_values");
+  EXPECT_EQ(r.Stop, ProcessStopReason::RuntimeFailure);
+  EXPECT_NE(
+      r.Diagnostic.find("nonvirtual method ID does not match class lookup"),
+      std::string::npos);
+}
+
+TEST_P(AndroidJNI, URLHandlerRetainsCheckedExceptionsAcrossOriginalABIRoutes) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  for (unsigned mode = 0; mode != 3; ++mode) {
+    std::optional<std::string> message;
+    if (mode)
+      message = mode == 1 ? "" : std::string("local\0", 6) + "离线";
+    Options.Android->Application = Snapshot{};
+    Options.Android->Application->url_open_failure_handlers = {
+        {"http", message}, {"https", message}};
+    for (unsigned form = 0; form != 3; ++form) {
+      SCOPED_TRACE(std::to_string(mode) + "/" + std::to_string(form));
+      Options.Android->Arguments = {mode, form};
+      auto result = run("jni_url_handler");
+      EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0u);
+    }
+  }
+  Options.Android->Application->url_open_failure_handlers = {{"http", {}}};
+  Options.Android->Arguments = {0, 1};
+  auto missing = run("jni_url_handler");
+  EXPECT_EQ(missing.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(missing.Diagnostic.find("handler state is not supplied"),
+            std::string::npos);
+}
+
 TEST_P(AndroidJNI, MutableStringBuilderSharesUTF16ValuesWithJNI) {
   auto R = run("jni_string_builder");
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;

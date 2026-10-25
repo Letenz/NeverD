@@ -426,10 +426,15 @@ struct Runtime::State::Engine {
       const auto slash = name.rfind('/');
       return slash == name.npos ? std::string_view() : name.substr(0, slash);
     };
-    // Package/protected/private member resolution remains outside this subset;
-    // a public member still cannot expose an inaccessible declaring class.
-    return klass && has(access, "public") &&
-           (has(klass->access, "public") || package(owner) == package(caller));
+    const bool same_package = package(owner) == package(caller);
+    // Supplied classes occupy one Program namespace. Admit package-visible
+    // static members without changing virtual/protected resolution or JNI's
+    // separate access rules. A public member still cannot expose an
+    // inaccessible declaring class.
+    const bool member = has(access, "public") ||
+                        (same_package && has(access, "static") &&
+                         !has(access, "private") && !has(access, "protected"));
+    return member && (has(klass->access, "public") || same_package);
   }
   ExecutionTask initialize(std::string_view name, unsigned depth) {
     auto fail = [&](ExecutionStop stop, std::string message,

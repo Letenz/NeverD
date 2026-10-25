@@ -3120,3 +3120,124 @@ int jni_split_source_dirs(int mode) { return jni_split_directories(mode, 0); }
 int jni_split_public_source_dirs(int mode) {
   return jni_split_directories(mode, 1);
 }
+
+int jni_url_values(int mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "java/net/URL");
+  Ref ctor = C(e, Ref, 33, type, "<init>", "(Ljava/lang/String;)V");
+  const char *spec =
+      mode == 1 ? "file:///local" : "https://example.invalid:8443/a?x=1#f";
+  Ref input = C(e, Ref, 167, spec);
+  U64 argument = input;
+  Ref url = mode == 5 ? C(e, Ref, 30, type, ctor, &argument)
+                      : C(e, Ref, 28, type, ctor, input);
+  CHECK(url);
+  Ref serial = C(e, Ref, 6, "java/io/Serializable");
+  CHECK(C(e, int, 32, url, serial));
+  Ref parent = C(e, Ref, 6, "java/lang/Object");
+  Ref superclass = C(e, Ref, 10, type);
+  CHECK(C(e, int, 24, superclass, parent));
+  const char *methods[] = {"toString", "toExternalForm"};
+  for (unsigned i = 0; i != 2; ++i) {
+    Ref method = C(e, Ref, 33, type, methods[i], "()Ljava/lang/String;");
+    Ref value = C(e, Ref, 34, url, method);
+    CHECK(value && !C(e, int, 24, value, url));
+    const char *text = C(e, const char *, 169, value, (void *)0);
+    CHECK(text);
+    unsigned j = 0;
+    for (; spec[j]; ++j)
+      CHECK(text[j] == spec[j]);
+    CHECK(!text[j]);
+    C(e, void, 170, value, text);
+  }
+  if (mode == 2) {
+    Ref open =
+        C(e, Ref, 33, type, "openConnection", "()Ljava/net/URLConnection;");
+    C(e, Ref, 34, url, open);
+    return __LINE__;
+  }
+  if (mode == 3 || mode == 4 || mode == 6) {
+    Ref equal = C(e, Ref, 33, parent, "equals", "(Ljava/lang/Object;)Z");
+    if (mode == 3)
+      C(e, int, 37, url, equal, url);
+    else
+      CHECK(C(e, int, 67, url, mode == 6 ? type : parent, equal, url) == 1);
+    if (mode != 4)
+      return __LINE__;
+  }
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+
+static Ref url_call_v(Handle e, Ref url, Ref method, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, method);
+  Ref result = C(e, Ref, 35, url, method, ap);
+  __builtin_va_end(ap);
+  return result;
+}
+int jni_url_handler(int mode, int form) {
+  Handle e = attach();
+  CHECK(e);
+  Ref url_type = C(e, Ref, 6, "java/net/URL");
+  Ref ctor = C(e, Ref, 33, url_type, "<init>", "(Ljava/lang/String;)V");
+  Ref open =
+      C(e, Ref, 33, url_type, "openConnection", "()Ljava/net/URLConnection;");
+  Ref io_type = C(e, Ref, 6, "java/io/IOException");
+  Ref exception_type = C(e, Ref, 6, "java/lang/Exception");
+  Ref runtime_type = C(e, Ref, 6, "java/lang/RuntimeException");
+  Ref get_message =
+      C(e, Ref, 33, io_type, "getMessage", "()Ljava/lang/String;");
+  const char *specs[] = {"http://example.invalid/a",
+                         "https://example.invalid/b"};
+  for (unsigned scheme = 0; scheme != 2; ++scheme) {
+    Ref saved_exception = 0, saved_message = 0;
+    for (unsigned round = 0; round != 2; ++round) {
+      Ref input = C(e, Ref, 167, specs[scheme]);
+      U64 args[] = {input};
+      Ref url = form == 0   ? C(e, Ref, 28, url_type, ctor, input)
+                : form == 1 ? dex_new_v(e, url_type, ctor, input)
+                            : C(e, Ref, 30, url_type, ctor, args);
+      CHECK(url && !C(e, int, 228));
+      Ref connection = form == 0   ? C(e, Ref, 34, url, open)
+                       : form == 1 ? url_call_v(e, url, open)
+                                   : C(e, Ref, 36, url, open, (void *)0);
+      CHECK(!connection && C(e, int, 228));
+      Ref thrown = C(e, Ref, 15);
+      Ref repeated = C(e, Ref, 15);
+      C(e, void, 17);
+      CHECK(!C(e, int, 228) && thrown && repeated);
+      CHECK(C(e, int, 24, thrown, repeated));
+      CHECK(!saved_exception || !C(e, int, 24, thrown, saved_exception));
+      CHECK(C(e, int, 32, thrown, io_type));
+      CHECK(C(e, int, 32, thrown, exception_type));
+      CHECK(!C(e, int, 32, thrown, runtime_type));
+      Ref message = C(e, Ref, 34, thrown, get_message);
+      if (!mode)
+        CHECK(!message);
+      else {
+        CHECK(message);
+        if (round)
+          CHECK(C(e, int, 24, message, saved_message));
+        CHECK(C(e, int, 164, message) == (mode == 1 ? 0 : 8));
+        if (mode == 2) {
+          const U16 expected[] = {'l', 'o', 'c', 'a', 'l', 0, 0x79bb, 0x7ebf};
+          const U16 *units = C(e, const U16 *, 165, message, (void *)0);
+          CHECK(units);
+          for (unsigned i = 0; i != 8; ++i)
+            CHECK(units[i] == expected[i]);
+          C(e, void, 166, message, units);
+        }
+      }
+      CHECK(C(e, int, 13, thrown) == 0 && C(e, int, 228));
+      Ref rethrown = C(e, Ref, 15);
+      C(e, void, 17);
+      CHECK(C(e, int, 24, rethrown, thrown));
+      saved_exception = thrown;
+      saved_message = message;
+    }
+  }
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}

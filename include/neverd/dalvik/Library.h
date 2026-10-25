@@ -73,7 +73,9 @@ enum LibraryOperation {
   LooperQueue,
   MessageQueueNext,
   MessageCallback,
-  MessageTarget
+  MessageTarget,
+  URLOpenConnection,
+  StringGetBytes
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

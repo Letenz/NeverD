@@ -13590,3 +13590,50 @@ across O0/ordinary and O2/RELR native callers. Guarded output, retained message
 counts, monotonic timestamps and the unchanged terminal reason cover successful
 removal, unknown/nonempty native callbacks, empty/foreign queues, missing pool
 or clock observations, and the post-before-nativeWake boundary.
+
+`URLValueTest.*` covers independent HTTP URL values, exact UTF-16 rendering,
+unsupported forms, work and heap limits, hierarchy, inherited virtual versus
+nonvirtual equality, and original DEX construction. `AndroidJNI.URLValues*`
+uses independent ARM64 JNI callers, including varargs and jvalue-array
+construction, inherited method IDs, the connection boundary and guarded string
+reads. Run complete Dalvik and JNI suites because these share the library owner.
+No test may use DNS, URL.equals/hashCode or connection methods as a host oracle;
+reference construction/rendering must run with host networking denied.
+
+`URLValueTest.Handler*` and `ProcessReport.AndroidURLHandler*` cover explicit
+custom handler state, strict typed/JSON admission, null/empty/non-ASCII messages,
+fresh checked IOException identities, retained message identity, DEX catch and
+rethrow, missing-scheme refusal, and terminal work/heap limits. Original ARM64
+`AndroidJNI.URLHandler*` callers exercise direct, va_list and jvalue-array routes,
+ExceptionOccurred/Check/Clear/Throw and getMessage. Compare full Unicorn/HVF
+reports at O0/O2. Reference Java must install an explicit local throwing handler
+and run with networking denied; default HTTP connection behavior is not an oracle
+for this synthetic declaration. Run full Dalvik, JNI and wire/parser suites.
+
+
+`DalvikRuntime.PackageStatic*` covers a compiler-style synthetic accessor
+calling its own private body, static method calls and field reads/writes, exact
+and default packages, nested-package/prefix confusion, declaring-class
+visibility, and retained private/protected refusals.
+`DalvikRuntime.PackageInstanceDispatchIsStillAnExplicitBoundary` keeps the
+public-instance control distinct from unmodeled package instance dispatch.
+A separate locally compiled Java 8 anonymous-Runnable fixture provides an
+independent JVM oracle and reproduces the same static-accessor boundary after
+D8 conversion; its source, DEX and execution receipts are private artifacts.
+
+## Named UTF-8 byte arrays
+
+`StringGetBytesTest.*` covers encoding boundaries, NUL, malformed surrogate
+replacement, case variants, fresh empty/nonempty arrays, null/type/storage
+refusals and terminal work/heap limits without partial publication. Run full
+Dalvik and Android JNI suites for the shared value owner. Independent javac/D8
+fixtures compare compiled DEX output with the local JVM, including all BMP
+units and boundary surrogate pairs. Native ordinary and array-form JNI calls
+check byte-array regions, identity and retained references across detach.
+Only the canonical UTF-8 name is admitted; aliases and other codecs are not
+qualified by these tests.
+
+The URL and named UTF-8 byte encoding fixtures compare complete SDK and CLI
+reports, including terminal diagnostics, Java state and guarded native memory.
+The same UTF-16 encoder serves DEX and JNI callers; the native matrix checks
+optimization, relocation packing, reference retention and independent arrays.

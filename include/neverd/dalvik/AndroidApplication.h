@@ -159,6 +159,15 @@ struct AndroidApplicationSnapshot {
   // Message.obtain's process-wide pool. Only an explicitly empty pool can
   // allocate a fresh Message; false preserves an unmodeled nonempty pool.
   std::optional<bool> initial_message_pool_empty;
+  // An explicitly installed custom URLStreamHandler, supplied as initial host
+  // state. Its openConnection always throws a fresh IOException with this
+  // retained message. This is not the default HTTP handler or a network policy.
+  // No entry for a scheme means unknown, not success or a simulated denial.
+  struct URLHandlerFailure {
+    std::string scheme;
+    std::optional<std::string> message;
+  };
+  std::vector<URLHandlerFailure> url_open_failure_handlers;
 };
 std::optional<bool>
 androidApplicationLoaderState(const AndroidApplicationSnapshot &input);
@@ -179,4 +188,5 @@ void validateAndroidPackageInfoQueries(const AndroidApplicationSnapshot &input);
 void validateAndroidDefaultLocale(const AndroidApplicationSnapshot &input);
 void validateAndroidClassLoaderPaths(const AndroidApplicationSnapshot &input);
 void validateAndroidMessageQueue(const AndroidApplicationSnapshot &input);
+void validateAndroidURLHandlers(const AndroidApplicationSnapshot &input);
 } // namespace neverd::mobile::dalvik

@@ -126,6 +126,7 @@ bool platformClass(std::string_view name) {
       "java/lang/String",
       "java/lang/Cloneable",
       "java/io/Serializable",
+      "java/io/IOException",
       "java/lang/Throwable",
       "java/lang/Exception",
       "java/lang/RuntimeException",
@@ -167,7 +168,7 @@ std::string_view javaParent(std::string_view name) {
     return {};
   if (name == "java/lang/ClassNotFoundException")
     return "java/lang/ReflectiveOperationException";
-  if (name == "java/lang/RuntimeException" ||
+  if (name == "java/io/IOException" || name == "java/lang/RuntimeException" ||
       name == "java/lang/ReflectiveOperationException")
     return "java/lang/Exception";
   if (name == "java/lang/Exception" || name == "java/lang/Error")

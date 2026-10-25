@@ -111,7 +111,7 @@ endforeach()
 foreach(_optimization O0 O2)
   foreach(_file_source android_time.c linux_files.c android_search.c android_copy.c android_length.c
       android_signals.c android_snapshots.c android_allocation.c android_log.c linux_residency.c
-      android_sleep.c linux_devices.c android_proc.c android_jni.c android_message_queue.c android_binder.c
+      android_sleep.c linux_devices.c android_proc.c android_jni.c android_message_queue.c android_string_getbytes.c android_binder.c
       android_semaphore.c android_random.c android_network.c android_auxv.c android_environment.c
       android_errors.c android_errors_dynamic.c
       android_calendar.c android_dladdr.c android_fdset.c android_readiness.c android_receive.c android_stream_waits.c android_poll.c)

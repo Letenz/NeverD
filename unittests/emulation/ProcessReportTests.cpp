@@ -2683,6 +2683,46 @@ TEST(ProcessReport, AndroidClassLoaderPathsRequireCompleteBoundedInventories) {
     }
   }
 }
+
+TEST(ProcessReport, AndroidURLHandlerRequiresExplicitBoundedCustomFailures) {
+  auto wrap = [](const std::string &value) {
+    return "{\"android\":{\"jni\":true,\"application_snapshot\":{\"phase\":"
+           "\"unattached\",\"url_open_failure_handlers\":" +
+           value + "}}}";
+  };
+  for (
+      const auto *value :
+      {"[]", R"([{"scheme":"http","message":null}])",
+       R"([{"scheme":"http","message":""},{"scheme":"https","message":"local\u0000离线"}])"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    const auto &handlers =
+        parsed->Android->Application->url_open_failure_handlers;
+    if (handlers.size() == 1)
+      EXPECT_FALSE(handlers[0].message);
+    if (handlers.size() == 2) {
+      ASSERT_TRUE(handlers[0].message);
+      EXPECT_TRUE(handlers[0].message->empty());
+      EXPECT_EQ(handlers[1].message, std::string("local\0", 6) + "离线");
+    }
+  }
+  for (
+      const auto &value : std::vector<std::string>{
+          "null", "false", "{}", "[null]", R"([{"scheme":"https"}])",
+          R"([{"message":null}])", R"([{"scheme":"HTTPS","message":null}])",
+          R"([{"scheme":"file","message":null}])",
+          R"([{"scheme":"https","message":false}])",
+          R"([{"scheme":"https","message":null,"extra":0}])",
+          R"([{"scheme":"http","message":null},{"scheme":"http","message":""}])",
+          R"([{"scheme":"http","message":null},{"scheme":"https","message":null},{"scheme":"other","message":null}])",
+          "[{\"scheme\":\"https\",\"message\":\"" + std::string(4097, 'x') +
+              "\"}]"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    EXPECT_FALSE(bool(parsed)) << value;
+    llvm::consumeError(parsed.takeError());
+  }
+}
+
 TEST(ProcessReport, AndroidDefaultLocaleRequiresCanonicalExplicitState) {
   auto wrap = [](const std::string &value, const char *phase = "unattached") {
     return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
