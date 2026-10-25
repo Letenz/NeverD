@@ -43870,7 +43870,7 @@ TEST(HighCPointerAddresses, MemoryExchangePreservesTypedPointerMemberBits) {
   Exchange->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
   returnValue(Function, Exchange);
   const auto Source = emitFunctions({Function});
-  ASSERT_NE(Source.find("callback"), std::string::npos) << Source;
+  ASSERT_NE(Source.find("->callback"), std::string::npos) << Source;
   compileAndRunCallOrdering(R"(
 #include <stdint.h>
 typedef struct CallbackHolder { uint8_t *callback; } CallbackHolder;
