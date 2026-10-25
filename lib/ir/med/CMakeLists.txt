@@ -75,6 +75,7 @@ add_neverd_component_library(NeverDIRMed
   lower/X86/LowToMedX86.cpp
   lower/X86/LowToMedX86CrossBlock.cpp
   lower/LowToMedMachineFlags.cpp
+  pass/MedCallReturnReads.cpp
   pass/MedCFGSimplify.cpp
   pass/MedConstantPropagation.cpp
   pass/MedImmutableTableScans.cpp
