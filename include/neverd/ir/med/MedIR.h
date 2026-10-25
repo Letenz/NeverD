@@ -330,11 +330,6 @@ struct MedOp {
   /// The source instruction is a proven no-return call.  This is explicit MedIR
   /// control provenance: consumers must not infer it again from a mutable name.
   bool DoesNotReturn = false;
-  /// Original near CALL writes these bytes immediately below its pre-call SP.
-  /// Bound from the instruction occurrence and shared source-call ABI reader;
-  /// synthetic/tail calls and unknown encodings keep zero. Source stack proofs
-  /// consume this fact without adding a store to the native call abstraction.
-  uint8_t CallReturnAddressBytes = 0;
 
   void addInput(MedVar V) {
     if (NumInputs < 65) {

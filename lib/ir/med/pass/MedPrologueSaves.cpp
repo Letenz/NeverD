@@ -6,8 +6,6 @@
 
 #include "neverd/ir/med/MedPrologueSaves.h"
 
-#include "../abi/MedABIPassDetail.h"
-
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -17,7 +15,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 
-#include <limits>
 #include <map>
 #include <set>
 #include <tuple>
@@ -165,30 +162,23 @@ bool isPrivateFrameAccess(const MedFunc &Func,
          Bytes <= Layout.EntryStackBase - Offset;
 }
 
-/// Plain memory accesses and authenticated call return-slot writes, resolved
-/// against the entry stack pointer by one batch proof.
+/// Every plain load and store of \p Func whose address resolves against the
+/// entry stack pointer, all by one proof.
 void frameAccessesOf(MedFunc &Func, Arch Architecture, BinaryFormat Format,
                      StackEntryKind Entry, std::vector<FrameAccess> &Loads,
-                     std::vector<FrameAccess> &Stores,
-                     std::vector<FrameAccess> &CallWrites) {
-  size_t CallBudget = limits::ir::kSourceEntrySpillWork;
-  const auto CallStacks =
-      returnAddressStackPointers(Func, Architecture, CallBudget);
+                     std::vector<FrameAccess> &Stores) {
   std::vector<MedOp *> Accesses;
-  std::vector<MedVar> Addresses;
   for (MedBlock &Block : Func.Blocks)
     for (MedOp &Op : Block.Ops)
       if ((Op.Opcode == NdOp::LOAD ||
            (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)) &&
           Op.NumInputs >= 1 && Op.MemoryOrdering == NdMemoryOrdering::None &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
         Accesses.push_back(&Op);
-        Addresses.push_back(Op.Inputs[0]);
-      } else if (const auto Call = CallStacks.find(&Op);
-                 Call != CallStacks.end()) {
-        Accesses.push_back(&Op);
-        Addresses.push_back(Call->second);
-      }
+  std::vector<MedVar> Addresses;
+  Addresses.reserve(Accesses.size());
+  for (const MedOp *Op : Accesses)
+    Addresses.push_back(Op->Inputs[0]);
   const std::vector<std::optional<int64_t>> Offsets =
       entryStackOffsets(Func, Addresses, Architecture, Format, Entry);
   for (size_t I = 0; I < Accesses.size(); ++I) {
@@ -197,12 +187,8 @@ void frameAccessesOf(MedFunc &Func, Arch Architecture, BinaryFormat Format,
     MedOp &Op = *Accesses[I];
     if (Op.Opcode == NdOp::LOAD)
       Loads.push_back({*Offsets[I], Op.Output.Size, &Op});
-    else if (Op.Opcode == NdOp::STORE)
+    else
       Stores.push_back({*Offsets[I], Op.Inputs[1].Size, &Op});
-    else if (*Offsets[I] >=
-             std::numeric_limits<int64_t>::min() + Op.CallReturnAddressBytes)
-      CallWrites.push_back({*Offsets[I] - Op.CallReturnAddressBytes,
-                            Op.CallReturnAddressBytes, &Op});
   }
 }
 
@@ -210,7 +196,6 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
                                  BinaryFormat Format, StackEntryKind Entry,
                                  std::vector<FrameAccess> &Loads,
                                  std::vector<FrameAccess> &Stores,
-                                 std::vector<FrameAccess> &CallWrites,
                                  const ValueReads &Reads) {
   const auto &TRI = getTargetRegInfo(Architecture);
   const BinaryFormat Convention =
@@ -220,7 +205,7 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
   const IntegerArgumentLayout Layout =
       TRI.integerArgumentLayout(Convention == BinaryFormat::COFF);
 
-  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores, CallWrites);
+  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
 
   size_t ReadBudget = limits::ir::kSourceEntrySpillWork;
   std::vector<MedOp *> Saves;
@@ -235,13 +220,8 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
       continue;
     const int64_t End = Save.Offset + Saved.Size;
     // A later store into the same bytes makes them storage the body uses.
-    if (llvm::any_of(Stores,
-                     [&](const FrameAccess &Other) {
-                       return Other.Op != Save.Op &&
-                              Other.overlaps(Save.Offset, End);
-                     }) ||
-        llvm::any_of(CallWrites, [&](const FrameAccess &Other) {
-          return Other.overlaps(Save.Offset, End);
+    if (llvm::any_of(Stores, [&](const FrameAccess &Other) {
+          return Other.Op != Save.Op && Other.overlaps(Save.Offset, End);
         }))
       continue;
     auto SameRegister = [&](const MedVar &V) {
@@ -282,15 +262,10 @@ bool hasStackReturnAddress(Arch Architecture, StackEntryKind Entry) {
 
 void markReturnAddressReads(unsigned PointerSize,
                             llvm::ArrayRef<FrameAccess> Loads,
-                            llvm::ArrayRef<FrameAccess> Stores,
-                            llvm::ArrayRef<FrameAccess> CallWrites) {
+                            llvm::ArrayRef<FrameAccess> Stores) {
   // A store into the slot replaces the return address, as a function that
   // returns somewhere else does.
-  if (llvm::any_of(Stores,
-                   [&](const FrameAccess &Write) {
-                     return Write.overlaps(0, PointerSize);
-                   }) ||
-      llvm::any_of(CallWrites, [&](const FrameAccess &Write) {
+  if (llvm::any_of(Stores, [&](const FrameAccess &Write) {
         return Write.overlaps(0, PointerSize);
       }))
     return;
@@ -370,15 +345,13 @@ bool isSpillScalarStep(NdOp Opcode) {
 
 /// Saving a scalar into scratch storage does not read its value
 /// when every path overwrites the bytes before observing them. Keep the proof
-/// in source preparation so HighC and LLVMC discard the same transport. Calls
-/// stop the proof unless their physical return-slot write kills every pending
-/// byte. Opaque memory and exceptional edges stop it; a partial overwrite kills
-/// only its own bytes. Operation positions remain unchanged.
+/// in source preparation so HighC and LLVMC discard the same transport. Calls,
+/// opaque memory accesses and exceptional edges stop the proof; a partial
+/// overwrite kills only its own bytes. Operation positions remain unchanged.
 void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
                                BinaryFormat Format,
                                llvm::ArrayRef<FrameAccess> Loads,
                                llvm::ArrayRef<FrameAccess> Stores,
-                               llvm::ArrayRef<FrameAccess> CallWrites,
                                const ValueReads &Reads) {
   if (Func.Blocks.empty() || Func.SkippedSSA || Func.AnalystStackFrame)
     return;
@@ -391,8 +364,6 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
   for (const FrameAccess &Access : Loads)
     Accesses.emplace(Access.Op, &Access);
   for (const FrameAccess &Access : Stores)
-    Accesses.emplace(Access.Op, &Access);
-  for (const FrameAccess &Access : CallWrites)
     Accesses.emplace(Access.Op, &Access);
   std::map<int, size_t> Blocks;
   std::set<va_t> BlockEntries;
@@ -542,19 +513,8 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
         } else if (Op.Opcode == NdOp::INTRINSIC &&
                    isExplicitFlagsTransfer(Op, Architecture)) {
           continue;
-        } else if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-          // The physical CALL writes its return address before entering the
-          // callee. Only the bytes actually overwritten stop being observable;
-          // an unproved call or any surviving byte remains a barrier.
-          const auto At = Accesses.find(&Op);
-          if (At != Accesses.end())
-            for (unsigned Byte = 0; Byte < Value.Size; ++Byte)
-              if (At->second->overlaps(Save.Offset + Byte,
-                                       Save.Offset + Byte + 1))
-                Pending &= ~(uint64_t{1} << Byte);
-          Safe = Pending == 0;
-          break;
-        } else if (Op.Opcode == NdOp::INTRINSIC ||
+        } else if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+                   Op.Opcode == NdOp::INTRINSIC ||
                    Op.Opcode == NdOp::INDIR_BR ||
                    Op.Opcode == NdOp::ATOMIC_XCHG ||
                    Op.Opcode == NdOp::ATOMIC_ADD ||
@@ -743,20 +703,20 @@ void replaceUnwrittenCallFrameReads(MedFunc &Func, Arch Architecture,
 
 void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
                                  BinaryFormat Format, StackEntryKind Entry) {
-  std::vector<FrameAccess> Loads, Stores, CallWrites;
+  std::vector<FrameAccess> Loads, Stores;
   const ValueReads Reads(Func);
   markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores,
-                              CallWrites, Reads);
+                              Reads);
 }
 
 void markReturnAddressReads(MedFunc &Func, Arch Architecture,
                             BinaryFormat Format, StackEntryKind Entry) {
   if (!hasStackReturnAddress(Architecture, Entry))
     return;
-  std::vector<FrameAccess> Loads, Stores, CallWrites;
-  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores, CallWrites);
+  std::vector<FrameAccess> Loads, Stores;
+  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
   markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
-                         Stores, CallWrites);
+                         Stores);
 }
 
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
@@ -768,17 +728,16 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
       Op.PrologueSave = false;
       Op.ReturnAddressRead = false;
     }
-  std::vector<FrameAccess> Loads, Stores, CallWrites;
+  std::vector<FrameAccess> Loads, Stores;
   const ValueReads Reads(Func);
   markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores,
-                              CallWrites, Reads);
+                              Reads);
   // Annotate before source-only replacement. No access proof survives the
   // replacements at the end of this preparation.
   if (hasStackReturnAddress(Architecture, Entry))
     markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
-                           Stores, CallWrites);
-  markUnobservedStackSpills(Func, Architecture, Format, Loads, Stores,
-                            CallWrites, Reads);
+                           Stores);
+  markUnobservedStackSpills(Func, Architecture, Format, Loads, Stores, Reads);
   replaceUnwrittenCallFrameReads(Func, Architecture, Loads, Stores);
 }
 

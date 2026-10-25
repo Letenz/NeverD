@@ -66,14 +66,13 @@ restores require a register overwrite before a later call, or a normal exit;
 ABI-preserved/result registers, PHIs and implicit clobber readers keep their
 values. This bounded shared proof removes avoidable HighC/LLVMC traps but does
 not recover escaping VM state or authorize a dynamic code-address fallback.
-Checked x86/x64 near calls now contribute their physical return-slot write to
-source spill proofs. A released private slot completely overwritten by that
-write need not observe its former value. Tail jumps, partial overlaps, unread
-restores without a liveness proof, unknown encodings and link-register calls
-remain conservative. This removes one transport class; it does not recover
-runtime VM inputs or call-clobbered registers.
 Pure POPCOUNT steps used to compute x86 parity no longer prevent an otherwise
-complete scratch overwrite proof; trapping operations still do.
+complete explicit scratch overwrite proof; trapping operations still do.
+Physical CALL return-slot writes remain barriers: they are absent from the C
+frame projection. Discarding an old save solely because CALL overwrites its
+bytes can turn a later return-slot read into an uninitialized C value. A full
+source projection of the new return-address value is required before admitting
+that optimization; runtime code-address relocation remains a separate proof.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by

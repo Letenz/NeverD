@@ -1,14 +1,3 @@
-//===- SourceCallABI.cpp - Checked source call bindings ------------------===//
-//
-// NeverD Decompiler
-//
-//===----------------------------------------------------------------------===//
-///
-/// \file
-/// Bind source call declarations to their original machine operands.
-///
-//===----------------------------------------------------------------------===//
-
 #include "neverd/ir/SourceCallABI.h"
 
 #include "neverd/ir/Limits.h"
@@ -37,24 +26,22 @@ neverd::sourceCallReturnAddressBias(const BinaryImage *Image, Arch Architecture,
                                     va_t Address) {
   if (Architecture == Arch::AArch64)
     return 0;
-  if ((Architecture != Arch::X64 && Architecture != Arch::X86) || !Image ||
-      Image->Arch != Architecture)
+  if (Architecture != Arch::X64 || !Image)
     return {};
-  const int64_t Width = getTargetRegInfo(Architecture).PointerSize;
   const auto *P = Image->readVA(Address, 2);
   if (!P)
     return {};
   if (P[0] == 0xe8)
-    return Width;
+    return 8;
   if (P[0] == 0xe9 || P[0] == 0xeb)
     return 0;
-  if (Architecture == Arch::X64 && (P[0] & 0xf0) == 0x40) {
+  if ((P[0] & 0xf0) == 0x40) {
     P = Image->readVA(Address + 1, 2);
     if (!P)
       return {};
   }
   if (P[0] == 0xff && ((P[1] >> 3) & 7) == 2)
-    return Width;
+    return 8;
   if (P[0] == 0xff && ((P[1] >> 3) & 7) == 4)
     return 0;
   return {};

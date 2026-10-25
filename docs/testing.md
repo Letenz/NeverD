@@ -310,18 +310,12 @@ an edited store must lose its previous prologue-save annotation before the
 ObjC private-copy machine replay compares both saved representations.
 These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
 instruction families.
-
-`SourceStackSpills` checks physical near-call return-slot overwrites across
-x86/x64/ARM/ARM64 and COFF/ELF/Mach-O, including partial overlap, observed
-bytes, missing call provenance, malformed normal edges, stack PHIs and incoming
-return-slot replacement. The x86/x64 positives require the pointer-width
-stack call; link-register architectures remain negative. The
-`OverwrittenCallClobberSpills` pipeline fixture executes the released-push-slot
-case through both C routes, with optimization enabled and disabled, for all
-three formats at host O0/O2 under UBSan.
-Its flag-preserving case also checks POPCOUNT-based parity updates before an
-explicit overwrite; trapping division and a count of observed spill bytes
-remain barriers in the owner tests.
+`SourceStackSpills` checks that pure POPCOUNT parity calculations allow an
+explicit scratch overwrite while division and actual old-slot reads remain
+barriers. `OverwrittenCallClobberSpills` executes the flag-save case through
+both C routes, with optimization enabled and disabled, for COFF/ELF/Mach-O
+at host O0/O2 under UBSan. Physical CALL writes alone remain conservative
+until the source frame represents their return-address value.
 Pointer-valued results retain their bits through both C routes; independent
 LLVM return tests cover the 32/64-bit x86 and Arm register ABIs.
 

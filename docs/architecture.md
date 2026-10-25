@@ -5003,16 +5003,10 @@ otherwise print as an unassigned local or a zero.
 
 The pipeline runs both annotations through `markSourceStackAccesses`, sharing
 one batch of entry-stack offset proofs and the resulting load/store ranges.
-That batch also includes the return-address write of a checked x86/x64 near
-call. LowToMed binds its width from the original ordinary-call boundary and
-the shared source-call encoding reader; tail jumps, conditional calls, far or
-unrecognized encodings and link-register architectures publish no such write.
-The ABI owner's reaching-SP walk supplies the current stack base, with a shared
-per-function work budget and complete normal-edge checks for source queries.
-Only a full overwrite before any observation can discard a scratch spill;
-partial overlaps and unread restores without a register-liveness proof stay
-conservative. Implicit writes also invalidate conflicting prologue-save and
-incoming-return-address annotations. Native call lowering is unchanged.
+Nontrapping scalar parity counts may precede an explicit scratch overwrite.
+A physical CALL return-slot write cannot substitute for a represented store:
+source C does not yet materialize that write, and later reads or escaping frame
+pointers could observe the missing value. Calls remain observation barriers.
 Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.

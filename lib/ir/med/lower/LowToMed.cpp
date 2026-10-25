@@ -20,7 +20,6 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/Limits.h"
-#include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
@@ -50,7 +49,6 @@
 #include "neverd/loader/SymbolDecoration.h"
 
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -1094,17 +1092,6 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   }
 
   for (const auto &LB : Low.Blocks) {
-    bool CheckedCallBoundaries =
-        Image && ConventionRegs.CallPushesReturnAddress &&
-        llvm::any_of(LB.InstructionBoundaries, [](const auto &Boundary) {
-          return Boundary.Control == LowInstructionControl::Call;
-        });
-    if (CheckedCallBoundaries)
-      if (auto Error = validateLowInstructionBoundaries(
-              LB, LowInstructionBoundaryRequirement::Required)) {
-        llvm::consumeError(std::move(Error));
-        CheckedCallBoundaries = false;
-      }
     uint8_t DispatchDefined =
         TrackDispatchArgs ? DispatchDefinedIn[LowBlockIndex] : 0;
     ++LowBlockIndex;
@@ -1213,16 +1200,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
           const LowInstructionBoundary &Boundary =
               LB.InstructionBoundaries[BoundaryIndex];
           if (Boundary.FirstOp <= LowOpIndex &&
-              LowOpIndex - Boundary.FirstOp < Boundary.OpCount) {
+              LowOpIndex - Boundary.FirstOp < Boundary.OpCount)
             MOp.DoesNotReturn = hasLowInstructionControlFlag(
                 Boundary.ControlFlags, LowInstructionControlFlag::NoReturn);
-            if (CheckedCallBoundaries &&
-                Boundary.Control == LowInstructionControl::Call)
-              if (const auto Bytes =
-                      sourceCallReturnAddressBias(Image, TheArch, LOp.Addr);
-                  Bytes && *Bytes == ConventionRegs.PointerSize)
-                MOp.CallReturnAddressBytes = static_cast<uint8_t>(*Bytes);
-          }
           if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
             MOp.DoesNotReturn |= x86_registration::hasNoReturnCallEffect(
                 Low, LB, LowOpIndex, Boundary);

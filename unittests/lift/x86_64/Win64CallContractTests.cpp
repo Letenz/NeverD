@@ -1395,7 +1395,7 @@ INSTANTIATE_TEST_SUITE_P(SourceStackSpills, OverwrittenCallClobberSpills,
 TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
   const unsigned Variant = GetParam();
 #if !defined(__x86_64__) && !defined(_M_X64)
-  if (Variant == 1 || Variant == 2 || Variant == 4)
+  if (Variant == 1 || Variant == 2 || Variant == 3)
     GTEST_SKIP() << "Native x64 flags-transfer execution requires an x64 host";
 #endif
   for (BinaryFormat Format :
@@ -1406,22 +1406,27 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
     std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
     Code.insert(Code.end(), Call.begin(), Call.end());
     if (Variant >= 3) {
-      // The next physical CALL overwrites this released push slot. Passing
-      // another frame member to strlen keeps the frame observable in C.
+      // PUSHF explicitly overwrites the released push slot after ADD.
+      // Passing another frame member to strlen keeps the frame observable.
       Code.insert(Code.end(), {0x66, 0xc7, 0x44, 0x24, 0x10, 97, 0, 0x41,
                                0x53}); // push r11
-      if (Variant == 4)
+      if (Variant == 3)
         // ADD's parity calculation is a nontrapping POPCOUNT. PUSHF's
         // explicit write then replaces the saved bytes before the CALL.
         Code.insert(Code.end(), {0x48, 0x83, 0xc4, 8, 0x9c, 0x9d});
       else
-        Code.insert(Code.end(), {0x48, 0x8d, 0x64, 0x24, 8}); // lea rsp,[rsp+8]
+        Code.insert(Code.end(), {0x48, 0x8d, 0x64, 0x24, 8});
       Code.insert(Code.end(), {0x48, 0x8d,
                                static_cast<uint8_t>(
                                    Format == BinaryFormat::COFF ? 0x4c : 0x7c),
                                0x24, 0x10});
       const auto Read = throughSlot(Text + Code.size(), slot(1));
       Code.insert(Code.end(), Read.begin(), Read.end());
+      if (Variant == 4)
+        // The machine reads the new return PC; source C has not represented
+        // that write. Retain the unavailable spill rather than read an
+        // uninitialized frame member after removing its only source store.
+        Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0xf8});
       Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x28, 0xc3});
     } else {
       const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
@@ -1469,8 +1474,12 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
               LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
         } else
           ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        if (Variant == 4) {
+          EXPECT_NE(Source.find("__builtin_trap"), std::string::npos) << Source;
+          continue;
+        }
         EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
-        if (Variant == 1 || Variant == 2 || Variant == 4) {
+        if (Variant == 1 || Variant == 2 || Variant == 3) {
           EXPECT_NE(Source.find("__readeflags"), std::string::npos) << Source;
           EXPECT_NE(Source.find("__writeeflags"), std::string::npos) << Source;
         }
