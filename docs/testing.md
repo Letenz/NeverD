@@ -11152,6 +11152,13 @@ boundaries, PROT_NONE and a mapped prefix before a hole without changing bytes,
 mapping generation or allocation counts. `LinuxProcessTests.cpp` executes the
 corresponding x64/ARM64 raw syscall callers and verifies the full output vector.
 
+`*NegativePrctl*` and `LinuxMemory.PositiveUnmodeledPrctl*` check kernel `int`
+narrowing, EINVAL for negative options, unreadable unused arguments, unchanged
+memory and mappings, raw versus libc errno, and inactive dynamic providers.
+The Linux fixtures execute O0/O2 callers on both LP64 ISAs. Android proc
+fixtures and `ProcessPublic.AndroidNegativePrctlMatchesSDKAndCLI` cover named,
+raw, variadic and dynamic calls, full output guards, and nonnegative refusal.
+
 `LinuxProc.Prctl*` checks the opt-in legacy anonymous VMA name contract through
 both LP64 syscall numbers: argument widths and error order, borrowed-pointer
 updates, pointer-identity splits/merges, holes, page faults, NAME_MAX truncation,
