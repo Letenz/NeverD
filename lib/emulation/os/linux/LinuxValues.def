@@ -71,6 +71,8 @@ NEVERD_LINUX_VALUE(TmpfsDirectoryEntryBytes, 20)
 NEVERD_LINUX_VALUE(DeviceIoctlLimit, 1024)
 NEVERD_LINUX_VALUE(DeviceMappingLimit, 16)
 NEVERD_LINUX_VALUE(DeviceMappingPageSize, 4096)
+// Explicit residency observations currently select the 4 KiB LP64 contract.
+NEVERD_LINUX_VALUE(ResidencyPageSize, 4096)
 NEVERD_LINUX_VALUE(DeviceMemoryLimit, 16)
 NEVERD_LINUX_VALUE(FileByteLimit, 16 * 1024 * 1024)
 NEVERD_LINUX_VALUE(ProcBlockSize, 1024)
@@ -110,6 +112,7 @@ NEVERD_LINUX_VALUE(MapAnonymous, 0x20)
 NEVERD_LINUX_VALUE(ProtRead, 0x01)
 NEVERD_LINUX_VALUE(ProtWrite, 0x02)
 NEVERD_LINUX_VALUE(ProtExecute, 0x04)
+NEVERD_LINUX_VALUE(AdviceDontNeed, 4)
 NEVERD_LINUX_VALUE(AdviceMergeable, 12)
 NEVERD_LINUX_VALUE(AdviceUnmergeable, 13)
 NEVERD_LINUX_VALUE(PRSetVMA, 0x53564d41)
@@ -255,6 +258,17 @@ NEVERD_LINUX_DYNAMIC_DEPENDENCY(DependencyAudit, 0x6ffffefb)
 #ifdef NEVERD_LINUX_DIAGNOSTIC
 NEVERD_LINUX_DIAGNOSTIC(MemoryResidency,
                         "unmodeled Linux page residency observation")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyExhausted,
+                        "Linux residency observation catalogue exhausted")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyMismatch,
+                        "Linux residency observation does not match the query")
+NEVERD_LINUX_DIAGNOSTIC(
+    ResidencyBacking,
+    "Linux residency requires owned anonymous mmap or brk backing")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyDeviceOutput,
+                        "Linux residency output in device memory is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(ResidencyPartialCopy,
+                        "partial Linux residency vector copy is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(KernelOptions,
                         "invalid Linux kernel availability input")
 NEVERD_LINUX_DIAGNOSTIC(PidFDTargetMissing,

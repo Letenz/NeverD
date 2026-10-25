@@ -26,8 +26,13 @@ inline constexpr uint32_t kMaxLinuxFileRenames = 64;
 inline constexpr uint32_t kMaxLinuxFileUnlinkParents = 64;
 inline constexpr uint32_t kMaxLinuxFileUnlinks = 64;
 
+/// Ordered mincore queries, bytes per query and aggregate observation bytes.
+inline constexpr size_t kMaxLinuxResidencyObservations = 1024;
+inline constexpr size_t kMaxLinuxResidencyPages = 65536;
+inline constexpr size_t kMaxLinuxResidencyObservationBytes = 1024 * 1024;
+
 /// Offline stream and datagram connections admitted together.
-inline constexpr int kMaxNetworkConnections = 256;
+inline constexpr int kMaxNetworkConnections = 4096;
 /// Receive and expected-send event entries admitted per connection.
 inline constexpr int kMaxNetworkEvents = 4096;
 /// Maximum configured send or receive chunk.

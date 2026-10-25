@@ -12,6 +12,8 @@ the component level. The C renderer groups its architecture helpers, intrinsic
 spelling tables and HighC/LLVMC adapters together under `render/<architecture>/`;
 its route-independent interfaces retain `render/HighC/` and `render/LLVMC/`.
 LLVM architecture headers mirror the existing backend implementation directories.
+The shared LLVM-to-C intrinsic spelling table includes the x86 entries from
+`ir/intrinsics/X86/`; generic names remain in the common table.
 Decoder, lifter, IR state, ABI and translation files follow the same ownership.
 Execution models and unpacking adapters extend their existing `arch/<target>/`
 layout, including the public execution models.
@@ -94,17 +96,26 @@ MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
 
-`X86APXAtomic.h` owns the APX atomic native API names, operand widths,
+`X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
 condition/segment controls and exact assembly fallback. The existing
 `ApxAtomicIntrinsicShape` owns LowIR/MedIR/HighIR admission. LLVM and both C
-routes preserve a native EVEX RAO-INT or CMPccXADD transaction, including dead
-results and false-condition write-back; no ordinary load/store expansion is
+routes preserve the original legacy/VEX/EVEX RAO-INT or CMPccXADD transaction,
+including dead results and false-condition write-back; no ordinary load/store expansion is
 permitted. Normalized offsets retain DS/FS/GS selection, with address-size
 wrapping performed by the existing effective-address owner. Default-stack
 RSP/RBP accesses with 64-bit addressing remain refused unless FS/GS overrides
 the segment: the normalized offset cannot yet retain their distinct #SS fault
 class. `Codegen` treats LLVM error diagnostics as compilation failures and
 does not publish the parseable but incomplete objects LLVM can leave behind.
+Legacy RAO also supports i386; normalized addresses remain eight bytes while
+the native i386 carrier is four bytes. A complete narrow absolute displacement
+is wrapped and published as a full address at the lifter boundary. LLVM's
+shared atomic address-role map defers only the address to memory resolution;
+stored/comparator values remain ordinary address-fragment escape sinks.
+Native memory emission uses the same writable-data, pointer-table and
+immutable-data address owners as ordinary memory operations. Selected or
+recurrent immutable bases must retain relocation; segment-relative offsets
+and live-image storage bypass this process-image rebasing.
 
 `X86NativeFeatures` owns C compiler capability selection and function target
 attributes for AMX, SGX, bounded SGX/SMX state and REP comparison flags. Instruction renderers report their required feature
@@ -116,6 +127,11 @@ assembly routes, and its `sahf` attribute survives every capability combination.
 SHA-256 vector projections participate in the same feature set, including the
 SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
 shape before selecting a compiler intrinsic.
+
+`X86SystemStateNative` also owns the RTM and CLZERO target requirements for
+native system calls. LLVM emission adds those requirements to the completed
+function without replacing its other family features, so standalone LLVM IR
+retains the instruction-selection contract used by the C routes.
 
 Source LLVM may retain loaded-image data in one external byte array, preserving
 overlapping scalar fields, pointer cells and original address differences.
@@ -139,6 +155,27 @@ Low-to-Med binds this evidence to the original direct-call occurrence and target
 omitted-callee memoization includes it. Source scratch-restore liveness can cross
 only a still-matching call. Private-byte overwrite and escape checks stay in
 `MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
+
+After shared call-signature recovery, `MedPrologueSaves` also checks complete
+Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
+use the resulting byte-read intervals to suppress private stores that cannot
+be observed. Negative offsets count; pointer capture, lossy transforms,
+exceptional edges, nested calls and incoming stack parameters refuse the proof.
+Implicit register inputs are checked independently of inferred source arity.
+An SSA version of zero is not itself an entry input: a first load or arithmetic
+definition can also have that version. Call home areas and released frame bytes
+remain observable without explicit pointer arguments. This proof annotates only
+the source projection; it neither changes native memory effects nor supplies a
+general pointer-escape or kernel continuation contract.
+The omitted-callee reader also visits scalar direct calls carrying a proven
+private-frame address. Existing operation and extra-lift budgets still bound
+those bodies; an arity-only summary cannot stand in for their pointer effects.
+HighIR consumes a direct call's recovered argument list as a whole, including
+empty lists and unavailable interior slots. Its local setup scan cannot append
+adjacent frame variables or replace those unknown operands with stale stores.
+Module call recovery finalizes this boundary for both C routes.
+HighIR adds this recovery for positional register/stack conventions. Independent
+register banks retain their source variadic and floating-return preparation.
 
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.
@@ -211,6 +248,10 @@ MedIR before LLVM emission. Automatically included exception callbacks cannot
 substitute for a rejected parent. Failures retain the entry's audit disposition
 and first decode or unsupported-instruction address; source views can still
 return their partial analysis.
+Whole-module lift/patch also fails when every attempted body was rejected;
+an empty LLVM module cannot stand in for unsupported instructions. Deliberate
+runtime/import exclusions and read-only machine analysis keep their separate
+outcomes.
 
 LLVM function-symbol lookup builds its eligible entry/end indexes lazily for
 each emission. It retains the last eligible symbol in image order and prefers
@@ -380,7 +421,7 @@ results remain return values; discarded C expressions retain the instruction.
 
 `AArch64AddressMemory.def` owns original ordinary-memory encodings and shapes.
 `AArch64AddressMemoryOperations.def` owns their identities, direction and
-register class. Its frozen scalar and vector lists occupy separate append
+register class. Its frozen scalar, vector and immediate lists occupy separate append
 positions, preserving previously published scalar and x86 identities. The GPR
 register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
 STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
@@ -416,6 +457,17 @@ The address is unknown to generic memory proofs, and discarding the result
 cannot discard the access or its possible fault. The operations preserve local
 Z/P values only when their physical vector registers are disjoint. Validated loads also preserve
 earlier call arguments other than their explicit outputs.
+The shared raw-operation contract also describes GPR and B/H/S/D/Q unsigned
+and unscaled immediate accesses, including the GPR unprivileged variants.
+These operations retain the raw base and encoded displacement; their index
+operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
+leaving every immediate bit and the access-EL variant intact. Explicit IR can
+execute these forms through LLVM and either C route without an image model.
+Automatic lifting still selects only register-offset operations. Image-backed
+immediate source projection fails explicitly until exact page/relocation
+occurrences, accessed-byte ownership and raw-base rebasing agree; source body
+filtering cannot bypass that requirement. This is not automatic immediate
+CPA2 lifting coverage.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. SP provenance is retained in IR, but
 execution projection refuses it without its alignment and tagging environment.
@@ -444,7 +496,10 @@ Source emission keeps these original reads even after recovering a switch.
 When a relocatable table read has no observable result, a bounded original-byte
 copy preserves the access without demanding callable identities for unreachable
 physical slots. The shared byte-storage descriptor grants no address or flow
-proof. HighC requires every use of the exact expression in its function to be
+proof. A common 64-bit byte-span query includes negative displacements and
+the original raw base, without shortening the maximum 65,536-byte unsigned-Q
+span. Alignment padding is not original prefix content. HighC requires every
+use of the exact expression in its function to be
 unobserved, together with a complete source-range proof; LLVM requires the
 existing exact-occurrence, storage-role and terminal-use closure. Observable
 reads still use the normal relocation-aware memory owner. Table-relative data
@@ -454,8 +509,8 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Immediate, pre/post-index, pair and other ordinary-memory families
-remain unqualified for CPA2, as does controlled native execution with CPTA
+identity. Automatic immediate, pre/post-index, pair and other ordinary-memory
+lifting remains unqualified for CPA2, as does controlled native execution with CPTA
 enabled. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
@@ -748,6 +803,13 @@ request. Navigation keeps the requested byte address separately from its owner.
 GUI refreshes retain loaded context within the per-side query budget and keep a
 prefetch margin, so replacing unchanged rows does not shrink and regrow the
 window used to route branch arrows. Revision and navigation fences still apply.
+
+<!-- i18n-section: interactive-patch-ownership -->
+## Interactive patch ownership
+
+`lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
+
+Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
 ## Structural comparison ownership
 
@@ -8076,6 +8138,13 @@ time solely from LinuxClock. Directory and stdio buffers belong to Bionic,
 which delegates refill, write, seek and close to this same kernel owner. Neither
 the JSON adapter nor a private workload supplies a second descriptor table.
 
+`processOptionsFromJSON` owns request wire accounting for every frontend.
+Only validated DEX and Linux regular-file bytes earn hexadecimal payload
+capacity beyond the metadata ceiling. The Android and Linux input owners
+retain their independent decoded and aggregate budgets; strings, paths,
+other binary fields and JSON escape overhead remain metadata. The C ABI
+uses the same outer limit before scanning its NUL-terminated input.
+
 `LinuxFiles` also owns the opt-in directory creation provider, mutable directory
 metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
@@ -8296,8 +8365,15 @@ changing the allocator. Android preparation still accounts for every requested
 byte, and the existing final snapshot path checks current permissions. Terminal
 CPU/model faults retain their diagnostics without attempting observation reads.
 `LinuxResidency.cpp` owns bounded `mincore` validation within `LinuxMemory`.
-It uses `AddressSpace` mapping facts for first-page holes and does not maintain
-a second map or equate allocated backing storage with Linux page residency.
+It uses `AddressSpace` mapping facts for first-page holes. Optional ordered
+residency observations are matched against separately tracked anonymous
+allocation provenance, never VMA names or allocated RAM contents. `mapPages`
+publishes provenance only after complete mapping success; shared `unmapPages`
+retires it, including brk shrink and thread retirement. These intervals retain
+no RAM and confer no access permissions. Proc and residency share live VMA
+boundaries, while only residency admits device boundaries for explicit refusal.
+A monotonic query/output walk preserves complete vector chunks before errors;
+unknown partial-copy progress remains unsupported.
 Linux memory dispatch selects each operation before applying its own argument
 policy; raw and Bionic calls share that decision.
 `AndroidMemory` owns copies of caller-specified regular files into explicit
@@ -11445,10 +11521,58 @@ boundary and heap; native thread detach never resets that process state. JSON
 supplies an optional snapshot, not inferred initialization or a second object
 owner. See [application snapshots](android-application-runtime.md) for the
 admitted methods, loader namespace and unsupported lifecycle transitions.
+AndroidFramework owns the prepared main queue's head; Message links and data
+remain ordinary fields in the shared heap. Posting and read-only snapshots
+consume that one list. RuntimeServices transports uptime observations from the
+existing LinuxClock, with cumulative ExecutionBudget accounting; it introduces
+no independent clock. The intrinsic catalog records final methods so Program
+admission can reject conflicting supplied declarations. Handler's virtual
+sendMessageAtTime override remains an explicit execution boundary.
 Program registers framework field ownership by declaration identity, independent
 of supplied source metadata. Runtime routes those instance fields to the same
 AndroidFramework state as library getters. Instrumentation starts from explicit
 optional state and retains compatible guest writes; JNI IDs do not own a copy.
+The attached Context's ApplicationInfo follows the same ownership rule. Its
+getter retains one instance shared by Application and base Context; `sourceDir`
+and `nativeLibraryDir` reads use independent nullable inputs until guest writes
+establish their values. Knowing one field does not supply the other.
+PackageManager ApplicationInfo queries match explicit own-user positive
+responses by exact package and flags. The same AndroidFramework field owner
+stores independent mutable slots per returned object; immutable response
+indices distinguish fresh parcel results from the Context's retained instance.
+The JSON adapter reuses one ApplicationInfo schema decoder, and the typed
+validator owns response bounds and preconditions. No JNI-side field copies or
+package service execution are introduced.
+The retained ApplicationInfo targetSdkVersion uses the same per-object owner
+and common Runtime int32 field conversion as PackageInfo integer fields. Its
+optional input is independent of platform Build.VERSION state; JSON only
+decodes and validates the explicit Context or query response.
+PackageInfo queries share exact query-key validation and matching, while
+retaining their own response inventory and per-object field slots. Their
+packageName, versionName and versionCode inputs are independently optional.
+Their nullable applicationInfo field retains one nested object per parcel
+result. It uses the existing ApplicationInfo field owner, with an immutable
+response source/index instead of aliasing the Context or a separate package
+query. Missing input remains unknown; explicit null and later reference writes
+are retained in the PackageInfo slot. JSON reuses the ApplicationInfo decoder
+and typed validation, and materialization charges the shared heap budget.
+Runtime validates reference writes and narrows primitive writes before
+dispatching to either ordinary DEX storage or framework field storage; field
+owners cannot introduce a second JNI-specific integer conversion.
+The inherited PackageItemInfo nonLocalizedLabel declaration uses this same
+per-object field storage. Label lookup returns the stored CharSequence only
+under explicitly known unsafe-label mode; it never caches a second copy or
+assumes the mutable static flag's initializer. Resource and safe-label paths
+remain unsupported.
+The shared `referenceAssignable` predicate owns the platform String to
+CharSequence relationship, including reference-array covariance. Program
+hierarchy checks, DEX field writes and JNI argument/field transport consume
+that relationship instead of relaxing individual field types.
+Framework String materialization shares one budgeted helper across methods and
+fields. File existence and APK contents remain separate filesystem inputs.
+The package resource path belongs to AndroidFramework's stable LoadedApk
+projection. Context getters share its retained nullable String independently of
+mutable ApplicationInfo fields; JSON and typed callers use one validator.
 Exact loader-scoped negative class lookup observations are admitted by the
 shared Android application validator and checked against the Runtime's actual
 Program visibility. AndroidFramework creates the shared throwable and message;
@@ -11556,6 +11680,31 @@ preserves the same heap throwable through move-exception, rethrow and JNI.
 Frame storage is released on every unwind, including caught exceptions;
 resource/unsupported stops remain terminal and cannot be caught by Java.
 This is neither a second decoder nor an ART/JVM class-loader implementation.
+
+`AndroidFramework` also owns the explicitly supplied, generation-stable Secure
+and Global settings caches of its attached resolver. The bounded `android_id`
+and redirected `adb_enabled` reads keep
+unknown, cached null, empty and nonempty values distinct, with the same retained
+String identity for JNI and DEX. Typed snapshots and JSON share admission;
+neither transport chooses a default identifier or setting. The defaulted
+integer getter reuses that String owner, checks ASCII decimal int32 bounds, and
+uses the caller's default only for known absence or invalid ASCII text. Unknown
+state and unmodeled Unicode digit semantics remain explicit stops.
+This projection requires an
+existing own-user cache and does not implement Binder/provider acquisition,
+generation changes, other users or writes. Its contract follows API 28
+[Settings.Secure and NameValueCache](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/provider/Settings.java).
+
+The API 28 value profile admits StringBuilder's empty constructor,
+`append(char)` and `toString()` through that same Library owner. Its retained
+UTF-16 value is mutable; append returns the original identity and charges its
+copy before mutation. Nonempty String results own independent bytes; the empty
+result uses the literal pool. Program declares the concrete, abstract-base and
+interface hierarchy. This bounded value projection does not expose ART backing
+arrays or capacity, and other overloads remain unsupported.
+The contract follows the public API 28
+[StringBuilder](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/StringBuilder.java)
+and its abstract base; no implementation bodies are incorporated.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
@@ -11800,9 +11949,113 @@ Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
 
+Exceptional memory histories follow the source instruction's possible prefixes,
+including before and after a throwing CALL or STORE. A complete local store
+ends only its own bytes. Completed byte histories are shared across later
+queries within the same immutable function, keeping repeated reads bounded
+without publishing a partially explored cycle. Exceptional predecessor and
+successor identities must agree.
+
+Immediately after conversion, the guard can bind complete PE32 SEH state facts
+from that exact LowIR input. Current source occurrences locate restored ESP
+definitions and prove unreachable calls; the shared stack-offset proof carries
+those definitions through synthetic stack cleanup and joins. These facts stay
+local to the query and never become reusable annotations on mutable MedIR.
+Checked SEH callback ownership separates a CALL below its private callback ESP
+from the parent frame. A relative-origin query rejects joins with the parent
+stack, another callback, or an unresolved restore. Native memory effects and
+the emitted source operations remain intact.
+
+Source register-call recovery runs after that original CALL-slot guard. The
+callee-effect owner retains a bounded, complete, straight-line x64 scalar/CPUID
+body only when it has no memory operations, internal calls, exceptional roots,
+unmodeled exception metadata, direction-flag writes or nonordinary return.
+`PipelineRegisterCalls.cpp` uses the ordinary LowIR
+converter to capture the caller's extra result registers; it does not duplicate
+partial-register or intrinsic semantics. Required results must have no remaining
+entry-state dependencies, and every written ABI-preserved GPR must equal its
+incoming value. Each original query is then expanded once, in order, with fresh
+SSA values shared by all outputs. Native lifting retains the original CALL.
+The cache accounts for retained leaf bodies, and per-body/per-function work
+bounds prevent unbounded expansion. Incoming-state-dependent, memory-using and
+other hardware leaves retain the ordinary unavailable-state behavior. This is
+not a general machine-state calling convention or a proof of unresolved frame
+aliases.
+
 The shared entry-stack offset proof follows the lifter's exact zero-extension
 of a native 32-bit address into its 64-bit memory-address container. It does
 not authenticate a wider incoming SP, a signed extension, a truncated 64-bit
 pointer or an ambiguous definition. Alignment rewrites keep their existing
 native-width rules. Source call-slot observation therefore sees the same frame
 bytes for direct pointer-width addresses and canonical widened addresses.
+
+ApplicationInfo.splitSourceDirs and splitPublicSourceDirs are owned by the existing shared framework
+field state. Explicit input distinguishes unknown, null and ordered nullable
+String arrays; per-result arrays are independently allocated in the shared
+heap, and JNI/DEX field and element writes retain reference identity. Missing
+paths are not inferred from sourceDir or the other array field, and no split APK bytes, package parsing
+or service execution are implied.
+
+Android message removal belongs to the same Dalvik framework owner as posting
+and queue inspection. Its private head and real Message fields are authoritative;
+JNI getters create ordinary references to these identities. A declared empty
+native callback set admits only a nonblocking initial poll and immediately due
+removal. The shared monotonic service supplies uptime, and the common Dalvik
+message-count limit bounds traversal. Unsupported waits or malformed state
+cannot partially unlink a message. Retrieval does not dispatch a callback or
+create a Java thread; JNI access to package-private next does not make that
+method public to application DEX.
+
+The bounded Java URL value profile admits explicit lowercase `http://` and
+`https://` strings up to 4096 ASCII units, with a nonempty ASCII hostname,
+optional canonical decimal port 0–65535, and unchanged path/query/fragment.
+The shared Library owner retains independent UTF-16 bytes and renders them
+through `toString` and `toExternalForm`. Program declares URL's final Object /
+Serializable hierarchy. Other URL forms, null-input exception state, protocol
+handlers, successful connections, DNS, URL equality and hashing remain explicit
+unsupported boundaries unless separately declared below. Inherited virtual Object.equals must not become identity equality
+for URL; a deliberately nonvirtual Object.equals call retains identity semantics.
+JNI validates its nonvirtual lookup against the same method catalog. This value
+subset carries no host network or filesystem authority and does not claim full
+Android libcore behavior or physical-device equivalence.
+
+The optional application snapshot `url_open_failure_handlers` declares an
+already-installed custom URLStreamHandler for each listed lowercase HTTP scheme.
+It is synthetic initial handler state, independent of application attachment;
+it does not describe the default HTTP handler, network availability, or factory
+installation execution. Shared Library validates the retained URL and selects
+its scheme. AndroidFramework owns the immutable policy and retained nullable
+message; every invocation throws a fresh checked IOException with that message
+identity. Work/heap stops remain terminal resource stops. Missing schemes remain
+unsupported. URLConnection is an abstract type only; no connection, DNS or host
+network access is performed. The typed and JSON adapters share one validator:
+at most two distinct http/https entries, each with an explicit null or bounded
+4096-byte UTF-8/WTF-8 message. Empty, null and absent handler state are distinct.
+
+
+DEX member visibility has one Runtime owner shared by calls and field accesses.
+Within the single supplied-class namespace represented by Program,
+package-visible static methods and fields admit another caller in the exact
+same package, including compiler-generated static accessors. Declaring-class
+visibility remains required. Private access remains confined to the declaring
+class; protected resolution and nonpublic instance dispatch remain explicitly
+unsupported across classes. This does not merge independent class-loader
+namespaces or change JNI access and nonpublic framework-library restrictions.
+
+## Named UTF-8 String encoding
+
+`dalvik::Library` owns `String.getBytes(String)` for the ASCII case-insensitive
+canonical name `UTF-8`. It reads retained UTF-16 units, preserves NUL, combines
+valid surrogate pairs and replaces isolated surrogates with byte `0x3f`. DEX
+and JNI receive fresh mutable `[B` objects, including empty results. Both
+conversion passes are charged before allocating an exact-size heap array.
+Null names throw NullPointerException; other names, aliases and overloads
+remain explicit unsupported boundaries. No default charset or host codec is
+inferred, and this does not add a Java charset provider.
+
+Anonymous allocation provenance is owned by LinuxMemory for every successful
+private anonymous mmap or brk growth, independently of optional observations and
+VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
+this authority. Discard replaces each target page through AddressSpace while
+retaining permissions and VMA policy; old physical aliases and pinned views
+keep their bytes. Device/GPU admission remains in the shared service dispatch.

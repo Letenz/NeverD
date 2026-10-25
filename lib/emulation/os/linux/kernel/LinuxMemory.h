@@ -11,7 +11,10 @@
 
 #include "neverd/emulation/AddressSpace.h"
 
+#include <cstddef>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace neverd::emulation::linux_model {
 /// Own Linux placement and program-break policy for one stopped process.
@@ -27,9 +30,11 @@ public:
   struct ProcMapping : LinuxProcMapping {
     unsigned Permissions = 0;
     uint64_t AnonymousName = 0;
+    bool IsMMIO = false;
   };
   llvm::Error initializeProc();
-  llvm::Expected<std::vector<ProcMapping>> procMappings() const;
+  llvm::Expected<std::vector<ProcMapping>>
+  procMappings(bool IncludeMMIOBoundaries = false) const;
   llvm::Expected<std::string> procAnonymousName(uint64_t Address) const;
   /// KSM eligibility only; the deterministic profile has no background scanner.
   bool isMergeable(uint64_t Address) const;
@@ -60,6 +65,11 @@ private:
     uint64_t Begin, End, Name;
   };
   std::vector<AnonymousVMAName> AnonymousVMANames;
+  // Provenance only, independent of names and page permissions. No RAM owners
+  // are retained; shared unmap retires these sorted, disjoint intervals.
+  std::vector<std::pair<uint64_t, uint64_t>> AnonymousAllocationRanges;
+  size_t NextResidencyObservation = 0;
+  void setAllocationOwnership(uint64_t Address, uint64_t Size, bool Owned);
   std::vector<AnonymousVMAName> keptAnonymousVMANames(uint64_t Address,
                                                       uint64_t Size) const;
   void retireAnonymousVMANames(uint64_t Address, uint64_t Size);
@@ -121,6 +131,8 @@ private:
   llvm::Expected<uint64_t> protect(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> unmap(const ProcessServiceEvent &Event);
   llvm::Expected<uint64_t> advise(const ProcessServiceEvent &Event);
+  llvm::Expected<std::optional<uint64_t>>
+  discard(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   residency(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<uint64_t> setBreak(uint64_t Address);

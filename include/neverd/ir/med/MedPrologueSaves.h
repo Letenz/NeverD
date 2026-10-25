@@ -17,6 +17,8 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include <map>
+
 namespace neverd {
 
 /// Whether \p V is the value register \p RegOff holds at \p Func's entry:
@@ -32,6 +34,14 @@ bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff);
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format,
                              StackEntryKind Entry = StackEntryKind::Call);
+
+/// After call argument recovery, omit private stores only when a complete
+/// noncapturing use proof of the frame finds no reads of their bytes. Direct
+/// callees contribute their actual bounded pointer reads, including negative
+/// displacements. Unknown callees, escapes and unsupported uses keep stores.
+void markUnobservedBorrowedFrameStores(
+    MedFunc &Func, Arch Architecture, BinaryFormat Format,
+    const std::map<va_t, const MedFunc *> &Callees);
 
 /// In source mode, mark each store that saves a callee-saved register's entry
 /// value into prologue storage as a PrologueSave.  Prologue storage is the

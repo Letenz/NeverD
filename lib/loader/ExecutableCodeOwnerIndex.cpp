@@ -7,6 +7,7 @@
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 
 #include "neverd/loader/BinaryImageModel.h"
+#include "neverd/support/SortedSearch.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -229,7 +230,7 @@ va_t BinaryImage::getFunctionMetadataEnd(
 }
 
 bool ExecutableCodeOwnerIndex::isImportStubAt(va_t Addr) const {
-  return std::binary_search(ImportStubs.begin(), ImportStubs.end(), Addr) ||
+  return sorted::contains64(ImportStubs.data(), ImportStubs.size(), Addr) ||
          contains(ImportRanges, Addr);
 }
 
@@ -237,11 +238,11 @@ bool ExecutableCodeOwnerIndex::hasFunctionSymbolAt(
     va_t Addr, bool IncludeBoundaryGuesses) const {
   const auto &Starts =
       IncludeBoundaryGuesses ? FunctionStarts : NonGuessedFunctionStarts;
-  return std::binary_search(Starts.begin(), Starts.end(), Addr);
+  return sorted::contains64(Starts.data(), Starts.size(), Addr);
 }
 
 bool ExecutableCodeOwnerIndex::hasKnownOrTypedOwnerAt(va_t Addr) const {
-  return std::binary_search(FunctionStarts.begin(), FunctionStarts.end(),
+  return sorted::contains64(FunctionStarts.data(), FunctionStarts.size(),
                             Addr) ||
          contains(CodeRanges, Addr);
 }

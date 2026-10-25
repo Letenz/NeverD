@@ -53,7 +53,7 @@ bytes). Ports and addresses use network byte order; the family uses the guest's
 little-endian ABI. A peer must match the next supplied attempt. `connect_errno`
 can supply EINTR, ECONNREFUSED, ETIMEDOUT, ENETUNREACH, EHOSTUNREACH or EACCES instead of
 success. A failed connection cannot carry stream data, and its socket must be
-closed before retry. There are at most 256 TCP/UDP attempts and 1 MiB of payload
+closed before retry. There are at most 4,096 combined TCP/UDP/failure attempts and 1 MiB of payload
 bytes combined.
 
 `socket`, `connect`, `sendto` and `recvfrom` share one implementation across raw
@@ -291,3 +291,21 @@ Semantics are independently implemented from
 [Linux eventpoll](https://github.com/torvalds/linux/blob/v6.6/fs/eventpoll.c),
 [Linux select/poll](https://github.com/torvalds/linux/blob/v6.6/fs/select.c) and
 [Android's poll wrappers](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/poll.cpp).
+
+### Counted TCP failures
+
+An explicit `tcp_connect_failures` object contains a nonzero `errno` and finite
+nonzero `count`. It becomes available only after all ordered TCP attempts have
+been consumed. It admits canonical IPv4/IPv6 peers matching the socket family
+and returns only the supplied failure; it creates no route, connection, bytes
+or readiness and never contacts the host network. Missing or exhausted input,
+wrong peers while exact attempts remain, nonblocking completion and failed
+socket reuse stop explicitly. Descriptor aliases share the failed description.
+
+The failure count shares the 4,096-attempt budget with exact TCP and UDP entries.
+Payload and event budgets remain independently enforced. JSON and typed input
+use the shared limits owner; decimal strings follow the existing integer wire
+contract. Allowed errors match explicit TCP attempts: EINTR, ECONNREFUSED,
+ETIMEDOUT, ENETUNREACH, EHOSTUNREACH and EACCES. The guest must close a failed
+socket before retrying, including after EINTR; this bounded contract does not
+model an asynchronous handshake.

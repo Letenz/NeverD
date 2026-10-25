@@ -45159,7 +45159,9 @@ TEST(HighCPointerAddresses, CompilerDispatchDoesNotDependOnIncludes) {
       {"NEVERD_X86_SYSTEM_REGISTER", {0x44, 0x0f, 0x20, 0xc0, 0xc3}},
       {"NEVERD_X86_DESCRIPTOR_STATE", {0x0f, 0x00, 0xd0, 0xc3}}, // lldt ax
       {"NEVERD_X86_VIRTUALIZATION", {0x0f, 0x01, 0xc4, 0xc3}},   // vmxoff
-      {"NEVERD_X86_SYSTEM_STATE", {0x0f, 0x03, 0xc1, 0xc3}}};    // lsl eax, ecx
+      {"NEVERD_X86_SYSTEM_STATE", {0x0f, 0x03, 0xc1, 0xc3}},     // lsl eax, ecx
+      {"NEVERD_X86_LEGACY_ATOMIC", {0x48, 0x0f, 0x38, 0xfc, 0x11, 0xc3}},
+      {"NEVERD_X86_APX_ATOMIC", {0x62, 0xf4, 0xfc, 0x08, 0xfc, 0x11, 0xc3}}};
   constexpr va_t Entry = 0x1000;
   for (const auto Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {

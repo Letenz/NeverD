@@ -194,6 +194,17 @@ def main():
         assert "diff:" in result.stderr
         reopen = json.loads(run(base + ["--json", "--reopen", str(saved)], {2, 3}).stdout)
         assert reopen == doc
+        contradictory = json.loads(json.dumps(doc))
+        pair = contradictory["matches"][0]
+        contradictory["overrides"].append({"kind": "unmatch", "primary": pair["primary"],
+                                           "secondary": pair["secondary"]})
+        invalid = root / "contradictory.nddiff"
+        invalid.write_text(json.dumps(contradictory))
+        retained = root / "retained.nddiff"
+        retained.write_bytes(b"previous output\n")
+        refused = run(base + ["--json", "--reopen", str(invalid), "--save", str(retained)], {1})
+        assert not refused.stdout and "effective unmatch" in refused.stderr, refused
+        assert retained.read_bytes() == b"previous output\n"
         cancel_saved_restore(args, root, base, saved)
         functions = json.loads(run(base + ["--list", "all", "--limit", "1"], {2, 3}).stdout)
         assert len(functions["items"]) == 1 and functions["next_offset"] == 1

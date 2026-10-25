@@ -126,9 +126,13 @@ NEVERD_PROCESS_REPORT_FIELD(UnavailableSyscalls, "unavailable_syscalls")
 NEVERD_PROCESS_REPORT_FIELD(GKI, "gki")
 NEVERD_PROCESS_REPORT_FIELD(XAttrQueryImport, "xattr_query_import")
 NEVERD_PROCESS_REPORT_FIELD(AnonymousVMANames, "anonymous_vma_names")
+NEVERD_PROCESS_REPORT_FIELD(ResidencyObservations, "residency_observations")
+NEVERD_PROCESS_REPORT_FIELD(ResidencyPages, "pages")
 NEVERD_PROCESS_REPORT_FIELD(LinuxPriority, "linux_priority")
 NEVERD_PROCESS_REPORT_FIELD(LinuxNetwork, "linux_network")
 NEVERD_PROCESS_REPORT_FIELD(Connections, "connections")
+NEVERD_PROCESS_REPORT_FIELD(TCPConnectFailures, "tcp_connect_failures")
+NEVERD_PROCESS_REPORT_FIELD(NetworkFailureCount, "count")
 NEVERD_PROCESS_REPORT_FIELD(DatagramConnections, "datagram_connections")
 NEVERD_PROCESS_REPORT_FIELD(ExpectedDatagrams, "expected_datagrams")
 NEVERD_PROCESS_REPORT_FIELD(ReceiveEvents, "receive_events")
@@ -324,6 +328,28 @@ NEVERD_PROCESS_REPORT_FIELD(JNI, "jni")
 NEVERD_PROCESS_REPORT_FIELD(DexImages, "dex_images")
 NEVERD_PROCESS_REPORT_FIELD(JNIClassLookupFailures, "jni_class_lookup_failures")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationSnapshot, "application_snapshot")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationDefaultLocale, "default_locale")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationURLFailureHandlers,
+                            "url_open_failure_handlers")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationMainLooperPrepared,
+                            "main_looper_prepared")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationInitialMainQueue, "initial_main_queue")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationQueueNativeCallbacksEmpty,
+                            "native_callbacks_empty")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationMessagePoolEmpty,
+                            "initial_message_pool_empty")
+NEVERD_PROCESS_REPORT_FIELD(JavaMainMessageQueue, "main_message_queue")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationLoaderPaths, "application_loader_paths")
+NEVERD_PROCESS_REPORT_FIELD(SystemLoaderPaths, "system_loader_paths")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationInfo, "application_info")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationInfoQueries, "application_info_queries")
+NEVERD_PROCESS_REPORT_FIELD(PackageInfoQueries, "package_info_queries")
+NEVERD_PROCESS_REPORT_FIELD(PackageItemForceSafeLabels,
+                            "package_item_force_safe_labels")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationPackageResourcePath,
+                            "package_resource_path")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationPackageManagerAvailable,
+                            "package_manager_available")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationPhase, "phase")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationPackage, "package_name")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationFilesDirectory, "files_directory")
@@ -332,6 +358,10 @@ NEVERD_PROCESS_REPORT_FIELD(ApplicationLoaderEstablished,
                             "application_loader_established")
 NEVERD_PROCESS_REPORT_FIELD(ApplicationClassLookupFailures,
                             "class_lookup_failures")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationSecureSettingsCache,
+                            "secure_settings_cache")
+NEVERD_PROCESS_REPORT_FIELD(ApplicationGlobalSettingsCache,
+                            "global_settings_cache")
 NEVERD_PROCESS_REPORT_FIELD(JNIRegistrations, "jni_registrations")
 NEVERD_PROCESS_REPORT_FIELD(ObserveJavaState, "observe_java_state")
 NEVERD_PROCESS_REPORT_FIELD(JavaLibrary, "java_library")
@@ -431,10 +461,11 @@ NEVERD_PROCESS_REPORT_FIELD(Cause, "cause")
 #endif
 #ifdef NEVERD_PROCESS_REPORT_LIMIT
 NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
-// 1 MiB of explicit DEX bytes uses 2 MiB of hexadecimal text. Other request
-// text retains its separate 64 KiB ceiling, including JSON escape overhead.
+// Up to 1 MiB of validated DEX and 16 MiB of validated Linux regular-file
+// bytes use two hex characters per byte. Their owners retain the decoded
+// bounds; other text, including JSON escapes, retains a 64 KiB ceiling.
 NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT,
-                            2162688)
+                            35717120)
 NEVERD_PROCESS_REPORT_LIMIT(JSONMetadataLimit,
                             NEVERD_PROCESS_OPTIONS_JSON_METADATA_LIMIT, 65536)
 #endif
@@ -474,7 +505,7 @@ NEVERD_PROCESS_REPORT_TEXT(Module, "module")
 NEVERD_PROCESS_REPORT_TEXT(EmptyOptions, "{}")
 NEVERD_PROCESS_REPORT_TEXT(
     TooLarge,
-    "process options JSON exceeds 64 KiB of metadata or 2112 KiB total")
+    "process options JSON exceeds 64 KiB of metadata or 34880 KiB total")
 NEVERD_PROCESS_REPORT_TEXT(ObjectRequired,
                            "process options must be a JSON object")
 NEVERD_PROCESS_REPORT_TEXT(UnknownField, "unknown process option: ")

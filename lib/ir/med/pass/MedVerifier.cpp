@@ -124,7 +124,7 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
           if (isX86CompactMemory(Id) &&
               !x86CompactShapeIsValid(Id, x86CompactMedShape(Op)))
             Err(X86CompactMalformed, Blk.Id, Op.Addr);
-          const bool IsApxAtomic = isApxAtomicIntrinsic(Id);
+          const bool IsApxAtomic = isX86AtomicIntrinsic(Id);
           if (IsApxAtomic &&
               !intrinsicApxAtomicShapeIsValid(Id, apxAtomicMedShape(Op)))
             Err("APX atomic intrinsic has an invalid operand/output contract",

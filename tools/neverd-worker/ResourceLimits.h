@@ -16,6 +16,7 @@
 #include "../common/transport/ResourceLimits.h"
 
 #include "neverd/Limits.h"
+#include "neverd/patch/Limits.h"
 #include "neverd/sdk/Limits.h"
 #include "neverd/support/Limits.h"
 
@@ -23,6 +24,12 @@
 #include <cstdint>
 
 namespace neverd::limits::worker {
+inline constexpr std::size_t kPatchHexBytes =
+    ::neverd::limits::patch::kMaxApplyBytes * 2;
+inline constexpr std::size_t kPatchStateBytes =
+    ::neverd::limits::transport::kJsonMaxJsonBytes / 2;
+inline constexpr std::size_t kPatchTextBytes =
+    ::neverd::limits::patch::kMaxAssemblyTextBytes;
 
 // tools/neverd-worker/Engine.cpp
 // The most source one declaration reads.

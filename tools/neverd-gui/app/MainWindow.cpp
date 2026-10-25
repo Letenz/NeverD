@@ -38,6 +38,7 @@
 #include "Session.h"
 #include "SetTypeDialog.h"
 #include "SettingsKeys.h"
+#include "ShortcutHint.h"
 #include "SymbolTablePromptDialog.h"
 #include "Theme.h"
 #include "TitleBar.h"
@@ -572,6 +573,11 @@ void MainWindow::buildMenusAndToolbars() {
 }
 
 void MainWindow::fillPlaceholder(QMenu *menu, const QString &name) {
+  if (name == QLatin1String("Patch")) {
+    connect(menu, &QMenu::aboutToShow, this,
+            [this, menu] { preparePatchMenu(menu); });
+    return;
+  }
   if (name == QLatin1String("RecentFiles")) {
     recentMenu_ = menu;
     auto *anchor = menu->addSeparator();
@@ -768,8 +774,12 @@ void MainWindow::buildDocks() {
 
   connectFunctions(functions_);
   connectDisassembly(disassembly_);
-  connect(hex_, &HexView::locationChanged, this,
-          [this](Address address) { disassembly_->navigate(address, false); });
+  connect(hex_, &HexView::locationChanged, this, [this](Address address) {
+    hexFollower_ = disassembly_;
+    disassembly_->navigate(address, false);
+  });
+  connect(&session_, &Session::unloaded, this,
+          [this] { hexFollower_.clear(); });
   hex_->setExportAction(actions_.action(ActionId::EditExportData));
   connect(output_, &OutputWindow::navigateRequested, this,
           [this](Address address) { jump(address); });
@@ -791,6 +801,8 @@ void MainWindow::buildDocks() {
               lastCodeView_.clear();
             if (it.key() != QLatin1String(OutputDock))
               hexActive_ = it.key() == QLatin1String(HexDock);
+            if (!hexActive_)
+              hexFollower_.clear();
             // What the commands act on follows the view: a pseudocode
             // window converts a parameter, the disassembly an operand.
             updateActions();
@@ -809,6 +821,10 @@ void MainWindow::buildDocks() {
 }
 
 void MainWindow::connectDisassembly(DisassemblyView *view) {
+  connect(view->listing(), &ListingView::jumpSettled, this, [this, view] {
+    if (hexFollower_ == view)
+      hexFollower_.clear();
+  });
   connect(view, &DisassemblyView::locationChanged, this,
           [this, view](Address address) {
             if (view == disassembly_)
@@ -840,6 +856,11 @@ void MainWindow::connectDisassembly(DisassemblyView *view) {
             if (graph && view == disassembly_)
               showOverview();
           });
+  connect(view->graph(), &GraphView::statusChanged, this, [this, view] {
+    // The graph's initial cursor arrives after focus and mode changed.
+    if (view == disassembly_ && view->graphMode())
+      updateActions();
+  });
 }
 
 void MainWindow::connectFunctions(ChooserView *view) {
@@ -916,6 +937,8 @@ MainWindow::Dock *MainWindow::chooserDock(ChooserKind kind) {
     return dock;
   auto *view = new ChooserView(session_, space_, kind);
   choosers_.insert(int(kind), view);
+  if (kind == ChooserKind::PatchedBytes)
+    connectPatchedBytes(view);
   connect(view, &ChooserView::activated, this,
           [this](Address address) { navigate(address); });
   // Lists reload when a session opens; one first shown later loads now.
@@ -1622,6 +1645,7 @@ void MainWindow::navigateCodeFunction(CodeView *view, Address address,
 
 void MainWindow::navigate(Address address) {
   ++codeNavigationSerial_;
+  hexFollower_.clear();
   if (!session_.loaded())
     return;
   auto *view = disassembly_;
@@ -1708,6 +1732,7 @@ void MainWindow::navigateExpression(const QString &text) {
 
 void MainWindow::navigateHistory(bool forward) {
   const auto serial = ++codeNavigationSerial_;
+  hexFollower_.clear();
   if (forward ? !disassembly_->canGoForward() : !disassembly_->canGoBack())
     return;
   if (auto *view = focusedCodeView()) {
@@ -1738,7 +1763,9 @@ void MainWindow::navigateHistory(bool forward) {
 
 void MainWindow::synchronize(Address address, QObject *source) {
   navigationBand_->setCurrent(address);
-  if (source != hex_)
+  // A refresh may resolve an operand byte back to its instruction start.
+  // Keep the active Hex cursor on the edited byte.
+  if (!hexActive_ && source != hex_ && source != hexFollower_)
     hex_->setCurrent(address, 1);
   const auto function = currentFunction();
   session_.publishSelection(address, function, QStringLiteral("disassembly"));
@@ -1768,6 +1795,7 @@ QVector<CodeView *> MainWindow::visibleCodeViews() const {
 //===----------------------------------------------------------------------===//
 
 void MainWindow::connectActions() {
+  connectPatchActions();
   const auto on = [this](ActionId id, auto slot) {
     connect(actions_.action(id), &QAction::triggered, this, slot);
   };
@@ -1823,7 +1851,6 @@ void MainWindow::connectActions() {
       QApplication::clipboard()->setText(hexAddress(*address));
   });
   on(ActionId::EditRename, [this] { rename(); });
-  on(ActionId::EditComment, [this] { comment(); });
   on(ActionId::EditRepeatableComment, [this] { comment(); });
   on(ActionId::EditBookmark, [this] {
     const auto address = currentAddress();
@@ -2245,6 +2272,19 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::FileLoadHeader)
       ->setEnabled(loaded && !session_.readOnly() &&
                    session_.declaresLocalTypes());
+  const bool patching =
+      loaded && !session_.readOnly() && session_.keepsBytePatches();
+#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
+  actions_.action(ActionId::Id)->setEnabled(patching);
+#include "PatchMenu.def"
+  actions_.action(ActionId::EditPatchMenu)->setEnabled(patching && location);
+  actions_.action(ActionId::EditPatchedBytes)
+      ->setEnabled(loaded && session_.keepsBytePatches());
+  actions_.action(ActionId::EditPatchRewriteFunction)
+      ->setEnabled(patching && session_.keepsSourcePatches() &&
+                   !session_.hasBytePatches() && currentFunction().has_value());
+  actions_.action(ActionId::FileProducePatchedBinary)
+      ->setEnabled(loaded && session_.hasBytePatches());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
   // A function starts where none starts yet; the one the cursor is in can
@@ -2325,8 +2365,6 @@ void MainWindow::updateActions() {
   actions_.action(ActionId::EditConvertToStruct)
       ->setEnabled(declarations && session_.convertsParameters() && code &&
                    code->text()->function().has_value());
-  actions_.action(ActionId::EditComment)
-      ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::EditRepeatableComment)
       ->setEnabled(location && !session_.readOnly());
   actions_.action(ActionId::OptionsAnalyze)
@@ -3999,21 +4037,22 @@ void MainWindow::showShortcuts() {
   tree->setHeaderLabels({tr("Action"), tr("Shortcut"), tr("Scope")});
   tree->setRootIsDecorated(false);
   tree->setUniformRowHeights(true);
-  const auto add = [&](const QString &text, const QKeySequence &key,
+  const auto add = [&](const QString &text, const QList<QKeySequence> &keys,
                        const QString &scope, const QIcon &icon = {}) {
     auto *item = new QTreeWidgetItem(tree);
     item->setIcon(0, icon);
     item->setText(0, QString(text).remove(QLatin1Char('&')));
-    item->setText(1, key.isEmpty() ? tr("Unassigned")
-                                   : key.toString(QKeySequence::NativeText));
+    const auto hint = shortcutHint(keys);
+    item->setText(1, hint.isEmpty() ? tr("Unassigned") : hint);
     item->setText(2, scope);
-    item->setData(1, Qt::UserRole, key.toString(QKeySequence::PortableText));
+    item->setData(1, Qt::UserRole,
+                  shortcutHint(keys, QKeySequence::PortableText));
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     return item;
   };
   for (auto *action : actions_.allActions()) {
     auto *item =
-        add(action->text(), action->shortcut(),
+        add(action->text(), action->shortcuts(),
             actions_.viewActions().contains(action) ? tr("Analysis views")
                                                     : tr("Workbench"),
             action->icon());
@@ -4021,13 +4060,13 @@ void MainWindow::showShortcuts() {
     item->setToolTip(0, action->statusTip());
   }
   add(actions_.action(ActionId::EditFunction)->text(),
-      ChooserView::commandKey(ChooserCommand::Edit), tr("Functions"));
-  add(tr("Quick filter"), QKeySequence(QKeySequence::Find), tr("Lists"));
-  add(tr("Add types…"), LocalTypesView::commandKey(TypesCommand::Add),
+      {ChooserView::commandKey(ChooserCommand::Edit)}, tr("Functions"));
+  add(tr("Quick filter"), {QKeySequence(QKeySequence::Find)}, tr("Lists"));
+  add(tr("Add types…"), {LocalTypesView::commandKey(TypesCommand::Add)},
       tr("Local Types"));
-  add(tr("Edit type…"), LocalTypesView::commandKey(TypesCommand::Edit),
+  add(tr("Edit type…"), {LocalTypesView::commandKey(TypesCommand::Edit)},
       tr("Local Types"));
-  add(tr("Delete types…"), LocalTypesView::commandKey(TypesCommand::Delete),
+  add(tr("Delete types…"), {LocalTypesView::commandKey(TypesCommand::Delete)},
       tr("Local Types"));
   tree->sortItems(0, Qt::AscendingOrder);
   tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -4087,7 +4126,7 @@ void MainWindow::showCommandPalette() {
         continue;
       auto *item = new QListWidgetItem(action->icon(), label, list);
       item->setData(SecondaryTextDelegate::SecondaryTextRole,
-                    action->shortcut().toString(QKeySequence::NativeText));
+                    shortcutHint(action->shortcuts()));
       item->setData(Qt::UserRole, action->objectName());
     }
     if (list->count())
@@ -4322,6 +4361,10 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     pathfinding->addAction(actions_.action(ActionId::PathfinderNewPath));
   }
   menu.addSeparator();
+  if (session_.keepsBytePatches()) {
+    auto *patch = menu.addMenu(icon(QStringLiteral("patch")), tr("Patch"));
+    preparePatchMenu(patch);
+  }
   menu.addAction(actions_.action(ActionId::EditRename));
   menu.addAction(actions_.action(ActionId::EditExportData));
   // Hex-Rays offers a variable's type, and a parameter's pointer to a
@@ -4343,7 +4386,8 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
     if (target && target->contains(QStringLiteral("parameter")))
       menu.addAction(convert);
   }
-  for (const auto id : {ActionId::EditComment, ActionId::EditBookmark})
+  for (const auto id :
+       {ActionId::EditRepeatableComment, ActionId::EditBookmark})
     menu.addAction(actions_.action(id));
   // IDA offers the operand's structure offset after its rename.
   if (auto *structure = actions_.action(ActionId::EditOperandStruct);

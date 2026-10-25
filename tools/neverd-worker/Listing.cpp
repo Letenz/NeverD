@@ -4960,4 +4960,25 @@ Json Listing::regions() {
   return items;
 }
 
+Json Listing::assemblySymbols(std::uint64_t address) {
+  Json result = Json::object();
+  const auto item = impl_->itemAt(address);
+  if (!item || item->function < 0)
+    return result;
+  const auto &body = impl_->decode(item->function);
+  std::set<std::string> ambiguous;
+  for (const auto &[offset, bytes] : body.frame) {
+    const auto name = impl_->frameName(body, offset);
+    if (ambiguous.contains(name))
+      continue;
+    if (result.contains(name) && result[name] != offset) {
+      result.erase(name);
+      ambiguous.insert(name);
+    } else {
+      result[name] = offset;
+    }
+  }
+  return result;
+}
+
 } // namespace neverd::worker

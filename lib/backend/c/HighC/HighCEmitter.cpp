@@ -699,7 +699,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
           (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
            x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
            isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
-           isApxAtomicIntrinsic(E.IntrinsicId) ||
+           isX86AtomicIntrinsic(E.IntrinsicId) ||
            isX86CompactMemory(E.IntrinsicId) ||
            E.IntrinsicId == Intrinsic::X86FourSourceMemory ||
            E.IntrinsicId == Intrinsic::X86AMXState);
@@ -3136,7 +3136,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       return std::nullopt;
     const auto Instruction = *aarch64AddressMemoryInstruction(
         Load->Operands[kAddressMemoryWordOperand]->ConstVal);
-    if (!Instruction.isLoad() || Instruction.stackBase())
+    if (!Instruction.isLoad() || Instruction.stackBase() ||
+        !Instruction.hasRegisterIndex())
       return std::nullopt;
     const auto Table =
         AddressOf(*Load->Operands[kAddressMemoryBaseOperand], Bases);
@@ -3214,14 +3215,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
               Read.Operands[kAddressMemoryWordOperand]->ConstVal);
           const auto Base =
               AddressOf(*Read.Operands[kAddressMemoryBaseOperand], Bases);
-          const auto Storage =
-              Base ? aarch64OriginalMemoryStorage(*Opts.Image, *Base)
+          const auto Span =
+              Base ? Instruction.controlIndependentSpan(*Base, *Bounds[I])
                    : std::nullopt;
-          if (!Storage || Storage->Bytes.size() < Instruction.accessBytes() ||
-              *Bounds[I] >
-                  ((Storage->Bytes.size() - Instruction.accessBytes()) >>
-                   Instruction.indexShift()) ||
-              !Instruction.controlIndependentAddressRange(*Base, *Bounds[I]))
+          const auto Storage =
+              Span ? aarch64OriginalMemoryStorage(*Opts.Image, Span->Begin)
+                   : std::nullopt;
+          if (!Storage || Span->Bytes > Storage->Bytes.size())
             continue;
           const auto It =
               Unobserved.emplace(&Read, std::make_pair(*Storage, 0)).first;
@@ -3241,7 +3241,12 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         }
         OriginalMemoryBases.emplace(
             std::make_pair(&Func, Read),
-            llvm::formatv(kOriginalMemoryCBase, It->second.second, Storage.Pad)
+            llvm::formatv(
+                kOriginalMemoryCBase, It->second.second,
+                Storage.Pad +
+                    *AddressOf(*Read->Operands[kAddressMemoryBaseOperand],
+                               Bases) -
+                    Storage.Base)
                 .str());
       }
     }
@@ -4721,10 +4726,12 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       if (Opts.TheArch != Arch::AArch64 ||
           !aarch64AddressMemoryHighShapeIsValid(*Expr))
         throw std::invalid_argument(kAddressMemoryMalformed);
-      if (aarch64AddressMemoryInstruction(
-              Expr->Operands[kAddressMemoryWordOperand]->ConstVal)
-              ->stackBase())
+      const auto Instruction = *aarch64AddressMemoryInstruction(
+          Expr->Operands[kAddressMemoryWordOperand]->ConstVal);
+      if (Instruction.stackBase())
         throw std::invalid_argument(kAddressMemorySPUnsupported);
+      if (Opts.Image && !Instruction.hasRegisterIndex())
+        throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
     }
     if (isAArch64PAuthLoadIntrinsic(Expr->IntrinsicId)) {
       if (Opts.TheArch != Arch::AArch64 ||

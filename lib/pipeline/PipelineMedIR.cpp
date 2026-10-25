@@ -11,12 +11,14 @@
 
 #include "PipelineLowIRDetail.h"
 #include "PipelineMedAudit.h"
+#include "PipelineRegisterCalls.h"
 #include "PipelineSEHRuntimeMemory.h"
 #include "PipelineSourceStackAccesses.h"
 #include "PipelineTrimStorage.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallReturnReads.h"
@@ -51,7 +53,8 @@ MedStackProjection medStackProjection(const PipelineOptions &Options) {
              : MedStackProjection::Machine;
 }
 
-void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
+void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
+                             const BinaryImage &Image,
                              MedStackProjection Projection) {
   Func.EntryKind = functionEntryKind(Func, Image.stackEntryKindAt(Func.Entry));
   if (Projection != MedStackProjection::Source)
@@ -59,9 +62,31 @@ void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
   simplifyProvenStackAlignment(Func, Image.Arch, Image.abiFormat(),
                                Func.EntryKind);
   std::string Diagnostic;
-  if (!validateSourceCallReturnReads(Func, Image, Diagnostic))
+  if (!validateSourceCallReturnReads(Func, Image, Diagnostic,
+                                     limits::ir::kSourceCallReturnReadWork,
+                                     &Source))
     throw LowToMedConversionError(Diagnostic);
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
+}
+
+void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
+                                         PipelineResult &Result) {
+  std::map<va_t, const MedFunc *> Callees;
+  std::set<va_t> Complete;
+  for (const LowFunc &Func : Result.LowFuncs)
+    if (Func.hasCompleteLiftCoverage() &&
+        Func.UnsafeIndirectBranchAddresses.empty())
+      Complete.insert(Func.Entry);
+  for (const MedFunc &Func : Result.MedFuncs)
+    if (Complete.count(Func.Entry))
+      Callees.emplace(Func.Entry, &Func);
+  if (Result.OmittedCallees)
+    for (const auto &Func : Result.OmittedCallees->Bodies)
+      Callees.try_emplace(Func->Entry, Func.get());
+  for (MedFunc &Func : Result.MedFuncs)
+    if (Complete.count(Func.Entry))
+      markUnobservedBorrowedFrameStores(Func, Image.Arch, Image.abiFormat(),
+                                        Callees);
 }
 
 //===----------------------------------------------------------------------===//
@@ -210,7 +235,10 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         auto &MF = Result.MedFuncs[I];
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
-        prepareMedStackAccesses(MF, Img, medStackProjection(Opts));
+        prepareMedStackAccesses(MF, Projected ? *Projected : LF, Img,
+                                medStackProjection(Opts));
+        if (medStackProjection(Opts) == MedStackProjection::Source)
+          expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
         MF.SourceFile = LF.SourceFile;
@@ -309,6 +337,7 @@ neverd::PipelineResult neverd::Pipeline::rebuildSourceCalls(
   COPY_SOURCE_FACT(CallEntryStackSlots);
   COPY_SOURCE_FACT(CallMayWriteGPRs);
   COPY_SOURCE_FACT(CallExitConstants);
+  COPY_SOURCE_FACT(CallRegisterLeaves);
   COPY_SOURCE_FACT(CallVariadicFrom);
   COPY_SOURCE_FACT(FormattedCalls);
   COPY_SOURCE_FACT(OmittedCalleeArgumentCounts);

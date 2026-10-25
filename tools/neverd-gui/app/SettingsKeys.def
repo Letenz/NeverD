@@ -33,4 +33,9 @@ NEVERD_SETTINGS_KEY(SymbolicSimplification, "code/symbolicSimplification")
 // in it (InstanceServer), as IDA's DisableIpcServer does.
 NEVERD_SETTINGS_KEY(InstancesDisabled, "instances/disabled")
 
+NEVERD_SETTINGS_KEY(PatchAssemblerDialect, "patch/assemblerDialect")
+NEVERD_SETTINGS_KEY(PatchFillNops, "patch/fillNops")
+NEVERD_SETTINGS_KEY(PatchCompiler, "patch/compiler")
+NEVERD_SETTINGS_KEY(PatchCompilerPaths, "patch/compilerPaths")
+
 #undef NEVERD_SETTINGS_KEY

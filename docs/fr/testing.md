@@ -2267,3 +2267,28 @@ Les régressions des objets d’entrée vérifient copies symboliques, sauvegard
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
 
 Exécutez `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) et `NeverDCSourcePresentationTests` pour vérifier la provenance des octets, l’accord des chemins, les stockages écrasés ou échappés, les plages d’image immuables, les budgets, les encodages et les limites des métadonnées. `NeverDWorkerStackText` compile des cas PE publics x64/ARM64 dans les deux voies C, y compris les écrasements inconnus. Clang et lld-link sont requis ; l’exécution Windows native est une validation distincte.
+
+<!-- i18n-section: interactive-byte-patches -->
+## Responsabilité des correctifs interactifs
+
+`NeverDBytePatchTests` vérifie la couche de modifications, le refus des relocalisations, l’assemblage relatif au PC, la signature PE et la somme de contrôle. `NeverDWorkerPatch` vérifie l’aperçu, les entrées périmées, l’annulation et le rétablissement, la restauration groupée, les répliques en lecture seule, la réouverture et l’export exclusif.
+
+`NeverDWorkerNativePatch` répète ces vérifications avec le SDK réel. `NeverDWorkerSourceBytePatch` vérifie sous Linux la preuve source, la prévisualisation isolée, les symboles de pile et le remplacement natif en C.
+
+`NeverDGuiPatchKeys` vérifie toutes les secondes touches via les raccourcis de `QWindow`, y compris les menus en attente, l’annulation et la saisie dans l’éditeur. `NeverDGuiNativePatchKeys` vérifie les octets du SDK réel, Hex, les fenêtres flottantes et les opérations annuler, rétablir et restaurer. Exécuter le même programme sous X11 couvre aussi les menus natifs.
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```

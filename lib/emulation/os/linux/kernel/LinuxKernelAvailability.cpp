@@ -4,6 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 #include "LinuxKernelAvailability.h"
+
+#include "neverd/emulation/Limits.h"
+
 namespace neverd::emulation::linux_model {
 std::optional<uint32_t> gkiPidFDFlags(AndroidGKIKernel Kernel) {
   switch (Kernel) {
@@ -64,6 +67,24 @@ xattrQueryImport(const LinuxKernelOptions &Options) {
   return std::nullopt;
 }
 llvm::Error validateKernelOptions(const LinuxKernelOptions &Options) {
+  using namespace neverd::limits::emulation;
+  if (Options.ResidencyObservations) {
+    if (Options.ResidencyObservations->size() > kMaxLinuxResidencyObservations)
+      return failure(KernelOptions);
+    uint64_t Total = 0;
+    for (const auto &Observation : *Options.ResidencyObservations) {
+      const uint64_t Size = Observation.Pages.size();
+      if (!Size || Size > kMaxLinuxResidencyPages ||
+          Observation.Address % ResidencyPageSize ||
+          Observation.Address > UINT64_MAX - Size * ResidencyPageSize ||
+          Size > kMaxLinuxResidencyObservationBytes - Total)
+        return failure(KernelOptions);
+      for (uint8_t State : Observation.Pages)
+        if (State > 1)
+          return failure(KernelOptions);
+      Total += Size;
+    }
+  }
   if (Options.AnonymousVMANames &&
       *Options.AnonymousVMANames != LinuxAnonymousVMANames::AndroidUserPointer)
     return failure(KernelOptions);

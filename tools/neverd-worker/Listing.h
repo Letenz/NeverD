@@ -105,6 +105,9 @@ public:
   /// Formatted instruction lines (no prefixes) of [start, end), for graph
   /// nodes.  Each element is {address, text, spans}.
   Json blockLines(std::uint64_t start, std::uint64_t end);
+  /// Explicit frame-name displacements used by the listing at this PC.
+  /// Ambiguous names are omitted, so assembly cannot guess their offset.
+  Json assemblySymbols(std::uint64_t address);
   /// Functions in address order under their display names:
   /// [{"name","engine_name","address","size","library","thunk","exported"}].
   const Json &functionRows();

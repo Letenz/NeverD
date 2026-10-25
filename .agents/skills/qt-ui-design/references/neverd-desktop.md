@@ -66,6 +66,27 @@ judge each change in the real window.
   round docks or views. A combo box's list drops below it and reads as a menu
   (`combobox-popup: 0`, and the styled item delegate `WorkbenchStyle` gives
   every combo box so the style sheet's item rules apply).
+- Keep a menu icon close to its label: NeverD's 16-pixel icon column uses
+  about 8 logical pixels of separation, with text aligned across icon,
+  checkmark and plain items. Qt already reserves the widest icon/check
+  column; do not add another column in `QMenu::item` padding. Position the
+  icon and checkmark in that same column, and reserve an icon's checked
+  border while unchecked so toggling it does not shift the glyph. Check
+  actual renders with shortcuts and submenus in both themes. This follows
+  [Fluent's proximity and spacing guidance](https://fluent2.microsoft.design/layout)
+  and [VS Code's aligned menu columns](https://github.com/microsoft/vscode/blob/main/src/vs/base/browser/ui/menu/menu.ts),
+  while retaining NeverD's desktop density and colored icons.
+- Keep menus taller than the available screen in one scrolling column.
+  `WorkbenchStyle::SH_Menu_Scrollable` enables Qt's top/bottom scrollers,
+  wheel input and keyboard navigation on every desktop. Fusion's default
+  instead wraps overflow into additional columns. Use the shared style for
+  main menus, context menus and submenus; do not split actions manually or
+  impose a fixed menu height. Check an actual overflowing popup, including
+  arrow interaction, wheel direction and keyboard access to its last item.
+- Keep one comment command, with `;` and `/` as equivalent shortcuts. Do not
+  restore the separate ordinary-comment action or its `:` key. Scope these
+  keys to analysis views so text fields retain normal punctuation input;
+  show both bindings in shortcut help and check aliases for conflicts.
 - Open the command palette where it was asked for. A click on the title bar's
   command center drops it from the bar's bottom edge, centered under the field
   and at least as wide (`TitleBar::clickedCommandCenter`), as in Visual Studio

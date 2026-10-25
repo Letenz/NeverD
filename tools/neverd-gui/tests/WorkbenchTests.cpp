@@ -34,6 +34,7 @@
 #include "MapPromptDialog.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
+#include "PatchEditor.h"
 #include "PathfinderView.h"
 #include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
@@ -2178,6 +2179,21 @@ private slots:
           foundUnassigned = item->text(1) == "Unassigned";
       }
       QVERIFY(foundUnassigned);
+      for (const auto &query : {QStringLiteral(";"), QStringLiteral("/")}) {
+        filter->setText(query);
+        int matches = 0;
+        for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+          auto *item = tree->topLevelItem(row);
+          if (item->isHidden())
+            continue;
+          ++matches;
+          QCOMPARE(item->data(0, Qt::UserRole).toString(),
+                   QStringLiteral("EditRepeatableComment"));
+          QCOMPARE(item->text(1), QStringLiteral(";, /"));
+          QCOMPARE(item->text(2), QStringLiteral("Analysis views"));
+        }
+        QCOMPARE(matches, 1);
+      }
       filter->clear();
       const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
       if (!captures.isEmpty()) {
@@ -5178,7 +5194,7 @@ private slots:
       });
       filler.start(10);
       if (comment)
-        bench.action(ActionId::EditComment)->trigger();
+        QTest::keyClick(code->window()->windowHandle(), Qt::Key_Slash);
       else
         QTest::keyClick(code, Qt::Key_N);
       return QTest::qWaitFor([&] { return accepted; }, OpenTimeoutMs);
@@ -11022,6 +11038,238 @@ private slots:
     QVERIFY(!disassembly->graph()->function());
     QVERIFY(!disassembly->graph()->currentAddress());
     QVERIFY(!disassembly->listing()->currentItem());
+  }
+
+  void hexBytePatchF2PreviewApplyCancelAndRevert_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void hexBytePatchF2PreviewApplyCancelAndRevert() {
+    QFETCH(bool, dark);
+    auto &theme = Theme::instance();
+    const auto previous = theme.mode();
+    const auto restore = qScopeGuard([&] { theme.setMode(previous); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("patch.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == QLatin1String("hex-1"))
+        dock->raise();
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_VERIFY(hex->byteAt(Base).has_value());
+    const auto original = *hex->byteAt(Base);
+    hex->setCurrent(Base);
+    hex->setFocus();
+    QTest::keyClick(hex, Qt::Key_F2);
+    QTRY_VERIFY(hex->findChild<PatchEditor *>());
+    QPointer<PatchEditor> editor = hex->findChild<PatchEditor *>();
+    auto *input = editor->findChild<QLineEdit *>("patchInput");
+    auto *apply = editor->findChild<QPushButton *>("patchApply");
+    QVERIFY(input && apply);
+    input->setText("2a");
+    QTRY_VERIFY_WITH_TIMEOUT(apply->isEnabled(), OpenTimeoutMs);
+    QCOMPARE(*hex->byteAt(Base), original);
+    if (const auto capture = qEnvironmentVariable("NEVERD_PATCH_CAPTURE_DIR");
+        !capture.isEmpty()) {
+      QDir().mkpath(capture);
+      QVERIFY(bench.window->grab().save(
+          capture + (dark ? "/hex-byte-preview-dark.png"
+                          : "/hex-byte-preview-light.png")));
+    }
+    QTest::keyClick(input, Qt::Key_Return);
+    QTRY_VERIFY_WITH_TIMEOUT(!editor, OpenTimeoutMs);
+    QTRY_COMPARE_WITH_TIMEOUT(hex->byteAt(Base), std::optional<quint8>(0x2a),
+                              OpenTimeoutMs);
+    QTRY_VERIFY(bench.session.hasBytePatch(Base));
+    hex->setCurrent(Base);
+    hex->setFocus();
+    QTest::keyClick(hex, Qt::Key_F2);
+    QTRY_VERIFY(hex->findChild<PatchEditor *>());
+    editor = hex->findChild<PatchEditor *>();
+    input = editor->findChild<QLineEdit *>("patchInput");
+    input->setText("55");
+    QTest::keyClick(input, Qt::Key_Escape);
+    QTRY_VERIFY(!editor);
+    QCOMPARE(hex->byteAt(Base), std::optional<quint8>(0x2a));
+    bench.session.editBytePatch("patch_revert", {{"address", hexAddress(Base)}},
+                                bench.session.epoch());
+    QTRY_COMPARE_WITH_TIMEOUT(hex->byteAt(Base),
+                              std::optional<quint8>(original), OpenTimeoutMs);
+    QTRY_VERIFY(!bench.session.hasBytePatch(Base));
+  }
+
+  void assemblyEditorRequiresOverlapConsentAndAppliesPaddedPreview() {
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("assembly-patch.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    PatchEditor editor(bench.session, Base, "assemble", "mov eax, 1",
+                       bench.window.get());
+    editor.show();
+    auto *apply = editor.findChild<QPushButton *>("patchApply");
+    auto *preview = editor.findChild<QPlainTextEdit *>("patchPreview");
+    auto *input = editor.findChild<QLineEdit *>("patchInput");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        preview->toPlainText().contains("enable replacement"), OpenTimeoutMs);
+    QVERIFY(!apply->isEnabled());
+    auto *overlap = editor.findChildren<QCheckBox *>().at(1);
+    overlap->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(apply->isEnabled(), OpenTimeoutMs);
+    QVERIFY(preview->toPlainText().contains("b8010000009090"));
+    input->setText("ret");
+    overlap->setChecked(false);
+    QTRY_VERIFY_WITH_TIMEOUT(apply->isEnabled(), OpenTimeoutMs);
+    QVERIFY(preview->toPlainText().contains("c390"));
+    QSignalSpy applied(&editor, &PatchEditor::applied);
+    QTest::keyClick(input, Qt::Key_Return);
+    // The committed request is already fixed. Do not accept edits that would
+    // disappear when its asynchronous completion closes the editor.
+    QVERIFY(!input->isEnabled());
+    QVERIFY(!overlap->isEnabled());
+    QTRY_COMPARE_WITH_TIMEOUT(applied.count(), 1, OpenTimeoutMs);
+    QTRY_VERIFY(bench.session.hasBytePatch(Base));
+  }
+
+  void bytePatchEditorRejectsStalePreview() {
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("stale-patch.bin"));
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    PatchEditor editor(bench.session, Base, "bytes", "2a", bench.window.get());
+    editor.show();
+    auto *apply = editor.findChild<QPushButton *>("patchApply");
+    QTRY_VERIFY_WITH_TIMEOUT(apply->isEnabled(), OpenTimeoutMs);
+    bool done = false;
+    bench.session.editBytePatch(
+        "patch_apply",
+        {{"address", hexAddress(Base)}, {"kind", "bytes"}, {"bytes", "55"}},
+        bench.session.epoch(), [&] { done = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(done, OpenTimeoutMs);
+    QSignalSpy applied(&editor, &PatchEditor::applied);
+    QTest::mouseClick(apply, Qt::LeftButton);
+    QVERIFY(!apply->isEnabled());
+    QCOMPARE(applied.count(), 0);
+    QVERIFY(editor.findChild<QPlainTextEdit *>("patchPreview")
+                ->toPlainText()
+                .contains("input changed"));
+  }
+
+  void nativePatchValueAndLargePreview_data() {
+    QTest::addColumn<QString>("value");
+    QTest::addColumn<QString>("expected");
+    QTest::addColumn<bool>("dark");
+    for (bool dark : {false, true}) {
+      const auto suffix = dark ? "-dark" : "-light";
+      QTest::newRow(qPrintable(QStringLiteral("leading-zero-decimal") + suffix))
+          << QStringLiteral("042") << QStringLiteral("b82a000000") << dark;
+      QTest::newRow(qPrintable(QStringLiteral("decimal-eight") + suffix))
+          << QStringLiteral("08") << QStringLiteral("b808000000") << dark;
+      QTest::newRow(qPrintable(QStringLiteral("hexadecimal") + suffix))
+          << QStringLiteral("0x2a") << QStringLiteral("b82a000000") << dark;
+      QTest::newRow(qPrintable(QStringLiteral("large-fill") + suffix))
+          << QString() << QString() << dark;
+    }
+  }
+
+  void nativePatchValueAndLargePreview() {
+    QFETCH(QString, value);
+    QFETCH(QString, expected);
+    QFETCH(bool, dark);
+    const auto worker = qEnvironmentVariable("NEVERD_PATCH_NATIVE_WORKER");
+    if (worker.isEmpty())
+      QSKIP("NEVERD_PATCH_NATIVE_WORKER is not configured");
+    auto &theme = Theme::instance();
+    const auto previous = theme.mode();
+    const auto restore = qScopeGuard([&] { theme.setMode(previous); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QStringLiteral("patch-preview.raw"));
+    QFile binary(path);
+    QVERIFY(binary.open(QIODevice::WriteOnly));
+    const auto bytes =
+        QByteArray::fromHex("b807000000c3") + QByteArray(4090, '\xcc');
+    QCOMPARE(binary.write(bytes), bytes.size());
+    binary.close();
+    Workbench bench(worker);
+    LoadOptions options;
+    options.loader = QStringLiteral("binary");
+    options.processor = QStringLiteral("x86_64");
+    options.platform = QStringLiteral("sysv");
+    options.base = 0x1000;
+    options.analysis = false;
+    bench.session.open(path, options);
+    QTRY_VERIFY2_WITH_TIMEOUT(bench.session.loaded(),
+                              qPrintable(bench.session.lastError()),
+                              NativeOpenTimeoutMs);
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    if (auto *dock = bench.dockFor(hex))
+      dock->raise();
+    hex->setCurrent(options.base, value.isEmpty() ? bytes.size() : 1);
+    hex->setFocus();
+    QTRY_VERIFY(hex->hasFocus());
+    QTRY_VERIFY(hex->byteAt(options.base).has_value());
+    QString preview;
+    bool confirmed = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, &answer, [&] {
+      auto *active = QApplication::activeModalWidget();
+      if (auto *input = qobject_cast<QInputDialog *>(active)) {
+        input->setTextValue(value);
+        input->accept();
+      } else if (auto *dialog = qobject_cast<QMessageBox *>(active);
+                 dialog && dialog->objectName() ==
+                               QStringLiteral("bytePatchConfirmation")) {
+        preview = dialog->text();
+        answer.stop();
+        if (const auto capture =
+                qEnvironmentVariable("NEVERD_PATCH_CAPTURE_DIR");
+            !capture.isEmpty()) {
+          QDir().mkpath(capture);
+          QVERIFY(dialog->grab().save(capture + "/patch-confirmation-" +
+                                      QTest::currentDataTag() + ".png"));
+        }
+        confirmed = true;
+        dialog->reject();
+      }
+    });
+    answer.start(5);
+    const auto action = value.isEmpty() ? ActionId::EditPatchFillNops
+                                        : ActionId::EditPatchConstant;
+    QTRY_VERIFY(bench.action(action)->isEnabled());
+    if (value.isEmpty()) {
+      // Let the initial navigation settle before selecting the complete range.
+      hex->setCurrent(options.base, bytes.size());
+      QCOMPARE(hex->byteSelection(),
+               (std::optional(std::pair{
+                   options.base, options.base + Address(bytes.size()) - 1})));
+    }
+    bench.action(action)->trigger();
+    QTRY_VERIFY2_WITH_TIMEOUT(confirmed, qPrintable(bench.session.lastError()),
+                              NativeOpenTimeoutMs);
+    if (value.isEmpty()) {
+      QVERIFY2(
+          preview.size() < 4096,
+          "A large patch must not expand every byte in the confirmation label");
+      QVERIFY2(preview.contains(QString::number(bytes.size())),
+               qPrintable(preview));
+    } else {
+      QVERIFY2(preview.contains(expected), qPrintable(preview));
+    }
+    QVERIFY(!bench.session.hasBytePatches());
+    QCOMPARE(readAll(path), bytes);
   }
 
   void narrowHexViewScrollsToItsText() {
