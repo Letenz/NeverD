@@ -74,6 +74,13 @@ inline constexpr size_t kSortedSearchMinimumSIMDEntries = 64;
 inline constexpr size_t kSortedSearchMinimumSIMDEntries = 4096;
 #endif
 inline constexpr size_t kSortedSearchSIMDTailEntries = 16;
+#if defined(__GNUC__) && !defined(__clang__)
+// Direct membership changes GCC's small scalar caller loops unfavorably.
+// Retain rank-based membership until caller measurements justify switching.
+inline constexpr bool kSortedSearchUseDirectMembership = false;
+#else
+inline constexpr bool kSortedSearchUseDirectMembership = true;
+#endif
 // Narrow x86 targets lose to scalar binary search on medium/ordered inputs.
 inline constexpr size_t kSortedSearchMinimumX86SIMDLanes = 4;
 

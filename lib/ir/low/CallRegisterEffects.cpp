@@ -7,6 +7,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86/X86FPState.h"
 #include "neverd/ir/intrinsics/X86/X64Syscall.h"
@@ -1040,6 +1041,110 @@ bool canSummarizeExitConstants(const BinaryImage &Img, CallRegisterBodyView F) {
   return Returns && WritesExtraRegister;
 }
 
+// Keep only self-contained scalar query bodies. CPUID is ordered and must run
+// exactly once; source expansion will clone its multi-result definition rather
+// than independently recompute any of its returned words.
+std::shared_ptr<const std::vector<LowOp>>
+registerLeaf(const BinaryImage &Image, CallRegisterBodyView Body) {
+  if (Image.Arch != Arch::X64 || !Body.Complete ||
+      Body.UnsafeIndirectBranches || Body.HasIndependentRoots ||
+      Body.Blocks.size() != 1)
+    return {};
+  const auto &Block = Body.Blocks.front();
+  if (const auto *Exception =
+          Image.ExceptionMetadata.findFunction(Block.StartAddr);
+      Exception && (Exception->Personality != ExceptionPersonality::None ||
+                    Exception->ParseStatus != ExceptionParseStatus::Complete))
+    return {};
+  if (!Block.Preds.empty() || !Block.Succs.empty() ||
+      !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
+      Block.Ops.empty() ||
+      Block.Ops.size() > limits::ir::kSourceRegisterLeafOps)
+    return {};
+  const auto &Return = Block.Ops.back();
+  const auto *Encoding = Image.readVA(Return.Addr, 1);
+  if (Return.Opcode != NdOp::RETURN || Return.NumInputs != 1 ||
+      Return.Inputs[0] != NdVar::reg(x86reg::RAX, 8) || !Encoding ||
+      *Encoding != 0xC3)
+    return {};
+  const auto &Registers = getTargetRegInfo(Image.Arch);
+  auto Scalar = [&](const NdVar &Value) {
+    if (!Value.Size)
+      return true;
+    if (Value.Size > sizeof(uint64_t))
+      return false;
+    if (Value.isConst())
+      return Value.Provenance != ConstantAddressProvenance::Address &&
+             Value.Provenance != ConstantAddressProvenance::CodeAddress &&
+             Value.Provenance != ConstantAddressProvenance::DataAddress &&
+             Value.Provenance != ConstantAddressProvenance::AddressFragment &&
+             !Image.isPotentiallyRelocatableAddress(Value.Offset);
+    return Value.isTemp() ||
+           (Value.isReg() && ((gprFamilyOf(Image.Arch, Value.Offset) &&
+                               Value.Offset / 8 != x86reg::RSP / 8) ||
+                              Registers.isFlag(Value.Offset, Value.Size)));
+  };
+  bool HasQuery = false;
+  for (size_t I = 0; I + 1 < Block.Ops.size(); ++I) {
+    const auto &Op = Block.Ops[I];
+    // CLD/STD change control state outside the projected GPR results, even
+    // when this caller has no explicit read of the direction flag.
+    if (Op.Output.isReg() && Op.Output.Offset == x86reg::DF)
+      return {};
+    if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        !Scalar(Op.Output))
+      return {};
+    for (unsigned K = 0; K < Op.NumInputs; ++K)
+      if (!Scalar(Op.Inputs[K]))
+        return {};
+    switch (Op.Opcode) {
+    case NdOp::COPY:
+    case NdOp::INT_ADD:
+    case NdOp::INT_SUB:
+    case NdOp::INT_AND:
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+    case NdOp::INT_LEFT:
+    case NdOp::INT_RIGHT:
+    case NdOp::INT_ASHR:
+    case NdOp::INT_MULT:
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESSEQUAL:
+    case NdOp::INT_ZEXT:
+    case NdOp::INT_SEXT:
+    case NdOp::INT_NEGATE:
+    case NdOp::INT_NOT:
+    case NdOp::INT_CARRY:
+    case NdOp::INT_SOVF:
+    case NdOp::INT_SBOR:
+    case NdOp::BOOL_AND:
+    case NdOp::BOOL_OR:
+    case NdOp::BOOL_XOR:
+    case NdOp::BOOL_NOT:
+    case NdOp::SUBBYTES:
+    case NdOp::CONCAT:
+    case NdOp::POPCOUNT:
+    case NdOp::SELECT:
+      break;
+    case NdOp::INTRINSIC:
+      if (Op.NumInputs != 3 || !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].Offset != static_cast<unsigned>(Intrinsic::Cpuid))
+        return {};
+      HasQuery = true;
+      break;
+    default:
+      return {};
+    }
+  }
+  return HasQuery ? std::make_shared<const std::vector<LowOp>>(Block.Ops)
+                  : nullptr;
+}
+
 GPRExitConstants scalarExitConstants(const BinaryImage &Img,
                                      const BlockScalarFacts &Facts) {
   GPRExitConstants Constants;
@@ -1178,6 +1283,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     IndexOfId[F.Blocks[I].Id] = I;
     BlockStarts.insert(F.Blocks[I].StartAddr);
   }
+  Effect.RegisterLeaf = registerLeaf(Img, F);
   Effect.Blocks.resize(F.Blocks.size());
   const bool SummarizeExit = canSummarizeExitConstants(Img, F);
   bool FirstReturn = true;

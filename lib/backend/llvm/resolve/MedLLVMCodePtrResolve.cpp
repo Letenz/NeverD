@@ -1162,6 +1162,7 @@ MedLLVMEmitter::jumpTableForLoad(const MedOp &Load,
                 Load.Inputs[kAddressMemoryWordOperand + 1].ConstVal)
           : std::nullopt;
   if (!CurMedFunc || !Img ||
+      (Original && (!Original->hasRegisterIndex() || Original->isVector())) ||
       ((Load.Opcode != NdOp::LOAD || Load.NumInputs < 1) && !Original) ||
       Load.Output.isConst() || Load.Output.Size == 0 ||
       Load.MemoryOrdering != NdMemoryOrdering::None ||

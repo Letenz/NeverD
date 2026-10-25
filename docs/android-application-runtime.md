@@ -1,9 +1,95 @@
 # Android application and class loader snapshots
 
+`application_info.split_source_dirs` and `split_public_source_dirs` each
+accept an omitted field (unknown),
+`null` (known null array), or an ordered array of nullable Strings, including
+an empty array. The same shape applies to application queries and nested
+PackageInfo responses. The bounded projection admits at most 64 elements of at
+most 4096 UTF-8 bytes each. These are model input limits, not Android package
+limits. Array objects and elements are retained and mutable; separate parcel
+responses and the two fields have independent arrays. No public/private
+path fallback or implicit alias is inferred. Values do not assert file existence,
+canonicalize paths or execute split loading.
+
 The API 28 native profile can project a declared process lifecycle into the
 shared Java heap. JNI and DEX use the same objects and methods. This is an
 explicit analysis input, not discovery of the installed application or execution
 of the Android framework's startup code.
+
+`main_looper_prepared` supplies stable API 28 `Looper.sMainLooper` state,
+independent of the Application phase. Omission is unknown, `false` returns
+null, and `true` retains one Looper and its MessageQueue identity.
+`Handler(Looper)` copies that exact queue and Looper into ordinary final
+instance fields, with null callback and synchronous delivery mode.
+A null constructor argument throws
+`NullPointerException`. JNI and DEX share these fields and identities.
+JNI `AllocObject` instead retains ordinary zero fields: its Looper has a known
+null queue, and its unconstructed Handler has a null Looper. An object without
+modeled queue storage remains unsupported. This projection does not run
+`prepareMainLooper` or assign a Java thread. Posting requires the additional
+state below; callback dispatch still requires separate execution.
+
+`Handler.post(Runnable)` admits an explicitly empty initial Message pool
+(`initial_message_pool_empty: true`) and main queue
+(`initial_main_queue: {"blocked": false}`, requiring
+`main_looper_prepared: true`). Missing state is unknown; a declared nonempty
+pool remains unsupported. These declarations are initial conditions, not fixed
+responses: each post allocates a distinct Message, retains its exact Handler and
+nullable Runnable, and changes the shared heap-linked queue. Message defaults
+include sendingUid -1. Equal nonzero deadlines preserve insertion order; zero
+goes to the front. At most 1024 pending messages are admitted.
+
+The native profile reads uptime through its existing Linux monotonic clock,
+including instruction and idle advancement. No second timestamp input or host
+clock is used. Standalone Runtime callers provide the same capability through
+`RuntimeServices::uptime_milliseconds`; omission stops at the clock boundary.
+Negative or overflowing native nanosecond observations remain unsupported.
+
+The final post declaration cannot be overridden by supplied DEX. Its virtual
+sendMessageAtTime boundary is preserved: supplied overrides stop explicitly
+until their invocation is modeled. A null queue stops at its logging boundary.
+An initially blocked queue enqueues, then stops at unmodeled nativeWake; the
+partial queue remains observable and is not reported as a successful post.
+The read-only `java_state.framework.main_message_queue` report traverses actual
+Message fields and marks malformed or cyclic lists incomplete. It contains
+model object identities, not JNI handles. Queue retention survives native thread
+detach. No accepted post executes the Runnable, creates a Java thread, removes
+messages, or implies startup completion. Message recycling, arbitrary initial
+queues, Looper dispatch, and Java monitor scheduling remain outside this scope.
+
+The independently written model follows API 28
+[Handler](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Handler.java),
+[Message](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Message.java),
+[MessageQueue](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/MessageQueue.java),
+and [SystemClock](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/libutils/SystemClock.cpp).
+Framework source bodies are not embedded in NeverD.
+
+`Looper.getQueue()`, `Message.getTarget()` and `Message.getCallback()` read
+the same retained typed fields as JNI and DEX. Their results are actual
+references, including known null fields of ordinary allocated objects.
+`MessageQueue.next()` is package-private in API 28. The modeled JNI method
+lookup can call it; ordinary application DEX invocation is explicitly
+unsupported rather than admitting it as a public framework method.
+
+Taking a message requires `initial_main_queue.native_callbacks_empty: true`
+in addition to the known initial queue. This input declares that the native
+poll with timeout zero has no callbacks, timers or descriptor listeners.
+Omission remains unknown and false remains unsupported. The model reads the
+shared uptime clock, validates the bounded retained chain, and removes only
+an immediately due message. A head synchronization barrier selects the first
+following asynchronous message; a future first candidate does not permit
+skipping to a later ready message. Removal clears its next link, marks it in
+use and clears the queue's blocked state without executing its callback.
+Unknown native state, malformed links, unknown fields and work exhaustion
+leave the queue links unchanged. Inspection, posting and removal use the
+single message-count policy in `neverd/dalvik/Limits.h`.
+
+Empty or delayed queues still stop at the unmodeled blocking/idle boundary;
+they do not return a fabricated null. Quit/dispose, recycling, idle handlers,
+native polling with callbacks and full `Looper.loop()` dispatch remain
+unmodeled. Returning a live message does not establish Android startup or
+callback execution. These semantics follow the API 28 sources cited above
+and [Looper](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Looper.java).
 
 ```json
 {
@@ -50,6 +136,19 @@ both objects' `getApplicationContext()` return the same Application and their
 deletion, local frames, native thread attachment and detachment do not reset
 these workload-owned identities. Two native threads see the same objects.
 
+`package_resource_path` optionally supplies the attached Application's stable
+API 28 `LoadedApk.mResDir`, returned by `Context.getPackageResourcePath()`.
+Missing input is unknown, JSON null is a known null Java value, and a String
+is preserved exactly up to 4096 UTF-8/WTF-8 bytes. The Application and its base
+Context share the retained result across DEX/JNI calls and native thread detach.
+No path normalization, file access or resource loading is inferred. Writes to
+the public ApplicationInfo fields do not change this separate retained value.
+The snapshot requires the application phase; system and foreign contexts are
+unsupported. It does not infer sourceDir/publicSourceDir selection or changes
+to LoadedApk after the snapshot. This follows API 28
+[ContextImpl.getPackageResourcePath](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java)
+and [LoadedApk.getResDir](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
+
 `package_manager_available` optionally declares stable package-service
 availability for this Context. Absence is unknown and stops
 `Context.getPackageManager()`; false returns null. True permits one retained
@@ -69,7 +168,8 @@ Each entry has exactly `package_name`, signed 32-bit `flags`, and `info`.
 Flags accept exact JSON integers or decimal strings through the shared integer
 reader; booleans, fractional values and out-of-range values are rejected.
 Names contain 1–1024 UTF-8 bytes without NUL. `info` uses the same required
-nullable `source_dir` and optional nullable `native_library_dir` schema as
+nullable `source_dir` and optional nullable `native_library_dir` and
+`non_localized_label` schema as
 `application_info`; each String is limited to 4096 UTF-8 bytes. The shared
 validator requires an Application and known available package service for any
 nonempty inventory. Responses declare the final API 28 result after ABI path
@@ -85,6 +185,33 @@ Context's retained ApplicationInfo. Unknown optional fields stay unknown until
 an explicit guest write supplies them. Query matching, object allocation and
 field materialization use the existing work and storage budgets.
 
+`package_info_queries` independently supplies up to 64 positive own-user
+`PackageManager.getPackageInfo(String, int)` results. It uses the same exact
+`package_name`, int32 `flags` and `info` record keys, query matching, lifecycle
+requirements and budgets as ApplicationInfo queries. Its `info` object admits
+`package_name`, `version_name`, `version_code` and `application_info`, all optional.
+String fields distinguish unknown, known null and exact UTF-8/WTF-8 text up to 4096
+bytes; version_code is an explicit signed int32. Empty info leaves all four
+fields unknown. A query key does not infer its returned packageName field.
+
+Each result is a fresh Parcelable PackageInfo with independently mutable
+`packageName`, `versionName`, `versionCode` and `applicationInfo` fields. JNI and
+DEX share Runtime reference validation and primitive narrowing before the field owner stores a
+write. Guest writes can establish unknown fields and survive native detach.
+The `application_info` member is null or an object using the ApplicationInfo
+schema below, including its required `source_dir`. Omission leaves the field
+unknown. A supplied object is retained within that PackageInfo result; separate
+queries create independent nested objects and mutable fields. It is not the
+Context's retained ApplicationInfo or an ApplicationInfo query result. Its
+fields and inherited label behavior use the same shared owner, and replacing
+the parent reference does not rewrite the previous child. Field declaration
+lookup itself does not require a supplied response or field value.
+There is no APK parsing or package-service execution in this projection.
+Missing query records, foreign instances, all other PackageInfo members and
+negative lookups remain explicit unsupported cases. This contract follows API 28
+[PackageInfo](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/content/pm/PackageInfo.java)
+and [ApplicationPackageManager.getPackageInfo](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ApplicationPackageManager.java).
+
 An optional `application_info` object with a required `source_dir` member
 supplies the initial Java `ApplicationInfo.sourceDir` field. It requires the
 application phase. The member is null or a UTF-8/WTF-8 string of at most 4096
@@ -93,6 +220,16 @@ including empty values, without path normalization or filesystem inference.
 An optional `native_library_dir` member independently supplies `nativeLibraryDir`
 under the same nullable String and byte-limit rules. Its absence is unknown even
 when sourceDir is known; no library directory is derived from the APK path.
+`non_localized_label` optionally supplies the inherited
+`PackageItemInfo.nonLocalizedLabel` field, initially as a String or known null.
+It has the same 4096-byte validation bound and independent unknown state.
+Its public `CharSequence` field also retains compatible guest writes, including
+mutable StringBuilder identities; JNI and DEX use the same field owner.
+Optional `target_sdk_version` supplies the
+independent mutable `targetSdkVersion` int32 field, including an explicitly
+known zero. Missing input stays unknown; neither the platform SDK property nor
+APK bytes supply it implicitly. Context and package-query results retain
+separate values, and guest writes use Runtime's common 32-bit field conversion.
 `Context.getApplicationInfo()` retains one ApplicationInfo shared by the
 Application and its base Context. JNI and DEX reads/writes access the same
 mutable fields and String identities. A guest write may establish an initially
@@ -103,6 +240,55 @@ The contract follows API 28 [ApplicationInfo](https://android.googlesource.com/p
 [ContextImpl](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ContextImpl.java)
 and [LoadedApk](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/LoadedApk.java).
 The implementation and tests are independently authored.
+
+Optional `default_locale` supplies a stable process default Locale independently
+of application attachment. The object may contain `language` and `country`,
+each an already-normalized API 28 BaseLocale UTF-8/WTF-8 string of at most 1024
+bytes. Missing object or components remain unknown; empty strings are known
+values and null is invalid. Language rejects ASCII uppercase and the modern
+codes `he`, `yi`, `id` (API 28 stores `iw`, `ji`, `in`); country rejects ASCII
+lowercase. This validates a snapshot rather than running a Locale constructor.
+`Locale.getDefault()` retains one nonnull object across JNI threads and DEX
+calls. Its `getLanguage()` and `getCountry()` return the shared heap's interned
+component Strings. No locale is inferred from the host, properties, APK or
+application phase. Foreign instances, constructors, setters, category-specific
+defaults, other Locale methods and initialization remain unsupported.
+The contract follows API 28
+[Locale](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/Locale.java)
+and [BaseLocale](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/sun/util/locale/BaseLocale.java);
+the implementation and tests are independently authored.
+
+Optional `application_loader_paths` and `system_loader_paths` independently
+supply the retained PathClassLoader's stable DexPathList state. Each object
+requires all three String arrays: `dex_zip_files`,
+`native_library_directories`, and `system_native_library_directories`.
+Empty inventories are known; absent outer objects remain unknown. The application
+input requires an established application loader, including the explicit
+attached-phase condition. Each array is limited to 64 entries, each File path to
+4096 UTF-8/WTF-8 bytes, and the combined three arrays to 16384 bytes. Path spelling
+and ordering are preserved.
+`BaseDexClassLoader.toString()` and `PathClassLoader.toString()` use this shared
+owner and return a fresh String. This subset admits ZIP elements with a nonnull
+DexFile and nonnull File path, so it does not require a directory probe when
+formatting an element. Native directories precede system directories. File paths
+are explicit state; opening DEX files, library searches, loader construction,
+other element forms and path-list mutation are outside this projection.
+The format follows API 28
+[BaseDexClassLoader](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/dalvik/src/main/java/dalvik/system/BaseDexClassLoader.java)
+and [DexPathList](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/dalvik/src/main/java/dalvik/system/DexPathList.java).
+
+`package_item_force_safe_labels` declares the stable API 28 PackageItemInfo
+static mode. Its absence is unknown. `PackageManager.getApplicationLabel(info)`
+requires the workload's own manager and a retained Context or query result.
+A null info argument throws NullPointerException. With the mode explicitly
+false and nonLocalizedLabel nonnull, it returns that exact CharSequence,
+including whitespace and mutable object identity. No trim, String conversion
+or resource access occurs on this branch. Unknown mode/field state, true mode,
+null-label resource/name fallback and foreign objects remain explicit stops.
+The mode is not inferred from the Java static initializer or APK bytes.
+This contract follows API 28
+[PackageItemInfo.loadLabel/loadUnsafeLabel](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/content/pm/PackageItemInfo.java)
+and [ApplicationPackageManager.getApplicationLabel](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/app/ApplicationPackageManager.java).
 
 An optional `secure_settings_cache` object with exactly one `android_id` member
 declares an already populated, generation-stable API 28 settings cache for the
@@ -404,3 +590,7 @@ Behavior was checked against API 28 ART
 [`JavaVMExt::LoadNativeLibrary`](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/java_vm_ext.cc)
 and the [JNI invocation specification](https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/invocation.html#JNI_OnLoad).
 Implementation and synthetic programs are independently authored.
+
+Package query flags, version codes and target SDK fields use the shared signed
+32-bit JSON integer contract, including decimal strings. Input budgets are
+owned by the Dalvik limits header and reused by typed and JSON admission.

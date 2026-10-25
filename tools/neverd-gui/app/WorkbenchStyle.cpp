@@ -110,6 +110,10 @@ int WorkbenchStyle::styleHint(StyleHint hint, const QStyleOption *option,
   // A combo box's list highlights the item under the pointer, as a menu does.
   case SH_ComboBox_ListMouseTracking:
     return true;
+  case SH_Menu_Scrollable:
+    // Fusion otherwise wraps tall menus into columns. Keep one column with
+    // Qt's scroll arrows, wheel handling and keyboard navigation on all hosts.
+    return true;
   case SH_DialogButtonLayout:
     return QDialogButtonBox::GnomeLayout; // Cancel, then the primary action.
   case SH_DialogButtonBox_ButtonsHaveIcons:

@@ -493,3 +493,69 @@ u64 residency_observe(u64 *out, u64 route, u64 length, u64 vector, u64 mode) {
   }
   return result;
 }
+
+u64 discard_pages(u64 *out, u64 route, u64 mode) {
+  volatile u64 *pages =
+      (volatile u64 *)mmap((void *)0x100000000UL, 12288, 3, 0x22, -1, 0);
+  if ((u64)pages != 0x100000000UL)
+    return 91;
+  for (u64 i = 0; i < 1536; ++i)
+    pages[i] = 0x3131313131313131UL + (i / 512) * 0x0101010101010101UL;
+  if (mode == 1) {
+    if (mprotect((void *)pages, 12288, 1) ||
+        mprotect((void *)(pages + 512), 4096, 0))
+      return 92;
+  } else if (mode == 2 && munmap((void *)(pages + 512), 4096)) {
+    return 93;
+  }
+  u64 address = (u64)pages + 4096, length = 1, advice = 4;
+  if (mode == 1 || mode == 2) {
+    address = (u64)pages;
+    length = 12288;
+  } else if (mode == 3) {
+    address = (u64)pages + 1;
+    length = 0;
+  } else if (mode == 4) {
+    length = ~0UL;
+  } else if (mode == 5) {
+    address = ~4095UL;
+    length = 0;
+  } else if (mode == 6) {
+    advice |= 1UL << 32;
+  }
+  int (*fn)(void *, u64, int) = 0;
+  if (route >= 3) {
+    void *handle = dlopen("libadvice.so", 2);
+    fn = (int (*)(void *, u64, int))dlsym(handle, "madvise");
+    if (route == 4)
+      dlclose(handle);
+  }
+  out[0] = 73;
+  out[1] = (u64)pages;
+  *__errno() = 733;
+  u64 result;
+  if (route == 0) {
+    result = (u64)(long)madvise((void *)address, length, (int)advice);
+  } else if (route == 1) {
+    register u64 x0 __asm__("x0") = address;
+    register u64 x1 __asm__("x1") = length;
+    register u64 x2 __asm__("x2") = advice;
+    register u64 x8 __asm__("x8") = 233;
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x1), "r"(x2), "r"(x8)
+                     : "memory", "cc");
+    result = x0;
+  } else if (route == 2) {
+    result = syscall(233, address, length, advice);
+  } else {
+    result = (u64)(long)fn((void *)address, length, (int)advice);
+  }
+  out[2] = result;
+  out[3] = (u64)*__errno();
+  out[4] = mode == 1 ? (u64)(long)mprotect((void *)pages, 12288, 3) : 0;
+  for (u64 i = 0; i < 1536; ++i)
+    out[32 + i] =
+        mode == 2 && i >= 512 && i < 1024 ? 0xccccccccccccccccUL : pages[i];
+  return result;
+}

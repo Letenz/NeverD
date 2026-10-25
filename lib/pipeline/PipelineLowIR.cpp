@@ -3363,6 +3363,9 @@ private:
             (Node + sizeof(va_t)) +
         Facts.FormattedReads.capacity() * sizeof(Facts.FormattedReads.front()) +
         Facts.Consulted.capacity() * sizeof(Facts.Consulted.front());
+    if (Effect.RegisterLeaf)
+      Bytes += sizeof(*Effect.RegisterLeaf) +
+               Effect.RegisterLeaf->capacity() * sizeof(LowOp);
     for (const RegisterBlock &Block : Effect.Blocks)
       Bytes += Block.Steps.capacity() * sizeof(RegisterStep) +
                Block.Succs.capacity() * sizeof(size_t);
@@ -4413,6 +4416,9 @@ void computeCallRegisterEffects(
   Result.CallDispatchThunks = std::move(DispatchThunks);
   Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
   Result.CallExitConstants = std::move(Summaries.ExitConstants);
+  for (const auto &[Entry, Effect] : Effects)
+    if (Effect->RegisterLeaf)
+      Result.CallRegisterLeaves.emplace(Entry, Effect->RegisterLeaf);
   Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);
   Result.CallUnreadGPRs = std::move(Summaries.Unread);
   Result.CallEntryStackArgs = std::move(Summaries.EntryStackArgs);
