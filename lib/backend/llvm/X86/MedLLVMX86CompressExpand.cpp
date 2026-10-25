@@ -1,0 +1,117 @@
+//===- MedLLVMX86CompressExpand.cpp - Native compact memory -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// The native instruction owns mask suppression, memory faults and merging.
+//===----------------------------------------------------------------------===//
+#include "../emit/MedLLVMDeadSlots.h"
+
+#include "neverd/backend/LLVMSourceUnknownValue.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86/X86CompressExpandNative.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
+#include "neverd/ir/med/X86/X86CompactShape.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/Support/SaveAndRestore.h"
+
+#include <stdexcept>
+#include <vector>
+
+namespace neverd {
+bool MedLLVMEmitter::tryEmitX86CompactFunction(const MedFunc &Function) {
+  bool Compact = false;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      Compact |= Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                 Op.Inputs[0].isConst() &&
+                 isX86CompactMemory(Intrinsic(Op.Inputs[0].ConstVal));
+  if (!Compact)
+    return false;
+  const bool Executable = !PreserveUnknownSourceValues;
+  // Use the existing source-state authority to retain missing entry values
+  // while definitions and PHI edges are emitted. In particular, an unknown
+  // mask must never become the legacy zero-initialized live-in value.
+  llvm::SaveAndRestore<bool> Preserve(PreserveUnknownSourceValues, true);
+  auto *Emitted = emitFunc(Function);
+  if (Executable && Emitted) {
+    llvm::SmallVector<llvm::AllocaInst *, 32> Slots;
+    for (const auto &[Key, Slot] : VarAllocs)
+      Slots.push_back(Slot);
+    discardDeadMedLLVMSlots(Slots);
+  }
+  if (Executable && Emitted)
+    for (auto &Block : *Emitted)
+      for (auto &Instruction : llvm::make_early_inc_range(Block))
+        if (llvm_source_unknown::isValue(&Instruction)) {
+          if (!Instruction.use_empty())
+            throw std::invalid_argument(
+                "native x86 compact memory requires known entry values");
+          Instruction.eraseFromParent();
+        }
+  return true;
+}
+
+llvm::Value *MedLLVMEmitter::emitX86CompressExpand(const MedOp &Op,
+                                                   Intrinsic Id,
+                                                   llvm::IRBuilder<> &B) {
+  const auto S = x86CompactMedShape(Op, TargetArch);
+  if ((TargetArch != Arch::X86 && TargetArch != Arch::X64) ||
+      !x86CompactShapeIsValid(Id, S))
+    throw std::invalid_argument(X86CompactMalformed);
+  const auto C = *x86CompactControl(Id, *S.Control);
+  const unsigned Prefix =
+      S.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
+      : S.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
+                                                            : 0;
+  const auto P = *x86CompactPlan(Id == Intrinsic::EVEXExpandLoad, S.Sizes[2],
+                                 C.Kind, C.Zero, Prefix);
+  auto *F = B.GetInsertBlock()->getParent();
+  std::string Features =
+      F->getFnAttribute("target-features").getValueAsString().str();
+  for (const auto &Name : P.features())
+    Features += (Features.empty() ? "+" : ",+") + Name;
+  F->addFnAttr("target-features", Features);
+  const auto Use = x86CompactOperandUse(P.Bytes / P.elementBytes(), P.Expand,
+                                        P.Zero, traceSSAConst(Op.Inputs[2]));
+  // Resolve only observed DS pointers or segment-relative FS/GS offsets.
+  // Suppressed operands may be arbitrary without consuming unknown state.
+  llvm::Value *Address =
+      Use.Address ? resolveAtomicMemoryPtr(Op.Inputs[1], 1, B.getInt8Ty(), B,
+                                           S.MemoryAddressSpace)
+                  : llvm::ConstantPointerNull::get(B.getPtrTy());
+  if (Address->getType()->getPointerAddressSpace()) {
+    // Transport the segment-relative offset bits. An address-space cast
+    // would instead describe a linear address conversion; the native
+    // instruction already owns FS/GS base addition through its prefix.
+    auto *Word = B.getIntNTy(TargetArch == Arch::X64 ? 64 : 32);
+    Address = B.CreateIntToPtr(B.CreatePtrToInt(Address, Word), B.getPtrTy());
+  }
+  auto *Vector = llvm::FixedVectorType::get(B.getInt32Ty(), P.Bytes / 4);
+  auto *Data = Use.Data ? B.CreateBitCast(getVar(Op.Inputs[3], B), Vector)
+                        : llvm::Constant::getNullValue(Vector);
+  auto *Mask = B.CreateZExtOrTrunc(getVar(Op.Inputs[2], B), B.getInt64Ty());
+  llvm::Value *Result;
+  if (const auto IID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName())) {
+    std::vector<llvm::Value *> Args = {Address, Mask, Data, B.getInt32(P.Kind)};
+    if (P.Expand)
+      Args.push_back(B.getInt32(P.Zero));
+    Args.push_back(B.getInt32(P.Prefix));
+    Result =
+        B.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(Mod, IID), Args);
+  } else {
+    auto *MaskType = B.getIntNTy(P.maskBits());
+    auto *Return = P.Expand ? static_cast<llvm::Type *>(Vector) : B.getVoidTy();
+    auto *Type = llvm::FunctionType::get(
+        Return, {B.getPtrTy(), MaskType, Vector}, false);
+    auto *Asm = llvm::InlineAsm::get(Type, P.assembly(), P.constraints(), true);
+    Result =
+        B.CreateCall(Asm, {Address, B.CreateZExtOrTrunc(Mask, MaskType), Data});
+  }
+  return P.Expand ? B.CreateBitCast(Result, sizeToType(P.Bytes)) : nullptr;
+}
+} // namespace neverd

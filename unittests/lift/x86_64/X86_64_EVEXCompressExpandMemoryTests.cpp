@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -278,6 +279,109 @@ TEST(X86EVEXCompressExpandMemory, AllTwelveFamiliesLiftAndExecute) {
   }
 }
 
+TEST(X86EVEXCompressExpandMemory,
+     ValidatesControlsAndDoesNotInventUnknownInputs) {
+  BinaryImage I = image(0x6000, 64);
+  LowOp Op;
+  Op.Opcode = NdOp::INTRINSIC;
+  Op.Output = NdVar::tmp(100, 16);
+  Op.addInput(NdVar::cst(unsigned(Intrinsic::EVEXExpandLoad), 2));
+  Op.addInput(NdVar::reg(x86reg::RAX, 8));
+  Op.addInput(NdVar::reg(x86reg::K2, 8));
+  Op.addInput(NdVar::reg(x86reg::vectorReg(1), 16));
+  Op.addInput(NdVar::cst(4 | X86CompactZero, 1));
+  Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+  NdOpEmulator E(I);
+  E.setStrictMode(true);
+  EXPECT_FALSE(E.step(Op)); // unknown mask is not zero
+  E.setRegister(x86reg::K2, 0);
+  EXPECT_TRUE(E.step(Op)); // no address/segment/prior needed for zeroing
+  E.setRegister(x86reg::K2, 1);
+  EXPECT_FALSE(E.step(Op)); // unknown active address and segment
+  E.setRegister(x86reg::RAX, 0);
+  EXPECT_FALSE(E.step(Op));
+  ASSERT_TRUE(E.setMemoryAddressSpaceBase(NdMemoryAddressSpace::X86FS, 0x6000));
+  EXPECT_TRUE(E.step(Op));
+  Op.Inputs[4] = NdVar::cst(4, 1);
+  EXPECT_FALSE(E.step(Op)); // merging needs prior inactive lanes
+  E.setRegisterBytes(x86reg::vectorReg(1), std::vector<uint8_t>(16, 0xa5));
+  EXPECT_TRUE(E.step(Op));
+  for (uint64_t C : {0ull, 3ull, 0x11ull, 0x12ull, 0x24ull, 0x44ull, 0x104ull,
+                     0x100000004ull}) {
+    Op.Inputs[4] = NdVar::cst(C, 1);
+    EXPECT_FALSE(E.step(Op)) << C;
+  }
+  Op.Inputs[4] = NdVar::cst(4, 2);
+  EXPECT_FALSE(E.step(Op));
+}
+
+TEST(X86EVEXCompressExpandMemory, BothDecodersRetainKindsSegmentsAndMode) {
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (bool Fast : {false, true})
+      for (const auto &F : Families)
+        for (unsigned Width : {16u, 32u, 64u})
+          for (unsigned Prefix : {0u, 0x64u, 0x65u})
+            for (bool Compress : {false, true}) {
+              auto Bytes = encoding(F, Compress, !Compress, Width);
+              if (Prefix)
+                Bytes.insert(Bytes.begin(), uint8_t(Prefix));
+              Decoder D;
+              ASSERT_TRUE(D.init(A));
+              DecodedInsn I{};
+              const auto Count =
+                  Fast ? D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000,
+                                            I)
+                       : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I);
+              ASSERT_EQ(Count, int(Bytes.size()));
+              std::vector<LowOp> Ops;
+              ASSERT_NO_THROW(D.liftToLow(I, Ops));
+              const auto It =
+                  std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+                    return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                           isX86CompactMemory(Intrinsic(Op.Inputs[0].Offset));
+                  });
+              ASSERT_NE(It, Ops.end());
+              const auto C = x86CompactControl(Intrinsic(It->Inputs[0].Offset),
+                                               It->Inputs[4].Offset);
+              ASSERT_TRUE(C);
+              EXPECT_EQ(C->ElementBytes, F.Element);
+              EXPECT_EQ(C->Kind >= 4, F.ExpandOpcode == 0x88);
+              EXPECT_EQ(It->MemoryAddressSpace,
+                        Prefix == 0x64   ? NdMemoryAddressSpace::X86FS
+                        : Prefix == 0x65 ? NdMemoryAddressSpace::X86GS
+                                         : NdMemoryAddressSpace::Default);
+            }
+}
+
+TEST(X86EVEXCompressExpandMemory,
+     RefusesUnownedStackFaultClassAndStrayZeroFlags) {
+  for (bool Fast : {false, true}) {
+    for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+             {0x62, 0xf2, 0x7d, 0x0a, 0x89, 0x0c, 0x24},    // RSP default SS
+             {0x62, 0xf2, 0x7d, 0x0a, 0x89, 0x4d, 0x00}}) { // RBP default SS
+      Decoder D;
+      ASSERT_TRUE(D.init(Arch::X64));
+      DecodedInsn I{};
+      ASSERT_EQ(Fast ? D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I)
+                     : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I),
+                int(Bytes.size()));
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+    }
+    const auto Bytes = encoding(Families[2], false, false, 16);
+    Decoder D;
+    ASSERT_TRUE(D.init(Arch::X64));
+    DecodedInsn I{};
+    ASSERT_EQ(Fast ? D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I)
+                   : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I),
+              int(Bytes.size()));
+    ASSERT_NE(I.Raw, nullptr);
+    I.Raw->detail->x86.operands[0].avx_zero_opmask = true;
+    std::vector<LowOp> Ops;
+    EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+  }
+}
+
 TEST(X86EVEXCompressExpandMemory, RejectsZeroingMemoryDestination) {
   for (const Family &F : Families) {
     auto Bytes = encoding(F, /*Compress=*/true, /*Zero=*/false);
@@ -300,6 +404,42 @@ TEST(X86EVEXCompressExpandMemory, RejectsZeroingMemoryDestination) {
     } catch (const UnliftedInstruction &) {
     }
   }
+}
+
+TEST(X86EVEXCompressExpandMemory, I386DSOverrideOwnsTheStackBaseSegment) {
+  for (bool Fast : {false, true})
+    for (bool Override : {false, true}) {
+      std::vector<uint8_t> Bytes = {0x62, 0xf2, 0x7d, 0x0a, 0x89, 0x4d, 0};
+      if (Override)
+        Bytes.insert(Bytes.begin(), 0x3e);
+      Decoder D;
+      ASSERT_TRUE(D.init(Arch::X86));
+      DecodedInsn I{};
+      ASSERT_EQ(Fast ? D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I)
+                     : D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I),
+                int(Bytes.size()));
+      std::vector<LowOp> Ops;
+      if (!Override) {
+        EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+        continue;
+      }
+      ASSERT_NO_THROW(D.liftToLow(I, Ops));
+      auto Image = image(0x6000, 4);
+      Image.Arch = Arch::X86;
+      Image.Bits = Bitness::Bits32;
+      Image.Segments[0].Data = {0x12, 0x34, 0x56, 0x78};
+      NdOpEmulator E(Image);
+      E.setStrictMode(true);
+      E.setRegister(x86reg::RBP, 0x6000);
+      E.setRegister(x86reg::K2, 1);
+      E.setRegisterBytes(x86reg::vectorReg(1), std::vector<uint8_t>(64, 0xcc));
+      for (const auto &Op : Ops)
+        ASSERT_TRUE(E.step(Op));
+      const auto Result = E.getRegisterBytes(x86reg::vectorReg(1));
+      ASSERT_TRUE(Result);
+      EXPECT_TRUE(std::equal(Image.Segments[0].Data.begin(),
+                             Image.Segments[0].Data.end(), Result->begin()));
+    }
 }
 
 } // namespace

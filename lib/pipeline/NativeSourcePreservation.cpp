@@ -23,7 +23,7 @@ bool hasNativeScalarIntrinsicEvidence(const MedOp &Operation,
 bool hasNativeReadOnlyMemoryIntrinsicEvidence(const MedOp &Operation,
                                               Arch Architecture) {
   return Architecture == Arch::AArch64 &&
-         aarch64AddressMemoryMedShapeIsValid(Operation) &&
+         aarch64AddressLoadMedShapeIsValid(Operation) &&
          !aarch64AddressMemoryInstruction(
               Operation.Inputs[kAddressMemoryWordOperand + 1].ConstVal)
               ->stackBase();

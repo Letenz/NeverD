@@ -200,7 +200,7 @@ class Tracer {
           Operation.Opcode == NdOp::INDIR_CALL ||
           (Operation.Opcode == NdOp::INTRINSIC &&
            !(Image.Arch == Arch::AArch64 &&
-             lowAArch64AddressMemoryShapeIsValid(Operation))) ||
+             lowAArch64AddressLoadShapeIsValid(Operation))) ||
           Operation.Opcode == NdOp::ATOMIC_XCHG ||
           Operation.Opcode == NdOp::ATOMIC_ADD ||
           Operation.Opcode == NdOp::ATOMIC_CMPXCHG)
@@ -239,7 +239,7 @@ class Tracer {
         if (Prior.Opcode == NdOp::CALL || Prior.Opcode == NdOp::INDIR_CALL ||
             (Prior.Opcode == NdOp::INTRINSIC &&
              !(Image.Arch == Arch::AArch64 &&
-               lowAArch64AddressMemoryShapeIsValid(Prior))))
+               lowAArch64AddressLoadShapeIsValid(Prior))))
           return std::nullopt;
         if (Prior.Opcode != NdOp::STORE)
           continue;
