@@ -351,6 +351,7 @@ bool isSpillScalarStep(NdOp Opcode) {
   case NdOp::INT_NEGATE:
   case NdOp::INT_NEG2:
   case NdOp::INT_NOT:
+  case NdOp::POPCOUNT:
   case NdOp::INT_CARRY:
   case NdOp::INT_SOVF:
   case NdOp::INT_SBOR:

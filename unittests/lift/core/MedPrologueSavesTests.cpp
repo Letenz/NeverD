@@ -626,6 +626,27 @@ TEST(SourceFrameReads, GeneralPartialLoadsKeepTheirInitializedBits) {
   EXPECT_EQ(Func.Blocks[0].Ops[6].Opcode, NdOp::LOAD);
 }
 
+TEST(SourceStackSpills, NontrappingBitCountsDoNotObserveScratchBytes) {
+  for (unsigned Mode = 0; Mode < 3; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func = pushedRbx();
+    auto &Ops = Func.Blocks[0].Ops;
+    Ops.resize(5);
+    Ops[4].Inputs[1] = MedVar::makeUnspecified(8, Arch::X64);
+    if (Mode == 2)
+      Ops.push_back(op(NdOp::LOAD, temp(20), {sp(1)}));
+    Ops.push_back(op(Mode == 1 ? NdOp::INT_DIV : NdOp::POPCOUNT, temp(21),
+                     {Mode == 2 ? temp(20) : rcx(0)}));
+    if (Mode == 1)
+      Ops.back().addInput(MedVar::makeConst(0, 8));
+    Ops.push_back(op(NdOp::STORE, none(), {sp(1), MedVar::makeConst(19, 8)}));
+    Ops.push_back(op(NdOp::RETURN, none(), {temp(21)}));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
+    EXPECT_EQ(save(Func).PrologueSave, Mode == 0);
+    EXPECT_FALSE(Ops[Ops.size() - 3].Dead);
+  }
+}
+
 TEST(SourceStackSpills, PhysicalCallsOverwriteOnlyTheirReturnAddressBytes) {
   for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
     for (BinaryFormat Format :

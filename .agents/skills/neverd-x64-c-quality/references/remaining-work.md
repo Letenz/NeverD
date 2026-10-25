@@ -72,6 +72,8 @@ write need not observe its former value. Tail jumps, partial overlaps, unread
 restores without a liveness proof, unknown encodings and link-register calls
 remain conservative. This removes one transport class; it does not recover
 runtime VM inputs or call-clobbered registers.
+Pure POPCOUNT steps used to compute x86 parity no longer prevent an otherwise
+complete scratch overwrite proof; trapping operations still do.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by

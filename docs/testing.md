@@ -319,6 +319,9 @@ stack call; link-register architectures remain negative. The
 `OverwrittenCallClobberSpills` pipeline fixture executes the released-push-slot
 case through both C routes, with optimization enabled and disabled, for all
 three formats at host O0/O2 under UBSan.
+Its flag-preserving case also checks POPCOUNT-based parity updates before an
+explicit overwrite; trapping division and a count of observed spill bytes
+remain barriers in the owner tests.
 Pointer-valued results retain their bits through both C routes; independent
 LLVM return tests cover the 32/64-bit x86 and Arm register ABIs.
 
