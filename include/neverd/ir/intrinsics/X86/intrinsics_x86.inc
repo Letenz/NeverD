@@ -249,8 +249,8 @@ Int3 = 1000, // int3  -> @llvm.debugtrap
     X86ApproxFloat,
 
     // Append-only: contiguous packed memory forms of EVEX compress/expand.  The
-    // control byte stores the element width in its low nibble and expand {z} in
-    // bit 7.  These are distinct from ordinary masked loads/stores: active
+    // control byte stores the element width in its low nibble, FP opcode family
+    // in bit 4, and expand {z} in bit 7.  These are distinct from ordinary masked loads/stores: active
     // lanes consume consecutive memory elements rather than lane-strided
     // addresses.
     EVEXCompressStore, EVEXExpandLoad,

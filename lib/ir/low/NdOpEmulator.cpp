@@ -22,6 +22,7 @@
 #include "neverd/ir/X86/X87Stack.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86/X86Regs.h"
@@ -530,6 +531,8 @@ bool NdOpEmulator::step(const LowOp &Op) {
         return false;
       }
     }
+    if (isX86CompactMemory(Id))
+      return executeIntrinsic(Op);
     // A scalar tracer has neither CPL/CR4/CPUID state nor a guest TLB.  Even a
     // structurally valid invalidation or MSR access must therefore stop here
     // rather than pretending the architectural state transition succeeded.

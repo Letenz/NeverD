@@ -21,6 +21,7 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/ir/med/X86/X86CompactShape.h"
 #include "neverd/ir/med/X86/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86/X86RegistrationFrame.h"
 #include "neverd/ir/med/X86/X86RegistrationSEHRegisters.h"
@@ -113,6 +114,9 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
             Err("x86 FP state intrinsic has an invalid numerical/state "
                 "contract",
                 Blk.Id, Op.Addr);
+          if (isX86CompactMemory(Id) &&
+              !x86CompactShapeIsValid(Id, x86CompactMedShape(Op)))
+            Err(X86CompactMalformed, Blk.Id, Op.Addr);
           const bool IsApxAtomic = isApxAtomicIntrinsic(Id);
           if (IsApxAtomic &&
               !intrinsicApxAtomicShapeIsValid(Id, apxAtomicMedShape(Op)))
@@ -202,6 +206,7 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
           if (IsMemoryIntrinsic && !IsDefaultString && !IsDefaultRegisterForm &&
               !IsApxAtomic && !IsX86Invalidate && !IsVirtualization &&
               !IsSystemState && !IsAmxState && !IsDescriptorState &&
+              !isX86CompactMemory(Id) &&
               !intrinsicMemoryAddressSpaceShapeIsValid(
                   Id, Op.NumInputs, Op.Output.Size,
                   Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,

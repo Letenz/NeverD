@@ -50,6 +50,7 @@ complete instruction support or semantic test coverage.
 | ARPL | 32-bit target only; actual ZF and adjusted selector; conditional memory write remains inside the instruction. |
 | VSHA512MSG1, VSHA512MSG2, VSHA512RNDS2 | Integer LowIR, independent scalar oracle, source aliasing, upper-lane clearing and executable LLVM/HighC/LLVMC tests without SHA512 hardware. |
 | VMASKMOVPS/PD and VPMASKMOVD/Q stores | A void output replaces an invalid zero-width RAX result. Tests cover both vector widths, both architectures and inactive lanes over unmapped memory. |
+| VPCOMPRESSB/W/D/Q, VCOMPRESSPS/PD, VPEXPANDB/W/D/Q and VEXPANDPS/PD memory forms | Native contiguous masked accesses across LLVM, HighC and LLVM-to-C. Integer/FP opcode identity, merging/zeroing, segment offsets and zero-mask effects are retained; the compact-memory section below records the address boundary and qualification. |
 | Shared 32-bit VEX3/EVEX register and address validators | Mode-aware register-bank selection for their callers, including F16C, FMA4, SHA512 and EVEX integer/vector families. Ignored extension fields select the low bank; reserved fields still fail clearly. |
 | REX2 and 32-bit VEX floating-point forms | Shared prefix validation replaces eight local parsers. The 13 previously failing REX2 and nine 32-bit VEX examples now strictly lift, retaining distinct GPR/vector/address extension rules. Concrete and executable source/native-route regressions cover the new behavior. |
 | WRSSD/Q, WRUSSD/Q, ENQCMD and ENQCMDS native output | The shared system contract emits the real instruction in LLVM, HighC and LLVM-to-C. Memory stays inside the instruction, enqueue returns its actual ZF, and FS/GS qualifies only the explicit memory operand. |
@@ -114,7 +115,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation; legacy standalone placeholder intrinsics cannot become NOPs. |
-| EVEX compress stores and expand loads | LowIR has masked contiguous-memory semantics, but `EVEXCompressStore` and `EVEXExpandLoad` still stop at the LLVM backend guard. Native memory/fault behavior and both executable C routes remain to be completed. |
+| Remaining compact-memory address forms | Native LLVM and both C routes now support DS/FS/GS compact memory. A 64-bit RSP/RBP-based address without FS/GS still lacks its #SS fault provenance. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
 | V4FMADDPS/SS, V4FNMADDPS/SS | The exact four-iteration floating-point contract exists in LowIR; `X86FourFMA` still has no LLVM lowering. Native source groups, rounding/flags and memory completion need qualification. |
 | VP4DPWSSD, VP4DPWSSDS | LowIR owns the four-source word dot product; the LLVM backend still rejects both IDs. Native register grouping, saturation and memory/mask behavior remain open. |
 | Remaining RAO-INT/CMPccXADD forms | EVEX AADD/AAND/AOR/AXOR and all sixteen CMPccXADD conditions now have native LLVM and both C routes. Legacy RAO-INT and VEX CMPccXADD still lack strict lifter admission. Default-stack RSP/RBP memory with 64-bit addressing and no FS/GS override remains refused until the normalized address retains its #SS fault class. Physical APX execution is not qualified. |
@@ -1665,3 +1666,69 @@ The concrete executor still restricts atomic accesses to aligned ordinary
 memory. Controlled completions do not prove physical atomicity, coherence or
 hardware fault behavior. LLVM release and production pinning remain deferred
 while the remaining instruction contracts are unfinished.
+
+## Native compact-memory qualification
+
+The twelve compress-store/expand-load families retain their original opcode
+kind and 128/256/512-bit width. `X86CompressExpand.h` owns the stable LowIR
+control: element bytes, the floating-point kind bit and load zeroing. LowIR
+and MedIR adapters live in their own `X86/` directories; native LLVM transport
+and C projection likewise stay in the owning component's `X86/` directory.
+Both decoders, Low-to-Med conversion, verification, execution and emitters
+consume that contract. Invalid controls, insufficient mask widths, mismatched
+results and non-x86 inputs fail explicitly.
+
+The LLVM fork supplies six fixed-signature native interfaces with raw i32
+vector carriers. NeverC exposes 36 corresponding builtins and the
+`__NEVERC_X86_COMPRESS_EXPAND__` capability. Expand-load pointers are const;
+stores take writable pointers. Native calls retain conservative memory effects
+and lower to volatile, byte-aligned machine memory operands of unknown size.
+Zero masks and dead load results retain the instruction. The pinned older SDK
+uses a checked owned-assembly interface; C output selects NeverC's native
+builtins when available and supports Clang's ATT/Intel assembly alternatives
+otherwise. C target attributes use the frontend spelling `avx512f`, without
+passing LLVM's backend-only `evex512` spelling to ordinary Clang.
+
+FS/GS arguments carry segment-relative offsets, not pre-added linear
+addresses. LLVM's address-space pointer is converted through its integer
+offset before entering the native interface; the instruction owns segment
+base addition. An RBX/EBX carrier retains default DS addressing. The remaining
+stack/segment provenance limitations are listed above. The full LLVM and
+NeverD matrices include i386; NeverC's builtin frontend remains x86-64 only.
+
+Concrete execution refuses unknown active masks, addresses and source/prior
+values. A zero mask suppresses address and segment-base resolution; all-active
+or zeroing loads need no old destination. Native reconstruction of functions
+containing these operations preserves entry-value evidence through emission
+and rejects remaining unknown values instead of inventing a zero mask.
+Analysis output retains the existing unknown-value markers. This does not
+introduce an implicit entry-register ABI or a runtime unknown-value helper.
+
+`NeverDX86EVEXCompressExpandMemoryTests` covers masked contiguous access,
+zero suppression, merge/zero lanes, upper-lane clearing, malformed controls,
+unknown inputs, both decoder routes and both x86 modes. Its existing
+partial-store fault model is a software projection; hardware partial-fault
+completion has not been independently qualified.
+`NeverDX86CompressExpandSourceTests` checks shared contracts, altered native
+and assembly effects, unknown-entry rejection, 162 wrapper variants and 162
+pipeline variants with explicit address/mask/vector input setup and observable
+load results. Their `KMOVW` setup also checks that a narrowing machine `COPY`
+survives Med-to-High expression substitution. The shared conversion retains
+that byte slice; an executable regression covers i386, x86-64 and AArch64.
+A naked instruction with unrecovered entry RAX/K2 is not an executable C fixture.
+
+Run the source test with `NEVERD_COMPACT_EXPORT_DIR` set, then use
+`scripts/verify_x86_compact_memory.py --exports DIR --keep AUDIT_DIR
+--llc LLVM/bin/llc --neverc NEVERC/bin/neverc --pipeline`. The script audits
+EVEX bytes independently of the lifter and checks width, kind, masks,
+zeroing, prefixes, DS-default addressing and instruction counts. It covers
+ELF/COFF/Mach-O at O0/O2, both C routes and both assembly dialects. Its C
+recorders execute the emitted operand/return transport and compare compacted
+bytes, inactive lanes, high ignored mask bits and repeated zero-mask effects
+without requiring AVX-512 hardware. Additional full-pipeline recorders run both
+C routes through Clang and NeverC at O0/O2, including dirty mask bits above
+`KMOVW`'s 16-bit input and each expand result's final memory store.
+Those recorders do not certify physical
+AVX-512 execution, exception ordering, concurrency or device memory.
+The architectural reference is Intel's
+[December 2024 instruction-set manual, Volume 2](https://cdrdv2-public.intel.com/843829/325383-sdm-vol-2abcd-dec-24.pdf).

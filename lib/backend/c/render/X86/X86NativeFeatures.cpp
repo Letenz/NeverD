@@ -15,6 +15,7 @@
 #include "X86APXAtomic.h"
 #include "X86AmxState.h"
 #include "X86BoundedLeaf.h"
+#include "X86CompressExpand.h"
 #include "X86RepState.h"
 
 #include "neverd/backend/llvm/X86/LLVMX86SHA.h"
@@ -121,13 +122,22 @@ std::string preamble(const std::set<std::string> &Amx, bool Sgx, bool Rep,
 } // namespace
 
 std::string x86NativeFunctionPreamble(const HighFunc &Function) {
-  bool Atomic = false;
+  bool Atomic = false, Compact = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
+  std::set<std::string> Required;
   std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
     if (!E)
       return;
     Atomic |= isApxAtomicIntrinsic(E->IntrinsicId);
+    if (isX86CompactMemory(E->IntrinsicId)) {
+      Compact = true;
+      // Target-independent source scanning validates its shape; the writer
+      // separately validates the actual target architecture.
+      const auto P = x86CompactHighPlan(Arch::X64, *E);
+      for (const auto &Name : x86CompactSourceFeatures(P))
+        Required.insert(Name);
+    }
     Sgx |= isX86SgxIntrinsic(E->IntrinsicId);
     if (isX86BoundedLeafIntrinsic(E->IntrinsicId)) {
       Bounded = true;
@@ -142,12 +152,13 @@ std::string x86NativeFunctionPreamble(const HighFunc &Function) {
       Visit(Operand);
   };
   walkStmts(Function.Body, [&](const HighStmt &S) { forEachExpr(S, Visit); });
-  return (Atomic ? X86APXAtomicCompilerDispatch : "") +
+  return std::string(Atomic ? X86APXAtomicCompilerDispatch : "") +
+         (Compact ? X86CompactCompilerDispatch : "") +
          preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
-                  BoundedEnclu);
+                  BoundedEnclu, Required);
 }
 std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
-  bool Atomic = false;
+  bool Atomic = false, Compact = false;
   bool Sgx = false, Rep = false, Compare = false, Bounded = false,
        BoundedEnclu = false;
   std::set<std::string> Required;
@@ -162,6 +173,11 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
               llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand()))
         Atomic |= llvm::StringRef(Asm->getAsmString())
                       .starts_with(X86APXAtomicAsmMarker);
+      if (const auto P = x86CompactCallPlan(Arch::X64, *Call)) {
+        Compact = true;
+        for (const auto &Name : x86CompactSourceFeatures(*P))
+          Required.insert(Name);
+      }
       if (llvmX86SHA256CName(*Call))
         Required.insert("sha");
       const auto *Result = llvm::dyn_cast<llvm::StructType>(Call->getType());
@@ -194,7 +210,8 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
           Required.insert("rtm");
       }
     }
-  return (Atomic ? X86APXAtomicCompilerDispatch : "") +
+  return std::string(Atomic ? X86APXAtomicCompilerDispatch : "") +
+         (Compact ? X86CompactCompilerDispatch : "") +
          preamble(x86AmxFunctionFeatures(Function), Sgx, Rep, Compare, Bounded,
                   BoundedEnclu, Required);
 }

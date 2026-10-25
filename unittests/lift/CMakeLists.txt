@@ -700,6 +700,10 @@ add_neverd_unittest(NeverDX86PortSourceTests
   x86/X86PortSourceTests.cpp
   LINK_COMPONENTS BackendC)
 
+add_neverd_unittest(NeverDX86CompressExpandSourceTests
+  x86/X86CompressExpandSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+
 add_neverd_unittest(NeverDX86APXAtomicSourceTests
   x86/X86APXAtomicSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
