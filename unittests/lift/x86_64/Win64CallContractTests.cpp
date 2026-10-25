@@ -4350,7 +4350,7 @@ TEST(FixedIntegerStackCalls, SysVAndTailOperandsUseTheirDeclaredLocations) {
       }
 }
 
-TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
+BinaryImage registerQueryImage(unsigned Mutation = 0) {
   constexpr va_t Producer = Text + 0x80;
   std::vector<uint8_t> Code(0xC0, 0xCC);
   std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x28, 0xE8};
@@ -4359,16 +4359,38 @@ TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
   Caller.insert(Caller.end(), {0x4C, 0x31, 0xC0, // xor rax,r8
                                0x48, 0x31, 0xC8, // xor rax,rcx
                                0x48, 0x83, 0xC4, 0x28, 0xC3});
+  if (Mutation == 7)
+    Caller.insert(Caller.end() - 5, {0x48, 0x8B, 0x44, 0x24, 0xF8});
   put(Code, Text, Caller);
-  put(Code, Producer,
-      {0x31, 0xC0,                               // xor eax,eax
-       0x31, 0xC9,                               // xor ecx,ecx
-       0x49, 0x87, 0xD8,                         // xchg rbx,r8
-       0x0F, 0xA2,                               // cpuid
-       0x49, 0x87, 0xD8,                         // xchg rbx,r8
-       0x41, 0x81, 0xF0, 0x67, 0x45, 0x23, 0x01, // xor r8d,1234567h
-       0x81, 0xF1, 0x98, 0xBA, 0xDC, 0xFE,       // xor ecx,0FEDCBA98h
-       0xB8, 1,    0,    0,    0,    0xC3});     // mov eax,1; ret
+  std::vector<uint8_t> Leaf = {
+      0x31, 0xC0,                               // xor eax,eax
+      0x45, 0x31, 0xC0,                         // xor r8d,r8d
+      0x31, 0xC9,                               // xor ecx,ecx
+      0x49, 0x87, 0xD8,                         // xchg rbx,r8
+      0x0F, 0xA2,                               // cpuid
+      0x49, 0x87, 0xD8,                         // xchg rbx,r8
+      0x41, 0x81, 0xF0, 0x67, 0x45, 0x23, 0x01, // xor r8d,1234567h
+      0x81, 0xF1, 0x98, 0xBA, 0xDC, 0xFE,       // xor ecx,0FEDCBA98h
+      0xB8, 1,    0,    0,    0,    0xC3};      // mov eax,1; ret
+  if (Mutation == 1)
+    Leaf.insert(Leaf.begin(), {0x48, 0x8B, 0x04, 0x24}); // original return PC
+  else if (Mutation == 2)
+    Leaf.erase(Leaf.begin() + 5, Leaf.begin() + 7); // runtime CPUID subleaf
+  else if (Mutation == 3)
+    Leaf.insert(Leaf.end() - 1, {0x0F, 0x31}); // ordered RDTSC also matters
+  else if (Mutation == 4) {
+    Leaf.back() = 0xC2;
+    Leaf.insert(Leaf.end(), {0, 0});
+  } else if (Mutation == 5)
+    Leaf.insert(Leaf.begin(), {0x85, 0xC9, 0x74, 2, 0x31, 0xC0});
+  else if (Mutation == 6)
+    Leaf.insert(Leaf.end() - 1, {0x49, 0xB8, 0, 0x10, 0, 0x40, 1, 0, 0, 0});
+  put(Code, Producer, Leaf);
+  return makeImage(Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}},
+                   {});
+}
+
+TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool LLVM : {false, true})
@@ -4376,8 +4398,7 @@ TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
         SCOPED_TRACE(static_cast<unsigned>(Format));
         SCOPED_TRACE(LLVM);
         SCOPED_TRACE(NoOpt);
-        auto Image = makeImage(
-            Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}}, {});
+        auto Image = registerQueryImage();
         Image.Format = Format;
         llvm::LLVMContext Context;
         PipelineOptions Options;
@@ -4417,5 +4438,52 @@ int main(void) {
               Source + Oracle,
               {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
       }
+}
+
+TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
+  constexpr va_t Producer = Text + 0x80;
+  for (unsigned Mutation = 1; Mutation <= 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = registerQueryImage(Mutation);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Text};
+    Options.SourceProjection = true;
+    auto Result = Pipeline().run(Image, Context, Options);
+    if (Mutation == 7) {
+      EXPECT_FALSE(Result.Success);
+      EXPECT_NE(Result.Error.find("return-address"), std::string::npos)
+          << Result.Error;
+      continue;
+    }
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    bool CallsOriginal = false;
+    for (const auto &Function : Result.MedFuncs)
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          CallsOriginal |= Op.Opcode == NdOp::CALL && Op.NumInputs &&
+                           Op.Inputs[0].isConst() &&
+                           Op.Inputs[0].ConstVal == Producer;
+    EXPECT_TRUE(CallsOriginal);
+  }
+}
+
+TEST(CallExitRegisters, RegisterQueryDoesNotRewriteMachineCalls) {
+  auto Image = registerQueryImage();
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {Text};
+  Options.LiftMode = true;
+  Options.NoOpt = true;
+  auto Result = Pipeline().run(Image, Context, Options);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  unsigned Calls = 0;
+  for (const auto &Function : Result.MedFuncs)
+    for (const auto &Block : Function.Blocks)
+      for (const auto &Op : Block.Ops)
+        Calls += Op.Opcode == NdOp::CALL;
+  EXPECT_EQ(Calls, 1u);
 }
 } // namespace

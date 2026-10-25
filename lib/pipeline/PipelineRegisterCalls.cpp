@@ -171,10 +171,19 @@ expand(const MedFunc &Caller, const MedOp &Call, const BinaryImage &Image,
 void expandSourceRegisterCalls(
     MedFunc &Function, const BinaryImage &Image,
     const std::map<va_t, std::shared_ptr<const std::vector<LowOp>>> &Leaves) {
-  if (Image.Arch != Arch::X64 || Leaves.empty() || Function.SkippedSSA ||
+  if (Image.Arch != Arch::X64 || Leaves.empty() ||
+      Function.CallClobbers.empty() || Function.SkippedSSA ||
       Function.AnalystStackFrame ||
       (Function.ExceptionMetadata &&
        Function.ExceptionMetadata->Personality != ExceptionPersonality::None))
+    return;
+  bool HasCandidate = false;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      HasCandidate |= Op.Opcode == NdOp::CALL && Op.NumInputs &&
+                      Op.Inputs[0].isConst() &&
+                      Leaves.count(Op.Inputs[0].ConstVal);
+  if (!HasCandidate)
     return;
   int NextId = 0;
   auto Note = [&](const MedVar &Value) {
@@ -196,6 +205,10 @@ void expandSourceRegisterCalls(
         Note(Value);
     }
   }
+  for (const auto &Value : Function.Params)
+    Note(Value);
+  for (const auto &Value : Function.Locals)
+    Note(Value);
   for (const auto &Clobber : Function.CallClobbers)
     Note(Clobber.Value);
   size_t Remaining = limits::ir::kSourceRegisterCallOps;
