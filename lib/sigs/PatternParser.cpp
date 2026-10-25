@@ -407,6 +407,8 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   // followed by at most one tail.
   bool SawTail = false;
   for (size_t I = OpeningFields; I < Tokens.size(); ++I) {
+    if (Tokens[I] == CollisionEvidenceOnly)
+      return patternError("collision evidence is not a matchable signature");
     if (Tokens[I] == RequiredReferences) {
       if (I != OpeningFields)
         return patternError("!refs must immediately follow total length");

@@ -54,10 +54,15 @@ def select(candidates: dict[str, builder.FoldResult],
         else:
             short_prefixes[shape.stated_prefix()].append(shape)
 
-    def relevant(raw: str) -> builder.PatternLine | None:
+    def relevant(raw: str, allow_evidence: bool = False) -> builder.PatternLine | None:
         parts = raw.split(maxsplit=4)
         if len(parts) < 5 or parts[0].startswith(("#", ";")):
             return None
+        rest = parts[4].split(maxsplit=1)
+        if rest[0] == "!evidence":
+            if not allow_evidence or len(rest) != 2:
+                raise builder.BuildError("collision evidence belongs only in --evidence inputs")
+            raw = " ".join([*parts[:4], rest[1]])
         nearby = by_crc.get((int(parts[1], 16), parts[2]), []) + by_prefix.get(
             parts[0][:2 * builder.MIN_PREFIX_BYTES], [])
         for prefix, shapes in short_prefixes.items():
@@ -77,7 +82,7 @@ def select(candidates: dict[str, builder.FoldResult],
     for name, path in evidence:
         with path.open(encoding="utf-8") as source:
             for raw in source:
-                line = relevant(raw)
+                line = relevant(raw, allow_evidence=True)
                 if line is not None:
                     grouped[name][line.text] = None
                     source_claims[name, line.key].update(line.names)
@@ -93,7 +98,7 @@ def select(candidates: dict[str, builder.FoldResult],
         results[Path(name + ".pat")] = result
     old = []
     owned = defaultdict(set)
-    for path in sorted(existing.glob("*.pat")):
+    for path in builder.pattern_files(existing):
         with path.open(encoding="utf-8") as source:
             for raw in source:
                 line = relevant(raw)
@@ -179,15 +184,16 @@ def main(argv: list[str] | None = None) -> int:
         written = []
         for name, lines in sorted(selected.items()):
             indices = [1]
-            for path in args.existing.glob(name + ".part*.pat"):
-                match = re.fullmatch(re.escape(name) + r"\.part([2-9][0-9]*|1[0-9]+)\.pat", path.name)
+            for path in builder.pattern_files(args.existing):
+                match = re.fullmatch(re.escape(name) + r"\.part([2-9][0-9]*|1[0-9]+)", path.stem)
                 if match:
                     indices.append(int(match[1]))
             if not lines:
                 continue
             parts = builder.split_parts([line.text for line in lines], builder.MAX_FILE_BYTES)
+            suffix = ".npat" if any(line.require_references for line in lines) else ".pat"
             for index, texts in enumerate(parts, start=max(indices) + 1):
-                path = args.output / f"{name}.part{index}.pat"
+                path = args.output / f"{name}.part{index}{suffix}"
                 # Never replace an existing pack, even if output == existing.
                 with path.open("x", encoding="utf-8") as target:
                     target.write("\n".join(texts) + "\n---\n")
@@ -196,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
                                 for name, path in paths]
         report = {"candidates": inputs(args.candidate), "evidence": inputs(args.evidence),
                   "existing": [{"file": path.name, "sha256": digest(path)}
-                               for path in sorted(args.existing.glob("*.pat"))
+                               for path in builder.pattern_files(args.existing)
                                if path.name not in {entry["file"] for entry in written}],
                   "output": written}
         with (args.output / "supplement.sources.json").open("x", encoding="utf-8") as target:

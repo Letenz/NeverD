@@ -67,6 +67,15 @@ class SupplementTests(unittest.TestCase):
         covering = "E9........C3 00 0000 0006 :0000 other ^0001 target\n"
         self.assertEqual(self.select(a, [("runtime", raw), ("another", covering)]), [])
 
+    def test_nonmatchable_collision_evidence_remains_a_counterclaim(self):
+        a = "AABBCCDD 00 0000 0004 :0000 a\n"
+        raw = a.replace(" :", " !evidence :")
+        self.assertEqual([line.text for line in self.select(a, [("runtime", raw)])], [a.strip()])
+        conflict = raw.replace(":0000 a", ":0000 other")
+        self.assertEqual(self.select(a, [("runtime", raw + conflict)]), [])
+        with self.assertRaisesRegex(builder.BuildError, "not a candidate"):
+            self.select(raw, [("runtime", raw)])
+
     def test_missing_common_context_is_not_downgraded_to_byte_only(self):
         a = "AABBCCDD.... 00 0000 0006 !refs :0000 a ^0004 callee\n"
         b = "AABBCCDD.... 00 0000 0006 :0000 a\n"
@@ -87,6 +96,17 @@ class SupplementTests(unittest.TestCase):
         claim = "AABBCCDD 00 0000 0004 :0000 wanted\n"
         with self.assertRaisesRegex(builder.BuildError, "lacks raw source evidence"):
             self.select(claim, [("another", claim)])
+
+    def test_required_output_uses_native_extension_and_keeps_existing_ownership(self):
+        claim = "E9........ 00 0000 0005 !refs :0000 a ^0001 target\n"
+        source = self.root / "source.pat"
+        source.write_text(claim)
+        (self.existing / "runtime.part2.pat").write_text("AABB 00 0000 0002 :0000 old\n")
+        self.assertEqual(supplement.main([
+            "--candidate", f"runtime={source}", "--evidence", f"runtime={source}",
+            "--existing", str(self.existing), "--output", str(self.existing)]), 0)
+        self.assertEqual((self.existing / "runtime.part3.npat").read_text(), claim + "---\n")
+        self.assertEqual(self.select(claim, [("runtime", claim)]), [])
 
     def test_numbered_output_does_not_replace_existing_parts(self):
         claim = "AABBCCDD 00 0000 0004 :0000 wanted\n"

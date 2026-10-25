@@ -48,7 +48,10 @@ must be confirmed before the hit becomes a candidate or supports another
 candidate. Required hits cannot bootstrap each other from raw bytes; a cycle
 without independent evidence stays unresolved. The existing bounded withdrawal
 algorithm removes dependent claims when their evidence changes. Older parsers
-reject this extension, and cache format 2 preserves its requirement.
+reject this extension, and cache format 2 preserves its requirement. Published
+constraint packs use `.npat`, which older directory readers ignore while
+retaining the ordinary `.pat` packs. New readers apply the same profile and
+toolset selection to both extensions.
 `neverd-sigmaker --contextual` emits this form for referenced functions,
 including those below the ordinary fixed-byte floor, and covers their entire
 body. Unreferenced functions retain the ordinary floor. This changes candidate
@@ -59,6 +62,11 @@ but the supplement builder still checks every overlapping raw source claim,
 including short, ambiguous and previously discarded functions. No missing
 rival pack is treated as proof of uniqueness. Pack publication also requires
 held-out image checks and index/reference cost measurements.
+`neverd-sigmaker --collision-evidence` generates that offline evidence with
+complete bodies and without size/fixed-byte floors. Its `!evidence` records
+are accepted only as supplement `--evidence` inputs: the matching parser
+rejects them, so an unfiltered audit cannot accidentally become a pack.
+Architecture filtering and unsupported-relocation diagnostics still apply.
 
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
 fields. Its additive `auto_name` field reports the address's admitted spelling,

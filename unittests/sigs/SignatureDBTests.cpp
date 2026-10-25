@@ -1521,7 +1521,8 @@ std::string requireReferences(std::string Line) {
 
 TEST(SignatureDBContext, UnknownReferenceNeverAdmitsAByteCandidate) {
   SignatureDB Database;
-  ASSERT_FALSE(Database.loadPatternText(requireReferences(callerLine("wrapper", " ^0005 callee")), "context"));
+  ASSERT_FALSE(Database.loadPatternText(
+      requireReferences(callerLine("wrapper", " ^0005 callee")), "context"));
   Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
   EXPECT_TRUE(Database.matches().empty());
   EXPECT_TRUE(Database.buildCandidateNameMap().empty());
@@ -1533,17 +1534,21 @@ TEST(SignatureDBContext, UnknownReferenceNeverAdmitsAByteCandidate) {
 
 TEST(SignatureDBContext, ImportAndTypeMetadataCanAnchorARequiredCandidate) {
   for (bool Type : {false, true}) {
-    auto Image = Type ? makeVTableImage() : makeIndirectImportImage(neverd::Arch::X64);
+    auto Image =
+        Type ? makeVTableImage() : makeIndirectImportImage(neverd::Arch::X64);
     SignatureDB Database;
-    ASSERT_FALSE(Database.loadPatternText(requireReferences(Type
-       ? vtableCallerLine("wrapper", "??_7Widget@@6B@")
-       : importCallerLine("wrapper", "__imp_RuntimeB")), "context"));
+    ASSERT_FALSE(Database.loadPatternText(
+        requireReferences(Type ? vtableCallerLine("wrapper", "??_7Widget@@6B@")
+                               : importCallerLine("wrapper", "__imp_RuntimeB")),
+        "context"));
     Database.apply(Image, {0x1000});
     ASSERT_EQ(Database.matches().size(), 1u);
     EXPECT_TRUE(Database.matches().front().Confirmed);
     EXPECT_TRUE(Database.buildNameMap().empty());
-    if (Type) Image.Segments.back().Data[0x140] = 0;
-    else Image.Imports.clear();
+    if (Type)
+      Image.Segments.back().Data[0x140] = 0;
+    else
+      Image.Imports.clear();
     Database.apply(Image, {0x1000});
     EXPECT_TRUE(Database.matches().empty());
   }
@@ -1553,12 +1558,15 @@ TEST(SignatureDBContext, RequiredCandidatesDoNotBootstrapCycles) {
   auto Image = makeNestedCallingImage();
   Image.Imports.clear();
   neverd::writeLE<uint32_t>(Image.Segments.front().Data.data() + 0x102,
-                           uint32_t(0x1000 - 0x1106));
-  const std::string Outer = requireReferences(callerLine("outer", " ^0005 inner"));
-  const std::string Inner = "53E8........5BC3 00 0000 0008 !refs :0000 inner ^0002 outer\n";
+                            uint32_t(0x1000 - 0x1106));
+  const std::string Outer =
+      requireReferences(callerLine("outer", " ^0005 inner"));
+  const std::string Inner =
+      "53E8........5BC3 00 0000 0008 !refs :0000 inner ^0002 outer\n";
   for (bool Reverse : {false, true}) {
     SignatureDB Database;
-    ASSERT_FALSE(Database.loadPatternText(Reverse ? Inner + Outer : Outer + Inner, "context"));
+    ASSERT_FALSE(Database.loadPatternText(
+        Reverse ? Inner + Outer : Outer + Inner, "context"));
     Database.apply(Image, {0x1000, 0x1100});
     EXPECT_TRUE(Database.matches().empty());
     // A raw hit at a target outside the entry set cannot bypass !refs either.
@@ -1566,18 +1574,22 @@ TEST(SignatureDBContext, RequiredCandidatesDoNotBootstrapCycles) {
     EXPECT_TRUE(Database.matches().empty());
   }
   SignatureDB Recursive;
-  ASSERT_FALSE(Recursive.loadPatternText(requireReferences(callerLine("self", " ^0005 self")), "context"));
+  ASSERT_FALSE(Recursive.loadPatternText(
+      requireReferences(callerLine("self", " ^0005 self")), "context"));
   Recursive.apply(makeCallingImage(0x1000), {0x1000});
   EXPECT_TRUE(Recursive.matches().empty());
 }
 
 TEST(SignatureDBContext, AnchoredChainsSettleAndWithdrawInEitherOrder) {
-  const std::string Outer = requireReferences(callerLine("outer", " ^0005 inner"));
-  const std::string Inner = "53E8........5BC3 00 0000 0008 !refs :0000 inner ^0002 import_a\n";
+  const std::string Outer =
+      requireReferences(callerLine("outer", " ^0005 inner"));
+  const std::string Inner =
+      "53E8........5BC3 00 0000 0008 !refs :0000 inner ^0002 import_a\n";
   for (bool Reverse : {false, true}) {
     auto Image = makeNestedCallingImage();
     SignatureDB Database;
-    ASSERT_FALSE(Database.loadPatternText(Reverse ? Inner + Outer : Outer + Inner, "context"));
+    ASSERT_FALSE(Database.loadPatternText(
+        Reverse ? Inner + Outer : Outer + Inner, "context"));
     Database.apply(Image, {0x1000, 0x1100});
     const auto Names = Database.buildCandidateNameMap();
     ASSERT_EQ(Names.size(), 2u);
@@ -1593,19 +1605,67 @@ TEST(SignatureDBContext, AnchoredChainsSettleAndWithdrawInEitherOrder) {
 TEST(SignatureDBContext, EveryRequiredReferenceMustBeConfirmed) {
   auto Image = makeIndirectImportImage(neverd::Arch::X64);
   auto &Code = Image.Segments.front().Data;
-  Code[16] = 0xff; Code[17] = 0x15;
+  Code[16] = 0xff;
+  Code[17] = 0x15;
   neverd::writeLE<uint32_t>(Code.data() + 18, 0x2008 - 0x1016);
   Image.Segments.back().Data.resize(16, 0);
   Image.Segments.back().Size = Image.Segments.back().FileSz = 16;
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText(
       "90909090FF15........909090909090FF15........90909090909090909090"
-      " 00 0000 0020 !refs :0000 wrapper ^0006 __imp_RuntimeB ^0012 __imp_Other\n", "context"));
+      " 00 0000 0020 !refs :0000 wrapper ^0006 __imp_RuntimeB ^0012 "
+      "__imp_Other\n",
+      "context"));
   Database.apply(Image, {0x1000});
   EXPECT_TRUE(Database.matches().empty());
-  auto Imp = Image.Imports.front(); Imp.Name = "Other"; Imp.IATAddr = 0x2008;
+  auto Imp = Image.Imports.front();
+  Imp.Name = "Other";
+  Imp.IATAddr = 0x2008;
   Image.Imports.push_back(Imp);
   Database.apply(Image, {0x1000});
   ASSERT_EQ(Database.matches().size(), 1u);
   EXPECT_TRUE(Database.matches().front().Confirmed);
+}
+
+TEST(SignatureDBContext, FunctionAddressReferencesRequireAnExecutableTarget) {
+  auto Image = makeVTableImage();
+  auto &Code = Image.Segments.front();
+  Code.Size = Code.FileSz = 0x200;
+  Code.Data.resize(0x200, 0xcc);
+  const uint8_t Callee[] = {0xaa, 0xbb, 0xcc, 0xdd, 0xc3};
+  std::copy(std::begin(Callee), std::end(Callee), Code.Data.begin() + 0x100);
+  neverd::writeLE<uint32_t>(Code.Data.data() + 7, 0x1100 - 0x100b);
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      requireReferences(vtableCallerLine("getter", "callee")) + CalleeLine,
+      "addresses"));
+  Database.apply(Image, {0x1000, 0x1100});
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "getter");
+  EXPECT_TRUE(Database.buildNameMap().empty());
+  neverd::writeLE<uint32_t>(Code.Data.data() + 7, 0x2000 - 0x100b);
+  std::copy(std::begin(Callee), std::end(Callee),
+            Image.Segments.back().Data.begin());
+  Database.apply(Image, {0x1000, 0x1100});
+  EXPECT_EQ(Database.buildCandidateNameMap().count(0x1000), 0u);
+}
+
+TEST_F(SignatureDirectoryTest,
+       NativePatternsShareLibrarySelectionAndExplicitLoading) {
+  write("vs2022.pat", CalleeLine);
+  write("vs2022.part3.npat",
+        requireReferences(importCallerLine("wrapper", "__imp_RuntimeB")));
+  write("ignored.txt", "invalid record");
+  auto Files = SignatureDB::listDirectory(Directory);
+  ASSERT_TRUE(bool(Files)) << llvm::toString(Files.takeError());
+  ASSERT_EQ(Files->size(), 2u);
+  EXPECT_EQ(SignatureDB::libraryName(Directory / "vs2022.part3.npat"),
+            "vs2022");
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadFile(Directory / "vs2022.part3.npat"));
+  Database.apply(makeIndirectImportImage(neverd::Arch::X64), {0x1000});
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_TRUE(Database.matches().front().Confirmed);
+  EXPECT_EQ(Database.matches().front().LibraryName, "vs2022");
+  ASSERT_FALSE(Database.loadDirectory(Directory));
+  EXPECT_EQ(Database.fileCount(), 2u);
 }

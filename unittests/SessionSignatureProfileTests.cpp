@@ -75,7 +75,7 @@ TEST_F(SessionSignatureProfile, DriverSelectionAndManualResetAreVisible) {
   EXPECT_EQ(Value->getAsObject()->getObject("signature_selection"), nullptr);
 
   write("tree/pe/x86/64/supplemental-bds.pat", "invalid excluded UI pack\n");
-  const auto Manual = write("tree/pe/x86/64/custom.pat",
+  const auto Manual = write("tree/pe/x86/64/custom.npat",
                             "B82A000000C3 00 0000 0006 :0000 answer\n");
   const auto Tree = (Directory / "tree").string();
   ASSERT_EQ(neverd_auto_apply_signatures(Session, Tree.c_str()), 1);
@@ -103,7 +103,7 @@ TEST_F(SessionSignatureProfile, CandidatesNeverReplaceNamesAcrossFormats) {
         write(("stripped-" + std::to_string(I) + ".bin").c_str(), Inputs[I]);
     ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
     const auto Pattern = write(
-        "candidate.pat", std::string(I == 2 ? "40058052C0035FD6 00 0000 0008"
+        "candidate.npat", std::string(I == 2 ? "40058052C0035FD6 00 0000 0008"
                                             : "B82A000000C3 00 0000 0006") +
                              " :0000 fabricated_identity\n");
     ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1);

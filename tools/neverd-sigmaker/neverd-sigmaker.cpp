@@ -92,6 +92,12 @@ static cl::opt<bool>
                         "including short functions; emits whole-function "
                         "NeverD !refs patterns and implies --references"),
                cl::init(false));
+static cl::opt<bool> CollisionEvidence(
+    "collision-evidence",
+    cl::desc("Emit complete offline collision evidence, including short and "
+             "unreferenced functions; !evidence records cannot be loaded as "
+             "signatures and imply --references"),
+    cl::init(false));
 static cl::opt<bool>
     Verify("verify",
            cl::desc("Parse the positional .pat files with the signature "
@@ -184,6 +190,10 @@ int main(int Argc, char *Argv[]) {
                               "NeverD Signature Maker\n\n"
                               "  Generate .pat files from static libraries.\n");
 
+  if (Contextual && CollisionEvidence) {
+    WithColor::error() << "--contextual and --collision-evidence are separate outputs\n";
+    return 1;
+  }
   if (Verify)
     return verifyPatterns();
 
@@ -213,8 +223,9 @@ int main(int Argc, char *Argv[]) {
   Opts.LeadingLen = LeadingLen;
   Opts.MinFuncSize = MinFuncSize;
   Opts.TailLen = TailLen;
-  Opts.EmitReferences = References || Contextual;
+  Opts.EmitReferences = References || Contextual || CollisionEvidence;
   Opts.RequireReferences = Contextual;
+  Opts.CollisionEvidence = CollisionEvidence;
 
   auto ForMachine = [&](const ObjectFile &Obj) {
     return !Required || isObjectForMachine(Obj, *Required);

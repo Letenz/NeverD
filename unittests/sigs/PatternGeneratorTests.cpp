@@ -72,12 +72,13 @@ public:
   void setDirectives(StringRef Text) { Directives = Text.str(); }
 
   void setRelocationTarget(StringRef Name) { TargetName = Name.str(); }
+  void setDataTarget() { TargetIsFunction = false; }
 
   std::vector<uint8_t> build() const {
     std::vector<Symbol> All = Symbols;
     All.push_back(
         {TargetName, 0, 0,
-         COFF::IMAGE_SYM_DTYPE_FUNCTION << COFF::SCT_COMPLEX_TYPE_SHIFT,
+         uint16_t(TargetIsFunction ? COFF::IMAGE_SYM_DTYPE_FUNCTION << COFF::SCT_COMPLEX_TYPE_SHIFT : 0),
          COFF::IMAGE_SYM_CLASS_EXTERNAL});
     // Two slots for the section symbol and its auxiliary record.
     const uint32_t TargetIndex = 2 + static_cast<uint32_t>(Symbols.size());
@@ -195,6 +196,7 @@ private:
   std::vector<std::pair<uint32_t, uint16_t>> Relocations;
   std::string Directives;
   std::string TargetName = "target";
+  bool TargetIsFunction = true;
 };
 
 /// A relocatable ELF object with one code section, assembled in memory.
@@ -668,6 +670,7 @@ TEST(PatternGeneratorCOFF, PrimaryVTableAddressesRetainExactTypeReferences) {
     Code[6] = 0x05;
     std::fill(Code.begin() + 7, Code.begin() + 11, 0);
     COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+    Builder.setDataTarget();
     Builder.addFunction("constructor", 0);
     Builder.addRelocation(7, COFF::IMAGE_REL_AMD64_REL32);
     Builder.setRelocationTarget("??_7Widget@@6B@");
@@ -1395,4 +1398,39 @@ TEST(PatternGeneratorCOFF, ContextualFunctionsRequireTheirWholeBodyAndReferences
   EXPECT_LT(SignatureMatcher::fixedByteCount(*Mod), SignatureMatcher::MinStatedBytes);
   Opts.EmitReferences = false;
   EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
+}
+
+TEST(PatternGeneratorCOFF, FunctionAddressReferencesRequireFunctionSymbols) {
+  const std::vector<uint8_t> Code{0x48, 0x8d, 0x05, 0, 0, 0, 0, 0xc3};
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+  Builder.addFunction("address_getter", 0);
+  Builder.setRelocationTarget("callee");
+  Builder.addRelocation(3, COFF::IMAGE_REL_AMD64_REL32);
+  PatternGeneratorOptions Opts;
+  Opts.EmitReferences = Opts.RequireReferences = true;
+  auto Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines.front());
+  ASSERT_TRUE(bool(Mod)) << toString(Mod.takeError());
+  EXPECT_TRUE(Mod->RequireReferences);
+  ASSERT_EQ(Mod->References.size(), 1u);
+  EXPECT_EQ(Mod->References.front().Name, "callee");
+  EXPECT_EQ(Mod->References.front().Offset, 3u);
+  Builder.setDataTarget();
+  EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
+}
+
+TEST(PatternGeneratorCOFF, CollisionEvidenceIncludesWeakUnreferencedFunctions) {
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, {0x33, 0xc0, 0xc3});
+  Builder.addFunction("zero", 0);
+  PatternGeneratorOptions Opts;
+  EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
+  Opts.CollisionEvidence = true;
+  Opts.LeadingLen = 1;
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  EXPECT_NE(Out.Lines.front().find(" !evidence "), std::string::npos);
+  auto Mod = PatternParser::parseLine(Out.Lines.front());
+  ASSERT_FALSE(bool(Mod));
+  EXPECT_NE(toString(Mod.takeError()).find("not a matchable signature"), std::string::npos);
 }

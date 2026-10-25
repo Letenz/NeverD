@@ -138,7 +138,7 @@ llvm::Error SignatureDB::loadFile(const std::filesystem::path &Path) {
   if (Ext == ".json")
     return loadFeaturePack(Path);
 
-  if (Ext == PatternExtension) {
+  if (Ext == PatternExtension || Ext == NativePatternExtension) {
     SigSource Src;
     Src.Path = pathToUTF8(Path);
     Src.LibraryName = libraryName(Path);
@@ -214,7 +214,7 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
         llvm::inconvertibleErrorCode());
   }
 
-  // Collect all .pat files first, then parse in parallel.
+  // Collect ordinary and native patterns first, then parse in parallel.
   std::vector<std::filesystem::path> PatFiles;
   std::filesystem::directory_iterator It(Dir, EC);
   const std::filesystem::directory_iterator End;
@@ -231,7 +231,9 @@ SignatureDB::listDirectory(const std::filesystem::path &Dir) {
           "cannot inspect signature entry: " + pathToUTF8(It->path()) + ": " +
               TypeError.message(),
           llvm::inconvertibleErrorCode());
-    if (IsRegular && It->path().extension() == PatternExtension.data())
+    const auto Ext = It->path().extension();
+    if (IsRegular && (Ext == PatternExtension.data() ||
+                      Ext == NativePatternExtension.data()))
       PatFiles.push_back(It->path());
     It.increment(EC);
     if (EC)
@@ -729,6 +731,8 @@ SignatureDB::settle(llvm::ArrayRef<const SigMatch *> Proposals) {
       std::set_intersection(Shared.begin(), Shared.end(), Names.begin(),
                             Names.end(), std::back_inserter(Merged));
       Shared.swap(Merged);
+      if (Shared.empty())
+        return std::nullopt;
       Merged.clear();
       std::set_union(Routine.Names.begin(), Routine.Names.end(), Names.begin(),
                      Names.end(), std::back_inserter(Merged));
@@ -752,15 +756,29 @@ SignatureDB::settle(llvm::ArrayRef<const SigMatch *> Proposals) {
   return Routine;
 }
 
-std::unordered_map<uint64_t, SignatureDB::SettledRoutine>
-SignatureDB::settleRoutines() const {
-  std::unordered_map<uint64_t, std::vector<const SigMatch *>> Proposed;
+std::unordered_map<uint64_t, std::string>
+SignatureDB::buildCandidateNameMap() const {
+  // One contiguous grouping avoids a hash node and a separate vector
+  // allocation for every function, which is usually named by one match.
+  std::vector<const SigMatch *> Proposed;
+  Proposed.reserve(Matches.size());
   for (const SigMatch &M : Matches)
-    Proposed[M.Address].push_back(&M);
-  std::unordered_map<uint64_t, SettledRoutine> Settled;
-  for (const auto &[Address, Proposals] : Proposed)
-    if (std::optional<SettledRoutine> Routine = settle(Proposals))
-      Settled.emplace(Address, std::move(*Routine));
+    Proposed.push_back(&M);
+  llvm::sort(Proposed, [](const SigMatch *A, const SigMatch *B) {
+    return A->Address < B->Address;
+  });
+  std::unordered_map<uint64_t, std::string> Settled;
+  Settled.reserve(Proposed.size());
+  for (size_t First = 0; First < Proposed.size();) {
+    size_t End = First + 1;
+    while (End < Proposed.size() &&
+           Proposed[End]->Address == Proposed[First]->Address)
+      ++End;
+    if (std::optional<SettledRoutine> Routine =
+            settle(llvm::ArrayRef(Proposed).slice(First, End - First)))
+      Settled.emplace(Proposed[First]->Address, Routine->Name);
+    First = End;
+  }
   return Settled;
 }
 
@@ -779,14 +797,6 @@ SignatureDB SignatureDB::snapshotForAnalysis() const {
   Snapshot.FeaturePacks = FeaturePacks;
   Snapshot.FeatureGeneration = FeatureGeneration;
   return Snapshot;
-}
-
-std::unordered_map<uint64_t, std::string>
-SignatureDB::buildCandidateNameMap() const {
-  std::unordered_map<uint64_t, std::string> Map;
-  for (const auto &[Address, Routine] : settleRoutines())
-    Map.emplace(Address, std::string(Routine.Name));
-  return Map;
 }
 
 void SignatureDB::clear() {
@@ -1098,6 +1108,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   std::vector<uint32_t> ConfirmedMetadata;
   llvm::DenseSet<size_t> ContradictedMetadata;
   llvm::DenseMap<uint64_t, std::optional<llvm::StringRef>> VTableTypes;
+  std::vector<uint8_t> Unconfirmable;
   for (size_t I = 0; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
     llvm::SmallVector<StoredName, 8> References(ReferencesOf(I).begin(),
@@ -1118,8 +1129,22 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
              References[End].Offset == References[R].Offset)
         ++End;
       ++Branches[I];
-      const std::optional<Branch> To =
-          branchTarget(Img, Start, References[R].Offset);
+      std::optional<Branch> To = branchTarget(Img, Start, References[R].Offset);
+      // Taking a named function's address carries the same exact target
+      // constraint as calling it. Metadata symbols retain their data-specific
+      // checks and cannot turn a vftable or import slot into executable code.
+      if (!To &&
+          llvm::none_of(llvm::ArrayRef(References).slice(R, End - R),
+                        [](const StoredName &Name) {
+                          return llvm::StringRef(Name.Name).starts_with(
+                                     COFFImportPointerPrefix) ||
+                                 coff_loader::primaryVTableTypeName(Name.Name)
+                                     .has_value();
+                        }))
+        if (const auto Target =
+                addressReferenceTarget(Img, Start, References[R].Offset))
+          if (Img.isCodeAddress(*Target))
+            To = Branch{*Target, false};
       if (To) {
         Site Where;
         for (size_t Alternative = R; Alternative < End; ++Alternative)
@@ -1183,6 +1208,18 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       }
       R = End;
     }
+    if (RequiresReferences(I) &&
+        (ContradictedMetadata.contains(I) ||
+         Branches[I] !=
+             Sites.size() - FirstSite[I] +
+                 (ConfirmedMetadata.empty() ? 0 : ConfirmedMetadata[I]))) {
+      // Every reference must either have immutable metadata confirmation or
+      // an executable target whose candidates can change. No graph iteration
+      // can repair a missing/unsupported field or absent import/type evidence.
+      if (Unconfirmable.empty())
+        Unconfirmable.resize(Matches.size(), 0);
+      Unconfirmable[I] = 1;
+    }
   }
   FirstSite[Matches.size()] = Sites.size();
 
@@ -1194,6 +1231,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   llvm::DenseSet<Entry> DisprovedPatterns;
   std::vector<Entry> Calling, At;
   for (size_t I = 0; I < Matches.size(); ++I) {
+    if (!Unconfirmable.empty() && Unconfirmable[I])
+      continue;
     At.emplace_back(Matches[I].Address, I);
     for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
       Calling.emplace_back(Sites[S].Target, I);
@@ -1234,15 +1273,16 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   std::vector<Entry> PatternsAt;
   PatternsAt.reserve(Hits.size());
   for (const SignatureMatcher::Hit &Hit : Hits)
-    PatternsAt.emplace_back(Hit.Address, Hit.Module);
+    // Required hits support callers only after settlement. Do not sort or
+    // search them again as raw evidence that PatternAt cannot use.
+    if (!Modules[Hit.Module].RequireReferences)
+      PatternsAt.emplace_back(Hit.Address, Hit.Module);
   llvm::sort(PatternsAt);
   auto PatternAt = [&](std::string_view Name, uint64_t Address) {
     for (const Entry &Hit : Range(PatternsAt, Address)) {
       // Context-dependent patterns cannot bootstrap each other from bytes.
       // Only their confirmed settlement can support a caller; an unvisited
       // target's contextual byte hit remains insufficient evidence.
-      if (Modules[Hit.second].RequireReferences)
-        continue;
       for (const StoredName &Public : Modules[Hit.second].publicNames())
         if (Public.Offset == 0 && Public.Name == Name &&
             !DisprovedPatterns.contains(Hit))
@@ -1363,7 +1403,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // to check checks them in parallel, against what the last one settled.
   std::vector<size_t> Work;
   for (size_t I = 0; I < Matches.size(); ++I)
-    if (!ReferencesOf(I).empty())
+    if (!ReferencesOf(I).empty() &&
+        (Unconfirmable.empty() || !Unconfirmable[I]))
       Work.push_back(I);
   std::vector<size_t> Next;
   std::vector<uint8_t> Queued(Matches.size(), 0);

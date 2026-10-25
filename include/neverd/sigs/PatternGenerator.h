@@ -65,6 +65,10 @@ struct PatternGeneratorOptions {
   /// byte coverage, including functions below the ordinary fixed-byte floor.
   /// Unreferenced functions retain the ordinary floor and output format.
   bool RequireReferences = false;
+  /// Emit complete collision evidence without the size/fixed-byte floors.
+  /// Every line is marked !evidence and rejected by the matching parser.
+  /// It is input to offline supplement validation, never a signature pack.
+  bool CollisionEvidence = false;
   /// The names a COFF link resolves a symbol to when no object defines it,
   /// as `/alternatename:symbol=alternate` directives give them (see
   /// collectAlternateNames).  A reference to the symbol also names each

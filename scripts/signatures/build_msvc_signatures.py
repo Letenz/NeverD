@@ -112,6 +112,15 @@ RESERVED_LIBRARY = re.compile(r"vs[0-9]{4}|winsdk")
 # <name>.pat, then <name>.part2.pat, <name>.part3.pat, ...
 MAX_FILE_BYTES = 50_000_000
 
+# Native constraints use a separate extension so old directory readers skip
+# them while retaining all ordinary patterns.
+PATTERN_SUFFIXES = (".pat", ".npat")
+
+
+def pattern_files(directory: Path) -> list[Path]:
+    return sorted(path for path in directory.iterdir()
+                  if path.is_file() and path.suffix in PATTERN_SUFFIXES)
+
 # Lines whose first bytes are relocated are not searched for routines that
 # state them; see settle_directory.
 MIN_PREFIX_BYTES = 4
@@ -431,6 +440,8 @@ def parse_line(text: str) -> PatternLine | None:
     if not stripped or stripped.startswith((";", "#")) or stripped == "---":
         return None
     tokens = stripped.split()
+    if len(tokens) > 4 and tokens[4] == "!evidence":
+        raise BuildError("collision evidence is not a candidate pattern")
     if len(tokens) < 6:
         raise BuildError(f"malformed pattern line: {stripped[:120]}")
     names: list[str] = []

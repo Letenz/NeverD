@@ -77,7 +77,7 @@ public:
   /// Replace the current database with all pattern files from a directory.
   llvm::Error loadDirectory(const std::filesystem::path &Dir);
 
-  /// The pattern files of a directory, sorted by name.
+  /// The .pat and .npat files of a directory, sorted by name.
   static llvm::Expected<std::vector<std::filesystem::path>>
   listDirectory(const std::filesystem::path &Dir);
 
@@ -294,8 +294,6 @@ private:
     }
     bool operator==(const SettledRoutine &) const = default;
   };
-  /// The candidate routines the matches settle; see buildCandidateNameMap.
-  std::unordered_map<uint64_t, SettledRoutine> settleRoutines() const;
   /// What \p Proposals, the matches at one address, settle there.
   static std::optional<SettledRoutine>
   settle(llvm::ArrayRef<const SigMatch *> Proposals);

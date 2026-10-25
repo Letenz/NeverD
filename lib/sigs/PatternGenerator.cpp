@@ -459,10 +459,10 @@ void countOrEmit(raw_ostream &OS, ArrayRef<StringRef> Names,
                  const PatternGeneratorOptions &Opts,
                  PatternGeneratorStats &Stats,
                  ArrayRef<FuncRef> References = {}) {
-  if (Data.size() < Opts.MinFuncSize)
+  if (Data.empty() || (!Opts.CollisionEvidence && Data.size() < Opts.MinFuncSize))
     ++Stats.TooSmall;
   else if (statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes &&
-           !(Opts.RequireReferences && !References.empty()))
+           !(Opts.RequireReferences && !References.empty()) && !Opts.CollisionEvidence)
     ++Stats.TooWeak;
   else if (emitPatternLine(OS, Names, Data, Wildcard, Opts, References))
     ++Stats.Functions;
@@ -1002,14 +1002,19 @@ struct COFFCodeSection {
   std::vector<Relocation> Relocations;
 };
 
-bool isCOFFFunctionSymbol(const COFFSymbolRef &Sym) {
+bool hasCOFFFunctionType(const COFFSymbolRef &Sym) {
   if (Sym.getComplexType() != COFF::IMAGE_SYM_DTYPE_FUNCTION)
     return false;
   uint8_t Class = Sym.getStorageClass();
   if (Class != COFF::IMAGE_SYM_CLASS_EXTERNAL &&
       Class != COFF::IMAGE_SYM_CLASS_STATIC)
     return false;
-  return !COFF::isReservedSectionNumber(Sym.getSectionNumber());
+  return true;
+}
+
+bool isCOFFFunctionSymbol(const COFFSymbolRef &Sym) {
+  return hasCOFFFunctionType(Sym) &&
+         !COFF::isReservedSectionNumber(Sym.getSectionNumber());
 }
 
 PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
@@ -1149,7 +1154,9 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
         continue;
       }
       if (AddressReference) {
-        if (!coff_loader::primaryVTableTypeName(*TargetName))
+        if (!coff_loader::primaryVTableTypeName(*TargetName) &&
+            !(hasCOFFFunctionType(*TargetOrErr) &&
+              TargetOrErr->getSectionNumber() >= COFF::IMAGE_SYM_UNDEFINED))
           continue;
         At = Field;
       }
@@ -1277,8 +1284,9 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
                      ArrayRef<FuncRef> References) {
   const size_t Size = Data.size();
   const bool RequireReferences = Opts.RequireReferences && !References.empty();
-  if (Names.empty() || Size < Opts.MinFuncSize || Wildcard.size() != Size ||
-      (!RequireReferences &&
+  if (Names.empty() || Size == 0 ||
+      (!Opts.CollisionEvidence && Size < Opts.MinFuncSize) || Wildcard.size() != Size ||
+      (!RequireReferences && !Opts.CollisionEvidence &&
        statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes))
     return false;
 
@@ -1293,7 +1301,9 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
 
   OS << format(CRCFieldsFormat, static_cast<unsigned>(CRCLen), CRC,
                static_cast<unsigned>(Size));
-  if (RequireReferences)
+  if (Opts.CollisionEvidence)
+    OS << FieldSeparator << CollisionEvidenceOnly;
+  else if (RequireReferences)
     OS << FieldSeparator << RequiredReferences;
   // Every name labels the function's start.
   for (StringRef Name : Names)
@@ -1310,7 +1320,7 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
   // difference between a name worth displaying and a name worth acting on.
   const size_t TailStart = CRCStart + CRCLen;
   const size_t TailEnd =
-      RequireReferences
+      RequireReferences || Opts.CollisionEvidence
           ? Size
           : std::min(Size, TailStart + static_cast<size_t>(Opts.TailLen));
   if (TailEnd > TailStart) {
