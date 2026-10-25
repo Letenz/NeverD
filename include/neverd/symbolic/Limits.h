@@ -41,6 +41,11 @@ inline constexpr unsigned kSymKnownBitsMaxCachedFacts = 65536;
 // include/neverd/symbolic/SymMBA.h
 inline constexpr size_t kSymMBAMBARewriteCacheCapacity = 65536;
 
+// lib/symbolic/expr/SymExprWalk.cpp and SymExprEval.cpp
+// Small reachable regions dominate the bottom-up MBA walk. These tables grow
+// normally when a graph needs more entries; this is not an analysis limit.
+inline constexpr unsigned kSymExprTraversalInlineBuckets = 32;
+
 // lib/symbolic/expr/SymExprCompare.cpp
 inline constexpr unsigned kSymExprCompareMaxNodes = 32;
 inline constexpr unsigned kSymExprCompareMaxEdges = 64;

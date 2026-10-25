@@ -1009,6 +1009,26 @@ TEST(SymExpr, SubstitutionRebuildsThroughTheCanonicalisingBuilders) {
   EXPECT_EQ(Ctx.substituteVar(Sum, Ctx.varId(Y), Ctx.mkZero(W32)), X);
 }
 
+TEST(SymExpr, RebuildingMergedMasksRetainsDemandedSimplification) {
+  for (unsigned Width : {8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    auto C = [&](uint64_t Value) { return Ctx.mkConst(Width, Value); };
+    const auto Sum = Ctx.mkAdd(Ctx.mkAnd(X, C(15)), Ctx.mkAnd(X, C(31)));
+    // Neither sparse mask demands a contiguous prefix. Their union does,
+    // but mask merging deliberately defers that additional normalization.
+    const auto Merged = Ctx.mkOr(Ctx.mkAnd(Sum, C(5)), Ctx.mkAnd(Sum, C(10)));
+    const auto Rebuilt = Ctx.rebuild(Merged, Ctx.operands(Merged));
+    EXPECT_LT(Ctx.readabilityCost(Rebuilt), Ctx.readabilityCost(Merged));
+    SymEvalPlan Plan(Ctx, Rebuilt);
+    for (uint64_t Value = 0; Value < 256; ++Value) {
+      const llvm::APInt Input(Width, Value);
+      EXPECT_EQ(Plan.eval({Input}), llvm::APInt(Width, (2 * Value) & 15));
+    }
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // Evaluation
 //===----------------------------------------------------------------------===//

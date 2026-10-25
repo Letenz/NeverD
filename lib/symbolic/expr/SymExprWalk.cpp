@@ -13,6 +13,7 @@
 
 #include "../SymPrintShape.h"
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -30,7 +31,9 @@ namespace neverd::symbolic {
 //===----------------------------------------------------------------------===//
 
 size_t SymContext::dagSize(SymRef R) const {
-  llvm::DenseSet<uint32_t> Seen;
+  llvm::SmallDenseSet<uint32_t,
+                      limits::symbolic::kSymExprTraversalInlineBuckets>
+      Seen;
   llvm::SmallVector<SymRef, 32> Work{R};
   while (!Work.empty()) {
     SymRef Cur = Work.pop_back_val();
@@ -99,7 +102,9 @@ SymReadability SymContext::readability(SymRef R) const {
 
 void SymContext::collectVars(SymRef R,
                              llvm::SmallVectorImpl<uint32_t> &Out) const {
-  llvm::DenseSet<uint32_t> Seen;
+  llvm::SmallDenseSet<uint32_t,
+                      limits::symbolic::kSymExprTraversalInlineBuckets>
+      Seen;
   llvm::SmallVector<SymRef, 32> Work{R};
   while (!Work.empty()) {
     SymRef Cur = Work.pop_back_val();
@@ -136,7 +141,9 @@ SymContext::substituteAll(llvm::ArrayRef<SymRef> Roots,
   // Rebuild bottom-up over a topological order.  Going through the builders
   // means the result is canonical, so a substitution that makes two subterms
   // equal has that equality recognised immediately.
-  llvm::DenseMap<uint32_t, SymRef> Done;
+  llvm::SmallDenseMap<uint32_t, SymRef,
+                      limits::symbolic::kSymExprTraversalInlineBuckets>
+      Done;
 
   llvm::SmallVector<std::pair<SymRef, bool>, 32> Work;
   for (SymRef R : OwnedRoots)
@@ -194,6 +201,12 @@ SymRef SymContext::substituteVar(SymRef R, uint32_t VarIdx, SymRef Val) {
 }
 
 SymRef SymContext::rebuild(SymRef Orig, llvm::ArrayRef<SymRef> NewOps) {
+  // Flat sums and products have already collected their terms and factors.
+  // Other builders can defer work (for example, merged masks), even when
+  // their edges are unchanged.
+  if ((op(Orig) == SymOp::Add || op(Orig) == SymOp::Mul) &&
+      NewOps == operands(Orig))
+    return Orig;
   // Copied rather than referenced: every builder below can intern, which grows
   // the node vector and would invalidate a reference into it.
   const SymNode N = Nodes[Orig.index()];

@@ -43,6 +43,10 @@ inline constexpr unsigned kMaxCubicCofactorSearchAtoms = 3;
 inline constexpr unsigned kMinQuadraticRowAtoms = 4;
 inline constexpr unsigned kMaxQuadraticRowAtoms = 8;
 inline constexpr std::size_t kMaxQuadraticRowTerms = 8;
+inline constexpr unsigned kMBAAbstractionInlineEntries = 16;
+// Dense tables need spare buckets before their load factor triggers growth.
+inline constexpr unsigned kMBAAbstractionInlineBuckets =
+    2 * kMBAAbstractionInlineEntries;
 inline constexpr std::size_t kMinCompletedRegionCacheWork = 64;
 inline constexpr std::size_t kCompletedMemoEntryBytes = 256;
 inline constexpr std::size_t kCompletedMemoStorageDivisor = 8;
