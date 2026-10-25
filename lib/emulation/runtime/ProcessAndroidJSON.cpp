@@ -875,6 +875,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       Out.JavaLibrary = std::move(*S);
     } else if (Name == field::ObserveJavaState ||
                Name == field::ObserveCPUState ||
+               Name == field::ObserveThreadCPUStates ||
                Name == field::ObserveMemoryOnFailure) {
       auto B = V.getAsBoolean();
       if (!B)
@@ -883,6 +884,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Out.ObserveJavaState = *B;
       else if (Name == field::ObserveCPUState)
         Out.ObserveCPUState = *B;
+      else if (Name == field::ObserveThreadCPUStates)
+        Out.ObserveThreadCPUStates = *B;
       else
         Out.ObserveMemoryOnFailure = *B;
     } else if (Name == field::ReadMemory) {
@@ -980,8 +983,7 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                          {field::Trace, std::move(Trace)},
                          {field::TraceTruncated, Result.TraceTruncated},
                          {field::Memory, std::move(Memory)}};
-  if (Result.CPUState) {
-    const auto &State = *Result.CPUState;
+  auto CPUStateJSON = [](const NativeCPUState &State) {
     llvm::json::Value Registers = nullptr;
     if (State.Registers) {
       llvm::json::Object Values;
@@ -990,10 +992,21 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
             llvm::json::Array{bits(R.Value[0]), bits(R.Value[1])};
       Registers = std::move(Values);
     }
-    Out[field::CPUState] =
-        llvm::json::Object{{field::ThreadID, State.ThreadID},
-                           {field::ObservationRegisters, std::move(Registers)},
-                           {field::Diagnostic, State.Diagnostic}};
+    return llvm::json::Object{
+        {field::ThreadID, State.ThreadID},
+        {field::ObservationRegisters, std::move(Registers)},
+        {field::Diagnostic, State.Diagnostic}};
+  };
+  if (Result.CPUState)
+    Out[field::CPUState] = CPUStateJSON(*Result.CPUState);
+  if (Result.ThreadCPUStates) {
+    llvm::json::Array States;
+    for (const auto &Thread : *Result.ThreadCPUStates) {
+      auto State = CPUStateJSON(Thread.State);
+      State[field::CurrentCPU] = Thread.Current;
+      States.push_back(std::move(State));
+    }
+    Out[field::ThreadCPUStates] = std::move(States);
   }
   if (!Result.JNIRegistrations.empty()) {
     llvm::json::Array Bindings;

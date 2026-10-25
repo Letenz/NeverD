@@ -8003,12 +8003,28 @@ backend.
 It publishes a complete packet or an error and never saves/restores a context,
 executes an instruction, or reads guest memory. Width validation rejects invalid
 backend values; architecture transports retain ownership of normalization.
+Its saved-context overload reads the same inventory directly from a context
+owned by that backend and its current address space. It uses the same register
+extraction and normalization as current-state reads, without restoring the
+context, accessing guest memory, or releasing faults or pending events. Expired,
+moved-from, foreign-owner and foreign-space contexts fail clearly; external
+backends without saved-state observation return an explicit unsupported error.
 Android's opt-in `observe_cpu_state` reserves its raw register-byte budget before
 execution and reports the current thread under `android.cpu_state`, even after a
 terminal CPU fault. Registers are named pairs of hexadecimal low/high 64-bit
 words. Capture failure has `registers: null` and a separate diagnostic, preserving
 the original workload stop. This is an observation of modeled architectural
 registers, not suspended-thread state or a resumable VM checkpoint.
+
+The separate `observe_thread_cpu_states` option reserves register bytes for the
+configured thread limit and emits `android.thread_cpu_states` in thread-creation
+order. It captures each unfinished thread: `current_cpu: true` reads the stopped
+CPU; other entries read the scheduler's saved context at its last switch. A
+failed capture retains that thread's diagnostic and does not prevent later
+observations or replace the workload stop. Completed and retired threads are
+omitted because their former contexts do not represent final state. An enabled
+option with no unfinished threads emits an empty array; the disabled option
+omits the field. Neither option captures guest memory or a resumable checkpoint.
 
 Android's separate `observe_memory_on_failure` option uses the existing
 `ExecutionBackend::snapshotBacking` owner for requested terminal RAM ranges.

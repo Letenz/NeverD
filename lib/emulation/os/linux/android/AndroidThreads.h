@@ -66,6 +66,7 @@ public:
   /// Complete an interrupted libc wrapper only after its handler returns.
   llvm::Error resumeSignal(Bionic &LibC);
   void report();
+  std::vector<NativeThreadCPUState> observeCPUStates() const;
   std::vector<linux_model::ProcTask> procTasks() const;
 
 private:

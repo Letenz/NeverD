@@ -2267,7 +2267,8 @@ TEST_F(ProcessPublic, AndroidTerminalCPUStateMatchesSDKAndCLI) {
       Options[field::Android] = llvm::json::Object{
           {field::EntrySymbol, Entry},
           {field::Arguments, llvm::json::Array{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}},
-          {field::ObserveCPUState, Observe}};
+          {field::ObserveCPUState, Observe},
+          {field::ObserveThreadCPUStates, Observe}};
       const auto Request = jsonText(std::move(Options));
       auto Text = takeString(neverd_emulate_process_json(
           Session, Path.c_str(), AndroidNativeAArch64, Request.c_str()));
@@ -2282,6 +2283,7 @@ TEST_F(ProcessPublic, AndroidTerminalCPUStateMatchesSDKAndCLI) {
       ASSERT_NE(Android, nullptr);
       if (!Observe) {
         EXPECT_FALSE(Android->get(field::CPUState));
+        EXPECT_FALSE(Android->get(field::ThreadCPUStates));
         Baseline = std::move(Parsed);
         continue;
       }
@@ -2296,7 +2298,21 @@ TEST_F(ProcessPublic, AndroidTerminalCPUStateMatchesSDKAndCLI) {
       ASSERT_NE(X0, nullptr);
       EXPECT_EQ((*X0)[0].getAsString(), Returned ? "192" : "13");
       EXPECT_EQ((*X0)[1].getAsString(), "0");
+      const auto *Threads = Android->getArray(field::ThreadCPUStates);
+      ASSERT_NE(Threads, nullptr);
+      if (Returned) {
+        EXPECT_TRUE(Threads->empty());
+      } else {
+        ASSERT_EQ(Threads->size(), 1u);
+        const auto *Thread = (*Threads)[0].getAsObject();
+        ASSERT_NE(Thread, nullptr);
+        EXPECT_EQ(Thread->getInteger(field::ThreadID), 1000);
+        EXPECT_EQ(Thread->getBoolean(field::CurrentCPU), true);
+        EXPECT_EQ(*Thread->get(field::ObservationRegisters),
+                  *State->get(field::ObservationRegisters));
+      }
       Android->erase(field::CPUState);
+      Android->erase(field::ThreadCPUStates);
       EXPECT_EQ(Parsed, Baseline);
     }
   }

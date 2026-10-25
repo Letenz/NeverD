@@ -7547,6 +7547,10 @@ writer copies, moves and resets. Both C emitters share this allocator.
 `NeverDRegisterSnapshotTests` checks the complete architecture inventories,
 lossless scalar/vector/80-bit values, refusal of every injected register-read
 failure, and repeated observations through available checked backends.
+The saved-context cases also cover software Unicorn and available checked
+transports, current/saved register separation, refreshed contexts, owner expiry,
+moves and address-space rebinding. Observing saved state after a terminal fault
+must preserve the current registers, fault and RAM; restore remains rejected.
 `AndroidObservation.TerminalRegister*` executes authored ARM64 register loads,
 compares complete reports with observation disabled, preserves normal/error and
 budget stops, checks stopped-child ownership across quanta, and enforces exact
@@ -7556,6 +7560,15 @@ opt-in JSON, high-bit preservation, and separate capture failures. Run these wit
 service stops through both public surfaces, then run
 the Android native, Linux process and execution-session suites after changes to
 terminal register observation. Unavailable transports are skips.
+
+`AndroidObservation.SavedThreadRegisters*` compares complete reports with thread
+observation disabled, then verifies independent GPR/SIMD/TLS and stack ownership
+for two looping workers and a waiting parent across three instruction quanta.
+Joined/retired threads are omitted. `ThreadRegisterBudget*` reserves the full
+configured owner count before execution; terminal-stop cases include faults and
+resource limits. `ProcessReport.ThreadCPUStates*` distinguishes disabled, empty,
+failed and successful captures; the public terminal-state test exercises the
+same opt-in through the SDK and CLI.
 
 `UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
 distinct scalar and SIMD values across repeated checked user/supervisor steps

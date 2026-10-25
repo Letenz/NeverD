@@ -1,5 +1,6 @@
 add_neverd_unittest(NeverDRegisterSnapshotTests
   RegisterSnapshotTests.cpp
+  ContextRegisterSnapshotTests.cpp
   TIMEOUT 20
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationCPU)
