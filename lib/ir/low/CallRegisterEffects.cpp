@@ -1051,6 +1051,11 @@ registerLeaf(const BinaryImage &Image, CallRegisterBodyView Body) {
       Body.Blocks.size() != 1)
     return {};
   const auto &Block = Body.Blocks.front();
+  if (const auto *Exception =
+          Image.ExceptionMetadata.findFunction(Block.StartAddr);
+      Exception && (Exception->Personality != ExceptionPersonality::None ||
+                    Exception->ParseStatus != ExceptionParseStatus::Complete))
+    return {};
   if (!Block.Preds.empty() || !Block.Succs.empty() ||
       !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
       Block.Ops.empty() ||

@@ -4400,10 +4400,11 @@ BinaryImage registerQueryImage(unsigned Mutation = 0) {
   put(Code, Producer, Leaf);
   auto Image = makeImage(
       Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}}, {});
-  if (Mutation == 12) {
+  if (Mutation == 12 || Mutation == 13) {
     ExceptionFunction Exception;
     Exception.CodeRange = {Producer, Producer + Leaf.size()};
-    Exception.Personality = ExceptionPersonality::Unknown;
+    Exception.Personality = Mutation == 12 ? ExceptionPersonality::Unknown
+                                           : ExceptionPersonality::None;
     Exception.ParseStatus = ExceptionParseStatus::Partial;
     Image.ExceptionMetadata.Functions.push_back(std::move(Exception));
   }
@@ -4485,7 +4486,7 @@ int main(void) {
 
 TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
   constexpr va_t Producer = Text + 0x80;
-  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 12u}) {
+  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 12u, 13u}) {
     SCOPED_TRACE(Mutation);
     auto Image = registerQueryImage(Mutation);
     llvm::LLVMContext Context;
