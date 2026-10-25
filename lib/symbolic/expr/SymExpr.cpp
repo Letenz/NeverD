@@ -119,6 +119,7 @@ const char *symOpName(SymOp Op) {
 SymContext::SymContext() {
   Nodes.reserve(1024);
   OperandPool.reserve(2048);
+  InternNext.reserve(Nodes.capacity());
 }
 
 //===----------------------------------------------------------------------===//
@@ -137,9 +138,9 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
 
   // Split the full hash across both fields. A constant second field biases
   // DenseMap's pair mixer; the upper half also cannot equal a 64-bit sentinel.
-  auto &Bucket = InternTable[{H >> 32, uint32_t(H)}];
-  for (uint32_t Cand : Bucket) {
-    const SymNode &N = Nodes[Cand];
+  auto &Head = InternTable[{H >> 32, uint32_t(H)}];
+  for (auto Cand = Head; Cand; Cand = InternNext[Cand.index()]) {
+    const SymNode &N = Nodes[Cand.index()];
     if (N.Op != Op || N.Width != Width || N.Aux != Aux ||
         N.NumOperands != Ops.size())
       continue;
@@ -151,7 +152,7 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
       }
     }
     if (Same)
-      return SymRef(Cand);
+      return Cand;
   }
 
   SymNode N;
@@ -164,8 +165,9 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
 
   auto Index = static_cast<uint32_t>(Nodes.size());
   Nodes.push_back(N);
-  Bucket.push_back(Index);
-  return SymRef(Index);
+  InternNext.push_back(Head);
+  Head = SymRef(Index);
+  return Head;
 }
 
 llvm::APInt SymContext::maskToWidth(const llvm::APInt &V,
