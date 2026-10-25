@@ -26,22 +26,23 @@ neverd::sourceCallReturnAddressBias(const BinaryImage *Image, Arch Architecture,
                                     va_t Address) {
   if (Architecture == Arch::AArch64)
     return 0;
-  if (Architecture != Arch::X64 || !Image)
+  if ((Architecture != Arch::X64 && Architecture != Arch::X86) || !Image)
     return {};
   const auto *P = Image->readVA(Address, 2);
   if (!P)
     return {};
+  const auto Width = getTargetRegInfo(Architecture).PointerSize;
   if (P[0] == 0xe8)
-    return 8;
+    return Width;
   if (P[0] == 0xe9 || P[0] == 0xeb)
     return 0;
-  if ((P[0] & 0xf0) == 0x40) {
+  if (Architecture == Arch::X64 && (P[0] & 0xf0) == 0x40) {
     P = Image->readVA(Address + 1, 2);
     if (!P)
       return {};
   }
   if (P[0] == 0xff && ((P[1] >> 3) & 7) == 2)
-    return 8;
+    return Width;
   if (P[0] == 0xff && ((P[1] >> 3) & 7) == 4)
     return 0;
   return {};

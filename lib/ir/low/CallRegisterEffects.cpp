@@ -1157,6 +1157,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
                     const std::map<va_t, va_t> *ArgumentSources,
                     const libc::StackProbeIndex *StackProbes) {
   LocalRegisterEffect Effect;
+  Effect.UnknownObservers = F.HasIndependentRoots;
   if (!F.Complete || F.UnsafeIndirectBranches || F.Blocks.empty()) {
     Effect.Unknown = true;
     Effect.Incomplete = true;
@@ -1173,6 +1174,7 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
   std::map<int, size_t> IndexOfId;
   std::set<va_t> BlockStarts;
   for (size_t I = 0; I < F.Blocks.size(); ++I) {
+    Effect.UnknownObservers |= IndexOfId.count(F.Blocks[I].Id) != 0;
     IndexOfId[F.Blocks[I].Id] = I;
     BlockStarts.insert(F.Blocks[I].StartAddr);
   }
@@ -1188,10 +1190,13 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
       findRegisterSaveAreaSpills(Img, F, IndexOfId);
   for (size_t BI = 0; BI < F.Blocks.size(); ++BI) {
     const LowBlock &Block = F.Blocks[BI];
+    Effect.UnknownObservers |= !Block.ExceptionalSuccs.empty();
     RegisterBlock &Out = Effect.Blocks[BI];
     for (int Succ : Block.Succs)
       if (auto It = IndexOfId.find(Succ); It != IndexOfId.end())
         Out.Succs.push_back(It->second);
+      else
+        Effect.UnknownObservers = true;
     std::map<size_t, uint8_t> MergeWrites;
     std::set<size_t> MergeReads;
     findMaskedMerges(Block, MergeWrites, MergeReads);
@@ -1552,6 +1557,7 @@ CallRegisterSummaries solveCallRegisterEffects(
     const std::map<va_t, GPRReadWidths> &FixedEntryReads,
     const std::map<va_t, int> &FixedEntryStackArgs) {
   CallRegisterSummaries Result;
+  Result.Unread = proveUnreadCallRegisters(Funcs);
   for (const auto &[Entry, Effect] : Funcs)
     if (!Effect->Incomplete && !Effect->ExitConstants.empty() &&
         !DispatchThunks.count(Entry))

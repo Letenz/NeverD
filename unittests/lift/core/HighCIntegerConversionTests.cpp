@@ -169,6 +169,37 @@ static const uint64_t xs[] = {0, 1, 0x7F, 0x80, 0xFF, 0x7FFFFFFF, 0x80000000,
                               0xFFFFFFFFFFFFFFFFull};
 )";
 
+TEST(HighCIntegerConversion, FloatingCallKeepsAConstantBitCast) {
+  for (const auto Architecture :
+       {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    for (uint16_t Bytes : {4, 8}) {
+      SCOPED_TRACE(Bytes);
+      const TypeRef Float = NdType::makeFloat(Bytes);
+      auto Parameter = typed(input(), Float);
+      Parameter->Var.Size = Bytes;
+      Parameter->Var.TheArch = Architecture;
+      HighFunc Callee = function("identity", Float, {result(Parameter)});
+      Callee.Entry = 0x2000;
+      Callee.Params = {{"arg0", Float}};
+      auto Value = cast(
+          constant(Bytes == 4 ? 0x3F800000ull : 0x3FF0000000000000ull, Bytes),
+          Float);
+      Value->Kind = ExprKind::BitCast;
+      auto Call = typed(HighExpr::makeCall("identity", 0x2000, {Value}), Float);
+      HighFunc Caller = function("call_constant", Float, {result(Call)});
+      Caller.Params.clear();
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(HighCEmitter().emit({Caller, Callee}, Out, Options));
+      compileAndRun(Source +
+                    "\nint main(void) { return call_constant() != 1.0; }\n");
+    }
+  }
+}
+
 TEST(HighCIntegerConversion, NarrowCopyKeepsLowBytesThroughSourceProjection) {
   for (const auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64}) {
     SCOPED_TRACE(static_cast<unsigned>(Architecture));
@@ -239,11 +270,12 @@ TEST(HighCIntegerConversion, ASignedCompareOfShiftsComparesSigned) {
   const TypeRef U32 = integer(4, false), I32 = integer(4, true);
   auto Low = lowPart(input(), U32);
   auto Second = op(NdOp::INT_RIGHT, lowPart(input(), U32), constant(8, 4), U32);
-  auto Less = op(NdOp::INT_SLESS, op(NdOp::INT_LEFT, Low, constant(24, 4), I32),
-                 op(NdOp::INT_LEFT, Second, constant(24, 4), I32),
-                 integer(1, false));
-  HighFunc F = function("signed_byte_less", integer(8, false),
-                        {result(extend(NdOp::INT_ZEXT, Less, integer(8, false)))});
+  auto Less =
+      op(NdOp::INT_SLESS, op(NdOp::INT_LEFT, Low, constant(24, 4), I32),
+         op(NdOp::INT_LEFT, Second, constant(24, 4), I32), integer(1, false));
+  HighFunc F =
+      function("signed_byte_less", integer(8, false),
+               {result(extend(NdOp::INT_ZEXT, Less, integer(8, false)))});
   const std::string Source = emit(F);
   compileAndRun(Source + R"(
 int main(void) {

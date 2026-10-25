@@ -3005,11 +3005,17 @@ struct CallStackProofCase {
     ASSERT_FALSE(F.CallInfos[0].IsIndirect);
     ASSERT_EQ(F.CallInfos[0].TargetAddr, Callee);
     const auto &Args = F.CallInfos[0].Args;
-    ASSERT_EQ(Args.size(), Expected ? 1U : 0U);
+    // The declared one-argument contract keeps its position even when no
+    // outgoing address is proved. It must not acquire the unrelated store.
+    ASSERT_EQ(Args.size(), 1U);
     if (Expected) {
       ASSERT_TRUE(Args[0].isConst());
       EXPECT_EQ(Args[0].ConstVal, 42U);
       EXPECT_EQ(Args[0].Size, TRI.PointerSize);
+    } else {
+      EXPECT_EQ(Args[0].Kind, MedVar::Unspecified);
+      EXPECT_EQ(Args[0].Size, TRI.PointerSize);
+      EXPECT_EQ(Args[0].TheArch, A);
     }
   }
 };
@@ -3536,7 +3542,10 @@ TEST(MedABIPass, X86CdeclRejectsConflictingPredecessorStackOffsets) {
   recoverCallAbi(Func, TheArch, Names, nullptr, &RegArity, &TotalArity);
 
   ASSERT_EQ(Func.CallInfos.size(), 1u);
-  EXPECT_TRUE(Func.CallInfos[0].Args.empty());
+  ASSERT_EQ(Func.CallInfos[0].Args.size(), 1u);
+  EXPECT_EQ(Func.CallInfos[0].Args[0].Kind, MedVar::Unspecified);
+  EXPECT_EQ(Func.CallInfos[0].Args[0].Size, TRI.PointerSize);
+  EXPECT_EQ(Func.CallInfos[0].Args[0].TheArch, TheArch);
 }
 
 TEST(MedABIPass, X86CdeclRecoversLoopCarriedCallSpRelativeSlots) {

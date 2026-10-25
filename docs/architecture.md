@@ -131,6 +131,15 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+`CallRegisterUnread` proves absent GPR input observations independently of
+argument inference. Opaque calls read every candidate family, and a nested
+call's may-write mask never kills a later input observation. Partial writes,
+exceptional entries, malformed successors and exhausted work remain conservative.
+Low-to-Med binds this evidence to the original direct-call occurrence and target;
+omitted-callee memoization includes it. Source scratch-restore liveness can cross
+only a still-matching call. Private-byte overwrite and escape checks stay in
+`MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
+
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.
 This keeps SSA promotion from recomputing whole-function dominance frontiers
@@ -1451,6 +1460,14 @@ and rows of `HeaderLibraryImages.def`: how an image's headers tell its kind
 (a PE's subsystem, the C library an ELF image under Linux runs on), and the
 libraries an image of each kind and architecture joins, in order. Its calling convention's rules then place
 each parameter (`placeSourceParameters`, one file per convention).
+`IntegerCallArguments` adapts those placements to physical integer and stack
+positions. The LLVM call-contract owner maps them to actual operands using
+the call's recorded register-bank sizes and stack byte offsets. LLVMC shares
+that binding for record construction, scalar types and argument limits, so
+omitting unused register operands cannot shift a record's stack fields.
+Missing or ambiguous carriers fail before source emission.
+The small `LLVMCallContract` component owns metadata readers and writers for
+both backends; using it from C emission does not depend on machine lifting.
 Independent declaration providers use `types::importPrototypes` at generation
 time, through `neverd_types_convert` and the standalone CLI. It imports missing
 prototypes with their dependency closure, shares structurally identical types,
@@ -1461,6 +1478,14 @@ dependency closure; absent selected names and provider parse errors prevent
 an import. This owner
 is separate from the runtime priority merge of system and program types; the
 flattened generated headers add no provider merge during decompilation.
+When the runtime merge knows its Windows kernel provider, the `ntifs.h`
+opaque `PEPROCESS`/`PETHREAD` aliases can use a complete PDB executive record
+whose first member is the corresponding kernel prefix at offset zero. This
+preserves the [documented opaque pointer identity](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle)
+while recovering the program's actual members. Existing program typedefs,
+`PKPROCESS`/`PKTHREAD`, unrelated providers and incomplete or mismatched records
+keep their original identity. The shared type library owns this association;
+both source emitters and the local-type views consume it.
 Callback types retain their source calling convention when local declarations
 become `NdType` values. The lightweight `CallingConvention.h` and existing
 `CallingConventions.def` own that identity; CodeView imports share one mapping.
@@ -11734,3 +11759,20 @@ Entry-stack offset recovery accepts a narrower scalar displacement only when
 its nonnegative value is independent of sign or zero extension. Pointer
 provenance and negative narrow constants cannot certify a frame offset. The
 same proof supplies stack annotations and saved-register recovery.
+
+Shared source stack preparation rejects exact entry-relative loads reached by
+an x86 CALL return-slot write that the reconstructed C frame does not contain.
+It reuses the ABI owner's current-SP walk and original call/jump encoding
+policy; a synthetic tail call supplies no push. Explicit later stores kill only
+the bytes they write on each incoming path. Unknown call positions, incomplete
+candidate graphs and exhausted observation budgets cannot grant separation.
+Both source routes receive the same conversion diagnostic before cleanup can
+forward an old constant. This guard neither materializes a relocatable return
+PC nor certifies unresolved addresses, callee memory effects or other targets.
+
+The shared entry-stack offset proof follows the lifter's exact zero-extension
+of a native 32-bit address into its 64-bit memory-address container. It does
+not authenticate a wider incoming SP, a signed extension, a truncated 64-bit
+pointer or an ambiguous definition. Alignment rewrites keep their existing
+native-width rules. Source call-slot observation therefore sees the same frame
+bytes for direct pointer-width addresses and canonical widened addresses.

@@ -5808,9 +5808,7 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       Function && ((Library && Function->Name == Library.Name) || SourceImport);
   const bool Grouped = Function && groupedFloatingCall(Call, *Function);
   const auto RecordCall =
-      SourceRecord ? libc::recordCallArguments(*Function, Opts.TheArch,
-                                               Opts.Format, libcVariant())
-                   : std::nullopt;
+      SourceRecord ? recordCallArguments(Call, *Function) : std::nullopt;
   if (SourceRecord && !RecordCall &&
       (Function->PrototypeFromHeader || Function->PrototypeFromCLibrary) &&
       libc::hasRecordCallParameters(*Function, libcVariant()))
@@ -6216,8 +6214,7 @@ TypeRef LLVMCWriter::enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const {
         if (peelIntCast(CB->getArgOperand(I)) != LI)
           continue;
         unsigned Parameter = I;
-        if (const auto Layout = libc::recordCallArguments(
-                *FS, Opts.TheArch, Opts.Format, libcVariant());
+        if (const auto Layout = recordCallArguments(*CB, *FS);
             Layout && !groupedFloatingCall(*CB, *FS)) {
           const auto Scalar =
               libc::recordCallScalarParameter(*FS, *Layout, I, libcVariant());

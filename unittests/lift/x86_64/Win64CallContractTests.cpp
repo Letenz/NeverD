@@ -1503,10 +1503,11 @@ TEST(CallExitRegisters, EntrySpillProofKeepsObservedBytesAndEscapes) {
 class OverwrittenCallClobberSpills : public testing::TestWithParam<unsigned> {};
 
 INSTANTIATE_TEST_SUITE_P(SourceStackSpills, OverwrittenCallClobberSpills,
-                         testing::Values(0u, 1u, 2u, 3u, 4u));
+                         testing::Values(0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u));
 
 TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
   const unsigned Variant = GetParam();
+  const bool LocalCallee = Variant == 5 || Variant == 6;
 #if !defined(__x86_64__) && !defined(_M_X64)
   if (Variant == 1 || Variant == 2 || Variant == 3)
     GTEST_SKIP() << "Native x64 flags-transfer execution requires an x64 host";
@@ -1518,11 +1519,15 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
     const auto Call = throughSlot(Text + 4, slot(0));
     std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
     Code.insert(Code.end(), Call.begin(), Call.end());
-    if (Variant >= 3) {
+    constexpr va_t Callee = Text + 0x80;
+    if ((Variant >= 3 && Variant <= 4) || Variant >= 7) {
       // PUSHF explicitly overwrites the released push slot after ADD.
       // Passing another frame member to strlen keeps the frame observable.
-      Code.insert(Code.end(), {0x66, 0xc7, 0x44, 0x24, 0x10, 97, 0, 0x41,
-                               0x53}); // push r11
+      Code.insert(Code.end(), {0x66, 0xc7, 0x44, 0x24, 0x10, 97, 0});
+      if (Variant >= 7)
+        Code.insert(Code.end(), {0x6a, 19}); // push 19
+      else
+        Code.insert(Code.end(), {0x41, 0x53}); // push r11
       if (Variant == 3)
         // ADD's parity calculation is a nontrapping POPCOUNT. PUSHF's
         // explicit write then replaces the saved bytes before the CALL.
@@ -1535,27 +1540,49 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
                                0x24, 0x10});
       const auto Read = throughSlot(Text + Code.size(), slot(1));
       Code.insert(Code.end(), Read.begin(), Read.end());
-      if (Variant == 4)
-        // The machine reads the new return PC; source C has not represented
-        // that write. Retain the unavailable spill rather than read an
-        // uninitialized frame member after removing its only source store.
+      if (Variant == 8)
+        // A complete explicit write after CALL supplies real source bytes.
+        Code.insert(Code.end(), {0x48, 0xc7, 0x44, 0x24, 0xf8, 19, 0, 0, 0});
+      if (Variant == 4 || Variant >= 7)
+        // The old slot can hold an unavailable register OR a known constant.
+        // Neither represents the CALL's new return address. Variant 8 alone
+        // supplies the complete later write before the observed load.
         Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0xf8});
       Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x28, 0xc3});
     } else {
-      const std::vector<uint8_t> Save = {0x4C, 0x89, 0x5C, 0x24, 0x20};
+      const uint8_t Operand = LocalCallee ? 0x44 : 0x5c;
+      const std::vector<uint8_t> Save = {0x4C, 0x89, Operand, 0x24, 0x20};
       Code.insert(Code.end(), Save.begin(), Save.end());
-      if (Variant)
+      if (Variant == 1 || Variant == 2)
         Code.insert(Code.end(), {0x9C, 0x9D}); // pushfq; popfq
-      if (Variant == 2)
-        Code.insert(Code.end(), {0x4C, 0x8B, 0x5C, 0x24, 0x20}); // restore r11
+      if (Variant == 2 || LocalCallee)
+        Code.insert(Code.end(), {0x4C, 0x8B, Operand, 0x24, 0x20}); // restore
       const std::vector<uint8_t> Body = {
           0x48, 0xC7, 0x44, 0x24, 0x20, 19, 0, 0, 0, // mov qword [...],19
-          0x48, 0x8B, 0x44, 0x24, 0x20,              // mov rax,[rsp+20h]
-          0x48, 0x83, 0xC4, 0x28, 0xC3};
+      };
       Code.insert(Code.end(), Body.begin(), Body.end());
+      if (LocalCallee) {
+        Code.push_back(0xe8);
+        const auto Displacement = rel32(Text + Code.size() + 4, Callee);
+        Code.insert(Code.end(), Displacement.begin(), Displacement.end());
+      }
+      Code.insert(Code.end(),
+                  {0x48, 0x8B, 0x44, 0x24, 0x20, // mov rax,[rsp+20h]
+                   0x48, 0x83, 0xC4, 0x28, 0xC3});
     }
     auto Image =
         makeImage(Code, {{Text, "reused_scratch"}}, {"rand", "strlen"});
+    if (LocalCallee) {
+      Code.resize(0x90, 0xcc);
+      // A complete body preserves R8 without reading it. The negative body
+      // instead observes its old value through a memory store.
+      put(Code, Callee,
+          Variant == 5 ? std::vector<uint8_t>{0xb8, 41, 0, 0, 0, 0xc3}
+                       : std::vector<uint8_t>{0x4d, 0x89, 0x00, 0xc3});
+      Image =
+          makeImage(Code, {{Text, "reused_scratch"}, {Callee, "scratch_user"}},
+                    {"rand", "strlen"});
+    }
     Image.Format = Format;
     ASSERT_TRUE(Image.recordImportStorageSlot(
         Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
@@ -1569,10 +1596,19 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
         PipelineOptions Options;
         Options.EmitDumpOutput = false;
         Options.OnlyFunctionEntries = {Text};
+        if (LocalCallee)
+          Options.OnlyFunctionEntries.insert(Callee);
         Options.LiftMode = LLVM;
         Options.SourceProjection = true;
         Options.NoOpt = NoOpt;
         auto Result = Pipeline().run(Image, Context, Options);
+        if (Variant == 4 || Variant == 7) {
+          EXPECT_FALSE(Result.Success);
+          EXPECT_NE(Result.Error.find("physical CALL return slot"),
+                    std::string::npos)
+              << Result.Error;
+          continue;
+        }
         ASSERT_TRUE(Result.Success) << Result.Error;
         std::string Source;
         llvm::raw_string_ostream Output(Source);
@@ -1587,7 +1623,7 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
               LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
         } else
           ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
-        if (Variant == 4) {
+        if (Variant == 6) {
           EXPECT_NE(Source.find("__builtin_trap"), std::string::npos) << Source;
           continue;
         }
@@ -1623,10 +1659,12 @@ static size_t spill_strlen_provider(const char *p) {
 #define strlen spill_strlen_provider
 )";
         const std::string Oracle =
-            Variant >= 3 ? "int main(void) { return reused_scratch() != 1 || "
-                           "calls != 2; }"
-                         : "int main(void) { return reused_scratch() != 19 || "
-                           "calls != 1; }";
+            Variant == 3   ? "int main(void) { return reused_scratch() != 1 || "
+                             "calls != 2; }"
+            : Variant == 8 ? "int main(void) { return reused_scratch() != 19 "
+                             "|| calls != 2; }"
+                           : "int main(void) { return reused_scratch() != 19 "
+                             "|| calls != 1; }";
         for (llvm::StringRef Level : {"-O0", "-O2"})
           source_call_execution_test::compileAndRun(
               Provider + Native + Oracle,
