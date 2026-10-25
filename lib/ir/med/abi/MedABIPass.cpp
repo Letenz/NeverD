@@ -1154,10 +1154,13 @@ void recoverCallAbi(
           IntegerSummary && PrototypeArgumentCallees &&
           (PrototypeArgumentCallees->count(CI.TargetAddr) ||
            (CallSlot && PrototypeArgumentCallees->count(*CallSlot)));
+      const bool PatchedCallee =
+          Img && Img->functionHasBytePatch(CI.TargetAddr);
       std::optional<libc::LibCArity> ExternalArity;
-      if (!PrototypeArguments && (!CI.IsIndirect || IsIndirectImport))
+      if (!PatchedCallee && !PrototypeArguments &&
+          (!CI.IsIndirect || IsIndirectImport))
         ExternalArity = libc::libcArityForSymbol(CI.TargetName, LibC);
-      else if (!PrototypeArguments && VariableCallee &&
+      else if (!PatchedCallee && !PrototypeArguments && VariableCallee &&
                !VariableCallee->ImportName.empty())
         ExternalArity =
             libc::libcArityForSymbol(VariableCallee->ImportName, LibC);
@@ -1317,7 +1320,7 @@ void recoverCallAbi(
       const bool VariadicOnStack =
           Convention && Convention->VariadicArgumentsOnStack;
       int DarwinVarArgBase = -1;
-      if (VariadicOnStack && !CI.IsIndirect) {
+      if (VariadicOnStack && !CI.IsIndirect && !PatchedCallee) {
         llvm::StringRef Bare = stripLeadingUnderscores(CI.TargetName);
         if (unsigned NF = libc::varArgFixedCount(Bare, LibC); NF > 0)
           DarwinVarArgBase = static_cast<int>(NF);

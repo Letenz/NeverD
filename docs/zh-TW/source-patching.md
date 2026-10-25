@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 63d86e1a94d8b33e055360514902466c202d434ebb87823cd91181b98a556871 -->
+<!-- i18n-source: dfc80a0bf5685db7576ab0eb49dc067cdc190a437a85b33c4a4186eed6915fce -->
 
 [← Documentation Index](README.md)
 
@@ -259,3 +259,10 @@ ELF ARM 與 Thumb 使用獨立設定。原始碼編譯器明確接收 `-marm` �
 Mach-O 修正依所選函式認證 Thumb 模式，避免被映像整體的 ARM/Thumb 混合模式覆蓋；僅正規化有證據的 Thumb 匯出指標，並統一 ARM32 展開程式碼位址，不改變資料指標或範圍長度。整合 LLVM 原始碼建置在本機通過全部 283 項 CPU 矩陣檢查及 258 項例外契約檢查，零失敗、零略過。舊 Mach-O 測試程式使用已記錄的開源連結器並預留展開中繼資料容量；i386 使用正確對齊的啟動入口和 64 KiB 頁零區段。
 
 這些結果證明指定模擬器及相容層下的 C 程式碼執行。Wine 不等於 Microsoft Windows，Darling 不等於 macOS；iOS HLE 中的 ARMv7k 執行不能證明 watchOS、WatchKit 或 Apple 實機支援。不能據此推斷舊 Apple SDK 或原生 32 位元硬體涵蓋率，這些測試也不認證 C++ 例外展開。既有原生與相容模式證據繼續分開記錄。NeverC 未建置、未修改。
+
+<!-- i18n-section: interactive-byte-patches -->
+## 互動式修補的職責
+
+`lib/patch` 負責位元組准入、LLVM MC 編碼、不可變輸入快照、正規化覆蓋記錄及獨佔匯出。SDK 根據實際輸出的 C、標準 LowIR 來源和解碼運算元證明原始碼目標；導覽錨點本身不能授權修改。worker 將選用的 `patches.json` 納入一般復原與重做，修改後使分析失效。簽章名稱讀取原始位元組；修改過的函式不再採用由身分推導的函式庫語意。GUI、CLI 和 Python 共用這些 API。整個函式替換仍使用 `neverd_patch_source`，有位元組修補時必須先匯出並重新開啟。
+
+[GUI](../gui.md) · `neverd patch-bytes` · `Session.byte_patches` · `Session.apply_byte_patch` · `Session.export_byte_patches`

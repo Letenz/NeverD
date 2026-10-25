@@ -408,6 +408,35 @@ declarations remain unqualified; the integer bridges do not certify those
 interfaces.
 The shared identity regression pins the published scalar and concurrent x86
 identities before admitting the appended vector operations.
+`AArch64ImmediateMemory` checks the explicit raw-operation contract with 177
+independent LLVM MC samples: unsigned, unscaled and GPR unprivileged immediate
+accesses. An independent Capstone operand-detail comparison also checks all
+112,640 immediate encodings and their scratch rewrites. The suite covers encoded
+displacements, signed result widths,
+neighboring writeback/pair exclusions, zero-index shape requirements, finite
+tracing in both modes and complete 64-bit byte spans. Both C routes and linked
+LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes,
+extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
+These are explicit-IR tests; they do not
+qualify automatic decoding/lifting, relocated-image projection or native
+half/whole-vector ABI. Stack and image requirements fail before body filtering.
+Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
+both generated C files, the independent native harness and an LLVM ELF object
+in a fresh directory recorded in the test's properties. These artifacts allow
+a controlled guest to consume the actual generated output; exporting them is
+not CPTA-on qualification.
+The official Arm AEM FVP 11.32.19 has executed these actual generated artifacts
+through HighC and LLVMC at O0/O2 and an LLVM ELF object. All five routes pass
+the 177 samples with SCTLR2_EL1 values 0, 512, 1024 and 1536, covering both
+CPTA/CPTA0 bits independently. Each guest requires CPA feature level 2,
+effective control readbacks, independent ADDPT overflow controls, completion
+and process success. Separate privileged-code and EL0/EL1-writable,
+non-executable data pages provide Normal WB memory; PAN and UAO read back zero.
+This qualifies the explicit no-image, nonoverflow memory fixtures on that
+model. It does not qualify automatic lifting, image relocation, original SP,
+writeback/pairs, EL0 instruction execution, native half/whole-vector ABI,
+Apple hardware, other translation/tagging contexts or overflowing memory and
+every CPACHECK choice. Remote GitHub CI results require separate observation.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the
@@ -2113,6 +2142,14 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
 ## Structural binary comparison
+
+Saved-decision regressions reject an accepted pair that contradicts the final
+effective Unmatch in all historical completion states. A reverse-history oracle
+checks every five-event sequence over two pairs; remap, rejection clearing,
+confirmation and undo roundtrips remain valid. CLI tests preserve an existing
+save target and empty stdout on rejection; SDK/worker tests retain the current
+snapshot, revision, edits, cached inspection and undo/redo after a failed restore
+or replacement. The `decisions` restore checkpoint is cooperatively cancellable.
 
 Saved-restore regressions cover typed pre-cancellation/deadline, coordinator-only
 progress, cancellation at read/parse/validation/measurement/publication stages,
@@ -13230,6 +13267,22 @@ through both C routes, with source optimization enabled and disabled, at C
 O0/O2 with UBSan. The oracle observes the non-return register's stored value
 and the ordinary call result. This qualifies bounded scalar constants, not
 dynamic machine-state returns or other architectures.
+`CallExitRegisters.PureRegisterLeafKeepsDynamicExtraResults` independently
+executes recovered query results against native CPUID on x64 COFF/ELF/Mach-O
+inputs through both C routes at O0/O2 with UBSan. Source execution selects the
+host's GNU intrinsic spelling while retaining the input image's recovered ABI.
+Cached emitter order, repeated calls and high-byte observations check shared
+result identity. IR checks retain exactly one query per expanded call. The
+`RegisterQuery*` controls retain memory/input-dependent leaves, other hardware
+operations, branching/nonordinary returns, image addresses, unpreserved RBX,
+unmodeled exception metadata, CLD/STD and native calls. Boundary controls run
+both source routes with and without optimization; the original CALL-slot read must still fail before source
+expansion. Opaque and general dynamic machine-state returns remain separate.
+`Win64CallContract.RegisterQueryWindowsSourceCompilesWithItsHeaders` compiles
+both unmodified C units for the Windows x64 target with Clang's freestanding
+headers. HighC includes `<intrin.h>` for the Microsoft CPUID spelling and its
+compiler barriers, as required by [Microsoft's intrinsic contract](https://learn.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex).
+Target compilation does not qualify native Windows execution.
 The opaque CPUID-exit counterexample checks that both C routes report an
 observed missing value before modifying the caller's output, after exactly one
 provider call. It covers serial and sharded LLVM source emission, optimized and
@@ -13421,3 +13474,28 @@ missing and null settings, signed integer defaults, mutable application fields,
 package-manager availability, package metadata, labels, resource paths, target
 SDK fields and exact package queries retain the same shared
 semantics through typed and public wire entrypoints.
+
+<!-- i18n-section: interactive-byte-patches -->
+## Interactive patch ownership
+
+`NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
+
+`NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
+
+`NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```
