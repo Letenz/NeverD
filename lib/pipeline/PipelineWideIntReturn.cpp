@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineRegisterCalls.h"
 #include "PipelineReturnModelingDetail.h"
 #include "PipelineWideIntReturnDetail.h"
 
