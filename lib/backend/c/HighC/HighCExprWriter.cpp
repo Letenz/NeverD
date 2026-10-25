@@ -36,6 +36,7 @@
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/high/HighIntegerProjection.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86/X86ShadowStackShape.h"
@@ -1134,6 +1135,13 @@ std::string HighCWriter::integerView(const HighExpr &E, const TypeRef &To,
                                      int ParentPrec) {
   const uint16_t Width = To->Size;
   const bool Signed = To->IsSigned;
+  if (isPlainInteger(E.Type) && Width && Width < E.Type->Size && Width < 8) {
+    auto Original = std::make_shared<HighExpr>(E);
+    auto Projected =
+        projectHighIntegerBits(Original, (uint64_t{1} << (Width * 8)) - 1);
+    if (Projected != Original)
+      return integerView(*Projected, To, ParentPrec);
+  }
   const HighExpr *Source = &lowBytesSource(E, Width);
   std::string Text = exprStr(*Source, ParentPrec);
   if (Source != &E && !integerText(*Source, Text)) {
@@ -1158,6 +1166,13 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
   if (!isPlainInteger(To))
     return std::nullopt;
   const uint16_t Width = To->Size;
+  if (isPlainInteger(E.Type) && Width && Width < E.Type->Size && Width < 8) {
+    auto Original = std::make_shared<HighExpr>(E);
+    auto Projected =
+        projectHighIntegerBits(Original, (uint64_t{1} << (Width * 8)) - 1);
+    if (Projected != Original)
+      return integerView(*Projected, To, 0);
+  }
   const HighExpr &Source = lowBytesSource(E, Width);
   // A literal is spelled as the value it converts to.
   if (Source.Kind == ExprKind::Const && isPlainInteger(Source.Type)) {

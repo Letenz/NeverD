@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../core/SourceCallExecution.h"
 #include "CSourceText.h"
 #include "gtest/gtest.h"
 
@@ -1525,7 +1526,11 @@ TEST(COFFExceptionIR, LLVMCExceptContinuationFollowsHandler) {
   EXPECT_LT(ExceptAt, HandleAt) << Source;
   EXPECT_LT(HandleAt, ExceptClose) << Source;
   EXPECT_LT(ExceptClose, AfterAt) << Source;
-  EXPECT_EQ(Source.find("goto ", BodyAt), std::string::npos) << Source;
+  // Cross-scope edges name the continuation explicitly. Its label and body
+  // must both stay outside __except, and every call is still emitted once.
+  const auto ContinuationAt = Source.find("\nL_cont:\n", ExceptClose);
+  ASSERT_NE(ContinuationAt, std::string::npos) << Source;
+  EXPECT_LT(ContinuationAt, AfterAt) << Source;
   EXPECT_EQ(Source.find("handler_step();", HandleAt + 1), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("after_step();", AfterAt + 1), std::string::npos)
@@ -2153,7 +2158,7 @@ TEST(COFFExceptionIR, LLVMCFallbackProjectsInvokeNormalEdgesInsideTry) {
   EXPECT_LT(ExitAt, ExitGotoAt) << Source;
   EXPECT_LT(ExitGotoAt, InsideAt) << Source;
   EXPECT_LT(InsideGotoAt, AfterAt) << Source;
-  EXPECT_LT(AfterAt, ExceptAt) << Source;
+  EXPECT_LT(ExceptAt, AfterAt) << Source;
   EXPECT_NE(Source.find("L_exit:", BodyAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("L_join:", BodyAt), std::string::npos) << Source;
   const auto HandlerDtorAt = Source.find("object_dtor(", ExceptAt);
@@ -2260,7 +2265,7 @@ TEST(COFFExceptionIR, LLVMCFallbackKeepsInvokeTargetReturnLabel) {
   }
 }
 
-TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
+TEST(COFFExceptionIR, LLVMCFallbackMovesSharedContinuationOutOfTry) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-seh-fallback-illegal-entry", Context);
   Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
@@ -2296,7 +2301,6 @@ TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
   llvm::IRBuilder<> JoinBuilder(Join);
   llvm::PHINode *Joined = JoinBuilder.CreatePHI(I32, 2, "joined");
   Joined->addIncoming(Result, Entry);
-  Joined->addIncoming(JoinBuilder.getInt32(99), Handler);
   JoinBuilder.CreateCall(AfterStep, {Joined});
   JoinBuilder.CreateBr(Done);
   llvm::IRBuilder<> DispatchBuilder(Dispatch);
@@ -2307,16 +2311,231 @@ TEST(COFFExceptionIR, LLVMCFallbackRejectsHandlerJumpIntoTry) {
   llvm::CatchPadInst *CatchPad = PadBuilder.CreateCatchPad(
       Switch,
       {llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(Context))});
+  auto *Code = PadBuilder.CreateIntrinsic(llvm::Intrinsic::eh_exceptioncode, {},
+                                          {CatchPad}, nullptr, "code");
+  Joined->addIncoming(Code, Handler);
   PadBuilder.CreateCatchRet(CatchPad, Handler);
   llvm::IRBuilder<> HandlerBuilder(Handler);
   HandlerBuilder.CreateBr(Join);
   EXPECT_FALSE(llvm::verifyFunction(*Function, &llvm::errs()));
 
-  // The first movable continuation is Done, but the handler branches to
-  // Join.  Keeping Join in the fallback __try would emit an illegal jump
-  // from __except into that protected scope.
-  EXPECT_DEATH((void)emitLLVMC(Module),
-               "LLVMC EH fallback handler enters protected try body");
+  // LLVM orders Done before Join. Both continuations must stay outside the
+  // wrapper, reached through the same PHI edges as in the original CFG.
+  const std::string Source = emitLLVMC(Module);
+  const auto Except = Source.find("} __except (");
+  const auto JoinAt = Source.find("\nL_join:\n");
+  ASSERT_NE(Except, std::string::npos) << Source;
+  ASSERT_NE(JoinAt, std::string::npos) << Source;
+  EXPECT_LT(Except, JoinAt) << Source;
+  EXPECT_NE(Source.find(" = GetExceptionCode();", Except), std::string::npos)
+      << Source;
+  const std::string Prelude =
+      "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n"
+      "unsigned long GetExceptionCode(void);\n";
+  if (hasHostFixtureCompiler()) {
+    const auto Syntax = runCCompiler(
+        Prelude + Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
+                           "-std=c11", "-fsyntax-only"});
+    ASSERT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
+  }
+  // A setjmp provider exercises the generated normal/handler CFG on the
+  // host. The target compile above separately validates legal SEH scopes.
+  const std::string Harness = R"(
+#include <setjmp.h>
+static jmp_buf destination;
+static unsigned raising, observed, calls;
+unsigned long GetExceptionCode(void) { return 99; }
+#define __try if (setjmp(destination) == 0)
+#define __except(filter) else
+uint32_t exit_step(void) { if (raising) longjmp(destination, 1); return 37; }
+void after_step(uint32_t value) { ++calls; observed = value; }
+)";
+  const std::string Main = R"(
+int main(void) {
+  for (raising = 0; raising != 2; ++raising) {
+    calls = observed = 0;
+    seh_illegal_entry();
+    if (calls != 1 || observed != (raising ? 99 : 37)) return 1;
+  }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Prelude + Harness + Source + Main,
+        {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+}
+
+TEST(COFFExceptionIR, LLVMCTryBeginSplitAfterLoopKeepsRangeAndHandlerEdges) {
+  for (bool MultipleRanges : {false, true}) {
+    SCOPED_TRACE(MultipleRanges);
+    for (bool LateBegin : {false, true}) {
+      SCOPED_TRACE(LateBegin);
+      llvm::LLVMContext Context;
+      llvm::Module Module("seh-range-loop", Context);
+      Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+      llvm::IRBuilder<> B(Context);
+      auto *Void = B.getVoidTy();
+      auto *I32 = B.getInt32Ty();
+      auto Declare = [&](llvm::StringRef Name, llvm::Type *Result,
+                         llvm::ArrayRef<llvm::Type *> Args = {}) {
+        return llvm::Function::Create(
+            llvm::FunctionType::get(Result, Args, false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+      };
+      auto *Personality = Declare("__C_specific_handler", I32);
+      auto *F = Declare("range_loop", Void);
+      F->setPersonalityFn(Personality);
+      auto Block = [&](llvm::StringRef Name) {
+        return llvm::BasicBlock::Create(Context, Name, F);
+      };
+      auto *Entry = Block("entry");
+      auto *Header = Block("header");
+      auto *Begin = Block("begin");
+      auto *Body = Block("body");
+      auto *End = Block("end");
+      auto *Between = MultipleRanges ? Block("between") : nullptr;
+      auto *BeginAgain = MultipleRanges ? Block("begin_again") : nullptr;
+      auto *BodyAgain = MultipleRanges ? Block("body_again") : nullptr;
+      auto *EndAgain = MultipleRanges ? Block("end_again") : nullptr;
+      auto *Tail = Block("tail");
+      auto *Done = Block("done");
+      auto *Dispatch = Block("dispatch");
+      auto *Pad = Block("pad");
+      auto *Handler = Block("handler");
+      auto *Before = Declare("before_step", I32);
+      auto *Step = Declare("range_step", I32, {I32});
+      auto *BetweenStep = Declare("between_step", Void);
+      auto *After = Declare("after_step", Void, {I32});
+      auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, llvm::Intrinsic::seh_try_begin);
+      auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, llvm::Intrinsic::seh_try_end);
+      B.SetInsertPoint(Entry);
+      B.CreateBr(Header);
+      B.SetInsertPoint(Header);
+      B.CreateCondBr(B.CreateICmpNE(B.CreateCall(Before), B.getInt32(0)), Begin,
+                     Done);
+      B.SetInsertPoint(Begin);
+      B.CreateInvoke(TryBegin, Body, Dispatch);
+      B.SetInsertPoint(Body);
+      llvm::Value *Value = B.CreateInvoke(Step, End, Dispatch, {B.getInt32(0)});
+      B.SetInsertPoint(End);
+      B.CreateInvoke(TryEnd, MultipleRanges ? Between : Tail, Dispatch);
+      if (MultipleRanges) {
+        B.SetInsertPoint(Between);
+        B.CreateCall(BetweenStep);
+        B.CreateBr(BeginAgain);
+        B.SetInsertPoint(BeginAgain);
+        B.CreateInvoke(TryBegin, BodyAgain, Dispatch);
+        B.SetInsertPoint(BodyAgain);
+        Value = B.CreateInvoke(Step, EndAgain, Dispatch, {B.getInt32(1)});
+        B.SetInsertPoint(EndAgain);
+        B.CreateInvoke(TryEnd, Tail, Dispatch);
+      }
+      B.SetInsertPoint(Tail);
+      auto *Joined = B.CreatePHI(I32, 2, "joined");
+      Joined->addIncoming(Value, MultipleRanges ? EndAgain : End);
+      Joined->addIncoming(B.getInt32(99), Handler);
+      B.CreateCall(After, {Joined});
+      B.CreateBr(Header);
+      B.SetInsertPoint(Done);
+      B.CreateRetVoid();
+      B.SetInsertPoint(Dispatch);
+      auto *Switch = B.CreateCatchSwitch(llvm::ConstantTokenNone::get(Context),
+                                         nullptr, 1);
+      Switch->addHandler(Pad);
+      B.SetInsertPoint(Pad);
+      auto *CatchPad = B.CreateCatchPad(
+          Switch, {llvm::ConstantPointerNull::get(B.getPtrTy())});
+      B.CreateCatchRet(CatchPad, Handler);
+      B.SetInsertPoint(Handler);
+      B.CreateBr(Tail);
+      if (LateBegin)
+        Begin->moveBefore(Dispatch->getIterator());
+      ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+      const std::string Source = emitLLVMC(Module);
+      if (MultipleRanges) {
+        // The unprotected operation must remain outside every emitted try.
+        int Depth = 0, TryDepth = -1;
+        for (llvm::StringRef Line :
+             llvm::split(llvm::StringRef(Source), '\n')) {
+          if (Line.contains("__try"))
+            TryDepth = Depth;
+          if (Line.contains("between_step();"))
+            EXPECT_EQ(TryDepth, -1) << Source;
+          for (char C : Line) {
+            if (C == '{')
+              ++Depth;
+            if (C == '}') {
+              --Depth;
+              if (TryDepth == Depth)
+                TryDepth = -1;
+            }
+          }
+        }
+      }
+      const std::string Prelude =
+          "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
+      if (hasHostFixtureCompiler()) {
+        const auto Syntax = runCCompiler(
+            Prelude + Source, {"--target=x86_64-pc-windows-msvc",
+                               "-fms-extensions", "-std=c11", "-fsyntax-only"});
+        ASSERT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
+      }
+      const std::string Harness = R"(
+#include <setjmp.h>
+static jmp_buf destination;
+static unsigned raising, iterations, calls, between_calls, bad;
+#define __try if (setjmp(destination) == 0)
+#define __except(filter) else
+uint32_t before_step(void) { return iterations < 3; }
+uint32_t range_step(uint32_t phase) {
+  ++calls;
+  if (raising & (1u << (iterations * 2 + phase))) longjmp(destination, 1);
+  return 37 + phase * 4;
+}
+void between_step(void) { ++between_calls; }
+void after_step(uint32_t value) {
+  const unsigned mask = (raising >> (iterations * 2)) & (MULTIPLE ? 3u : 1u);
+  bad |= value != (mask ? 99 : (MULTIPLE ? 41 : 37));
+  ++iterations;
+}
+)";
+      const std::string Main = R"(
+int main(void) {
+  for (raising = 0; raising != 64; ++raising) {
+    iterations = calls = between_calls = bad = 0;
+    range_loop();
+    unsigned expected_between = 0;
+    for (unsigned i = 0; i != 3; ++i)
+      expected_between += MULTIPLE && !(raising & (1u << (i * 2)));
+    if (iterations != 3 || calls != 3 + expected_between || bad ||
+        between_calls != expected_between) return 1;
+  }
+  return 0;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Prelude + "#define MULTIPLE " + (MultipleRanges ? "1\n" : "0\n") +
+                Harness + Source + Main,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      if (MultipleRanges) {
+        auto *Branch = llvm::cast<llvm::BranchInst>(Header->getTerminator());
+        Branch->setSuccessor(1, BodyAgain);
+        ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+        EXPECT_THROW((void)emitLLVMC(Module), std::runtime_error);
+        Branch->setSuccessor(1, Done);
+        // Nested begin without closing the active range cannot be flattened
+        // into independent try statements merely because the handler matches.
+        llvm::cast<llvm::InvokeInst>(End->getTerminator())
+            ->setCalledFunction(TryBegin);
+        ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+        EXPECT_THROW((void)emitLLVMC(Module), std::runtime_error);
+      }
+    }
+  }
 }
 
 TEST(COFFExceptionIR, LLVMCFinallyWrapContainsCleanupBody) {
@@ -4520,6 +4739,46 @@ TEST(COFFExceptionIR, SEHHandlerEndingAnArmContinuesAfterTheIfElse) {
   const std::string Source = emitHighC({High});
   EXPECT_EQ(Source.find("goto L_140001040"), std::string::npos) << Source;
   EXPECT_NE(Source.find("sub_14000D000();"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, UnstructuredSEHEntryMayHaveNoLiveRegisterCopies) {
+  REQUIRE_HOST_FIXTURE_COMPILER();
+  HighFunc Function;
+  Function.Entry = 0x140001000;
+  Function.Name = "empty_handler_entry";
+  Function.ReturnType = NdType::makeInt(4);
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = Function.Entry + 0x40;
+  HighStmt Region;
+  Region.Kind = StmtKind::SEHTry;
+  Region.EHRange = {Function.Entry, Function.Entry + 0x10};
+  Region.EHIsReducible = false;
+  HighEHClause Clause;
+  Clause.Kind = HighEHClauseKind::SEHExcept;
+  Clause.HandlerVA = Jump.GotoTarget;
+  Region.EHClauses = {Clause};
+  Region.EHClauseBodies = {{Jump}};
+  Region.Body = {Jump};
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.Addr = Jump.GotoTarget;
+  Return.RetVal = HighExpr::makeConst(7, 4);
+  Function.Body = {Region, Return};
+  const std::string Source = emitHighC({Function});
+  EXPECT_NE(Source.find("Native exception entry to the handler"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("goto L_140001040;"), std::string::npos) << Source;
+  for (const char *Level : {"-O0", "-O2"}) {
+    const auto Syntax = runCCompiler("#include <stdint.h>\n" + Source,
+                                     {"-std=c11", Level, "-fsyntax-only"});
+    EXPECT_EQ(Syntax.ExitCode, 0) << Syntax.Error << Source;
+  }
+  // Actual handler code still cannot be moved into an unstructured clause.
+  Function.Body.front().EHClauseBodies.front().insert(
+      Function.Body.front().EHClauseBodies.front().begin(), Return);
+  EXPECT_THROW(emitHighC({Function}), std::invalid_argument);
 }
 
 TEST(COFFExceptionIR, SEHRangeLeavingAGuardedCallOutsideStaysUnstructured) {

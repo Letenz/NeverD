@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Common.h"
+#include "neverd/backend/LLVMOriginalImageStorage.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/object/SectionNames.h"
@@ -52,6 +53,44 @@
 #include <vector>
 
 namespace neverd {
+
+bool MedLLVMEmitter::usesOriginalImageStorage() const {
+  return OriginalImageStorageForSource && Img && !Img->IsRelocatable;
+}
+
+std::pair<llvm::GlobalVariable *, uint64_t>
+MedLLVMEmitter::originalImageStorage(uint64_t OwnerVA) {
+  if (!OriginalImageStorageForSource || !Img || Img->IsRelocatable)
+    return {nullptr, 0};
+  const Segment *Owner = Img->getSegmentFor(OwnerVA);
+  if (!Owner || !Owner->isReadable())
+    return {nullptr, 0};
+  // A linked image preserves the distances between its mapped regions too.
+  // A single external span keeps direct, indexed and one-past addresses in
+  // the same coordinate system, without allocating or inspecting its bytes.
+  uint64_t Begin = InvalidVA, End = 0;
+  for (const Segment &Seg : Img->Segments) {
+    const uint64_t Size = Seg.Size ? Seg.Size : Seg.Data.size();
+    if (!Size)
+      continue;
+    if (Size > InvalidVA - Seg.VA)
+      return {nullptr, 0};
+    Begin = std::min(Begin, Seg.VA);
+    End = std::max(End, Seg.VA + Size);
+  }
+  if (Begin >= End)
+    return {nullptr, 0};
+  const std::string Name =
+      (kNdDataPrefix + llvm::utohexstr(Begin)).str() + ".image";
+  auto *Global = Mod->getNamedGlobal(Name);
+  if (!Global) {
+    auto *Type = llvm::ArrayType::get(llvm::Type::getInt8Ty(*Ctx), End - Begin);
+    Global = new llvm::GlobalVariable(
+        *Mod, Type, false, llvm::GlobalValue::ExternalLinkage, nullptr, Name);
+    llvm_original_image::mark(*Global);
+  }
+  return {Global, Begin};
+}
 
 // Whether an address-ordered slot set or map holds a slot inside \p S. Only
 // the first slot at or above the segment base can be inside it.
@@ -133,6 +172,8 @@ bool MedLLVMEmitter::rodataRunBounds(uint64_t SegVA, uint64_t &RunStart,
 
 std::pair<llvm::GlobalVariable *, uint64_t>
 MedLLVMEmitter::embedRodataRun(uint64_t SegVA) {
+  if (auto Storage = originalImageStorage(SegVA); Storage.first)
+    return Storage;
   uint64_t RunStart = 0, RunEnd = 0;
   std::vector<const Segment *> Run;
   if (!collectRodataRun(Img, SegVA, Run, RunStart, RunEnd))
@@ -180,6 +221,9 @@ MedLLVMEmitter::embedRodataRun(uint64_t SegVA) {
 
 std::pair<llvm::GlobalVariable *, uint64_t>
 MedLLVMEmitter::embedExecSegmentRun(const Segment *Seg) {
+  if (Seg)
+    if (auto Storage = originalImageStorage(Seg->VA); Storage.first)
+      return Storage;
   if (!Seg || Seg->Data.empty() ||
       Seg->Data.size() > limits::kMaxSingleGlobalEmbedLen)
     return {nullptr, 0};
@@ -264,7 +308,9 @@ llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
   // Shards must choose the same storage for a segment even if a different
   // shard takes its address. Keep their existing whole-run contract; local
   // mirrors below can instead rebind all earlier uses when demand expands.
-  if (!Img || !Size || MergeableGlobals || (Addr == 0 && OwnerVA == InvalidVA))
+  if (!Img || !Size || MergeableGlobals ||
+      (OriginalImageStorageForSource && !Img->IsRelocatable) ||
+      (Addr == 0 && OwnerVA == InvalidVA))
     return nullptr;
   ensureImportStorageSnapshot();
   const Segment *Seg = Img->getSegmentFor(Addr);
@@ -657,6 +703,8 @@ bool MedLLVMEmitter::addrInCodePtrMirrorRun(uint64_t VA) const {
 
 std::pair<llvm::GlobalVariable *, uint64_t>
 MedLLVMEmitter::embedWritableRun(uint64_t SegVA) {
+  if (auto Storage = originalImageStorage(SegVA); Storage.first)
+    return Storage;
   uint64_t RunStart = 0, RunEnd = 0;
   if (!writableRunBounds(SegVA, RunStart, RunEnd))
     return {nullptr, 0};
@@ -732,7 +780,9 @@ bool MedLLVMEmitter::writableRunBounds(uint64_t SegVA, uint64_t &RunStart,
   if (!isMutableDataSeg(Seg))
     return false;
   uint64_t RunLen = Seg->Size ? Seg->Size : Seg->Data.size();
-  if (RunLen == 0 || RunLen > limits::kMaxSingleGlobalEmbedLen ||
+  if (RunLen == 0 ||
+      (RunLen > limits::kMaxSingleGlobalEmbedLen &&
+       !(OriginalImageStorageForSource && !Img->IsRelocatable)) ||
       RunLen > std::numeric_limits<uint64_t>::max() - Seg->VA)
     return false;
   RunStart = Seg->VA;

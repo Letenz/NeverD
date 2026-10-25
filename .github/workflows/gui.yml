@@ -66,6 +66,7 @@ jobs:
           cmake -S tools/neverd-gui/tests/mock-sdk -B build-fixture -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build-fixture --parallel 3
       - name: Build workbench with fixture SDK
+        id: build_workbench
         shell: bash
         run: |
           cmake -S tools/neverd-gui -B build-gui -G Ninja \
@@ -77,7 +78,7 @@ jobs:
             -DNEVERD_WORKER_REAL_ENGINE_TESTS=OFF
           python scripts/build.py build-gui --parallel 3
           cp "build-fixture/bin/${{ matrix.library }}" build-gui/bin/
-      - name: Verify native appearance before controller regressions
+      - name: Verify native appearance and frames before controller regressions
         if: runner.os != 'Linux'
         shell: bash
         run: |
@@ -87,7 +88,18 @@ jobs:
             build-gui/bin/neverd-gui-appearance-tests \
             -o build-gui/ci-diagnostics/native-appearance.txt,txt
           appearance_status=$?
+          build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
+            toolbarButtonsKeepKeysInTooltips \
+            -o build-gui/ci-diagnostics/native-frame.txt,txt
+          frame_status=$?
+          if [ "$frame_status" -ne 0 ]; then
+            QT_LOGGING_RULES='qt.qpa.window=true' \
+              build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
+              -o build-gui/ci-diagnostics/native-frame-trace.txt,txt
+          fi
           cat build-gui/ci-diagnostics/native-appearance.txt
+          cat build-gui/ci-diagnostics/native-frame.txt
+          if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
           exit "$appearance_status"
       - name: Retain native appearance diagnostics
         if: ${{ always() && runner.os != 'Linux' }}
@@ -96,10 +108,13 @@ jobs:
           name: desktop-gui-${{ runner.os }}-appearance-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build-gui/ci-diagnostics/native-appearance.txt
+            build-gui/ci-diagnostics/native-frame.txt
+            build-gui/ci-diagnostics/native-frame-trace.txt
             build-gui/ci-diagnostics/appearance/
           if-no-files-found: warn
           retention-days: 7
       - name: Verify GUI, IPC, MCP and translation contracts
+        if: ${{ !cancelled() && steps.build_workbench.outcome == 'success' }}
         shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
@@ -151,15 +166,12 @@ jobs:
           # the log file back on every platform.
           mkdir -p build-gui/ci-diagnostics
           set +e
-          build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
-            toolbarButtonsKeepKeysInTooltips \
-            -o build-gui/ci-diagnostics/native-frame.txt,txt
-          frame_status=$?
           build-gui/bin/neverd-gui-tests \
             floatingDocksReturnToWorkbench \
             closingWorkbenchClosesDetachedWindows \
             codeOpensBesideFloatingDisassembly \
             focusModeGroupsViewsAndRestoresLayout \
+            focusToolbarKeepsWorkbenchCommands \
             focusFunctionsSidebarTogglesAndNavigates \
             focusSequenceUsesNativeKeysAndIgnoresTyping \
             fileReviewWindowsOfferWindowControls \
@@ -187,9 +199,7 @@ jobs:
             -o build-gui/ci-diagnostics/native-interactions.txt,txt \
             -o build-gui/ci-diagnostics/native-interactions.xml,xml
           interaction_status=$?
-          cat build-gui/ci-diagnostics/native-frame.txt
           cat build-gui/ci-diagnostics/native-interactions.txt
-          if [ "$frame_status" -ne 0 ]; then exit "$frame_status"; fi
           exit "$interaction_status"
       - name: Retain desktop GUI contract diagnostics
         id: gui_diagnostics

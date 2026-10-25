@@ -90,7 +90,8 @@ llvm::Value *MedLLVMEmitter::resolveAtomicMemoryPtr(
   llvm::Value *Address = nullptr;
   if (AddressSpace == NdMemoryAddressSpace::Default && Img)
     Address = tryResolveDirectGlobalDataAddress(AddressVar, AccessBytes);
-  if (!Address && AddressSpace == NdMemoryAddressSpace::Default && Img)
+  if (!Address && AddressSpace == NdMemoryAddressSpace::Default && Img &&
+      !usesOriginalImageStorage())
     Address = tryResolveWritableData(AddressVar, AccessBytes, Builder);
   if (!Address) {
     rejectEscapingAddressFragment(AddressVar,
@@ -919,7 +920,11 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     if (!IsSegmentRelative && Op.NumInputs >= 1 && Img)
       Ptr = tryResolveDirectGlobalDataAddress(AddrVar, Op.Output.Size);
     bool IsGlobalData = (Ptr != nullptr);
-    if (!IsSegmentRelative && !Ptr && Img && Op.NumInputs >= 1) {
+    // Live image operands already carry runtime addresses. Mirror resolution
+    // proves how to move file bytes to independent globals; applying it here
+    // would rebase loaded pointers or reject legitimate runtime pointer merges.
+    if (!IsSegmentRelative && !Ptr && Img && Op.NumInputs >= 1 &&
+        !usesOriginalImageStorage()) {
       // Runtime-indexed access into a writable .data / .bss segment: redirect
       // into the cohesive mutable global so it aliases the direct (constant)
       // loads/stores of the same global.  Checked first as it is the only path
@@ -1034,7 +1039,11 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       Ptr = tryResolveDirectGlobalDataAddress(AddrVar, Hint);
     }
     bool IsGlobalData = (Ptr != nullptr);
-    if (!IsSegmentRelative && !Ptr && Img && Op.NumInputs >= 1) {
+    // Live image operands already carry runtime addresses. Mirror resolution
+    // proves how to move file bytes to independent globals; applying it here
+    // would rebase loaded pointers or reject legitimate runtime pointer merges.
+    if (!IsSegmentRelative && !Ptr && Img && Op.NumInputs >= 1 &&
+        !usesOriginalImageStorage()) {
       // Runtime-indexed store into a writable .data / .bss segment: redirect
       // into the cohesive mutable global so it aliases that global's loads.
       Ptr = tryResolveWritableData(AddrVar, AddrVar.Size, Builder);
@@ -1106,7 +1115,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       return StoredAddressRelation ? traceValueVA(Op.Inputs[1])
                                    : traceSSAConst(Op.Inputs[1]);
     };
-    if (Img && Op.NumInputs >= 2 && Val && Val->getType()->isIntegerTy() &&
+    if (Img && !usesOriginalImageStorage() && Op.NumInputs >= 2 && Val &&
+        Val->getType()->isIntegerTy() &&
         (!StoredOccurrence.hasExplicitProvenance() || StoredAddressRelation)) {
       const bool HasMatchingSlotReload =
           frameSlotHasMatchingKeyLoad(Op.Inputs[0]);

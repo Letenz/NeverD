@@ -86,6 +86,12 @@ public:
   void setPreserveUnknownSourceValues(bool Enabled) {
     PreserveUnknownSourceValues = Enabled;
   }
+  /// An inspection/source module may depend on the original loaded image.
+  /// Its data stays external, including loader-relocated and runtime-written
+  /// pointer cells. Standalone reconstruction keeps the default mirror mode.
+  void setOriginalImageStorageForSource(bool Enabled) {
+    OriginalImageStorageForSource = Enabled;
+  }
   void setAnalystSourceProjection(bool Enabled) {
     AnalystSourceProjection = Enabled;
   }
@@ -157,6 +163,11 @@ private:
                                         llvm::IRBuilder<> &Builder);
   bool AnalystSourceProjection = false;
   bool PreserveUnknownSourceValues = false;
+  bool OriginalImageStorageForSource = false;
+  bool usesOriginalImageStorage() const;
+
+  std::pair<llvm::GlobalVariable *, uint64_t>
+  originalImageStorage(uint64_t OwnerVA);
   const SourceTargetSignatures *AnalystTargets = nullptr;
   friend class MedLLVMEmitterTestPeer;
   friend class MedLLVMProvenanceTestPeer;
@@ -170,6 +181,8 @@ private:
     uint64_t StableOffsetNodes = 0;
     uint64_t ClosedScalarNodes = 0;
     uint64_t IndexedBaseProofs = 0;
+    uint64_t IndexedBaseNodes = 0;
+    uint64_t FragmentReloadProofs = 0;
     uint64_t FrameSlotNodes = 0;
     uint64_t FrameSlotCacheHits = 0;
     uint64_t FrameSlotReplays = 0;
@@ -1729,14 +1742,19 @@ private:
                                 bool FailClosed = false,
                                 bool *SawAmbiguousPhi = nullptr) const;
 
-  /// Pure recursive implementation behind collectIndexedGlobalBase. Diagnostic
-  /// policy is replayed by the wrapper so a speculative cached query cannot
-  /// suppress a later strict query for the same value.
+  /// One recursive decomposition memoizes shared expression nodes, including
+  /// negative results. Diagnostic policy is still owned by the outer wrapper.
+  struct IndexedGlobalBaseContext;
   bool collectIndexedGlobalBaseImpl(const MedVar &V, uint64_t &Base,
                                     bool &HaveBase,
                                     std::vector<MedVar> &IdxTerms, int Depth,
                                     bool *SawAmbiguousPhi,
-                                    const PhiNode **AmbiguousPhi) const;
+                                    const PhiNode **AmbiguousPhi,
+                                    IndexedGlobalBaseContext &Context) const;
+  bool collectIndexedGlobalBaseUncached(
+      const MedVar &V, uint64_t &Base, bool &HaveBase,
+      std::vector<MedVar> &IdxTerms, int Depth, bool *SawAmbiguousPhi,
+      const PhiNode **AmbiguousPhi, IndexedGlobalBaseContext &Context) const;
 
   /// Return the unique occurrence-local data owner for p Value reachable in
   /// the address-forming portion of p V. Conflicting owners set p Conflict;
@@ -1904,6 +1922,11 @@ private:
     std::vector<MedVar> IdxTerms;
     bool SawAmbiguousPhi = false;
     const PhiNode *AmbiguousPhi = nullptr;
+  };
+
+  struct IndexedGlobalBaseContext {
+    using Key = std::tuple<AddressProvenanceVarKey, int, uint64_t, bool>;
+    std::map<Key, IndexedGlobalBaseProof> Proofs;
   };
 
   /// Exact value identity used by the provenance caches. Constants include

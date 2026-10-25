@@ -36498,8 +36498,9 @@ TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
   const size_t Catch = Source.find("catch (const ProbeError &e)");
   ASSERT_NE(Catch, std::string::npos) << Source;
   const auto Load = sourceLineContaining(Source, "__builtin_memcpy(&", Catch);
-  // The buffer clear, a forward REP STOSQ of zero, is memset of its bytes.
-  const auto Clear = sourceLineContaining(Source, "__builtin_memset(");
+  // The explicit REP clear and the handler access the same parent frame.
+  const auto Clear =
+      sourceLineContaining(Source, "__builtin_ia32_rep_stos_state(");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Load.empty()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;
@@ -36551,8 +36552,9 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   const auto Store = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint8_t" && S.Value == "3";
   });
-  // The buffer clear, a forward REP STOSQ of zero, is memset of its bytes.
-  const auto Clear = sourceLineContaining(Source, "__builtin_memset(");
+  // The explicit REP clear and the handler access the same parent frame.
+  const auto Clear =
+      sourceLineContaining(Source, "__builtin_ia32_rep_stos_state(");
   // The update can remain compound C or be rendered as a load, add and store
   // of the member when the value passes through the SEH clause boundary.
   auto ExceptStore = sourceLineContaining(Source, "+= 20;");
@@ -40770,9 +40772,22 @@ TEST(LLVMCPointerAddresses, X86DivCheckPreservesIntegerViewWidths) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("(uint64_t)((uint32_t)(eRecord)) >> 0x20"),
-            std::string::npos)
-      << Source;
+  // The upper half of a zero-extended uint32_t is exactly zero. Verify
+  // the observable condition rather than retaining an unnecessary shift.
+  EXPECT_EQ(Source.find(">> 0x20"), std::string::npos) << Source;
+  const std::string Oracle = R"(
+int main(void) {
+  const uint32_t inputs[] = {0, 1, 0x7fffffff, 0x80000000, 0xffffffff};
+  for (unsigned i = 0; i < 5; ++i)
+    for (unsigned j = 0; j < 5; ++j)
+      if (div_check(inputs[i], inputs[j]) != (inputs[j] != 0)) return 1;
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        "#include <stdint.h>\n" + Source + Oracle,
+        {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
   EXPECT_NE(Source.find("nBins == 0"), std::string::npos) << Source;
   EXPECT_NE(Source.find("||"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(unsigned)eRecord >> 0x20"), std::string::npos)
@@ -40788,7 +40803,7 @@ TEST(LLVMCPointerAddresses, DivOverflowOrPreservesUnsignedShiftPrecedence) {
   llvm::Module Module("llvm-c-div-paren", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {I32, I32}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {I64, I32}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "div_paren", Module);
   Function->getArg(0)->setName("eRecord");
@@ -40802,11 +40817,8 @@ TEST(LLVMCPointerAddresses, DivOverflowOrPreservesUnsignedShiftPrecedence) {
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *ERecord = Function->getArg(0);
   llvm::Value *NBins = Function->getArg(1);
-  llvm::Value *Z1 = Builder.CreateZExt(ERecord, I64, "z1");
-  llvm::Value *T1 = Builder.CreateTrunc(Z1, I32, "t1");
-  llvm::Value *Z2 = Builder.CreateZExt(T1, I64, "z2");
   llvm::Value *Hi =
-      Builder.CreateLShr(Z2, llvm::ConstantInt::get(I64, 32), "hi");
+      Builder.CreateLShr(ERecord, llvm::ConstantInt::get(I64, 32), "hi");
   llvm::Value *Hi32 = Builder.CreateTrunc(Hi, I32, "hi32");
   llvm::Value *IsZero =
       Builder.CreateICmpEQ(NBins, llvm::ConstantInt::get(I32, 0), "iszero");
@@ -40827,13 +40839,24 @@ TEST(LLVMCPointerAddresses, DivOverflowOrPreservesUnsignedShiftPrecedence) {
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   EXPECT_NE(Source.find("if (nBins == 0 || ", BodyAt), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("(uint32_t)(((uint64_t)((uint32_t)(eRecord)) >> 0x20)) "
-                        ">= nBins)",
-                        BodyAt),
-            std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("(unsigned)eRecord >> 0x20", BodyAt), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find(">> 0x20"), std::string::npos) << Source;
+  const std::string Oracle = R"(
+int main(void) {
+  const uint64_t dividends[] = {0, 0xffffffff, 0x100000000, 0x80000000ffffffff,
+                                0xffffffffffffffff};
+  const uint32_t divisors[] = {0, 1, 2, 0x7fffffff, 0x80000000, 0xffffffff};
+  for (unsigned i = 0; i < 5; ++i)
+    for (unsigned j = 0; j < 6; ++j) {
+      unsigned expected = divisors[j] != 0 && (dividends[i] >> 32) < divisors[j];
+      if (div_paren(dividends[i], divisors[j]) != expected) return 1;
+    }
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        "#include <stdint.h>\n" + Source + Oracle,
+        {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
 }
 
 std::string emitUnsignedFieldCompare(bool UnsignedField) {
@@ -41394,6 +41417,89 @@ capturedVolatileImageStore(const std::string &Source, const std::string &Base,
   return CapturedImageStore{static_cast<size_t>(Match.position()), Match[2]};
 }
 
+bool insidePrintedTry(const std::string &Source, size_t Position) {
+  for (size_t At = Source.find("__try {"); At != std::string::npos;
+       At = Source.find("__try {", At + 1)) {
+    int Depth = 0;
+    for (size_t I = Source.find('{', At); I < Source.size(); ++I) {
+      if (Source[I] == '{')
+        ++Depth;
+      else if (Source[I] == '}' && --Depth == 0) {
+        if (At < Position && Position < I)
+          return true;
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+// Exercise both normal and exception paths independently of the number or
+// printed order of try ranges. The Windows compile check below separately
+// rejects illegal jumps into protected scopes; this provider checks values,
+// filter arguments, side effects and joins at both optimization levels.
+void checkCorpusSehPaths(std::string Source, const std::string &Entry,
+                         const std::string &Filter, const std::string &Storage,
+                         unsigned SinkOffset) {
+  const std::string Include = "#include <excpt.h>\n";
+  if (auto At = Source.find(Include); At != std::string::npos)
+    Source.erase(At, Include.size());
+  const std::string Prelude = R"(
+#include <stdint.h>
+#include <string.h>
+#include <setjmp.h>
+static jmp_buf destination;
+static unsigned raising, calls, filters;
+static char parent_frame;
+#define __try if (setjmp(destination) == 0)
+#define __except(filter) else if (filter)
+#define GetExceptionInformation() (&destination)
+#define GetExceptionCode() 0xe0421001u
+void *test_parent_frame(void) __asm__("llvm.localaddress");
+void *test_parent_frame(void) { return &parent_frame; }
+void RaiseException(uint32_t code, uint32_t flags, uint32_t count,
+                    const uintptr_t *args) {
+  if (code != 0xe0421001u || flags || count || args) __builtin_trap();
+  ++calls;
+  if (raising) longjmp(destination, 1);
+}
+)";
+  std::string Provider =
+      "\nuint32_t " + Filter +
+      "(void *info, void *frame) {\n"
+      "  if (info != &destination || frame != &parent_frame) "
+      "__builtin_trap();\n"
+      "  ++filters; return 1;\n}\n";
+  if (Source.find("extern uint8_t " + Storage + "[") != std::string::npos) {
+    const auto At = Source.find("extern uint8_t " + Storage + "[");
+    const auto End = Source.find(';', At);
+    ASSERT_NE(End, std::string::npos);
+    Provider += Source.substr(At + 7, End - At - 7) + ";\n";
+  }
+  const std::string Main =
+      "int main(void) {\n"
+      "  const uint32_t inputs[] = {0, 1, 7, 0xffffffff};\n"
+      "  for (raising = 0; raising < 2; ++raising)\n"
+      "    for (unsigned i = 0; i < 4; ++i) {\n"
+      "      calls = filters = 0;\n"
+      "      uint32_t result = " +
+      Entry +
+      "(inputs[i]), observed;\n"
+      "      memcpy(&observed, " +
+      Storage + " + " + std::to_string(SinkOffset) +
+      ", sizeof(observed));\n"
+      "      unsigned caught = raising && inputs[i] == 7;\n"
+      "      uint32_t expected = caught ? 41u : (uint32_t)-100;\n"
+      "      if (result != expected + 1 || observed != expected ||\n"
+      "          calls != (inputs[i] == 7) || filters != caught) return 1;\n"
+      "    }\n"
+      "  return 0;\n}\n";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Prelude + Source + Provider + Main,
+        {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+}
+
 TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
@@ -41422,9 +41528,8 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   EXPECT_EQ(Source.find("_call_clobber"), std::string::npos) << Source;
   expectCapturedSehExceptionCode(Source);
   EXPECT_EQ(Source.find("_140003000"), std::string::npos) << Source;
-  // The normal edge from the last try block reaches the range marker next
-  // in printed order; the handler between them in LLVM order is printed in
-  // __except.  Keep both the conditional skip and handler rejoin edges.
+  // Split ranges can share an out-of-line handler. Keep both the conditional
+  // skip and handler rejoin edges without requiring one lexical try body.
   const auto SkipAt = Source.find("goto L_seh_try_end_0_");
   ASSERT_NE(SkipAt, std::string::npos) << Source;
   const auto SkipEnd = Source.find(';', SkipAt);
@@ -41436,7 +41541,7 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   ASSERT_NE(SkipTargetAt, std::string::npos) << Source;
   EXPECT_LT(SkipAt, RaiseAt) << Source;
   EXPECT_LT(RaiseAt, SkipTargetAt) << Source;
-  EXPECT_LT(SkipTargetAt, ExceptAt) << Source;
+  EXPECT_TRUE(insidePrintedTry(Source, RaiseAt)) << Source;
   EXPECT_NE(Source.find("goto L_bb_5;"), std::string::npos) << Source;
   const auto JoinAt = Source.find("L_bb_5:");
   const auto ExceptCloseAt = Source.find("\n    }\n", ExceptAt);
@@ -41487,6 +41592,7 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
             "extern void RaiseException(uint32_t, uint32_t, uint32_t, const "
             "uintptr_t *);\n"
             "extern void *GetExceptionInformation(void);\n"
+            "extern unsigned long GetExceptionCode(void);\n"
          << Source;
   }
   llvm::SmallVector<llvm::StringRef, 8> Arguments{
@@ -41534,7 +41640,13 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
         }
       }
   EXPECT_EQ(ParentFrameCaptures, 1u);
-  EXPECT_EQ(FilterCalls, 1u);
+  unsigned ExceptClauses = 0;
+  for (size_t At = Source.find("} __except ("); At != std::string::npos;
+       At = Source.find("} __except (", At + 1))
+    ++ExceptClauses;
+  EXPECT_EQ(FilterCalls, ExceptClauses);
+  checkCorpusSehPaths(Source, "sub_140001050", "sub_1400024E0", "unk_140005000",
+                      224);
 
   auto OptImg = loadBinary(Path, FuncOpts);
   ASSERT_TRUE(static_cast<bool>(OptImg)) << llvm::toString(OptImg.takeError());
@@ -41544,6 +41656,8 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   expectCapturedSehExceptionCode(OptSource);
   EXPECT_EQ(OptSource.find("= 0xE0421001"), std::string::npos) << OptSource;
   EXPECT_EQ(OptSource.find("5368722016"), std::string::npos) << OptSource;
+  checkCorpusSehPaths(OptSource, "sub_140001050", "sub_1400024E0",
+                      "unk_140005000", 224);
 }
 
 TEST(LLVMCPointerAddresses, CorpusOptimizedSehResultIsAssignedOnBothPaths) {
@@ -41575,7 +41689,7 @@ TEST(LLVMCPointerAddresses, CorpusOptimizedSehResultIsAssignedOnBothPaths) {
     ASSERT_NE(NormalValue, std::string::npos) << Source;
     ASSERT_NE(HandlerValue, std::string::npos) << Source;
     EXPECT_LT(TryAt, NormalValue) << Source;
-    EXPECT_LT(NormalValue, ExceptAt) << Source;
+    EXPECT_TRUE(insidePrintedTry(Source, NormalValue)) << Source;
     EXPECT_LT(ExceptAt, HandlerValue) << Source;
     auto AssignedName = [&](size_t AssignAt) {
       constexpr std::string_view Ident =
@@ -41600,7 +41714,7 @@ TEST(LLVMCPointerAddresses, CorpusOptimizedSehResultIsAssignedOnBothPaths) {
       const size_t CopyAt =
           Source.find(SinkHome + " = " + NormalHome + ";", NormalValue);
       ASSERT_NE(CopyAt, std::string::npos) << Source;
-      EXPECT_LT(CopyAt, ExceptAt) << Source;
+      EXPECT_TRUE(insidePrintedTry(Source, CopyAt)) << Source;
     }
     if (SinkHome != HandlerHome) {
       const size_t CopyAt =
@@ -41611,6 +41725,8 @@ TEST(LLVMCPointerAddresses, CorpusOptimizedSehResultIsAssignedOnBothPaths) {
     EXPECT_NE(Source.find("return (" + SinkHome + " + 1);", SinkAt),
               std::string::npos)
         << Source;
+    checkCorpusSehPaths(Source, "sub_1400011C0", "sub_140001E50",
+                        "unk_140003000", 160);
   }
 }
 
@@ -41658,23 +41774,23 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   ASSERT_NE(SuccessAt, std::string::npos) << Source;
   ASSERT_NE(HandlerAt, std::string::npos) << Source;
   EXPECT_LT(TryAt, RaiseAt) << Source;
-  EXPECT_LT(RaiseAt, ExceptAt) << Source;
+  EXPECT_TRUE(insidePrintedTry(Source, RaiseAt)) << Source;
   EXPECT_LT(TryAt, SuccessAt) << Source;
-  EXPECT_LT(SuccessAt, ExceptAt) << Source;
+  EXPECT_TRUE(insidePrintedTry(Source, SuccessAt)) << Source;
   EXPECT_LT(ExceptAt, HandlerAt) << Source;
   const size_t ExceptCloseAt = Source.find("\n    }\n", ExceptAt);
   ASSERT_NE(ExceptCloseAt, std::string::npos) << Source;
-  EXPECT_LT(HandlerAt, ExceptCloseAt) << Source;
-  const std::string Continuation = Source.substr(ExceptCloseAt);
+  EXPECT_FALSE(insidePrintedTry(Source, HandlerAt)) << Source;
+  const std::string Continuation = Source.substr(HandlerAt);
   const auto Sink =
-      capturedVolatileImageStore(Continuation, "unk_140005000", 224);
+      capturedVolatileImageStore(Continuation, "unk_140001000", 16608);
   ASSERT_TRUE(Sink.has_value()) << Source;
   EXPECT_EQ(Sink->Value, Slot) << Source;
   EXPECT_NE(Continuation.find("return (" + Slot + " + 1);"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("llvm_x2E_seh_x2E_try"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("L_seh_catch_pad_0:\n        ;\n"), std::string::npos)
-      << Source;
+  checkCorpusSehPaths(Source, "sub_140001050", "sub_1400024E0", "unk_140001000",
+                      16608);
 
   // The CLI's analysis-only LLVM route can print register-home assignments
   // that its earlier declaration prediction did not see. Every simple local
@@ -41727,9 +41843,12 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
     ASSERT_FALSE(Source.empty()) << Source;
     EXPECT_EQ(Source.find("__asm { test"), std::string::npos) << Source;
     EXPECT_EQ(Source.find("struct anon_"), std::string::npos) << Source;
-    // The buffer clear, a forward REP STOS of zero, is memset of its bytes,
-    // as HighC prints it.
-    EXPECT_NE(Source.find("__builtin_memset("), std::string::npos) << Source;
+    // Analysis-only EH must keep the REP interface and its fallback macro.
+    EXPECT_NE(Source.find("__builtin_ia32_rep_stos_state("), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("#define NEVERD_X86_REP(native, ...)"),
+              std::string::npos)
+        << Source;
     EXPECT_NE(Source.find("__asm__(\"llvm.localaddress\")"), std::string::npos)
         << Source;
     // Function selection retains the emitter's exact dependency declarations.
@@ -41750,6 +41869,7 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
             "void RaiseException(uint32_t, uint32_t, uint32_t, const uintptr_t "
             "*);\n"
             "void *GetExceptionInformation(void);\n"
+            "unsigned long GetExceptionCode(void);\n"
          << Source;
     }
     llvm::SmallVector<llvm::StringRef, 16> Args{
@@ -44621,79 +44741,120 @@ TEST(HighCPointerAddresses, InterruptFlagChangesDoNotClobberRax) {
 }
 
 TEST(HighCPointerAddresses, DirectionFlagIsClearOnEntry) {
-  // Both x86 ABIs enter with DF clear, so REP MOVSB copies forward only; on
-  // Windows that is the <intrin.h> forward copy.
+  // The entry ABI supplies DF=0. Execute both source routes, including an
+  // overlapping forward copy whose repeated byte differs from memmove.
   constexpr va_t Entry = 0x140001000;
   const std::vector<uint8_t> Code = {0x48, 0x8b, 0xf9, // mov rdi, rcx
                                      0x48, 0x8b, 0xf2, // mov rsi, rdx
                                      0x49, 0x8b, 0xc8, // mov rcx, r8
                                      0xf3, 0xa4,       // rep movsb
                                      0xc3};
-  const std::string HighC =
-      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("__movsb((unsigned char *)neverd_di, "
-                       "(const unsigned char *)neverd_si, neverd_cx)"),
-            std::string::npos)
-      << HighC;
-  EXPECT_EQ(HighC.find("std"), std::string::npos) << HighC;
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    const auto Image = makeCodeFixture(Entry, Code);
+    const auto Source = LLVM ? llvmcOnlyFunction(Image, Entry, false)
+                             : highcOnlyFunction(Image, Entry);
+    EXPECT_NE(Source.find("__builtin_ia32_rep_movs_state("), std::string::npos)
+        << Source;
+    const std::string Oracle = R"(
+int main(void) {
+  unsigned char src[64], dst[64];
+  for (unsigned n = 0; n <= 32; ++n) {
+    for (unsigned i = 0; i < 64; ++i) { src[i] = i * 7 + 5; dst[i] = 0xCC; }
+    sub_140001000((uintptr_t)dst, (uintptr_t)src, n);
+    for (unsigned i = 0; i < 64; ++i)
+      if (dst[i] != (i < n ? src[i] : 0xCC)) return 1;
+    sub_140001000((uintptr_t)(src + 1), (uintptr_t)src, n);
+    for (unsigned i = 1; i <= n; ++i) if (src[i] != 5) return 2;
+    uintptr_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+    if (flags & 0x400) return 3;
+  }
+  return 0;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      source_call_execution_test::compileAndRun(
+          "#include <stdint.h>\n" + Source + Oracle,
+          {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+  }
 }
 
-TEST(HighCPointerAddresses, FlatFillsAndCopiesAreTheLibraryRoutines) {
-  // With DF clear, REP STOS of a value whose bytes are alike is memset of
-  // those bytes, and REP MOVS between frame ranges that cannot overlap is
-  // memcpy, on every target.  An overlapping forward copy repeats what it
-  // already wrote, which memcpy need not, and keeps the instruction.
+TEST(HighCPointerAddresses, FlatRepeatedFillsAndCopiesRetainMachineCompletion) {
+  // Initializing the source makes the result independent of the host stack.
+  // An overlapping forward copy must read bytes that earlier iterations wrote.
   constexpr va_t Entry = 0x140001000;
-  const std::vector<uint8_t> Fill = {
-      0x48, 0x83, 0xec, 0x48,       // sub rsp, 0x48
-      0x31, 0xc0,                   // xor eax, eax
-      0xb9, 0x08, 0x00, 0x00, 0x00, // mov ecx, 8
-      0x48, 0x89, 0xe7,             // mov rdi, rsp
-      0xf3, 0x48, 0xab,             // rep stosq
-      0x48, 0x8b, 0x44, 0x24, 0x08, // mov rax, [rsp + 8]
-      0x48, 0x83, 0xc4, 0x48,       // add rsp, 0x48
-      0xc3};                        // ret
+  const std::vector<uint8_t> Fill = {0x48, 0x83, 0xec, 0x48, 0x31, 0xc0, 0xb9,
+                                     0x08, 0x00, 0x00, 0x00, 0x48, 0x89, 0xe7,
+                                     0xf3, 0x48, 0xab, 0x48, 0x8b, 0x44, 0x24,
+                                     0x08, 0x48, 0x83, 0xc4, 0x48, 0xc3};
   const auto Copy = [](uint8_t Source, uint8_t Destination) {
-    std::vector<uint8_t> Code = {
-        0x48, 0x81, 0xec, 0x88, 0x00, 0x00, 0x00, // sub rsp, 0x88
-        0x48, 0x8d, 0x74, 0x24, 0x00,             // lea rsi, [rsp + Source]
-        0x48, 0x8d, 0x7c, 0x24, 0x00,             // lea rdi, [rsp + Dest]
-        0xb9, 0x08, 0x00, 0x00, 0x00,             // mov ecx, 8
-        0xf3, 0x48, 0xa5,                         // rep movsq
-        0x48, 0x8b, 0x44, 0x24, 0x10,             // mov rax, [rsp + 0x10]
-        0x48, 0x81, 0xc4, 0x88, 0x00, 0x00, 0x00, // add rsp, 0x88
-        0xc3};                                    // ret
-    Code[11] = Source;
-    Code[16] = Destination;
+    std::vector<uint8_t> Code = {0x48, 0x81, 0xec, 0x88, 0x00, 0x00, 0x00};
+    for (uint8_t I = 0; I != 8; ++I) {
+      const std::vector<uint8_t> Store = {
+          0x48,           0xc7, 0x84, 0x24, uint8_t(Source + I * 8), 0, 0, 0,
+          uint8_t(I + 1), 0,    0,    0};
+      Code.insert(Code.end(), Store.begin(), Store.end());
+    }
+    const std::vector<uint8_t> Tail = {0x48,
+                                       0x8d,
+                                       0x74,
+                                       0x24,
+                                       Source,
+                                       0x48,
+                                       0x8d,
+                                       0x7c,
+                                       0x24,
+                                       Destination,
+                                       0xb9,
+                                       0x08,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0xf3,
+                                       0x48,
+                                       0xa5,
+                                       0x48,
+                                       0x8b,
+                                       0x44,
+                                       0x24,
+                                       uint8_t(Destination + 8),
+                                       0x48,
+                                       0x81,
+                                       0xc4,
+                                       0x88,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0xc3};
+    Code.insert(Code.end(), Tail.begin(), Tail.end());
     return Code;
   };
-  // LLVM-C prints them alike, from the IR the optimizer folds the counts in.
-  for (const bool LLVMC : {false, true})
-    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
-      SCOPED_TRACE(static_cast<int>(Format));
-      SCOPED_TRACE(LLVMC);
-      const auto Render = [&](std::vector<uint8_t> Code) {
-        BinaryImage Img = makeCodeFixture(Entry, std::move(Code));
-        Img.Format = Format;
-        return LLVMC ? llvmcOnlyFunction(std::move(Img), Entry, /*NoOpt=*/false)
-                     : highcOnlyFunction(std::move(Img), Entry);
-      };
-      const std::string Filled = Render(Fill);
-      EXPECT_NE(Filled.find("__builtin_memset("), std::string::npos) << Filled;
-      EXPECT_NE(Filled.find(", 0, 0x40);"), std::string::npos) << Filled;
-      EXPECT_EQ(Filled.find("stos"), std::string::npos) << Filled;
-      // 0x40 bytes from rsp + 0x48 to rsp + 0x8: adjacent, apart.
-      const std::string Copied = Render(Copy(0x48, 0x08));
-      EXPECT_NE(Copied.find("__builtin_memcpy("), std::string::npos) << Copied;
-      EXPECT_NE(Copied.find(", 0x40);"), std::string::npos) << Copied;
-      EXPECT_EQ(Copied.find("movs"), std::string::npos) << Copied;
-      // From rsp + 0x10 to rsp + 0x18: the copy reads what it wrote.
-      const std::string Smeared = Render(Copy(0x10, 0x18));
-      EXPECT_NE(Smeared.find(LLVMC ? "movs_count" : "movsq"), std::string::npos)
-          << Smeared;
-      EXPECT_EQ(Smeared.find("__builtin_memcpy((void *)"), std::string::npos)
-          << Smeared;
-    }
+  for (bool LLVM : {false, true})
+    for (auto Format : {BinaryFormat::COFF, BinaryFormat::ELF})
+      for (unsigned Case = 0; Case != 3; ++Case) {
+        SCOPED_TRACE(testing::Message()
+                     << LLVM << ':' << unsigned(Format) << ':' << Case);
+        auto Image =
+            makeCodeFixture(Entry, Case == 0 ? Fill
+                                             : Copy(Case == 1 ? 0x48 : 0x10,
+                                                    Case == 1 ? 0x08 : 0x18));
+        Image.Format = Format;
+        const auto Source = LLVM ? llvmcOnlyFunction(Image, Entry, false)
+                                 : highcOnlyFunction(Image, Entry);
+        EXPECT_NE(Source.find(Case == 0 ? "__builtin_ia32_rep_stos_state("
+                                        : "__builtin_ia32_rep_movs_state("),
+                  std::string::npos)
+            << Source;
+        const auto Expected = Case == 0 ? 0 : Case == 1 ? 2 : 1;
+        const auto Oracle =
+            "\nint main(void) { return (uint64_t)sub_140001000() != " +
+            std::to_string(Expected) + "; }\n";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              "#include <stdint.h>\n" + Source + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
 }
 
 TEST(HighCPointerAddresses, StackProbesLeaveNoSelfAssignment) {

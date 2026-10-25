@@ -137,6 +137,12 @@ WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar)
   window.installEventFilter(this);
   handle.installEventFilter(this);
   platform::configureFrame(handle);
+  // Qt implements frameless Windows maximization by changing geometry, so
+  // there need not be a native WindowStateChange event. Wayland and Cocoa
+  // still need their native confirmation before changing frame margins.
+  if (QGuiApplication::platformName() == QLatin1String("windows"))
+    connect(&handle, &QWindow::windowStateChanged, this,
+            &WindowFrame::syncWindowState);
   connect(&handle, &QWindow::screenChanged, this, [this] {
     platform::configureFrame(handle_);
     updateMargins();
@@ -187,6 +193,19 @@ bool WindowFrame::resizable() const {
   return window_.minimumSize() != window_.maximumSize();
 }
 
+void WindowFrame::syncWindowState() {
+  const auto states = handle_.windowStates();
+  if (states == states_)
+    return;
+  // Cocoa can infer a maximized state when a drag reaches the window's size
+  // limit. The held gesture must still be able to shrink back from that limit.
+  // Only entering a state with no resize interaction cancels the grab.
+  if (states & (Qt::WindowFullScreen | Qt::WindowMinimized))
+    finishResize();
+  states_ = states;
+  updateMargins();
+}
+
 bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   if (object == &window_) {
     if (event->type() == QEvent::Hide || event->type() == QEvent::UngrabMouse)
@@ -206,9 +225,7 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   // applies it; the native window receives this event only when the window
   // system has applied a state, such as with a Wayland configure.
   if (event->type() == QEvent::WindowStateChange) {
-    finishResize();
-    states_ = handle_.windowStates();
-    updateMargins();
+    syncWindowState();
     return false;
   }
   if (event->type() == QEvent::Leave) {

@@ -1,19 +1,80 @@
-//===- MedLLVMDeadSlots.cpp - Discard unobserved private SSA slots
-//---------===//
+//===- MedLLVMDeadSlots.cpp - Private SSA storage cleanup -----------------===//
 //
 // NeverD Decompiler
 //
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Remove unobserved private slots and entry seeds overwritten before all uses.
+///
 //===----------------------------------------------------------------------===//
 
 #include "MedLLVMDeadSlots.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Transforms/Utils/Local.h"
 
 namespace neverd {
+void discardOverwrittenMedLLVMSeeds(llvm::ArrayRef<llvm::StoreInst *> Seeds) {
+  if (Seeds.empty())
+    return;
+  auto &Function = *Seeds.front()->getFunction();
+  llvm::DominatorTree Dominators(Function);
+  for (auto *Seed : Seeds) {
+    auto *Slot = llvm::dyn_cast<llvm::AllocaInst>(Seed->getPointerOperand());
+    if (!Slot || Seed->getParent() != &Function.getEntryBlock() ||
+        Slot->getParent() != &Function.getEntryBlock() || !Seed->isSimple() ||
+        Seed->hasMetadata() || Slot->hasMetadata())
+      continue;
+
+    llvm::StoreInst *Definition = nullptr;
+    bool Private = true;
+    for (auto *User : Slot->users()) {
+      if (User == Seed)
+        continue;
+      if (auto *Store = llvm::dyn_cast<llvm::StoreInst>(User)) {
+        if (Definition || !Store->isSimple() || Store->hasMetadata() ||
+            Store->getPointerOperand() != Slot ||
+            Store->getValueOperand() == Slot) {
+          Private = false;
+          break;
+        }
+        Definition = Store;
+      } else if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
+        if (!Load->isSimple() || Load->hasMetadata() ||
+            Load->getPointerOperand() != Slot) {
+          Private = false;
+          break;
+        }
+      } else {
+        Private = false;
+        break;
+      }
+    }
+    if (!Private || !Definition || !Dominators.dominates(Seed, Definition))
+      continue;
+    for (auto *User : Slot->users()) {
+      if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(User);
+          Load && !Dominators.dominates(Definition, Load)) {
+        Private = false;
+        break;
+      }
+    }
+    if (!Private)
+      continue;
+
+    auto *Initial = llvm::dyn_cast<llvm::Instruction>(Seed->getValueOperand());
+    Seed->eraseFromParent();
+    if (Initial && !Initial->hasMetadata() &&
+        llvm::isInstructionTriviallyDead(Initial))
+      Initial->eraseFromParent();
+  }
+}
+
 void discardDeadMedLLVMSlots(llvm::ArrayRef<llvm::AllocaInst *> Slots) {
   llvm::SmallPtrSet<llvm::AllocaInst *, 32> PrivateSlots(Slots.begin(),
                                                          Slots.end());

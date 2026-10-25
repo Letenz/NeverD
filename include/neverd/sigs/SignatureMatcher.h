@@ -142,6 +142,17 @@ public:
     size_t Module = 0;
   };
 
+  /// Deterministic work counters for one scan, summed across worker blocks.
+  /// A CRC request may reuse a value computed for another candidate at the
+  /// same input address. CRCBytes counts only bytes actually checksummed.
+  struct ScanStatistics {
+    uint64_t Entries = 0;
+    uint64_t Candidates = 0;
+    uint64_t CRCRequests = 0;
+    uint64_t CRCComputations = 0;
+    uint64_t CRCBytes = 0;
+  };
+
   /// The modules of \p Modules that match at each of \p FuncEntries, in the
   /// order \ref scanAtAddresses reports them, with the entries checked on
   /// the worker threads.
@@ -150,6 +161,15 @@ public:
                                           llvm::ArrayRef<uint64_t> FuncEntries,
                                           llvm::ArrayRef<StoredModule> Modules,
                                           const HashIndex &Index);
+
+  /// As above, resetting and filling \p Statistics for this call. The overload
+  /// without counters avoids recording work in the matching loop.
+  static std::vector<Hit> findAtAddresses(const uint8_t *ImageBase,
+                                          size_t ImageSize, uint64_t BaseVA,
+                                          llvm::ArrayRef<uint64_t> FuncEntries,
+                                          llvm::ArrayRef<StoredModule> Modules,
+                                          const HashIndex &Index,
+                                          ScanStatistics &Statistics);
 };
 
 } // namespace sigs

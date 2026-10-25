@@ -88,6 +88,10 @@ inline constexpr size_t kSourceVariableFlowMaxWork = 2000000;
 inline constexpr size_t kUnwrittenSourceFrameReadWork = 262144;
 // Shared per-function budget for source-only scratch spill overwrite proofs.
 inline constexpr size_t kSourceEntrySpillWork = 262144;
+/// Closed internal-call return proofs are bounded independently of general
+/// CFG discovery. Larger groups retain the ordinary conservative admission.
+inline constexpr size_t kOwnInteriorReturnProofFunctions = 32;
+inline constexpr uint64_t kOwnInteriorReturnProofBytes = 4096;
 
 // lib/ir/high/HighSourceFlow.cpp
 inline constexpr size_t kHighSourceFlowMaxDiagnostics = 4096;

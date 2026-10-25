@@ -15,6 +15,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/ir/high/HighIntegerProjection.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -839,10 +840,24 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   case NdOp::SUBBYTES: {
     if (const HighExpr *Call = typedCallResult(&E))
       return exprStr(*Call, ParentPrec);
-    std::string Src = exprStr(*E.Operands[0], 99);
     uint64_t ByteOff = 0;
     if (E.Operands[1]->Kind == ExprKind::Const)
       ByteOff = E.Operands[1]->ConstVal;
+    if (E.Operands[1]->Kind == ExprKind::Const && E.Type &&
+        E.Type->Kind == NdTypeKind::Int && E.Type->Size && E.Type->Size <= 8 &&
+        ByteOff < 8) {
+      const uint64_t Mask = E.Type->Size == 8
+                                ? UINT64_MAX
+                                : (uint64_t{1} << (E.Type->Size * 8)) - 1;
+      auto Source =
+          projectHighIntegerBits(E.Operands[0], Mask << (ByteOff * 8));
+      if (Source != E.Operands[0]) {
+        HighExpr Projected = E;
+        Projected.Operands[0] = std::move(Source);
+        return renderBinOp(Projected, ParentPrec);
+      }
+    }
+    std::string Src = exprStr(*E.Operands[0], 99);
     std::string Ty = typeToC(E.Type);
     if (ByteOff == 0 && E.Type && E.Type->Kind == NdTypeKind::Int &&
         !E.Type->IsEnum && E.Operands[0]->Type &&

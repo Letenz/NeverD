@@ -20,6 +20,7 @@
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMOriginalImageStorage.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
@@ -621,9 +622,10 @@ LLVMCWriter::imageByteArrayBacking(const llvm::Value *V,
     const auto Base = parseNdDataSymbol(GV.getName());
     const auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType());
     if (!Base || !Array || !Array->getElementType()->isIntegerTy(8) ||
-        !GV.hasInitializer() ||
-        (!llvm::isa<llvm::ConstantAggregateZero>(GV.getInitializer()) &&
-         !llvm::isa<llvm::ConstantDataArray>(GV.getInitializer())) ||
+        (!llvm_original_image::isMarked(GV) &&
+         (!GV.hasInitializer() ||
+          (!llvm::isa<llvm::ConstantAggregateZero>(GV.getInitializer()) &&
+           !llvm::isa<llvm::ConstantDataArray>(GV.getInitializer())))) ||
         *Addr < *Base || AccessSize > Array->getNumElements())
       continue;
     const uint64_t Offset = *Addr - *Base;
@@ -647,6 +649,16 @@ LLVMCWriter::imageByteArrayPointer(const llvm::Value *V,
 
 std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
                                                         uint16_t Size) const {
+  // Original-image storage is provided after relocation and runtime setup.
+  // The file's pointer bits are not a scalar constant of that live storage.
+  if (CurMod)
+    for (const auto &Global : CurMod->globals())
+      if (llvm_original_image::isMarked(Global))
+        if (const auto Base = parseNdDataSymbol(Global.getName()))
+          if (const auto *Array =
+                  llvm::dyn_cast<llvm::ArrayType>(Global.getValueType());
+              Array && Addr >= *Base && Addr - *Base < Array->getNumElements())
+            return std::nullopt;
   if (!Img)
     return std::nullopt;
   const Segment *Seg = Img->getSegmentFor(Addr);
@@ -665,6 +677,14 @@ std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
 
 std::optional<va_t>
 LLVMCWriter::declaredImageDataVA(const llvm::Value *V) const {
+  if (V->getType()->isPointerTy())
+    if (const auto *Global =
+            llvm::dyn_cast<llvm::GlobalVariable>(llvm::getUnderlyingObject(V));
+        Global && llvm_original_image::isMarked(*Global))
+      return std::nullopt;
+  if (auto Backing = imageByteArrayBacking(V, 1);
+      Backing && llvm_original_image::isMarked(*Backing->first))
+    return std::nullopt;
   // Full-module output owns the bytes of a pointer mirror or a section's
   // byte array it defines. Their interior fields are offsets into that
   // object, as the code spells them, not separate globals at the original
@@ -3505,6 +3525,16 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
     // cast would truncate i64/i128 before division, remainder, or shifting.
     return Text.starts_with(Cast) ? Text : Cast + "(" + Text + ")";
   };
+  auto ShiftCount = [&]() {
+    const unsigned Width = Ty->getIntegerBitWidth();
+    uint64_t Constant = 0;
+    if (!llvm::StringRef(RHS).getAsInteger(0, Constant) && Constant < Width)
+      return RHS;
+    // Oversized LLVM shifts produce poison. A bounded count is one stable
+    // refinement of that value, allowing an enclosing freeze to materialize
+    // it without first executing undefined C. Both operands are read once.
+    return "(" + Unsigned(RHS) + " % " + std::to_string(Width) + ")";
+  };
   // Half arithmetic can use excess precision on hosts without native FP16.
   // An explicit cast publishes the rounding boundary even when a producer is
   // inlined into another operation; FP_CONTRACT alone does not do this.
@@ -3555,10 +3585,10 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::FRem:
     return LHS + " % " + RHS;
   case llvm::Instruction::Shl:
-    return castStr(llvm::Instruction::Trunc, Unsigned(LHS) + " << " + RHS, Ty,
-                   Ty);
+    return castStr(llvm::Instruction::Trunc,
+                   Unsigned(LHS) + " << " + ShiftCount(), Ty, Ty);
   case llvm::Instruction::LShr:
-    return Unsigned(LHS) + " >> " + RHS;
+    return Unsigned(LHS) + " >> " + ShiftCount();
   case llvm::Instruction::AShr:
     // LLVM integers have no declared signedness. The C carrier is unsigned,
     // so reconstruct the source-width sign before either assigned or inline
@@ -3567,7 +3597,8 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
     // odd-width returns must not leak sign-extension bits, and following
     // wrapping arithmetic must not inherit C signed-overflow behavior.
     return castStr(llvm::Instruction::Trunc,
-                   signedIntegerOperand(Ty, LHS) + " >> " + RHS, Ty, Ty);
+                   signedIntegerOperand(Ty, LHS) + " >> " + ShiftCount(), Ty,
+                   Ty);
   case llvm::Instruction::And:
     return LHS + " & " + RHS;
   case llvm::Instruction::Or:

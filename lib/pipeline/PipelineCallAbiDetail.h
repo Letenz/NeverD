@@ -37,7 +37,13 @@ namespace neverd {
 struct BinaryImage;
 struct AnalysisCacheWarmup;
 struct PipelineResult;
+struct CallArgumentConvention;
 struct Symbol;
+
+/// Register summaries do not necessarily bound the stack arguments. Read
+/// callee signatures for either source of call arguments, identically in
+/// selected-function recovery and cache warmup.
+bool needsCallSignatureRecovery(const CallArgumentConvention *Convention);
 namespace detail {
 class AbsoluteRelocationRootIndex;
 } // namespace detail

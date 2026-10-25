@@ -55,13 +55,15 @@ protected:
 private:
   WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar);
   bool resizable() const;
+  void syncWindowState();
   /// Draw the shadow outside the visible window and its surface inside.
   void paint();
   /// Give the shadow band its size, which a maximized or full-screen window
   /// does without, and keep room for the title bar.  The band follows the
   /// state the window system applied (states_), not the one QWidget requests:
   /// a Wayland window that changed its geometry for a state the compositor
-  /// had not entered yet committed buffers for neither state.
+  /// had not entered yet committed buffers for neither state. Windows also
+  /// uses Qt's state signal for its geometry-based frameless maximization.
   void updateMargins();
   void placeTitleBar();
   void showEdges(Qt::Edges edges);

@@ -182,6 +182,9 @@ bool MedLLVMEmitter::canResolveGlobalDataConstant(uint64_t Addr) const {
   if (!Seg->isReadable())
     return false;
 
+  if (OriginalImageStorageForSource && !Img->IsRelocatable)
+    return true;
+
   // Objective-C runtime objects intentionally remain external identities and
   // therefore do not require file-backed bytes in the rebuilt module.
   if (Img->isMachO()) {
@@ -294,6 +297,11 @@ MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
   if (Addr < OwnerBegin || Addr > OwnerEnd)
     return nullptr;
 
+  if (auto [Storage, Base] = originalImageStorage(OwnerVA); Storage)
+    return llvm::ConstantExpr::getGetElementPtr(
+        llvm::Type::getInt8Ty(*Ctx), Storage,
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Addr - Base));
+
   // Interior addresses keep every established special case (Objective-C
   // runtime identities, compact strings, pointer mirrors).  The owner-aware
   // path is required when zero denotes NOBITS storage or when one-past lands
@@ -329,6 +337,11 @@ MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
 
 llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
                                                      uint16_t DataSizeHint) {
+  if (Addr != 0)
+    if (auto [Storage, Base] = originalImageStorage(Addr); Storage)
+      return llvm::ConstantExpr::getGetElementPtr(
+          llvm::Type::getInt8Ty(*Ctx), Storage,
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(*Ctx), Addr - Base));
   if (!canResolveGlobalDataConstant(Addr))
     return nullptr;
 

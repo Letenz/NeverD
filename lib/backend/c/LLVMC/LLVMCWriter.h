@@ -868,6 +868,9 @@ public:
   /// The calls a function's next render keeps as statements: its text
   /// printed each other than once where the analysis inlined it.
   std::set<const llvm::CallBase *> StatementCalls;
+  // Shared SEH handlers can resume a loop across several protected ranges.
+  // Preserve their individual block scopes and explicit CFG edges.
+  bool ExplicitSEHBlockScopes = false;
 
   int NextVar = 0;
   std::map<const llvm::Value *, std::string> ValNames;
