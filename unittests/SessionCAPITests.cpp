@@ -3246,9 +3246,57 @@ TEST_F(SessionCAPITest, DataTakesItsListingNameWhereOnlyItsAddressIsTaken) {
           << HighC;
     const std::string LLVMC =
         takeString(neverd_decompile_llvm(Names, DataELFEntry));
-    EXPECT_NE(LLVMC.find(Prefix + Data), std::string::npos)
+    // LLVMC's loaded-image view keeps one external storage identity. Naming
+    // this interior address as a separate object would lose that relation.
+    EXPECT_NE(LLVMC.find("/* neverd.image: 0x400000 "), std::string::npos)
+        << LLVMC << takeString(neverd_last_error(Names));
+    EXPECT_NE(LLVMC.find("extern uint8_t unk_400000[4104];"), std::string::npos)
         << LLVMC << takeString(neverd_last_error(Names));
     neverd_session_destroy(Names);
+  }
+}
+
+TEST_F(SessionCAPITest, ReturnedDataAddressKeepsOriginalImageStorage) {
+  if (std::string_view(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "native C fixture compiler unavailable";
+  std::string Code = "\x48\x8d\x05";
+  const auto Displacement =
+      static_cast<uint32_t>(DataELFData - (DataELFEntry + 7));
+  for (unsigned I = 0; I < 4; ++I)
+    Code += static_cast<char>(Displacement >> (8 * I));
+  Code += '\xc3';
+  const auto Input =
+      write("returned-storage.elf", makeDataELF(std::string(8, '\x11'), Code));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  ASSERT_GE(neverd_session_discover_functions(Session), 1);
+  constexpr std::string_view Harness = R"(
+#include <stdint.h>
+uint8_t unk_400000[4104];
+uint64_t sub_4000B0(void);
+int main(void) {
+  uint8_t *returned = (uint8_t *)(uintptr_t)sub_4000B0();
+  if (returned != unk_400000 + 4096) return 1;
+  unk_400000[4096] = 0xa7;
+  if (returned[0] != 0xa7) return 2;
+  returned[1] = 0x5c;
+  if (unk_400000[4097] != 0x5c) return 3;
+  return 0;
+}
+)";
+  for (int NoOpt : {0, 1}) {
+    SCOPED_TRACE(NoOpt);
+    const auto Source =
+        takeString(neverd_decompile_llvm_ex(Session, DataELFEntry, NoOpt));
+    ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+    const auto Binary = buildProgramFrom(
+        "returned-storage-" + std::to_string(NoOpt), {Source, Harness});
+    ASSERT_FALSE(Binary.empty());
+    std::string Message;
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Binary, {Binary}, std::nullopt, {}, 60,
+                                        0, &Message),
+              0)
+        << Message << Source;
   }
 }
 
@@ -8943,7 +8991,10 @@ TEST_F(SessionCAPITest, SelectionsKeepTheFunctionListARebuildWouldMake) {
 
   // The detector's entries and the user's function edits.
   ASSERT_GT(neverd_session_discover_functions(Session), 0);
-  EXPECT_FALSE(SessionTestAccess::keepsFunctionList(State));
+  // Completed discovery reconciles provisional loader guesses immediately;
+  // its published list already equals a rebuild from the current evidence.
+  EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
+  EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
   Select(Entry);
   EXPECT_TRUE(SessionTestAccess::keepsFunctionList(State));
   EXPECT_TRUE(SessionTestAccess::functionListIsRebuilt(State));
