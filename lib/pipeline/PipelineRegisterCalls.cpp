@@ -12,8 +12,10 @@
 #include "PipelineRegisterCalls.h"
 
 #include "neverd/ir/Limits.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -66,15 +68,34 @@ expand(llvm::ArrayRef<const MedCallClobber *> Clobbers, const MedOp &Call,
   Block.Ops = Body;
   LowOp &Return = Block.Ops.back();
   std::vector<uint64_t> Registers{x86reg::RAX};
-  for (const auto &Output : Outputs) {
-    const uint64_t Register = Output.RegOff & ~uint64_t(7);
+  auto CaptureRegister = [&](uint64_t Register) {
     if (llvm::is_contained(Registers, Register))
-      continue;
+      return true;
     if (Return.NumInputs == std::size(Return.Inputs))
-      return {};
+      return false;
     Registers.push_back(Register);
     Return.addInput(NdVar::reg(Register, sizeof(uint64_t)));
-  }
+    return true;
+  };
+  for (const auto &Output : Outputs)
+    if (!CaptureRegister(Output.RegOff & ~uint64_t(7)))
+      return {};
+  // Source ABI preservation is a value claim, not merely an absence of
+  // caller clobber records. A query that fails to restore RBX is not an
+  // ordinary-call leaf even when this caller has no explicit RBX read.
+  const auto &Target = getTargetRegInfo(Image.Arch);
+  std::set<uint64_t> Preserved;
+  for (const auto &Op : Body)
+    if (Op.Output.isReg())
+      if (const auto Family = gprFamilyOf(Image.Arch, Op.Output.Offset)) {
+        const uint64_t Register = *Family * sizeof(uint64_t);
+        if (Target.isCallPreserved(Register, sizeof(uint64_t),
+                                   Image.abiFormat())) {
+          if (!CaptureRegister(Register))
+            return {};
+          Preserved.insert(Register);
+        }
+      }
   LowToMedConverter Converter;
   Converter.setBinaryImage(&Image);
   MedFunc Captured = Converter.convert(Capture, Image.Arch, Image.abiFormat());
@@ -100,8 +121,14 @@ expand(llvm::ArrayRef<const MedCallClobber *> Clobbers, const MedOp &Call,
       Definitions.emplace(key(Value), I);
   }
   std::vector<MedVar> Pending;
-  for (unsigned I = 0; I < Ops.back().NumInputs; ++I)
-    Pending.push_back(Ops.back().Inputs[I]);
+  for (unsigned I = 0; I < Ops.back().NumInputs; ++I) {
+    const auto &Value = Ops.back().Inputs[I];
+    if (Preserved.count(Registers[I])) {
+      if (!isEntryLiveInValue(Captured, Value, Registers[I]))
+        return {};
+    } else
+      Pending.push_back(Value);
+  }
   std::set<size_t> Needed;
   auto Include = [&](size_t I) {
     if (Needed.insert(I).second)

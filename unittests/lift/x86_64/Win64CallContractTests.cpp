@@ -4385,6 +4385,8 @@ BinaryImage registerQueryImage(unsigned Mutation = 0) {
     Leaf.insert(Leaf.begin(), {0x85, 0xC9, 0x74, 2, 0x31, 0xC0});
   else if (Mutation == 6)
     Leaf.insert(Leaf.end() - 1, {0x49, 0xB8, 0, 0x10, 0, 0x40, 1, 0, 0, 0});
+  else if (Mutation == 8)
+    Leaf.erase(Leaf.begin() + 12, Leaf.begin() + 15); // RBX is not restored
   put(Code, Producer, Leaf);
   return makeImage(Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}},
                    {});
@@ -4442,7 +4444,7 @@ int main(void) {
 
 TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
   constexpr va_t Producer = Text + 0x80;
-  for (unsigned Mutation = 1; Mutation <= 7; ++Mutation) {
+  for (unsigned Mutation = 1; Mutation <= 8; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Image = registerQueryImage(Mutation);
     llvm::LLVMContext Context;
