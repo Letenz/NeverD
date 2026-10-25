@@ -319,7 +319,8 @@ NEVERD_LINUX_DIAGNOSTIC(DeviceMappingAdvice,
                         "Linux device mapping advice is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(
     XAttrKernel,
-    "extended attribute queries require explicit released GKI input")
+    "extended attribute queries require explicit released GKI input or "
+    "xattr_query_import")
 NEVERD_LINUX_DIAGNOSTIC(
     XAttrObservation,
     "extended attributes for this catalogue object are unmodeled")
@@ -415,7 +416,7 @@ NEVERD_LINUX_DIAGNOSTIC(TimePartialOutput,
 NEVERD_LINUX_DIAGNOSTIC(
     TimeClockOption, "linux_time requires distinct supported Linux clock IDs")
 NEVERD_LINUX_DIAGNOSTIC(TimeCPUObservation,
-                        "Linux process CPU clocks require consistent GKI task "
+                        "Linux process CPU clocks require consistent task "
                         "observations and nonnegative seconds")
 NEVERD_LINUX_DIAGNOSTIC(TimeCPUTargetMissing,
                         "CPU clock target process is not modeled")
@@ -437,9 +438,10 @@ NEVERD_LINUX_DIAGNOSTIC(TimeDynamicClock,
                         "dynamic and encoded Linux clocks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(TimezoneMissing,
                         "Linux timezone has no explicit linux_time input")
-NEVERD_LINUX_DIAGNOSTIC(TimeAdvanceClock,
-                        "advance_on_idle supports realtime, monotonic, "
-                        "boottime and fixed process CPU clocks only")
+NEVERD_LINUX_DIAGNOSTIC(
+    TimeAdvanceClock,
+    "virtual time advancement supports realtime, monotonic, "
+    "monotonic raw, boottime and fixed process CPU clocks only")
 NEVERD_LINUX_DIAGNOSTIC(
     TimeAdvanceOverflow,
     "Linux virtual clock advancement exceeds its modeled range")

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../../runtime/RuntimeValues.h"
+#include "AndroidDlfcn.h"
 #include "AndroidInternal.h"
 #include "AndroidLog.h"
 #include "AndroidObservation.h"
@@ -26,6 +27,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   if (auto E = validateAuxiliaryVector(Native))
     return std::move(E);
   if (auto E = validateCalendar(Native))
+    return std::move(E);
+  if (auto E = validateDladdrObservations(Native.DladdrObservations))
     return std::move(E);
   if (Native.ResolverQueries)
     if (auto E = validateResolverQueries(*Native.ResolverQueries))
@@ -56,6 +59,15 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return Budget.takeError();
   std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
+  if (Native.ObserveCPUState) {
+    const uint64_t Bytes =
+        sizeof(uint64_t) +
+        architectureRegisters(GuestArchitecture::AArch64).size() *
+            sizeof(RegisterValue);
+    if (Bytes > Options.OutputLimit - ReportSize)
+      return failure(diagnostic::SnapshotLimits);
+    ReportSize += Bytes;
+  }
   if (Native.ThreadLimit > 1) {
     const uint64_t ThreadBytes = Native.ThreadLimit * thread_model::ReportBytes;
     if (ThreadBytes > Options.OutputLimit - ReportSize)
@@ -63,6 +75,13 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     ReportSize += ThreadBytes;
   }
   for (const auto &Read : Native.ReadMemory) {
+    if (Native.ObserveMemoryOnFailure) {
+      constexpr uint64_t DiagnosticBytes =
+          ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
+      if (DiagnosticBytes > Options.OutputLimit - ReportSize)
+        return failure(diagnostic::SnapshotLimits);
+      ReportSize += DiagnosticBytes;
+    }
     if (!Read.Size || Read.Size > Options.OutputLimit - ReportSize ||
         Read.Address > UINT64_MAX - Read.Size)
       return failure(diagnostic::SnapshotLimits);
@@ -623,10 +642,31 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   Result.Events = Resources->events();
   Threads.report();
   LibC.reportJNIState();
-  // A terminal CPU fault can prohibit model memory access. Preserve that
-  // original failure; memory snapshots are produced only at resumable stops.
-  if (Result.Stop != ProcessStopReason::CPUFailure &&
-      Result.Stop != ProcessStopReason::RuntimeFailure) {
+  // Guest/model reads can be prohibited after a terminal fault. Explicit
+  // forensic snapshots use the existing stopped-RAM owner, without executing
+  // device callbacks, changing permissions or replacing the original failure.
+  const bool Failed = Result.Stop == ProcessStopReason::CPUFailure ||
+                      Result.Stop == ProcessStopReason::RuntimeFailure;
+  if (Failed && Native.ObserveMemoryOnFailure) {
+    constexpr size_t DiagnosticBytes =
+        ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
+    const llvm::StringRef Suffix(diagnostic::SnapshotDiagnosticTruncated);
+    static_assert(DiagnosticBytes >
+                  sizeof(diagnostic::SnapshotDiagnosticTruncated));
+    for (const auto &Read : Native.ReadMemory) {
+      NativeMemorySnapshot Snapshot{Read.Address,
+                                    std::vector<uint8_t>(Read.Size)};
+      if (auto E = CPU.snapshotBacking(Read.Address, Snapshot.Bytes)) {
+        Snapshot.Bytes.clear();
+        Snapshot.Diagnostic = llvm::toString(std::move(E));
+        if (Snapshot.Diagnostic.size() > DiagnosticBytes) {
+          Snapshot.Diagnostic.resize(DiagnosticBytes - Suffix.size());
+          Snapshot.Diagnostic += Suffix.str();
+        }
+      }
+      Result.MemorySnapshots.push_back(std::move(Snapshot));
+    }
+  } else if (!Failed) {
     for (const auto &Read : Native.ReadMemory) {
       auto Access = CPU.canAccess(Read.Address, Read.Size,
                                   emulation::Read | UserAccessible);
@@ -646,6 +686,15 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
       }
       Result.MemorySnapshots.push_back(std::move(Snapshot));
     }
+  }
+  if (Native.ObserveCPUState) {
+    auto &State = Result.CPUState.emplace();
+    State.ThreadID = Threads.id();
+    auto Registers = CPU.readRegisters();
+    if (Registers)
+      State.Registers = std::move(*Registers);
+    else
+      State.Diagnostic = llvm::toString(Registers.takeError());
   }
   return Result;
 }

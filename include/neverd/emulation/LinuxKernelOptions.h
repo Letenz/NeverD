@@ -26,16 +26,23 @@ enum class LinuxUnavailableSyscall {
 struct LinuxKernelTask {
   bool GroupLeader = true;
 };
-/// Explicit released GKI contracts and observed absent kernel interfaces.
+/// The observed import order for getxattr/lgetxattr/fgetxattr requests.
+enum class LinuxXAttrQueryImport { TargetBeforeName, NameBeforeTarget };
+/// Explicit Linux kernel contracts and observed absent kernel interfaces.
 /// Unmodeled interfaces retain their unsupported execution boundary.
 struct LinuxKernelOptions {
   std::set<LinuxUnavailableSyscall> UnavailableSyscalls;
   /// Explicit released Android common kernel contract. Android API levels
   /// alone do not select a kernel. Only implemented services use this value.
   std::optional<AndroidGKIKernel> GKI;
+  /// Independent xattr query import order, mutually exclusive with GKI.
+  /// It supplies no attribute values, namespace policy or other kernel rules.
+  std::optional<LinuxXAttrQueryImport> XAttrQueryImport;
   /// Optional closed catalogue of additional live tasks. The running process
   /// is always a live group leader. An absent catalogue leaves foreign task
   /// lookup unsupported; an explicitly empty one observes no additional tasks.
+  /// Independent of GKI: this supplies CPU-clock task identities, not pidfd
+  /// release rules or observations for other services.
   std::optional<std::map<uint32_t, LinuxKernelTask>> Tasks;
 };
 } // namespace neverd::emulation

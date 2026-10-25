@@ -421,6 +421,37 @@ fresh source evidence. The recipes are `llvm-progress-neighborhoods-v3` and
 `llvm-progress-fragments-v3`. All v1 and v2 profiles remain available with their
 published contracts and saved encodings.
 
+**Optimized SSA with branching loop analysis**
+(`--dataflow-profile=llvm-progress-ssa-v4`) also handles several continuation
+paths that advance the same header counter. Different fixed steps are allowed
+when every path strictly advances in one common signed or unsigned nowrap
+domain. An increasing path paired with a decreasing path, a reset, an unguarded
+continuation, or incompatible signed/unsigned guarantees remains unproven.
+
+The same proof handles compiler-generated unconditional latches: all incoming
+paths must have a direct consuming guard, and the latch must feed the header
+with either one common update or a PHI selecting each path's exact update.
+Guards can test the current counter or their own update. Overflow poison may
+cross one backedge before a current-counter guard observes it on the next
+iteration; it cannot sustain defined infinite continuation. Nested components
+still require a final acyclic residual graph before any progress is published.
+Only the stated direct update/one-PHI forms are admitted. Irreducible entries,
+duplicate predecessor edges and more complex recurrence expressions remain
+unproven. Ordinary optimization is unchanged, so some compiler outputs may
+lose the required nowrap evidence or acquire an unsupported control-flow shape.
+
+Schema 8 distinguishes `loop_count`, `backedge_count`, and `guard_count`.
+Witness `block` now identifies the consuming guard; `latch` identifies the
+physical backedge source. Two guards may justify one backedge. `header`,
+`counter`, `update`, and `compare` retain their exact graph identities. Node
+pages expose witnesses on guard-block rows; all pages retain the authoritative
+totals. The interface shows the selected guard and its actual latch separately.
+Saved validation recomputes every count and witness before fresh source binding.
+The recipes are `llvm-progress-neighborhoods-v4` and
+`llvm-progress-fragments-v4`; published v1/v2/v3 bytes and behavior are retained.
+All scans, grouping and ordering use the existing work/storage/cancellation
+allowances, without a fixed limit on loop depth or the number of backedges.
+
 Native-to-SSA change associations and call-effect contracts currently require
 the original MedIR profile. Change review explicitly reports an unsupported
 association profile for LLVM evidence while retaining native changes. Local

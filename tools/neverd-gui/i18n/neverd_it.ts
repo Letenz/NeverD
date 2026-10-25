@@ -6441,6 +6441,10 @@ Copertura: %7</translation>
         <source>Optimized SSA with nested loop analysis</source>
         <translation>SSA ottimizzata con analisi dei cicli annidati</translation>
     </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli ramificati</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6583,6 +6587,18 @@ La terminazione non dimostra che il numero di iterazioni o i risultati delle fun
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5</source>
         <translation>Ciclo dimostrato: blocco di ingresso %1 → blocco di ritorno %2 · contatore #%3 → aggiornamento #%4 · condizione #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with branching loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli ramificati</translation>
+    </message>
+    <message>
+        <source>Return progress proved · Counter loops: %1 · Backedges: %2 · Guards: %3</source>
+        <translation>Avanzamento del ritorno dimostrato · Cicli con contatore: %1 · Archi di ritorno: %2 · Guardie: %3</translation>
+    </message>
+    <message>
+        <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
+        <translation>Ciclo dimostrato: blocco iniziale %1 → blocco di ritorno %2 · contatore #%3 → aggiornamento #%4 · guardia #%5 nel blocco %6</translation>
     </message>
 </context>
 <context>

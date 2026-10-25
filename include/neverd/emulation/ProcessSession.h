@@ -130,6 +130,7 @@ struct ProcessResult {
   /// Runs in Trace: each row owns PCs from Index to the next row's Index.
   std::vector<NativeTraceThread> TraceThreads;
   std::vector<NativeExecutionObservation> ExecutionObservations;
+  std::optional<NativeCPUState> CPUState;
   bool ExecutionObservationsEnabled = false;
   bool ExecutionObservationsTruncated = false;
   /// Guest signal termination, distinct from a normal exit status. No host

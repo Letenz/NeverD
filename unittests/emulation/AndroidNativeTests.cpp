@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
+#include "neverd/emulation/Limits.h"
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 #include "neverd/loader/ELF/ELFLoader.h"
@@ -1091,6 +1092,90 @@ TEST(AndroidOptions, StrictWireTypesAndProfiles) {
   EXPECT_FALSE(bool(Bad));
   EXPECT_NE(llvm::toString(Bad.takeError()).find("Android"), std::string::npos);
 }
+TEST(AndroidOptions, DladdrPositiveObservationsAreStrictAndOptional) {
+  auto Parse = [](llvm::StringRef Records) {
+    return processOptionsFromJSON("{\"android\":{\"entry_symbol\":\"entry\","
+                                  "\"dladdr_observations\":" +
+                                  Records.str() + "}}");
+  };
+  auto Empty = Parse("[]");
+  ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
+  ASSERT_TRUE(Empty->Android->DladdrObservations);
+  EXPECT_TRUE(Empty->Android->DladdrObservations->empty());
+  const char *Record =
+      R"([{"address":"0x40001004","image_base":"0x40000000","image_name":"/guest/fixture.so","symbol_name":null,"symbol_address":0}])";
+  auto Good = Parse(Record);
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  const auto &O = Good->Android->DladdrObservations->front();
+  EXPECT_EQ(O.Address, 0x40001004u);
+  EXPECT_EQ(O.ImageBase, 0x40000000u);
+  EXPECT_EQ(O.ImageName, "/guest/fixture.so");
+  EXPECT_FALSE(O.SymbolName);
+  EXPECT_EQ(O.SymbolAddress, 0u);
+  for (
+      const char *Bad :
+      {"null", "{}", "[{}]",
+       R"([{"address":0,"image_base":0,"image_name":"x","symbol_name":null,"symbol_address":0}])",
+       R"([{"address":1,"image_base":2,"image_name":"x","symbol_name":null,"symbol_address":0}])",
+       R"([{"address":1,"image_base":0,"image_name":"","symbol_name":null,"symbol_address":0}])",
+       R"([{"address":1,"image_base":0,"image_name":"x","symbol_name":"s","symbol_address":0}])",
+       R"([{"address":1,"image_base":0,"image_name":"x","symbol_name":null,"symbol_address":1}])",
+       R"([{"address":1,"image_base":0,"image_name":"x","symbol_name":false,"symbol_address":0}])",
+       R"([{"address":1.5,"image_base":0,"image_name":"x","symbol_name":null,"symbol_address":0}])",
+       R"([{"address":1,"image_base":0,"image_name":"x","symbol_name":null,"symbol_address":0,"extra":0}])"}) {
+    SCOPED_TRACE(Bad);
+    auto Result = Parse(Bad);
+    EXPECT_FALSE(bool(Result));
+    llvm::consumeError(Result.takeError());
+  }
+}
+TEST_P(AndroidNative, DladdrTypedRecordsRejectInvalidStateBeforeGuestEntry) {
+  Options.Android->EntrySymbol = "add_arguments";
+  NativeDladdrObservation Good{0x40001004, 0x40000000, "/guest/fixture.so",
+                               "symbol", 0x40001000};
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto Bad = Good;
+    switch (Mode) {
+    case 0:
+      Bad.Address = 0;
+      break;
+    case 1:
+      Bad.ImageBase = Bad.Address + 1;
+      break;
+    case 2:
+      Bad.ImageName = std::string("x\0y", 3);
+      break;
+    case 3:
+      Bad.ImageName.assign(
+          ::neverd::limits::emulation::kAndroidDladdrStringBytes + 1, 'x');
+      break;
+    case 4:
+      Bad.SymbolName = "";
+      break;
+    case 5:
+      Bad.SymbolName.reset();
+      break;
+    case 6:
+      Bad.SymbolAddress = Bad.Address + 1;
+      break;
+    case 7:
+      Bad.SymbolAddress = Bad.ImageBase - 1;
+      break;
+    case 8:
+      break;
+    }
+    Options.Android->DladdrObservations = std::vector{Bad};
+    if (Mode == 8)
+      Options.Android->DladdrObservations->push_back(Bad);
+    auto Result =
+        emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+    EXPECT_FALSE(bool(Result));
+    EXPECT_NE(llvm::toString(Result.takeError()).find("dladdr"),
+              std::string::npos);
+  }
+}
+
 TEST(AndroidOptions, DefaultScopeDistinguishesUnspecifiedFromEmpty) {
   for (const char *Text :
        {R"({"android":{}})", R"({"android":{"default_scope":[]}})",

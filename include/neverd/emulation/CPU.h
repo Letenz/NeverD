@@ -117,6 +117,10 @@ public:
   /// set. OS context restoration must not infer this from writable MXCSR bits.
   virtual bool supportsSIMDExceptions() const { return false; }
   virtual llvm::Expected<RegisterValue> readRegister(CPURegister Register) = 0;
+  /// Read the stopped CPU's complete modeled architectural register set.
+  /// All-or-error: no partial state, context switch, execution, or memory read.
+  /// This is observation only, not a resumable context or saved-thread state.
+  llvm::Expected<std::vector<RegisterSnapshot>> readRegisters();
   virtual llvm::Error writeRegister(CPURegister Register,
                                     const RegisterValue &Value) = 0;
   virtual llvm::Error fetch(uint64_t Address,

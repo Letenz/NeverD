@@ -65,6 +65,116 @@ TEST(LinuxKernelAvailability, JSONAndTypedInputsFailBeforeLoading) {
   ASSERT_TRUE(bool(Empty)) << llvm::toString(Empty.takeError());
   EXPECT_TRUE(Empty->LinuxKernel->UnavailableSyscalls.empty());
 }
+TEST(LinuxKernelAvailability,
+     XAttrQueryImportContractsRequireExactTypedOrJSONInput) {
+  struct Case {
+    const char *Label;
+    LinuxXAttrQueryImport Import;
+  };
+  constexpr Case Cases[] = {
+      {"target-before-name", LinuxXAttrQueryImport::TargetBeforeName},
+      {"name-before-target", LinuxXAttrQueryImport::NameBeforeTarget}};
+  for (const auto &C : Cases) {
+    auto O = processOptionsFromJSON(
+        std::string("{\"linux_kernel\":{\"xattr_query_import\":\"") + C.Label +
+        "\"}}");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    ASSERT_TRUE(O->LinuxKernel);
+    EXPECT_EQ(O->LinuxKernel->XAttrQueryImport, C.Import);
+    EXPECT_EQ(xattrQueryImport(*O->LinuxKernel), C.Import);
+    EXPECT_FALSE(O->LinuxKernel->GKI);
+    EXPECT_FALSE(bool(validateKernelOptions(*O->LinuxKernel)));
+  }
+  for (const char *Value :
+       {"null", "true", "false", "0", "[]", "{}", "\"\"", "\"unknown\"",
+        "\"target-first\"", "\"TARGET-BEFORE-NAME\""}) {
+    auto O = processOptionsFromJSON(
+        std::string("{\"linux_kernel\":{\"xattr_query_import\":") + Value +
+        "}}");
+    ASSERT_FALSE(bool(O)) << Value;
+    llvm::consumeError(O.takeError());
+  }
+  auto Extra = processOptionsFromJSON(
+      R"({"linux_kernel":{"xattr_query_import":"target-before-name","extra":0}})");
+  ASSERT_FALSE(bool(Extra));
+  llvm::consumeError(Extra.takeError());
+  ProcessOptions O;
+  auto &K = O.LinuxKernel.emplace();
+  EXPECT_FALSE(xattrQueryImport(K));
+  K.XAttrQueryImport = static_cast<LinuxXAttrQueryImport>(99);
+  EXPECT_FALSE(xattrQueryImport(K));
+  auto E = validateKernelOptions(K);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)), KernelOptions);
+  auto Bad = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+  ASSERT_FALSE(bool(Bad));
+  EXPECT_EQ(llvm::toString(Bad.takeError()), KernelOptions);
+}
+
+TEST(LinuxKernelAvailability,
+     XAttrQueryImportPreservesGKIAndRejectsTwoAuthorities) {
+  struct Case {
+    AndroidGKIKernel Kernel;
+    const char *Label;
+    bool NameFirst;
+  };
+  constexpr Case Cases[] = {
+#define NEVERD_GKI_RELEASE_CASE(Name, Label, ThreadFlag, SingleBuffer, Error,  \
+                                NameFirst)                                     \
+  {AndroidGKIKernel::Name, Label, NameFirst},
+#include "GKIReleaseCases.def"
+#undef NEVERD_GKI_RELEASE_CASE
+  };
+  for (const auto &C : Cases) {
+    SCOPED_TRACE(C.Label);
+    LinuxKernelOptions K;
+    K.GKI = C.Kernel;
+    const auto Expected = C.NameFirst ? LinuxXAttrQueryImport::NameBeforeTarget
+                                      : LinuxXAttrQueryImport::TargetBeforeName;
+    EXPECT_EQ(xattrQueryImport(K), Expected);
+    EXPECT_FALSE(bool(validateKernelOptions(K)));
+    for (const auto &Import : {LinuxXAttrQueryImport::TargetBeforeName,
+                               LinuxXAttrQueryImport::NameBeforeTarget}) {
+      K.XAttrQueryImport = Import;
+      EXPECT_FALSE(xattrQueryImport(K));
+      auto E = validateKernelOptions(K);
+      ASSERT_TRUE(bool(E));
+      EXPECT_EQ(llvm::toString(std::move(E)), KernelOptions);
+    }
+    for (const char *Import : {"target-before-name", "name-before-target"}) {
+      auto O = processOptionsFromJSON(
+          std::string("{\"linux_kernel\":{\"gki\":\"") + C.Label +
+          "\",\"xattr_query_import\":\"" + Import + "\"}}");
+      ASSERT_FALSE(bool(O));
+      llvm::consumeError(O.takeError());
+    }
+  }
+  LinuxKernelOptions K;
+  K.GKI = static_cast<AndroidGKIKernel>(99);
+  EXPECT_FALSE(xattrQueryImport(K));
+}
+
+TEST(LinuxKernelAvailability,
+     XAttrQueryImportDoesNotSelectOtherKernelContracts) {
+  for (const char *Import : {"target-before-name", "name-before-target"}) {
+    auto O = processOptionsFromJSON(
+        std::string("{\"linux_kernel\":{\"xattr_query_import\":\"") + Import +
+        R"(","unavailable_syscalls":["pidfd_open"]}})");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    auto &K = *O->LinuxKernel;
+    EXPECT_FALSE(K.GKI);
+    EXPECT_FALSE(K.Tasks);
+    EXPECT_TRUE(
+        unavailableKernelService(ServiceKind::PidFDOpen, O->LinuxKernel));
+    EXPECT_FALSE(
+        unavailableKernelService(ServiceKind::GetXAttr, O->LinuxKernel));
+    EXPECT_FALSE(bool(validateKernelOptions(K)));
+    K.XAttrQueryImport.reset();
+    EXPECT_FALSE(xattrQueryImport(K));
+    EXPECT_FALSE(bool(validateKernelOptions(K)));
+  }
+}
+
 struct Profile {
   const char *Name;
   ExecutionBackendKind Backend;
