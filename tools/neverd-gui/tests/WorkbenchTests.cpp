@@ -98,7 +98,6 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
-#include <QSizeGrip>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabBar>
@@ -8320,23 +8319,18 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
     auto *recent =
         dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
-    auto *grip = dialog.findChild<QSizeGrip *>();
     auto *action =
         dialog.findChild<QPushButton *>(QStringLiteral("quickStartAction"));
-    QVERIFY(recent && grip && grip->isVisible() && action);
+    QVERIFY(recent && action);
+    QVERIFY(dialog.findChild<TitleBar *>());
+    QVERIFY(!dialog.isSizeGripEnabled());
     const QSize initialSize = dialog.size();
     const QSize initialListSize = recent->size();
     const QSize actionSize = action->size();
 
-    // Drag the actual resize control, then check the content gained the space.
-    const QPoint start = grip->rect().center();
-    const QPoint destination = grip->mapToGlobal(start) + QPoint(24, 24);
-    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier, start);
-    QMouseEvent move(QEvent::MouseMove, grip->mapFromGlobal(destination),
-                     destination, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(grip, &move);
-    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier,
-                        grip->mapFromGlobal(destination));
+    // Native edge gestures are covered by the shared frame tests. Here the
+    // dialog's content and saved size must follow the resulting geometry.
+    dialog.resize(initialSize + QSize(24, 24));
     QTRY_VERIFY(dialog.width() > initialSize.width());
     QTRY_VERIFY(dialog.height() > initialSize.height());
     const QSize chosenSize = dialog.size();

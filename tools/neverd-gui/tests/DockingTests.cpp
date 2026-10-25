@@ -145,19 +145,19 @@ public:
     if (QGuiApplication::platformName() == QLatin1String("xcb"))
       return true;
 #ifdef Q_OS_WIN
-    Q_UNUSED(held);
-    return true; // Native buttons also drive the system move loop.
+    if (QGuiApplication::platformName() == QLatin1String("windows"))
+      return true; // Native buttons also drive the system move loop.
 #elif defined(Q_OS_MACOS)
-    return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
-                       global);
-#else
+    if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+      return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
+                         global);
+#endif
     QWidget *receiver = Pressed ? Pressed.data() : &widget;
     QMouseEvent event(QEvent::MouseMove, receiver->mapFromGlobal(global),
                       global, Qt::NoButton,
                       held ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(receiver, &event);
     return true;
-#endif
   }
 
   bool button(QWidget &widget, QPoint point, bool pressed) {
@@ -176,18 +176,17 @@ public:
                        .arg(pressed ? QStringLiteral("PRESSED")
                                     : QStringLiteral("RELEASED")));
 #ifdef Q_OS_WIN
-    Q_UNUSED(widget);
-    Q_UNUSED(point);
-    INPUT input{};
-    input.type = INPUT_MOUSE;
-    input.mi.dwFlags = pressed ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
-    return SendInput(1, &input, sizeof(input)) == 1;
+    if (QGuiApplication::platformName() == QLatin1String("windows")) {
+      INPUT input{};
+      input.type = INPUT_MOUSE;
+      input.mi.dwFlags = pressed ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
+      return SendInput(1, &input, sizeof(input)) == 1;
+    }
 #elif defined(Q_OS_MACOS)
-    Q_UNUSED(widget);
-    Q_UNUSED(point);
-    return nativeMouse(pressed ? kCGEventLeftMouseDown : kCGEventLeftMouseUp,
-                       QCursor::pos());
-#else
+    if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+      return nativeMouse(pressed ? kCGEventLeftMouseDown : kCGEventLeftMouseUp,
+                         QCursor::pos());
+#endif
     if (pressed) {
       Pressed = &widget;
       QTest::mousePress(&widget, Qt::LeftButton, Qt::NoModifier, point);
@@ -198,7 +197,6 @@ public:
       Pressed.clear();
     }
     return true;
-#endif
   }
 
 #ifdef Q_OS_MACOS
@@ -520,13 +518,7 @@ private slots:
     const QSize size = floating->size();
     // Start just inside the visible edge, including the top caption corners.
     // Previously only the extreme bottom-right corner was tested.
-    // Linux's drawn border has an eight-pixel interior hit area. The native
-    // Windows frame and macOS resize handler also accept the immediate edge.
-#ifdef Q_OS_LINUX
-    const int inset = (onWayland() ? 10 : 0) + 6;
-#else
-    const int inset = 1;
-#endif
+    const int inset = floating->contentsMargins().left() + 6;
     QPoint start = floating->rect().center();
     QPoint delta;
     if (edges & Qt::LeftEdge) {
