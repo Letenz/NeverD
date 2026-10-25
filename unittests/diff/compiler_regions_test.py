@@ -18,6 +18,36 @@ def digest(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
+def cyclic_entry_targets(graph):
+    """Classify fixture CFGs independently of their reported progress proof."""
+    successors = [block['successors'] for block in graph['blocks']]
+    reachable = []
+    for start in range(len(successors)):
+        seen, pending = set(), [start]
+        while pending:
+            block = pending.pop()
+            if block not in seen:
+                seen.add(block)
+                pending.extend(successors[block])
+        reachable.append(seen)
+    remaining = set(range(len(successors)))
+    assert reachable[graph['entry_block']] == remaining
+    entries = []
+    while remaining:
+        start = min(remaining)
+        component = {other for other in remaining
+                     if other in reachable[start] and start in reachable[other]}
+        remaining -= component
+        if len(component) == 1 and start not in successors[start]:
+            continue
+        targets = {target for source, edges in enumerate(successors)
+                   if source not in component for target in edges if target in component}
+        if graph['entry_block'] in component:
+            targets.add(graph['entry_block'])
+        entries.append(targets)
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--neverd', required=True)
@@ -365,21 +395,45 @@ def main():
                     cross_report = root / f'{prefix}-cross-level.nddiff'
                     crossed = compare(prefix + '-cross-level', a, b,
                                       [*progress_profile, '--save', str(cross_report)], False)
-                    other = crossed['dataflow']['secondary']['entries'][0]['graph']['progress']
+                    other_graph = crossed['dataflow']['secondary']['entries'][0]['graph']
+                    other = other_graph['progress']
+                    multiple_entries = False
+                    nowrap_decrement = False
                     if family == 5:
-                        # O2 retains the bounded unsigned decrement, either at
-                        # a common latch or in both selected arms. Recovering
-                        # that proof is valid: the source takes at most eight
-                        # iterations. Require and authenticate its witnesses.
+                        entries = cyclic_entry_targets(other_graph)
+                        assert len(entries) == 1 and entries[0], (prefix, entries)
+                        multiple_entries = len(entries[0]) > 1
+                        nodes = other_graph['nodes']
+                        decrements = {i for i, node in enumerate(nodes)
+                            if node['opcode'] in ('add', 'sub') and node['result_bytes'] == 4
+                            and any(v[0] == 1 and v[3] == (
+                                '0xffffffff' if node['opcode'] == 'add' else '0x1')
+                                for v in node['inputs'])
+                            and any(v[0] == 0 and nodes[v[1]]['phi'] for v in node['inputs'])}
+                        assert decrements, prefix
+                        common_wrap_flags = 3  # LLVM nuw/nsw bits in the wire contract.
+                        for update in decrements:
+                            flags = int(nodes[update]['semantics'].rsplit(';flags=', 1)[1])
+                            assert 0 <= flags <= 3, (prefix, flags)
+                            common_wrap_flags &= flags
+                        nowrap_decrement = bool(common_wrap_flags)
+                    if family == 5 and not multiple_entries and nowrap_decrement:
+                        # A retained single-entry bounded decrement must prove
+                        # progress, whether it has a common or selected update.
                         assert other['kind'] == 'counter_loops', (prefix, other)
                         assert other['loop_count'] == 1 and other['backedge_count'] == 1, (prefix, other)
                         assert other['guard_count'] == len(other['loops']) > 0, (prefix, other)
+                        assert {w['update'] for w in other['loops']} == decrements, prefix
                         assert 'willreturn' not in other['source_contract'], (prefix, other)
                         assert 'willreturn' in other['observed_contract'], (prefix, other)
                     else:
-                        # The common-update O0 shape still lacks a proof
-                        # premise; its unchanged contract cannot add anchors.
+                        # Tail duplication can give the selected-update O2
+                        # component multiple entries. v4-v6 require one entry;
+                        # the source's bounded loop is not a retained proof.
+                        # A missing nowrap flag also requires v4 to abstain.
+                        # Common-update O0 also still lacks a v4 premise.
                         assert other['kind'] == 'unproven', (prefix, other)
+                        assert not other['loops'], (prefix, other)
                         assert other['source_contract'] == other['observed_contract'], (prefix, other)
                         assert crossed['flow_regions']['anchor_count'] == 0, prefix
                     assert crossed['dataflow']['primary']['entries'][0]['graph'] == graphs[0]
@@ -438,24 +492,37 @@ def main():
                            for pair in anchor['nodes'])
                 if version == 4:
                     modular = compare(prefix + '-modular', a, b,
-                        ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments'])
+                        ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments'],
+                        not multiple_entries)
                     graph = modular['dataflow']['secondary']['entries'][0]['graph']
                     proof = graph['progress']
-                    if family == 5:
-                        # The bounded decrement was already proved by v4 above.
-                        # The modular profile must retain that exact graph and
-                        # every existing nowrap witness, including a compiler
-                        # shape with one common latch instead of two guards.
+                    if family == 5 and (multiple_entries or nowrap_decrement):
+                        # The modular profile must retain v4's exact graph and
+                        # decision, including every existing nowrap witness or
+                        # the explicit refusal of a multiple-entry component.
                         previous = crossed['dataflow']['secondary']['entries'][0]['graph']
                         assert graph['nodes'] == previous['nodes'], prefix
                         expected = {**previous['progress'], 'loops': [
                             {**witness, 'proof': 'nowrap'}
                             for witness in previous['progress']['loops']]}
                         assert proof == expected, (prefix, proof, expected)
+                        if multiple_entries:
+                            assert modular['flow_regions']['anchor_count'] == 0
                     else:
                         assert proof['kind'] == 'counter_loops'
                         assert proof['loop_count'] == 1 and proof['guard_count'] == 2
                         assert {w['proof'] for w in proof['loops']} <= {'nowrap', 'modular'}
+                        if family == 5:
+                            assert proof['backedge_count'] == 1
+                            assert {w['proof'] for w in proof['loops']} == {'modular'}
+                            assert {w['update'] for w in proof['loops']} == decrements
+                            counters = {v[1] for update in decrements
+                                for v in other_graph['nodes'][update]['inputs'] if v[0] == 0}
+                            guards = {i for i, node in enumerate(other_graph['nodes'])
+                                if node['opcode'] == 'icmp' and ';predicate=32' in node['semantics']
+                                and any(v[0] == 1 and v[3] == '0x0' for v in node['inputs'])
+                                and any(v[0] == 0 and v[1] in counters for v in node['inputs'])}
+                            assert {w['compare'] for w in proof['loops']} == guards
 
     modular_profile = ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments']
     for arch, targets in (
@@ -601,7 +668,10 @@ def main():
                           ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments'], False)
             old_proof = old['dataflow']['primary']['entries'][0]['graph']['progress']
             assert old_proof['kind'] == 'unproven' and not old_proof['loops']
-            assert old['flow_regions']['anchor_count'] == 0
+            assert old_proof['source_contract'] == old_proof['observed_contract']
+            # Finite local fragments can still match in an unproved loop.
+            # Their open control boundaries do not establish whole-loop progress.
+            assert all(anchor['open_control_frontier'] for anchor in old['flow_regions']['anchors'])
             crossed = compare(prefix + '-cross-level', a, b, parameter_bound_profile)
             optimized = crossed['dataflow']['secondary']['entries'][0]['graph']['progress']
             assert optimized['kind'] == 'counter_loops'
