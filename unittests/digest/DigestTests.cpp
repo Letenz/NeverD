@@ -19,7 +19,9 @@
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/SHA256.h"
+#include "llvm/TargetParser/Host.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -41,6 +43,10 @@ namespace {
     !defined(_M_ARM64)
 #error "Native ARM64 qualification must not run an emulated x86 digest"
 #endif
+#if defined(NEVERD_DIGEST_REQUIRE_X86_64) &&                                   \
+    ((!defined(__x86_64__) && !defined(_M_X64)) || defined(_M_ARM64EC))
+#error "Native x86-64 qualification must compile the x86-64 digest"
+#endif
 
 TEST(Digest, SelectedImplementation) {
   const bool Hardware = detail::sha256UsesHardware();
@@ -48,6 +54,15 @@ TEST(Digest, SelectedImplementation) {
 #ifdef NEVERD_SHA256_PORTABLE
   EXPECT_FALSE(Hardware);
 #else
+#if (defined(__x86_64__) || defined(_M_X64)) && !defined(_M_ARM64EC)
+  // The independently maintained LLVM detector must agree with the narrower
+  // query, including hosts where hardware acceleration is unavailable.
+  const auto Features = llvm::sys::getHostCPUFeatures();
+  EXPECT_EQ(Hardware, Features.lookup("sha") && Features.lookup("sse4.1") &&
+                          Features.lookup("ssse3"));
+#elif (defined(__aarch64__) || defined(_M_ARM64)) && defined(_WIN32)
+  EXPECT_EQ(Hardware, llvm::sys::getHostCPUFeatures().lookup("sha2"));
+#endif
   // Native qualification requires acceleration explicitly, so a detector that
   // silently falls back cannot pass merely because the digest is correct.
   if (const char *Expected = std::getenv("NEVERD_TEST_SHA256_HARDWARE")) {
