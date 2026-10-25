@@ -4,11 +4,12 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Recovers memory-independent constant branch targets before tail-call
-/// conversion. Unknown live-ins, loads and partial writes never invent facts.
+/// Recovers exact constant branch targets before tail-call conversion.
+/// Unknown live-ins, mutable loads and partial writes never invent facts.
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowScalarConstant.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include <algorithm>
 #include <map>
@@ -20,7 +21,8 @@ namespace neverd {
 
 bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
                                                Decoder &Dec, LowFunc &Func,
-                                               size_t &RemainingWork) {
+                                               size_t &RemainingWork,
+                                               ScalarImageFacts &ImageScalars) {
   // ARM32 state-changing branches require a separate instruction-mode proof.
   if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64 &&
       Img.Arch != Arch::AArch64)
@@ -35,6 +37,8 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
     return false;
 
   bool Changed = false;
+  // All image metadata is fixed throughout discovery. Cache failures as well
+  // as successes so repeated instructions/rounds do not rescan the image.
   auto Spend = [&](size_t Work) {
     if (Work > RemainingWork) {
       RemainingWork = 0;
@@ -145,7 +149,21 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
           const NdVar &Output = Op.Output;
           if (!Output.isReg() && !Output.isTemp())
             continue;
-          const auto Result = lowScalarConstantResult(Op, ValueOf);
+          auto Result = lowScalarConstantResult(Op, ValueOf);
+          if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1 && Output.Size &&
+              Output.Size <= sizeof(uint64_t) &&
+              Op.Inputs[0].Size >= Img.getPointerSize() &&
+              Op.MemoryOrdering == NdMemoryOrdering::None &&
+              Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+            if (auto Address = ValueOf(Op.Inputs[0])) {
+              const auto Key = std::make_pair(*Address, Output.Size);
+              auto [It, Inserted] = ImageScalars.try_emplace(Key);
+              if (Inserted)
+                It->second = readImmutableImageScalar(
+                    Img, *Address, Output.Size, &RemainingWork);
+              Result = It->second;
+            }
+          }
           if (!Spend(1 + Output.Size)) {
             Complete = false;
             break;

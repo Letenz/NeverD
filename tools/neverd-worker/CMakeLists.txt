@@ -208,6 +208,11 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/constant_branch_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerConstantBranch PROPERTIES TIMEOUT 40)
+      add_test(NAME NeverDWorkerScalarBranchValues
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_branch_value_test.py"
+                "$<TARGET_FILE:neverd-worker>" "${_neverd_worker_source_cc}")
+      set_tests_properties(NeverDWorkerScalarBranchValues PROPERTIES
+        TIMEOUT 120 SKIP_RETURN_CODE 77)
       add_test(NAME NeverDWorkerRealEngine
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/real_engine_test.py"
                 "$<TARGET_FILE:neverd-worker>")

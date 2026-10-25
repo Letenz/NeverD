@@ -11,6 +11,14 @@ refuted guesses and explicit user identities). Replaced-PC and recursive
 fixtures execute both C routes at O0/O2 with independent callbacks or return
 values; malformed return-slot and arbitrary-write controls remain refused.
 
+`NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
+incoming stack binding regressions without the full mobile fixture inventory.
+The incoming-stack case compiles and executes HighC and LLVMC for x64/ARM64
+PE/ELF inputs at O0/O2, with pipeline optimization enabled and disabled. It
+checks integer and floating bit transport, repeated binding, call indices, and
+isolation from machine lifting, patching and analysis. These host executions
+do not qualify native Windows ARM64 drivers.
+
 `NeverDLLVMCValueTests` executes byte-shuffle and SHA-256 projections against
 independent scalar oracles and compiles mixed SHA/SGX/AMX feature selection.
 The latter does not execute privileged or tile-state instructions.
@@ -915,6 +923,9 @@ after changing frame-member queries.
 `*PackageApplicationInfo*` tests exact name/flag keys, independent mutable
 query results, retained Context fields, nullable and unknown field states,
 UTF-16 names, invalid typed/JSON responses and terminal work/storage limits.
+`AndroidFrameworkTest.PackageQueriesAdmitOneResultAllocation` compares the
+shared query allocation budget and checks that exhaustion leaves no result
+object allocated.
 The native fixture checks ordinary and jvalue-array calls and field ownership
 across detach and a second thread; DEX queries enter the same owner. Run the
 full Dalvik, Android JNI and ProcessReport suites for this shared contract.
@@ -1161,6 +1172,19 @@ invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
 ownership and an AArch64 scalar transfer. Discontiguous and backward targets
 retain the original frame across another entry's search bound; independently
 known targets remain tail calls with their original instruction address.
+Immutable scalar reads extend this matrix to all three architectures and
+formats, retaining mutable, ambiguous, relocated, ordered, segment-relative
+and unaffordable loads as runtime inputs. Revalidation shares a read cache
+throughout one CFG build. `NeverDReadOnlyBytesTests` checks scalar width,
+relocation identity and cold-read budget boundaries. `LowScalarConstant.*`
+in `NeverDSEHRuntimeMemoryTests` compares unary arithmetic and sign extension
+with concrete LowIR execution.
+
+`NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
+both C routes for readonly loads, NOT, NEG and sign-extended target offsets.
+Independent native ELF x64 fixtures return a known result past an overlapping
+unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
+the native test is skipped on other hosts.
 
 `NeverDWorkerConstantBranch` also checks cold expression resolution and literal
 GUI listing jumps into forward and backward fragments, both C routes, retained
@@ -5854,6 +5878,26 @@ different addresses, recursion through aliases, canonical indirect import
 relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
 checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
 or absent metadata, evidence withdrawal, and the separate identity gate.
+The COFF cases also check primary x64 vftable references: exact RTTI types,
+locator and hierarchy consistency, bounded strings, unsupported secondary
+layouts, malformed data, instruction prefixes and negative displacements.
+`SignatureDBContext.*` verifies that `!refs` rejects unresolved byte hits,
+cannot bootstrap cycles, propagates anchored chains in either order and
+withdraws their dependent candidates. Parser and cache tests preserve the
+constraint; producer tests keep the ordinary byte floor and require complete
+bodies for contextual patterns. The Python supplement tests retain short and
+discarded counterclaims across independently selected packs.
+`SignatureDBCallerContext.*` checks incoming support, full-body disagreement,
+entry scope, complete alternatives, variant consensus, and refusal of weak,
+partial, ambiguous, required or contradicted initial anchors. Rooted chains
+exercise both input orders, independent frozen validation, weak intermediate
+bodies, unrooted cycles and the depth budget. Cache tests run pieces in reverse
+order and reject invalid caller offsets and CRC coverage without depending on
+another worker's materialized names. `SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
+adds 4096 short records while retaining exactly one scheduled ordinary byte
+check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
+cache and generator tests preserve the caller constraint. The SDK profile
+fixture loads `.npat` explicitly and through automatic selection.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -5865,7 +5909,8 @@ automatic load retains the previous successful database and statistics.
 public C SDK, including header JSON counts and their manual-load reset.
 Its naming cases exercise PE exports and stripped PE, ELF x64/ARM64 and Mach-O:
 candidates stay visible without replacing function names, and evidence for one
-alias does not certify the others. `SignatureDBIdentity.*` covers confirmed
+alias does not certify the others. Streamed candidate JSON retains escaping,
+UTF-8 repair, aliases and admission fields. `SignatureDBIdentity.*` covers confirmed
 references without source identity, stated names, data/analysis/user symbols,
 failed reloads and evidence withdrawal. `PersonalitySignatures.*` keeps the
 dedicated exception-context path. `SafetyCAPI.SignatureCandidateCannotInventSafetySinkIdentity`
