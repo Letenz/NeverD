@@ -239,6 +239,32 @@ TEST(ConstantBranch, ImageReadCacheSurvivesTheCompletedGraphRevalidation) {
   EXPECT_TRUE(addresses(build(Image)).count(0x1011));
 }
 
+TEST(ConstantBranch, OrderedAndSegmentRelativeReadsRemainRuntimeInputs) {
+  auto Image = scalarLoadImage(Arch::AArch64, BinaryFormat::COFF);
+  auto &Text = Image.Segments.front();
+  Text.Data = {0x00, 0x00, 0x82, 0xd2,  // mov x0,0x1000
+               0x02, 0x00, 0x84, 0xd2,  // mov x2,0x2000
+               0x41, 0xfc, 0xdf, 0x88,  // ldar w1,[x2]
+               0x00, 0x00, 0x01, 0x8b,  // add x0,x0,x1
+               0x00, 0x00, 0x1f, 0xd6,  // br x0
+               0x00, 0x00, 0x20, 0xd4,  // unreachable brk
+               0xc0, 0x03, 0x5f, 0xd6}; // ret
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = Text.Size;
+  writeLE<uint32_t>(Image.Segments.back().Data.data(), 24);
+  EXPECT_FALSE(addresses(build(Image)).count(0x1018));
+
+  Image = scalarLoadImage(Arch::X64, BinaryFormat::COFF);
+  auto &X86Text = Image.Segments.front();
+  // A GS override cannot read the image's identically numbered default-space
+  // address without an independently proved segment base.
+  X86Text.Data.insert(X86Text.Data.begin() + 5, 0x65);
+  X86Text.Size = X86Text.FileSz = X86Text.Data.size();
+  Image.Sections.front().Size = Image.Sections.front().FileSz = X86Text.Size;
+  writeLE<uint32_t>(Image.Segments.back().Data.data(), 18);
+  EXPECT_FALSE(addresses(build(Image)).count(0x1012));
+}
+
 TEST(ConstantBranch, UnknownLiveInAndPartialRegisterStayUnknown) {
   const auto Unknown = build({0x48, 0x83, 0xc0, 0x07, 0xff, 0xe0, 0xe9, 0xc3});
   EXPECT_FALSE(addresses(Unknown).count(0x1007));

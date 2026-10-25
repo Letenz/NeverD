@@ -704,8 +704,8 @@ can supply bits, and pointer-width address candidates retain their separate
 relocation proof. Cold reads charge the image metadata inventory against the
 existing evidence budget; repeated reads cache successes and failures within
 one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
-Recovery revalidates the producer's basic block after discovering new paths. Lost or
-incomplete proofs retain the original indirect transfer. The native function
+Recovery revalidates the producer's basic block after discovering new paths.
+Lost or incomplete proofs retain the original indirect transfer. The native function
 disassembly API publishes these same instruction boundaries and targets; raw
 disassembly remains linear. The worker uses recovered bodies for function
 listings and replaces their linear reference-scan results, so skipped bytes do
