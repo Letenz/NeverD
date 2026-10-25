@@ -1892,16 +1892,19 @@ independent. Also check `NEVERD_ENABLE_MIMALLOC=OFF`, Debug, and Unix
 AddressSanitizer/UBSan. Do not treat a skipped, absent or cancelled case as a
 pass. The acceleration CI also runs installed binaries on each native host.
 
-`SortedSearch.*` compares ranks against independent counts, checks every
-insertion point across narrowed tails, and puts read-only input against an
-inaccessible page. It exercises every supported/generated Highway target,
+`SortedSearch.*` compares ranks against independent counts and membership
+against linear search, checks every insertion point across narrowed tails,
+and puts read-only input against an inaccessible page for both operations.
+Membership includes a possible match at the narrowed interval's upper bound.
+It exercises every supported/generated Highway target,
 including unsigned high-bit addresses and duplicate keys. Test XML records the
 targets and, on Linux ARM64 with SVE, the actual vector length. For example,
 QEMU's `-cpu max,sve-max-vq=3` exercises 384-bit SVE, whose lane count does not
 divide the fixed tail. Emulation checks correctness, not native speed.
 
-The optional `neverd-sorted-search-bench` target accepts `std`, `simd`, or, in
-the full build, `owner`, followed by sorted keys and query files containing
+The optional `neverd-sorted-search-bench` target accepts `std`/`simd` for lower
+bounds, `std-contains`/`contains` for membership, or, in the full build, `owner`,
+followed by sorted keys and query files containing
 hexadecimal unsigned integers. An optional final Highway target name selects
 a supported implementation. It validates the complete result vector and
 reports warm lookup wall/process CPU time; parsing, reference computation,
