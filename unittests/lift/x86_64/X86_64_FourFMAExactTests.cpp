@@ -88,6 +88,46 @@ void expectMalformedRejected(const std::vector<uint8_t> &Bytes) {
   EXPECT_TRUE(Ops.empty());
 }
 
+TEST(X86FourFMAExact, ScalarSourcesObserveOnlyTheirLowDwords) {
+  const auto Ops = lift({0x62, 0xf2, 0x5f, 0x0a, 0x9b, 0x08});
+  auto Image = image(floats({2, 3, 4, 5}, 4));
+  NdOpEmulator E(Image);
+  E.setStrictMode(true);
+  E.setRegister(mapCapstoneReg(X86_REG_RAX).Offset, 0x4000);
+  E.setRegister(mapCapstoneReg(X86_REG_K2).Offset, 1);
+  auto Old = floats({7, 11, 13, 17}, 4);
+  E.setRegisterBytes(mapCapstoneReg(X86_REG_XMM1).Offset, Old);
+  for (unsigned I = 0; I < 4; ++I)
+    E.setRegisterBytes(
+        mapCapstoneReg(static_cast<x86_reg>(X86_REG_XMM4 + I)).Offset,
+        floats({float(I + 1)}, 1));
+  ASSERT_EQ(E.run(Ops), Ops.size());
+  auto Result = E.getRegisterBytes(mapCapstoneReg(X86_REG_XMM1).Offset);
+  ASSERT_TRUE(Result);
+  EXPECT_EQ(getf(*Result, 0), 47.0f);
+  EXPECT_TRUE(std::equal(Old.begin() + 4, Old.end(), Result->begin() + 4));
+}
+
+TEST(X86FourFMAExact, MissingPackedSourceCannotBecomeZeroWhilePacking) {
+  const auto Ops = lift({0x62, 0xf2, 0x5f, 0x4a, 0x9a, 0x08});
+  auto Image = image(floats({2, 3, 4, 5}, 4));
+  for (unsigned Missing = 0; Missing < 4; ++Missing) {
+    NdOpEmulator E(Image);
+    E.setStrictMode(true);
+    E.setRegister(mapCapstoneReg(X86_REG_RAX).Offset, 0x4000);
+    E.setRegister(mapCapstoneReg(X86_REG_K2).Offset, 1);
+    auto Old = floats({7}, 16);
+    E.setRegisterBytes(mapCapstoneReg(X86_REG_ZMM1).Offset, Old);
+    for (unsigned I = 0; I < 4; ++I)
+      if (I != Missing)
+        E.setRegisterBytes(
+            mapCapstoneReg(static_cast<x86_reg>(X86_REG_ZMM4 + I)).Offset,
+            floats({float(I + 1)}, 16));
+    EXPECT_LT(E.run(Ops), Ops.size());
+    EXPECT_EQ(E.getRegisterBytes(mapCapstoneReg(X86_REG_ZMM1).Offset), Old);
+  }
+}
+
 TEST(X86FourFMAExact, PackedPositiveAndHighGroupNegativeAreSequentiallyFused) {
   EXPECT_TRUE(isSideeffectIntrinsic(Intrinsic::X86FourFMA));
   const std::vector<uint8_t> Memory = floats({2, 3, 4, 5}, 4);

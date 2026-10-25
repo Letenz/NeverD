@@ -15,6 +15,7 @@
 #include "../CodeGenDetail.h"
 
 #include "neverd/backend/llvm/X86/X86CompressExpandNative.h"
+#include "neverd/backend/llvm/X86/X86FourSourceNative.h"
 #include "neverd/backend/llvm/X86/X86SystemStateNative.h"
 
 namespace neverd {
@@ -67,11 +68,12 @@ detectTargetFeaturesX86(const std::set<std::string> &Names) {
   bool Half = Has(kUsesHalfMarker);
   bool AVX2 = Has("avx2"),
        AVX = Has("avx") || AVX2 || Has("avx512") ||
-             Has(X86CompactAsmMarker.data()) || Has("vround") || Has("vcvt") ||
-             Has("vrcp") || Has("vrsqrt") || Has("vadd") || Has("vsub") ||
-             Has("vmul") || Has("vdiv") || Has("vsqrt") || Has("vmin") ||
-             Has("vmax") || Has("vhadd") || Has("vhsub") || Has("vcmp") ||
-             Has("vcomi") || Has("vucomi") || FMA || Half;
+             Has(X86CompactAsmMarker.data()) ||
+             Has(X86FourSourceAsmMarker.data()) || Has("vround") ||
+             Has("vcvt") || Has("vrcp") || Has("vrsqrt") || Has("vadd") ||
+             Has("vsub") || Has("vmul") || Has("vdiv") || Has("vsqrt") ||
+             Has("vmin") || Has("vmax") || Has("vhadd") || Has("vhsub") ||
+             Has("vcmp") || Has("vcomi") || Has("vucomi") || FMA || Half;
 
   std::string F = "+sse,+sse2,+cx16";
   if (SSE3)

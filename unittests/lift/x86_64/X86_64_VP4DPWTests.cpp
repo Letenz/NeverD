@@ -101,15 +101,19 @@ TEST(X86VP4DPW, CanonicalLiftOwnsMemoryAndFourRegisterSourceBlock) {
   ASSERT_EQ(IntrinsicOp->NumInputs, 6);
   ASSERT_TRUE(IntrinsicOp->Inputs[0].isConst());
   EXPECT_EQ(static_cast<Intrinsic>(IntrinsicOp->Inputs[0].Offset),
-            Intrinsic::X86VP4DPWSSD);
+            Intrinsic::X86FourSourceMemory);
   EXPECT_EQ(IntrinsicOp->Output.Size, 64);
   EXPECT_EQ(IntrinsicOp->Inputs[1].Size, 8);
   EXPECT_EQ(IntrinsicOp->Inputs[2].Size, 64);
-  ASSERT_TRUE(IntrinsicOp->Inputs[3].isConst());
-  EXPECT_EQ(IntrinsicOp->Inputs[3].Offset, 20u);
+  EXPECT_TRUE(IntrinsicOp->Inputs[3].isTemp());
+  EXPECT_EQ(IntrinsicOp->Inputs[3].Size, 256u);
+  EXPECT_EQ(
+      std::count_if(Ops.begin(), Ops.end(),
+                    [](const LowOp &Op) { return Op.Opcode == NdOp::CONCAT; }),
+      3);
   EXPECT_EQ(IntrinsicOp->Inputs[4].Size, 2);
   ASSERT_TRUE(IntrinsicOp->Inputs[5].isConst());
-  EXPECT_EQ(IntrinsicOp->Inputs[5].Offset, 1u);
+  EXPECT_EQ(IntrinsicOp->Inputs[5].Offset, 0x84u);
 }
 
 TEST(X86VP4DPW, SideeffectIDsAndFourSequentialWrapOrSaturateRounds) {

@@ -708,6 +708,9 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
        Id == Intrinsic::X86FPFixup || Id == Intrinsic::X86FPScale ||
        Id == Intrinsic::X86FPCompare))
     return false;
+  if (Id == Intrinsic::X86FourSourceMemory || Id == Intrinsic::X86FourFMA ||
+      isX86VP4DPIntrinsic(Id))
+    return executeX86FourSource(Op);
   if (Id == Intrinsic::X86FPArith)
     return executeX86FPArith(Op);
   if (Id == Intrinsic::X86FPConvert)
@@ -1115,334 +1118,6 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
         Result[Base + Word * 2] = static_cast<uint8_t>(Sum);
         Result[Base + Word * 2 + 1] = static_cast<uint8_t>(Sum >> 8);
       }
-    writeOutputBytes(Op.Output, Result);
-    return true;
-  }
-
-  if (Id == Intrinsic::X86FourFMA) {
-    if (Op.NumInputs != 6 || (Op.Output.Size != 16 && Op.Output.Size != 64) ||
-        Op.Inputs[1].Size == 0 || Op.Inputs[1].Size > 8 ||
-        Op.Inputs[2].Size != Op.Output.Size || !Op.Inputs[3].isConst() ||
-        Op.Inputs[3].Size != 1 ||
-        (Op.Inputs[4].Size != 1 && Op.Inputs[4].Size != 2) ||
-        !Op.Inputs[5].isConst() || Op.Inputs[5].Size != 1)
-      return false;
-    const uint8_t GroupBase = static_cast<uint8_t>(readOperand(Op.Inputs[3]));
-    const uint8_t Control = static_cast<uint8_t>(readOperand(Op.Inputs[5]));
-    if ((Control & ~7u) != 0)
-      return false;
-    const bool Scalar = (Control & 1) != 0;
-    const bool Negative = (Control & 2) != 0;
-    const bool ZeroMask = (Control & 4) != 0;
-    if (Scalar != (Op.Output.Size == 16) ||
-        Op.Inputs[4].Size != (Scalar ? 1 : 2) || GroupBase > 28 ||
-        (GroupBase & 3) != 0)
-      return false;
-    const uint64_t Mask = readOperand(Op.Inputs[4]);
-    const uint64_t ActiveMask = Mask & (Scalar ? 1 : 0xffff);
-    std::array<uint32_t, 4> MemoryWords{};
-    if (ActiveMask != 0) {
-      const auto Address = resolveMemoryAddress(Op, readOperand(Op.Inputs[1]));
-      if (!Address)
-        return false;
-      for (unsigned I = 0; I < 4; ++I) {
-        const auto Word = loadMemory(*Address + I * 4, 4);
-        if (!Word)
-          return false;
-        MemoryWords[I] = static_cast<uint32_t>(*Word);
-      }
-      if (CollectLoads &&
-          static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
-        LoadLog.push_back({*Address, 16});
-    }
-    const std::vector<uint8_t> Old = readOperandBytes(Op.Inputs[2]);
-    std::array<std::vector<uint8_t>, 4> Sources;
-    if (ActiveMask != 0)
-      for (unsigned I = 0; I < 4; ++I) {
-        const x86_reg Reg = static_cast<x86_reg>(
-            (Scalar ? X86_REG_XMM0 : X86_REG_ZMM0) + GroupBase + I);
-        const RegInfo Info = mapCapstoneReg(Reg);
-        const auto Value = getRegisterBytes(Info.Offset);
-        if (!Value || Value->size() < Op.Output.Size)
-          return false;
-        Sources[I].assign(Value->begin(), Value->begin() + Op.Output.Size);
-      }
-    std::vector<uint8_t> Result = Old;
-    const unsigned Lanes = Scalar ? 1 : 16;
-    std::vector<uint32_t> Accumulators(Lanes);
-    for (unsigned Lane = 0; Lane < Lanes; ++Lane) {
-      const unsigned Offset = Lane * 4;
-      if (((ActiveMask >> Lane) & 1) == 0) {
-        if (ZeroMask)
-          std::fill_n(Result.begin() + Offset, 4, 0);
-        continue;
-      }
-      std::memcpy(&Accumulators[Lane], Old.data() + Offset, 4);
-    }
-    auto Rounding = [&]() {
-      switch ((MXCSR >> 13) & 3U) {
-      case 1:
-        return llvm::APFloat::rmTowardNegative;
-      case 2:
-        return llvm::APFloat::rmTowardPositive;
-      case 3:
-        return llvm::APFloat::rmTowardZero;
-      default:
-        return llvm::APFloat::rmNearestTiesToEven;
-      }
-    }();
-    auto StatusFlags = [](llvm::APFloat::opStatus Status) {
-      const unsigned Raw = static_cast<unsigned>(Status);
-      uint32_t Flags = 0;
-      if (Raw & llvm::APFloat::opInvalidOp)
-        Flags |= 1U << 0;
-      if (Raw & llvm::APFloat::opDivByZero)
-        Flags |= 1U << 2;
-      if (Raw & llvm::APFloat::opOverflow)
-        Flags |= 1U << 3;
-      if (Raw & llvm::APFloat::opUnderflow)
-        Flags |= 1U << 4;
-      if (Raw & llvm::APFloat::opInexact)
-        Flags |= 1U << 5;
-      return Flags;
-    };
-    auto IsNaN = [](uint32_t V) {
-      return (V & 0x7f800000U) == 0x7f800000U && (V & 0x007fffffU) != 0;
-    };
-    auto IsSignalingNaN = [&](uint32_t V) {
-      return IsNaN(V) && (V & 0x00400000U) == 0;
-    };
-    auto IsInf = [](uint32_t V) { return (V & 0x7fffffffU) == 0x7f800000U; };
-    auto IsZero = [](uint32_t V) { return (V & 0x7fffffffU) == 0; };
-    auto IsDenormal = [](uint32_t V) {
-      return (V & 0x7f800000U) == 0 && (V & 0x007fffffU) != 0;
-    };
-    auto ApplyDaz = [&](uint32_t Bits) {
-      return (MXCSR & (1U << 6)) != 0 && IsDenormal(Bits) ? Bits & 0x80000000U
-                                                          : Bits;
-    };
-    for (unsigned I = 0; I < 4; ++I) {
-      uint32_t PreRaised = 0;
-      std::vector<uint32_t> ArithmeticSources(Lanes);
-      std::vector<uint32_t> Multipliers(Lanes);
-      std::vector<uint32_t> Addends(Lanes);
-      std::vector<uint8_t> NeedsPostComputation(Lanes, 0);
-      for (unsigned Lane = 0; Lane < Lanes; ++Lane) {
-        if (((ActiveMask >> Lane) & 1) == 0)
-          continue;
-        const unsigned Offset = Lane * 4;
-        uint32_t OriginalSource = 0;
-        std::memcpy(&OriginalSource, Sources[I].data() + Offset, 4);
-        const uint32_t OriginalMultiplier = MemoryWords[I];
-        const uint32_t OriginalAddend = Accumulators[Lane];
-
-        // Intel's pre-computation priority is NaN/other-invalid, then
-        // denormal.  Select a source NaN from its original architectural bits:
-        // V4FNMADD's arithmetic negation must not change its sign or payload.
-        if (IsNaN(OriginalSource) || IsNaN(OriginalMultiplier) ||
-            IsNaN(OriginalAddend)) {
-          if (IsSignalingNaN(OriginalSource) ||
-              IsSignalingNaN(OriginalMultiplier) ||
-              IsSignalingNaN(OriginalAddend))
-            PreRaised |= 1U << 0;
-          const uint32_t Selected = IsNaN(OriginalSource) ? OriginalSource
-                                    : IsNaN(OriginalMultiplier)
-                                        ? OriginalMultiplier
-                                        : OriginalAddend;
-          Accumulators[Lane] = Selected | 0x00400000U;
-          continue;
-        }
-
-        uint32_t SourceBits = ApplyDaz(OriginalSource);
-        const uint32_t MultiplierBits = ApplyDaz(OriginalMultiplier);
-        const uint32_t AddendBits = ApplyDaz(OriginalAddend);
-        if (Negative)
-          SourceBits ^= 0x80000000U;
-        if ((IsZero(SourceBits) && IsInf(MultiplierBits)) ||
-            (IsInf(SourceBits) && IsZero(MultiplierBits))) {
-          Accumulators[Lane] = 0xffc00000U;
-          PreRaised |= 1U << 0;
-          continue;
-        }
-        const bool InfiniteProduct = IsInf(SourceBits) || IsInf(MultiplierBits);
-        const uint32_t ProductInf =
-            0x7f800000U | ((SourceBits ^ MultiplierBits) & 0x80000000U);
-        if (InfiniteProduct && IsInf(AddendBits) &&
-            ((ProductInf ^ AddendBits) & 0x80000000U)) {
-          Accumulators[Lane] = 0xffc00000U;
-          PreRaised |= 1U << 0;
-          continue;
-        }
-
-        if ((MXCSR & (1U << 6)) == 0 &&
-            (IsDenormal(OriginalSource) || IsDenormal(OriginalMultiplier) ||
-             IsDenormal(OriginalAddend)))
-          PreRaised |= 1U << 1;
-        if (InfiniteProduct) {
-          Accumulators[Lane] = ProductInf;
-          continue;
-        }
-        if (IsInf(AddendBits)) {
-          Accumulators[Lane] = AddendBits;
-          continue;
-        }
-
-        ArithmeticSources[Lane] = SourceBits;
-        Multipliers[Lane] = MultiplierBits;
-        Addends[Lane] = AddendBits;
-        NeedsPostComputation[Lane] = 1;
-      }
-
-      // Packed lanes report the union of their pre-computation exceptions.
-      // An unmasked pre fault suppresses post-computation for every lane in
-      // this iteration, rather than allowing a different lane to add O/U/P.
-      MXCSR |= PreRaised;
-      if ((PreRaised & ~(MXCSR >> 7) & 0x03U) != 0)
-        return false;
-
-      uint32_t PostRaised = 0;
-      for (unsigned Lane = 0; Lane < Lanes; ++Lane) {
-        if (!NeedsPostComputation[Lane])
-          continue;
-        uint32_t Raised = 0;
-        llvm::APFloat Product(llvm::APFloat::IEEEsingle(),
-                              llvm::APInt(32, ArithmeticSources[Lane]));
-        const llvm::APFloat Multiplier(llvm::APFloat::IEEEsingle(),
-                                       llvm::APInt(32, Multipliers[Lane]));
-        const llvm::APFloat Addend(llvm::APFloat::IEEEsingle(),
-                                   llvm::APInt(32, Addends[Lane]));
-        Raised |=
-            StatusFlags(Product.fusedMultiplyAdd(Multiplier, Addend, Rounding));
-        Accumulators[Lane] =
-            static_cast<uint32_t>(Product.bitcastToAPInt().getZExtValue());
-        const bool Tiny = IsDenormal(Accumulators[Lane]);
-        const bool UnderflowMasked = (MXCSR & (1U << 11)) != 0;
-        if (Tiny && !UnderflowMasked) {
-          // Exact tiny results still fault when underflow is unmasked.  FTZ is
-          // ignored on this path and must not synthesize precision.
-          Raised |= 1U << 4;
-        } else if (Tiny && (MXCSR & (1U << 15)) != 0) {
-          // With underflow masked, FTZ flushes even an exact tiny result and
-          // reports both underflow and precision.
-          Accumulators[Lane] &= 0x80000000U;
-          Raised |= (1U << 4) | (1U << 5);
-        }
-        PostRaised |= Raised;
-      }
-      MXCSR |= PostRaised;
-      if ((PostRaised & ~(MXCSR >> 7) & 0x3fU) != 0)
-        return false;
-    }
-    for (unsigned Lane = 0; Lane < Lanes; ++Lane) {
-      if (((ActiveMask >> Lane) & 1) == 0)
-        continue;
-      const unsigned Offset = Lane * 4;
-      const uint32_t Bits = Accumulators[Lane];
-      Result[Offset] = static_cast<uint8_t>(Bits);
-      Result[Offset + 1] = static_cast<uint8_t>(Bits >> 8);
-      Result[Offset + 2] = static_cast<uint8_t>(Bits >> 16);
-      Result[Offset + 3] = static_cast<uint8_t>(Bits >> 24);
-    }
-    writeOutputBytes(Op.Output, Result);
-    return true;
-  }
-
-  if (isX86VP4DPIntrinsic(Id)) {
-    // [id, effective address, old ZMM destination, source-block base,
-    // compact k mask, zeroing bit].  The four-register source block and the
-    // m128 Tuple1_4X are architectural: do not model this as one vector add.
-    if (!intrinsicX86VP4DPShapeIsValid(Id, Op.NumInputs, Op.Output.Size,
-                                       Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
-                                       Op.NumInputs > 2 ? Op.Inputs[2].Size : 0,
-                                       Op.NumInputs > 3 ? Op.Inputs[3].Size : 0,
-                                       Op.NumInputs > 4 ? Op.Inputs[4].Size : 0,
-                                       Op.NumInputs > 5 ? Op.Inputs[5].Size
-                                                        : 0) ||
-        !Op.Inputs[3].isConst() ||
-        (!Op.Inputs[4].isConst() && !Op.Inputs[4].isReg()) ||
-        !Op.Inputs[5].isConst())
-      return false;
-    const uint64_t GroupBase = readOperand(Op.Inputs[3]);
-    const uint64_t Mask = readOperand(Op.Inputs[4]) & UINT64_C(0xffff);
-    const bool ZeroMask = (readOperand(Op.Inputs[5]) & 1) != 0;
-    if (GroupBase > 28 || (GroupBase & 3) != 0)
-      return false;
-
-    // Tuple1_4X is all-or-nothing: if any destination lane is active, read
-    // all four dwords before observing or publishing any destination result.
-    std::array<uint32_t, 4> MemoryWords{};
-    if (Mask != 0) {
-      const auto Address = resolveMemoryAddress(Op, readOperand(Op.Inputs[1]));
-      if (!Address)
-        return false;
-      const auto Bytes = loadMemoryBytes(*Address, 16);
-      if (!Bytes)
-        return false;
-      for (unsigned I = 0; I < 4; ++I)
-        std::memcpy(&MemoryWords[I], Bytes->data() + I * 4, 4);
-      if (CollectLoads &&
-          static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
-        LoadLog.push_back({*Address, 16});
-    }
-
-    const std::vector<uint8_t> Old = readOperandBytes(Op.Inputs[2]);
-    if (Old.size() != 64)
-      return false;
-    std::array<std::vector<uint8_t>, 4> Sources;
-    if (Mask != 0)
-      for (unsigned I = 0; I < 4; ++I) {
-        const RegInfo Info = mapCapstoneReg(static_cast<x86_reg>(
-            X86_REG_ZMM0 + static_cast<unsigned>(GroupBase) + I));
-        const auto Value = getRegisterBytes(Info.Offset);
-        if (Info.Offset == UINT64_C(0xffff) || !Value || Value->size() < 64)
-          return false;
-        Sources[I].assign(Value->begin(), Value->begin() + 64);
-      }
-
-    std::vector<uint8_t> Result = Old;
-    auto readDword = [](const std::vector<uint8_t> &Bytes, size_t Offset) {
-      uint32_t Value = 0;
-      std::memcpy(&Value, Bytes.data() + Offset, sizeof(Value));
-      return Value;
-    };
-    auto writeDword = [](std::vector<uint8_t> &Bytes, size_t Offset,
-                         uint32_t Value) {
-      std::memcpy(Bytes.data() + Offset, &Value, sizeof(Value));
-    };
-    auto readWord = [](const std::vector<uint8_t> &Bytes, size_t Offset) {
-      uint16_t Value = 0;
-      std::memcpy(&Value, Bytes.data() + Offset, sizeof(Value));
-      return static_cast<int32_t>(static_cast<int16_t>(Value));
-    };
-    const bool Saturating = Id == Intrinsic::X86VP4DPWSSDS;
-    for (unsigned Lane = 0; Lane < 16; ++Lane) {
-      if (((Mask >> Lane) & 1) == 0) {
-        if (ZeroMask)
-          writeDword(Result, Lane * 4, 0);
-        continue;
-      }
-      uint32_t Acc = readDword(Old, Lane * 4);
-      for (unsigned I = 0; I < 4; ++I) {
-        const int64_t Product =
-            static_cast<int64_t>(readWord(Sources[I], Lane * 4)) *
-                static_cast<int64_t>(
-                    static_cast<int16_t>(MemoryWords[I] & UINT32_C(0xffff))) +
-            static_cast<int64_t>(readWord(Sources[I], Lane * 4 + 2)) *
-                static_cast<int64_t>(
-                    static_cast<int16_t>(MemoryWords[I] >> 16));
-        const int64_t Sum =
-            static_cast<int64_t>(static_cast<int32_t>(Acc)) + Product;
-        if (Saturating) {
-          const int64_t Clamped = std::max<int64_t>(
-              -2147483648LL, std::min<int64_t>(2147483647LL, Sum));
-          Acc = static_cast<uint32_t>(static_cast<int32_t>(Clamped));
-        } else {
-          // VP4DPWSSD wraps after every one of the four sequential updates.
-          Acc = static_cast<uint32_t>(Sum);
-        }
-      }
-      writeDword(Result, Lane * 4, Acc);
-    }
     writeOutputBytes(Op.Output, Result);
     return true;
   }
@@ -2808,6 +2483,32 @@ bool NdOpEmulator::executeCopy(const LowOp &Op) {
         !knownOperandBytes(Op.Inputs[0], readOperand(Op.Inputs[1]),
                            Op.Output.Size))
       return false;
+  }
+
+  // Pure reshaping cannot establish missing source bytes. Propagate unknown
+  // state so a later masked consumer can decide whether it observes the value.
+  // In particular, packing a four-register source group must not invent zeros
+  // for an unavailable member or retain a stale result from an earlier step.
+  // SUBBYTES keeps its stricter slice/offset proof above.
+  for (unsigned I = 0; Op.Opcode != NdOp::SUBBYTES && I < Op.NumInputs; ++I) {
+    const auto &Input = Op.Inputs[I];
+    uint64_t Needed = Input.Size;
+    if (Op.Opcode == NdOp::CONCAT && Op.NumInputs >= 2)
+      Needed = I == 0
+                   ? Op.Output.Size > Op.Inputs[1].Size
+                         ? std::min<unsigned>(Input.Size, Op.Output.Size -
+                                                              Op.Inputs[1].Size)
+                         : 0
+                   : std::min(Input.Size, Op.Output.Size);
+    else if (I == 0)
+      Needed = std::min(Input.Size, Op.Output.Size);
+    if (Needed && !knownOperandBytes(Input, 0, Needed)) {
+      if (Op.Output.isReg() || Op.Output.isTemp()) {
+        Registers.erase(Op.Output.Offset);
+        WideRegisters.erase(Op.Output.Offset);
+      }
+      return true;
+    }
   }
 
   if (Op.Output.Size > 8 || Op.Inputs[0].Size > 8 ||

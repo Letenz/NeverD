@@ -182,6 +182,9 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     llvm::report_fatal_error(
         "PDEP/PEXT intrinsic has an invalid operand/output contract");
 
+  if (IC == I::X86FourSourceMemory)
+    return emitX86FourSource(Op, Builder);
+
   if (isX86CompactMemory(IC))
     return emitX86CompressExpand(Op, IC, Builder);
 

@@ -590,9 +590,9 @@ std::string extendedIntegerType(unsigned Bytes, bool Signed) {
   if (Bytes == 32 || Bytes == 64)
     return std::string(Signed ? "int" : "uint") + std::to_string(Bytes * 8) +
            "_t";
-  // C23 _BitInt covers every non-power-of-two slice up to the widest
-  // register (a 512-bit ZMM value); e.g. a 224-bit YMM byte-shift window.
-  if (Bytes == 0 || Bytes > 64)
+  // C23 _BitInt also carries packed source groups and intermediate slices;
+  // these scalar values are distinct from individual compiler vector types.
+  if (Bytes == 0 || Bytes > limits::kMaxCSourceIntegerBytes)
     throw std::invalid_argument("C integer of " + std::to_string(Bytes) +
                                 " bytes exceeds the supported bit width");
   return std::string(Signed ? "" : "unsigned ") + "_BitInt(" +

@@ -23,6 +23,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86/X86CompactShape.h"
+#include "neverd/ir/med/X86/X86FourSourceShape.h"
 #include "neverd/ir/med/X86/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86/X86RegistrationFrame.h"
 #include "neverd/ir/med/X86/X86RegistrationSEHRegisters.h"
@@ -117,6 +118,9 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
             Err("x86 FP state intrinsic has an invalid numerical/state "
                 "contract",
                 Blk.Id, Op.Addr);
+          if (Id == Intrinsic::X86FourSourceMemory &&
+              !x86FourSourceShapeIsValid(x86FourSourceMedShape(Op)))
+            Err(X86FourSourceMalformed, Blk.Id, Op.Addr);
           if (isX86CompactMemory(Id) &&
               !x86CompactShapeIsValid(Id, x86CompactMedShape(Op)))
             Err(X86CompactMalformed, Blk.Id, Op.Addr);

@@ -6249,6 +6249,19 @@ the same shared observation rule in concrete execution and source projection.
 Their unknown-size volatile memory effects keep even zero-mask instructions.
 Stack-default fault provenance remains an explicit unsupported boundary.
 
+`X86FourSource.h` owns the explicit four-source memory shape and observation
+rules. The lifter snapshots independent register inputs into one packed SSA
+operand before an aliasing write; scalar forms retain only the four observed
+low dwords. Native LLVM expands that operand to four vector arguments, while
+the C renderer owns their native-builtin/checked-assembly projection. Numerical
+execution lives under `ir/low/X86/`, retaining the existing sequential FP and
+integer algorithms. Pure COPY/CONCAT transport cannot manufacture missing
+source bytes. Compact and four-source native functions share entry-unknown
+validation; their lifters share DS-carrier address admission. C scalar integer
+carriers accommodate the complete 256-byte source group, independently of the
+64-byte compiler vector limit. Legacy implicit-bank identities stay readable
+without acquiring an unproved native source-state contract.
+
 Both source routes retain a complete constant carried by an integer RETURN
 after copy propagation. A later synthetic low-register read is not another
 machine write and cannot truncate that reaching value. The shared

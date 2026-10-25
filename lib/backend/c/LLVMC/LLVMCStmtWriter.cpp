@@ -19,6 +19,7 @@
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86FPStateHelpers.h"
+#include "../render/X86/X86FourSource.h"
 #include "../render/X86/X86RepState.h"
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
@@ -3959,6 +3960,21 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (x86FourSourceNativeName(Callee->getName().str())) {
+    const auto *I = llvm::dyn_cast<llvm::CallInst>(&Call);
+    if (!I)
+      throw std::invalid_argument(X86FourSourceMalformed);
+    std::vector<std::string> Args;
+    for (const auto &V : Call.args())
+      Args.push_back(valueStr(V.get()));
+    const bool Live =
+        !Call.getType()->isVoidTy() && valueFeedsPrintedUse(&Call);
+    emitIndent(Indent);
+    OS << *renderX86FourSourceCall(Opts.TheArch, *I, Args,
+                                   Live ? getName(&Call) : "", Live,
+                                   typeToCLLVM(Call.getType()));
+    return true;
+  }
   if (x86CompactNativeName(Callee->getName().str())) {
     const auto *I = llvm::dyn_cast<llvm::CallInst>(&Call);
     if (!I)
@@ -5278,6 +5294,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
                                   typeToCLLVM(Call.getType()))) {
     emitIndent(Indent);
     OS << *Amx;
+    return true;
+  }
+  if (auto FourSource =
+          renderX86FourSourceCall(Opts.TheArch, Call, ArgStrs, Name, ResultLive,
+                                  typeToCLLVM(Call.getType()))) {
+    emitIndent(Indent);
+    OS << *FourSource;
     return true;
   }
   if (auto Compact =

@@ -2410,7 +2410,11 @@ TEST(X86SystemStateSource, CacheZeroKeepsMemoryEffectsAndTheImplicitAddress) {
         if (::testing::Test::HasFailure())
           return;
         const auto Store = IR.find("store i32 7,");
-        const auto Clear = IR.find("call void @llvm.x86.clzero(ptr ");
+        const auto Clear =
+            IR.find(llvm::Intrinsic::lookupIntrinsicID("llvm.x86.clzero")
+                        ? "call void @llvm.x86.clzero(ptr "
+                        : "call void asm sideeffect \"clzero\", "
+                          "\"{ax},~{memory}\"(ptr ");
         const auto Load = IR.find("load i32");
         ASSERT_NE(Load, std::string::npos) << IR;
         EXPECT_LT(Store, Clear) << IR;
