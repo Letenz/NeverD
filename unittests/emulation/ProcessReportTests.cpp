@@ -2133,6 +2133,227 @@ TEST(ProcessReport, AndroidApplicationSnapshotIsExplicitAndStrict) {
     EXPECT_FALSE(Input->Android->Application->package_name.has_value());
   }
 }
+TEST(ProcessReport, AndroidSecureSettingsCacheRequiresExplicitNullableValue) {
+  auto wrap = [](const std::string &entry, const char *phase = "application") {
+    return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                       "\"phase\":\"") +
+           phase + "\",\"secure_settings_cache\":" + entry + "}}}";
+  };
+  for (auto text : {"null", "\"\"", "\"fixture\"", "\"A\\u0000\\u00e9\""}) {
+    auto parsed = processOptionsFromJSON(
+        wrap(std::string("{\"android_id\":") + text + "}"));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    const auto &cache = parsed->Android->Application->secure_settings_cache;
+    ASSERT_TRUE(cache);
+    EXPECT_EQ(cache->android_id.has_value(), std::string_view(text) != "null");
+  }
+  for (auto bad : {"null", "[]", "true", "{}", "{\"android_id\":true}",
+                   "{\"android_id\":1}", "{\"android_id\":null,\"extra\":0}",
+                   "{\"other\":\"value\"}"}) {
+    auto parsed = processOptionsFromJSON(wrap(bad));
+    EXPECT_FALSE(bool(parsed)) << bad;
+    llvm::consumeError(parsed.takeError());
+  }
+  for (auto phase : {"attached", "unattached"}) {
+    auto parsed = processOptionsFromJSON(wrap("{\"android_id\":null}", phase));
+    EXPECT_FALSE(bool(parsed));
+    llvm::consumeError(parsed.takeError());
+  }
+  auto large = processOptionsFromJSON(
+      wrap("{\"android_id\":\"" + std::string(4097, 'x') + "\"}"));
+  EXPECT_FALSE(bool(large));
+  llvm::consumeError(large.takeError());
+}
+
+TEST(ProcessReport, AndroidGlobalSettingsCacheRequiresExplicitNullableValue) {
+  auto wrap = [](const std::string &entry, const char *phase = "application") {
+    return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                       "\"phase\":\"") +
+           phase + "\",\"global_settings_cache\":" + entry + "}}}";
+  };
+  for (auto text :
+       {"null", "\"\"", "\"0\"", "\"1\"", "\"-1\"", "\"\\u0661\""}) {
+    auto parsed = processOptionsFromJSON(
+        wrap(std::string("{\"adb_enabled\":") + text + "}"));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    const auto &cache = parsed->Android->Application->global_settings_cache;
+    ASSERT_TRUE(cache);
+    EXPECT_EQ(cache->adb_enabled.has_value(), std::string_view(text) != "null");
+    EXPECT_FALSE(parsed->Android->Application->secure_settings_cache);
+  }
+  for (auto bad :
+       {"null", "[]", "{}", "{\"adb_enabled\":true}", "{\"adb_enabled\":1}",
+        "{\"adb_enabled\":null,\"extra\":0}", "{\"android_id\":\"0\"}"}) {
+    auto parsed = processOptionsFromJSON(wrap(bad));
+    EXPECT_FALSE(bool(parsed)) << bad;
+    llvm::consumeError(parsed.takeError());
+  }
+  for (auto phase : {"attached", "unattached"}) {
+    auto parsed = processOptionsFromJSON(wrap("{\"adb_enabled\":null}", phase));
+    EXPECT_FALSE(bool(parsed));
+    llvm::consumeError(parsed.takeError());
+  }
+  auto large = processOptionsFromJSON(
+      wrap("{\"adb_enabled\":\"" + std::string(4097, 'x') + "\"}"));
+  EXPECT_FALSE(bool(large));
+  llvm::consumeError(large.takeError());
+}
+
+TEST(ProcessReport,
+     AndroidApplicationInfoRequiresExplicitNullableSourceDirectory) {
+  auto wrap = [](const std::string &entry, const char *phase = "application") {
+    return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                       "\"phase\":\"") +
+           phase + "\",\"application_info\":" + entry + "}}}";
+  };
+  for (auto text :
+       {"null", "\"\"", "\"/test/base.apk\"", "\"a\\u0000\\u00e9\""}) {
+    auto parsed = processOptionsFromJSON(
+        wrap(std::string("{\"source_dir\":") + text + "}"));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    const auto &info = parsed->Android->Application->application_info;
+    ASSERT_TRUE(info);
+    EXPECT_EQ(info->source_dir.has_value(), std::string_view(text) != "null");
+  }
+  for (auto bad :
+       {"null", "[]", "{}", "{\"source_dir\":true}", "{\"source_dir\":1}",
+        "{\"source_dir\":null,\"extra\":0}", "{\"sourceDir\":\"x\"}"}) {
+    auto parsed = processOptionsFromJSON(wrap(bad));
+    EXPECT_FALSE(bool(parsed)) << bad;
+    llvm::consumeError(parsed.takeError());
+  }
+  for (auto phase : {"attached", "unattached"}) {
+    auto parsed = processOptionsFromJSON(wrap("{\"source_dir\":null}", phase));
+    EXPECT_FALSE(bool(parsed));
+    llvm::consumeError(parsed.takeError());
+  }
+  auto large = processOptionsFromJSON(
+      wrap("{\"source_dir\":\"" + std::string(4097, 'x') + "\"}"));
+  EXPECT_FALSE(bool(large));
+  llvm::consumeError(large.takeError());
+}
+
+TEST(ProcessReport,
+     AndroidApplicationInfoNativeDirectoryIsOptionalAndNullable) {
+  auto wrap = [](const std::string &value) {
+    return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                       "\"phase\":\"application\",\"application_info\":{"
+                       "\"source_dir\":\"/base.apk\",\"native_library_dir\":") +
+           value + "}}}}";
+  };
+  for (auto value : {"null", "\"\"", "\"/lib/arm64\"", "\"\\u00e9\""}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+    const auto &info = *parsed->Android->Application->application_info;
+    ASSERT_TRUE(info.native_library_dir);
+    EXPECT_EQ(info.native_library_dir->has_value(),
+              std::string_view(value) != "null");
+    EXPECT_EQ(info.source_dir, "/base.apk");
+  }
+  for (auto value : {"true", "1", "{}", "[]"}) {
+    auto parsed = processOptionsFromJSON(wrap(value));
+    EXPECT_FALSE(bool(parsed));
+    llvm::consumeError(parsed.takeError());
+  }
+  auto large =
+      processOptionsFromJSON(wrap("\"" + std::string(4097, 'x') + "\""));
+  EXPECT_FALSE(bool(large));
+  llvm::consumeError(large.takeError());
+}
+
+TEST(ProcessReport, AndroidPackageApplicationInfoQueriesHaveStrictTypedKeys) {
+  auto wrap = [](const std::string &queries, const char *available = "true",
+                 const char *phase = "application") {
+    return std::string("{\"android\":{\"jni\":true,\"application_snapshot\":{"
+                       "\"phase\":\"") +
+           phase + "\",\"package_manager_available\":" + available +
+           ",\"application_info_queries\":" + queries + "}}}";
+  };
+  for (auto flags : {"-2147483648", "0", "2147483647"})
+    for (bool quoted : {false, true}) {
+      const std::string wire =
+          quoted ? std::string("\"") + flags + "\"" : flags;
+      auto parsed = processOptionsFromJSON(wrap(
+          std::string("[{\"package_name\":\"test.\\u00e9\",\"flags\":") + wire +
+          ",\"info\":{\"source_dir\":null,\"native_library_dir\":\"/lib\"}}]"));
+      ASSERT_TRUE(bool(parsed)) << llvm::toString(parsed.takeError());
+      const auto &queries =
+          parsed->Android->Application->application_info_queries;
+      ASSERT_EQ(queries.size(), 1u);
+      EXPECT_EQ(queries[0].package_name, "test.\xc3\xa9");
+      EXPECT_EQ(queries[0].flags, std::stoll(flags));
+      EXPECT_FALSE(queries[0].info.source_dir);
+      ASSERT_TRUE(queries[0].info.native_library_dir);
+      EXPECT_EQ(*queries[0].info.native_library_dir, "/lib");
+    }
+  for (
+      auto invalid :
+      {"null",
+       "{}",
+       "[null]",
+       "[{}]",
+       R"([{"package_name":"","flags":0,"info":{"source_dir":null}}])",
+       R"([{"package_name":"a\u0000b","flags":0,"info":{"source_dir":null}}])",
+       R"([{"package_name":1,"flags":0,"info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":true,"info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":"+0","info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":"0x0","info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":" 0","info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":"0 ","info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":"-","info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":"2147483648","info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":"-2147483649","info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":0.5,"info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":2147483648,"info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":-2147483649,"info":{"source_dir":null}}])",
+       R"([{"package_name":"test.app","flags":0,"info":null}])",
+       R"([{"package_name":"test.app","flags":0,"info":{}}])",
+       R"([{"package_name":"test.app","flags":0,"info":{"source_dir":false}}])",
+       R"([{"package_name":"test.app","flags":0,"info":{"source_dir":null,"native_library_dir":1}}])",
+       R"([{"package_name":"test.app","flags":0,"info":{"source_dir":null},"extra":0}])"}) {
+    auto parsed = processOptionsFromJSON(wrap(invalid));
+    EXPECT_FALSE(bool(parsed)) << invalid;
+    llvm::consumeError(parsed.takeError());
+  }
+  const std::string one =
+      R"({"package_name":"test.app","flags":0,"info":{"source_dir":null}})";
+  for (auto available : {"false", "null"}) {
+    auto parsed = processOptionsFromJSON(wrap("[" + one + "]", available));
+    EXPECT_FALSE(bool(parsed));
+    llvm::consumeError(parsed.takeError());
+  }
+  for (auto phase : {"attached", "unattached"}) {
+    auto parsed = processOptionsFromJSON(wrap("[" + one + "]", "true", phase));
+    EXPECT_FALSE(bool(parsed));
+    llvm::consumeError(parsed.takeError());
+  }
+  auto duplicate = processOptionsFromJSON(wrap("[" + one + "," + one + "]"));
+  EXPECT_FALSE(bool(duplicate));
+  llvm::consumeError(duplicate.takeError());
+  std::string queries = "[";
+  for (unsigned i = 0; i < 65; ++i) {
+    if (i)
+      queries += ",";
+    queries += "{\"package_name\":\"test.app\",\"flags\":" + std::to_string(i) +
+               ",\"info\":{\"source_dir\":null}}";
+    if (i == 63) {
+      auto accepted = processOptionsFromJSON(wrap(queries + "]"));
+      ASSERT_TRUE(bool(accepted)) << llvm::toString(accepted.takeError());
+    }
+  }
+  auto too_many = processOptionsFromJSON(wrap(queries + "]"));
+  EXPECT_FALSE(bool(too_many));
+  llvm::consumeError(too_many.takeError());
+  for (auto field : {"source_dir", "native_library_dir"}) {
+    std::string info =
+        field == std::string_view("source_dir") ? "" : "\"source_dir\":null,";
+    auto large = processOptionsFromJSON(
+        wrap("[{\"package_name\":\"test.app\",\"flags\":0,\"info\":{" + info +
+             "\"" + field + "\":\"" + std::string(4097, 'x') + "\"}}]"));
+    EXPECT_FALSE(bool(large));
+    llvm::consumeError(large.takeError());
+  }
+}
 
 TEST(ProcessReport, JavaLibraryBindingRequiresInitializedJNIGuestImage) {
   auto Parsed = processOptionsFromJSON(
@@ -2248,6 +2469,27 @@ TEST(ProcessReport, AndroidLoaderMayBeEstablishedBeforeApplication) {
   }
 }
 
+TEST(ProcessReport, AndroidPackageManagerAvailabilityIsExplicitAndStrict) {
+  const std::string Prefix =
+      R"({"android":{"jni":true,"application_snapshot":{"phase":"application")";
+  auto Unknown = processOptionsFromJSON(Prefix + "}}}");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_FALSE(Unknown->Android->Application->package_manager_available);
+  for (bool Available : {false, true}) {
+    auto O =
+        processOptionsFromJSON(Prefix + R"(,"package_manager_available":)" +
+                               (Available ? "true" : "false") + "}}}");
+    ASSERT_TRUE(bool(O)) << llvm::toString(O.takeError());
+    EXPECT_EQ(O->Android->Application->package_manager_available, Available);
+  }
+  for (auto Bad : {"null", "0", "\"true\"", "[]", "{}"}) {
+    auto O = processOptionsFromJSON(
+        Prefix + R"(,"package_manager_available":)" + Bad + "}}}");
+    ASSERT_FALSE(bool(O));
+    EXPECT_NE(llvm::toString(O.takeError()).find("package_manager_available"),
+              std::string::npos);
+  }
+}
 TEST(ProcessReport, RejectsMalformedRequestsBeforeWorkloadConstruction) {
 #define NEVERD_PROCESS_INVALID_JSON(Name, Text)                                \
   {                                                                            \

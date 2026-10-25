@@ -10,7 +10,9 @@
 
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
+#include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -43632,7 +43634,13 @@ TEST(HighCPointerAddresses, OddWideIntegerSlicePrintsBitInt) {
   // A YMM value shifted by one 32-bit lane leaves a 224-bit slice.
   EXPECT_EQ(typeToC(NdType::makeInt(28, false)), "unsigned _BitInt(224)");
   EXPECT_EQ(typeToC(NdType::makeInt(32, false)), "uint256_t");
-  EXPECT_THROW(typeToC(NdType::makeInt(65, false)), std::invalid_argument);
+  EXPECT_EQ(typeToC(NdType::makeInt(65, false)), "unsigned _BitInt(520)");
+  EXPECT_EQ(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes, false)),
+            "unsigned _BitInt(" +
+                std::to_string(limits::kMaxCSourceIntegerBytes * 8) + ")");
+  EXPECT_THROW(
+      typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes + 1, false)),
+      std::invalid_argument);
 }
 
 // Caller keeps RDX live across a direct call, as MSVC /LTCG does when the
@@ -45157,7 +45165,9 @@ TEST(HighCPointerAddresses, CompilerDispatchDoesNotDependOnIncludes) {
       {"NEVERD_X86_SYSTEM_REGISTER", {0x44, 0x0f, 0x20, 0xc0, 0xc3}},
       {"NEVERD_X86_DESCRIPTOR_STATE", {0x0f, 0x00, 0xd0, 0xc3}}, // lldt ax
       {"NEVERD_X86_VIRTUALIZATION", {0x0f, 0x01, 0xc4, 0xc3}},   // vmxoff
-      {"NEVERD_X86_SYSTEM_STATE", {0x0f, 0x03, 0xc1, 0xc3}}};    // lsl eax, ecx
+      {"NEVERD_X86_SYSTEM_STATE", {0x0f, 0x03, 0xc1, 0xc3}},     // lsl eax, ecx
+      {"NEVERD_X86_LEGACY_ATOMIC", {0x48, 0x0f, 0x38, 0xfc, 0x11, 0xc3}},
+      {"NEVERD_X86_APX_ATOMIC", {0x62, 0xf4, 0xfc, 0x08, 0xfc, 0x11, 0xc3}}};
   constexpr va_t Entry = 0x1000;
   for (const auto Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {

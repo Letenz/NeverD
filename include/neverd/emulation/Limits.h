@@ -26,8 +26,13 @@ inline constexpr uint32_t kMaxLinuxFileRenames = 64;
 inline constexpr uint32_t kMaxLinuxFileUnlinkParents = 64;
 inline constexpr uint32_t kMaxLinuxFileUnlinks = 64;
 
+/// Ordered mincore queries, bytes per query and aggregate observation bytes.
+inline constexpr size_t kMaxLinuxResidencyObservations = 1024;
+inline constexpr size_t kMaxLinuxResidencyPages = 65536;
+inline constexpr size_t kMaxLinuxResidencyObservationBytes = 1024 * 1024;
+
 /// Offline stream and datagram connections admitted together.
-inline constexpr int kMaxNetworkConnections = 256;
+inline constexpr int kMaxNetworkConnections = 4096;
 /// Receive and expected-send event entries admitted per connection.
 inline constexpr int kMaxNetworkEvents = 4096;
 /// Maximum configured send or receive chunk.
@@ -111,6 +116,11 @@ inline constexpr int kDarwinImageInitializerRecordsLimit = 65536;
 // lib/emulation/os/linux/android/AndroidAuxv.cpp
 inline constexpr int
     kAndroidAuxvValidateAuxiliaryVectorOptionsAuxiliaryVectorSizeLimit = 128;
+
+// Bionic error text placement is model policy, not a library virtual address.
+inline constexpr uint64_t kAndroidErrorStringsBase = 0x7040000000;
+// Per-thread storage beyond dlerror and ABI TLS slots.
+inline constexpr uint64_t kAndroidErrorBufferOffset = 0x800;
 
 // lib/emulation/os/linux/android/AndroidCalendar.cpp
 inline constexpr int kAndroidCalendarValidateCalendarZNameSizeLimit = 32;

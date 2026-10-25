@@ -337,16 +337,39 @@ network services participate. ABI references:
 [Bionic masks](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/sigprocmask.cpp)
 and [Bionic signal helpers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/signal.cpp).
 
-`mincore` supports ordered validation, zero-length queries and a first queried
-page that is unmapped. Alignment errors return EINVAL before address-range
-checks; an invalid query range returns ENOMEM before vector-range validation.
-The vector consumes one byte per rounded-up page. Numerical vector-range
-errors return EFAULT, but an unmapped vector does not precede ENOMEM for an
-unmapped first query page. These paths do not write the vector. A mapped first
-page, including PROT_NONE, stops explicitly because mapping ownership alone
-does not establish Linux residency. The model does not skip a mapped prefix to
-report a later hole, fabricate resident bits or query the host. This bounded
-ordering follows the [Linux implementation](https://android.googlesource.com/kernel/common/+/16a2d602244f/mm/mincore.c).
+`mincore` validates alignment, query range and numerical vector range in that
+order (EINVAL, ENOMEM, EFAULT). The vector has one byte per rounded-up page.
+Zero-length queries succeed; an unmapped first query page returns ENOMEM before
+checking output mappings. These paths leave the vector and observations alone.
+
+An optional `linux_kernel.residency_observations` array supplies ordered
+`{ "address": "4294967296", "pages": [0, 1, 0] }` records. Addresses use the
+shared unsigned decimal integer wire contract. Records describe query-time page
+states, not initial RAM contents: the start and entire rounded query length must
+match exactly. The bounded LP64 contract uses 4 KiB pages and admits 1,024
+records, 65,536 pages per record and 1,048,576 observation bytes in total. Shared
+JSON metadata limits still apply. Missing, exhausted or mismatched input stops
+explicitly; neither host residency nor allocated NeverD RAM supplies a default.
+
+Only live anonymous allocations made by the shared Linux `mmap`/`brk` owner
+qualify, including PROT_NONE pages. Names alone never establish backing
+provenance. Unmapping retires provenance, so an unrelated mapping at a reused
+address cannot inherit it. Query output advances by complete live VMA chunks,
+limited to one page of vector bytes. A later hole returns ENOMEM with completed
+prefixes intact. An inaccessible first output byte returns EFAULT; an incomplete
+chunk with a writable prefix remains unsupported because exact partial-copy
+progress is architecture-specific. Device query backing and device output are
+unsupported. Unrelated device mappings are not accessed. Observations are
+consumed once a query reaches known backing, before output validation, including
+EFAULT. Unknown first backing does not consume a record.
+
+Raw Linux syscalls, Bionic `mincore`, Bionic `syscall` and dynamic imports use the
+same state; Bionic alone translates kernel errors to errno. Temporary kernel
+allocation failure (EAGAIN), host paging and unknown backing types are outside
+this model. The ordering and chunking contract follows Android common kernel
+4.4.115 `aa856bd83c43969dc3e8f8c0e97e6105e91aef76`,
+[`mm/mincore.c`](https://android.googlesource.com/kernel/common/+/aa856bd83c43969dc3e8f8c0e97e6105e91aef76/mm/mincore.c).
+This selects a bounded semantic contract, not a device kernel image.
 
 Static ELF TLS templates (`PT_TLS`) are validated as loader-owned facts, with
 one template, bounded file/memory extents, alignment congruence and readable

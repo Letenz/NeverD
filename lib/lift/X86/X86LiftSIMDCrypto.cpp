@@ -94,7 +94,6 @@ bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     return false;
 
   // Intel TSX (transactional memory) instructions.
-  case X86_INS_XBEGIN:
   case X86_INS_XEND:
   case X86_INS_XABORT:
   case X86_INS_XTEST: {
@@ -110,36 +109,21 @@ bool liftSIMDCrypto(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       S.emitIntrinsic(Intrinsic::Xabort, NdVar(), {NdVar::cst(Imm & 0xFF, 1)});
       break;
     }
-    Intrinsic Id;
-    switch (InsnId) {
-    case X86_INS_XBEGIN:
-      Id = Intrinsic::Xbegin;
-      break;
-    case X86_INS_XEND:
-      Id = Intrinsic::Xend;
-      break;
-    case X86_INS_XTEST:
-      Id = Intrinsic::Xtest;
-      break;
-    default:
-      Id = Intrinsic::Xbegin;
-      break;
-    }
-    if (Id == Intrinsic::Xtest) {
+    if (InsnId == X86_INS_XTEST) {
       // XTEST clears ZF inside a transaction and sets it otherwise; it
       // writes no general register.
       NdVar InTransaction = S.makeTemp(1);
       S.emitIntrinsic(Intrinsic::Xtest, InTransaction, {});
       S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
              {InTransaction, NdVar::cst(0, 1)});
+      for (uint64_t Flag :
+           {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::SF, x86reg::OF})
+        S.emit(NdOp::COPY, NdVar::reg(Flag, 1), {NdVar::cst(0, 1)});
       break;
     }
-    if (Id != Intrinsic::Xbegin) {
-      // XEND writes no register.
-      S.emitIntrinsic(Id, NdVar());
-      break;
-    }
-    S.emitIntrinsic(Id);
+    // XEND writes no register. XBEGIN needs its original continuation and
+    // checkpoint, and is refused by the nonlocal-control admission boundary.
+    S.emitIntrinsic(Intrinsic::Xend, NdVar());
     break;
   }
 

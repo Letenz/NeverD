@@ -65,8 +65,6 @@ inline constexpr int kQuickStartDialogMaximumSideWidth = 440;
 inline constexpr qreal kStyledTextGridTolerance = 0.01;
 
 // tools/neverd-gui/app/Theme.cpp
-inline constexpr int kThemeDefaultUiPointSize = 10;
-inline constexpr int kThemeDefaultCodePointSize = 10;
 inline constexpr int kThemeMinimumCodePointSize = 6;
 inline constexpr int kThemeMaximumCodePointSize = 48;
 

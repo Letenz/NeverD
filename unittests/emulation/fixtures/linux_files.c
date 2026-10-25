@@ -1144,6 +1144,7 @@ extern int open64(const char *, int, ...);
 extern int openat(int, const char *, int, ...);
 extern int openat64(int, const char *, int, ...);
 extern I64 read(int, void *, U64);
+extern I64 __read_chk(int, void *, U64, U64);
 extern int close(int);
 extern I64 lseek(int, I64, int);
 extern I64 lseek64(int, I64, int);
@@ -1151,6 +1152,10 @@ extern int fstat(int, struct FileStatus *);
 extern int fstat64(int, struct FileStatus *);
 extern int fstatat(int, const char *, struct FileStatus *, int);
 extern int fstatat64(int, const char *, struct FileStatus *, int);
+extern int stat(const char *, struct FileStatus *);
+extern int stat64(const char *, struct FileStatus *);
+extern int lstat(const char *, struct FileStatus *);
+extern int lstat64(const char *, struct FileStatus *);
 extern int access(const char *, int);
 extern int faccessat(int, const char *, int, int);
 extern int mkdir(const char *, U32);
@@ -1382,6 +1387,45 @@ extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
 
+U64 files_read_chk_sequence(U64 Mode) {
+  I64 (*Checked)(int, void *, U64, U64) = __read_chk;
+  void *Library = 0;
+  if (Mode) {
+    Library = dlopen("libfiles.so", 2);
+    CHECK(Library != 0, 1);
+    Checked = dlsym(Library, "__read_chk");
+    CHECK(Checked != 0, 1);
+    if (Mode == 2)
+      CHECK(dlclose(Library), 0);
+  }
+  int FD = open(Path, 0);
+  CHECK(FD, 3);
+  *__errno() = 77;
+  CHECK(Checked(FD, (void *)1, 0, 0), 0);
+  CHECK(*__errno(), 77);
+  CHECK(Checked(FD, (void *)1, 1, 1), -1);
+  CHECK(*__errno(), 14);
+  *__errno() = 77;
+  CHECK(Checked(FD, Pages, 2, 2), 2);
+  CHECK(raw(Read, FD, (U64)(Pages + 2), 2, 0), 2);
+  CHECK(Checked(FD, Pages + 4, 4096, ~0UL), 2);
+  for (unsigned I = 0; I != sizeof(Expected); ++I)
+    CHECK(Pages[I], Expected[I]);
+  CHECK(Checked(FD, Pages, sizeof(Expected), sizeof(Expected)), 0);
+  CHECK(*__errno(), 77);
+  CHECK(close(FD), 0);
+  CHECK(Checked(FD, Pages, 1, 1), -1);
+  CHECK(*__errno(), 9);
+  if (Mode)
+    CHECK(dlclose(Library), 0);
+  return 0;
+}
+
+U64 files_read_chk_bounds(void *Buffer, U64 Count, U64 Capacity) {
+  *__errno() = 77;
+  return __read_chk(99, Buffer, Count, Capacity);
+}
+
 static void *reader(void *Arg) {
   U64 FD = (U64)Arg;
   *__errno() = 82;
@@ -1589,6 +1633,45 @@ U64 files_status_at_call(U64 Route, U64 Directory, U64 Name, U64 Output,
     break;
   }
   *(U64 *)ObservedErrno = *__errno();
+  return Result;
+}
+
+U64 files_path_status_call(U64 Alias, U64 Name, U64 Output, U64 ObservedErrno,
+                           U64 Dynamic) {
+  void *Library = 0;
+  int (*Function)(const char *, struct FileStatus *) = 0;
+  if (Dynamic) {
+    const char *Names[] = {"stat", "stat64", "lstat", "lstat64"};
+    Library = dlopen("libfiles.so", 2);
+    CHECK(Library != 0, 1);
+    Function = dlsym(Library, Names[Alias]);
+    CHECK(Function != 0, 1);
+    if (Dynamic == 2)
+      CHECK(dlclose(Library), 0);
+  }
+  *__errno() = 83;
+  I64 Result;
+  if (Dynamic) {
+    Result = Function((const char *)Name, (struct FileStatus *)Output);
+  } else {
+    switch (Alias) {
+    case 0:
+      Result = stat((const char *)Name, (struct FileStatus *)Output);
+      break;
+    case 1:
+      Result = stat64((const char *)Name, (struct FileStatus *)Output);
+      break;
+    case 2:
+      Result = lstat((const char *)Name, (struct FileStatus *)Output);
+      break;
+    default:
+      Result = lstat64((const char *)Name, (struct FileStatus *)Output);
+      break;
+    }
+  }
+  *(U64 *)ObservedErrno = *__errno();
+  if (Dynamic == 1)
+    CHECK(dlclose(Library), 0);
   return Result;
 }
 

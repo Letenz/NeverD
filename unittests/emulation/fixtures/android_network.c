@@ -39,6 +39,59 @@ __asm__(".type __memcpy_chk, %function\n"
         ".type __memmove_chk, %function\n"
         ".type __memset_chk, %function\n");
 
+// Different call surfaces consume the same failure count. Mode 1 makes
+// one more fresh-socket attempt; mode 2 retries the failed description.
+u64 network_connect_failures(u64 *out, u64 mode) {
+  unsigned char peer4[16] = {2, 0, 0x23, 0x29, 127, 0, 0, 1};
+  unsigned char peer6[28] = {10, 0, 0x23, 0x29, 0, 0, 0, 0};
+  peer6[23] = 1;
+  int fd = socket(2, 1, 6);
+  out[0] = connect(fd, peer4, 16);
+  if (out[0] || close(fd))
+    return 1;
+  void *handle = dlopen("libc.so", 2);
+  int (*dynamic_connect)(int, const void *, u32) = dlsym(handle, "connect");
+  if (!dynamic_connect)
+    return 2;
+  for (unsigned i = 0; i != 4; ++i) {
+    int ipv6 = i & 1;
+    void *peer = ipv6 ? peer6 : peer4;
+    u32 size = ipv6 ? 28 : 16;
+    ++((unsigned char *)peer)[3];
+    fd = socket(ipv6 ? 10 : 2, 1, 6);
+    *__errno() = 73;
+    if (i == 0)
+      out[1 + 2 * i] = connect(fd, peer, size);
+    else if (i == 1)
+      out[1 + 2 * i] = dynamic_connect(fd, peer, size);
+    else if (i == 2)
+      out[1 + 2 * i] = syscall(203, fd, peer, size);
+    else {
+      register long x0 __asm__("x0") = fd;
+      register void *x1 __asm__("x1") = peer;
+      register long x2 __asm__("x2") = size;
+      register long x8 __asm__("x8") = 203;
+      __asm__ volatile("svc #0"
+                       : "+r"(x0)
+                       : "r"(x1), "r"(x2), "r"(x8)
+                       : "memory", "cc");
+      out[1 + 2 * i] = x0;
+    }
+    out[2 + 2 * i] = *__errno();
+    if (mode == 2 && i == 0)
+      out[10] = connect(fd, peer, size);
+    if (close(fd))
+      return 3;
+  }
+  if (mode == 1) {
+    fd = socket(2, 1, 6);
+    *__errno() = 73;
+    out[10] = connect(fd, peer4, 16);
+    return 4;
+  }
+  return 0;
+}
+
 u64 network_checked_memory(u64 *out, u64 mode) {
   unsigned char *dst = (void *)(out + 32);
   const unsigned char src[] = {0, 0xff, 0x42};

@@ -987,6 +987,87 @@ int main(void) {
   }
 }
 
+TEST(Win64CallContract, RelocatedCallbacksBindTheFinalExternalIdentifier) {
+  for (const char *TargetName : {"callback.target", "callback_target"}) {
+    SCOPED_TRACE(TargetName);
+    constexpr va_t Target = Text + 0x80, Address = Text + 0x40;
+    std::vector<uint8_t> Code(0x90, 0xCC);
+    // Save the direct result, then invoke the same routine through its slot.
+    std::vector<uint8_t> Caller = {0x53, 0x48, 0x83, 0xEC, 0x20, 0xE8};
+    const auto Direct = rel32(Text + Caller.size() + 4, Target);
+    Caller.insert(Caller.end(), Direct.begin(), Direct.end());
+    Caller.insert(Caller.end(), {0x48, 0x89, 0xC3});
+    const auto Indirect = throughSlot(Text + Caller.size(), Iat);
+    Caller.insert(Caller.end(), Indirect.begin(), Indirect.end());
+    Caller.insert(Caller.end(),
+                  {0x48, 0x01, 0xD8, 0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3});
+    put(Code, Text, Caller);
+    std::vector<uint8_t> GetAddress = {0x48, 0x8D, 0x05};
+    const auto Displacement = rel32(Address + 7, Target);
+    GetAddress.insert(GetAddress.end(), Displacement.begin(),
+                      Displacement.end());
+    GetAddress.push_back(0xC3);
+    put(Code, Address, GetAddress);
+    put(Code, Target, {0x48, 0xC7, 0xC0, 37, 0, 0, 0, 0xC3});
+    auto Image = makeImage(Code,
+                           {{Text, "invoke_callback"},
+                            {Address, "callback_address"},
+                            {Target, TargetName}},
+                           {});
+    auto &Data = Image.Segments.back();
+    Data.Name = ".data";
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.Size = Data.FileSz = 8;
+    Data.Data.resize(8);
+    for (unsigned I = 0; I != 8; ++I)
+      Data.Data[I] = static_cast<uint8_t>(Target >> (I * 8));
+    // Cover a shared C stem, then an identical debug spelling whose
+    // reconstructed data must also avoid the external function linker label.
+    Symbol SlotSymbol;
+    SlotSymbol.Name = "callback_target";
+    SlotSymbol.Addr = Iat;
+    SlotSymbol.Size = 8;
+    Image.Symbols.push_back(SlotSymbol);
+    Image.CodePtrRelocSlots.insert(Iat);
+    Image.BaseRelocations.push_back({Iat, 10});
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text, Address};
+      Options.SourceProjection = true;
+      Options.LiftMode = LLVM;
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      ASSERT_TRUE(
+          LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                     nullptr, &Image)
+               : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+      std::string Oracle = R"(
+uint64_t callback_provider(void) __asm__("callback.target");
+uint64_t callback_provider(void) { return 37; }
+int main(void) {
+  if ((uintptr_t)callback_address() != (uintptr_t)&callback_provider) return 1;
+  return invoke_callback() != 74;
+}
+)";
+      const std::string Label = "callback.target";
+      Oracle.replace(Oracle.find(Label), Label.size(), TargetName);
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+  }
+}
+
 TEST(Win64CallContract, BoundIntegerOperandsAgreeAcrossSourceRoutes) {
   constexpr va_t Consumer = Text + 0x80;
   std::vector<uint8_t> Code(0xA0, 0xCC);

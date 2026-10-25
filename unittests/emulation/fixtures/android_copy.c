@@ -10,11 +10,36 @@ typedef unsigned long u64;
 extern char *strncpy(char *, const char *, u64);
 extern char *__strncpy_chk(char *, const char *, u64, u64);
 extern char *__strncpy_chk2(char *, const char *, u64, u64, u64);
+extern u64 strlcpy(char *, const char *, u64);
+__asm__(".type strlcpy, %function");
 extern int *__errno(void);
 extern int mprotect(void *, u64, int);
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
+
+u64 copy_sized(char *dst, const char *src, u64 count, u64 route, u64 *error) {
+  u64 (*copy)(char *, const char *, u64) = strlcpy;
+  if (route) {
+    void *library = dlopen("libcopy.so", 2);
+    if (!library)
+      return 97;
+    copy = dlsym(library, "strlcpy");
+    if (!copy)
+      return 96;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  u64 result = copy(dst, src, count);
+  *error = (u64)*__errno();
+  return result;
+}
+u64 copy_sized_readonly(void *page, char *dst, const char *src, u64 count) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return strlcpy(dst, src, count);
+}
 
 u64 copy_raw(char *dst, const char *src, u64 count) {
   return (u64)strncpy(dst, src, count);

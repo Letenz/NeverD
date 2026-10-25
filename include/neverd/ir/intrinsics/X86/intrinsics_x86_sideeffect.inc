@@ -277,3 +277,9 @@ SIDEEFFECT(Intrinsic::X86EncluBounded);
 SIDEEFFECT(Intrinsic::X86GetsecBounded);
 
 SIDEEFFECT(Intrinsic::X86FourSourceMemory);
+
+SIDEEFFECT(Intrinsic::X86LegacyRaoAdd);
+SIDEEFFECT(Intrinsic::X86LegacyRaoAnd);
+SIDEEFFECT(Intrinsic::X86LegacyRaoOr);
+SIDEEFFECT(Intrinsic::X86LegacyRaoXor);
+SIDEEFFECT(Intrinsic::X86LegacyCmpccXadd);

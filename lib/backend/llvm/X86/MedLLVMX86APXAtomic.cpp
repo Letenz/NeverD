@@ -21,17 +21,17 @@ namespace neverd {
 
 llvm::Value *MedLLVMEmitter::emitX86APXAtomic(const MedOp &Op, Intrinsic Id,
                                               llvm::IRBuilder<> &B) {
-  const auto S = apxAtomicMedShape(Op);
+  const auto S = apxAtomicMedShape(Op, TargetArch);
   const auto Prefix = x86APXSegmentPrefix(Op.MemoryAddressSpace);
-  if (TargetArch != Arch::X64 || !intrinsicApxAtomicShapeIsValid(Id, S) ||
-      !Prefix)
+  if (!intrinsicApxAtomicShapeIsValid(Id, S) || !Prefix)
     throw std::invalid_argument("invalid APX atomic operand/output contract");
-  const auto P =
-      *x86APXAtomicPlan(Id, S.SourceSize, 64, *Prefix,
-                        Id == Intrinsic::ApxCmpccXadd ? S.Condition : 0);
+  const auto P = *x86APXAtomicPlan(
+      Id, S.SourceSize, TargetArch == Arch::X86 ? 32 : 64, *Prefix,
+      isX86CmpccXaddIntrinsic(Id) ? S.Condition : 0, TargetArch);
   auto *Address = resolveAtomicMemoryPtr(
       Op.Inputs[1], P.Bytes, sizeToType(P.Bytes), B, Op.MemoryAddressSpace);
-  std::vector<llvm::Value *> Args = {B.CreatePtrToInt(Address, B.getInt64Ty())};
+  std::vector<llvm::Value *> Args = {
+      B.CreatePtrToInt(Address, B.getIntNTy(P.addressBytes() * 8))};
   const auto Append = [&](unsigned I) {
     auto *V = getVar(Op.Inputs[I], B);
     auto *T = sizeToType(P.Bytes);

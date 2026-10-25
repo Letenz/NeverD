@@ -699,7 +699,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
           (x86VirtualizationContract(E.IntrinsicId).MemoryArgument >= 0 ||
            x86SystemStateContract(E.IntrinsicId).MemoryArgument >= 0 ||
            isX86DescriptorStateIntrinsic(E.IntrinsicId) ||
-           isApxAtomicIntrinsic(E.IntrinsicId) ||
+           isX86AtomicIntrinsic(E.IntrinsicId) ||
            isX86CompactMemory(E.IntrinsicId) ||
            E.IntrinsicId == Intrinsic::X86FourSourceMemory ||
            E.IntrinsicId == Intrinsic::X86AMXState);
@@ -1783,8 +1783,11 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
 
   writeSourceRecordDeclarations(Funcs, CallTargets);
   // A function whose address the code takes is declared as a callee is.
-  CallTargets.insert(AddressTakenFunctions.begin(),
-                     AddressTakenFunctions.end());
+  for (const std::string &Symbol : AddressTakenFunctions) {
+    const std::string Identifier = functionIdentifier(Symbol);
+    CallTargets.insert(Identifier);
+    ExternalCallSources[Identifier].insert(Symbol);
+  }
 
   // A stub of a variadic import passes its arguments on through stdarg.h.
   if (Opts.Image)
@@ -1965,8 +1968,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       forEachExpr(S, [&](const ExprPtr &E) { Visit(*E); });
     });
   // A function whose address the code takes is declared as a callee is.
-  CallTargets.insert(AddressTakenFunctions.begin(),
-                     AddressTakenFunctions.end());
+  for (const std::string &Symbol : AddressTakenFunctions) {
+    const std::string Identifier = functionIdentifier(Symbol);
+    CallTargets.insert(Identifier);
+    ExternalCallSources[Identifier].insert(Symbol);
+  }
   UnitCallTargets = CallTargets;
 
   for (const auto &[Name, Identifier] : SourceRuntimeDataIdentifiers) {
@@ -3929,7 +3935,8 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
     return;
   for (const HighFunc &Func : Funcs)
     if (Func.Entry == Addr && !Func.Name.empty()) {
-      FunctionAddressNames.emplace(Addr, functionIdentifier(Func));
+      FunctionAddressNames.emplace(Addr,
+                                   FunctionAddressTarget{Func.Name, &Func});
       AddressTakenDefinitions.insert(&Func);
       return;
     }
@@ -3940,10 +3947,26 @@ void HighCWriter::noteFunctionAddress(va_t Addr,
       SharedFunctionSymbols ? *SharedFunctionSymbols : *OwnFunctionSymbols;
   if (const auto Found = Symbols.find(Addr); Found != Symbols.end()) {
     const Symbol &Sym = *Found->second;
-    FunctionAddressNames.emplace(Addr,
-                                 functionIdentifier(llvm::StringRef(Sym.Name)));
+    FunctionAddressNames.emplace(Addr, FunctionAddressTarget{Sym.Name});
     AddressTakenFunctions.insert(Sym.Name);
   }
+}
+
+std::string HighCWriter::functionAddressIdentifier(
+    const FunctionAddressTarget &Target) const {
+  return Target.Definition ? functionIdentifier(*Target.Definition)
+                           : functionIdentifier(Target.Symbol);
+}
+
+bool HighCWriter::imageFunctionOwnsLinkIdentifier(llvm::StringRef Name) {
+  if (!ImageFunctionLinkNames) {
+    ImageFunctionLinkNames.emplace();
+    for (const Symbol &Symbol : Opts.Image->Symbols)
+      if (Symbol.IsFunc && !Symbol.Name.empty())
+        ImageFunctionLinkNames->insert(
+            cNameOfSymbol(Symbol.Name, Opts.Format, Opts.TheArch).str());
+  }
+  return ImageFunctionLinkNames->count(Name.str());
 }
 
 void HighCWriter::writeImageObjects() {
@@ -4301,7 +4324,8 @@ std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
     for (const va_t Entry : {Target, Target & ~va_t{1}})
       if (auto It = FunctionAddressNames.find(Entry);
           It != FunctionAddressNames.end())
-        return "(uintptr_t)&" + It->second + (Entry != Target ? " + 1" : "");
+        return "(uintptr_t)&" + functionAddressIdentifier(It->second) +
+               (Entry != Target ? " + 1" : "");
     return std::nullopt;
   }
   if (!Opts.Image->DataPtrRelocSlots.count(Slot))

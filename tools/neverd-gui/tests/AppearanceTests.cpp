@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ActionRegistry.h"
+#include "Docking.h"
 #include "GnomeModalDialogs.h"
 #include "Language.h"
 #include "OutputWindow.h"
@@ -32,19 +33,26 @@
 #include <QFontInfo>
 #include <QGlyphRun>
 #include <QInputDialog>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPixmap>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QSettings>
 #include <QStyle>
+#include <QStyleOption>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextLayout>
 #include <QToolButton>
 #include <QWindow>
+#include <kddockwidgets/qtwidgets/views/DockWidget.h>
+#include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <memory>
 
 using namespace neverd::gui;
@@ -60,6 +68,7 @@ public:
 private slots:
   void initTestCase() {
     QVERIFY(settings_.isValid());
+    QVERIFY(!QCoreApplication::testAttribute(Qt::AA_Use96Dpi));
     QCoreApplication::setOrganizationName(QStringLiteral("NeverDTests"));
     QCoreApplication::setApplicationName(QStringLiteral("AppearanceTests"));
     QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -68,6 +77,8 @@ private slots:
     QSettings().setValue(settings::NativeTitleBar, true);
     WindowFrame::frameDialogs(*qApp);
     gnome::detachModalDialogs(*qApp);
+    Theme::instance().apply();
+    configureDocking();
   }
 
   void dialogsUseOwnedChrome_data() {
@@ -233,6 +244,168 @@ private slots:
     }
   }
 
+  void menuColumnsStayTogether_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void menuColumnsStayTogether() {
+    QFETCH(bool, dark);
+    Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    Theme::instance().apply();
+    QMenu menu;
+    menu.ensurePolished();
+    QStyleOption option;
+    option.initFrom(&menu);
+    const int iconExtent =
+        menu.style()->pixelMetric(QStyle::PM_SmallIconSize, &option, &menu);
+    QPixmap marker(iconExtent, iconExtent);
+    marker.fill(Qt::magenta);
+    auto *withIcon = menu.addAction(QIcon(marker), "Menu entry");
+    withIcon->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
+    auto *plain = menu.addAction("Menu entry");
+    auto *checked = menu.addAction("Menu entry");
+    checked->setCheckable(true);
+    checked->setChecked(true);
+    auto *checkedIcon = menu.addAction(QIcon(marker), "Menu entry");
+    checkedIcon->setCheckable(true);
+    checkedIcon->setChecked(true);
+    auto *submenu = menu.addMenu(QIcon(marker), "Menu entry");
+    submenu->addAction("Child entry");
+    // Rendering columns does not need popup activation. Cocoa can dismiss
+    // an unfocused popup before an exposure wait, unrelated to its layout.
+    menu.resize(menu.sizeHint());
+    const auto capture = menu.grab().toImage();
+    const qreal dpr = capture.devicePixelRatio();
+    const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(capture.save(captures + "/menu-columns-" +
+                           QTest::currentDataTag() + ".png"));
+    }
+    // Measure painted columns: Qt adds its icon column after item padding,
+    // so checking the style-sheet literal alone misses a double reservation.
+    const auto bounds = [&](QAction *action, const QColor &color, int fromX) {
+      const QRect row = menu.actionGeometry(action);
+      QRect ink;
+      for (int y = qRound(row.top() * dpr);
+           y < qRound((row.bottom() + 1) * dpr); ++y)
+        for (int x = fromX; x < capture.width(); ++x) {
+          const auto pixel = capture.pixelColor(x, y);
+          if (qAbs(pixel.red() - color.red()) < 12 &&
+              qAbs(pixel.green() - color.green()) < 12 &&
+              qAbs(pixel.blue() - color.blue()) < 12)
+            ink |= QRect(x, y, 1, 1);
+        }
+      return ink;
+    };
+    const QRect iconInk = bounds(withIcon, Qt::magenta, 0);
+    QVERIFY(!iconInk.isEmpty());
+    const auto foreground = Theme::instance().chrome("MenuText");
+    const QRect labelInk = bounds(withIcon, foreground, iconInk.right() + 1);
+    QVERIFY(!labelInk.isEmpty());
+    const qreal gap = (labelInk.left() - iconInk.right() - 1) / dpr;
+    qInfo() << "Menu icon-to-label gap" << gap << "DPR" << dpr
+            << "icon physical bounds" << iconInk << "label bounds" << labelInk;
+    QVERIFY(gap >= 6 && gap <= 10);
+    for (auto *action : {plain, checked, checkedIcon, submenu->menuAction()}) {
+      const QRect label = bounds(action, foreground, iconInk.right() + 1);
+      QVERIFY(!label.isEmpty());
+      QCOMPARE(label.left(), labelInk.left());
+    }
+    // Checking an icon must not move it when the active border appears.
+    QCOMPARE(bounds(checkedIcon, Qt::magenta, 0).left(), iconInk.left());
+    if (!captures.isEmpty()) {
+      ActionRegistry registry;
+      QMenuBar bar;
+      registry.buildMenus(&bar, [](QMenu *, const QString &) {});
+      for (const auto *name : {"menuFile", "menuEdit", "menuOptions"}) {
+        auto *actual = bar.findChild<QMenu *>(QLatin1String(name));
+        QVERIFY(actual);
+        actual->ensurePolished();
+        actual->resize(actual->sizeHint());
+        QVERIFY(actual->grab().save(captures + "/" + QLatin1String(name) + "-" +
+                                    QTest::currentDataTag() + ".png"));
+      }
+    }
+  }
+
+  void tabCloseIconKeepsItsSizeAndInset_data() {
+    QTest::addColumn<bool>("docked");
+    QTest::addColumn<bool>("dark");
+    for (const bool docked : {false, true})
+      for (const bool dark : {false, true})
+        QTest::newRow(qPrintable(QString(docked ? "dock" : "plain") +
+                                 (dark ? "-dark" : "-light")))
+            << docked << dark;
+  }
+
+  void tabCloseIconKeepsItsSizeAndInset() {
+    QFETCH(bool, docked);
+    QFETCH(bool, dark);
+    Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    Theme::instance().apply();
+    KDDockWidgets::QtWidgets::MainWindow window("tab-appearance");
+    QTabBar plain;
+    QTabBar *tabs = &plain;
+    if (docked) {
+      auto *dock = new KDDockWidgets::QtWidgets::DockWidget("NeverD View-A");
+      dock->setWidget(new QWidget);
+      window.addDockWidget(dock, KDDockWidgets::Location_OnLeft);
+      window.resize(320, 160);
+      window.show();
+      QVERIFY(QTest::qWaitForWindowExposed(&window));
+      tabs = window.findChild<QTabBar *>();
+      QVERIFY(tabs);
+    } else {
+      tabs->setTabsClosable(true);
+      tabs->addTab(QStringLiteral("NeverD View-A"));
+      tabs->show();
+      QVERIFY(QTest::qWaitForWindowExposed(tabs));
+    }
+    const auto side =
+        static_cast<QTabBar::ButtonPosition>(tabs->style()->styleHint(
+            QStyle::SH_TabBar_CloseButtonPosition, nullptr, tabs));
+    auto *button = tabs->tabButton(0, side);
+    QVERIFY(button);
+    const auto capture = button->grab().toImage();
+    QRect ink;
+    // The close glyph's muted blue is distinct from the neutral tab and hover
+    // backgrounds. Measure its visible stroke, not just the button's geometry.
+    for (int y = 0; y < capture.height(); ++y)
+      for (int x = 0; x < capture.width(); ++x) {
+        const auto color = capture.pixelColor(x, y);
+        if (color.blue() - color.red() > 15 && color.red() > 70)
+          ink |= QRect(x, y, 1, 1);
+      }
+    const qreal dpr = capture.devicePixelRatio();
+    const qreal rightInset =
+        tabs->tabRect(0).right() + 1 - button->x() - (ink.right() + 1) / dpr;
+    qInfo() << "Tab close button" << button->size() << "DPR" << dpr
+            << "glyph physical bounds" << ink << "logical right inset"
+            << rightInset;
+    const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(tabs->grab().save(captures + "/tab-close-" +
+                                QTest::currentDataTag() + ".png"));
+    }
+    // At fractional DPR, antialiasing can leave an edge pixel below the color
+    // threshold. Allow one physical pixel, not a fraction of the logical size.
+    QVERIFY((ink.width() + 1) / dpr >= 8);
+    QVERIFY((ink.height() + 1) / dpr >= 8);
+    // A correctly sized glyph must also have room before the tab's outer edge.
+    // Tab text padding alone does not inset Qt's separate close-button widget.
+    QVERIFY(rightInset >= 8);
+    if (docked) {
+      // Preserve the docking library's workaround for closing a moving tab.
+      QCOMPARE(tabs->style()->styleHint(QStyle::SH_Widget_Animation_Duration,
+                                        nullptr, tabs),
+               0);
+    }
+  }
+
   void bundledFontsCoverInterfaceLanguages() {
     const auto original = currentLanguage();
     const auto restore = qScopeGuard([&] { applyLanguage(original); });
@@ -274,6 +447,65 @@ private slots:
       QCOMPARE(metrics.horizontalAdvance("WWWW"),
                metrics.horizontalAdvance("iiii"));
     }
+  }
+
+  void defaultFontSizesFollowThePlatform() {
+    Theme::instance().apply();
+    const auto ui = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    const auto fixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    const auto code = Theme::defaultCodeFont();
+    QCOMPARE(QApplication::font().pointSizeF(), ui.pointSizeF());
+    QCOMPARE(QApplication::font().pixelSize(), ui.pixelSize());
+    QCOMPARE(code.pointSizeF(), ui.pointSizeF());
+    QCOMPARE(code.pixelSize(), ui.pixelSize());
+    QLineEdit field("Address or expression");
+    field.ensurePolished();
+    QCOMPARE(QFontInfo(field.font()).pixelSize(), QFontInfo(ui).pixelSize());
+    qInfo() << "Platform font sizes: UI" << ui.pointSizeF() << "pt /"
+            << QFontInfo(ui).pixelSize() << "px; code" << code.pointSizeF()
+            << "pt /" << QFontInfo(code).pixelSize() << "px; system fixed font"
+            << fixed.pointSizeF() << "pt; screen DPI"
+            << QGuiApplication::primaryScreen()->logicalDotsPerInch() << "DPR"
+            << QGuiApplication::primaryScreen()->devicePixelRatio();
+  }
+
+  void codeFontZoomPreservesFractionalAndPixelSizes_data() {
+    QTest::addColumn<bool>("pixels");
+    QTest::newRow("fractional-points") << false;
+    QTest::newRow("logical-pixels") << true;
+  }
+
+  void codeFontZoomPreservesFractionalAndPixelSizes() {
+    QFETCH(bool, pixels);
+    auto &theme = Theme::instance();
+    const auto original = theme.codeFont();
+    const auto restore = qScopeGuard([&] { theme.setCodeFont(original); });
+    QFont chosen = original;
+    chosen.setItalic(true);
+    if (pixels)
+      chosen.setPixelSize(18);
+    else
+      chosen.setPointSizeF(10.5);
+    theme.setCodeFont(chosen);
+    theme.apply();
+    QCOMPARE(theme.codeFont().pointSizeF(), chosen.pointSizeF());
+    QCOMPARE(theme.codeFont().pixelSize(), chosen.pixelSize());
+    const qreal initial =
+        pixels ? QFontInfo(chosen).pointSizeF() : chosen.pointSizeF();
+    theme.zoomCodeFont(1);
+    QCOMPARE(theme.codeFont().pointSizeF(), initial + 1);
+    theme.zoomCodeFont(-1);
+    QCOMPARE(theme.codeFont().pointSizeF(), initial);
+    theme.resetCodeFontSize();
+    const auto defaults = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    QCOMPARE(theme.codeFont().pointSizeF(), defaults.pointSizeF());
+    QCOMPARE(theme.codeFont().pixelSize(), defaults.pixelSize());
+    QCOMPARE(theme.codeFont().family(), chosen.family());
+    QVERIFY(theme.codeFont().italic());
+    QLineEdit field;
+    field.ensurePolished();
+    QCOMPARE(QFontInfo(field.font()).pixelSize(),
+             QFontInfo(defaults).pixelSize());
   }
 
   void clientResizeKeepsOppositeEdgesAndBounds_data() {
@@ -391,5 +623,12 @@ private:
   QTemporaryDir settings_;
 };
 
-QTEST_MAIN(AppearanceTests)
+// QTEST_MAIN forces 96 DPI, which masks Cocoa's native point-size behavior.
+// Appearance checks and their captures must use the same DPI as the product.
+int main(int argc, char **argv) {
+  AppearanceTests::initMain();
+  QApplication app(argc, argv);
+  AppearanceTests tests;
+  return QTest::qExec(&tests, argc, argv);
+}
 #include "AppearanceTests.moc"
