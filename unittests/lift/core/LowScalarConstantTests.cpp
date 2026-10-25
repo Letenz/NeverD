@@ -28,6 +28,91 @@ LowOp binary(NdOp Opcode, uint16_t Width, uint64_t Left, uint64_t Right) {
   return Op;
 }
 
+LowOp unary(NdOp Opcode, uint16_t Width, uint64_t Value, uint16_t OutputWidth) {
+  LowOp Op;
+  Op.Opcode = Opcode;
+  Op.Output = NdVar::reg(0, OutputWidth);
+  Op.NumInputs = 1;
+  Op.Inputs[0] = NdVar::cst(Value, Width);
+  return Op;
+}
+
+TEST(LowScalarConstant, UnaryResultsMatchConcreteFixedWidthExecution) {
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    const uint64_t Mask = UINT64_MAX >> ((8 - Width) * 8);
+    for (NdOp Opcode : {NdOp::INT_NOT, NdOp::INT_NEGATE, NdOp::INT_NEG2})
+      for (uint64_t Value :
+           {uint64_t{0}, uint64_t{1}, Mask >> 1, uint64_t{1} << (Width * 8 - 1),
+            Mask, UINT64_MAX}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << unsigned(Opcode) << ':' << Value);
+        const auto Op = unary(Opcode, Width, Value, Width);
+        NdOpEmulator Emulator(BinaryImage{});
+        ASSERT_TRUE(Emulator.step(Op));
+        const auto Expected = Emulator.getRegister(0);
+        ASSERT_TRUE(Expected);
+        EXPECT_EQ(lowScalarConstantResult(Op, constant), *Expected & Mask);
+      }
+  }
+}
+
+TEST(LowScalarConstant, SignExtensionMatchesConcreteExecution) {
+  for (uint16_t Width : {1, 2, 4, 8})
+    for (uint16_t OutputWidth : {1, 2, 4, 8}) {
+      if (OutputWidth < Width)
+        continue;
+      const uint64_t Mask = UINT64_MAX >> ((8 - Width) * 8);
+      const uint64_t OutputMask = UINT64_MAX >> ((8 - OutputWidth) * 8);
+      for (uint64_t Value :
+           {uint64_t{0}, uint64_t{1}, Mask >> 1, uint64_t{1} << (Width * 8 - 1),
+            Mask, UINT64_MAX}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << OutputWidth << ':' << Value);
+        const auto Op = unary(NdOp::INT_SEXT, Width, Value, OutputWidth);
+        NdOpEmulator Emulator(BinaryImage{});
+        ASSERT_TRUE(Emulator.step(Op));
+        const auto Expected = Emulator.getRegister(0);
+        ASSERT_TRUE(Expected);
+        EXPECT_EQ(lowScalarConstantResult(Op, constant),
+                  *Expected & OutputMask);
+      }
+    }
+}
+
+TEST(LowScalarConstant, InvalidUnaryOperationsNeverCreateFacts) {
+  for (NdOp Opcode :
+       {NdOp::INT_NOT, NdOp::INT_NEGATE, NdOp::INT_NEG2, NdOp::INT_SEXT})
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      auto Op = unary(Opcode, 4, UINT32_MAX, 4);
+      switch (Mutation) {
+      case 0:
+        Op.Inputs[0] = NdVar::reg(8, 4);
+        break;
+      case 1:
+        Op.Inputs[0].Size = 0;
+        break;
+      case 2:
+        Op.Inputs[0].Size = 8;
+        break;
+      case 3:
+        Op.Output.Size = 0;
+        break;
+      case 4:
+        Op.Output.Size = 16;
+        break;
+      case 5:
+        Op.NumInputs = 2;
+        break;
+      case 6:
+        Op.Output = NdVar::cst(0, 4);
+        break;
+      }
+      EXPECT_FALSE(lowScalarConstantResult(Op, constant));
+    }
+  for (NdOp Opcode : {NdOp::INT_NOT, NdOp::INT_NEGATE, NdOp::INT_NEG2})
+    EXPECT_FALSE(lowScalarConstantResult(unary(Opcode, 4, 1, 8), constant));
+}
+
 TEST(LowScalarConstant, MultiplicationMatchesConcreteFixedWidthExecution) {
   for (uint16_t Width : {1, 2, 4, 8})
     for (uint64_t Left : {uint64_t{0}, uint64_t{1}, uint64_t{4},
