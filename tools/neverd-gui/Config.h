@@ -51,7 +51,6 @@ inline constexpr int kFocusModeSequenceLength = 3;
 // tools/neverd-gui/app/FocusSidebar.cpp
 inline constexpr int kFocusSidebarPreferredWidth = 360;
 inline constexpr int kFocusSidebarMinimumWidth = 240;
-inline constexpr int kFocusSidebarResizeHandleWidth = 6;
 inline constexpr int kFocusSidebarKeyboardResizeStep = 16;
 inline constexpr int kFocusSidebarToggleWidth = 20;
 inline constexpr int kFocusSidebarToggleHeight = 36;
@@ -66,6 +65,7 @@ inline constexpr int kQuickStartDialogMaximumSideWidth = 440;
 inline constexpr qreal kStyledTextGridTolerance = 0.01;
 
 // tools/neverd-gui/app/Theme.cpp
+inline constexpr int kThemeDefaultUiPointSize = 10;
 inline constexpr int kThemeDefaultCodePointSize = 10;
 inline constexpr int kThemeMinimumCodePointSize = 6;
 inline constexpr int kThemeMaximumCodePointSize = 48;
@@ -193,8 +193,8 @@ inline constexpr int kSecondaryTextDelegateSecondaryGap = 16;
 inline constexpr int kSecondaryTextDelegateSecondaryMargin = 8;
 
 // tools/neverd-gui/app/TitleBar.cpp
-// Visual Studio Code's custom title bar, in logical pixels; its height
-// is the platform's (WindowFramePlatform.h).
+// Shared title-bar geometry in logical pixels on every desktop.
+inline constexpr int kTitleBarHeight = 35;
 inline constexpr int kTitleBarIconSlot = 35;
 inline constexpr int kTitleBarIconSize = 16;
 inline constexpr int kTitleBarButtonWidth = 46;
@@ -219,18 +219,12 @@ inline constexpr int kTitleBarTitlePadding = 12;
 inline constexpr int kWindowFrameShadowExtent = 10;
 /// Resize presses take precedence over content and docking inside this band.
 inline constexpr int kWindowFrameResizeInset = 8;
+/// Corner resize reach measured from the visible edge.
+inline constexpr int kWindowFrameCornerReach = 16;
 
 // tools/neverd-gui/app/WorkbenchStyle.cpp
 /// The size of icons drawn on the 16 pixel grid of IconSet.def.
 inline constexpr int kWorkbenchStyleSmallIconSize = 16;
-
-// tools/neverd-gui/app/platform/WindowFrameUnix.cpp
-/// Visual Studio Code's custom title bar with its command center.
-inline constexpr int kWindowFrameUnixTitleBarHeight = 35;
-
-// tools/neverd-gui/app/platform/WindowFrameWindows.cpp
-/// Visual Studio Code's custom title bar with its command center.
-inline constexpr int kWindowFrameWindowsTitleBarHeight = 35;
 
 inline constexpr QSize kQuickStartDialogSize{900, 560};
 inline constexpr QSize kQuickStartMinimumDialogSize{720, 460};

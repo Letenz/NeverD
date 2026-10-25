@@ -784,10 +784,12 @@ entry:
 }
 )",
                               Arch::X64);
-  EXPECT_NE(C.find("__inbyte(0x60)"), std::string::npos) << C;
-  EXPECT_NE(C.find("__outbyte(0x80, "), std::string::npos) << C;
-  EXPECT_NE(C.find("__outdword(port, value)"), std::string::npos) << C;
-  EXPECT_NE(C.find("__inword(port)"), std::string::npos) << C;
+  EXPECT_NE(C.find("__inbyte((uint16_t)(0x60))"), std::string::npos) << C;
+  EXPECT_NE(C.find("__outbyte((uint16_t)(0x80), "), std::string::npos) << C;
+  EXPECT_NE(C.find("__outdword((uint16_t)(port), (uint32_t)(value))"),
+            std::string::npos)
+      << C;
+  EXPECT_NE(C.find("__inword((uint16_t)(port))"), std::string::npos) << C;
   EXPECT_EQ(C.find("-128"), std::string::npos) << C;
 }
 

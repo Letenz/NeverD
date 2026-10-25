@@ -48,7 +48,6 @@
 #include "TypeLibrariesView.h"
 #include "TypePickerDialog.h"
 #include "WindowFrame.h"
-#include "WindowFramePlatform.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -99,7 +98,6 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
-#include <QSizeGrip>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabBar>
@@ -220,9 +218,20 @@ bool activateTestWindow(QWidget *window) {
   window->activateWindow();
   // Qt can report a transient family as active before native keyboard focus
   // reaches this particular window. Wait for both before sending test input.
-  return QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
-           return QGuiApplication::focusWindow() == window->windowHandle();
-         });
+  const bool active =
+      QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
+        return QGuiApplication::focusWindow() == window->windowHandle();
+      });
+  if (!active)
+    qWarning() << "Native focus did not reach" << window << "visible"
+               << window->isVisible() << "exposed"
+               << (window->windowHandle() &&
+                   window->windowHandle()->isExposed())
+               << "focus" << QGuiApplication::focusWindow() << "active"
+               << QApplication::activeWindow() << "popup"
+               << QApplication::activePopupWidget() << "modal"
+               << QApplication::activeModalWidget();
+  return active;
 }
 
 /// Bound a regression to exec() so a modal reference list fails rather than
@@ -646,6 +655,91 @@ private slots:
         << int(ActionId::FileCompare) << QStringLiteral("binaryComparison");
   }
 
+  void focusToolbarKeepsWorkbenchCommands_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void focusToolbarKeepsWorkbenchCommands() {
+    QFETCH(bool, dark);
+    auto &theme = Theme::instance();
+    const auto previous = theme.mode();
+    const auto restoreTheme = qScopeGuard([&] { theme.setMode(previous); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    theme.apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "focus-toolbar.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    auto *mode = bench.action(ActionId::ViewFocusMode);
+    mode->trigger();
+    auto *workspace = assembly->window();
+    QVERIFY(activateTestWindow(workspace));
+    QPointer<QToolBar> toolbar =
+        workspace->findChild<QToolBar *>(QStringLiteral("focusToolbar"));
+    QVERIFY(toolbar && toolbar->isVisible());
+    QCOMPARE(toolbar->toolButtonStyle(), Qt::ToolButtonIconOnly);
+    for (auto *normal : bench.window->findChildren<QToolBar *>(
+             QString(), Qt::FindDirectChildrenOnly)) {
+      if (normal->objectName() == QLatin1String("toolbarNavigationBand"))
+        continue;
+      for (auto *action : normal->actions())
+        if (!action->isSeparator())
+          QVERIFY2(toolbar->actions().contains(action),
+                   qPrintable(action->objectName()));
+    }
+    auto *code = workspace->findChild<CodeView *>();
+    QVERIFY(code);
+    QTRY_COMPARE(code->text()->function(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(!code->text()->loading());
+    assembly->navigate(Base + 0x1e0);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    code->text()->setFocus();
+    QTRY_VERIFY(code->text()->hasFocus());
+    const auto click = [&](ActionId id) {
+      auto *button = toolbar->widgetForAction(bench.action(id));
+      if (!button || !button->isVisible() || !button->isEnabled())
+        return false;
+      QTest::mouseClick(workspace->windowHandle(), Qt::LeftButton,
+                        Qt::NoModifier,
+                        button->mapTo(workspace, button->rect().center()));
+      return true;
+    };
+    QVERIFY(click(ActionId::JumpBack));
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    QTRY_VERIFY(code->text()->hasFocus());
+    QVERIFY(click(ActionId::JumpForward));
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x1e0));
+    QTRY_COMPARE(code->text()->function(), assembly->currentFunction());
+    QTRY_VERIFY(!code->text()->loading());
+    const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(workspace->grab().save(captures + "/focus-toolbar-" +
+                                     QTest::currentDataTag() + ".png"));
+    }
+    mode->trigger();
+    QTRY_VERIFY(!toolbar);
+    auto *output = bench.window->findChild<OutputWindow *>();
+    QVERIFY(output && output->isVisible());
+    mode->trigger();
+    workspace = assembly->window();
+    QCOMPARE(workspace->findChildren<QToolBar *>(QStringLiteral("focusToolbar"))
+                 .size(),
+             1);
+    workspace->close();
+    QTRY_VERIFY(!mode->isChecked());
+    QVERIFY(output->isVisible());
+  }
+
   void focusFunctionsSidebarTogglesAndNavigates_data() {
     QTest::addColumn<bool>("dark");
     QTest::newRow("light") << false;
@@ -719,10 +813,10 @@ private slots:
     QTRY_VERIFY(functions->model().total() > 0 &&
                 !functions->model().loading());
     QVERIFY(capture(QStringLiteral("open")));
-    auto *handle = sidebar->findChild<QWidget *>(
+    auto *handle = workspace->findChild<QWidget *>(
         QStringLiteral("focusSidebarResizeHandle"));
     QVERIFY(handle && handle->isVisible());
-    QCOMPARE(handle->cursor().shape(), Qt::SizeHorCursor);
+    QCOMPARE(handle->cursor().shape(), Qt::SplitHCursor);
     const int initialWidth = sidebar->width();
     const int nameWidth = functions->table()->header()->sectionSize(0);
     const auto resizeBy = [&](int delta) {
@@ -932,8 +1026,7 @@ private slots:
       auto *minimize =
           bar->findChild<QAbstractButton *>(QStringLiteral("minimizeButton"));
       QVERIFY(maximize && minimize);
-      if (platform::drawsWindowControls())
-        QVERIFY(maximize->isVisible() && minimize->isVisible());
+      QVERIFY(maximize->isVisible() && minimize->isVisible());
       if (maximize->isVisible()) {
         QTest::mouseClick(maximize, Qt::LeftButton);
         QTRY_VERIFY(dialog->isMaximized());
@@ -1632,15 +1725,17 @@ private slots:
       QVERIFY(palette);
       QCOMPARE(QApplication::activePopupWidget(), palette.data());
       QVERIFY(!QApplication::activeModalWidget());
-      QVERIFY(activateTestWindow(palette));
-      QTRY_COMPARE(QGuiApplication::focusWindow(), palette->windowHandle());
       auto *input = palette->findChild<QLineEdit *>();
       QVERIFY(input);
       QTRY_VERIFY(input->hasFocus());
       input->setText(bench.action(ActionId::JumpAnywhere)->text().remove('&'));
       QSignalSpy operand(bench.action(ActionId::JumpOperand),
                          &QAction::triggered);
-      QTest::keyClick(input, accept ? Qt::Key_Return : Qt::Key_Escape);
+      // Cocoa popups can receive keys through their owner's native key
+      // window. Exercise that routing instead of requiring a separate one.
+      QVERIFY(QGuiApplication::focusWindow());
+      QTest::keyClick(QGuiApplication::focusWindow(),
+                      accept ? Qt::Key_Return : Qt::Key_Escape);
       QVERIFY(operand.isEmpty());
       QTRY_VERIFY(!palette);
       if (accept) {
@@ -8320,23 +8415,18 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
     auto *recent =
         dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
-    auto *grip = dialog.findChild<QSizeGrip *>();
     auto *action =
         dialog.findChild<QPushButton *>(QStringLiteral("quickStartAction"));
-    QVERIFY(recent && grip && grip->isVisible() && action);
+    QVERIFY(recent && action);
+    QVERIFY(dialog.findChild<TitleBar *>());
+    QVERIFY(!dialog.isSizeGripEnabled());
     const QSize initialSize = dialog.size();
     const QSize initialListSize = recent->size();
     const QSize actionSize = action->size();
 
-    // Drag the actual resize control, then check the content gained the space.
-    const QPoint start = grip->rect().center();
-    const QPoint destination = grip->mapToGlobal(start) + QPoint(24, 24);
-    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier, start);
-    QMouseEvent move(QEvent::MouseMove, grip->mapFromGlobal(destination),
-                     destination, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(grip, &move);
-    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier,
-                        grip->mapFromGlobal(destination));
+    // Native edge gestures are covered by the shared frame tests. Here the
+    // dialog's content and saved size must follow the resulting geometry.
+    dialog.resize(initialSize + QSize(24, 24));
     QTRY_VERIFY(dialog.width() > initialSize.width());
     QTRY_VERIFY(dialog.height() > initialSize.height());
     const QSize chosenSize = dialog.size();

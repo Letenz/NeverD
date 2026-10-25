@@ -98,7 +98,32 @@ thread and `exit_group` ends the workload. Destructors are not run when the
 observation ends at the selected function's return. The libc
 `exit` import and automatic FINI-array execution remain unsupported.
 
-### Selected execution observations
+### Execution observations
+
+`android.observe_cpu_state: true` adds `android.cpu_state` to the final report.
+It contains the current guest `thread_id` and all modeled ARM64 registers:
+`X0`–`X30`, `SP`, `PC`, `NZCV`, the three modeled `TPIDR` registers, `FPCR`,
+`FPSR`, and `V0`–`V31`. Each named value is a pair of hexadecimal strings
+`[low_64_bits, high_64_bits]`, including scalars whose upper word is zero.
+Capture also runs at terminal CPU/model failures. A read failure produces
+`registers: null` with its own `diagnostic`; the workload's stop reason and
+diagnostic remain intact. The option is false by default and reserves 1,144 raw
+report bytes from `output_limit` before execution. It does not observe suspended
+threads, guest memory, or backend-private state and is not a resumable
+checkpoint. The captured `PC` is the actual CPU register; a service report may
+separately identify a call site or continuation.
+
+`android.observe_memory_on_failure: true` also captures the requested
+`read_memory` ranges after CPU or runtime failures. It reads stopped RAM backing
+without executing guest instructions, switching threads, changing permissions
+or invoking devices. This forensic read ignores guest read permissions; it does
+not make an unmapped or device-backed range readable. A failed region has empty
+`bytes_hex` and its own `diagnostic`; later regions are still attempted and the
+original stop and diagnostic remain intact. The default is false. Every requested
+range reserves an additional diagnostic allowance from `output_limit`, owned by
+`kAndroidFailureMemoryDiagnosticBytes` in `emulation/Limits.h`; long diagnostics
+end with an explicit truncation marker. Entry-time mapping requirements still
+apply. This is selected RAM evidence, not a resumable process checkpoint.
 
 `android.observe_execution` records state immediately before explicit absolute
 guest PCs, without patching code or supplying call results:
@@ -238,8 +263,9 @@ The supported Bionic subset is:
   checked before either effect, and errno is preserved. Invalid pointers and
   exhausted scan/deadline bounds stop explicitly. No host tokenizer or hidden
   process cursor supplies state; `strtok` remains unsupported.
-- `snprintf`, `vsnprintf`, `sprintf`, `vsprintf`, for the bounded integer and
-  byte-string formatting subset described below.
+- `snprintf`, `vsnprintf`, `sprintf`, `vsprintf` and their four `__*_chk`
+  fortify forms, for the bounded integer and byte-string formatting subset
+  described below.
 - `sscanf`, `vsscanf`, for bounded integer scanning as described below.
 - `kill`, sharing the [Linux signal contract](process-emulation.md) with raw
   SVC and variadic `syscall`: self signal-zero probes, process-wide SIGKILL and
@@ -393,7 +419,10 @@ The supported Bionic subset is:
   IPC remain unsupported.
 - `time`, `gettimeofday`, and `clock_gettime`, using the shared explicit
   [`linux_time` inputs](process-emulation.md#explicit-guest-clocks). Imports,
-  named dynamic calls and raw ARM64 services read the same fixed observations.
+  named dynamic calls and raw ARM64 services share the same observations.
+  A closed task catalogue can admit encoded process CPU clocks independently
+  of GKI; CPU samples remain fixed. Explicit monotonic-raw observations share
+  virtual idle/instruction advancement while retaining their own epoch.
   Successful calls preserve errno; kernel errors become `-1` and errno in
   Bionic alone. API 28's `time` fallback stores through the caller's `time_t*`
   in user space, so a bad destination is a runtime failure rather than a
@@ -499,7 +528,7 @@ The model is independently implemented; these sources specify the ABI.
 
 ### String formatting
 
-The four string formatting imports share one Android implementation. It reads
+The eight string formatting imports share one Android implementation. It reads
 ordinary GP arguments from x0–x7 and then the guest stack. The `v` forms consume
 the caller's actual 32-byte AAPCS64 `va_list`, including its GP save area and
 overflow stack; they never use the host's variadic ABI. The caller's list is
@@ -520,6 +549,22 @@ only the actual destination prefix to be writable. Padding is counted without
 materializing discarded bytes; input scans and retained output share the
 process's existing memory and deadline limits.
 
+`__snprintf_chk` and `__vsnprintf_chk` check the requested capacity against the
+compiler-supplied object size before reading the format or variadic arguments.
+An admitted request retains ordinary `snprintf` truncation and counting rules,
+including a zero-capacity call with a null destination. The object size remains
+64-bit and may be SIZE_MAX when the requested capacity is within the supported
+range. `__sprintf_chk` and `__vsprintf_chk` use the object size as their capacity
+and require the complete result plus its final NUL to fit. Even an empty result
+requires one byte. API 28 ignores the flags argument in all four forms.
+
+Fortify violations stop as `unsupported_service` without publishing a result or
+partial output; Bionic's abort, logging and pre-abort writes are not simulated.
+The checked `sprintf` forms retain the existing INT_MAX capacity admission
+boundary, including explicit refusal of an unknown SIZE_MAX object size. API 28
+maps that unknown size to SSIZE_MAX, whose version-specific formatting behavior
+is outside this model. No smaller capacity or successful result is guessed.
+
 Floating-point, wide text, positional arguments, `%n`, unknown conversions,
 `snprintf` capacities above INT_MAX, and lengths exceeding INT_MAX stop as
 `unsupported_service` before publishing output. This boundary does not simulate
@@ -530,8 +575,9 @@ same implementation and provider lifetime checks as direct imports.
 
 The independently authored implementation and compiled O0/O2 callers follow
 [AAPCS64's variadic layout](https://github.com/ARM-software/abi-aa/blob/2025Q1/aapcs64/aapcs64.rst#the-va_list-type),
-Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp)
-and [conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp).
+Android 9's [formatting entrypoints](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/stdio.cpp),
+[conversion behavior](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/stdio/vfprintf.cpp)
+and [fortify wrappers](https://android.googlesource.com/platform/bionic/+/android-9.0.0_r1/libc/bionic/fortify.cpp).
 
 ### Byte streams
 
@@ -715,6 +761,29 @@ Missing libraries/symbols, closed or invalid handles, and a null symbol name
 return a lookup error. `dlerror()` consumes the pending guest error pointer in
 API 28 TLS slot 6 once; successful lookups do not clear an earlier error, and
 `errno` is independent. Error message wording belongs to the model.
+
+An optional `dladdr_observations` array supplies successful LP64 `dladdr`
+queries. Each record requires `address`, `image_base`, `image_name`,
+`symbol_name` and `symbol_address`. Addresses accept unsigned integers or hex
+strings; a missing symbol is expressed by `symbol_name: null` and
+`symbol_address: 0`. Query addresses must be unique and match exactly.
+
+```json
+{"android":{"entry_symbol":"inspect_buffer","dladdr_observations":[
+  {"address":"0x40001004","image_base":"0x40000000",
+   "image_name":"/guest/fixture.so","symbol_name":"symbol",
+   "symbol_address":"0x40001000"}
+]}}
+```
+
+A matching query writes the four LP64 fields and returns 1 while preserving
+`errno` and pending `dlerror` state. Names are borrowed, stable, read-only guest
+strings. Invalid output spans publish no partial `Dl_info`; changing or
+unmapping retained strings makes subsequent queries fail explicitly. Missing,
+empty and unmatched observations remain unsupported. These records neither
+populate the library catalogue nor infer negative results, symbol membership
+or host files. Record, string and aggregate byte limits have one authority in
+`include/neverd/emulation/Limits.h`.
 
 An optional `default_scope` supplies the complete ordered provider list for
 `dlsym(RTLD_DEFAULT, name)` (handle 0 on LP64):

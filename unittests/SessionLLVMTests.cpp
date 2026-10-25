@@ -8,7 +8,9 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
-#include "neverd/lift/X86Regs.h"
+#include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
+#include "neverd/lift/X86/X86Regs.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -137,6 +139,57 @@ TEST_F(SessionLLVMTest, ExactAddressZeroIgnoresHelperNamesAndDeclarations) {
 
   EXPECT_EQ(State.findNativeLlvmFunction(0), Source);
   EXPECT_TRUE(State.LastError.empty());
+}
+
+TEST_F(SessionLLVMTest, EmissionExceptionsKeepTheSessionAndReason) {
+  State.Img.Arch = Arch::AArch64;
+  auto Function = sourceFunction();
+  MedOp Exit;
+  Exit.Opcode = NdOp::INTRINSIC;
+  Exit.addInput(MedVar::makeConst(static_cast<uint64_t>(Intrinsic::Eret),
+                                  sizeof(uint16_t)));
+  Function.Blocks.front().Ops.insert(Function.Blocks.front().Ops.begin(), Exit);
+  State.PipeResult.MedFuncs.push_back(Function);
+  std::shared_ptr<LLVMSourceMap> Sources;
+  for (bool NoOpt : {false, true})
+    for (bool OriginalImage : {false, true}) {
+      State.clearError();
+      EXPECT_NO_THROW(EXPECT_FALSE(
+          State.emitNativeLlvm(NoOpt, nullptr, Sources, OriginalImage)));
+      EXPECT_NE(State.LastError.find(kAArch64ExceptionReturnUnsupported),
+                std::string::npos)
+          << State.LastError;
+      EXPECT_FALSE(Sources);
+      EXPECT_TRUE(State.PipeRan);
+      EXPECT_TRUE(State.PipeResult.Success);
+      EXPECT_TRUE(State.FunctionLlvmModules.empty());
+    }
+  State.PipeResult.MedFuncs.front() = sourceFunction();
+  State.NativeMedFuncs.reset();
+  State.clearError();
+  ASSERT_TRUE(State.emitNativeLlvm(true, nullptr, Sources)) << State.LastError;
+  EXPECT_TRUE(State.LastError.empty());
+}
+
+TEST_F(SessionLLVMTest, SourceOnlyStackLimitSurvivesModulePreparation) {
+  State.Img.Format = BinaryFormat::COFF;
+  auto Function = sourceFunction();
+  Function.HasUnresolvedSEHFrame = true;
+  State.PipeResult.MedFuncs.push_back(Function);
+  std::shared_ptr<LLVMSourceMap> Sources;
+  for (bool NoOpt : {false, true})
+    for (bool OriginalImage : {false, true}) {
+      State.clearError();
+      auto Module =
+          State.emitNativeLlvm(NoOpt, nullptr, Sources, OriginalImage);
+      ASSERT_TRUE(Module) << State.LastError;
+      ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+      const auto *Emitted = Module->getFunction(Function.Name);
+      ASSERT_TRUE(Emitted);
+      EXPECT_TRUE(
+          Emitted->hasFnAttribute(windows_eh_md::UnresolvedSourceFrame));
+      EXPECT_TRUE(State.LastError.empty());
+    }
 }
 
 TEST_F(SessionLLVMTest, MissingIdentityNeverFallsBackToSymbolSpelling) {

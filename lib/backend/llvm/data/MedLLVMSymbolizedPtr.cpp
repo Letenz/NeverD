@@ -363,6 +363,17 @@ llvm::Value *MedLLVMEmitter::tryResolvePointerArg(const MedVar &AddrVar,
     rejectEscapingAddressFragment(AddrVar, "a call argument");
     return nullptr;
   }
+  // In an original-image view, pointer values refer to the provider's
+  // runtime storage, not to independently reconstructed table mirrors. The
+  // constant materializer and PHI edges own the single image coordinate
+  // model; do not reinterpret a live value using file contents here.
+  if (usesOriginalImageStorage()) {
+    llvm::Value *Value = getVar(AddrVar, Builder);
+    if (!Value || Value->getType()->isPointerTy())
+      return Value;
+    return Builder.CreateIntToPtr(Value, llvm::PointerType::getUnqual(*Ctx),
+                                  "image.pointer");
+  }
   // Scalar, fragment, and mixed explicit occurrences must never fall through
   // to value-global heuristics.  Unlike Address, they carry no complete data-
   // pointer relation for this consumer to own.

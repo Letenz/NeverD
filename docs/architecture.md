@@ -45,6 +45,9 @@ ordered, potentially trapping reads even when the result is unused. Constant
 propagation does not turn a 16-bit DX port into an 8-bit port. C output selects
 qualified builtins, real MSVC intrinsics or owned assembly at compile time.
 LLVM-to-C validates types and full memory effects before recognizing a call.
+Its port recognizer zero-extends a validated 8-bit immediate from the LLVM
+constant before rendering C. DX operands retain their full 16-bit value;
+the signed spelling of an instruction byte cannot choose a different port.
 
 `X86SystemRegisterAsm.h` owns CR/DR register selection, native width and native
 LLVM/C API names. LLVM emission and both C projections share that contract.
@@ -98,6 +101,58 @@ use. Separate target attributes would discard one group's requirements in a
 mixed function. AMX/SGX assembly fallbacks do not acquire unavailable compiler features. REP
 comparison completion in long mode requires LAHF/SAHF on both native and
 assembly routes, and its `sahf` attribute survives every capability combination.
+SHA-256 vector projections participate in the same feature set, including the
+SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
+shape before selecting a compiler intrinsic.
+
+Source LLVM may retain loaded-image data in one external byte array, preserving
+overlapping scalar fields, pointer cells and original address differences.
+`LLVMOriginalImageStorage.h` owns the marker and its admission checks. This is
+an original-image source view, not a relocated reconstruction: native emission,
+relocatable objects and escaped address fragments retain their separate guards.
+The SDK includes this choice in its per-function LLVM cache key.
+
+Source unknown entry values use distinct opaque SSA seeds. A copy or PHI may
+transport an unavailable value without observing it; a real observation still
+requires its availability. Callee-save restoration follows those uses through
+dead copies and joins, while calls, exceptional entries and actual consumers
+retain their evidence. Native reconstruction does not acquire a machine-entry
+contract from these source seeds.
+
+After all native exception edges exist, the LLVM emitter removes an entry seed
+only when its private slot has one later definition dominating every read.
+This keeps SSA promotion from recomputing whole-function dominance frontiers
+for already defined temporaries. Bypassed definitions, first loop iterations,
+ordered accesses and escaping storage retain the original seed.
+
+LowIR owns x64 internal-call return proofs. Replaced-PC tail transfers require
+an exact write to the pushed return slot and a checked parent stack. Bounded
+closed recursive groups must preserve every invocation's return slot and
+ordinary preserved registers; unknown calls, memory writes or stack offsets
+cannot supply that proof. COFF stack-probe allocation recovery similarly uses
+the decoded subtraction and unwind-prologue boundary, sharing the decoded
+callee register-effect authority across frame analyses.
+
+LLVM-to-C assigns split Windows protected ranges to blocks independently of
+LLVM block order. Shared handlers remain outside protected scopes, normal-edge
+PHI copies retain their original destinations, and inconsistent incoming scope
+states are refused. Unsupported C scope layouts throw a recoverable emission
+error instead of terminating the embedding process. Source-only unresolved SEH
+frames remain explicitly marked in LLVM and C; native emission still refuses
+them without the missing runtime stack contract.
+
+X86 LLVM assembly that modifies arithmetic flags declares `~{flags}`. LLVM's
+x86 register constraint parser does not map `~{cc}` to EFLAGS; an apparently
+correct instruction window can otherwise reuse a stale comparison after a
+native flag write. GNU C assembly still spells this clobber `"cc"`. Owned
+assembly producers and LLVM-to-C recognizers share the exact LLVM contract;
+the recognizer rejects older windows that omitted the actual EFLAGS effect.
+
+The shared LLVM intrinsic dispatcher refuses an operation unless its target
+handler owns the result or effect. Unknown void operations cannot disappear,
+and unhandled values cannot become zero. The emitter throws while it still
+owns the incomplete module; direct callers and both serial and sharded
+pipeline paths therefore receive a diagnostic instead of executable output.
 
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
@@ -124,6 +179,12 @@ entries and unwind frame starts; a frame that begins later, a chained row or a
 cold fragment cannot supply an independent callable identity. Next-entry bounds
 use those primary identities as well. Explicitly selecting code for analysis
 retains its separate decode and admission checks.
+COFF `IMAGE_SCN_CNT_CODE` is instruction-storage evidence independently of
+page execute permission. Ownership, selected pipeline entries and SDK batch
+selection share that distinction without changing the image's page flags.
+A completed SDK discovery run reconciles provisional loader boundary guesses
+against the detector result. Stated symbols and user-created or renamed
+identities remain; a later catalog rebuild cannot resurrect a refuted guess.
 Patch/lift output requires every explicitly selected entry to survive into
 MedIR before LLVM emission. Automatically included exception callbacks cannot
 substitute for a rejected parent. Failures retain the entry's audit disposition
@@ -1952,10 +2013,17 @@ from the selected allocator backend.
 compilation and records the actual commits for qualification and installation.
 The private text helper uses Highway only after an inline short-run scan and
 simdutf only to prove that an entire UTF-8 span needs no repair. Existing string
-metadata and byte-preserving repair remain authoritative. Transport parsing
+metadata and byte-preserving repair remain authoritative. Metadata normalization
+keeps already-valid UTF-8 in its existing string storage; both owned and copied
+text use the same valid-prefix scanner and malformed-byte escape implementation.
+Transport parsing
 copies validated simdjson values into the owned nlohmann DOM and checks decoded
 keys during object insertion. Floating-point tokens and negative zero retain
 the original numeric parser; refused SIMD input uses the original admission path.
+The CLI export-table adapter reuses this parser and owned DOM for the SDK's
+shallow export array. It validates every record before formatting and admits
+the full SDK response size, without applying the transport frame-size budget.
+The SDK remains responsible for export order, ordinal width and UTF-8 repair.
 The default task helper uses oneTBB with checked 8 MiB worker stacks. A caller
 with enough unused stack can coordinate directly; small callers get a native
 coordinator. Small batches and explicitly serial weighted batches also use
@@ -4067,6 +4135,11 @@ and its [schema](web-artifact-schema.md) for the current capability boundary.
 
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
+`loader/ImageProfile` separately owns metadata-based system, execution-domain
+and runtime evidence. Automatic pattern selection consumes that evidence and
+the reviewed bundled pack scopes before file/cache I/O. Unknown or conflicting
+dimensions retain coverage; mixed SDK and compiler helpers keep their broad
+scope. See [signature selection](signature-selection.md).
 MedIR analyses prove typed expressions and bounded COM ownership sequences.
 `PipelineLibraryRecognition` combines this evidence without changing names,
 operands, bodies or ABI contracts. The session publishes one display identity
@@ -7517,6 +7590,25 @@ backend.
 
 ## CPU execution
 
+`ExecutionBackend::readRegisters` observes the stopped CPU through the shared
+`Registers.def` inventory, including vector lanes and extended x64 FP values.
+It publishes a complete packet or an error and never saves/restores a context,
+executes an instruction, or reads guest memory. Width validation rejects invalid
+backend values; architecture transports retain ownership of normalization.
+Android's opt-in `observe_cpu_state` reserves its raw register-byte budget before
+execution and reports the current thread under `android.cpu_state`, even after a
+terminal CPU fault. Registers are named pairs of hexadecimal low/high 64-bit
+words. Capture failure has `registers: null` and a separate diagnostic, preserving
+the original workload stop. This is an observation of modeled architectural
+registers, not suspended-thread state or a resumable VM checkpoint.
+
+Android's separate `observe_memory_on_failure` option uses the existing
+`ExecutionBackend::snapshotBacking` owner for requested terminal RAM ranges.
+It never retries guest/model reads after a fault or accesses device callbacks.
+Each failed range retains its own bounded diagnostic and publishes no partial
+bytes, without changing the execution failure or preventing later captures.
+The default report and resumable-stop memory contract remain unchanged.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage: partial failures, cancellation and deadline expiry cannot publish a
@@ -7588,12 +7680,16 @@ provider identity to aliases.
 
 The Linux kernel component also owns validation and lookup of explicit
 clock observations in `LinuxTimeOptions`, plus time-service output ordering.
-`LinuxCPUClock` decodes process CPU identities and validates their released GKI
-task observations. It resolves current-task aliases to the process group and
+`LinuxCPUClock` decodes process CPU identities under a released GKI contract or
+an explicit closed task catalogue. `LinuxKernelAvailability` validates that
+catalogue independently of GKI, including task limits and thread-ID conflicts.
+It does not select pidfd or other version-specific rules. The CPU-clock owner
+validates the corresponding task observations. It resolves current-task aliases to the process group and
 checks foreign group leaders before output access. `LinuxClock` canonicalizes
 observations and rejects duplicate aliases. Process CPU samples stay fixed
-while the idle policy advances declared wall clocks; no execution accounting
-or host clock supplies an observation.
+while the idle policy advances declared wall clocks, including monotonic raw
+from its own epoch. No execution accounting or host clock supplies a CPU
+observation; missing raw-clock input never borrows monotonic time.
 The process wire parser validates representations and delegates value policy
 to that owner. Android reuses clock lookup and raw kernel services; Bionic
 alone owns errno conversion and `time`'s user-space destination store.
@@ -7629,6 +7725,13 @@ their per-call views borrow the existing Bionic state. Kernel bindings stay in
 with their existing Linux and report inventories. Keep control flow in C++ and
 independent test expectations in fixtures; ordinary punctuation and empty strings
 do not need vocabulary entries.
+
+`AndroidFormatting` owns both ordinary and fortify string formatting. Its
+entrypoint classification supplies the fixed-argument layout and object-size
+checks to one formatter and the shared AAPCS64 `ArgumentReader`; it does not
+duplicate conversion rules for checked imports, dynamic providers, SDK or CLI.
+Fortify paths requiring unmodeled process-abort effects stop before publishing
+output. Existing memory, deadline and representable-result limits still apply.
 
 `LinuxFiles` owns directory cursors, workload-local inode identities and the
 optional live proc FD namespace alongside regular and device descriptions.
@@ -7970,6 +8073,13 @@ C, CLI and Python consume the same option parser. No dependency graph,
 namespace or caller-specific scope is inferred from these explicit inputs.
 
 
+`AndroidDlfcn` owns explicit positive `dladdr` observations. Typed and JSON
+inputs share one validator and the limits in `emulation/Limits.h`. An exact
+address selects an authored LP64 `Dl_info`; absent or unmatched observations
+stop explicitly. Names are interned in read-only guest memory, shared across
+threads and revalidated before output publication. Static imports and dynamic
+provider traps share this owner without inferring ELF membership or host state.
+
 `AndroidStrings` owns Bionic's mutating token scan over guest memory. Imported
 and dynamically named `strtok_r` calls use the same bounded byte reads and
 caller-owned continuation pointer. It validates the complete cursor and
@@ -8213,6 +8323,23 @@ never rolls back committed RAM or device effects. Other devices without read
 preparation reject memory-to-memory reads rather than consuming them early.
 
 `CheckedAArch64Instructions.def` and `AArch64InstructionEffects` admit bounded baseline FP32/FP64 arithmetic, comparisons, moves and fixed-width SIMD operations at EL0/EL1. FPCR supports four rounding modes, FZ and DN; FPSR retains cumulative status and QC. Unsupported control/status bits are rejected before mutation. FP16 arithmetic, SVE/SME, unmasked exceptions, optional extensions and unlisted forms fail explicitly. This CPU support does not add Windows ARM64 driver loading or another OS environment.
+
+The same admission owner accepts FP32/FP64 `FCCMP`/`FCCMPE`, baseline scalar
+and vector `FCMLE #0`, and equal-width scalar SIMD `SCVTF`/`UCVTF`. FCMLE
+accepts only its exact typed zero immediate; scalar conversions retain width
+and operand-class checks. Conditions, exception status, rounding and results
+come from the existing checked execution semantics. FP16, fixed-point, packed
+conversions and scalable forms remain unsupported.
+
+The shared checked ARM64 catalogue admits integer `CMLT #0` for scalar D and
+fixed 8B/16B/4H/8H/2S/4S/2D vectors. The existing vector-effect owner retains
+register and immediate-form validation. This admission adds no FP comparison
+semantics, scalable registers or reserved scalar/narrow forms.
+
+The same catalogue admits baseline `EXT` byte windows and `REV64` element
+reversal within each 64-bit block. Both 64-bit and 128-bit vectors use the
+existing vector-effect owner; narrow results clear the upper half. Reserved
+offsets, reserved element sizes and scalable encodings remain unsupported.
 
 Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
 The original instructions execute on the selected checked CPU transport; OS
@@ -10343,6 +10470,17 @@ See
 [released GKI contracts](android-gki-kernels.md) for pinned source evidence and
 the limits of this implemented subset.
 
+`LinuxKernelAvailability.cpp` owns the import order through `xattrQueryImport` for
+`getxattr`, `lgetxattr` and `fgetxattr`. An explicit
+`LinuxKernelOptions::XAttrQueryImport` selects target-before-name or
+name-before-target independently of a released GKI contract. Supplying both
+authorities is invalid even when they select the same order. The existing GKI
+table remains authoritative when only GKI is supplied. `LinuxFiles` consumes
+this shared decision for raw syscalls and Bionic imports; JSON only parses the
+explicit declaration. This option supplies no attribute values, symbolic-link
+traversal, namespace policy or other kernel capabilities. Unknown attributes
+retain their unsupported boundary without reading or writing the value buffer.
+
 Frame-offset proof keys normalize a top-level 64-bit address sum by removing its constant bias and subtracting the same entry root. Cold proofs retain the complete predicate and the existing remainder expression. Completed domains subtract the bias before insertion and restore the requested bias on lookup, preserving modular wrap, empty domains and nonuniqueness. Keys follow the original address so a change in the bounded remainder rewrite from a binary to an n-ary sum cannot change proof identity. All new nodes count against the existing node limit.
 
 ## Mobile source assembly
@@ -11283,3 +11421,8 @@ The x64 adapter admits only the complete canonical `CPUID` bundle; the lifter in
 Core retains exact root/offset relations through complete registers and frame spills, intersects them at joins and forgets overwritten or possibly corrupted relations. Fresh node roots restore only retained relations; lost entry bindings are never recreated. Physical frame addresses and native stack offsets remain frame-only. `ProveStoreFrameSeparation` separately proves that each complete executed write misses the frame, including wide, conditional atomic and full segmented addresses. Declarations grant no unchecked store exemption. Preparation, operations and symbolic nodes use existing budgets. Raw integrity binds every declaration field and order; an empty vector preserves the prior digest encoding. Ordinary source and native proof consumers still refuse this raw domain.
 
 Before original calls, `SourceFrameAnalysis` can observe proven private bytes on x64/ARM64 in a bounded, call-free, acyclic prefix. `observeSourceFrameBytes` authenticates immutable image loads without relocations; HighC and LLVM C show terminated text as comments without changing operations. Exact alignment guards remain active. These observations grant no ABI or native-rewrite authority.
+
+Entry-stack offset recovery accepts a narrower scalar displacement only when
+its nonnegative value is independent of sign or zero extension. Pointer
+provenance and negative narrow constants cannot certify a frame offset. The
+same proof supplies stack annotations and saved-register recovery.

@@ -71,13 +71,13 @@ target_include_directories(neverd_gui_app PUBLIC
 target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core neverd_gui_web Qt6::Widgets Qt6::Svg
   Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets NeverDProjectDatabase)
 # A window that draws its own frame tells the Wayland compositor where its
-# shadow ends, and drops the Windows caption, through Qt's private native
-# window interfaces.
+# shadow ends through Qt's private native window interface.
 target_link_libraries(neverd_gui_app PRIVATE Qt6::GuiPrivate)
 # How a window loses the system's title bar differs by platform
 # (app/WindowFramePlatform.h).
 if(WIN32)
   target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameWindows.cpp)
+  target_link_libraries(neverd_gui_app PRIVATE dwmapi)
 elseif(APPLE)
   enable_language(OBJCXX)
   target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameMac.mm)
@@ -87,9 +87,15 @@ else()
 endif()
 file(GLOB NEVERD_GUI_ICONS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*.svg")
+file(GLOB NEVERD_GUI_FONTS CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/*.ttf"
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/*.ttc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/*-OFL.txt"
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/README.md")
 qt_add_resources(neverd_gui_app "workbench_assets" PREFIX /neverd
   BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources"
-  FILES ${NEVERD_GUI_ICONS} "${CMAKE_CURRENT_SOURCE_DIR}/resources/theme.qss")
+  FILES ${NEVERD_GUI_ICONS} ${NEVERD_GUI_FONTS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/theme.qss")
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-dark.svg"
   PROPERTIES QT_RESOURCE_ALIAS "icons/app.svg")
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/../../docs/assets/neverd-logo-light.svg"
@@ -105,6 +111,19 @@ add_custom_command(TARGET neverd-gui POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSES/sqlite/SOURCE.md"
     "$<TARGET_FILE_DIR:neverd-gui>/licenses/sqlite")
+file(GLOB NEVERD_GUI_FONT_NOTICES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/*-OFL.txt"
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/README.md")
+add_custom_command(TARGET neverd-gui POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:neverd-gui>/licenses/fonts"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NEVERD_GUI_FONT_NOTICES}
+    "$<TARGET_FILE_DIR:neverd-gui>/licenses/fonts")
+if(APPLE)
+  install(FILES ${NEVERD_GUI_FONT_NOTICES}
+    DESTINATION "neverd-gui.app/Contents/Resources/licenses/fonts")
+else()
+  install(FILES ${NEVERD_GUI_FONT_NOTICES} DESTINATION share/neverd/licenses/fonts)
+endif()
 
 file(GLOB NEVERD_TRANSLATIONS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/i18n/*.ts")
 if(NEVERD_TRANSLATIONS)
@@ -204,6 +223,12 @@ if(BUILD_TESTING)
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
   qt_add_executable(neverd-gui-unit-tests tests/WorkbenchUnitTests.cpp)
+  qt_add_executable(neverd-gui-appearance-tests tests/AppearanceTests.cpp)
+  target_link_libraries(neverd-gui-appearance-tests PRIVATE neverd_gui_app Qt6::Test)
+  set_target_properties(neverd-gui-appearance-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME NeverDGuiAppearance COMMAND neverd-gui-appearance-tests)
+  set_tests_properties(NeverDGuiAppearance PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
   qt_add_executable(neverd-gui-x87-tests tests/X87CapabilitiesTests.cpp)
   target_link_libraries(neverd-gui-x87-tests PRIVATE neverd_gui_app Qt6::Test)
   set_target_properties(neverd-gui-x87-tests PROPERTIES WIN32_EXECUTABLE FALSE)

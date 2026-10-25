@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "ProcessAndroidJSON.h"
 
+#include "../os/linux/android/AndroidDlfcn.h"
 #include "../os/linux/android/AndroidJavaLibrary.h"
 #include "../os/linux/android/AndroidLog.h"
 #include "../os/linux/android/AndroidObservation.h"
@@ -455,6 +456,43 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         return Label.takeError();
       Out.FixedTimeZone =
           AndroidFixedTimeZone{int32_t(*Offset), std::move(*Label)};
+    } else if (Name == field::DladdrObservations) {
+      const auto *Entries = V.getAsArray();
+      if (!Entries ||
+          Entries->size() > android_model::dladdr_model::MaximumRecords)
+        return invalid(Name);
+      Out.DladdrObservations.emplace();
+      for (const auto &Entry : *Entries) {
+        const auto *Record = Entry.getAsObject();
+        if (!Record || Record->size() != 5 || !Record->get(field::Address) ||
+            !Record->get(field::DladdrImageBase) ||
+            !Record->get(field::DladdrImageName) ||
+            !Record->get(field::DladdrSymbolName) ||
+            !Record->get(field::DladdrSymbolAddress))
+          return invalid(Name);
+        NativeDladdrObservation O;
+        for (auto [Key, Destination] :
+             {std::pair{field::Address, &O.Address},
+              {field::DladdrImageBase, &O.ImageBase},
+              {field::DladdrSymbolAddress, &O.SymbolAddress}}) {
+          auto N = number(*Record->get(Key), Name);
+          if (!N)
+            return N.takeError();
+          *Destination = *N;
+        }
+        auto Text = string(*Record->get(field::DladdrImageName), Name);
+        if (!Text)
+          return Text.takeError();
+        O.ImageName = std::move(*Text);
+        if (Record->get(field::DladdrSymbolName)->kind() !=
+            llvm::json::Value::Null) {
+          auto Symbol = string(*Record->get(field::DladdrSymbolName), Name);
+          if (!Symbol)
+            return Symbol.takeError();
+          O.SymbolName = std::move(*Symbol);
+        }
+        Out.DladdrObservations->push_back(std::move(O));
+      }
     } else if (Name == field::DefaultScope) {
       const auto *Scope = V.getAsArray();
       if (!Scope)
@@ -498,11 +536,18 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       }
       Out.JavaLibrary = std::move(*S);
-    } else if (Name == field::ObserveJavaState) {
+    } else if (Name == field::ObserveJavaState ||
+               Name == field::ObserveCPUState ||
+               Name == field::ObserveMemoryOnFailure) {
       auto B = V.getAsBoolean();
       if (!B)
         return invalid(Name);
-      Out.ObserveJavaState = *B;
+      if (Name == field::ObserveJavaState)
+        Out.ObserveJavaState = *B;
+      else if (Name == field::ObserveCPUState)
+        Out.ObserveCPUState = *B;
+      else
+        Out.ObserveMemoryOnFailure = *B;
     } else if (Name == field::ReadMemory) {
       auto Reads = memoryReads(V);
       if (!Reads)
@@ -553,6 +598,9 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
     } else
       return invalid(Name);
   }
+  if (auto E =
+          android_model::validateDladdrObservations(Out.DladdrObservations))
+    return std::move(E);
   if (auto E = android_model::validateLogRecords(Out.LogRecords))
     return std::move(E);
   if (Out.ObserveJavaState && !Out.JNI)
@@ -583,15 +631,33 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
   }
   for (uint64_t PC : Result.Trace)
     Trace.push_back(bits(PC));
-  for (const auto &Snapshot : Result.MemorySnapshots)
-    Memory.push_back(
-        llvm::json::Object{{field::Address, bits(Snapshot.Address)},
-                           {field::Bytes, llvm::toHex(Snapshot.Bytes, true)}});
+  for (const auto &Snapshot : Result.MemorySnapshots) {
+    llvm::json::Object Value{{field::Address, bits(Snapshot.Address)},
+                             {field::Bytes, llvm::toHex(Snapshot.Bytes, true)}};
+    if (!Snapshot.Diagnostic.empty())
+      Value[field::Diagnostic] = Snapshot.Diagnostic;
+    Memory.push_back(std::move(Value));
+  }
   llvm::json::Object Out{{field::Initialize, Result.InitializersEnabled},
                          {field::NativeCalls, std::move(Calls)},
                          {field::Trace, std::move(Trace)},
                          {field::TraceTruncated, Result.TraceTruncated},
                          {field::Memory, std::move(Memory)}};
+  if (Result.CPUState) {
+    const auto &State = *Result.CPUState;
+    llvm::json::Value Registers = nullptr;
+    if (State.Registers) {
+      llvm::json::Object Values;
+      for (const auto &R : *State.Registers)
+        Values[registerName(R.Register)] =
+            llvm::json::Array{bits(R.Value[0]), bits(R.Value[1])};
+      Registers = std::move(Values);
+    }
+    Out[field::CPUState] =
+        llvm::json::Object{{field::ThreadID, State.ThreadID},
+                           {field::ObservationRegisters, std::move(Registers)},
+                           {field::Diagnostic, State.Diagnostic}};
+  }
   if (!Result.JNIRegistrations.empty()) {
     llvm::json::Array Bindings;
     for (const auto &Binding : Result.JNIRegistrations)

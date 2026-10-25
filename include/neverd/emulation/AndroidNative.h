@@ -10,6 +10,7 @@
 #include "neverd/dalvik/RuntimeSnapshot.h"
 #include "neverd/emulation/AndroidResolverOptions.h"
 #include "neverd/emulation/ProcessCall.h"
+#include "neverd/emulation/Registers.h"
 
 #include <array>
 #include <cstdint>
@@ -40,6 +41,9 @@ struct NativeMemoryRead {
 struct NativeMemorySnapshot {
   uint64_t Address;
   std::vector<uint8_t> Bytes;
+  /// Nonempty only when an opted-in failure snapshot could not read RAM.
+  /// Bytes is then empty; the process's original failure remains unchanged.
+  std::string Diagnostic;
 };
 
 /// Resolve a read from the stopped register state at each observation. Register
@@ -80,11 +84,28 @@ struct NativeExecutionObservation {
   std::array<uint64_t, 31> Registers{};
   std::vector<NativeMemorySnapshot> Memory;
 };
+/// Registers of the current CPU at the final stop, including terminal faults.
+/// Suspended threads, memory, and backend-private state are not captured.
+/// A failed read leaves Registers absent and records its separate diagnostic.
+struct NativeCPUState {
+  uint64_t ThreadID = 0;
+  std::optional<std::vector<RegisterSnapshot>> Registers;
+  std::string Diagnostic;
+};
 
 /// One visible logd v4 entry. Payload is opaque; no host log is consulted.
 struct NativeLogRecord {
   uint32_t ID = 0, PID = 0, TID = 0, Seconds = 0, Nanoseconds = 0, UID = 0;
   std::vector<uint8_t> Payload;
+};
+
+/// One explicit successful LP64 dladdr observation. Address matches exactly;
+/// image membership and symbol selection are supplied, never inferred.
+struct NativeDladdrObservation {
+  uint64_t Address = 0, ImageBase = 0;
+  std::string ImageName;
+  std::optional<std::string> SymbolName;
+  uint64_t SymbolAddress = 0;
 };
 
 /// Android 9 / API 28, little-endian AArch64. Function
@@ -125,6 +146,13 @@ struct AndroidNativeOptions {
   /// Retain this many admitted instruction PCs. Zero disables tracing.
   uint64_t TraceLimit = 0;
   std::optional<NativeExecutionObservationOptions> ObserveExecution;
+  /// Read the final current-thread architectural registers without executing
+  /// or switching contexts. Failure never replaces the original stop reason.
+  bool ObserveCPUState = false;
+  /// Also snapshot ReadMemory from stopped RAM backing after CPU/runtime
+  /// failures. Ignores guest read permissions, never reads devices or resumes
+  /// execution, and records per-region errors without replacing the stop.
+  bool ObserveMemoryOnFailure = false;
   /// Concrete analysis choice for bytes returned by malloc and the new tail
   /// of realloc. Zero preserves the default. This is not a claim about an
   /// Android allocator or proof that reading uninitialized bytes is valid.
@@ -169,6 +197,11 @@ struct AndroidNativeOptions {
   /// scope or unload them. Absent means unknown (unsupported); empty means
   /// explicitly no providers. No namespace or dependency order is inferred.
   std::optional<std::vector<std::string>> DefaultScope;
+  /// Immutable positive query observations. Absent, empty and unmatched
+  /// queries remain unsupported; negative linker outcomes are not modeled.
+  /// Names become borrowed read-only guest strings with stable identities.
+  /// This does not populate Libraries, resolve ELF symbols, or load host files.
+  std::optional<std::vector<NativeDladdrObservation>> DladdrObservations;
 };
 
 /// Model-owned identity and placement, not a public pthread_internal_t layout.

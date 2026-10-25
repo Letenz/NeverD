@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Docking.h"
+#include "NativeWindowStates.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
 #include "WindowFrame.h"
@@ -101,7 +102,8 @@ bool place(QWidget &window, QPoint position) {
   return shell(
       QStringLiteral(
           "(() => { const w = %1; if (!w) throw Error('missing window');"
-          "w.move_frame(true, %2, %3); Main.activateWindow(w); })()")
+          "Main.overview.hide(); w.move_frame(true, %2, %3);"
+          "Main.activateWindow(w); })()")
           .arg(nativeWindow(window))
           .arg(position.x())
           .arg(position.y()));
@@ -140,23 +142,26 @@ public:
               .arg(qRound(local.y() * scale)));
     }
     const QPoint global = widget.mapToGlobal(point);
+#ifdef Q_OS_MACOS
+    // Cocoa's QCursor::setPos posts its own button-up mouse-moved event. In a
+    // held drag it would arrive ahead of the dragged motion and interrupt it.
+    if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+      return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
+                         global);
+#endif
     QCursor::setPos(global);
     if (QGuiApplication::platformName() == QLatin1String("xcb"))
       return true;
 #ifdef Q_OS_WIN
-    Q_UNUSED(held);
-    return true; // Native buttons also drive the system move loop.
-#elif defined(Q_OS_MACOS)
-    return nativeMouse(held ? kCGEventLeftMouseDragged : kCGEventMouseMoved,
-                       global);
-#else
+    if (QGuiApplication::platformName() == QLatin1String("windows"))
+      return true; // Native buttons also drive the system move loop.
+#endif
     QWidget *receiver = Pressed ? Pressed.data() : &widget;
     QMouseEvent event(QEvent::MouseMove, receiver->mapFromGlobal(global),
                       global, Qt::NoButton,
                       held ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(receiver, &event);
     return true;
-#endif
   }
 
   bool button(QWidget &widget, QPoint point, bool pressed) {
@@ -175,18 +180,17 @@ public:
                        .arg(pressed ? QStringLiteral("PRESSED")
                                     : QStringLiteral("RELEASED")));
 #ifdef Q_OS_WIN
-    Q_UNUSED(widget);
-    Q_UNUSED(point);
-    INPUT input{};
-    input.type = INPUT_MOUSE;
-    input.mi.dwFlags = pressed ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
-    return SendInput(1, &input, sizeof(input)) == 1;
+    if (QGuiApplication::platformName() == QLatin1String("windows")) {
+      INPUT input{};
+      input.type = INPUT_MOUSE;
+      input.mi.dwFlags = pressed ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
+      return SendInput(1, &input, sizeof(input)) == 1;
+    }
 #elif defined(Q_OS_MACOS)
-    Q_UNUSED(widget);
-    Q_UNUSED(point);
-    return nativeMouse(pressed ? kCGEventLeftMouseDown : kCGEventLeftMouseUp,
-                       QCursor::pos());
-#else
+    if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+      return nativeMouse(pressed ? kCGEventLeftMouseDown : kCGEventLeftMouseUp,
+                         QCursor::pos());
+#endif
     if (pressed) {
       Pressed = &widget;
       QTest::mousePress(&widget, Qt::LeftButton, Qt::NoModifier, point);
@@ -197,7 +201,6 @@ public:
       Pressed.clear();
     }
     return true;
-#endif
   }
 
 #ifdef Q_OS_MACOS
@@ -267,13 +270,18 @@ private slots:
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        Settings.path());
+    Theme::instance().apply();
     configureDocking();
     if (onWayland() && qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER")) {
       QVERIFY(shell(QStringLiteral(
           "Main.overview.hide(); global.neverdTestPointer = "
           "imports.gi.Clutter.get_default_backend().get_default_seat()"
           ".create_virtual_device(imports.gi.Clutter.InputDeviceType.POINTER_"
-          "DEVICE);")));
+          "DEVICE); global.neverdTestPointer.notify_absolute_motion("
+          "imports.gi.GLib.get_monotonic_time(), global.stage.width / 2, "
+          "global.stage.height / 2);")));
+      // A pointer left at (0, 0) can reopen GNOME's overview via its hot
+      // corner after startup, consuming the first window-control gestures.
       QTest::qWait(750); // Finish leaving the compositor's startup overview.
     }
   }
@@ -304,6 +312,18 @@ private slots:
     // The full window controls remain usable, unlike tiny dock-tool buttons.
     QVERIFY(close->width() >= 40);
     QVERIFY(close->height() >= 28);
+    // A shrink can be followed by input before the next paint. A stale drag
+    // region must not cover any controls in that interval.
+    floating->setUpdatesEnabled(false);
+    for (const int width : {900, 450}) {
+      floating->resize(width, 350);
+      QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+      for (auto *button : {maximize, minimize, close, desktop.lockButton()})
+        QCOMPARE(
+            floating->childAt(button->mapTo(floating, button->rect().center())),
+            button);
+    }
+    floating->setUpdatesEnabled(true);
     if (onWayland()) {
       QVERIFY(floating->windowFlags() & Qt::FramelessWindowHint);
       QCOMPARE(floating->windowHandle()->frameMargins(), QMargins());
@@ -502,13 +522,7 @@ private slots:
     const QSize size = floating->size();
     // Start just inside the visible edge, including the top caption corners.
     // Previously only the extreme bottom-right corner was tested.
-    // Linux's drawn border has an eight-pixel interior hit area. The native
-    // Windows frame and macOS resize handler also accept the immediate edge.
-#ifdef Q_OS_LINUX
-    const int inset = (onWayland() ? 10 : 0) + 6;
-#else
-    const int inset = 1;
-#endif
+    const int inset = floating->contentsMargins().left() + 6;
     QPoint start = floating->rect().center();
     QPoint delta;
     if (edges & Qt::LeftEdge) {
@@ -620,10 +634,14 @@ private slots:
                                        "throw Error('window did not restore');")
                             .arg(nativeWindow(*floating))));
     QTRY_COMPARE(floating->size(), normalSize);
+    test::NativeWindowStates applied(*floating->windowHandle());
     floating->showFullScreen();
-    QTRY_VERIFY(floating->isFullScreen());
+    QTRY_VERIFY_WITH_TIMEOUT(applied.is(Qt::WindowFullScreen), 10000);
+    // QWidget reports the request immediately. Cocoa ignores a restore
+    // until its full-screen animation ends, and can leave the following
+    // drag tests on that full-screen desktop if this window is destroyed.
     floating->showNormal();
-    QTRY_VERIFY(!floating->isFullScreen());
+    QTRY_VERIFY_WITH_TIMEOUT(applied.is(Qt::WindowNoState), 10000);
     QTRY_COMPARE(floating->size(), normalSize);
     QVERIFY(desktop.titleBar());
     QVERIFY(desktop.Source.isFloating());
@@ -733,6 +751,15 @@ private slots:
       moved &= pointer.move(desktop.Window, destination, true);
     });
     QTimer::singleShot(550, &desktop.Window, [&] {
+      preview = area->currentDropLocation() == location;
+      if (!preview)
+        qWarning() << "Drop target mismatch: requested" << location << "actual"
+                   << int(area->currentDropLocation()) << "cursor"
+                   << QCursor::pos() << "destination"
+                   << desktop.Window.mapToGlobal(destination) << "workbench"
+                   << desktop.Window.geometry() << "floating"
+                   << floating->geometry() << "overlay visible"
+                   << area->dropIndicatorOverlay()->isVisible();
       const QString captures = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
       if (!captures.isEmpty()) {
         QDir().mkpath(captures);
@@ -751,8 +778,10 @@ private slots:
                QStringLiteral("org.gnome.Shell.Screenshot.Screenshot"),
                QStringLiteral("false"), QStringLiteral("false"),
                captures + "/" + name + "-desktop.png"});
+        else
+          desktop.Window.screen()->grabWindow(0).save(captures + "/" + name +
+                                                      "-desktop.png");
       }
-      preview = area->currentDropLocation() == location;
       released = pointer.button(desktop.Window, destination, false);
     });
     QTRY_VERIFY_WITH_TIMEOUT(released, 5000);

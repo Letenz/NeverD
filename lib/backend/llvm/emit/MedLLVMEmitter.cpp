@@ -775,7 +775,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   for (const auto &Func : Funcs) {
     if (const char *Error = validateAArch64SVEState(Func, TheArch))
       throw std::runtime_error(Error);
-    if (Func.HasUnresolvedSEHFrame)
+    if (Func.HasUnresolvedSEHFrame && !PreserveUnknownSourceValues)
       throw std::runtime_error(
           "Windows SEH source projection has an unresolved runtime stack in " +
           Func.Name);

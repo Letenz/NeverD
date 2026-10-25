@@ -32,6 +32,7 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -2370,7 +2371,7 @@ TEST(CFGBuilderCoverage, DecodesOperandSizePrefixedFence) {
   EXPECT_EQ(Function.LiftedInstructionCount, 2u);
 }
 
-TEST(MedLLVMEmitterAudit, CountsUnhandledValueIntrinsic) {
+TEST(MedLLVMEmitterAudit, RefusesUnhandledValueAndRetainsValidSourceIdentity) {
   MedFunc Func;
   Func.Entry = 0x140001000;
   Func.Name = "backend_audit_probe";
@@ -2398,9 +2399,14 @@ TEST(MedLLVMEmitterAudit, CountsUnhandledValueIntrinsic) {
 
   llvm::LLVMContext Context;
   MedLLVMEmitter Emitter;
+  EXPECT_THROW(Emitter.emit({Func}, Context, "backend-audit", Arch::X64),
+               std::runtime_error);
+  EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 1u);
+  Func.Blocks[0].Ops[0].Opcode = NdOp::COPY;
+  Func.Blocks[0].Ops[0].Inputs[0] = MedVar::makeConst(7, Output.Size);
   auto Module = Emitter.emit({Func}, Context, "backend-audit", Arch::X64);
   ASSERT_NE(Module, nullptr);
-  EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 1u);
+  EXPECT_EQ(Emitter.unhandledValueIntrinsicCount(), 0u);
   llvm::Function *Emitted = Module->getFunction(Func.Name);
   ASSERT_NE(Emitted, nullptr);
   auto OriginalVA = rewrite_source::getOriginalVA(*Emitted);

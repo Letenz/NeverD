@@ -2817,7 +2817,14 @@ void recoverCallAbi(
         const bool UnreadRegisterPosition =
             UseExternalArity && PrototypeArguments && CalleeRegArgs >= 0 &&
             K >= CalleeRegArgs && K < StackArgBase && CalleeArgs > StackArgBase;
-        if (Gap && !FillGaps && !UnreadRegisterPosition) {
+        // A known fixed signature can consume a later stack slot even when
+        // no store defines an interior slot. Keep that missing machine value
+        // explicit; truncating here would also discard every later argument.
+        const bool RequiredStackPosition = !HeaderVariadic &&
+                                           !OpenVariadicArity &&
+                                           K >= StackArgBase && K < CalleeArgs;
+        if (Gap && !FillGaps && !UnreadRegisterPosition &&
+            !RequiredStackPosition) {
           // Indirect integer variadic (Darwin): stack arguments live in high
           // slots while the register prefix has interior gaps.  Pure-FP
           // indirect calls route overflow through FoundFP instead; do not skip
@@ -2846,8 +2853,11 @@ void recoverCallAbi(
           break;
         }
         MedVar A =
-            Gap ? MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize))
-                : Found[K];
+            !Gap ? Found[K]
+            : RequiredStackPosition && !FillGaps
+                ? MedVar::makeUnspecified(
+                      static_cast<uint16_t>(TRI.PointerSize), TheArch)
+                : MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize));
         // A slot found by the stack scan is a stack argument even when its
         // index falls in the integer-register range (i386 FP-register callee
         // with no integer register argument); assemble it after the FP

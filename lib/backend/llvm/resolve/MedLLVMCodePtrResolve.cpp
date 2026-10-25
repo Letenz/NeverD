@@ -15,6 +15,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/DataSymbolMetadata.h"
+#include "neverd/backend/LLVMOriginalImageStorage.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -28,6 +29,7 @@
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -132,6 +134,13 @@ llvm::Function *MedLLVMEmitter::resolveLiftedFunctionEntry(va_t Address) const {
 }
 
 llvm::Constant *MedLLVMEmitter::resolveLiftedCodeAddress(va_t Address) {
+  // Address-of code in an original-image view keeps the image's byte layout.
+  // A newly compiled block label plus an old PC-relative displacement would
+  // point into unrelated storage. Direct calls still resolve function entries
+  // through their separate callable-identity path.
+  if (usesOriginalImageStorage() && Img->isCodeAddress(Address))
+    return tryResolveGlobalData(Address);
+
   if (ConflictingLiftedCodeBlocks.count(Address))
     return nullptr;
   if (llvm::Function *Function = resolveLiftedFunctionEntry(Address))
@@ -383,6 +392,10 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
   // Do not retry a large mirror on every subsequent use of the same run.
   if (!Img || FatalCodePointerResolution || FatalDataPointerResolution)
     return nullptr;
+  if (auto [Storage, Base] = originalImageStorage(SlotVA); Storage) {
+    OutSegVA = Base;
+    return Storage;
+  }
   ensureImportStorageSnapshot();
   const unsigned PtrSz = Img->getPointerSize();
   if (PtrSz == 0)
@@ -2761,6 +2774,8 @@ bool MedLLVMEmitter::codeIdentityOccurrenceMayRelocate(
 llvm::Value *
 MedLLVMEmitter::tryResolveCodeIdentityOperand(const MedVar &V,
                                               llvm::IRBuilder<> &Builder) {
+  if (usesOriginalImageStorage())
+    return getVar(V, Builder);
   if (!codeIdentityOccurrenceMayRelocate(V))
     return nullptr;
   return tryResolveCodeAddressValue(V, /*RequireCodeRole=*/false, Builder);
@@ -2776,6 +2791,11 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     rejectEscapingAddressFragment(V, "an observable code-address value");
     return nullptr;
   }
+  // Live image code values already use runtime addresses. They can select
+  // among several actual entry points without proving that all paths name
+  // one rebuilt function or block; retain that value and its normal uses.
+  if (usesOriginalImageStorage() && !V.isConst())
+    return getVar(V, Builder);
   // Most observable integer values are pure runtime scalars. Avoid running the
   // richer identity/convergence proof unless the complete structural graph
   // contains either an explicit code occurrence or, at a final sink, an exact
@@ -3444,6 +3464,12 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
       FatalCodePointerResolution = true;
       return nullptr;
     }
+    if (usesOriginalImageStorage() &&
+        (V.Size == 0 || V.Size == Img->getPointerSize()))
+      if (llvm::Constant *Slot =
+              tryResolveGlobalData(SlotVA, Img->getPointerSize()))
+        return Builder.CreateLoad(sizeToType(Img->getPointerSize()), Slot,
+                                  "icall.image.target");
     const bool IsImportStorage =
         EffectiveImportStorageSlots.count(SlotVA) != 0 ||
         ExternalFunctionPointerSlots.count(SlotVA) != 0;
@@ -3509,6 +3535,14 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
     const PointerTableLoadRoleSummary SlotRoles =
         classifyPointerTableLoadRoles(V, /*RequirePointerWidth=*/false);
     if (SlotRoles.Recognized) {
+      // The source view reads the provider's live image, not a private table
+      // whose code slots need rebasing to rebuilt functions. Preserve the
+      // actual runtime call through that cell; do not infer a static target
+      // or relax the reconstruction proof for ordinary mirrors.
+      if (usesOriginalImageStorage() && SlotRoles.Load &&
+          SlotRoles.ValueAdjustment == 0 &&
+          SlotRoles.Load->Output.Size == Img->getPointerSize())
+        return getVar(V, Builder);
       if (SlotRoles.Load &&
           SlotRoles.Load->Output.Size != Img->getPointerSize()) {
         if (!FatalCodePointerResolution && !FatalDataPointerResolution)

@@ -45,6 +45,7 @@
 #include "neverd/Common.h"
 #include "neverd/DataAccessWidths.h"
 #include "neverd/backend/DataSymbolMetadata.h"
+#include "neverd/backend/LLVMOriginalImageStorage.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/FloatingPointContract.h"
@@ -58,6 +59,7 @@
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX86SHA.h"
 #include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
@@ -78,6 +80,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Debug.h"
@@ -256,6 +259,9 @@ std::string wrapInitializer(std::string Text) {
 
 bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
                                           Arch TheArch) {
+  if ((TheArch == Arch::X86 || TheArch == Arch::X64) &&
+      llvmX86SHA256CName(Call))
+    return true;
   const auto *Callee = Call.getCalledFunction();
   if (TheArch != Arch::AArch64 || !Callee ||
       Callee->getIntrinsicID() != llvm::Intrinsic::aarch64_neon_bfmmla ||
@@ -1331,6 +1337,10 @@ void LLVMCWriter::writeStructDefs(llvm::Module &Mod) {
 void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
                                       llvm::StringRef Name) {
   const auto *Array = llvm::cast<llvm::ArrayType>(Global.getValueType());
+  if (!Global.hasInitializer()) {
+    OS << "extern uint8_t " << Name << "[" << Array->getNumElements() << "];\n";
+    return;
+  }
   OS << llvmc::storageAlignment(Global.getValueType(),
                                 Global.getParent()->getDataLayout(),
                                 Global.getAlign().valueOrOne());
@@ -1441,6 +1451,19 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
 
     if (ExternalDataIdentifiers.count(&GV))
       continue;
+    if (llvm_original_image::isMarked(GV)) {
+      const auto Base = parseNdDataSymbol(GV.getName());
+      const auto *Array = llvm::dyn_cast<llvm::ArrayType>(GV.getValueType());
+      if (!Base || !Array || !Array->getElementType()->isIntegerTy(8) ||
+          GV.hasInitializer())
+        throw std::invalid_argument("invalid original image storage");
+      const std::string Name = namedImageObject(*Base);
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(*Base)
+         << " (original loaded image storage) */\n";
+      writeImageByteArray(GV, Name);
+      EmittedGlobalNames.insert(Name);
+      continue;
+    }
     // IAT/import slots are callable names at call sites, not C objects.
     // Printing `__imp_??1?$CStringT@...` as `extern uint64_t` is not C.
     if (!GV.hasInitializer()) {
@@ -2380,6 +2403,42 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 // Public API
 //===----------------------------------------------------------------------===//
 
+// PSHUFB is a byte lookup independently within each 128-bit lane. Keep the
+// selector masked before extraction: an out-of-range extract would introduce
+// poison for defined instructions whose ignored mask bits are set.
+static void lowerCByteShuffles(llvm::Module &Mod) {
+  llvm::SmallVector<llvm::IntrinsicInst *> Work;
+  for (auto &F : Mod)
+    for (auto &BB : F)
+      for (auto &I : BB)
+        if (auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(&I))
+          switch (Call->getIntrinsicID()) {
+          case llvm::Intrinsic::x86_ssse3_pshuf_b_128:
+          case llvm::Intrinsic::x86_avx2_pshuf_b:
+          case llvm::Intrinsic::x86_avx512_pshuf_b_512:
+            Work.push_back(Call);
+            break;
+          default:
+            break;
+          }
+  for (auto *Call : Work) {
+    llvm::IRBuilder<> B(Call);
+    auto *Type = llvm::cast<llvm::FixedVectorType>(Call->getType());
+    llvm::Value *Result = llvm::PoisonValue::get(Type);
+    for (unsigned I = 0; I < Type->getNumElements(); ++I) {
+      auto *Mask = B.CreateExtractElement(Call->getArgOperand(1), I);
+      auto *Index =
+          B.CreateOr(B.CreateAnd(Mask, B.getInt8(15)), B.getInt8(I & ~15u));
+      auto *Byte = B.CreateExtractElement(Call->getArgOperand(0), Index);
+      Byte = B.CreateSelect(B.CreateICmpSLT(Mask, B.getInt8(0)), B.getInt8(0),
+                            Byte);
+      Result = B.CreateInsertElement(Result, Byte, I);
+    }
+    Call->replaceAllUsesWith(Result);
+    Call->eraseFromParent();
+  }
+}
+
 static void lowerCIntegerReductions(llvm::Module &Mod) {
   llvm::SmallVector<llvm::IntrinsicInst *> Work;
   for (auto &F : Mod)
@@ -2392,6 +2451,7 @@ static void lowerCIntegerReductions(llvm::Module &Mod) {
           case llvm::Intrinsic::vector_reduce_and:
           case llvm::Intrinsic::vector_reduce_or:
           case llvm::Intrinsic::vector_reduce_xor:
+          case llvm::Intrinsic::experimental_cttz_elts:
             if (llvm::isa<llvm::FixedVectorType>(
                     Call->getArgOperand(0)->getType()))
               Work.push_back(Call);
@@ -2403,6 +2463,33 @@ static void lowerCIntegerReductions(llvm::Module &Mod) {
     llvm::IRBuilder<> B(Call);
     auto Id = Call->getIntrinsicID();
     auto *Vector = Call->getArgOperand(0);
+    if (Id == llvm::Intrinsic::experimental_cttz_elts) {
+      const unsigned Count =
+          llvm::cast<llvm::FixedVectorType>(Vector->getType())
+              ->getNumElements();
+      auto *ResultType = llvm::cast<llvm::IntegerType>(Call->getType());
+      llvm::Value *Result = llvm::ConstantInt::get(ResultType, 0);
+      llvm::Value *PrefixZero = B.getTrue();
+      // The intrinsic observes every lane, including poison after the first
+      // nonzero element. A chain of selects would incorrectly hide that lane;
+      // the prefix ANDs and additions retain those data dependencies.
+      for (unsigned I = 0; I < Count; ++I) {
+        auto *Lane = B.CreateExtractElement(Vector, I);
+        PrefixZero = B.CreateAnd(
+            PrefixZero, B.CreateICmpEQ(Lane, llvm::Constant::getNullValue(
+                                                 Lane->getType())));
+        Result =
+            B.CreateAdd(Result, B.CreateZExtOrTrunc(PrefixZero, ResultType));
+      }
+      if (llvm::cast<llvm::ConstantInt>(Call->getArgOperand(1))->isOne())
+        Result = B.CreateSelect(PrefixZero, llvm::PoisonValue::get(ResultType),
+                                Result);
+      if (llvm::APInt(64, Count).getActiveBits() > ResultType->getBitWidth())
+        Result = llvm::PoisonValue::get(ResultType);
+      Call->replaceAllUsesWith(Result);
+      Call->eraseFromParent();
+      continue;
+    }
     auto *Identity = llvm::getReductionIdentity(
         Id, Vector->getType()->getScalarType(), llvm::FastMathFlags{});
     auto *Result = llvm::getOrderedReduction(
@@ -2817,6 +2904,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
           "C projection could not map the selected function into its clone");
   }
   if (HasVectors) {
+    lowerCByteShuffles(*Projection);
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
   }
@@ -2833,6 +2921,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         promoteCallResultHomes(Function);
   for (auto &Function : *Projection)
     if (!ProjectionOnly || &Function == ProjectionOnly) {
+      llvmc::simplifyIntegerSlices(Function);
       llvmc::simplifyBitTests(Function);
       llvmc::factorCommonBranchTests(Function);
       llvmc::factorLoopPhiExpressions(Function);

@@ -5032,6 +5032,12 @@ MedLLVMEmitter::traceTableBaseConst(const MedVar &V, int Depth, bool *SawLoad,
     return std::nullopt;
   }
   case NdOp::LOAD: {
+    // Source image storage belongs to the live, relocated image. Its contents
+    // are runtime values, even when the file has read-only section flags.
+    // Folding a pointer from file bytes would both erase runtime updates and
+    // make the address resolvers rebase an already-relocated pointer again.
+    if (OriginalImageStorageForSource && Img && !Img->IsRelocatable)
+      return std::nullopt;
     // FS/GS operands are segment-relative numeric offsets, not flat image
     // addresses.  Never inspect the backing image for a non-default load even
     // when its offset happens to equal a literal-pool or relocation slot VA.
@@ -6822,6 +6828,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBase(const MedVar &V, uint64_t &Base,
                                               std::vector<MedVar> &IdxTerms,
                                               int Depth, bool FailClosed,
                                               bool *SawAmbiguousPhi) const {
+  IndexedGlobalBaseContext Context;
   const bool CleanTopLevel =
       Depth == 0 && Base == 0 && !HaveBase && IdxTerms.empty();
   auto replayDiagnostic = [&](bool SawAmbiguous, const PhiNode *AmbiguousPhi) {
@@ -6850,9 +6857,9 @@ bool MedLLVMEmitter::collectIndexedGlobalBase(const MedVar &V, uint64_t &Base,
     ++AddressProvenanceWork.IndexedBaseProofs;
     bool LocalSawAmbiguous = false;
     const PhiNode *LocalAmbiguousPhi = nullptr;
-    const bool Proven =
-        collectIndexedGlobalBaseImpl(V, Base, HaveBase, IdxTerms, Depth,
-                                     &LocalSawAmbiguous, &LocalAmbiguousPhi);
+    const bool Proven = collectIndexedGlobalBaseImpl(
+        V, Base, HaveBase, IdxTerms, Depth, &LocalSawAmbiguous,
+        &LocalAmbiguousPhi, Context);
     IndexedGlobalBaseProof Proof;
     Proof.Proven = Proven;
     Proof.Base = Base;
@@ -6869,9 +6876,9 @@ bool MedLLVMEmitter::collectIndexedGlobalBase(const MedVar &V, uint64_t &Base,
     ++AddressProvenanceWork.IndexedBaseProofs;
   bool LocalSawAmbiguous = false;
   const PhiNode *LocalAmbiguousPhi = nullptr;
-  const bool Proven =
-      collectIndexedGlobalBaseImpl(V, Base, HaveBase, IdxTerms, Depth,
-                                   &LocalSawAmbiguous, &LocalAmbiguousPhi);
+  const bool Proven = collectIndexedGlobalBaseImpl(V, Base, HaveBase, IdxTerms,
+                                                   Depth, &LocalSawAmbiguous,
+                                                   &LocalAmbiguousPhi, Context);
   replayDiagnostic(LocalSawAmbiguous, LocalAmbiguousPhi);
   return Proven;
 }
@@ -6963,7 +6970,39 @@ MedLLVMEmitter::uniqueDataAddressOwner(const MedVar &V, uint64_t Value,
 bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
     const MedVar &V, uint64_t &Base, bool &HaveBase,
     std::vector<MedVar> &IdxTerms, int Depth, bool *SawAmbiguousPhi,
-    const PhiNode **AmbiguousPhi) const {
+    const PhiNode **AmbiguousPhi, IndexedGlobalBaseContext &Context) const {
+  const auto Key =
+      std::make_tuple(addressProvenanceVarKey(V), Depth, Base, HaveBase);
+  auto replay = [&](const IndexedGlobalBaseProof &Proof) {
+    Base = Proof.Base;
+    HaveBase = Proof.HaveBase;
+    IdxTerms.insert(IdxTerms.end(), Proof.IdxTerms.begin(),
+                    Proof.IdxTerms.end());
+    if (SawAmbiguousPhi && Proof.SawAmbiguousPhi)
+      *SawAmbiguousPhi = true;
+    if (AmbiguousPhi && !*AmbiguousPhi)
+      *AmbiguousPhi = Proof.AmbiguousPhi;
+    return Proof.Proven;
+  };
+  if (auto It = Context.Proofs.find(Key); It != Context.Proofs.end())
+    return replay(It->second);
+  ++AddressProvenanceWork.IndexedBaseNodes;
+  IndexedGlobalBaseProof Proof;
+  Proof.Base = Base;
+  Proof.HaveBase = HaveBase;
+  Proof.Proven = collectIndexedGlobalBaseUncached(
+      V, Proof.Base, Proof.HaveBase, Proof.IdxTerms, Depth,
+      &Proof.SawAmbiguousPhi, &Proof.AmbiguousPhi, Context);
+  // Depth and incoming base are part of the key: a bounded/cyclic refusal or
+  // an owner conflict cannot masquerade as a shallower, clean-base proof.
+  auto [It, Inserted] = Context.Proofs.emplace(Key, std::move(Proof));
+  return replay(It->second);
+}
+
+bool MedLLVMEmitter::collectIndexedGlobalBaseUncached(
+    const MedVar &V, uint64_t &Base, bool &HaveBase,
+    std::vector<MedVar> &IdxTerms, int Depth, bool *SawAmbiguousPhi,
+    const PhiNode **AmbiguousPhi, IndexedGlobalBaseContext &Context) const {
   if (!CurMedFunc ||
       Depth >
           ::neverd::limits::backend::
@@ -7024,7 +7063,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
     if (auto Forwarded = pointerPreservingInput(*Def))
       return collectIndexedGlobalBaseImpl(*Forwarded, Base, HaveBase, IdxTerms,
                                           Depth + 1, SawAmbiguousPhi,
-                                          AmbiguousPhi);
+                                          AmbiguousPhi, Context);
   // A non-recursive control-flow PHI can transport one table base just like a
   // COPY, but only after proving every feasible incoming edge.  Direct PHI
   // constants are emitted as raw original-image integers (the edge-copy path
@@ -7063,7 +7102,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
         std::vector<MedVar> ArmTerms;
         if (collectIndexedGlobalBaseImpl(Arg, ArmBase, HaveArmBase, ArmTerms,
                                          Depth + 1, SawAmbiguousPhi,
-                                         AmbiguousPhi) &&
+                                         AmbiguousPhi, Context) &&
             HaveArmBase)
           Candidate = traceValueVA(Arg);
       }
@@ -7189,7 +7228,8 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
     if (!KC || Def->Output.Size == 0 || Def->Inputs[0].Size == 0 ||
         Def->Output.Size < Def->Inputs[0].Size ||
         !collectIndexedGlobalBaseImpl(Def->Inputs[0], Base, HaveBase, IdxTerms,
-                                      Depth + 1, SawAmbiguousPhi, AmbiguousPhi))
+                                      Depth + 1, SawAmbiguousPhi, AmbiguousPhi,
+                                      Context))
       return false;
     uint16_t KSz = Def->Inputs[1].Size ? Def->Inputs[1].Size : 8;
     IdxTerms.push_back(MedVar::makeConst(uint64_t(0) - *KC, KSz));
@@ -7255,7 +7295,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
   // (including a constant offset) becomes an index addend.
   if (!CA &&
       collectIndexedGlobalBaseImpl(A, Base, HaveBase, IdxTerms, Depth + 1,
-                                   SawAmbiguousPhi, AmbiguousPhi)) {
+                                   SawAmbiguousPhi, AmbiguousPhi, Context)) {
     if (Def->Output.Size == 0 || A.Size == 0 || Def->Output.Size < A.Size)
       return false;
     IdxTerms.push_back(B);
@@ -7263,7 +7303,7 @@ bool MedLLVMEmitter::collectIndexedGlobalBaseImpl(
   }
   if (!CB &&
       collectIndexedGlobalBaseImpl(B, Base, HaveBase, IdxTerms, Depth + 1,
-                                   SawAmbiguousPhi, AmbiguousPhi)) {
+                                   SawAmbiguousPhi, AmbiguousPhi, Context)) {
     if (Def->Output.Size == 0 || B.Size == 0 || Def->Output.Size < B.Size)
       return false;
     IdxTerms.push_back(A);

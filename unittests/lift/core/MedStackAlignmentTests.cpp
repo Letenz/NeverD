@@ -91,6 +91,39 @@ TEST(MedStackAlignment, PreservesExactAndRoundedARMFrameOffsets) {
   EXPECT_EQ(Ops[4].Inputs[1].ConstVal, 1u);
 }
 
+TEST(MedStackAlignment, PositiveNarrowDisplacementsKeepPointerWidthFrames) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (NdOp Opcode : {NdOp::INT_ADD, NdOp::INT_SUB})
+      for (uint16_t Bytes : {1, 2, 4, 8}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(static_cast<unsigned>(Opcode));
+        SCOPED_TRACE(Bytes);
+        const auto Width = getTargetRegInfo(Architecture).PointerSize;
+        MedFunc Func = frameWithEntrySP(Architecture);
+        auto &Ops = Func.Blocks.front().Ops;
+        const MedVar Result = temp(2, Architecture);
+        Ops.push_back(op(Opcode, Result, reg(0, Architecture),
+                         MedVar::makeConst(64, Bytes)));
+        const auto Expected =
+            Bytes <= Width
+                ? std::optional<int64_t>(Opcode == NdOp::INT_ADD ? 64 : -64)
+                : std::nullopt;
+        EXPECT_EQ(
+            entryStackOffset(Func, Result, Architecture, BinaryFormat::ELF),
+            Expected);
+        // A high-bit narrow constant must not be mistaken for a signed
+        // pointer-width displacement, nor may address provenance be erased.
+        Ops.back().Inputs[1] = MedVar::makeConst(~uint64_t{0}, Bytes);
+        if (Bytes != Width)
+          EXPECT_FALSE(
+              entryStackOffset(Func, Result, Architecture, BinaryFormat::ELF));
+        Ops.back().Inputs[1] =
+            MedVar::makeConst(64, Bytes, ConstantAddressProvenance::Address);
+        EXPECT_FALSE(
+            entryStackOffset(Func, Result, Architecture, BinaryFormat::ELF));
+      }
+}
+
 TEST(MedStackAlignment, RejectsUnprovedOrStrongerThanABIAlignment) {
   MedFunc Func = frameWithEntrySP();
   auto &Block = Func.Blocks[0];

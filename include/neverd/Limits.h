@@ -32,6 +32,8 @@ namespace limits {
 /// gracefully by the Segment bounds checks.  The cap is far larger than any
 /// real .bss, so legitimate binaries are unaffected.
 constexpr uint64_t kMaxSegmentZeroFill = 1ull << 30; // 1 GiB
+/// Bound optional target metadata inspection; larger records remain unknown.
+inline constexpr size_t kMaxImageProfileMetadataBytes = 64 * 1024;
 
 /// Work for proving that PE initialization leaves mapped header bytes intact.
 /// Counts section-owner queries and visited import/configuration/fixup bytes.
@@ -430,6 +432,10 @@ constexpr uint64_t kMaxOverlapDistance = 0x10000;
 /// the ABI clobber set.
 constexpr int kMaxCallEffectCalleeDepth = 4;
 constexpr size_t kMaxCallEffectExtraLifts = 256;
+/// On-demand CFG register proofs admit only small, metadata-bounded callees.
+/// The query may not recursively start another CFG register proof.
+constexpr size_t kMaxCFGCallRegisterProofFunctions = 32;
+constexpr uint64_t kMaxCFGCallRegisterProofBytes = 4096;
 /// Scalar exit facts inspect only bounded, complete, call-free callee bodies.
 constexpr size_t kMaxCallExitConstantOps = 4096;
 /// All-path predecessor stack-store evidence for one call argument setup.

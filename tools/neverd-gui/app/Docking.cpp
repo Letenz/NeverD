@@ -14,7 +14,6 @@
 #include "Theme.h"
 #include "TitleBar.h"
 #include "WindowFrame.h"
-#include "WindowFramePlatform.h"
 
 #include <QContextMenuEvent>
 #include <QCoreApplication>
@@ -46,6 +45,7 @@
 #include <kddockwidgets/core/TabBar.h>
 #include <kddockwidgets/core/TitleBar.h>
 #include <kddockwidgets/qtcommon/View.h>
+#include <kddockwidgets/qtwidgets/Platform.h>
 #include <kddockwidgets/qtwidgets/ViewFactory.h>
 #include <kddockwidgets/qtwidgets/views/FloatingWindow.h>
 #include <kddockwidgets/qtwidgets/views/Group.h>
@@ -56,6 +56,14 @@
 namespace neverd::gui {
 namespace {
 constexpr char FloatingLocked[] = "neverdFloatingLocked";
+
+// WindowFrame owns native moving and resizing. Let the docking library handle
+// client drags on every desktop instead of installing a second Windows frame
+// handler that turns unlocked docking gestures into system window moves.
+class DockPlatform final : public KDDockWidgets::QtWidgets::Platform {
+public:
+  bool supportsAeroSnap() const override { return false; }
+};
 
 bool onWayland() {
   return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
@@ -338,7 +346,7 @@ public:
 
   QSize sizeHint() const override {
     return {::neverd::limits::gui_config::kTitleBarButtonWidth,
-            platform::titleBarHeight()};
+            ::neverd::limits::gui_config::kTitleBarHeight};
   }
 
 protected:
@@ -383,6 +391,22 @@ class DockTitleBar final : public KDDockWidgets::QtWidgets::TitleBar {
 public:
   using TitleBar::TitleBar;
 
+  void addToolbar(QWidget &toolbar) {
+    toolbar.setParent(this);
+    toolbar.setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    m_layout->insertWidget(m_layout->indexOf(moveArea_), &toolbar);
+    toolbar_ = &toolbar;
+    captionFocusPolicy_ = focusPolicy();
+    // A toolbar button must act on the current pane. Mouse focus on the
+    // caption otherwise activates the floating window's first dock instead.
+    setFocusPolicy(Qt::TabFocus);
+    toolbar.installEventFilter(this);
+    // Keep a control-sized patch available for moving even on small screens.
+    moveArea_->setMinimumWidth(
+        ::neverd::limits::gui_config::kTitleBarButtonWidth);
+    toolbar.show();
+  }
+
 protected:
   void init() override {
     TitleBar::init();
@@ -402,11 +426,22 @@ protected:
     lock_->setCheckable(true);
     lock_->setAutoRaise(true);
     lock_->setIcon(neverd::gui::icon("lock"));
-    lock_->setFixedSize(platform::titleBarHeight(), platform::titleBarHeight());
+    lock_->setFixedSize(::neverd::limits::gui_config::kTitleBarHeight,
+                        ::neverd::limits::gui_config::kTitleBarHeight);
     m_layout->insertWidget(m_layout->indexOf(m_minimizeButton), lock_);
     moveArea_ = new QWidget(this);
     moveArea_->setObjectName(QStringLiteral("floatingWindowMoveArea"));
     moveArea_->installEventFilter(this);
+    // Keep the drag region in the same layout as the controls. Updating an
+    // overlay only while painting lets its old bounds cover buttons after
+    // a resize, before the next paint arrives.
+    for (int i = 0; i < m_layout->count(); ++i)
+      if (m_layout->itemAt(i)->spacerItem()) {
+        delete m_layout->takeAt(i);
+        m_layout->insertWidget(i, moveArea_, 1);
+        break;
+      }
+    moveArea_->show();
     connect(lock_, &QToolButton::toggled, this, [this](bool locked) {
       QWidget::window()->setProperty(FloatingLocked, locked);
       updateLock();
@@ -429,6 +464,13 @@ protected:
   }
 
   bool eventFilter(QObject *object, QEvent *event) override {
+    if (object == toolbar_ && event->type() == QEvent::ParentChange &&
+        toolbar_->parentWidget() != this) {
+      toolbar_->removeEventFilter(this);
+      toolbar_.clear();
+      setFocusPolicy(captionFocusPolicy_);
+      moveArea_->setMinimumWidth(0);
+    }
     if (object == moveArea_) {
       if (event->type() == QEvent::MouseButtonDblClick &&
           static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
@@ -458,7 +500,7 @@ protected:
   QSize sizeHint() const override {
     QSize size = TitleBar::sizeHint();
     if (titleBar()->floatingWindow())
-      size.setHeight(platform::titleBarHeight());
+      size.setHeight(::neverd::limits::gui_config::kTitleBarHeight);
     return size;
   }
 
@@ -469,9 +511,8 @@ protected:
     }
     QPainter painter(this);
     const auto &theme = Theme::instance();
-    painter.fillRect(rect(), theme.chrome("TitleBar"));
     // The tabs identify each pane; leave its floating caption blank.
-    moveArea_->setGeometry(0, 0, lock_->x(), height());
+    painter.fillRect(rect(), theme.chrome("TitleBar"));
   }
 
   void mouseDoubleClickEvent(QMouseEvent *event) override {
@@ -495,8 +536,7 @@ private:
     lock_->setAccessibleName(text);
     moveArea_->setAccessibleName(
         QCoreApplication::translate("Docking", "Move window"));
-    moveArea_->setVisible(locked);
-    moveArea_->raise();
+    moveArea_->setAttribute(Qt::WA_TransparentForMouseEvents, !locked);
   }
 
   void updateMaximize() {
@@ -513,12 +553,13 @@ private:
   }
 
   QAbstractButton *maximize_ = nullptr;
+  QPointer<QWidget> toolbar_;
+  Qt::FocusPolicy captionFocusPolicy_ = Qt::NoFocus;
   QToolButton *lock_ = nullptr;
   QWidget *moveArea_ = nullptr;
 };
 
-/// Linux uses our resize hit area ahead of the library's docking handlers.
-/// Windows and macOS retain their existing platform resizing.
+/// Floating panes share the application frame and its resize hit area.
 class DockFloatingWindow final
     : public KDDockWidgets::QtWidgets::FloatingWindow {
 public:
@@ -526,15 +567,13 @@ public:
 
 protected:
   bool event(QEvent *event) override {
-    if (event->type() == QEvent::Polish &&
-        platform::frameKind() == platform::FrameKind::Frameless && !frame_)
-      frame_ =
-          WindowFrame::attach(*this, nullptr, WindowFrame::Caption::Client);
+    if (event->type() == QEvent::Polish && !frame_)
+      frame_ = WindowFrame::attach(*this);
     return FloatingWindow::event(event);
   }
 
   void paintEvent(QPaintEvent *) override {
-    if (frame_ && onWayland())
+    if (frame_)
       return;
     QPainter painter(this);
     painter.setPen(
@@ -596,7 +635,8 @@ public:
 } // namespace
 
 void configureDocking() {
-  KDDockWidgets::initFrontend(KDDockWidgets::FrontendType::QtWidgets);
+  if (!KDDockWidgets::Core::Platform::hasInstance())
+    new DockPlatform;
   auto &config = KDDockWidgets::Config::self();
   // Every docked window carries a closable tab, as in classic disassemblers.
   // The drawn floating caption remains a docking drag source on every desktop.
@@ -607,6 +647,9 @@ void configureDocking() {
                   KDDockWidgets::Config::Flag_AllowReorderTabs |
                   KDDockWidgets::Config::Flag_TitleBarHasMinimizeButton |
                   KDDockWidgets::Config::Flag_TitleBarIsFocusable);
+  config.setInternalFlags(
+      config.internalFlags() |
+      KDDockWidgets::Config::InternalFlag_UseTransparentFloatingWindow);
   // Setting the thickness resets the spacing too, so it comes first.
   config.setSeparatorThickness(
       ::neverd::limits::gui_config::kDockingSeparatorGrabWidth);
@@ -615,6 +658,18 @@ void configureDocking() {
   config.setViewFactory(new DockViewFactory);
   config.setDragAboutToStartFunc(beginDockDrag);
   config.setDragEndedFunc(endDockDrag);
+}
+
+bool addFloatingWindowToolbar(QWidget &window, QWidget &toolbar) {
+  auto *floating =
+      qobject_cast<KDDockWidgets::QtWidgets::FloatingWindow *>(&window);
+  if (!floating)
+    return false;
+  auto *caption = KDDockWidgets::QtCommon::View_qt::asQWidget(
+      floating->floatingWindow()->titleBar()->view());
+  // configureDocking installs this caption for every floating window.
+  static_cast<DockTitleBar *>(caption)->addToolbar(toolbar);
+  return true;
 }
 
 QMargins dockAreaMargins() { return DockAreaMargins; }

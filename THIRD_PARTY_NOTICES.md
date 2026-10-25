@@ -1,5 +1,13 @@
 # Third-Party Notices
 
+## Desktop fonts
+
+The desktop embeds unmodified Noto Sans, Noto Sans Arabic, Noto Sans Symbols 2,
+the Noto Sans CJK collection and JetBrains Mono NL under the SIL Open Font
+License 1.1. [Source revisions, hashes and original license notices](tools/neverd-gui/resources/fonts/README.md)
+are kept with the font resources. The notices also ship beside the executable
+under `licenses/fonts` and in installed desktop packages.
+
 ## SQLite
 
 The SDK and desktop share a native NDDB reader built with the unchanged SQLite

@@ -1,7 +1,6 @@
 #include "WindowFrame.h"
 
 #include "../Config.h"
-#include "SettingsKeys.h"
 #include "Theme.h"
 #include "TitleBar.h"
 #include "WindowFramePlatform.h"
@@ -13,7 +12,6 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QSettings>
 #include <QSurfaceFormat>
 #include <QWidget>
 #include <QWindow>
@@ -22,7 +20,8 @@
 namespace neverd::gui {
 namespace {
 /// How far along an edge from a corner a press resizes both edges.
-constexpr int CornerReach = 16;
+constexpr int CornerReach =
+    ::neverd::limits::gui_config::kWindowFrameCornerReach;
 
 Qt::CursorShape shapeFor(Qt::Edges edges) {
   const bool horizontal = edges & (Qt::LeftEdge | Qt::RightEdge);
@@ -74,41 +73,27 @@ protected:
 
 void WindowFrame::prepareNativeWindows() {
   QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
+  QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+  QCoreApplication::setAttribute(Qt::AA_DontUseNativeMenuBar);
 }
 
-bool WindowFrame::enabled() {
-  if (platform::frameKind() == platform::FrameKind::System)
-    return false;
-  return !QSettings().value(settings::NativeTitleBar).toBool();
-}
-
-WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar,
-                                 Caption caption) {
-  if (platform::frameKind() == platform::FrameKind::System ||
-      (caption == Caption::UserPreference && !enabled()))
-    return nullptr;
-  const bool frameless =
-      platform::frameKind() == platform::FrameKind::Frameless;
-  const bool drawsShadow = frameless && platform::drawsShadow();
+WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
   // A native window that has not shown yet takes the flag as it is, without
   // being created again.
-  if (frameless) {
-    window.overrideWindowFlags(window.windowFlags() | Qt::FramelessWindowHint);
-    if (QWindow *handle = window.windowHandle())
-      handle->setFlags(handle->flags() | Qt::FramelessWindowHint);
-  }
+  window.overrideWindowFlags(window.windowFlags() | Qt::FramelessWindowHint |
+                             Qt::NoDropShadowWindowHint);
+  if (QWindow *handle = window.windowHandle())
+    handle->setFlags(window.windowFlags());
   // Qt then paints no background of the window's own; the frame paints it
   // inside the shadow.
-  if (drawsShadow) {
-    window.setAttribute(Qt::WA_TranslucentBackground);
-    // Qt keeps the format a created window had, so QtWayland would still
-    // mark the whole surface opaque and GNOME would not draw what lies
-    // under the shadow.
-    if (QWindow *handle = window.windowHandle()) {
-      QSurfaceFormat format = handle->requestedFormat();
-      format.setAlphaBufferSize(8);
-      handle->setFormat(format);
-    }
+  window.setAttribute(Qt::WA_TranslucentBackground);
+  // Qt keeps the format a created window had, so QtWayland would still
+  // mark the whole surface opaque and GNOME would not draw what lies
+  // under the shadow.
+  if (QWindow *handle = window.windowHandle()) {
+    QSurfaceFormat format = handle->requestedFormat();
+    format.setAlphaBufferSize(8);
+    handle->setFormat(format);
   }
   // The native window exists from here, so its margins can be set before
   // the compositor first sizes it.  A dialog's parent keeps its children
@@ -117,7 +102,7 @@ WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar,
   QWindow *handle = window.windowHandle();
   if (!handle)
     return nullptr;
-  return new WindowFrame(window, *handle, titleBar, frameless, drawsShadow);
+  return new WindowFrame(window, *handle, titleBar);
 }
 
 void WindowFrame::fitTitle(QDialog &dialog, int width) {
@@ -143,29 +128,32 @@ void WindowFrame::fitTitle(QDialog &dialog, int width) {
 }
 
 void WindowFrame::frameDialogs(QApplication &app) {
-  if (enabled())
-    app.installEventFilter(new DialogFrames(&app));
+  app.installEventFilter(new DialogFrames(&app));
 }
 
-WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar,
-                         bool frameless, bool drawsShadow)
+WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar)
     : QObject(&window), window_(window), handle_(handle), titleBar_(titleBar),
-      frameless_(frameless), drawsShadow_(drawsShadow),
       content_(window.contentsMargins()), states_(handle.windowStates()) {
   window.installEventFilter(this);
   handle.installEventFilter(this);
-  if (!frameless) {
-    platform::removeCaption(handle);
-    // The system frame's size follows the screen's scale.
-    connect(&handle, &QWindow::screenChanged, this, [this] {
-      platform::removeCaption(handle_);
-      updateMargins();
-    });
-  }
+  platform::configureFrame(handle);
+  // Qt implements frameless Windows maximization by changing geometry, so
+  // there need not be a native WindowStateChange event. Wayland and Cocoa
+  // still need their native confirmation before changing frame margins.
+  if (QGuiApplication::platformName() == QLatin1String("windows"))
+    connect(&handle, &QWindow::windowStateChanged, this,
+            &WindowFrame::syncWindowState);
+  connect(&handle, &QWindow::screenChanged, this, [this] {
+    platform::configureFrame(handle_);
+    updateMargins();
+  });
   updateMargins();
 }
 
-WindowFrame::~WindowFrame() { showEdges({}); }
+WindowFrame::~WindowFrame() {
+  finishResize();
+  showEdges({});
+}
 
 Qt::Edges WindowFrame::edgesAt(QPoint at, QSize size, QMargins shadow) {
   const QRect window(QPoint(), size);
@@ -205,25 +193,83 @@ bool WindowFrame::resizable() const {
   return window_.minimumSize() != window_.maximumSize();
 }
 
+void WindowFrame::toggleFullScreen() {
+  if (restoreAfterFullScreen_)
+    return;
+  const bool windows =
+      QGuiApplication::platformName() == QLatin1String("windows");
+  if (!window_.isFullScreen()) {
+    beforeFullScreen_ = window_.windowState() & Qt::WindowMaximized;
+    if (windows && beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
+      // Qt uses one saved rectangle for frameless maximization and full
+      // screen. A direct transition overwrites the normal restore geometry.
+      window_.showNormal();
+      window_.showFullScreen();
+      return;
+    }
+    window_.setWindowState(beforeFullScreen_ | Qt::WindowFullScreen);
+    return;
+  }
+  if (QGuiApplication::platformName() == QLatin1String("cocoa") &&
+      beforeFullScreen_.testFlag(Qt::WindowMaximized)) {
+    // Cocoa's full-screen exit restores the frame before the Dock occupies
+    // its desktop space again. Asking Qt to maximize at that point zooms to
+    // the wrong work area and loses both maximization and normal geometry.
+    restoreAfterFullScreen_ = true;
+    window_.showNormal();
+  } else {
+    // Leaving full screen directly maximized uses Win32's native maximize,
+    // then clears the rectangle Qt's frameless Restore still needs. Reenter
+    // maximization through Qt's normal frameless path instead.
+    if (windows && beforeFullScreen_.testFlag(Qt::WindowMaximized))
+      window_.showNormal();
+    window_.setWindowState(beforeFullScreen_);
+  }
+}
+
+void WindowFrame::syncWindowState() {
+  const auto states = handle_.windowStates();
+  if (restoreAfterFullScreen_ && states.testFlag(Qt::WindowMaximized) &&
+      !states.testFlag(Qt::WindowFullScreen))
+    restoreAfterFullScreen_ = false;
+  if (states == states_)
+    return;
+  // Cocoa can infer a maximized state when a drag reaches the window's size
+  // limit. The held gesture must still be able to shrink back from that limit.
+  // Only entering a state with no resize interaction cancels the grab.
+  if (states & (Qt::WindowFullScreen | Qt::WindowMinimized))
+    finishResize();
+  states_ = states;
+  updateMargins();
+}
+
 bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   if (object == &window_) {
+    if (event->type() == QEvent::Hide || event->type() == QEvent::UngrabMouse)
+      finishResize();
     // Some systems make the native window's frame only as it first shows.
-    if (event->type() == QEvent::Show && !frameless_)
-      platform::removeCaption(handle_);
+    if (event->type() == QEvent::Show)
+      platform::configureFrame(handle_);
     else if (event->type() == QEvent::Resize)
       placeTitleBar();
-    else if (event->type() == QEvent::Paint && drawsShadow_)
+    else if (event->type() == QEvent::Paint)
       paint();
     return false;
   }
   if (object != &handle_)
     return false;
+  if (event->type() == QEvent::Expose && restoreAfterFullScreen_ &&
+      handle_.isExposed() && !states_.testFlag(Qt::WindowFullScreen)) {
+    // The desktop's screen/work-area notifications precede its exposure.
+    // Wait for that native boundary instead of a guessed animation delay.
+    restoreAfterFullScreen_ = false;
+    window_.setWindowState(beforeFullScreen_);
+  }
   // QWidget reports a requested state at once, before the window system
   // applies it; the native window receives this event only when the window
   // system has applied a state, such as with a Wayland configure.
   if (event->type() == QEvent::WindowStateChange) {
-    states_ = handle_.windowStates();
-    updateMargins();
+    syncWindowState();
     return false;
   }
   if (event->type() == QEvent::Leave) {
@@ -231,24 +277,77 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
     return false;
   }
   if (event->type() != QEvent::MouseMove &&
-      event->type() != QEvent::MouseButtonPress)
+      event->type() != QEvent::MouseButtonPress &&
+      event->type() != QEvent::MouseButtonRelease)
     return false;
   auto *mouse = static_cast<QMouseEvent *>(event);
+  if (resizing_) {
+    if (event->type() == QEvent::MouseMove)
+      resizeTo(mouse->globalPosition().toPoint());
+    else if (event->type() == QEvent::MouseButtonRelease &&
+             mouse->button() == Qt::LeftButton) {
+      resizeTo(mouse->globalPosition().toPoint());
+      finishResize();
+    }
+    return true;
+  }
   Qt::Edges edges = resizable() ? edgesAt(mouse->position().toPoint(),
                                           window_.size(), margins_)
                                 : Qt::Edges();
-  // The system frame resizes the window from its other edges.
-  if (!(edges & platform::ownResizeEdges()))
-    edges = {};
+  if (window_.minimumWidth() == window_.maximumWidth())
+    edges &= ~(Qt::LeftEdge | Qt::RightEdge);
+  if (window_.minimumHeight() == window_.maximumHeight())
+    edges &= ~(Qt::TopEdge | Qt::BottomEdge);
   if (event->type() == QEvent::MouseMove) {
     if (mouse->buttons() == Qt::NoButton)
       showEdges(edges);
     return false;
   }
-  if (mouse->button() != Qt::LeftButton || !edges)
+  if (event->type() != QEvent::MouseButtonPress ||
+      mouse->button() != Qt::LeftButton || !edges)
     return false;
   showEdges({});
-  return handle_.startSystemResize(edges);
+  if (!handle_.startSystemResize(edges)) {
+    // Cocoa does not implement QWindow::startSystemResize. Keep the same
+    // visible frame and bounds with an ordinary mouse grab there.
+    resizing_ = edges;
+    resizeOrigin_ = mouse->globalPosition().toPoint();
+    resizeGeometry_ = window_.geometry();
+    window_.grabMouse(shapeFor(edges));
+  }
+  return true;
+}
+
+void WindowFrame::resizeTo(QPoint globalPosition) {
+  const QPoint delta = globalPosition - resizeOrigin_;
+  QRect next = resizeGeometry_;
+  if (resizing_ & (Qt::LeftEdge | Qt::RightEdge)) {
+    const int width =
+        std::clamp(resizeGeometry_.width() +
+                       (resizing_ & Qt::LeftEdge ? -delta.x() : delta.x()),
+                   window_.minimumWidth(), window_.maximumWidth());
+    next.setWidth(width);
+    if (resizing_ & Qt::LeftEdge)
+      next.moveRight(resizeGeometry_.right());
+  }
+  if (resizing_ & (Qt::TopEdge | Qt::BottomEdge)) {
+    const int height =
+        std::clamp(resizeGeometry_.height() +
+                       (resizing_ & Qt::TopEdge ? -delta.y() : delta.y()),
+                   window_.minimumHeight(), window_.maximumHeight());
+    next.setHeight(height);
+    if (resizing_ & Qt::TopEdge)
+      next.moveBottom(resizeGeometry_.bottom());
+  }
+  window_.setGeometry(next);
+}
+
+void WindowFrame::finishResize() {
+  if (!resizing_)
+    return;
+  resizing_ = {};
+  if (QWidget::mouseGrabber() == &window_)
+    window_.releaseMouse();
 }
 
 void WindowFrame::paint() {
@@ -283,27 +382,18 @@ void WindowFrame::paint() {
 void WindowFrame::updateMargins() {
   const bool framed = !(states_ & (Qt::WindowMaximized | Qt::WindowFullScreen));
   const QMargins margins =
-      drawsShadow_ && framed
-          ? QMargins(::neverd::limits::gui_config::kWindowFrameShadowExtent,
-                     ::neverd::limits::gui_config::kWindowFrameShadowExtent,
-                     ::neverd::limits::gui_config::kWindowFrameShadowExtent,
-                     ::neverd::limits::gui_config::kWindowFrameShadowExtent)
-          : QMargins();
+      framed ? QMargins(::neverd::limits::gui_config::kWindowFrameShadowExtent,
+                        ::neverd::limits::gui_config::kWindowFrameShadowExtent,
+                        ::neverd::limits::gui_config::kWindowFrameShadowExtent,
+                        ::neverd::limits::gui_config::kWindowFrameShadowExtent)
+             : QMargins();
   if (margins != margins_) {
     margins_ = margins;
     platform::setShadowMargins(handle_, margins);
     window_.update();
   }
-  // A window made full screen from maximized is both; full screen has no
-  // system border past the screen's edge.
-  insets_ =
-      !frameless_ && (states_ & (Qt::WindowMaximized | Qt::WindowFullScreen)) ==
-                         Qt::WindowMaximized
-          ? platform::maximizedInsets(handle_)
-          : QMargins();
   const int titleHeight = titleBar_ ? titleBar_->sizeHint().height() : 0;
-  const QMargins contents =
-      content_ + margins + insets_ + QMargins(0, titleHeight, 0, 0);
+  const QMargins contents = content_ + margins + QMargins(0, titleHeight, 0, 0);
   if (window_.contentsMargins() != contents)
     window_.setContentsMargins(contents);
   placeTitleBar();
@@ -312,7 +402,7 @@ void WindowFrame::updateMargins() {
 void WindowFrame::placeTitleBar() {
   if (!titleBar_)
     return;
-  const QRect visible = window_.rect().marginsRemoved(margins_ + insets_);
+  const QRect visible = window_.rect().marginsRemoved(margins_);
   titleBar_->setGeometry(visible.left(), visible.top(), visible.width(),
                          titleBar_->sizeHint().height());
   titleBar_->raise();

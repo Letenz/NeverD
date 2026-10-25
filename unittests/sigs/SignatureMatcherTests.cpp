@@ -292,3 +292,203 @@ TEST(SignatureMatcherIndex, ParallelBuildMatchesTheSingleThreadedOne) {
     }
   }
 }
+
+namespace {
+
+using HitPair = std::pair<uint64_t, size_t>;
+
+std::vector<HitPair> hitPairs(llvm::ArrayRef<SignatureMatcher::Hit> Hits) {
+  std::vector<HitPair> Result;
+  for (const auto &Hit : Hits)
+    Result.emplace_back(Hit.Address, Hit.Module);
+  return Result;
+}
+
+std::string crcPattern(llvm::ArrayRef<uint8_t> Code, size_t Leading,
+                       uint8_t Length, unsigned Variant = 0) {
+  std::string Line;
+  for (size_t I = 0; I < Leading; ++I)
+    Line += hexByte(Code[I]);
+  const uint16_t CRC =
+      SignatureMatcher::computeCRC16(Code.data() + Leading, Length);
+  Line += " " + hexByte(Length) + " " + hexWord(CRC ^ (Variant == 1)) + " " +
+          hexWord(Leading + Length + 1) + " :0000 routine ";
+  return Line + hexByte(Code[Leading + Length] ^ (Variant == 2)) + "\n";
+}
+
+} // namespace
+
+TEST(SignatureMatcherCRCReuse, EveryLengthKeepsCRCAndTailChecks) {
+  std::array<uint8_t, 320> Code;
+  for (size_t I = 0; I < Code.size(); ++I)
+    Code[I] = static_cast<uint8_t>(I * 17 + 3);
+  std::string Text;
+  for (unsigned Variant = 0; Variant != 3; ++Variant)
+    for (unsigned Length = 1; Length != 256; ++Length)
+      Text += crcPattern(Code, 32, Length, Variant);
+  PackedText Packed(Text);
+  SignatureMatcher::HashIndex Index;
+  Index.build(Packed.Modules);
+
+  // Repeated addresses cross worker-block boundaries. An out-of-range entry,
+  // a wrong leading byte, and a truncated input must not reuse valid results.
+  constexpr uint64_t Base = 0x1000;
+  std::vector<uint64_t> Entries(40, Base);
+  Entries.insert(Entries.end(), {Base - 1, Base + 1, Base + Code.size() - 1});
+  std::vector<HitPair> Expected;
+  for (uint64_t Address : Entries) {
+    if (Address < Base || Address - Base >= Code.size())
+      continue;
+    for (size_t M = 0; M < Packed.Modules.size(); ++M)
+      if (SignatureMatcher::matchPattern(Packed.Modules[M],
+                                         Code.data() + (Address - Base),
+                                         Code.size() - (Address - Base)))
+        Expected.emplace_back(Address, M);
+  }
+  ASSERT_EQ(Expected.size(), 40u * 255u);
+
+  SignatureMatcher::ScanStatistics One, Many;
+  neverd::setWorkerThreadCount(1);
+  const auto Sequential = SignatureMatcher::findAtAddresses(
+      Code.data(), Code.size(), Base, Entries, Packed.Modules, Index, One);
+  neverd::setWorkerThreadCount(8);
+  const auto Parallel = SignatureMatcher::findAtAddresses(
+      Code.data(), Code.size(), Base, Entries, Packed.Modules, Index, Many);
+  const auto Untracked = SignatureMatcher::findAtAddresses(
+      Code.data(), Code.size(), Base, Entries, Packed.Modules, Index);
+  neverd::setWorkerThreadCount(0);
+
+  EXPECT_EQ(hitPairs(Sequential), Expected);
+  EXPECT_EQ(hitPairs(Parallel), Expected);
+  EXPECT_EQ(hitPairs(Untracked), Expected);
+  EXPECT_EQ(One.Entries, 42u);
+  EXPECT_EQ(One.CRCRequests, 40u * 3u * 255u);
+  EXPECT_EQ(One.CRCComputations, 40u * 255u);
+  EXPECT_EQ(One.CRCBytes, 40u * (255u * 256u / 2u));
+  EXPECT_EQ(Many.Entries, One.Entries);
+  EXPECT_EQ(Many.Candidates, One.Candidates);
+  EXPECT_EQ(Many.CRCRequests, One.CRCRequests);
+  EXPECT_EQ(Many.CRCComputations, One.CRCComputations);
+  EXPECT_EQ(Many.CRCBytes, One.CRCBytes);
+}
+
+TEST(SignatureMatcherCRCReuse, SharedWindowWorkDoesNotGrowWithLibraryCount) {
+  std::array<uint8_t, 96> Code{};
+  std::string Text;
+  for (unsigned Library = 0; Library != 1024; ++Library)
+    Text += crcPattern(Code, 32, 63, 1);
+  PackedText Packed(Text);
+  SignatureMatcher::HashIndex Index;
+  Index.build(Packed.Modules);
+  SignatureMatcher::ScanStatistics Statistics;
+  EXPECT_TRUE(SignatureMatcher::findAtAddresses(Code.data(), Code.size(), 0,
+                                                {0}, Packed.Modules, Index,
+                                                Statistics)
+                  .empty());
+  EXPECT_EQ(Statistics.Candidates, 1024u);
+  EXPECT_EQ(Statistics.CRCRequests, 1024u);
+  EXPECT_EQ(Statistics.CRCComputations, 1u);
+  EXPECT_EQ(Statistics.CRCBytes, 63u);
+
+  // The call replaces counters even when it has no input to scan.
+  EXPECT_TRUE(SignatureMatcher::findAtAddresses(nullptr, Code.size(), 0, {0},
+                                                Packed.Modules, Index,
+                                                Statistics)
+                  .empty());
+  EXPECT_EQ(Statistics.Entries, 0u);
+  EXPECT_EQ(Statistics.Candidates, 0u);
+  EXPECT_EQ(Statistics.CRCRequests, 0u);
+  EXPECT_EQ(Statistics.CRCComputations, 0u);
+  EXPECT_EQ(Statistics.CRCBytes, 0u);
+}
+
+TEST(SignatureMatcherCRCReuse, LeadingOffsetsAndInputChangesStayIndependent) {
+  std::array<uint8_t, 80> Code;
+  for (size_t I = 0; I < Code.size(); ++I)
+    Code[I] = static_cast<uint8_t>(I * I + 1);
+  std::string Text;
+  // The same length describes distinct windows, including nonstandard
+  // leading widths greater than the byte index's width.
+  for (size_t Leading : {16u, 32u, 40u, 16u, 40u})
+    Text += crcPattern(Code, Leading, 8);
+  PackedText Packed(Text);
+  SignatureMatcher::HashIndex Index;
+  Index.build(Packed.Modules);
+  auto Check = [&](size_t Available) {
+    std::vector<HitPair> Expected;
+    for (size_t M = 0; M < Packed.Modules.size(); ++M)
+      if (SignatureMatcher::matchPattern(Packed.Modules[M], Code.data(),
+                                         Available))
+        Expected.emplace_back(0, M);
+    SignatureMatcher::ScanStatistics Statistics;
+    EXPECT_EQ(hitPairs(SignatureMatcher::findAtAddresses(Code.data(), Available,
+                                                         0, {0}, Packed.Modules,
+                                                         Index, Statistics)),
+              Expected);
+    return Statistics;
+  };
+  EXPECT_EQ(Check(Code.size()).CRCRequests, 5u);
+  EXPECT_EQ(Check(20).CRCRequests, 0u);
+  Code[47] ^= 1;
+  Check(Code.size());
+  Code[47] ^= 1;
+  Code[24] ^= 1;
+  Check(Code.size());
+}
+
+TEST(SignatureMatcherCRCReuse, ValueScansAgreeWithIndependentPatternChecks) {
+  std::array<uint8_t, 80> Code;
+  for (size_t I = 0; I < Code.size(); ++I)
+    Code[I] = static_cast<uint8_t>((I / 8) * 7);
+  std::string Text;
+  for (size_t Offset : {0u, 3u, 16u})
+    for (size_t Leading : {4u, 16u, 40u})
+      for (unsigned Variant = 0; Variant != 3; ++Variant)
+        Text += crcPattern(llvm::ArrayRef(Code).drop_front(Offset), Leading, 8,
+                           Variant);
+  auto Modules = PatternParser::parseText(Text);
+  ASSERT_TRUE(static_cast<bool>(Modules))
+      << llvm::toString(Modules.takeError());
+  std::vector<HitPair> Expected, Region, Entries;
+  std::vector<uint64_t> Addresses;
+  for (size_t Offset = 0; Offset < Code.size(); ++Offset) {
+    Addresses.push_back(Offset);
+    for (size_t M = 0; M < Modules->size(); ++M)
+      if (SignatureMatcher::matchPattern((*Modules)[M], Code.data() + Offset,
+                                         Code.size() - Offset))
+        Expected.emplace_back(Offset, M);
+  }
+  ASSERT_FALSE(Expected.empty());
+  SignatureMatcher::scanRegion(
+      Code.data(), Code.size(), *Modules,
+      [&](uint64_t Offset, const PatternModule &Module) {
+        Region.emplace_back(Offset, &Module - Modules->data());
+      });
+  SignatureMatcher::scanAtAddresses(
+      Code.data(), Code.size(), 0, Addresses, *Modules,
+      [&](uint64_t Offset, const PatternModule &Module) {
+        Entries.emplace_back(Offset, &Module - Modules->data());
+      });
+  EXPECT_EQ(Region, Expected);
+  EXPECT_EQ(Entries, Expected);
+}
+
+TEST(SignatureMatcherCRCReuse, ExternalCallbacksCanChangeInputBytes) {
+  std::array<uint8_t, 41> Code{};
+  const std::string Line = crcPattern(Code, 32, 8);
+  auto Modules = PatternParser::parseText(Line + Line);
+  ASSERT_TRUE(static_cast<bool>(Modules))
+      << llvm::toString(Modules.takeError());
+  unsigned Matches = 0;
+  auto Mutate = [&](uint64_t, const PatternModule &) {
+    ++Matches;
+    Code[32] ^= 1;
+  };
+  SignatureMatcher::scanAtAddresses(Code.data(), Code.size(), 0, {0}, *Modules,
+                                    Mutate);
+  EXPECT_EQ(Matches, 1u);
+  Code.fill(0);
+  Matches = 0;
+  SignatureMatcher::scanRegion(Code.data(), Code.size(), *Modules, Mutate);
+  EXPECT_EQ(Matches, 1u);
+}

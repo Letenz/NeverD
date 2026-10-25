@@ -61,6 +61,14 @@ public:
             Work.StableOffsetProofs, Work.IndexedBaseProofs};
   }
 
+  static uint64_t indexedBaseNodes(const MedLLVMEmitter &Emitter) {
+    return Emitter.AddressProvenanceWork.IndexedBaseNodes;
+  }
+
+  static uint64_t fragmentReloadProofs(const MedLLVMEmitter &Emitter) {
+    return Emitter.AddressProvenanceWork.FragmentReloadProofs;
+  }
+
   static void resetAddressProvenanceWork(MedLLVMEmitter &Emitter) {
     Emitter.AddressProvenanceWork = {};
   }
@@ -12102,9 +12110,9 @@ TEST(MachOLLVMDataPointerBoundary,
   expectValidModule(*Module);
 
   const auto Work = MedLLVMProvenanceTestPeer::frameReloadSourceWork(Emitter);
-  EXPECT_EQ(std::get<1>(Work), 3u)
-      << "preflight must build the base reload once; body must rebuild it and "
-         "also cache the target LOAD's negative frame answer";
+  EXPECT_EQ(std::get<1>(Work), 2u)
+      << "preflight must build the base reload once and body must rebuild it; "
+         "a suppressed target LOAD needs no empty-fragment proof";
   EXPECT_EQ(std::get<3>(Work), 2u)
       << "the body phase must rebuild the stable occurrence index";
 }
@@ -24058,10 +24066,15 @@ TEST(LLVMDataPointerInvariantBoundary,
       Block.Ops.push_back(std::move(Store));
       Func.Blocks.push_back(std::move(Block));
 
-      llvm::LLVMContext Context;
-      auto Module = MedLLVMEmitter().emit({Func}, Context, "fragment-escape",
-                                          TargetArch, {}, &Image, Format);
-      EXPECT_EQ(Module, nullptr);
+      for (bool OriginalImage : {false, true}) {
+        SCOPED_TRACE(OriginalImage);
+        llvm::LLVMContext Context;
+        MedLLVMEmitter Emitter;
+        Emitter.setOriginalImageStorageForSource(OriginalImage);
+        auto Module = Emitter.emit({Func}, Context, "fragment-escape",
+                                   TargetArch, {}, &Image, Format);
+        EXPECT_EQ(Module, nullptr);
+      }
     }
 }
 
@@ -25110,6 +25123,71 @@ struct FrameSlotProofFixture {
     Func.Blocks[Header].Phis.push_back(std::move(Phi));
   }
 };
+
+TEST(LLVMDataPointerInvariantBoundary,
+     ScalarFrameReloadsDoNotBuildAnEmptyFragmentClosure) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::AArch64}) {
+    const auto &TRI = getTargetRegInfo(TargetArch);
+    const uint16_t Width = TRI.PointerSize;
+    BinaryImage Image =
+        makeSpilledConstTableImage(TargetArch, BinaryFormat::ELF);
+    Image.Bits = Width == 4 ? Bitness::Bits32 : Bitness::Bits64;
+    FrameSlotProofFixture F(TargetArch);
+    F.Func.Entry = CallerVA;
+    F.Func.Name = "scalar_frame_reloads";
+    F.Func.FrameSize = 16;
+    F.Func.ReturnType = NdType::makeInt(Width);
+    F.Func.Blocks.front().StartAddr = CallerVA;
+    F.SP.SSAVer = 0;
+    const MedVar Slot = F.temp();
+    F.op(0, NdOp::COPY, F.SP, {F.SP});
+    F.op(0, NdOp::INT_ADD, Slot,
+         {F.SP, MedVar::makeConst(uint64_t(-8), Width,
+                                  ConstantAddressProvenance::Scalar)});
+    F.op(0, NdOp::STORE, {},
+         {Slot,
+          MedVar::makeConst(42, Width, ConstantAddressProvenance::Scalar)});
+    for (unsigned I = 0; I != 128; ++I)
+      F.op(0, NdOp::LOAD, F.temp(), {Slot});
+    F.op(0, NdOp::RETURN, {},
+         {MedVar::makeConst(17, Width, ConstantAddressProvenance::Scalar)});
+    llvm::LLVMContext Context;
+    MedLLVMEmitter Emitter;
+    auto Module = Emitter.emit({F.Func}, Context, "empty-fragment-closure",
+                               TargetArch, {}, &Image, BinaryFormat::ELF);
+    ASSERT_NE(Module, nullptr);
+    expectValidModule(*Module);
+    // Other address resolvers may legitimately inspect these reads. The
+    // fragment closure itself must not repeat a proof with no possible seed.
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::fragmentReloadProofs(Emitter), 0u);
+  }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     SharedScalarDAGHasLinearIndexedBaseWork) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::AArch64}) {
+    BinaryImage Image =
+        makeSpilledConstTableImage(TargetArch, BinaryFormat::ELF);
+    FrameSlotProofFixture F(TargetArch);
+    MedVar Value = F.temp();
+    Value.Kind = MedVar::Param;
+    F.Func.Params.push_back(Value);
+    constexpr unsigned Depth = 28;
+    for (unsigned I = 0; I != Depth; ++I) {
+      const MedVar Next = F.temp();
+      F.op(0, NdOp::INT_ADD, Next, {Value, Value});
+      Value = Next;
+    }
+    MedLLVMEmitter Emitter;
+    MedLLVMProvenanceTestPeer::prepareFreshAnalysis(
+        Emitter, F.Func, Image, TargetArch, BinaryFormat::ELF);
+    EXPECT_FALSE(MedLLVMProvenanceTestPeer::indexedBase(Emitter, Value));
+    const auto Nodes = MedLLVMProvenanceTestPeer::indexedBaseNodes(Emitter);
+    EXPECT_LE(Nodes, Depth + 1);
+    EXPECT_FALSE(MedLLVMProvenanceTestPeer::indexedBase(Emitter, Value));
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::indexedBaseNodes(Emitter), Nodes);
+  }
+}
 
 TEST(LLVMFrameSlotProof, SharedDiamondsRetainExactCoordinatesWithinBudget) {
   for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {

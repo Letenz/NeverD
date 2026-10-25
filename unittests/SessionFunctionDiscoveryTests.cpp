@@ -147,6 +147,62 @@ TEST_F(SessionFunctionDiscovery, CallsAtTheEntryAreSweptInStep) {
 }
 
 TEST_F(SessionFunctionDiscovery,
+       CompletedDiscoveryRefutesOnlyUnconfirmedLoaderGuesses) {
+  using namespace neverd;
+  for (bool Async : {false, true}) {
+    SCOPED_TRACE(Async);
+    // Bytes beyond the entry are invalid instruction starts. Only the
+    // provisional guess must disappear; stated and user-owned entries stay
+    // available for inspection even when their bodies cannot be decoded.
+    const auto Path = write(
+        "guesses.elf", makeNativeELF(false, 0x400000, std::string(64, '\x06')));
+    ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+    auto &State = *static_cast<sdk::Session *>(Session);
+    const va_t Entry = neverd_session_entry_addr(Session);
+    const va_t Rejected = Entry + 8, Stated = Entry + 16, Renamed = Entry + 24,
+               Created = Entry + 32;
+    for (va_t Address : {Rejected, Stated, Renamed, Created}) {
+      Symbol Symbol = Symbol::makeFunc(Address);
+      Symbol.IsBoundaryGuess = Address != Stated;
+      State.Img.Symbols.push_back(Symbol);
+    }
+    State.Renames[Renamed] = "analyst_name";
+    State.FunctionEdits[Created] = true;
+    sdk::SessionTestAccess::resetFunctions(State);
+    ASSERT_GE(neverd_func_find_by_addr(Session, Rejected), 0);
+    if (Async) {
+      ASSERT_EQ(neverd_session_discover_functions_step(Session), 0);
+      ASSERT_TRUE(State.FunctionDiscovery);
+      State.FunctionDiscovery->Result.wait();
+      ASSERT_EQ(neverd_session_discover_functions_step(Session), 1);
+    } else {
+      ASSERT_GE(neverd_session_discover_functions(Session), 0);
+    }
+    ASSERT_TRUE(State.DiscoveredFunctions);
+    EXPECT_FALSE(llvm::any_of(*State.DiscoveredFunctions, [&](const auto &F) {
+      return F.first == Rejected;
+    }));
+    for (bool Rebuild : {false, true}) {
+      if (Rebuild)
+        sdk::SessionTestAccess::resetFunctions(State);
+      EXPECT_EQ(neverd_func_find_by_addr(Session, Rejected), -1);
+      for (va_t Kept : {Entry, Stated, Renamed, Created})
+        EXPECT_GE(neverd_func_find_by_addr(Session, Kept), 0) << Kept;
+      EXPECT_EQ(takeString(neverd_func_name(
+                    Session, neverd_func_find_by_addr(Session, Renamed))),
+                "analyst_name");
+    }
+    // The symbol remains diagnostic evidence in the image, not a mutated
+    // loader fact. Creating it explicitly restores the user-owned function.
+    EXPECT_TRUE(llvm::any_of(State.Img.Symbols, [&](const Symbol &Symbol) {
+      return Symbol.Addr == Rejected && Symbol.IsBoundaryGuess;
+    }));
+    ASSERT_EQ(neverd_func_create(Session, Rejected), 0);
+    EXPECT_GE(neverd_func_find_by_addr(Session, Rejected), 0);
+  }
+}
+
+TEST_F(SessionFunctionDiscovery,
        RecoveredExtentsSurviveSelectingAnotherFunction) {
   // An x86-64 entry that calls the function after it: discovery lists both
   // without extents, and each complete lift gives its function one.

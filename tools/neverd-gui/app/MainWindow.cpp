@@ -501,6 +501,7 @@ MainWindow::~MainWindow() {
   disconnect(&session_, nullptr, this, nullptr);
   disconnect(&broker_, nullptr, this, nullptr);
   disconnect(qApp, &QApplication::focusChanged, this, nullptr);
+  delete focusToolbar_.data();
   focusFunctions_.clear();
   delete focusSidebar_.data();
   // Hiding can lay out child models. Their borrowed address space and the
@@ -533,6 +534,7 @@ QString MainWindow::layoutPath() const {
 
 void MainWindow::buildMenusAndToolbars() {
   menuBar_ = new QMenuBar(this);
+  menuBar_->setNativeMenuBar(false);
   if (frame_) {
     titleBar_ = new TitleBar(*this, menuBar_);
     titleBar_->setCommandCenterAction(
@@ -2106,8 +2108,10 @@ void MainWindow::connectActions() {
                     0);
   });
   on(ActionId::ViewCalculator, [this] { showCalculator(); });
-  on(ActionId::ViewFullScreen,
-     [this] { setWindowState(windowState() ^ Qt::WindowFullScreen); });
+  on(ActionId::ViewFullScreen, [this] {
+    if (frame_)
+      frame_->toggleFullScreen();
+  });
   on(ActionId::ViewZoomIn, [] { Theme::instance().zoomCodeFont(1); });
   on(ActionId::ViewZoomOut, [] { Theme::instance().zoomCodeFont(-1); });
   on(ActionId::ViewZoomReset, [] { Theme::instance().resetCodeFontSize(); });
@@ -5262,6 +5266,9 @@ void MainWindow::toggleFocusMode() {
   output->setAsCurrentTab();
   showPseudocode(code->representation());
   floating->showMaximized();
+  focusToolbar_ = actions_.buildFocusToolbar(floating);
+  if (!addFloatingWindowToolbar(*floating, *focusToolbar_))
+    delete focusToolbar_.data();
   floating->raise();
   floating->activateWindow();
   disassembly_->focusContent();
@@ -5304,6 +5311,14 @@ void MainWindow::leaveFocusMode() {
   const auto focus = std::exchange(focusReturn_, {});
   focusFunctions_.clear();
   delete focusSidebar_.data();
+  if (auto *toolbar = focusToolbar_.data()) {
+    focusToolbar_.clear();
+    toolbar->hide();
+    // A toolbar command can exit focus mode while its button is dispatching.
+    // Keep it alive until that event returns, even if the floating pane closes.
+    toolbar->setParent(this);
+    toolbar->deleteLater();
+  }
   actions_.action(ActionId::ViewFocusMode)->setChecked(false);
   // Focus mode only moves panes. Restoring the untouched main-window geometry
   // can lose its maximized state while the compositor processes the resize.

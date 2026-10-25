@@ -1117,8 +1117,7 @@ detectFunctions(BinaryImage &Image, const std::function<bool()> &Cancelled) {
 void publishDiscovery(Session &S,
                       std::vector<std::pair<va_t, std::string>> Functions) {
   S.DiscoveredFunctions = std::move(Functions);
-  if (S.appendDiscoveredFunctions())
-    S.refreshFunctionNames();
+  S.resetFunctionsFromImage();
 }
 
 enum class DiscoveryJobState { Pending, Complete, Cancelled };

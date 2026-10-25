@@ -287,6 +287,7 @@ struct Session {
   struct FunctionLlvmModule {
     va_t Entry = 0;
     bool NoOpt = false;
+    bool OriginalImageStorage = false;
     SourceViewOptions Options;
     std::unique_ptr<llvm::Module> Module;
     std::shared_ptr<LLVMSourceMap> Sources;
@@ -771,6 +772,18 @@ struct Session {
       return;
     const auto Symbols = Img.getFunctionSymbols();
     Functions.reserve(Symbols.size());
+    // Loader boundary guesses are provisional. A completed detector run can
+    // refute one, but cannot withdraw a stated symbol or a user's identity.
+    // Keep this gate in rebuilding the list so lazy analysis cannot resurrect
+    // a rejected guess after discovery has reconciled the catalog.
+    std::unordered_set<va_t> Confirmed;
+    if (DiscoveredFunctions) {
+      for (const auto &[Entry, Name] : *DiscoveredFunctions)
+        Confirmed.insert(Entry);
+      for (const Symbol *Symbol : Symbols)
+        if (!Symbol->IsBoundaryGuess)
+          Confirmed.insert(Symbol->Addr);
+    }
     // The export each address names first, as findExportAt finds it, for
     // every symbol at once: an image can hold thousands of both.
     std::unordered_map<va_t, const Export *> ExportAt;
@@ -778,6 +791,10 @@ struct Session {
     for (const Export &Exp : Img.Exports)
       ExportAt.try_emplace(Exp.Addr, &Exp);
     for (const Symbol *Symbol : Symbols) {
+      if (DiscoveredFunctions && Symbol->IsBoundaryGuess &&
+          !Confirmed.count(Symbol->Addr) && !Renames.count(Symbol->Addr) &&
+          !FunctionEdits.count(Symbol->Addr))
+        continue;
       // A name that states nothing gives way to the export there, as the
       // analysis names the function (getFunctionNameAt): a PE names its
       // functions by exports, and one entry several times where its linker
@@ -1146,7 +1163,8 @@ struct Session {
   /// error and returns null when the emitter refuses or verification fails.
   std::unique_ptr<llvm::Module>
   emitNativeLlvm(bool NoOpt, const std::vector<char> *BodyMask,
-                 std::shared_ptr<LLVMSourceMap> &Sources) {
+                 std::shared_ptr<LLVMSourceMap> &Sources,
+                 bool OriginalImageStorage = false) try {
     // HighIR decompile does not run recoverCallAbi. --func --llvm still emits
     // from that MedIR, so populate CallInfos here; otherwise MedLLVM emits
     // 0-arg calls for unwritten live-in rcx.  A body-masked module declares
@@ -1191,6 +1209,7 @@ struct Session {
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
     Emitter.setPreserveUnknownSourceValues(true);
+    Emitter.setOriginalImageStorageForSource(OriginalImageStorage);
     Emitter.setAnalystSourceProjection(UsingAnalystCallContracts);
     if (UsingAnalystCallContracts && CallVariant)
       Emitter.setSourceTargetSignatures(&CallVariant->TargetSignatures);
@@ -1241,11 +1260,21 @@ struct Session {
       return nullptr;
     }
     return Candidate;
+  } catch (const std::exception &Error) {
+    Sources.reset();
+    setError(std::string("native LLVM emission failed: ") + Error.what());
+    return nullptr;
+  } catch (...) {
+    Sources.reset();
+    setError("unexpected native LLVM emission failure");
+    return nullptr;
   }
 
   /// The module that shows the function at \p Entry: its body alone, every
   /// other function declared.  Kept for the functions shown last.
-  const FunctionLlvmModule *ensureFunctionLlvmModule(va_t Entry, bool NoOpt) {
+  const FunctionLlvmModule *
+  ensureFunctionLlvmModule(va_t Entry, bool NoOpt,
+                           bool OriginalImageStorage = false) {
     if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
       clearPipeline();
     SourceViewOptions NativeOptions = SourceOptions;
@@ -1254,6 +1283,7 @@ struct Session {
     for (auto It = FunctionLlvmModules.begin(); It != FunctionLlvmModules.end();
          ++It)
       if (It->Entry == Entry && It->NoOpt == NoOpt &&
+          It->OriginalImageStorage == OriginalImageStorage &&
           It->Options == NativeOptions) {
         FunctionLlvmModules.splice(FunctionLlvmModules.begin(),
                                    FunctionLlvmModules, It);
@@ -1277,8 +1307,10 @@ struct Session {
     FunctionLlvmModule Built;
     Built.Entry = Entry;
     Built.NoOpt = NoOpt;
+    Built.OriginalImageStorage = OriginalImageStorage;
     Built.Options = std::move(NativeOptions);
-    Built.Module = emitNativeLlvm(NoOpt, &Mask, Built.Sources);
+    Built.Module =
+        emitNativeLlvm(NoOpt, &Mask, Built.Sources, OriginalImageStorage);
     if (!Built.Module)
       return nullptr;
     FunctionLlvmModules.push_front(std::move(Built));

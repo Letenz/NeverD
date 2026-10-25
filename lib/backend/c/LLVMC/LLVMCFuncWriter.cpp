@@ -679,6 +679,8 @@ bool LLVMCWriter::sameSlotDestructorBetween(
 }
 
 void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
+  if (ExplicitSEHBlockScopes)
+    return;
   auto CanSinkCall = [&](const llvm::CallInst &Call,
                          const llvm::Instruction &Sink) {
     // C does not sequence sibling operands. Moving a call to its printed use
@@ -1310,6 +1312,17 @@ void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
 
 void LLVMCWriter::writeEHWrapClose(const EHWrapClause &Clause, int Indent) {
   auto WriteBody = [&]() {
+    // Catch-pad tokens describe the structured handler, but values produced
+    // in that pad (notably the exception code) still execute on handler entry.
+    // Body starts at catchret's destination, so emit the pad's value producers
+    // here before any handler use instead of dropping them with the token.
+    if (Clause.Switch)
+      if (const auto *Pad = firstCatchPad(*Clause.Switch))
+        for (const llvm::Instruction &Inst : *Pad->getParent()) {
+          if (llvm::isa<llvm::CatchPadInst, llvm::CatchReturnInst>(Inst))
+            continue;
+          writeInstruction(const_cast<llvm::Instruction &>(Inst), Indent + 1);
+        }
     if (Clause.Body.empty()) {
       emitIndent(Indent + 1);
       OS << "/* recovered handler labels remain in the protected body */\n";
@@ -2782,7 +2795,8 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
     analyzeVoidDeadChain(Analysis, Fn);
   collectOmittedUnknowns(Fn);
   collectOmittedInlinedImmediates(Fn);
-  collectTypedHomes(Fn);
+  if (!ExplicitSEHBlockScopes)
+    collectTypedHomes(Fn);
   markSinglePrintedUseCalls(Fn);
   planRawMemoryUpdates(Fn);
   scanReferencedBlocks(Fn);
@@ -5016,6 +5030,12 @@ bool LLVMCWriter::joinPrintsNext(const llvm::BasicBlock *From,
   // that bridge is still the next statement.
   const llvm::BasicBlock *Printed = printBranchTarget(Join);
   if (!Printed)
+    return false;
+  // A continuation moved out of a protected scope no longer follows the
+  // same LLVM block in the C listing. Its incoming edge must leave the scope
+  // explicitly, including a handler that resumes at a later continuation.
+  if (EHMovedContinuationBlocks.count(Printed) &&
+      !EHMovedContinuationBlocks.count(From))
     return false;
   const llvm::Function *Fn = From->getParent();
   bool SeenFrom = false;
@@ -9158,13 +9178,15 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
       return;
     }
   }
+  // Analysis-only EH still emits the same native instruction expressions.
+  // Their fallback macros and target attributes belong to every definition.
+  if (EmitFunctionWrapper)
+    OS << x86NativeFunctionPreamble(Fn);
   if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn) &&
       (functionHasWindowsEHPads(Fn) || functionNeedsAnalysisOnlyEHWrap(Fn))) {
     writeAnalysisOnlyFunction(Fn);
     return;
   }
-  if (EmitFunctionWrapper)
-    OS << x86NativeFunctionPreamble(Fn);
   writeFunctionProjection(Fn);
 }
 
@@ -9188,9 +9210,169 @@ size_t printedOccurrences(llvm::StringRef Text, llvm::StringRef Call) {
       ++Count;
   return Count;
 }
+
+// Optimization can append a split precondition block containing try.begin
+// after its protected body. Restore that entry's lexical position only when
+// the CFG proves a closed, single-entry range already contiguous in the
+// normal block walk. No edge, instruction or exception scope is changed.
+void restoreSEHRangeEntryOrder(llvm::Function &Fn) {
+  llvm::InvokeInst *Begin = nullptr;
+  llvm::InvokeInst *End = nullptr;
+  for (auto &BB : Fn) {
+    auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator());
+    auto *Callee = Invoke ? Invoke->getCalledFunction() : nullptr;
+    if (!Callee)
+      continue;
+    if (Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin) {
+      if (Begin)
+        return;
+      Begin = Invoke;
+    } else if (Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end) {
+      if (End)
+        return;
+      End = Invoke;
+    }
+  }
+  if (!Begin || !End || Begin->getUnwindDest() != End->getUnwindDest())
+    return;
+  llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Body, Normal;
+  collectNormalReachable(Fn, Normal);
+  llvm::SmallVector<const llvm::BasicBlock *, 16> Work{Begin->getNormalDest()};
+  while (!Work.empty()) {
+    const auto *BB = Work.pop_back_val();
+    if (BB == Begin->getParent() || !Normal.count(BB))
+      return;
+    if (!Body.insert(BB).second || BB == End->getParent())
+      continue;
+    const auto *Term = BB->getTerminator();
+    if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
+      if (Invoke->getUnwindDest() != Begin->getUnwindDest())
+        return;
+      Work.push_back(Invoke->getNormalDest());
+    } else {
+      if (Term->getNumSuccessors() == 0)
+        return;
+      for (const auto *Successor : llvm::successors(BB))
+        Work.push_back(Successor);
+    }
+  }
+  if (!Body.count(End->getParent()))
+    return;
+  for (const auto *BB : Body)
+    for (const auto *Pred : llvm::predecessors(BB))
+      if (!Body.count(Pred) &&
+          !(BB == Begin->getNormalDest() && Pred == Begin->getParent()))
+        return;
+  bool Inside = false, Ended = false, BeginAfter = false;
+  for (auto &BB : Fn) {
+    if (&BB == Begin->getParent()) {
+      BeginAfter = Ended;
+      continue;
+    }
+    if (!Normal.count(&BB))
+      continue;
+    if (Body.count(&BB)) {
+      if (Ended || (!Inside && &BB != Begin->getNormalDest()))
+        return;
+      Inside = true;
+      if (&BB == End->getParent())
+        Ended = true;
+    } else if (Inside && !Ended) {
+      return;
+    }
+  }
+  if (BeginAfter)
+    Begin->getParent()->moveBefore(Begin->getNormalDest()->getIterator());
+}
+
+struct SEHBlockScopes {
+  std::map<const llvm::BasicBlock *, bool> Protected;
+  const llvm::CatchSwitchInst *Dispatch = nullptr;
+  const llvm::CatchPadInst *Pad = nullptr;
+  const llvm::BasicBlock *Handler = nullptr;
+};
+
+// Range markers own the scope state, independently of LLVM's block order.
+// A flat shared handler may have several normal exits and re-enter a loop;
+// representing each protected block as its own __try preserves those edges
+// without introducing a C goto into a protected compound statement.
+std::optional<SEHBlockScopes> planSEHBlockScopes(const llvm::Function &Fn) {
+  const llvm::BasicBlock *Dispatch = nullptr;
+  unsigned Begins = 0, Ends = 0;
+  for (const auto &BB : Fn) {
+    const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator());
+    if (!Invoke)
+      continue;
+    if (Dispatch && Dispatch != Invoke->getUnwindDest())
+      return std::nullopt;
+    Dispatch = Invoke->getUnwindDest();
+    const auto *Callee = Invoke->getCalledFunction();
+    if (Callee) {
+      Begins += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin;
+      Ends += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end;
+    }
+  }
+  if (!Begins || !Ends || (Begins == 1 && Ends == 1) || !Dispatch)
+    return std::nullopt;
+  SEHBlockScopes Plan;
+  Plan.Dispatch =
+      llvm::dyn_cast<llvm::CatchSwitchInst>(Dispatch->getTerminator());
+  if (!Plan.Dispatch || Plan.Dispatch->getNumHandlers() != 1 ||
+      !Plan.Dispatch->unwindsToCaller())
+    return std::nullopt;
+  Plan.Pad = firstCatchPad(*Plan.Dispatch);
+  if (!Plan.Pad || Plan.Pad->arg_size() != 1)
+    return std::nullopt;
+  const auto *Ret = llvm::dyn_cast<llvm::CatchReturnInst>(
+      Plan.Pad->getParent()->getTerminator());
+  if (!Ret)
+    return std::nullopt;
+  Plan.Handler = Ret->getSuccessor();
+  llvm::SmallVector<std::pair<const llvm::BasicBlock *, bool>, 16> Work{
+      {&Fn.getEntryBlock(), false}, {Plan.Handler, false}};
+  while (!Work.empty()) {
+    const auto [BB, Incoming] = Work.pop_back_val();
+    auto [It, Inserted] = Plan.Protected.emplace(BB, Incoming);
+    if (!Inserted) {
+      if (It->second != Incoming)
+        return std::nullopt;
+      continue;
+    }
+    const auto *Term = BB->getTerminator();
+    if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
+      const auto *Callee = Invoke->getCalledFunction();
+      const auto ID =
+          Callee ? Callee->getIntrinsicID() : llvm::Intrinsic::not_intrinsic;
+      bool Outgoing = Incoming;
+      if (ID == llvm::Intrinsic::seh_try_begin) {
+        if (Incoming)
+          return std::nullopt;
+        Outgoing = true;
+      } else if (ID == llvm::Intrinsic::seh_try_end) {
+        if (!Incoming)
+          return std::nullopt;
+        Outgoing = false;
+      } else if (!Incoming) {
+        return std::nullopt;
+      }
+      Work.emplace_back(Invoke->getNormalDest(), Outgoing);
+      continue;
+    }
+    if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchReturnInst,
+                  llvm::CleanupReturnInst, llvm::IndirectBrInst>(Term))
+      return std::nullopt;
+    for (const auto *Next : llvm::successors(BB))
+      Work.emplace_back(Next, Incoming);
+  }
+  return Plan;
+}
 } // namespace
 
 void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
+  if (Fn.hasFnAttribute(windows_eh_md::UnresolvedSourceFrame))
+    OS << "/* neverd.seh: unresolved runtime stack; unknown entry values "
+          "remain explicit. Native reconstruction is unavailable. */\n";
+  restoreSEHRangeEntryOrder(Fn);
   // A call the analysis sinks into the one use that needs it must print
   // there exactly once: text that prints the use twice (`(c) & (c)` for
   // `test eax, eax`) runs it twice, and text that drops the use loses it.
@@ -9241,6 +9423,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
 }
 
 void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
+  const auto BlockScopes = planSEHBlockScopes(Fn);
+  ExplicitSEHBlockScopes = BlockScopes.has_value();
   setupFunction(Fn);
   CallDeclNames.clear();
   std::string Buffered;
@@ -9536,7 +9720,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     const llvm::BasicBlock *End = nullptr;
   };
   std::vector<SehRangeMarker> RangeMarkers(EHWraps.size());
-  bool UseRanges = !EHWraps.empty();
+  bool UseRanges = !BlockScopes && !EHWraps.empty();
   auto PadBlock = [](const EHWrapClause &Clause) -> const llvm::BasicBlock * {
     if (Clause.Switch)
       return Clause.Switch->getParent();
@@ -9662,7 +9846,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   // destination prints that destination after the wrap. Leaving it inside
   // the try drops it from the handler path once the resume goto is omitted.
   llvm::SmallPtrSet<const llvm::BasicBlock *, 16> AfterWrap;
-  if (!UseRanges && EHWraps.size() == 1 &&
+  if (!BlockScopes && !UseRanges && EHWraps.size() == 1 &&
       EHWraps.front().Kind == EHWrapClause::Kind::SEHExcept &&
       EHWraps.front().Switch && EHWraps.front().Body.size() == 1) {
     const llvm::BasicBlock *Dispatch = EHWraps.front().Switch->getParent();
@@ -9712,16 +9896,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
               !InvokeBlocks.empty() && HandlerTerm &&
               ((HandlerBr && HandlerBr->getSuccessor(0) == FirstCont) ||
                llvm::isa<llvm::ReturnInst>(HandlerTerm));
-    if (Ok)
-      for (const llvm::BasicBlock &BB : Fn) {
-        if (&BB == FirstCont)
-          break;
-        if (AfterWrap.count(&BB) &&
-            (!isPrintPassthrough(&BB) || printBranchTarget(&BB) != FirstCont)) {
-          Ok = false;
-          break;
-        }
-      }
+    // Post-try blocks can have several entries, and their LLVM list order
+    // need not start with the handler's join. Explicit edges below preserve
+    // that CFG; requiring one fallthrough join needlessly sent valid layouts
+    // to the unsafe all-blocks-inside-try fallback.
     auto MainBlocks = [&]() {
       llvm::SmallVector<const llvm::BasicBlock *, 16> Blocks;
       for (const llvm::BasicBlock &BB : Fn)
@@ -9794,8 +9972,8 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         const auto *Invoke =
             llvm::cast<llvm::InvokeInst>(InvokeBB->getTerminator());
         const llvm::BasicBlock *NormalDest = NormalPrintTarget(*Invoke);
-        const bool ExitsTry =
-            AfterWrap.count(Invoke->getNormalDest()) && NormalDest == FirstCont;
+        const bool ExitsTry = AfterWrap.count(Invoke->getNormalDest()) &&
+                              AfterWrap.count(NormalDest);
         HasNormalExit |= ExitsTry;
         if (!ExitsTry && !TryRegion.count(Invoke->getNormalDest())) {
           Ok = false;
@@ -9817,27 +9995,9 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
             NeedGoto.emplace(InvokeBB, NormalDest);
           continue;
         }
-        // A normal exit can fall through the end of __try only if every
-        // remaining main-walk block is an empty EH boundary marker. Otherwise
-        // jump to the continuation after the entire __except statement.
-        if (Invoke->getNormalDest() != NormalDest)
-          NeedGoto.emplace(InvokeBB, NormalDest);
-        for (auto Later = std::next(It); Later != MainWalk.end(); ++Later) {
-          const auto *End =
-              SehRangeInvoke(**Later, llvm::Intrinsic::seh_try_end);
-          bool EmptyEnd = End && End->getNormalDest() == FirstCont &&
-                          !edgePrintsPhiCopy(*Later, FirstCont);
-          if (EmptyEnd)
-            for (const llvm::Instruction &Inst : **Later)
-              if (&Inst != End && instructionIsPrinted(Inst)) {
-                EmptyEnd = false;
-                break;
-              }
-          if (!EmptyEnd) {
-            NeedGoto.emplace(InvokeBB, NormalDest);
-            break;
-          }
-        }
+        // Both normal and exception exits name their actual continuation;
+        // neither can borrow the first block printed after the wrapper.
+        NeedGoto.emplace(InvokeBB, NormalDest);
       }
     }
     Ok = Ok && HasNormalExit;
@@ -9855,11 +10015,11 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
           const auto *PredInvoke =
               llvm::dyn_cast<llvm::InvokeInst>(Pred->getTerminator());
           const bool FromInvoke = InvokeBlocks.count(Pred) && PredInvoke &&
-                                  PredInvoke->getNormalDest() == BB &&
-                                  NormalPrintTarget(*PredInvoke) == FirstCont;
+                                  PredInvoke->getNormalDest() == BB;
           const bool FromHandler = Pred == Handler && BB == FirstCont;
           const bool FromCont = AfterWrap.count(Pred);
-          if (!FromInvoke && !FromHandler && !FromCont) {
+          const bool FromTry = TryRegion.count(Pred) && Normal.count(Pred);
+          if (!FromInvoke && !FromHandler && !FromCont && !FromTry) {
             Ok = false;
             break;
           }
@@ -9877,15 +10037,15 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       // enter that protected C scope.  writeGoto can instead inline its
       // proven shared return epilogue and finish inside __except.
       if (!HandlerTerm)
-        llvm::report_fatal_error("LLVMC EH fallback handler has no terminator");
+        throw std::runtime_error("LLVMC EH fallback handler has no terminator");
       if (ConsumedByOtherPrinter(Handler))
-        llvm::report_fatal_error(
+        throw std::runtime_error(
             "LLVMC EH fallback handler has no printed C body");
       for (unsigned I = 0; I < HandlerTerm->getNumSuccessors(); ++I) {
         const llvm::BasicBlock *Successor = HandlerTerm->getSuccessor(I);
         if (Successor == Handler) {
           if (isPrintPassthrough(Handler))
-            llvm::report_fatal_error(
+            throw std::runtime_error(
                 "LLVMC EH fallback handler has no printed C loop");
           ReferencedBlocks.insert(Handler);
           continue;
@@ -9896,7 +10056,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         const bool ReturnsInline =
             EmitsGoto && sharedReturnEpilogue(Successor) == Successor;
         if (!ReturnsInline)
-          llvm::report_fatal_error(
+          throw std::runtime_error(
               "LLVMC EH fallback handler enters protected try body");
         EHPrintedPassthroughHandlers.insert(Handler);
       }
@@ -9914,12 +10074,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         const auto To =
             std::find(FallbackWalk.begin(), FallbackWalk.end(), Target);
         if (From == FallbackWalk.end() || To == FallbackWalk.end())
-          llvm::report_fatal_error(
+          throw std::runtime_error(
               "LLVMC EH fallback invoke normal edge has no printed try target");
         if (std::next(From) == To && Invoke->getNormalDest() == Target)
           continue;
         if (!HasGotoLabel(Target))
-          llvm::report_fatal_error(
+          throw std::runtime_error(
               "LLVMC EH fallback invoke normal target has no C label");
         NeedGoto.emplace(InvokeBB, Target);
       }
@@ -9927,12 +10087,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     EHInvokeNormalGotos.insert(NeedGoto.begin(), NeedGoto.end());
     for (const auto &[_, Target] : NeedGoto)
       ReferencedBlocks.insert(Target);
-    if (Ok && HandlerCopy) {
+    if (Ok && HandlerBr) {
       EHPrintedPassthroughHandlers.insert(Handler);
     }
   }
 
-  if (!UseRanges && AfterWrap.empty() && EHWraps.size() == 1 &&
+  if (!BlockScopes && !UseRanges && AfterWrap.empty() && EHWraps.size() == 1 &&
       (EHWraps.front().Kind == EHWrapClause::Kind::SEHFinally ||
        EHWraps.front().Kind == EHWrapClause::Kind::CxxCleanup) &&
       EHWraps.front().Cleanup && EHWraps.front().Body.size() == 1) {
@@ -10026,7 +10186,94 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   const bool WroteScalarRegions = DeferredUnknownFlags.empty() &&
                                   EHWraps.empty() && !UseRanges &&
                                   tryWriteScalarRegions(Fn, 1);
-  if (WroteScalarRegions) {
+  if (BlockScopes) {
+    const auto Clause = std::find_if(
+        EHWraps.begin(), EHWraps.end(), [&](const EHWrapClause &Candidate) {
+          return Candidate.Kind == EHWrapClause::Kind::SEHExcept &&
+                 Candidate.Switch == BlockScopes->Dispatch;
+        });
+    if (Clause == EHWraps.end())
+      throw std::runtime_error("C SEH block scopes lack their shared handler");
+    // Every edge assigns its own PHIs. None is a lexical fallthrough or a
+    // globally known immediate, including bridges with no other statements.
+    for (const auto &[BB, Protected] : BlockScopes->Protected) {
+      EHMovedContinuationBlocks.insert(BB);
+      for (const auto &Inst : *BB)
+        if (llvm::isa<llvm::PHINode>(Inst))
+          Analysis.Inlinable.erase(&Inst);
+    }
+    auto Edge = [&](const llvm::BasicBlock *From, const llvm::BasicBlock *To,
+                    int Indent) {
+      writePhiCopies(From, To, Indent);
+      KnownImmediates.clear();
+      emitIndent(Indent);
+      OS << "goto " << blockLabel(To) << ";\n";
+    };
+    for (auto &BB : Fn) {
+      const auto Scope = BlockScopes->Protected.find(&BB);
+      if (Scope == BlockScopes->Protected.end())
+        continue;
+      KnownImmediates.clear();
+      AllocaImmediates.clear();
+      AllocaLastValues.clear();
+      AfterCxxThrow = false;
+      OS << blockLabel(&BB) << ":\n";
+      if (Scope->second)
+        writeEHWrapOpen(*Clause, 1);
+      const int Indent = Scope->second ? 2 : 1;
+      for (auto &Inst : BB) {
+        if (Inst.isTerminator() || llvm::isa<llvm::AllocaInst>(Inst))
+          continue;
+        writeInstruction(Inst, Indent);
+      }
+      auto *Term = BB.getTerminator();
+      if (auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
+        writeCallLike(*Invoke,
+                      Invoke->getType()->isVoidTy() ? "" : getName(Invoke),
+                      Indent);
+        if (!AfterCxxThrow)
+          Edge(&BB, Invoke->getNormalDest(), Indent);
+      } else if (const auto *Branch =
+                     llvm::dyn_cast<llvm::UncondBrInst>(Term)) {
+        Edge(&BB, Branch->getSuccessor(0), Indent);
+      } else if (const auto *Branch = llvm::dyn_cast<llvm::CondBrInst>(Term)) {
+        emitIndent(Indent);
+        OS << "if (" << valueStr(Branch->getCondition()) << ") {\n";
+        Edge(&BB, Branch->getSuccessor(0), Indent + 1);
+        emitIndent(Indent);
+        OS << "} else {\n";
+        Edge(&BB, Branch->getSuccessor(1), Indent + 1);
+        emitIndent(Indent);
+        OS << "}\n";
+      } else if (const auto *Switch = llvm::dyn_cast<llvm::SwitchInst>(Term)) {
+        emitIndent(Indent);
+        OS << "switch (" << valueStr(Switch->getCondition()) << ") {\n";
+        for (const auto &Case : Switch->cases()) {
+          emitIndent(Indent);
+          OS << "case " << valueStr(Case.getCaseValue()) << ":\n";
+          Edge(&BB, Case.getCaseSuccessor(), Indent + 1);
+        }
+        emitIndent(Indent);
+        OS << "default:\n";
+        Edge(&BB, Switch->getDefaultDest(), Indent + 1);
+        emitIndent(Indent);
+        OS << "}\n";
+      } else {
+        writeInstruction(*Term, Indent);
+      }
+      if (Scope->second) {
+        emitIndent(1);
+        OS << "} __except (" << Clause->Clause << ") {\n";
+        KnownImmediates.clear();
+        for (const auto &Inst : *BlockScopes->Pad->getParent())
+          if (!llvm::isa<llvm::CatchPadInst, llvm::CatchReturnInst>(Inst))
+            writeInstruction(const_cast<llvm::Instruction &>(Inst), 2);
+        Edge(BlockScopes->Pad->getParent(), BlockScopes->Handler, 2);
+        emitIndent(1);
+        OS << "}\n";
+      }
+    }
+  } else if (WroteScalarRegions) {
     // The complete region plan owns all blocks and PHI edges.
   } else if (!UseRanges) {
     EHSkippedMainBlocks.insert(SkipInTry.begin(), SkipInTry.end());
@@ -10260,13 +10507,13 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     const std::string Name = blockLabel(Target);
     for (const auto &[Block, OtherName] : BlockLabels)
       if (Block != Target && OtherName == Name)
-        llvm::report_fatal_error(
+        throw std::runtime_error(
             "LLVMC EH invoke normal target label is ambiguous");
     const std::string Label = "\n" + Name + ":\n";
     const size_t First = Final.find(Label);
     if (First == std::string::npos ||
         Final.find(Label, First + Label.size()) != std::string::npos)
-      llvm::report_fatal_error(
+      throw std::runtime_error(
           "LLVMC EH invoke normal target has no unique emitted label");
   }
   OS << Final;
