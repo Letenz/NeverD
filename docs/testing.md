@@ -40,6 +40,20 @@ loop. Both C routes preserve the call count and memory effects for every null
 pointer combination. `HighCStoreForwarding.CopyCyclesNeedAnObservableReader`
 keeps the same copy cycle when a return, call argument or indirect target reads
 it; a void return alone does not keep it alive.
+`CSourcePresentation.GlobalTypesFollowLoadsFromSharedImageStorage` checks
+source-only global pointer assertions across ELF, COFF and Mach-O with ordinary
+and volatile reads, plus incompatible-width refusals. The worker source-variable
+suite compiles both edited C routes at O0/O2 and changes the pointer cell between
+calls; the loaded value must follow shared image storage and native IR must not
+change. LLVMC's original-image view exposes the scalar through `source_variables`,
+not a separate C declaration disconnected from its backing array.
+
+`NeverDX86VirtualizationSourceTests` gives every system instruction/word-size
+pair its own compile test and every LAR/LSL destination width its own completion
+test. The split preserves both C routes, LLVM output, O0/O2, and all register,
+memory, success/failure and optimized/unoptimized descriptor cases within the
+ordinary per-test timeout. NeverC variants still require `NEVERD_TEST_NEVERC`.
+
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
