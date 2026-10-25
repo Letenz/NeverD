@@ -18,6 +18,7 @@
 #include "../render/X86/X86APXAtomic.h"
 #include "../render/X86/X86AmxState.h"
 #include "../render/X86/X86BoundedLeaf.h"
+#include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86RepState.h"
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
@@ -2001,6 +2002,15 @@ std::string HighCWriter::resolveCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX86CompactMemory(E.IntrinsicId)) {
+    std::vector<std::string> Args;
+    for (const auto &V : E.Operands) {
+      if (!V)
+        throw std::invalid_argument(X86CompactMalformed);
+      Args.push_back(intrinsicOperandStr(*V));
+    }
+    return renderX86CompactExpression(Opts.TheArch, E, Args, typeToC(E.Type));
+  }
   if (isApxAtomicIntrinsic(E.IntrinsicId))
     return renderX86APXAtomicExpression(
         Opts.TheArch, E,
@@ -2233,6 +2243,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
+      if (isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+          I == kAddressMemoryBaseOperand)
+        if (const auto It = OriginalMemoryBases.find({CurrentFunc, &E});
+            It != OriginalMemoryBases.end()) {
+          OpStrs.push_back(It->second);
+          continue;
+        }
       if (((LinuxSyscallArgs && !x64SyscallOperandRead(I, *LinuxSyscallArgs)) ||
            I >= FirstUnreadOperand) &&
           CanOmit(CanOmit, Op.get(), 0)) {

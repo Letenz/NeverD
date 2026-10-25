@@ -129,3 +129,54 @@ TEST(Z3Solver, ModelExtractionCanBeDisabledAndOldOutputIsCleared) {
   EXPECT_EQ(z3CheckEqual(Ctx, X, X, &Model), EquivResult::Equal);
   EXPECT_TRUE(Model.empty());
 }
+
+TEST(Z3Solver, ScaledProductsKeepFullWordsAndIndependentInputModels) {
+  if (!Z3Solver::available())
+    GTEST_SKIP() << "Z3 backend disabled";
+  for (unsigned Width : {1u, 8u, 16u, 32u, 64u, 65u, 129u, 257u})
+    for (unsigned Shift : {0u, 1u, Width / 2, Width - 1})
+      for (bool Negative : {false, true}) {
+        if (Shift >= Width)
+          continue;
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << Shift << ':' << Negative);
+        auto Scale = llvm::APInt(Width, 3).shl(Shift);
+        if (Negative)
+          Scale = -Scale;
+        SymContext Ctx;
+        const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+        const auto Mask = ~llvm::APInt(Width, 1);
+        const auto A = Ctx.mkAdd(X, Y);
+        const auto B = Ctx.mkXor(X, Ctx.mkConst(Mask));
+        const auto Product = Ctx.mkMul({Ctx.mkConst(Scale), A, B, A, B, B});
+        for (unsigned Trial = 0; Trial < 4; ++Trial) {
+          const auto XV = Trial == 0 ? llvm::APInt(Width, 0)
+                                     : llvm::APInt::getAllOnes(Width) - Trial;
+          const auto YV = llvm::APInt(Width, 1).shl(Width - 1) + Trial;
+          const auto AV = XV + YV, BV = XV ^ Mask;
+          const auto Expected = Scale * AV * BV * AV * BV * BV;
+          Z3Solver Solver(Ctx);
+          ASSERT_TRUE(Solver.assertEqual(X, Ctx.mkConst(XV)));
+          ASSERT_TRUE(Solver.assertEqual(Y, Ctx.mkConst(YV)));
+          // These wide concrete operator checks expose the complete query to
+          // preprocessing. Incremental session behavior has its own tests.
+          ASSERT_TRUE(Solver.assertDistinct(Product, Ctx.mkConst(Expected)));
+          ASSERT_EQ(Solver.check(), SatResult::Unsat) << Solver.reasonUnknown();
+          // A mismatch in the highest output bit remains observable. The
+          // model must also retain all high input bits beyond the quotient.
+          const auto Different =
+              Expected ^ llvm::APInt(Width, 1).shl(Width - 1);
+          Z3Solver ModelSolver(Ctx);
+          ASSERT_TRUE(ModelSolver.assertEqual(X, Ctx.mkConst(XV)));
+          ASSERT_TRUE(ModelSolver.assertEqual(Y, Ctx.mkConst(YV)));
+          ASSERT_TRUE(
+              ModelSolver.assertDistinct(Product, Ctx.mkConst(Different)));
+          ASSERT_EQ(ModelSolver.check(), SatResult::Sat)
+              << ModelSolver.reasonUnknown();
+          ASSERT_TRUE(ModelSolver.model().value(Ctx, X));
+          ASSERT_TRUE(ModelSolver.model().value(Ctx, Y));
+          EXPECT_EQ(*ModelSolver.model().value(Ctx, X), XV);
+          EXPECT_EQ(*ModelSolver.model().value(Ctx, Y), YV);
+        }
+      }
+}

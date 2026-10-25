@@ -6,6 +6,8 @@
 
 #include "X86LiftDetail.h"
 
+#include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
+
 #include <algorithm>
 #include <vector>
 
@@ -214,21 +216,38 @@ bool liftEvexCompressExpandRegister(X86Lifter &L, X86Lifter::LiftState &S,
     } else if ((Encoding.P2 & 0x87) != 0) {
       return false;
     }
-    const NdVar Address = S.computeEA(MemoryOperand);
+    for (unsigned Index = 0; Index < X86.op_count; ++Index)
+      if (X86.operands[Index].avx_zero_opmask && (!HasMask || Index != 1))
+        return false;
     const NdMemoryAddressSpace AddressSpace =
         X86Lifter::LiftState::memoryAddressSpace(MemoryOperand);
-    if (AddressSpace != NdMemoryAddressSpace::Default)
+    // Normalized addresses cannot yet retain SS-default fault provenance.
+    // Long-mode SS overrides do not restore it on a DS-default native base.
+    const auto Base = MemoryOperand.mem.base;
+    const bool StackBase = Base == X86_REG_RSP || Base == X86_REG_RBP ||
+                           Base == X86_REG_ESP || Base == X86_REG_EBP ||
+                           Base == X86_REG_BP;
+    const auto Segment = MemoryOperand.mem.segment;
+    if (AddressSpace == NdMemoryAddressSpace::Default &&
+        ((L.targetArch() == Arch::X64 && X86.addr_size == 8 && StackBase) ||
+         (L.targetArch() == Arch::X86 &&
+          ((StackBase && Segment == X86_REG_INVALID) ||
+           (Segment != X86_REG_INVALID && Segment != X86_REG_DS)))))
       return false;
+    const NdVar Address = S.computeEA(MemoryOperand);
+    const unsigned Kind =
+        (Opcode == 0x88 || Opcode == 0x8a) ? X86CompactFloat : 0;
     if (Compress) {
       const NdVar Source = L.operandRead(S, VectorOperand);
-      S.emitIntrinsic(Intrinsic::EVEXCompressStore, {},
-                      {Address, Mask, Source, NdVar::cst(ElementSize, 1)},
-                      NdMemoryOrdering::None, AddressSpace);
+      S.emitIntrinsic(
+          Intrinsic::EVEXCompressStore, {},
+          {Address, Mask, Source, NdVar::cst(ElementSize | Kind, 1)},
+          NdMemoryOrdering::None, AddressSpace);
     } else {
       const NdVar OldDestination = L.operandRead(S, VectorOperand);
       const NdVar Destination = L.operandWrite(VectorOperand);
       const uint8_t Control = static_cast<uint8_t>(
-          ElementSize |
+          ElementSize | Kind |
           (HasMask && X86.operands[1].avx_zero_opmask ? 0x80 : 0));
       S.emitIntrinsic(Intrinsic::EVEXExpandLoad, Destination,
                       {Address, Mask, OldDestination, NdVar::cst(Control, 1)},

@@ -298,9 +298,27 @@ PACM operations, rejecting malformed shapes and unresolved PACM. A raw
 PACIASP/PTRUE/DUP/LASTB/RETAA leaf exercises the real CLI path. Undefined Z
 state must return a normal error for both one-function serial and eight-function
 sharded LLVM emission, with and without optimization.
-`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks original 64-bit
-LSL register-offset loads through both raw decoders, strict/permissive lifting,
-SSA and both C routes. Independent LLVM MC words check source aliases, zero
+`AArch64AddressMemory` in `NeverDArm64eAnalysisTests` checks all 13 GPR
+register-offset operations across 104 extension/scale encodings through both
+raw decoders, strict/permissive lifting, SSA and both C routes. Independent
+native-word comparisons exercise each family through HighC and LLVMC at O0/O2,
+including signed data, W-result zero extension, narrow-index high garbage,
+negative offsets, exact store widths and unchanged neighbouring bytes.
+Eighteen decoded narrow-index aliases also exercise source ABI recovery.
+Native harnesses also link the LLVM-generated objects and compare their memory
+and return values with independent instruction words. Fifty-two additional MC
+fixtures cover SP provenance, zero indices, discarded loads, zero stores and
+aliased base/index/data registers across every scalar family.
+Narrow-store tests reject unknown data while accepting a known accessed slice
+with unknown unused upper bytes. Native HighC cases share both bases and call
+expressions within and across functions, checking that only unobserved reads
+use original-byte storage and that returned callable pointers keep their native
+identity. The relative-table, finite-selector and shared-absolute execution
+regressions exercise retained reads through both source routes at O0/O2.
+`HighSourceRanges.*` independently enumerates SELECT, OR and XOR outcomes across
+all scalar widths, including their high bits, and rejects unknown selected arms.
+The software tracer reads only accessed bytes and keeps failed stores from
+changing finite memory in either mode. Independent LLVM MC words check source aliases, zero
 indices, discarded destinations and both encoded scales. O0/O2 object checks
 retain one load even with an unused result; native AArch64 C execution covers
 positive/negative offsets and stores on both sides of the load. Malformed
@@ -308,14 +326,26 @@ LowIR, MedIR, HighIR and typed LLVM assembly are refused before body filtering,
 and the software tracer refuses state-dependent addresses in both modes, even
 when unchecked arithmetic would heal a poisoned/tagged base into mapped RAM.
 Control-independent addresses retain finite image reads without guessing CPTA.
+Whole-W interval certificates cover all 104 encodings, exhaustively check small
+positive ranges and reject signed-W domain discontinuities, address-region
+crossings, wrap, SP and malformed words. Exact-use zero-extension proofs keep
+unknown X high bits from borrowing this domain. `NeverDJumpTableTests` runs
+`JTE_AArch64.*`, guarded-range/cache/predicate-demand cases and the shared table
+owners; selecting `*JumpTable*` alone does not include the `JTE_AArch64` suite.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives only a validated scalar memory operation. Run this group with the
 decode/parity, SVE, return/ABI, AArch64 lift and ObjC/Swift source-call groups.
-Include `NativeBooleanResultProof.*` and the jump-table/computed-goto tests:
+Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
+jump-table/computed-goto tests:
 identical-address reads preserve the differential result proof, while either
 tainted address input must refuse it. Computed-goto execution covers both a
 zero-register index and a load overwriting its index register. Selector tests
 reject stale or duplicated authentication records and duplicate load occurrences.
+Run `ResolverGuardPredicates.*` and `ResolverPredicateDemand.*` as well:
+explicit guarded upper-bound queries retain compound unsigned path predicates
+without claiming a finite mask or predecessor join, while ordinary equality and
+cheap-bound queries keep their existing demand policy. Bounds above 64 and
+cold/warm query mixtures exercise the distinct cache modes.
 `MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
 an edited store must lose its previous prologue-save annotation before the
 ObjC private-copy machine replay compares both saved representations.
@@ -5675,6 +5705,16 @@ handler and landing-pad cases retain the exception-boundary coverage.
 `HighValueForward.*` in `NeverDHighControlFlowTests` checks when the HighC writer may fold a single-use value into its use. A loop condition keeps a value whose variables the loop assigns, since one name can denote several SSA values; a reloaded frame slot keeps its value across a store to that slot and folds past a store to another slot. A copy keeps its value when its source is reassigned before the use. Each case runs at `-O0` and `-O2` with undefined-behavior traps.
 
 `HighCIntegerConversion.*` in `NeverDHighControlFlowTests` checks the integer conversions the HighC writer leaves to C. A conversion inside an operand that keeps the bytes an outer conversion keeps prints no cast of its own; an assignment to a declared integer local and a return convert implicitly, and a literal is spelled as the value it converts to, while a pointer keeps its explicit conversion. Stores convert like assignments, and a zero-extended argument to a typed wider parameter keeps its extension. A callee whose debug symbol has no type, or that nothing declares while the code reads more than an int of its result, returns its whole register, so a 64-bit pointer keeps its upper half. Each case runs at `-O0` and `-O2` with undefined-behavior traps against reference arithmetic.
+
+`HighCIntegerConversion.NarrowCopyKeepsLowBytesThroughSourceProjection` starts
+from MedIR and checks narrowing copies followed by zero extension for i386,
+x86-64 and AArch64. The emitted C executes at O0/O2 with undefined-behavior
+traps, comparing byte/word/dword results against independently narrowed inputs.
+`NeverDX86CompressExpandSourceTests` additionally exports actual `KMOVW` and
+compact-memory instruction pipelines. The oracle in
+`scripts/verify_x86_compact_memory.py` compiles their C with Clang and NeverC,
+records native-call operand and return transport, and verifies the word-mask
+boundary. Physical AVX-512 execution is a separate, unqualified capability.
 
 Source projection also revalidates variadic object lists after this cleanup: empty instruction anchors are accepted, while hidden effects or control transfers are rejected. Synchronized cleanup accepts a single `int64_t` or `uint64_t` view of the same saved receiver; narrowing, floating conversions, address arithmetic and reassignment remain rejected. Foundation object sets and normal/exceptional unlock traces run at both `-O0` and `-O2`.
 

@@ -188,7 +188,7 @@ public:
 };
 
 bool intrinsicMayClobberFrameMemory(const LowOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC || lowAArch64AddressMemoryShapeIsValid(Op))
+  if (Op.Opcode != NdOp::INTRINSIC || lowAArch64AddressLoadShapeIsValid(Op))
     return false;
   if (Op.NumInputs < 1 || !Op.Inputs[0].isConst())
     return true;
@@ -5723,7 +5723,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   std::optional<ResolverPredicateMode> MemoEdgeConstraintMode;
   auto predicateMode = [](const JumpTableValueQuery *Query) {
     if (Query &&
-        Query->Relation == JumpTableValueRelation::JoinedUnsignedFeasibleSet)
+        (Query->Relation == JumpTableValueRelation::JoinedUnsignedFeasibleSet ||
+         Query->Relation == JumpTableValueRelation::GuardedUnsignedLessThan))
       return ResolverPredicateMode::Joined;
     if (Query && Query->Relation == JumpTableValueRelation::UnsignedFeasibleSet)
       return ResolverPredicateMode::Unsigned;
@@ -8776,8 +8777,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   auto provesUnsignedUpperBound = [&](const ResolverValue &Value,
                                       uint64_t Bound, bool &ProofComplete,
                                       bool ExactModuloRecipeOnly = false,
-                                      uint64_t *FeasibleMask = nullptr) {
+                                      uint64_t *FeasibleMask = nullptr,
+                                      bool RetainGuards = false) {
     ProofComplete = false;
+    const bool RetainPathPredicates = FeasibleMask || RetainGuards;
     if (!Value || Value->Size == 0 || Value->Size > sizeof(uint64_t) ||
         Bound == 0 || (FeasibleMask && Bound > 64))
       return false;
@@ -8997,10 +9000,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           if (!appendPathConstraint(Predicate))
             return {};
         }
-        // Outside the finite-set transaction this is a deliberate
-        // over-approximation: dropping a reachability constraint can only
-        // prevent an upper-bound proof.  The finite-set path above retains it
-        // and conjoins it with every authoritative solver query.
+        // Cheap bounds deliberately omit reachability constraints. Finite
+        // sets and explicit guarded bounds retain them for the authoritative
+        // solver query; a constraint never grants storage or join authority.
         return Input;
       }
       const uint32_t NodeWidth = uint32_t(Node->Size) * 8u;
@@ -9206,7 +9208,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         auto SymbolizeArm = [&](const ResolverValue &Arm) {
           std::vector<symbolic::SymRef> ArmConstraints;
           llvm::SaveAndRestore<std::vector<symbolic::SymRef> *> ArmScope(
-              ActivePathConstraints, FeasibleMask ? &ArmConstraints : nullptr);
+              ActivePathConstraints,
+              RetainPathPredicates ? &ArmConstraints : nullptr);
           SymbolicValue Result;
           Result.Value =
               Symbolize(HoistExtension ? Arm->Input : Arm, Depth + 1);
@@ -9376,7 +9379,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       {
         std::vector<symbolic::SymRef> Constraints;
         llvm::SaveAndRestore<std::vector<symbolic::SymRef> *> ConstraintScope(
-            ActivePathConstraints, FeasibleMask ? &Constraints : nullptr);
+            ActivePathConstraints,
+            RetainPathPredicates ? &Constraints : nullptr);
         Result.Value = buildSymbolic(Node, Depth);
         Result.Predicate = combinePathConstraints(Constraints);
       }
@@ -9708,7 +9712,13 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       return Mask != 0;
     }
 
-    symbolic::SymRef Index = Symbolize(Value, 0);
+    std::vector<symbolic::SymRef> PathConstraints;
+    symbolic::SymRef Index;
+    {
+      llvm::SaveAndRestore<std::vector<symbolic::SymRef> *> ConstraintScope(
+          ActivePathConstraints, RetainGuards ? &PathConstraints : nullptr);
+      Index = Symbolize(Value, 0);
+    }
     if (!Index || Exhausted || Ctx.width(Index) != Width) {
       if (ExactModuloRecipeOnly && !Exhausted)
         ProofComplete = true;
@@ -9736,6 +9746,17 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         return false;
       symbolic::SymRef Counterexample =
           Ctx.mkNot(Ctx.mkUlt(Index, Ctx.mkConst(Width, Bound)));
+      // A guarded bound retains the selected predecessor's reachability
+      // predicates just like a finite-set proof, without enumerating or
+      // publishing any coordinates. Ordinary cheap bounds remain unchanged.
+      const auto Predicate = combinePathConstraints(PathConstraints);
+      if (Exhausted)
+        return false;
+      if (Predicate) {
+        if (!consumeSymbolWork(2))
+          return false;
+        Counterexample = Ctx.mkAnd(Predicate, Counterexample);
+      }
       const solver::SatResult Result =
           solver::checkSat(Ctx, Counterexample, nullptr, makeSolverOptions());
       switch (Result) {
@@ -9830,6 +9851,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     MemoEdgeConstraintMode = EdgeConstraintMode;
     if (Query.Candidate.Size == 0 ||
         (Query.Relation != JumpTableValueRelation::UnsignedLessThan &&
+         Query.Relation != JumpTableValueRelation::GuardedUnsignedLessThan &&
          Query.Relation != JumpTableValueRelation::ResolvableValue &&
          Query.Relation != JumpTableValueRelation::ConstantAddress &&
          !FiniteSet &&
@@ -10014,6 +10036,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (CandidateValue.Kind != ResolverResultKind::Value) {
       if (Query.Relation == JumpTableValueRelation::MayDepend ||
           Query.Relation == JumpTableValueRelation::UnsignedLessThan ||
+          Query.Relation == JumpTableValueRelation::GuardedUnsignedLessThan ||
           Query.Relation == JumpTableValueRelation::ResolvableValue ||
           FiniteSet) {
         markIncomplete(QueryIndex);
@@ -10036,10 +10059,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       continue;
     }
 
-    if (Query.Relation == JumpTableValueRelation::UnsignedLessThan) {
+    if (Query.Relation == JumpTableValueRelation::UnsignedLessThan ||
+        Query.Relation == JumpTableValueRelation::GuardedUnsignedLessThan) {
       bool ProofComplete = false;
       Results[QueryIndex] = provesUnsignedUpperBound(
-          CandidateValue.Value, Query.UnsignedUpperBound, ProofComplete);
+          CandidateValue.Value, Query.UnsignedUpperBound, ProofComplete,
+          /*ExactModuloRecipeOnly=*/false, /*FeasibleMask=*/nullptr,
+          /*RetainGuards=*/Query.Relation ==
+              JumpTableValueRelation::GuardedUnsignedLessThan);
       if (!ProofComplete) {
         markIncomplete(QueryIndex);
       }
@@ -11781,19 +11808,15 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
                      {}});
     if (originalAArch64TableLoad(*Load)) {
       if (Role.IsLiteralCoordinate || Role.AllowedBases.size() != 1 ||
-          Role.Indices.size() != 1 || Role.HasBaseSelect ||
-          Role.HasBaseMaskBlend || HasFrameStorage || HasDisplacedAddress ||
-          Role.AddressIndex.Value.Size ||
-          Role.AddressScale != kAddressMemoryPointerBytes)
-        return false;
-      const auto &Index = Role.Indices.front();
-      if (Index.DefinedAtPoint || Index.Addr != Load->Addr ||
-          Index.Seq != Load->Seq ||
-          !sameVar(Index.Value, Load->Inputs[kAddressMemoryIndexOperand + 1]))
+          Role.HasBaseSelect || Role.HasBaseMaskBlend || HasFrameStorage ||
+          HasDisplacedAddress || Role.AddressIndex.Value.Size ||
+          Role.AddressScale != originalAArch64TableLoad(*Load)->accessBytes())
         return false;
       bool AddressComplete = false;
       if (!aarch64OriginalTableLoadMatches(
-              *Load, Role.AllowedBases.front(), Info.PhysicalCapacity,
+              *Load, Role,
+              Info.PhysicalCapacity ? Info.PhysicalCapacity
+                                    : limits::kMaxJumpTableEntries,
               AggregateEvidenceBudget, AddressComplete, &QueryScope,
               CertifiedEdgeOverrides, UseGroupContext)) {
         Complete &= AddressComplete;

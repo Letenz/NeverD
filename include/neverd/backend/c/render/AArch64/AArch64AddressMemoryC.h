@@ -29,22 +29,35 @@ namespace neverd {
 
 inline std::string
 aarch64AddressMemoryC(const AArch64AddressMemoryInstruction &Instruction,
-                      llvm::StringRef Base, llvm::StringRef Index) {
+                      llvm::StringRef Base, llvm::StringRef Index,
+                      llvm::StringRef Data = {}) {
   if (!aarch64AddressMemoryInstruction(Instruction.Word))
     throw std::invalid_argument(kAddressMemoryMalformed);
   if (Instruction.stackBase())
     throw std::invalid_argument(kAddressMemorySPUnsupported);
+  if (Instruction.isLoad() != Data.empty())
+    throw std::invalid_argument(kAddressMemoryMalformed);
   const auto ValueName =
-      aarch64PAuthTemporary(kAddressLoadCValue, {Base, Index});
+      aarch64PAuthTemporary(kAddressLoadCValue, {Base, Index, Data});
   const auto BaseName =
-      aarch64PAuthTemporary(kAddressLoadCBase, {Base, Index, ValueName});
+      aarch64PAuthTemporary(kAddressLoadCBase, {Base, Index, Data, ValueName});
   const auto IndexName = aarch64PAuthTemporary(
-      kAddressLoadCIndex, {Base, Index, ValueName, BaseName});
+      kAddressLoadCIndex, {Base, Index, Data, ValueName, BaseName});
   const auto BaseInput = aarch64PAuthTemporary(
-      kAddressLoadCBaseInput, {Base, Index, ValueName, BaseName, IndexName});
+      kAddressLoadCBaseInput,
+      {Base, Index, Data, ValueName, BaseName, IndexName});
   const auto IndexInput = aarch64PAuthTemporary(
       kAddressLoadCIndexInput,
-      {Base, Index, ValueName, BaseName, IndexName, BaseInput});
+      {Base, Index, Data, ValueName, BaseName, IndexName, BaseInput});
+  if (!Instruction.isLoad()) {
+    const auto DataInput = aarch64PAuthTemporary(
+        kAddressStoreCDataInput, {Base, Index, Data, ValueName, BaseName,
+                                  IndexName, BaseInput, IndexInput});
+    return llvm::formatv(kAddressStoreCExpression, ValueName, BaseName,
+                         IndexName, Base, Index, Instruction.scratchWord(),
+                         BaseInput, IndexInput, DataInput, Data)
+        .str();
+  }
   return llvm::formatv(kAddressLoadCExpression, ValueName, BaseName, IndexName,
                        Base, Index, Instruction.scratchWord(), BaseInput,
                        IndexInput)

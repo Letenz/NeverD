@@ -34,6 +34,7 @@
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/low/X86/X86CompactShape.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
@@ -815,6 +816,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         }
         if (Id == Intrinsic::A64_PACMPending)
           throw LowToMedConversionError(kAArch64PAuthMalformedOperation);
+        if (isX86CompactMemory(Id)) {
+          if (!x86CompactShapeIsValid(Id, x86CompactLowShape(Op, TheArch)))
+            throw LowToMedConversionError(X86CompactMalformed);
+          continue;
+        }
         if (isApxAtomicIntrinsic(Id)) {
           if (!intrinsicApxAtomicShapeIsValid(Id,
                                               apxAtomicLowShape(Op, TheArch)))

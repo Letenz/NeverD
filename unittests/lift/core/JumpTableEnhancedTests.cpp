@@ -25,6 +25,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -37,6 +38,7 @@
 
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <optional>
@@ -5410,47 +5412,73 @@ expectIndirectDispatchHasNoStaticSuccessors(const std::string &Body) {
                                                         << Body;
 }
 
+#define JUMP_TABLE_ENTRY_OBSERVATION_TEXT(Name, Text)                          \
+  static constexpr char Name[] = Text;
+#define JUMP_TABLE_ENTRY_OBSERVATION_VALUE(Type, Name, Value)                  \
+  static constexpr Type Name = Value;
+#include "JumpTableEntryObservation.def"
+
 static void expectSwitchNotOnLoadedEntry(const std::string &Body,
                                          const std::string &EntryType) {
-  const std::string LoadNeedle = "= load " + EntryType;
-  for (std::string::size_type Load = Body.find(LoadNeedle);
-       Load != std::string::npos; Load = Body.find(LoadNeedle, Load + 1)) {
-    std::string::size_type LoadLine = Body.rfind('\n', Load);
-    LoadLine = LoadLine == std::string::npos ? 0 : LoadLine + 1;
-    LoadLine = Body.find('%', LoadLine);
-    if (LoadLine == std::string::npos)
-      continue;
-    std::string::size_type LoadNameEnd = Body.find(' ', LoadLine);
-    if (LoadNameEnd == std::string::npos)
-      continue;
-    const std::string LoadName = Body.substr(LoadLine, LoadNameEnd - LoadLine);
+  const std::array<std::string, 2> LoadNeedles{"= load " + EntryType,
+                                               kOriginalTableLoadTruncation};
+  for (const std::string &LoadNeedle : LoadNeedles)
+    for (std::string::size_type Load = Body.find(LoadNeedle);
+         Load != std::string::npos; Load = Body.find(LoadNeedle, Load + 1)) {
+      if (LoadNeedle == kOriginalTableLoadTruncation) {
+        const auto Source = Load + LoadNeedle.size();
+        const auto End = Body.find(kOriginalTableLoadResultType, Source);
+        const auto LineEnd = Body.find('\n', Load);
+        if (End == std::string::npos || End >= LineEnd ||
+            Body.compare(End, LineEnd - End,
+                         std::string(kOriginalTableLoadResultType) + EntryType))
+          continue;
+        const auto Definition = Body.find(Body.substr(Source, End - Source) +
+                                          kOriginalTableLoadDefinition);
+        if (Definition == std::string::npos || Definition >= Load)
+          continue;
+        const auto Marker = Body.find(kOriginalTableLoadMarker, Definition);
+        if (Marker == std::string::npos ||
+            Marker >= Body.find('\n', Definition))
+          continue;
+      }
+      std::string::size_type LoadLine = Body.rfind('\n', Load);
+      LoadLine = LoadLine == std::string::npos ? 0 : LoadLine + 1;
+      LoadLine = Body.find('%', LoadLine);
+      if (LoadLine == std::string::npos)
+        continue;
+      std::string::size_type LoadNameEnd = Body.find(' ', LoadLine);
+      if (LoadNameEnd == std::string::npos)
+        continue;
+      const std::string LoadName =
+          Body.substr(LoadLine, LoadNameEnd - LoadLine);
 
-    const std::string ExtendNeedle = "= zext " + EntryType + " " + LoadName;
-    std::string::size_type Extend = Body.find(ExtendNeedle, Load);
-    if (Extend == std::string::npos)
-      continue;
-    std::string::size_type ExtendLine = Body.rfind('\n', Extend);
-    ExtendLine = ExtendLine == std::string::npos ? 0 : ExtendLine + 1;
-    ExtendLine = Body.find('%', ExtendLine);
-    if (ExtendLine == std::string::npos)
-      continue;
-    std::string::size_type EntryNameEnd = Body.find(' ', ExtendLine);
-    if (EntryNameEnd == std::string::npos)
-      continue;
-    const std::string EntryName =
-        Body.substr(ExtendLine, EntryNameEnd - ExtendLine);
+      const std::string ExtendNeedle = "= zext " + EntryType + " " + LoadName;
+      std::string::size_type Extend = Body.find(ExtendNeedle, Load);
+      if (Extend == std::string::npos)
+        continue;
+      std::string::size_type ExtendLine = Body.rfind('\n', Extend);
+      ExtendLine = ExtendLine == std::string::npos ? 0 : ExtendLine + 1;
+      ExtendLine = Body.find('%', ExtendLine);
+      if (ExtendLine == std::string::npos)
+        continue;
+      std::string::size_type EntryNameEnd = Body.find(' ', ExtendLine);
+      if (EntryNameEnd == std::string::npos)
+        continue;
+      const std::string EntryName =
+          Body.substr(ExtendLine, EntryNameEnd - ExtendLine);
 
-    std::string::size_type Switch = Body.find("switch i", Extend);
-    if (Switch == std::string::npos)
-      continue;
-    std::string::size_type SwitchEnd = Body.find('\n', Switch);
-    const std::string SwitchLine = Body.substr(Switch, SwitchEnd - Switch);
-    EXPECT_EQ(SwitchLine.find(EntryName), std::string::npos)
-        << "Switch must use the table index, not the loaded compact entry: "
-        << SwitchLine << "\n"
-        << Body;
-    return;
-  }
+      std::string::size_type Switch = Body.find("switch i", Extend);
+      if (Switch == std::string::npos)
+        continue;
+      std::string::size_type SwitchEnd = Body.find('\n', Switch);
+      const std::string SwitchLine = Body.substr(Switch, SwitchEnd - Switch);
+      EXPECT_EQ(SwitchLine.find(EntryName), std::string::npos)
+          << "Switch must use the table index, not the loaded compact entry: "
+          << SwitchLine << "\n"
+          << Body;
+      return;
+    }
   FAIL() << "Expected a compact table-entry load/extension chain:\n" << Body;
 }
 
@@ -10951,6 +10979,21 @@ TEST_F(JTE_AArch64, CheckedIndexedLoadsKeepReadAndEscapeEffectsDistinct) {
   EXPECT_TRUE(Independent.UnsafeBranches.empty());
   EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr));
   EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr + 8));
+
+  // An original indexed store cannot acquire the validated read-only
+  // contract. Its write through the writable table keeps the branch unsafe.
+  auto Writer = Reader;
+  auto &Write = Writer.Blocks.front().Ops.back();
+  Write.Output = neverd::NdVar{};
+  Write.Output.Size = 0;
+  Write.Inputs[0].Offset =
+      static_cast<uint64_t>(neverd::Intrinsic::A64_StoreRegisterOffset);
+  Write.Inputs[3].Offset &= ~kOriginalTableStoreLoadBit;
+  Write.addInput(neverd::NdVar::scalar(0, Image.getPointerSize()));
+  ASSERT_TRUE(neverd::lowAArch64AddressMemoryShapeIsValid(Write));
+  const auto Written = arbitrate({Owner, Writer});
+  ASSERT_TRUE(Written.AnalysisComplete);
+  EXPECT_TRUE(Written.UnsafeBranches.count(Table.InsnAddr));
 
   // A checked read of a private spill does not escape the spill's address,
   // but a pointer read from it can still escape through a later call.

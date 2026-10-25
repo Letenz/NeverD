@@ -8,7 +8,7 @@
 /// ARM-family architecture-gated jump-table detectors:
 ///
 ///   - tryARMTableBranch      — ARM32 TBB/TBH table-branch pattern.
-///   - tryAArch64CompactTable — AArch64 byte/halfword compact table.
+///   - tryAArch64CompactTable — AArch64 compact and word-relative tables.
 ///
 /// These are the only architecture-specific table recognizers; the generic
 /// resolver framework and every pattern-based (architecture-neutral) strategy
@@ -287,17 +287,45 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       break;
     }
   }
-  if (ShiftIdx < 0)
-    return false;
-  uint32_t Shift = static_cast<uint32_t>(Ops[ShiftIdx].Inputs[1].Offset);
-  if (Shift == 0 || Shift > limits::kMaxShiftForEntrySize)
-    return false;
+  uint32_t Shift = 0;
+  NdVar EntryValue;
+  int EntryFrom = AddIdx - 1;
+  if (ShiftIdx >= 0) {
+    Shift = static_cast<uint32_t>(Ops[ShiftIdx].Inputs[1].Offset);
+    if (Shift == 0 || Shift > limits::kMaxShiftForEntrySize)
+      return false;
+    EntryValue = Ops[ShiftIdx].Inputs[0];
+    EntryFrom = ShiftIdx - 1;
+  } else {
+    // Word-relative tables already store byte displacements. Only propose
+    // the sole extended word operand; the complete chain below must still
+    // reach an exact read and authenticate its separate code anchor.
+    for (unsigned Side = 0; Side != 2; ++Side) {
+      const auto &Value = Ops[AddIdx].Inputs[Side];
+      const int Definition = reachingDefIdx(Ops, AddIdx - 1, Value);
+      if (Definition < 0)
+        continue;
+      const auto &Extend = Ops[Definition];
+      if ((Extend.Opcode != NdOp::INT_SEXT &&
+           Extend.Opcode != NdOp::INT_ZEXT) ||
+          Extend.NumInputs != 1 ||
+          Extend.Inputs[0].Size != kAddressMemoryWordBytes ||
+          Extend.Output.Size != kAddressMemoryPointerBytes)
+        continue;
+      if (AnchorWhich >= 0)
+        return false;
+      AnchorWhich = 1 - Side;
+      EntryValue = Value;
+    }
+    if (AnchorWhich < 0)
+      return false;
+  }
 
   // The shifted value traces through ZEXT/SEXT/COPY and low-byte views to a
-  // 1- or 2-byte LOAD.  The byte/halfword entries are *unscaled* in the load
-  // address (`ldrb [base,idx]`), so unlike the word table the index is not
-  // multiplied — extract the two address operands directly rather than via the
-  // scaled-index analyzer.
+  // byte/halfword or word LOAD.  The byte/halfword entries are *unscaled* in
+  // the load address (`ldrb [base,idx]`), so unlike the word table the index is
+  // not multiplied — extract the two address operands directly rather than via
+  // the scaled-index analyzer.
   bool Signed = false;
   uint16_t LoadWidth = 0;
   std::vector<int> EntryChain;
@@ -313,8 +341,8 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   int TableLoadIdx = -1;
   int AddressAddIdx = -1;
   {
-    NdVar V = Ops[ShiftIdx].Inputs[0];
-    int CurFrom = ShiftIdx - 1;
+    NdVar V = EntryValue;
+    int CurFrom = EntryFrom;
     for (int Guard = 0; Guard < limits::kMaxSliceDepth; ++Guard) {
       int D = reachingDefIdx(Ops, CurFrom, V);
       if (D < 0)
@@ -333,7 +361,22 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
         CurFrom = D - 1;
         continue;
       }
-      if (O.Opcode == NdOp::LOAD) {
+      if (const auto Original = originalAArch64TableLoad(O)) {
+        if ((uint64_t(1) << Original->indexShift()) != Original->accessBytes())
+          return false;
+        TableLoadIdx = D;
+        LoadWidth = Original->accessBytes();
+        auto candidate = [&](const NdVar &Input) {
+          IndexCandidate Result;
+          Result.Value = Input;
+          Result.UseAddr = O.Addr;
+          Result.UseSeq = O.Seq;
+          Result.Reg = traceToRegister(Ops, D - 1, Input);
+          return Result;
+        };
+        CandA = candidate(O.Inputs[kAddressMemoryBaseOperand + 1]);
+        CandB = candidate(O.Inputs[kAddressMemoryIndexOperand + 1]);
+      } else if (O.Opcode == NdOp::LOAD) {
         TableLoadIdx = D;
         LoadWidth = O.Output.Size;
         const NdVar &AddrV = (O.NumInputs >= 2) ? O.Inputs[1] : O.Inputs[0];
@@ -366,7 +409,9 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
       break;
     }
   }
-  if (LoadWidth != 1 && LoadWidth != 2)
+  if ((LoadWidth != 1 && LoadWidth != 2 &&
+       LoadWidth != kAddressMemoryWordBytes) ||
+      (!Shift && LoadWidth != kAddressMemoryWordBytes))
     return false;
   // What the chain from the loaded entry to the shift makes of it: the entry
   // itself, or its zero or sign extension.  A view narrower than the entry
@@ -558,7 +603,11 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   }
   if (!Anchor)
     return false;
-  if (!Img.hasExecutableCodeOwnerAt(*Anchor, ExecutableCodeOwners))
+  // Compact byte/halfword offsets use a code anchor. Word-relative offsets
+  // may instead be relative to the data table itself; every decoded target
+  // still passes the common exact code-owner and target-role proofs.
+  if (LoadWidth != kAddressMemoryWordBytes &&
+      !Img.hasExecutableCodeOwnerAt(*Anchor, ExecutableCodeOwners))
     return false;
 
   if (IndexReg != InvalidVA) {
@@ -574,6 +623,10 @@ bool CFGBuilder::tryAArch64CompactTable(const BinaryImage &Img,
   Info.IsSigned = Signed;
   Info.setTargetBase(*Anchor);
   Info.EntryScale = 1u << Shift;
+  // The encoded load can overwrite the index. Its typed input occurrence is
+  // authoritative; a physical-register fallback after the load would be stale.
+  if (TableLoadIdx >= 0 && originalAArch64TableLoad(Ops[TableLoadIdx]))
+    IndexReg = InvalidVA;
   Info.IndexReg = IndexReg;
   Info.IndexValueAtUse = IndexCandidateAtLoad.Value;
   Info.IndexUseAddr = IndexCandidateAtLoad.UseAddr;

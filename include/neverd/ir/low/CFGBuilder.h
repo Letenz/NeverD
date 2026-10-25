@@ -1535,6 +1535,10 @@ private:
     /// does not replace ordinary mask/group domain ownership or treat a
     /// logical predicate union as a control-flow join.
     JoinedUnsignedFeasibleSet,
+    /// Prove an unsigned upper bound using unsigned and compound path
+    /// predicates. This grants neither a finite mask nor predecessor-join
+    /// ownership. The caller separately authenticates memory and addresses.
+    GuardedUnsignedLessThan,
   };
 
   struct JumpTableValueQuery {
@@ -1563,7 +1567,7 @@ private:
     /// opaque call and unknown-store barriers.
     bool AllowPrivateFrameMemoryAcrossCalls = false;
     JumpTableValueRelation Relation = JumpTableValueRelation::MustEqual;
-    /// UnsignedLessThan/UnsignedFeasibleSet's exclusive bound, or
+    /// Range queries' exclusive upper bound, or
     /// ExactUnsignedModuloRecipe's exact divisor.
     uint64_t UnsignedUpperBound = 0;
     /// Do not apply the role-neutral architectural-address owner wildcard.
@@ -2520,7 +2524,7 @@ private:
   /// Both operands are proved at its exact occurrence, and every possible
   /// accessed byte must have the same address for every CPA2 control choice.
   bool aarch64OriginalTableLoadMatches(
-      const LowOp &Load, va_t Base, uint32_t Capacity,
+      const LowOp &Load, const JumpTableLoadRole &Role, uint32_t Capacity,
       size_t *AggregateEvidenceBudget, bool &AnalysisComplete,
       ResolverQueryScope *ReadOnlyScope = nullptr,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,

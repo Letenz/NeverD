@@ -968,6 +968,17 @@ class SourceFlow {
         return *Input < (uint64_t{1} << (InputBytes * 8 - 1)) ? *Input : Mask;
       return std::nullopt;
     }
+    if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::SELECT &&
+        Value->Operands.size() == 3 && purePredicate(Value->Operands[0])) {
+      const auto True = indexRange(Value->Operands[1], Dependencies, Depth + 1);
+      const auto False =
+          indexRange(Value->Operands[2], Dependencies, Depth + 1);
+      if (!True || !False ||
+          Value->Operands[1]->Type->Size != Value->Type->Size ||
+          Value->Operands[2]->Type->Size != Value->Type->Size)
+        return std::nullopt;
+      return std::max(*True, *False);
+    }
     if (Value->Kind != ExprKind::BinOp || Value->Operands.size() != 2)
       return std::nullopt;
     const auto Left = indexRange(Value->Operands[0], Dependencies, Depth + 1);
@@ -992,9 +1003,14 @@ class SourceFlow {
     case NdOp::INT_MULT:
       return !*Right || *Left <= Mask / *Right ? *Left * *Right : Mask;
     case NdOp::INT_SUB:
-    case NdOp::INT_OR:
-    case NdOp::INT_XOR:
       return Mask;
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR: {
+      // Upper bounds do not describe known-one bits. Cover every bit either
+      // interval can contain, rather than ORing the two upper endpoints.
+      const uint64_t Bits = *Left | *Right;
+      return Bits ? UINT64_MAX >> llvm::countl_zero(Bits) : 0;
+    }
     default:
       return std::nullopt;
     }

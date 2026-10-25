@@ -1,0 +1,109 @@
+//===- X86CompressExpandNative.h - Compact memory transport ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Native and owned assembly interfaces for one contiguous masked access.
+//===----------------------------------------------------------------------===//
+#ifndef NEVERD_BACKEND_LLVM_X86_X86COMPRESSEXPANDNATIVE_H
+#define NEVERD_BACKEND_LLVM_X86_X86COMPRESSEXPANDNATIVE_H
+#include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
+
+#include <algorithm>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+namespace neverd {
+inline constexpr std::string_view X86CompactAsmMarker = "# neverd.x86.compact ";
+struct X86CompactPlan {
+  bool Expand;
+  unsigned Bytes;
+  unsigned Kind;
+  bool Zero;
+  unsigned Prefix;
+  unsigned elementBytes() const {
+    constexpr unsigned Sizes[] = {1, 2, 4, 8, 4, 8};
+    return Sizes[Kind];
+  }
+  unsigned maskBits() const { return std::max(16u, Bytes / elementBytes()); }
+  std::string mnemonic() const {
+    constexpr const char *Suffixes[] = {"b", "w", "d", "q", "ps", "pd"};
+    return std::string(Kind < 4 ? "vp" : "v") +
+           (Expand ? "expand" : "compress") + Suffixes[Kind];
+  }
+  std::string llvmName() const {
+    return std::string("llvm.x86.avx512.") +
+           (Expand ? "expandload" : "compressstore") +
+           std::to_string(Bytes * 8) + ".native";
+  }
+  std::string builtin() const {
+    return "__builtin_ia32_" + mnemonic() + std::to_string(Bytes * 8) +
+           "_native";
+  }
+  std::vector<std::string> features() const {
+    std::vector<std::string> R = {"avx512f"};
+    if (Bytes < 64)
+      R.push_back("avx512vl");
+    else
+      R.push_back("evex512");
+    if (Kind < 2) {
+      R.push_back("avx512bw");
+      R.push_back("avx512vbmi2");
+    }
+    return R;
+  }
+  std::string segment() const {
+    switch (Prefix) {
+    case 0x26:
+      return "es";
+    case 0x2e:
+      return "cs";
+    case 0x36:
+      return "ss";
+    case 0x3e:
+      return "ds";
+    case 0x64:
+      return "fs";
+    case 0x65:
+      return "gs";
+    default:
+      return "";
+    }
+  }
+  std::string assembly() const {
+    const auto Segment = Prefix ? "%" + segment() + ":" : "";
+    return std::string(X86CompactAsmMarker) + std::to_string(Expand) + " " +
+           std::to_string(Bytes) + " " + std::to_string(Kind) + " " +
+           std::to_string(Zero) + " " + std::to_string(Prefix) + "\n" +
+           mnemonic() + " " +
+           (Expand ? Segment + "($1), $0 {$2}" + (Zero ? " {z}" : "")
+                   : "$2, " + Segment + "($0) {$1}");
+  }
+  std::string constraints() const {
+    return Expand ? "=v,{bx},^Yk,0,~{memory}" : "{bx},^Yk,v,~{memory}";
+  }
+};
+inline std::optional<X86CompactPlan> x86CompactPlan(bool Expand, unsigned Bytes,
+                                                    unsigned Kind,
+                                                    unsigned Zero,
+                                                    unsigned Prefix) {
+  if ((Bytes != 16 && Bytes != 32 && Bytes != 64) || Kind >= 6 || Zero > 1 ||
+      (!Expand && Zero) ||
+      (Prefix && Prefix != 0x26 && Prefix != 0x2e && Prefix != 0x36 &&
+       Prefix != 0x3e && Prefix != 0x64 && Prefix != 0x65))
+    return {};
+  return X86CompactPlan{Expand, Bytes, Kind, bool(Zero), Prefix};
+}
+inline std::optional<X86CompactPlan> x86CompactNativeName(std::string_view N) {
+  for (bool Expand : {false, true})
+    for (unsigned Bytes : {16u, 32u, 64u}) {
+      X86CompactPlan P{Expand, Bytes, 0, false, 0};
+      if (P.llvmName() == N)
+        return P;
+    }
+  return {};
+}
+} // namespace neverd
+#endif // NEVERD_BACKEND_LLVM_X86_X86COMPRESSEXPANDNATIVE_H

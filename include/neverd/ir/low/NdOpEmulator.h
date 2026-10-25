@@ -265,6 +265,8 @@ private:
 
   uint64_t readOperand(const NdVar &Operand) const;
   std::vector<uint8_t> readOperandBytes(const NdVar &Operand) const;
+  bool knownOperandBytes(const NdVar &Operand, uint64_t Offset,
+                         uint64_t Bytes) const;
   std::optional<uint64_t> resolveMemoryAddress(const LowOp &Op,
                                                uint64_t Offset) const;
   bool isX86CanonicalMemoryRange(uint64_t Address, uint64_t Size) const;

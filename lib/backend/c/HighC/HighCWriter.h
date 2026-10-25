@@ -14,6 +14,7 @@
 #ifndef NEVERD_LIB_BACKEND_C_HIGHC_HIGHCWRITER_H
 #define NEVERD_LIB_BACKEND_C_HIGHC_HIGHCWRITER_H
 
+#include "../../AArch64OriginalMemory.h"
 #include "../CIdentifier.h"
 #include "../CSourceRecorder.h"
 #include "../DebugParamBinding.h"
@@ -200,6 +201,10 @@ public:
   floatToIntegerConversion(const HighExpr &E) const;
   void collectImageObjects(const std::vector<HighFunc> &Funcs);
   void writeImageObjects();
+  std::map<std::pair<const HighFunc *, const HighExpr *>, std::string>
+      OriginalMemoryBases;
+  std::map<va_t, std::pair<AArch64OriginalMemoryStorage, std::string>>
+      OriginalMemoryObjects;
   std::optional<va_t> constAddress(const HighExpr &E) const;
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> imageObjectName(va_t Addr) const;
