@@ -890,6 +890,77 @@ TEST(MedStackAlignment, LoopAssumptionsDoNotBecomeIndependentProofs) {
   }
 }
 
+TEST(MedStackAlignment, InterlockingPhiLoopsShareAllIncomingStackOrigins) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (bool Reversed : {false, true})
+        for (unsigned Case = 0; Case != 5; ++Case) {
+          SCOPED_TRACE(testing::Message() << static_cast<int>(Architecture)
+                                          << ":" << static_cast<int>(Format)
+                                          << ":" << Reversed << ":" << Case);
+          auto Func = frameWithEntrySP(Architecture);
+          const unsigned Width = getTargetRegInfo(Architecture).PointerSize;
+          const auto Entry = reg(0, Architecture);
+          const auto Initial = reg(1, Architecture);
+          const auto Restored = reg(2, Architecture);
+          const auto A = reg(3, Architecture);
+          const auto B = reg(4, Architecture);
+          const auto C = reg(5, Architecture);
+          const auto D = reg(6, Architecture);
+          auto &Ops = Func.Blocks[0].Ops;
+          Ops.push_back(
+              op(NdOp::INT_SUB, Initial, Entry, MedVar::makeConst(64, Width)));
+          Ops.push_back(op(NdOp::INT_SUB, Restored, Entry,
+                           MedVar::makeConst(Case == 1 ? 72 : 64, Width)));
+          if (Case == 2)
+            Ops.back().Inputs[0] = MedVar::makeUnspecified(Width, Architecture);
+          // Model the ordinary loop and the independently restored SEH arm:
+          // A = phi(initial, C), B = phi(A, restored, D), C = phi(B, D),
+          // D = phi(C, restored). Every loop header needs the same invariant.
+          const std::vector<std::pair<MedVar, std::vector<MedVar>>> Joins = {
+              {A, {Case == 3 ? D : Initial, C}},
+              {B, {A, Case == 3 ? C : Restored, D}},
+              {C, {B, D}},
+              {D, {C, Case == 3 ? A : Restored}}};
+          for (const auto &[Output, Inputs] : Joins) {
+            MedBlock Block;
+            Block.Id = Func.Blocks.size();
+            Block.StartAddr = 0x1000 + 16 * Block.Id;
+            PhiNode Phi;
+            Phi.Output = Output;
+            for (size_t I = 0; I < Inputs.size(); ++I)
+              Phi.Args.emplace_back(I, Inputs[I]);
+            if (Case == 4 && Output == D)
+              Phi.Args.back().second.Size /= 2;
+            Block.Phis.push_back(std::move(Phi));
+            Func.Blocks.push_back(std::move(Block));
+          }
+          Func.Blocks.back().Ops.push_back(op(NdOp::INT_ADD,
+                                              temp(20, Architecture), C,
+                                              MedVar::makeConst(16, Width)));
+          if (Reversed)
+            std::reverse(Func.Blocks.begin() + 1, Func.Blocks.end());
+          const std::vector<MedVar> Values{
+              A, B, C, D, temp(20, Architecture), Entry, Initial};
+          const std::optional<int64_t> Stack =
+              Case ? std::nullopt : std::optional<int64_t>(-64);
+          const std::vector<std::optional<int64_t>> Expected{
+              Stack,
+              Stack,
+              Stack,
+              Stack,
+              Case ? std::nullopt : std::optional<int64_t>(-48),
+              0,
+              -64};
+          EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                    Expected);
+          for (size_t I = 0; I < Values.size(); ++I)
+            EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                      Expected[I]);
+        }
+}
+
 TEST(MedStackAlignment, ReusedJoinKeepsTheDepthOfItsNestedInputs) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
     SCOPED_TRACE(static_cast<int>(Architecture));

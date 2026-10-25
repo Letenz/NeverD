@@ -265,6 +265,69 @@ private:
            Offset == static_cast<int64_t>(static_cast<int32_t>(Offset));
   }
 
+  /// A set of mutually dependent PHIs denotes one offset only when every
+  /// value entering the set proves that same offset. Proving one PHI at a
+  /// time cannot establish this invariant for overlapping loop backedges:
+  /// each nested proof can encounter another still-active PHI. Collapse only
+  /// the PHI edges here; ordinary definitions retain resolve()'s semantics.
+  std::optional<int64_t> joinPhiComponent(const MedVar &Root, unsigned Depth) {
+    std::set<Key> Visited, Active;
+    std::vector<std::pair<MedVar, unsigned>> Boundaries;
+    bool HasCycle = false;
+    const Key RootKey = key(Root);
+    const auto Visit = [&](const auto &Self, const MedVar &Value,
+                           unsigned AtDepth) -> bool {
+      Deepest = std::max(Deepest, AtDepth);
+      if (++Steps > kMaxProofSteps ||
+          AtDepth > limits::ir::kMedStackAlignmentResolveDepthLimit ||
+          Value.Size != TRI.PointerSize ||
+          (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp))
+        return false;
+      const Key K = key(Value);
+      const auto Found = Definitions.find(K);
+      const ValueDefinition *Definition =
+          Found == Definitions.end() ? nullptr : &Found->second;
+      if (Definition && Definition->Ambiguous)
+        return false;
+      if (!Definition || !Definition->Join || Assumed.count(K) ||
+          (!OnlySeededRoots && Value.Kind == MedVar::Reg &&
+           Value.RegOff == TRI.StackPointer && Value.SSAVer == 0 &&
+           !Definition->Op)) {
+        Boundaries.emplace_back(Value, AtDepth);
+        return true;
+      }
+      const PhiNode &Phi = *Definition->Join;
+      if (!sameOccurrence(Phi.Output, Value) || Phi.Args.empty() ||
+          (OnlySeededRoots && Phi.ExceptionalEntry) ||
+          (Definition->Active && K != RootKey))
+        return false;
+      if (Active.count(K)) {
+        HasCycle = true;
+        return true;
+      }
+      if (!Visited.insert(K).second)
+        return true;
+      Active.insert(K);
+      for (const auto &[Pred, Arg] : Phi.Args) {
+        (void)Pred;
+        if (!Self(Self, Arg, AtDepth + 1))
+          return false;
+      }
+      Active.erase(K);
+      return true;
+    };
+    if (!Visit(Visit, Root, Depth) || !HasCycle || Boundaries.empty())
+      return std::nullopt;
+    std::optional<int64_t> Agreed;
+    for (const auto &[Value, AtDepth] : Boundaries) {
+      const auto Offset = resolve(Value, AtDepth);
+      if (!Offset || (Agreed && *Agreed != *Offset))
+        return std::nullopt;
+      Agreed = Offset;
+    }
+    return Agreed;
+  }
+
   std::optional<int64_t> resolveJoin(const MedVar &Value,
                                      ValueDefinition &Definition,
                                      unsigned Depth) {
@@ -290,7 +353,13 @@ private:
     const size_t BeforeContext = ContextUses;
     const unsigned OuterDepth = Deepest;
     Deepest = Depth;
-    const auto Result = join(*Definition.Join, Definition, Depth);
+    auto Result = join(*Definition.Join, Definition, Depth);
+    if (!Result && ContextUses != BeforeContext && !JoiningComponent &&
+        Steps < kMaxProofSteps) {
+      JoiningComponent = true;
+      Result = joinPhiComponent(Value, Depth);
+      JoiningComponent = false;
+    }
     const unsigned InnerDepth = Deepest;
     Deepest = std::max(OuterDepth, InnerDepth);
     // A successful traversal that never reads a loop assumption or an active
@@ -437,6 +506,7 @@ private:
   unsigned Deepest = 0;
   std::map<Key, int64_t> Assumed;
   bool CycleHit = false;
+  bool JoiningComponent = false;
   static constexpr size_t kMaxProofSteps =
       ::neverd::limits::ir::kMedStackAlignmentMaxProofSteps;
   size_t Steps = 0;
