@@ -17,6 +17,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -26,6 +27,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <set>
 #include <string>
@@ -100,6 +102,31 @@ SourceFunctionTypeHint homeSignature(Arch Architecture, bool Floating) {
   return Hint;
 }
 
+std::map<SourceCallOccurrenceKey, SourceCallTypeHint>
+homeCallSites(const BinaryImage &Image,
+              const SourceFunctionTypeHint &Signature) {
+  Decoder Decoder;
+  if (!Decoder.init(Image))
+    return {};
+  CFGBuilder Builder;
+  const std::set<va_t> Entries{Caller, Callee};
+  Builder.setKnownFuncEntries(&Entries);
+  const auto Low = Builder.build(Image, Decoder, Caller, "caller_home");
+  std::map<SourceCallOccurrenceKey, SourceCallTypeHint> Sites;
+  for (const auto &Block : Low.Blocks)
+    for (const auto &Operation : Block.Ops)
+      if (const auto Site = sourceCallOccurrenceKey(Operation);
+          Site && Site->StaticTarget == Callee) {
+        SourceCallTypeHint Hint;
+        Hint.CallKind = SourceCallTypeHint::Kind::Native;
+        Hint.TargetAddress = Callee;
+        Hint.TargetName = "read_home";
+        Hint.Signature = Signature;
+        Sites.emplace(*Site, std::move(Hint));
+      }
+  return Sites;
+}
+
 TEST(IncomingHomeSource, ExplicitStackCarrierReachesBothCPaths) {
   for (bool Floating : {false, true})
     for (Arch Architecture : {Arch::X64, Arch::AArch64})
@@ -111,24 +138,8 @@ TEST(IncomingHomeSource, ExplicitStackCarrierReachesBothCPaths) {
         const auto Signature = homeSignature(Architecture, Floating);
         std::string Diagnostic;
         ASSERT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
-        Decoder Decoder;
-        ASSERT_TRUE(Decoder.init(Image));
-        CFGBuilder Builder;
         const std::set<va_t> Entries{Caller, Callee};
-        Builder.setKnownFuncEntries(&Entries);
-        const auto Low = Builder.build(Image, Decoder, Caller, "caller_home");
-        std::map<SourceCallOccurrenceKey, SourceCallTypeHint> Sites;
-        for (const auto &Block : Low.Blocks)
-          for (const auto &Operation : Block.Ops)
-            if (const auto Site = sourceCallOccurrenceKey(Operation);
-                Site && Site->StaticTarget == Callee) {
-              SourceCallTypeHint Hint;
-              Hint.CallKind = SourceCallTypeHint::Kind::Native;
-              Hint.TargetAddress = Callee;
-              Hint.TargetName = "read_home";
-              Hint.Signature = Signature;
-              Sites.emplace(*Site, std::move(Hint));
-            }
+        const auto Sites = homeCallSites(Image, Signature);
         ASSERT_EQ(Sites.size(), 1u);
         for (bool LLVM : {false, true})
           for (bool NoOpt : {false, true}) {
@@ -152,6 +163,16 @@ TEST(IncomingHomeSource, ExplicitStackCarrierReachesBothCPaths) {
                              });
             ASSERT_NE(Function, Result.MedFuncs.end());
             ASSERT_TRUE(Function->SourceParametersBound);
+            size_t Operations = 0;
+            for (const auto &Block : Function->Blocks)
+              Operations += Block.Ops.size();
+            inferMedTypes(*Function, Architecture);
+            ASSERT_TRUE(Function->SourceTypeHint);
+            ASSERT_TRUE(Function->SourceParametersBound);
+            size_t ReboundOperations = 0;
+            for (const auto &Block : Function->Blocks)
+              ReboundOperations += Block.Ops.size();
+            EXPECT_EQ(ReboundOperations, Operations);
             std::string Source;
             llvm::raw_string_ostream Output(Source);
             CEmitterOptions COptions;
@@ -184,5 +205,89 @@ TEST(IncomingHomeSource, ExplicitStackCarrierReachesBothCPaths) {
                    "-fsanitize=undefined", "-fsanitize-trap=all"});
           }
       }
+}
+
+TEST(IncomingHomeSource, MachineModesIgnoreSourceStackDeclarations) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF})
+      for (unsigned Mode = 0; Mode != 4; ++Mode) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(Mode);
+        const auto Image = homeImage(Architecture, Format);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Caller, Callee};
+        Options.LiftMode = Mode == 0;
+        Options.PatchMode = Mode == 1 || Mode == 2;
+        Options.SourceProjection = Mode == 2;
+        Options.MedAnalysisOnly = Mode == 3;
+        const auto Signature = homeSignature(Architecture, false);
+        Options.SourceTypeHints.emplace(Callee, Signature);
+        const auto Sites = homeCallSites(Image, Signature);
+        ASSERT_EQ(Sites.size(), 1u);
+        Options.SourceCallSiteHints.emplace(Caller, Sites);
+        const auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        ASSERT_EQ(Result.MedFuncs.size(), 2u);
+        for (const auto &Function : Result.MedFuncs) {
+          EXPECT_FALSE(Function.SourceParametersBound);
+          EXPECT_FALSE(Function.SourceTypeHint);
+          for (const auto &Block : Function.Blocks)
+            for (const auto &Op : Block.Ops)
+              EXPECT_FALSE(Op.SourceCallHint);
+        }
+      }
+}
+
+TEST(IncomingHomeSource, EntryInitializationRetainsCallOccurrenceIndices) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    MedFunc Function;
+    Function.Entry = Callee;
+    Function.Name = "read_home";
+    Function.SourceTypeHint = homeSignature(Architecture, false);
+    Function.Blocks.resize(1);
+    auto &Block = Function.Blocks.front();
+    Block.Id = 0;
+    MedVar Stack;
+    Stack.Kind = MedVar::Reg;
+    Stack.TheArch = Architecture;
+    Stack.Id = 20;
+    Stack.RegOff = TRI.StackPointer;
+    Stack.Size = TRI.PointerSize;
+    MedOp Seed;
+    Seed.Opcode = NdOp::COPY;
+    Seed.Output = Stack;
+    Seed.addInput(Stack);
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.CallSiteId = 1;
+    Call.addInput(MedVar::makeConst(Caller, TRI.PointerSize));
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(MedVar::makeConst(1, TRI.PointerSize));
+    Block.Ops = {Seed, Call, Return};
+    MedCallInfo Info;
+    Info.BlockId = Block.Id;
+    Info.OpIdx = 1;
+    Info.TargetAddr = Caller;
+    Function.CallInfos.push_back(Info);
+    inferMedTypes(Function, Architecture);
+    ASSERT_TRUE(Function.SourceParametersBound);
+    ASSERT_EQ(Function.CallInfos.size(), 1u);
+    ASSERT_GE(Function.CallInfos.front().OpIdx, 0);
+    const auto Index = static_cast<size_t>(Function.CallInfos.front().OpIdx);
+    ASSERT_LT(Index, Block.Ops.size());
+    EXPECT_EQ(Block.Ops[Index].Opcode, NdOp::CALL);
+    EXPECT_EQ(Block.Ops[Index].CallSiteId, 1u);
+    EXPECT_EQ(Block.Ops[Index].Inputs[0].ConstVal, Caller);
+    const auto Size = Block.Ops.size();
+    inferMedTypes(Function, Architecture);
+    ASSERT_TRUE(Function.SourceTypeHint);
+    EXPECT_EQ(Function.CallInfos.front().OpIdx, static_cast<int>(Index));
+    EXPECT_EQ(Block.Ops.size(), Size);
+  }
 }
 } // namespace

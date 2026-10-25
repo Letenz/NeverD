@@ -1542,12 +1542,17 @@ add_neverd_unittest(NeverDWin64CallContractTests
 target_include_directories(NeverDWin64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
-add_neverd_unittest(NeverDIncomingHomeSourceTests
+add_neverd_unittest(NeverDSourceEntryBindingTests
   core/IncomingHomeSourceTests.cpp
+  core/SourceABITests.cpp
+  core/ObjCSourceTypeHintTests.cpp
+  core/HighCSourceCallTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
 )
-target_include_directories(NeverDIncomingHomeSourceTests PRIVATE
+target_include_directories(NeverDSourceEntryBindingTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDSourceEntryBindingTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
 
 add_neverd_unittest(NeverDI386CallContractTests
   core/I386CallContractTests.cpp

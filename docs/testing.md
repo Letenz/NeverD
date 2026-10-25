@@ -11,6 +11,14 @@ refuted guesses and explicit user identities). Replaced-PC and recursive
 fixtures execute both C routes at O0/O2 with independent callbacks or return
 values; malformed return-slot and arbitrary-write controls remain refused.
 
+`NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
+incoming stack binding regressions without the full mobile fixture inventory.
+The incoming-stack case compiles and executes HighC and LLVMC for x64/ARM64
+PE/ELF inputs at O0/O2, with pipeline optimization enabled and disabled. It
+checks integer and floating bit transport, repeated binding, call indices, and
+isolation from machine lifting, patching and analysis. These host executions
+do not qualify native Windows ARM64 drivers.
+
 `NeverDLLVMCValueTests` executes byte-shuffle and SHA-256 projections against
 independent scalar oracles and compiles mixed SHA/SGX/AMX feature selection.
 The latter does not execute privileged or tile-state instructions.
