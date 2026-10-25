@@ -10,6 +10,8 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NeverDGoogleTest.cmake")
+neverd_configure_googletest()
 
 enable_testing()
 include(GoogleTest)

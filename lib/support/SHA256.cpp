@@ -96,6 +96,8 @@ constexpr size_t StateWords = std::size(InitialState);
 /// The rounds take the message schedule, and the round constants, one
 /// register -- a quad of words -- at a time; a block's own words are the
 /// first quads of its schedule.
+/// Full unrolling lets Clang keep the message quads in vector registers
+/// by making each schedule index a constant on the 64-bit targets.
 constexpr size_t Quads = std::size(RoundConstants) / WordsPerRegister;
 constexpr size_t BlockQuads = BlockBytes / RegisterBytes;
 
@@ -154,6 +156,9 @@ void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
     for (size_t Quad = 0; Quad != BlockQuads; ++Quad)
       Schedule[Quad] = vreinterpretq_u32_u8(
           vrev32q_u8(vld1q_u8(Data + Quad * RegisterBytes)));
+#if defined(__clang__)
+#pragma clang loop unroll(full)
+#endif
     for (size_t Quad = 0; Quad != Quads; ++Quad) {
       uint32x4_t &Words = Schedule[Quad % BlockQuads];
       const uint32x4_t Message =
@@ -214,6 +219,9 @@ void compress(uint32_t *State, const uint8_t *Data, size_t Blocks) {
           _mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
                                Data + Quad * RegisterBytes)),
                            ByteSwap);
+#if defined(__clang__) && (defined(__x86_64__) || defined(_M_X64))
+#pragma clang loop unroll(full)
+#endif
     for (size_t Quad = 0; Quad != Quads; ++Quad) {
       const __m128i Current = Schedule[Quad % BlockQuads];
       __m128i Message = _mm_add_epi32(
