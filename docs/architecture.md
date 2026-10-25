@@ -2212,6 +2212,13 @@ scale; off-diagonal entries partition the remaining minterms between the two
 factors. It checks every matrix entry, including absent edges and coefficients
 that wrap to zero, within shared work and storage limits. The independent
 polynomial difference verifier still authorizes the replacement.
+Polynomial synthesis also restricts the linear remainder's corner table to
+the inputs that remainder actually uses. Variables confined to higher-degree
+products no longer replicate its coefficients or dilute its synthesis budget.
+Support discovery consumes the shared work allowance, and constants keep a
+single coefficient with the minterm basis's negative sign. Projection does
+not authorize a replacement: the complete polynomial difference must still
+be proved before CLI or GUI source output uses the result.
 Cubic recovery uses a minterm shared by all three factors as an anchor. Its
 diagonal coefficient fixes the scale; coefficients with two copies of the
 anchor identify how many factors select each other minterm. Coefficients with
@@ -2396,11 +2403,9 @@ not assume that an even value has a modular inverse. Batched sums cancel exact
 complementary bits and combine multiplicities before carrying; full-adder
 carries share a direct majority decision. A proved parity input orders its
 low prefix before the remaining interleaved bits. Dense decision and carry
-caches prepay their bucket growth. Word lookups also use a dense table with
-prepaid buckets, while separately owned values keep recursive references valid
-when that table grows. Immutable word views avoid repeated copies and are
-discarded when the assumption changes; polynomial views remain valid throughout
-reconstruction.
+caches prepay their bucket growth. Immutable word views avoid repeated copies
+and are discarded when the assumption changes; polynomial views remain valid
+throughout reconstruction.
 Ordinary HighIR expression cleanup also uses an iterative operand walk, keeping
 its large local-rewrite frame off nested worker stacks. Operand order, shared
 node visitation and ordered-memory guards remain unchanged.
