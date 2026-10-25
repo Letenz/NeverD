@@ -4,6 +4,8 @@
 
 # NeverD のテスト
 
+`SymMBAWitness.*` は、作業予算を変えずに反転入力の次数96/128の積を検査し、下位6ビットの桁上がり入力を全探索します。257ビットまでの語、近接する偶奇変更、予算不足による拒否も対象です。具体的な非ゼロ反例は無益なゼロ化探索を止めるだけで、書き換えを認可しません。`--family complemented-carry-product --count 108` は、反転入力、因子の逆順、偶奇の近接例を含む次数48–256の432例を生成します。従来の全コーパスを性能と出力コストの対照として保持してください。CLIとGUI workerのソーステストは、次数96の両反例フィクスチャを全6経路でO0/O2実行します。
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*` と `DriverMSRDeclaration.*` は明示した MSR 値、全幅分割、状態保持、反復読み取り、厳密な命令予算、不足・無効な宣言、メモリ権限が増えないことを利用可能なバックエンドで検査します。`KernelMSRRead.*` は未使用宣言の依存を保持します。ネイティブドライバ、ドライバエミュレーション、カーネルスナップショットのテストを実行します。利用不能な WHP/HVF はスキップであり認証ではありません。

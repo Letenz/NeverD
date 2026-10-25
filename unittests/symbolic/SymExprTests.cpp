@@ -45,12 +45,12 @@ TEST(SymExpr, InterningRetainsFullIdentityAcrossGrowthCopyAndMove) {
   const auto X = Ctx.mkVar("x", 64);
   const auto WideValue = llvm::APInt::getOneBitSet(128, 100);
   const auto Wide = Ctx.mkConst(WideValue);
-  // These literals exercise hashes zero, UINT64_MAX and UINT64_MAX-1, plus
-  // exact collisions with the variable and the first wide literal. A hash
-  // match must never substitute for the complete operator/width/value check.
-  const std::array<uint64_t, 5> Values{
+  // These literals exercise hashes zero, UINT64_MAX, UINT64_MAX-1 and
+  // 0xfffffffefffffffe, plus exact collisions with the variable and the first
+  // wide literal. A hash match must never substitute for full identity.
+  const std::array<uint64_t, 6> Values{
       0x96c84cbe741a547eULL, 0xfb9ece775e7489a1ULL, 0xfb9ece775e7489a0ULL,
-      0xffffffffffffcfd1ULL, 0xffffffffffffefb0ULL};
+      0xfb9ece785e7489a0ULL, 0xffffffffffffcfd1ULL, 0xffffffffffffefb0ULL};
   std::vector<SymRef> Literals;
   for (auto Value : Values) {
     const auto R = Ctx.mkConst(64, Value);

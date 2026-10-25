@@ -4,6 +4,8 @@
 
 # Тестирование NeverD
 
+`SymMBAWitness.*` проверяет произведения степени 96/128 с инвертированными входами при прежнем бюджете, перебирает входы переноса по шести младшим битам и охватывает слова до 257 бит, близкие изменения чётности и отказ при исчерпании бюджета. Конкретный ненулевой свидетель лишь прекращает бесполезный поиск нулевого тождества и не разрешает переписывание. `--family complemented-carry-product --count 108` создаёт 432 случая степени 48–256 с инвертированными входами, обратным порядком множителей и вариантами чётности. Сохраните все прежние корпуса для контроля производительности и стоимости результата. Тесты исходного кода CLI и GUI worker выполняют обе фикстуры степени 96 по всем шести путям при O0/O2.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*` и `DriverMSRDeclaration.*` проверяют явные MSR, полное разделение значения, сохранение состояния, повторные чтения, точные лимиты, отсутствующие/неверные записи и отсутствие прав памяти на доступных бэкендах. `KernelMSRRead.*` сохраняет неиспользованные зависимости. Запускать наборы нативного драйвера, эмуляции и снимков ядра; недоступные WHP/HVF считаются пропусками, не нативной проверкой.

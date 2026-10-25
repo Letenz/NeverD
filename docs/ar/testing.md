@@ -4,6 +4,8 @@
 
 # اختبار NeverD
 
+تختبر `SymMBAWitness.*` جداءات من الدرجة 96/128 بمدخلات متممة ضمن ميزانية العمل الأصلية، وتستنفد مدخلات الحمل للبتات الستة الدنيا، وتغطي كلمات حتى 257 بت وتغييرات مجاورة في الزوجية والرفض عند نفاد الميزانية. الشواهد الملموسة غير الصفرية توقف فقط البحث غير المجدي عن هوية صفرية، ولا تجيز إعادة الكتابة. يولد `--family complemented-carry-product --count 108` عدد 432 حالة من الدرجات 48–256 بمدخلات متممة وعوامل معكوسة الترتيب وتغييرات في الزوجية. احتفظ بجميع المجموعات السابقة لضبط الأداء وكلفة المخرجات. تنفذ اختبارات المصدر في CLI وGUI worker عينتي الدرجة 96 عبر مسارات المصدر الستة عند O0/O2.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 تختبر `DriverMSRExecution.*` و`DriverMSRDeclaration.*` قيم MSR الصريحة وتقسيمها الكامل وحفظ الحالة والقراءة المتكررة والميزانيات الدقيقة والمدخلات الغائبة أو غير الصحيحة وعدم منح صلاحيات الذاكرة على الخلفيات المتاحة. تحفظ `KernelMSRRead.*` التبعيات غير المستخدمة. شغّل مجموعات برنامج التشغيل الأصلي والمحاكاة ولقطات النواة؛ يعد غياب WHP/HVF تخطياً لا تحققاً أصلياً.

@@ -945,6 +945,28 @@ def permuted_carry_product_corpus(width, count):
     return rows
 
 
+def complemented_carry_product_corpus(width, count):
+    """Degree-48–256 products with complemented inputs and parity near misses."""
+    rows = []
+    for index in range(count):
+        kind = index % 108
+        degree = (48, 65, 96, 128, 192, 256)[kind // 18]
+        observed = 6 + kind % 18 // 6
+        high = 2 + kind % 6 // 3
+        mode = kind % 3
+        base = "(~x)" if mode == 1 else "(x^1)"
+        factors = []
+        for i in range(degree):
+            offset = 2*i + int(mode == 2 and i == 0)
+            upper = f"(((y+{i})&-2)*((z+{2*i})&-{1 << (high-1)}))"
+            factors.append(f"(({base}+{offset})^{upper})")
+        if mode == 1:
+            factors.reverse()
+        rows.append(f"({3 << (width-observed)}*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def sparse_linear_mixed_degree_corpus(width, count):
     """Degree-4–18 products with disjoint constant, linear and perturbed tails.
 
@@ -1117,7 +1139,8 @@ def main():
                  "row-residual", "mixed-frontier", "extreme-frontier",
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
                  "distributed-prefix", "multiple-residual", "carry-product",
-                 "permuted-carry-product", "sparse-linear-mixed-degree"),
+                 "permuted-carry-product", "complemented-carry-product",
+                 "sparse-linear-mixed-degree"),
         default="complement",
     )
     args = parser.parse_args()
@@ -1156,6 +1179,7 @@ def main():
                 "multiple-residual": multiple_residual_corpus,
                 "carry-product": carry_product_corpus,
                 "permuted-carry-product": permuted_carry_product_corpus,
+                "complemented-carry-product": complemented_carry_product_corpus,
                 "sparse-linear-mixed-degree": sparse_linear_mixed_degree_corpus,
             }[args.family]
             expressions = generate(width, args.count)

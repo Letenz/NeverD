@@ -43,6 +43,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <compare>
 #include <cstdint>
 #include <map>
@@ -509,9 +510,13 @@ private:
   uint32_t LowWordProjectionInsertions = 0;
 
   /// Hash of a node's identity to the first node carrying that hash. Full
-  /// identity checks follow the context-owned collision links below. The split
-  /// halves keep every 64-bit hash outside DenseMap's reserved key pairs.
-  llvm::DenseMap<std::pair<uint64_t, uint32_t>, SymRef> InternTable;
+  /// identity checks follow the context-owned collision links below. Both
+  /// halves fit in 32 bits, keeping the key and head in three words.
+  using InternKey = std::pair<uint32_t, uint32_t>;
+  llvm::DenseMap<InternKey, SymRef> InternTable;
+  /// The two reserved key pairs have ordinary context-owned collision heads,
+  /// so every complete 64-bit hash remains representable.
+  std::array<SymRef, 2> ReservedInternHeads;
   /// One next link per node avoids a separately managed vector in each bucket.
   /// Invalid refs terminate a chain; copying a context retains all links.
   std::vector<SymRef> InternNext;

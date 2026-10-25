@@ -1151,6 +1151,17 @@ work counts to the CLI report before computing per-case medians and percentiles.
 The independent evaluator handles explicit word widths, extracts, extensions
 and modular shifts. Check it with
 `python3 tools/neverd-bench/tests/test_symbolic_masks.py`.
+
+`SymMBAWitness.*` checks complemented degree-96/128 products at the unchanged
+work allowance, exhaustive low-six-bit carry inputs, wide words through 257
+bits, nearby parity changes and budget refusal. Concrete nonzero witnesses
+only stop futile zero searches; they never authorize a rewrite. Use
+`--family complemented-carry-product --count 108` for 432 degree-48–256 cases
+with complemented inputs, reversed factors and parity near misses. Keep all
+earlier corpora as performance and output-cost controls. The CLI and GUI worker
+source tests execute both degree-96 witness fixtures through all six source
+routes at O0/O2.
+
 Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage

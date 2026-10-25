@@ -4,6 +4,8 @@
 
 # 测试 NeverD
 
+`SymMBAWitness.*` 在不变的工作预算下检查取反输入的 96/128 次乘积，穷举低六位进位输入，并覆盖直到 257 位的字、相邻奇偶扰动和预算拒绝。具体非零反例只停止无效的零化搜索，不能授权替换。使用 `--family complemented-carry-product --count 108` 生成 432 个 48–256 次样本，包含取反输入、因子倒序和相邻奇偶扰动。保留所有旧样本，作为性能与输出成本对照。CLI 与 GUI worker 的源码测试通过全部六条源码路径，在 O0/O2 下执行两份 96 次反例样本。
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*` 与 `DriverMSRDeclaration.*` 在可用后端上检查显式 MSR 输入、全宽拆分、状态保留、重复读取、精确指令预算、缺失/无效声明及不授予内存权限。`KernelMSRRead.*` 检查未使用声明仍保留依赖。运行原生驱动、驱动模拟和内核快照测试组；不可用的 WHP/HVF 记为跳过，不算原生验证。

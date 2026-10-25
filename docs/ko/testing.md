@@ -4,6 +4,8 @@
 
 # NeverD 테스트
 
+`SymMBAWitness.*`는 기존 작업 예산에서 반전 입력을 가진 96/128차 곱을 검사하며, 하위 6비트의 자리올림 입력을 전수 검사합니다. 최대 257비트 워드, 인접한 홀짝 변경 및 예산 부족에 따른 거부도 포함합니다. 구체적인 비영 반례는 불필요한 영식 탐색만 중단하며 재작성을 허용하지 않습니다. `--family complemented-carry-product --count 108`은 반전 입력, 역순 인수 및 홀짝 근접 사례를 포함하는 48–256차 사례 432개를 생성합니다. 이전의 모든 코퍼스를 성능과 출력 비용의 대조군으로 유지하세요. CLI와 GUI worker 소스 테스트는 두 96차 반례 픽스처를 여섯 소스 경로 모두에서 O0/O2로 실행합니다.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*`와 `DriverMSRDeclaration.*`는 가용 백엔드에서 명시적 MSR 값, 전체 너비 분할, 상태 보존, 반복 읽기, 정확한 명령 예산, 누락·잘못된 선언과 메모리 권한 부재를 검사합니다. `KernelMSRRead.*`는 미사용 선언의 의존성을 유지합니다. 원시 드라이버, 드라이버 에뮬레이션 및 커널 스냅샷 테스트를 실행합니다. 사용할 수 없는 WHP/HVF는 검증 통과가 아닌 건너뛰기입니다.

@@ -273,7 +273,7 @@ def multiple_residual_elf(degree, neighbor=False):
 
 
 def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=False,
-                      *, interleaved=False):
+                      *, interleaved=False, complemented=False):
     # Retain the requested low bits, including observable residual cross terms.
     high_bits = high_bits or (3 if product else 2)
     mask = (0xffffffff << (high_bits - int(product))) & 0xffffffff
@@ -284,7 +284,10 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=F
     if interleaved:
         order = order[::2] + order[1::2]
     for i in order:
-        code += bytes.fromhex("89f9 81c1") + struct.pack("<I", 2*i)
+        code += bytes.fromhex("89f9")
+        if complemented:
+            code += bytes.fromhex("83f101")
+        code += bytes.fromhex("81c1") + struct.pack("<I", 2*i)
         code += bytes.fromhex("4189f0 4181c0") + struct.pack("<I", i)
         if product:
             code += bytes.fromhex("4183e0fe 4189d1 4181c1") + struct.pack("<I", 2*i)
@@ -298,7 +301,8 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=F
         code += bytes.fromhex("0fafc1")
         # Keep the independent C oracle in natural order even when the
         # original machine instructions construct the factors differently.
-        factors[i] = f"((x+{2*i}U){'+' if additive else '^'}{high})"
+        base = "(x^1U)" if complemented else "x"
+        factors[i] = f"(({base}+{2*i}U){'+' if additive else '^'}{high})"
     code += bytes.fromhex("01f8 01f0 01d0 c3")
     return elf(code), f"x+y+z+{scale}U*" + "*".join(factors)
 
@@ -544,6 +548,8 @@ if __name__ == "__main__":
             ("carry-product-wide-mask-128", *carry_product_elf(128, False, 8, 3)),
             ("carry-product-interleaved-128", *carry_product_elf(128, False, 8, 2, interleaved=True)),
             ("carry-product-interleaved-mask-128", *carry_product_elf(128, False, 8, 3, interleaved=True)),
+            ("carry-cofactor-zero-witness-96", *carry_product_elf(96, True, 6, 2, complemented=True)),
+            ("carry-cofactor-zero-witness-mask-96", *carry_product_elf(96, True, 6, 3, complemented=True)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

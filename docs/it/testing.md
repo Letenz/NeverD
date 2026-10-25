@@ -4,6 +4,8 @@
 
 # Testare NeverD
 
+`SymMBAWitness.*` verifica prodotti di grado 96/128 con ingressi complementati senza modificare il budget, enumera gli ingressi di riporto dei sei bit bassi e copre parole fino a 257 bit, variazioni vicine di parità e rifiuti per budget. I testimoni concreti non nulli fermano soltanto ricerche inutili dello zero; non autorizzano riscritture. `--family complemented-carry-product --count 108` genera 432 casi di grado 48–256 con ingressi complementati, fattori in ordine inverso e varianti di parità. Conservare tutti i corpus precedenti come controlli di prestazioni e costo dell’output. I test del codice CLI e GUI worker eseguono entrambe le fixture di grado 96 tramite tutti i sei percorsi a O0/O2.
+
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
 `DriverMSRExecution.*` e `DriverMSRDeclaration.*` verificano valori MSR espliciti, divisione completa, stato preservato, letture ripetute, limiti esatti, input mancanti/invalidi e assenza di permessi di memoria sui backend disponibili. `KernelMSRRead.*` mantiene dipendenze inutilizzate. Eseguire le suite driver nativo, emulazione e snapshot kernel; WHP/HVF non disponibili sono saltati, non qualificati.
