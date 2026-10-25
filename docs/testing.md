@@ -13654,3 +13654,19 @@ Narrow scanning public regressions compare 36 full SDK/CLI reports across
 O0/O2, direct calls, copied lists and wholly stacked lists. The full 8 KiB
 buffer includes source, format and output canaries, including unsupported
 wide conversions that must not publish earlier staged assignments.
+
+`LinuxMemory.Discard*` verifies rounded pages, full memory, permission and VMA
+metadata preservation, physical aliases and pinned views, holes, brk, unknown
+backing and model allocation limits. `AndroidNative.Discard*` uses independent
+callers for raw, Bionic, variadic and dynamic routes, including provider closure,
+full-width pointers, int narrowing, complete guards and errno. The
+`LinuxProcess.DiscardPreservesOuterPagesThenClearsBothSidesOfAHole` fixture runs
+actual AArch64 and x64 syscalls at O0/O2. Run Linux process, Android native,
+Dalvik/JNI, memory and proc regressions when changing this ownership boundary.
+All execution inputs are local and run with host network access denied.
+
+`ProcessPublic.AndroidAnonymousDiscardMatchesSDKAndCLI` compares 26 complete
+SDK/CLI report pairs with independently expected guarded bytes, across ordinary
+and RELR callers, four service routes, permission changes, holes and a closed
+dynamic provider. Named input RAM and unmap/replacement regressions verify that
+VMA names and address reuse cannot manufacture anonymous allocation provenance.

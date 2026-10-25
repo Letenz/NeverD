@@ -12036,3 +12036,10 @@ conversion passes are charged before allocating an exact-size heap array.
 Null names throw NullPointerException; other names, aliases and overloads
 remain explicit unsupported boundaries. No default charset or host codec is
 inferred, and this does not add a Java charset provider.
+
+Anonymous allocation provenance is owned by LinuxMemory for every successful
+private anonymous mmap or brk growth, independently of optional observations and
+VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
+this authority. Discard replaces each target page through AddressSpace while
+retaining permissions and VMA policy; old physical aliases and pinned views
+keep their bytes. Device/GPU admission remains in the shared service dispatch.
