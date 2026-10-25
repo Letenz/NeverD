@@ -3410,6 +3410,97 @@ int main(void) { observe_result(); return observed != 42; }
 )");
 }
 
+TEST(Win64CallContract, UnobservedVoidCallResultsDoNotKeepLoopCopiesAlive) {
+  constexpr va_t Release = Text + 0x80;
+  std::vector<uint8_t> Code(0xA0, 0xCC);
+  // Save RBX/RDI and visit two pointers. A null pointer skips the void
+  // call, joining its unused result register with the previous iteration.
+  std::vector<uint8_t> Caller = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83,
+                                 0xEC, 0x20, 0x48, 0x8B, 0xD9, 0xBF, 0x02, 0,
+                                 0,    0,    0x48, 0x8B, 0x0B, 0x48, 0x85, 0xC9,
+                                 0x74, 0x09, 0x48, 0x83, 0xC1, 0x20, 0xE8};
+  const auto Displacement = rel32(Text + Caller.size() + 4, Release);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  Caller.insert(Caller.end(), {0x48, 0x83, 0xC3, 0x08, 0x48, 0x83, 0xEF,
+                               0x01, 0x75, 0xE5, 0x48, 0x8B, 0x5C, 0x24,
+                               0x30, 0x48, 0x83, 0xC4, 0x20, 0x5F, 0xC3});
+  put(Code, Text, Caller);
+  // A void routine can leave a computed scratch value in RAX.
+  put(Code, Release, {0x48, 0x89, 0xC8, 0x48, 0xFF, 0x09, 0xC3});
+  BinaryImage Image = makeImage(Code, {{Text, "release_pair"}}, {});
+  Image.Exports.push_back({"release_item", 1, Release});
+  class Prototypes : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != Release)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.Name = "release_item";
+      Function.ReturnType = NdType::makeVoid();
+      Function.Params = {{"object", NdType::makePtr(NdType::makeVoid())}};
+      Function.PrototypeLibrary = "windows-kernel-x64";
+      Function.PrototypeFromHeader = true;
+      return Function;
+    }
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      return Name == "release_item" ? resolveFunction(Release) : std::nullopt;
+    }
+  } Debug;
+  for (bool LLVM : {false, true})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      SCOPED_TRACE(NoOpt);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text};
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = true;
+      Options.NoOpt = NoOpt;
+      auto Result = Pipeline().run(Image, Context, Options, &Debug);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                        &Debug, &Image));
+      } else
+        ASSERT_TRUE(
+            HighCEmitter().emit(Result.HighFuncs, Output, COptions, &Debug));
+      EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+      const std::string Oracle = R"(
+static unsigned released;
+void release_item(void *object) { --*(uint64_t *)object; ++released; }
+int main(void) {
+  for (unsigned mask = 0; mask != 4; ++mask) {
+    struct { uint8_t padding[32]; uint64_t count; } a = {{0}, 3}, b = {{0}, 5};
+    uintptr_t pair[2] = {mask & 1 ? (uintptr_t)&a : 0,
+                         mask & 2 ? (uintptr_t)&b : 0};
+    released = 0;
+    release_pair((uintptr_t)pair);
+    if (a.count != 3 - (mask & 1) || b.count != 5 - ((mask >> 1) & 1) ||
+        released != (mask & 1) + ((mask >> 1) & 1))
+      return 1;
+  }
+  return 0;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+}
+
 TEST(Win64CallContract, HeaderVoidReturnFactsAreSourceOnly) {
   auto Image = makeImage(throughSlot(Text, Iat, true),
                          {{Text, "forward_qualified"}}, {"fixture_qualified"});

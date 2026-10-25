@@ -574,6 +574,59 @@ TEST(HighCStoreForwarding, CallResultsFollowRenderedLoadsAndCallArity) {
   }
 }
 
+TEST(HighCStoreForwarding, CopyCyclesNeedAnObservableReader) {
+  for (unsigned Mode = 0; Mode != 4; ++Mode) {
+    SCOPED_TRACE(Mode);
+    const TypeRef Integer = NdType::makeInt(8, false);
+    auto Local = [&](int Id) {
+      MedVar Variable;
+      Variable.Kind = MedVar::Temp;
+      Variable.Id = Id;
+      Variable.Size = 8;
+      return HighExpr::makeVar(Variable, Integer);
+    };
+    auto Assign = [&](int Id, ExprPtr Value) {
+      HighStmt Statement;
+      Statement.Kind = StmtKind::Assign;
+      Statement.Dst = Local(Id);
+      Statement.Val = std::move(Value);
+      return Statement;
+    };
+    HighFunc Function;
+    Function.Name = "copy_cycle";
+    Function.ReturnType = Integer;
+    Function.Body = {Assign(1, HighExpr::makeUndef(8)), Assign(2, Local(1)),
+                     Assign(1, Local(2)),
+                     Assign(2, HighExpr::makeCall("produce", 0x2000, {})),
+                     ret(Local(1))};
+    if (Mode >= 2) {
+      HighStmt Read;
+      Read.Kind = StmtKind::Call;
+      Read.CallExpr = HighExpr::makeCall("consume", 0x3000, {Local(1)});
+      if (Mode == 3) {
+        Read.CallExpr->IsIndirectCall = true;
+        Read.CallExpr->IndirectTarget = Local(1);
+      }
+      Function.Body.insert(Function.Body.end() - 1, std::move(Read));
+    }
+    HighCAnalysisState State;
+    State.VoidReturns = Mode != 1;
+    const auto VarFn = [](const MedVar &Variable) {
+      return "t" + std::to_string(Variable.Id);
+    };
+    const auto ArgLimit = [Mode](const HighExpr &Call) {
+      return Mode == 3 ? size_t(0) : Call.Operands.size();
+    };
+    analyzeUnusedAssigns(State, Function, VarFn, ArgLimit);
+    analyzeUnusedCallResults(State, Function, VarFn, ArgLimit);
+    for (size_t I = 0; I != 3; ++I)
+      EXPECT_EQ(State.DeadStmts.count(&Function.Body[I]), Mode == 0 ? 1u : 0u);
+    EXPECT_FALSE(State.DeadStmts.count(&Function.Body[3]));
+    EXPECT_EQ(State.OmittedCallResults.count(&Function.Body[3]),
+              Mode == 0 ? 1u : 0u);
+  }
+}
+
 TEST(HighCStoreForwarding, KeepsObservableStoresAndPrecedingLoads) {
   const auto I32 = NdType::makeInt(4);
   const auto Ptr = NdType::makePtr(I32);

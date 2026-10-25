@@ -29,6 +29,12 @@ fifth argument stored into a slot whose address an earlier call received.
 The callee's stack summary must override the local-slot heuristic. Both C
 routes compile and execute the independently checked argument values at O0/O2
 with UBSan, with pipeline optimization enabled and disabled.
+`Win64CallContract.UnobservedVoidCallResultsDoNotKeepLoopCopiesAlive`
+executes conditional void calls whose unused result registers join around a
+loop. Both C routes preserve the call count and memory effects for every null
+pointer combination. `HighCStoreForwarding.CopyCyclesNeedAnObservableReader`
+keeps the same copy cycle when a return, call argument or indirect target reads
+it; a void return alone does not keep it alive.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
