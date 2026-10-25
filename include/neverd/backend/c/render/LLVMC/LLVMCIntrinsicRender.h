@@ -89,6 +89,10 @@ renderX86SystemRegisterCall(Arch TheArch, BinaryFormat Format,
                             const llvm::CallBase &Call,
                             const std::string &ResultName, bool ResultLive,
                             const std::vector<std::string> &Args);
+/// Preserve the exact prefetch hint, address and segment of owned assembly.
+std::optional<InlineAsmRender>
+renderX86PrefetchCall(Arch TheArch, const llvm::CallBase &Call,
+                      const std::vector<std::string> &Args);
 const char *lookupX86AsmToC(const char *Mnem);
 InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,

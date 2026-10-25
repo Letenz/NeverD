@@ -10,6 +10,8 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -145,6 +147,36 @@ CompilerResult runCCompiler(llvm::StringRef Source,
   Result.Output = Read(OutputPath);
   Result.Error += Read(ErrorPath);
   return Result;
+}
+
+void checkStandaloneSEHSource(llvm::StringRef Source) {
+  ASSERT_TRUE(hasHostFixtureCompiler());
+  // Supply the small platform-header interface independently of the emitter.
+  // The compiler still checks the real SEH intrinsic scopes, and the source
+  // itself must include the header rather than relying on a test prelude.
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-seh-headers", Directory));
+  llvm::FileRemover RemoveDirectory(Directory);
+  const std::string HeaderPath = Directory.str().str() + "/excpt.h";
+  llvm::FileRemover RemoveHeader(HeaderPath);
+  std::error_code Error;
+  {
+    llvm::raw_fd_ostream Header(HeaderPath, Error);
+    ASSERT_FALSE(Error);
+    Header << "#define EXCEPTION_EXECUTE_HANDLER 1\n"
+              "#define EXCEPTION_CONTINUE_SEARCH 0\n"
+              "#define EXCEPTION_CONTINUE_EXECUTION (-1)\n"
+              "unsigned long _exception_code(void);\n"
+              "void *_exception_info(void);\n"
+              "#define exception_code _exception_code\n"
+              "#define GetExceptionCode() _exception_code()\n"
+              "#define GetExceptionInformation() _exception_info()\n";
+  }
+  const auto Result = runCCompiler(
+      Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
+               "-fsyntax-only", "-isystem", Directory});
+  EXPECT_EQ(Result.ExitCode, 0) << Result.Error << "\n" << Source.str();
 }
 
 std::string emitHighC(llvm::ArrayRef<HighFunc> Funcs,
@@ -502,6 +534,58 @@ TEST(COFFExceptionIR, HighCSEHFilterRendersNamedFilterCall) {
   EXPECT_NE(Source.find("handler @ 0x140001200"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("#if 0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, HighCStandaloneSEHIncludesItsPlatformDeclarations) {
+  REQUIRE_HOST_FIXTURE_COMPILER();
+  for (bool NamedFilter : {false, true}) {
+    SCOPED_TRACE(NamedFilter);
+    HighFunc Function;
+    Function.Name = "seh_header_dependencies";
+    Function.Entry = 0x140001000;
+    Function.ReturnType = NdType::makeInt(4, false);
+    HighStmt Try;
+    Try.Kind = StmtKind::SEHTry;
+    Try.EHIsReducible = true;
+    Try.EHRange = {Function.Entry, Function.Entry + 0x20};
+    HighStmt Work;
+    Work.Kind = StmtKind::Call;
+    Work.CallExpr = HighExpr::makeCall("may_raise", 0x140002000, {});
+    Try.Body.push_back(Work);
+    HighEHClause Clause;
+    Clause.Kind = HighEHClauseKind::SEHExcept;
+    Clause.FilterOrActionVA = NamedFilter ? 0x140003000 : 0;
+    Clause.HandlerVA = Function.Entry + 0x20;
+    Try.EHClauses.push_back(Clause);
+    MedVar Code;
+    Code.Kind = MedVar::SEHExceptionCode;
+    Code.Size = 4;
+    Code.ConstVal = Clause.HandlerVA;
+    HighStmt HandlerReturn;
+    HandlerReturn.Kind = StmtKind::Return;
+    HandlerReturn.RetVal = HighExpr::makeVar(Code, Function.ReturnType);
+    Try.EHClauseBodies.push_back({HandlerReturn});
+    // Header collection must visit regions nested inside ordinary blocks.
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Cond = HighExpr::makeConst(1, 1);
+    Outer.Body.push_back(Try);
+    Function.Body.push_back(Outer);
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeConst(0, 4);
+    Function.Body.push_back(Return);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Function}, Stream, Options));
+    EXPECT_NE(Source.find("GetExceptionCode()"), std::string::npos);
+    EXPECT_NE(Source.find("return seh_exception_code;"), std::string::npos)
+        << Source;
+    checkStandaloneSEHSource(Source);
+  }
 }
 
 // A try at Begin whose one __except clause calls the filter at Filter and
@@ -1276,6 +1360,15 @@ TEST(COFFExceptionIR, LLVMCCatchSwitchRendersExceptSyntax) {
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("unhandled:"), std::string::npos) << Source;
+
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  std::string Standalone;
+  llvm::raw_string_ostream Stream(Standalone);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Stream, Options));
+  if (hasHostFixtureCompiler())
+    checkStandaloneSEHSource(Standalone);
 }
 
 TEST(COFFExceptionIR, LLVMCWrapUsesRecoveredSEHFilter) {
@@ -2321,7 +2414,23 @@ TEST(COFFExceptionIR, LLVMCFallbackMovesSharedContinuationOutOfTry) {
 
   // LLVM orders Done before Join. Both continuations must stay outside the
   // wrapper, reached through the same PHI edges as in the original CFG.
-  const std::string Source = emitLLVMC(Module);
+  rewrite_source::setOriginalVA(*Function, 0x140001000);
+  const std::string Unmapped = emitLLVMC(Module);
+  CSourceMap Map;
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.SourceMap = &Map;
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, Stream, Options));
+  EXPECT_EQ(Source, Unmapped);
+  ASSERT_FALSE(Map.Variables.empty());
+  for (const auto &[Key, Variable] : Map.Variables) {
+    if (!Variable.Bytes) {
+      EXPECT_TRUE(Variable.Ambiguous);
+      EXPECT_FALSE(Variable.Type);
+    }
+  }
   const auto Except = Source.find("} __except (");
   const auto JoinAt = Source.find("\nL_join:\n");
   ASSERT_NE(Except, std::string::npos) << Source;

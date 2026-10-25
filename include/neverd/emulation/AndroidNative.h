@@ -202,6 +202,12 @@ struct AndroidNativeOptions {
   /// Names become borrowed read-only guest strings with stable identities.
   /// This does not populate Libraries, resolve ELF symbols, or load host files.
   std::optional<std::vector<NativeDladdrObservation>> DladdrObservations;
+  /// Guest address of the complete, NUL-terminated LP64 environ pointer
+  /// vector used by getenv. Absent means unknown; zero supplies a null
+  /// environment. The vector and strings remain live guest memory, including
+  /// duplicate names and mutable values. No host environment is inherited.
+  /// This does not expose a writable environ global or environment mutators.
+  std::optional<uint64_t> EnvironmentVector;
 };
 
 /// Model-owned identity and placement, not a public pthread_internal_t layout.
