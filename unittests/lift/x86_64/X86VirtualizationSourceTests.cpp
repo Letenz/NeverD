@@ -2404,6 +2404,7 @@ TEST(X86SystemStateSource, XendBuiltinCompilesWithoutCallerFeatureFlags) {
       for (const auto &Source : {High, LLVM}) {
         // Stock Clang owns XEND too. Select the generated native branch,
         // without claiming support for the fork's other system builtins.
+        ASSERT_NE(Source.find("target(\"rtm\")"), std::string::npos) << Source;
         const auto Native =
             "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n" + Source;
         compileNativeC(Compiler, Directory, Format, Native, "llvm.x86.xend",

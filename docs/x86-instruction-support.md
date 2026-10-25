@@ -1630,13 +1630,22 @@ LLVM errors from publishing parseable but incomplete objects.
 
 The subsequent `dev` integration at `101544392` registers 752 tests across
 the two SDKs: 746 pass and six skip unavailable SDK/platform interfaces. The
-feature-composition regression now covers all sixteen combinations of SHA,
-SGX, AMX, REP and optional APX atomics, using native interfaces or the shared
+feature-composition regression now covers all sixteen combinations of SGX,
+AMX, REP and APX atomics with SHA present, using native interfaces or the shared
 owned-assembly templates according to SDK availability. Both SDKs again pass
 37 wrapper programs and 504 production pipeline objects. All 1,008 pipeline
 C sources match between SDKs; 396 changed since the initial qualification
 and were recompiled 1,584 times, while the other 612 reuse the prior evidence
 only after comparing source and case metadata.
+
+The following system-contract integration exposes an older-SDK XEND source
+failure: its owned LLVM assembly can select a native C builtin, so the shared
+feature collector must retain `rtm` for that representation too. The corrected
+collector combines RTM with SHA in one attribute. Both native and owned-assembly
+regressions compile at O0/O2 without caller feature flags. The complete matrix
+and affected rechecks cover 1,024 unique test/profile pairs: 986 pass and 38
+skip unavailable SDK, compiler-mode, platform or hardware prerequisites.
+The APX IR, C and object exports are byte-identical after this correction.
 
 LLVM `698a418beac3` and NeverC `6efa5e2a6` additionally correct the older
 pointer-taking atomic APIs: an integer width of 32/64 bits must not become a
