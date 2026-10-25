@@ -73,6 +73,8 @@ struct PatternGeneratorOptions {
   /// Unlike ordinary patterns, this includes functions below the size floor.
   bool RequireCaller = false;
   /// Emit complete collision evidence without the size/fixed-byte floors.
+  /// Includes self references and their aliases: omitting them can hide a
+  /// source constraint from an overlapping raw counterclaim.
   /// Every line is marked !evidence and rejected by the matching parser.
   /// It is input to offline supplement validation, never a signature pack.
   bool CollisionEvidence = false;
