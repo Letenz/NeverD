@@ -772,6 +772,19 @@ source/destination, overlap and dynamic provider lifetime.
 `AndroidStringCopyMemory.*` checks atomic refusal, memory limits and timeout
 against complete guarded guest bytes. No host libc copy is used as the oracle.
 
+`AndroidStringLength.*` checks `strlen`, `strnlen` and `__strlen_chk` using
+independent O0/O2 AArch64 callers across relocation formats and available CPU
+backends. It covers byte lengths, unchanged errno and memory, NUL-inclusive
+object bounds, full-width extents, read-only/cross-page inputs, page-tail NUL,
+scan-before-fortify fault order and dynamic provider lifetime.
+`AndroidStringLengthMemory.*` checks exact scan limits and expired deadlines,
+including zero object bounds, without publishing a result or guest writes.
+`ProcessPublic.AndroidFortifyLengthReportsMatchSDKAndCLI` compares shared SDK
+and CLI reports for success, fortify refusal and a pointer fault. Run these
+with `AndroidSearch.*`, `AndroidSearchMemory.*`, `AndroidStringCopy*`,
+`AndroidToken*` and `AndroidFormatting*` to protect neighboring string owners.
+Expected lengths and bytes are authored independently of host libc.
+
 `AndroidSearch.*Span*` checks `strspn` and `strcspn` at O0/O2 across relocation formats and
 available CPU backends. Independent expected counts cover empty sets, duplicates,
 all nonzero byte values, read-only/overlapping strings, page-tail termination or

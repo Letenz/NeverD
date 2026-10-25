@@ -185,6 +185,17 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `__strlen_chk` uses the same NUL scan as `strlen`, then requires the returned
+  length to be strictly smaller than the full LP64 object extent. The NUL must
+  fit inside that extent; an empty string therefore needs at least one byte.
+  Even a zero extent does not skip the scan. Inaccessible memory, the scan
+  limit or an expired deadline can stop the call before the fortify check.
+  Large extents, including `SIZE_MAX`, do not require a whole-object read and
+  do not relax the process scan limit. Success preserves guest bytes and errno.
+  A failed extent check uses the existing string-fortify `runtime_failure`
+  boundary without a returned value; abort-triggered signal delivery and
+  logging are not modeled. This independently implemented ordering follows the
+  pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
 - `strncpy` copies at most the requested count through the first NUL, then pads
   the destination to exactly that count with zeros. Truncated copies need not
   terminate. It returns the original destination and retains errno; zero count
