@@ -19,6 +19,7 @@
 #include "ItemViewActivation.h"
 #include "LinkDispatch.h"
 #include "LoadFileDialog.h"
+#include "ModelessDialog.h"
 #include "NativeWindowStates.h"
 #include "PatchMenu.h"
 #include "ProjectDatabase.h"
@@ -54,6 +55,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QRandomGenerator>
 #include <QRegularExpression>
@@ -75,6 +77,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <kddockwidgets/KDDockWidgets.h>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
@@ -85,6 +88,24 @@
 using namespace neverd::gui;
 
 namespace {
+class ReparentedDialogSource final : public QWidget {
+public:
+  using QWidget::QWidget;
+  QPointer<QDialog> Dialog;
+  bool SawParentChange = false;
+  bool DetachedBeforeChange = false;
+
+protected:
+  bool event(QEvent *event) override {
+    if (event->type() == QEvent::ParentAboutToChange && Dialog &&
+        Dialog->windowHandle()) {
+      SawParentChange = true;
+      DetachedBeforeChange = !Dialog->windowHandle()->transientParent();
+    }
+    return QWidget::event(event);
+  }
+};
+
 /// Two docks side by side in a main window, each filled with a plain color.
 struct DockPair {
   static constexpr QColor LeftColor{0x10, 0x20, 0x30};
@@ -172,6 +193,43 @@ class WorkbenchUnitTests : public QObject {
 public:
   static void initMain() { WindowFrame::prepareNativeWindows(); }
 private slots:
+  void modelessBrowsersDetachBeforeTheirNativeOwnerChanges_data() {
+    QTest::addColumn<bool>("ancestor");
+    QTest::newRow("source") << false;
+    QTest::newRow("ancestor") << true;
+  }
+
+  void modelessBrowsersDetachBeforeTheirNativeOwnerChanges() {
+    QFETCH(bool, ancestor);
+    auto origin = std::make_unique<QWidget>();
+    QWidget destination;
+    origin->show();
+    destination.show();
+    auto *moving = new ReparentedDialogSource(origin.get());
+    auto *source = ancestor ? new QWidget(moving) : moving;
+    moving->show();
+    source->show();
+    const QPointer<QDialog> dialog = new QDialog(source);
+    showModelessDialog(dialog, source);
+    QVERIFY(dialog->windowHandle());
+    QCOMPARE(dialog->windowHandle()->transientParent(), origin->windowHandle());
+    moving->Dialog = dialog;
+
+    // A native owner can disappear before the queued ParentChange callback.
+    // Inspect this boundary synchronously, while the old owner still exists.
+    moving->setParent(&destination);
+    QVERIFY(moving->SawParentChange);
+    QVERIFY(moving->DetachedBeforeChange);
+    origin.reset();
+    moving->show();
+    source->show();
+    QTRY_VERIFY(dialog && dialog->isVisible());
+    QTRY_COMPARE(dialog->windowHandle()->transientParent(),
+                 destination.windowHandle());
+    dialog->close();
+    QTRY_VERIFY(!dialog);
+  }
+
   void initTestCase() {
     // As the workbench starts.
     WindowFrame::prepareNativeWindows();
