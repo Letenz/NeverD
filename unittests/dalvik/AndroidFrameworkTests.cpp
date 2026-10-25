@@ -47,7 +47,8 @@ const LibraryMethod &handlerConstructor() {
 AndroidApplicationSnapshot messageInput() {
   AndroidApplicationSnapshot input;
   input.main_looper_prepared = true;
-  input.initial_main_queue.emplace();
+  input.initial_main_queue.emplace(
+      AndroidApplicationSnapshot::EmptyMessageQueue{});
   input.initial_message_pool_empty = true;
   return input;
 }
