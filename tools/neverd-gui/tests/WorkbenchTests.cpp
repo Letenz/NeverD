@@ -218,9 +218,20 @@ bool activateTestWindow(QWidget *window) {
   window->activateWindow();
   // Qt can report a transient family as active before native keyboard focus
   // reaches this particular window. Wait for both before sending test input.
-  return QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
-           return QGuiApplication::focusWindow() == window->windowHandle();
-         });
+  const bool active =
+      QTest::qWaitForWindowActive(window) && QTest::qWaitFor([window] {
+        return QGuiApplication::focusWindow() == window->windowHandle();
+      });
+  if (!active)
+    qWarning() << "Native focus did not reach" << window << "visible"
+               << window->isVisible() << "exposed"
+               << (window->windowHandle() &&
+                   window->windowHandle()->isExposed())
+               << "focus" << QGuiApplication::focusWindow() << "active"
+               << QApplication::activeWindow() << "popup"
+               << QApplication::activePopupWidget() << "modal"
+               << QApplication::activeModalWidget();
+  return active;
 }
 
 /// Bound a regression to exec() so a modal reference list fails rather than
