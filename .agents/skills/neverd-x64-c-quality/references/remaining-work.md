@@ -12,6 +12,12 @@ stated symbols and user identities cannot be removed by that reconciliation.
 COFF instruction-content flags and page execute permissions are separate.
 Full source emission is not proof of executable kernel reconstruction.
 
+Large LLVM source functions no longer retain redundant entry stores on private
+SSA temporaries whose single later definition dominates every read. The proof
+runs after exception edges are installed; bypasses, loop-first reads, ordering
+and escapes keep their unknown seeds. Public raw-IR regression checks protect
+this promotion cost without changing a function's timeout or skipping output.
+
 The source routes now preserve original-image byte-storage identity, finite
 bit projections, native byte shuffles and SHA-256 vector operations. Split SEH
 scopes no longer depend on LLVM block order. Unsupported scope arrangements

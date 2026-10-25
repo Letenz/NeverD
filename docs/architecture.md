@@ -119,6 +119,12 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+After all native exception edges exist, the LLVM emitter removes an entry seed
+only when its private slot has one later definition dominating every read.
+This keeps SSA promotion from recomputing whole-function dominance frontiers
+for already defined temporaries. Bypassed definitions, first loop iterations,
+ordered accesses and escaping storage retain the original seed.
+
 LowIR owns x64 internal-call return proofs. Replaced-PC tail transfers require
 an exact write to the pushed return slot and a checked parent stack. Bounded
 closed recursive groups must preserve every invocation's return slot and

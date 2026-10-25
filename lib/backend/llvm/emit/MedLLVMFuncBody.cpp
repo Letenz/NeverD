@@ -37,6 +37,7 @@
 #include "neverd/loader/X86/X86GetPcThunk.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InlineAsm.h"
@@ -703,6 +704,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   // a distinct entry seed, so a cross-block read cannot manufacture a zero or
   // poison away real control flow. Native emission retains its existing
   // refinement of unspecified state. Always-written seeds disappear in DCE.
+  llvm::SmallVector<llvm::StoreInst *, 32> EntrySeeds;
   auto preCreatePhiAlloca = [&](const MedVar &Out) {
     if (Out.isConst() || Out.Size == 0)
       return;
@@ -729,7 +731,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
             ? llvm_source_unknown::createEntrySeed(
                   AllocBuilder, llvm::cast<llvm::IntegerType>(Ty))
             : llvm::ConstantInt::get(Ty, 0);
-    AllocBuilder.CreateStore(Initial, Alloca);
+    EntrySeeds.push_back(AllocBuilder.CreateStore(Initial, Alloca));
     VarAllocs[Key] = Alloca;
   };
   for (auto &Blk : Func.Blocks) {
@@ -1152,6 +1154,10 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
             llvm::ConstantInt::get(CurFunc->getReturnType(), 0));
     }
   }
+
+  // Exception edges are now complete. Remove only entry seeds that no read
+  // can observe, before LLVM's SSA promotion sees two definitions per slot.
+  discardOverwrittenMedLLVMSeeds(EntrySeeds);
 
   // Analysis IR retains the original value graph. Native registration bodies
   // use optnone and must not materialize unused, unavailable PHI inputs as

@@ -8952,6 +8952,13 @@ values, escaping pointers, volatile reads, atomic/volatile stores and source
 observations. The narrow O1 entry re-lift also catches an unused ECX PHI that
 previously became an uninitialized native frame read on catch return. The
 source-frame initialization validator must still reject that old generated code.
+The same target checks redundant entry seeds in raw native/source LLVM before
+optimization. A cross-block definition chain must have one store per temporary;
+promotion preserves its independently computed result. Bypassed definitions,
+first loop iterations, reads before writes, later seeds, escapes, ordering and
+source metadata must retain observable initial values. Run the Win64 call
+contract, multi-root entry-frame, PHI, value and exception suites with this
+target when changing the emitter's seed cleanup.
 `RegistrationFrameStores` and `RegistrationFrameTaint` test bounded LLVM spill
 proofs, joins, backedges, partial writes and exhausted budgets. Loader tests keep
 independent SafeSEH/code references and real function boundaries while excluding
