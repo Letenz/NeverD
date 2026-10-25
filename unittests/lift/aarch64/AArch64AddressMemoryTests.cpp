@@ -54,6 +54,7 @@
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -369,6 +370,21 @@ std::string memorySource(const MedFunc &Function, llvm::Module &Module,
   return Source;
 }
 } // namespace
+
+TEST(AArch64AddressMemory, VectorIdentitiesAppendAfterPublishedInstructions) {
+  EXPECT_EQ(static_cast<uint16_t>(Intrinsic::A64_Load64RegisterOffset),
+            kPublishedWideAddressLoad);
+  EXPECT_EQ(static_cast<uint16_t>(Intrinsic::A64_LoadRegisterOffset),
+            kPublishedAddressLoad);
+  EXPECT_EQ(static_cast<uint16_t>(Intrinsic::A64_StoreRegisterOffset),
+            kPublishedAddressStore);
+  EXPECT_EQ(static_cast<uint16_t>(Intrinsic::X86FourSourceMemory),
+            kPublishedFourSourceMemory);
+  EXPECT_LT(Intrinsic::X86FourSourceMemory,
+            Intrinsic::A64_VectorLoadRegisterOffset);
+  EXPECT_LT(Intrinsic::A64_VectorLoadRegisterOffset,
+            Intrinsic::A64_VectorStoreRegisterOffset);
+}
 
 TEST(AArch64AddressMemory, RawWordsPreserveIndexScaleAndAliases) {
   for (const auto &Case : Cases)

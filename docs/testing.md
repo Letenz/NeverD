@@ -359,6 +359,8 @@ payloads, signaling bit patterns, negative zero and unchanged neighboring bytes
 at O0/O2. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain unqualified; the integer bridges do not certify those
 interfaces.
+The shared identity regression pins the published scalar and concurrent x86
+identities before admitting the appended vector operations.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the

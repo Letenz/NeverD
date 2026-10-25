@@ -369,7 +369,10 @@ feature availability. These operations preserve call argument setup and frame ta
 without proving a checked result is an ordinary arithmetic value. Their explicit
 results remain return values; discarded C expressions retain the instruction.
 
-`AArch64AddressMemory.def` owns original ordinary-memory operations. Its GPR
+`AArch64AddressMemory.def` owns original ordinary-memory encodings and shapes.
+`AArch64AddressMemoryOperations.def` owns their identities, direction and
+register class. Its frozen scalar and vector lists occupy separate append
+positions, preserving previously published scalar and x86 identities. The GPR
 register-offset inventory covers LDRB/H, LDR W/X, LDRSB/SH W/X, LDRSW and
 STRB/H/W/X with UXTW, SXTW, UXTX/LSL and SXTX, including both encoded scales.
 The raw index and original word remain one effectful operation through LowIR,

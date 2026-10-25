@@ -1,0 +1,32 @@
+//===- AArch64AddressMemoryOperations.def - Memory identities -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Frozen legacy and vector operation lists keep their serialized append
+/// positions independent. The vector hook defaults to the common metadata
+/// hook so shape, effect and spelling consumers share one operation inventory.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_A64_ADDRESS_MEMORY_OPERATION
+#define NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic, Store, Vector)
+#endif
+#ifndef NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION
+#define NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(Id, Mnemonic, Store)        \
+  NEVERD_A64_ADDRESS_MEMORY_OPERATION(Id, Mnemonic, Store, true)
+#endif
+
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_Load64RegisterOffset, "ldr", false,
+                                    false)
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_LoadRegisterOffset, "scalar.load",
+                                    false, false)
+NEVERD_A64_ADDRESS_MEMORY_OPERATION(A64_StoreRegisterOffset, "scalar.store",
+                                    true, false)
+NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(A64_VectorLoadRegisterOffset,
+                                           "vector.load", false)
+NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION(A64_VectorStoreRegisterOffset,
+                                           "vector.store", true)
+
+#undef NEVERD_A64_ADDRESS_VECTOR_MEMORY_OPERATION
+#undef NEVERD_A64_ADDRESS_MEMORY_OPERATION
