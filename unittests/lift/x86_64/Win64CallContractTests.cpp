@@ -33,6 +33,8 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/libc/NoReturnLoadedTarget.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -872,6 +874,117 @@ PipelineResult run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   auto Result = Pipeline().run(Img, Ctx, Opts);
   EXPECT_TRUE(Result.Success) << Result.Error;
   return Result;
+}
+
+TEST(Win64CallContract, ImmutableNoReturnSlotsEndBothSourcePaths) {
+  constexpr va_t Target = Text + 0x80;
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    std::vector<uint8_t> Code(0x90, 0xCC);
+    put(Code, Text,
+        {0x48, 0x83, 0xEC, 0x28, // sub rsp,40
+         0x85, 0xC9,             // test ecx,ecx
+         0x74, 7});              // je normal
+    put(Code, Text + 8, throughSlot(Text + 8, Iat));
+    put(Code, Text + 15, {0xB8, 37, 0, 0, 0, 0x48, 0x83, 0xC4, 0x28, 0xC3});
+    put(Code, Target,
+        {0x0F, 0x0B}); // abort's named body is independently terminal
+    auto Image =
+        makeImage(Code, {{Text, "loaded_noreturn"}, {Target, "abort"}}, {});
+    Symbol SlotSymbol;
+    SlotSymbol.Name = "stop_callback";
+    SlotSymbol.Addr = Iat;
+    SlotSymbol.Size = 8;
+    Image.Symbols.push_back(SlotSymbol);
+    auto &Data = Image.Segments.back();
+    Data.Name = ".rdata";
+    Data.Size = Data.FileSz = 8;
+    Data.Data.resize(8);
+    for (unsigned I = 0; I != 8; ++I)
+      Data.Data[I] = static_cast<uint8_t>(Target >> (I * 8));
+    for (auto &Segment : Image.Segments) {
+      Segment.FileSz = Segment.Size;
+      Section Section;
+      Section.Name = Segment.Name;
+      Section.VA = Segment.VA;
+      Section.Flags = Segment.Flags;
+      Section.Size = Section.FileSz = Segment.Size;
+      Image.Sections.push_back(Section);
+    }
+    Image.CodePtrRelocSlots.insert(Iat);
+    Image.BaseRelocations.push_back({Iat, 10}); // IMAGE_REL_BASED_DIR64
+    if (Mutation == 1) {
+      Data.Flags = Data.Flags | SegmentFlags::Writable;
+      Image.Sections.back().Flags = Data.Flags;
+    } else if (Mutation == 2)
+      Image.BaseRelocations.clear();
+    else if (Mutation == 3)
+      Image.BaseRelocations.push_back({Iat, 10});
+    else if (Mutation == 4)
+      Image.DataPtrRelocSlots.insert(Iat);
+    else if (Mutation == 5)
+      Image.UserNoReturn[Target] = false;
+    else if (Mutation == 6)
+      Image.UserNoReturn[Iat] = false;
+    else if (Mutation == 7)
+      Image.Segments.push_back(Data);
+    const bool Expected = Mutation == 0;
+    libc::NoReturnTargetIndex Index(Image);
+    EXPECT_EQ(libc::isNoReturnLoadedTarget(Image, Iat), Expected);
+    EXPECT_EQ(libc::isNoReturnLoadedTarget(Image, Iat, &Index), Expected);
+    // Storage's loaded target never gives a direct call into data its ABI.
+    EXPECT_FALSE(libc::isNoReturnTarget(Image, Iat, &Index));
+    if (!Expected)
+      continue;
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text};
+      Options.SourceProjection = true;
+      Options.LiftMode = LLVM;
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      bool Found = false;
+      for (const auto &Function : Result.LowFuncs)
+        if (Function.Entry == Text)
+          for (const auto &Block : Function.Blocks)
+            for (const auto &Instruction : Block.InstructionBoundaries)
+              if (Instruction.Address == Text + 8) {
+                Found = true;
+                EXPECT_TRUE(hasLowInstructionControlFlag(
+                    Instruction.ControlFlags,
+                    LowInstructionControlFlag::NoReturn));
+                EXPECT_EQ(Block.EndAddr, Text + 14);
+              }
+      ASSERT_TRUE(Found);
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      ASSERT_TRUE(
+          LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions)
+               : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+      EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+      const std::string Oracle = R"(
+extern _Noreturn void _Exit(int);
+_Noreturn uint64_t stop_provider(void) __asm__("abort");
+_Noreturn uint64_t stop_provider(void) { _Exit(0); }
+int main(void) {
+  if (loaded_noreturn(0) != 37) return 1;
+  loaded_noreturn(1);
+  return 2;
+}
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+  }
 }
 
 TEST(Win64CallContract, BoundIntegerOperandsAgreeAcrossSourceRoutes) {
@@ -1835,6 +1948,137 @@ int main(void) {
             Guard + Source + Oracle,
             {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
     }
+}
+
+TEST(CallExitRegisters, DeferredVoidCallsCannotProduceKnownValues) {
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    if (LLVM) {
+      llvm::LLVMContext Context;
+      llvm::Module Module("deferred-void-call", Context);
+      Module.setDataLayout("e-p:64:64");
+      llvm::IRBuilder<> B(Context);
+      auto *F = llvm::Function::Create(
+          llvm::FunctionType::get(B.getInt32Ty(), {B.getInt32Ty()}, false),
+          llvm::GlobalValue::ExternalLinkage, "deferred_void", Module);
+      auto *Produce = llvm::Function::Create(
+          llvm::FunctionType::get(B.getInt32Ty(), false),
+          llvm::GlobalValue::ExternalLinkage, "produce_value", Module);
+      auto *Effect = llvm::Function::Create(
+          llvm::FunctionType::get(B.getVoidTy(), false),
+          llvm::GlobalValue::ExternalLinkage, "reset_value", Module);
+      auto *Entry = llvm::BasicBlock::Create(Context, "entry", F);
+      auto *Reset = llvm::BasicBlock::Create(Context, "reset", F);
+      auto *Define = llvm::BasicBlock::Create(Context, "define", F);
+      auto *Join = llvm::BasicBlock::Create(Context, "join", F);
+      B.SetInsertPoint(Entry);
+      auto *Known = B.CreateCall(Produce);
+      B.CreateCondBr(B.CreateICmpEQ(F->getArg(0), B.getInt32(0)), Join, Reset);
+      B.SetInsertPoint(Reset);
+      B.CreateCall(Effect);
+      auto *Unknown = llvm_source_unknown::create(B, B.getInt32Ty());
+      B.CreateCondBr(B.CreateICmpEQ(F->getArg(0), B.getInt32(2)), Define, Join);
+      B.SetInsertPoint(Define);
+      B.CreateBr(Join);
+      B.SetInsertPoint(Join);
+      auto *Value = B.CreatePHI(B.getInt32Ty(), 3, "value");
+      Value->addIncoming(Known, Entry);
+      Value->addIncoming(Unknown, Reset);
+      Value->addIncoming(B.getInt32(41), Define);
+      B.CreateRet(Value);
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      ASSERT_TRUE(LLVMCEmitter().emit(Module, Output));
+    } else {
+      class VoidPrototype : public NullDebugContext {
+      public:
+        std::optional<FunctionSym>
+        resolveFunction(va_t Address) const override {
+          return resolvePrototype(Address == 0x1100   ? "produce_value"
+                                  : Address == 0x1200 ? "reset_value"
+                                                      : "");
+        }
+        std::optional<FunctionSym>
+        resolvePrototype(llvm::StringRef Name) const override {
+          if (Name != "reset_value" && Name != "produce_value")
+            return std::nullopt;
+          FunctionSym Symbol;
+          Symbol.Name = Name.str();
+          Symbol.PlatformConvention = true;
+          Symbol.ReturnType = Name == "reset_value" ? NdType::makeVoid()
+                                                    : NdType::makeInt(4, false);
+          return Symbol;
+        }
+        bool hasInfo() const override { return true; }
+      } Debug;
+      HighFunc F;
+      F.Name = "deferred_void";
+      F.ReturnType = NdType::makeInt(4, false);
+      F.Params = {{"arg0", F.ReturnType}};
+      MedVar Value;
+      Value.Kind = MedVar::Temp;
+      Value.Id = 1;
+      Value.Size = 4;
+      Value.TheArch = Arch::X64;
+      MedVar Mode = Value;
+      Mode.Kind = MedVar::Param;
+      Mode.Id = 0;
+      auto Assign = [&](ExprPtr Expression, bool Phi = false) {
+        HighStmt S;
+        S.Kind = StmtKind::Assign;
+        S.Dst = HighExpr::makeVar(Value, F.ReturnType);
+        S.Val = std::move(Expression);
+        S.IsPhiCopy = Phi;
+        return S;
+      };
+      auto Call = [&](const char *Name) {
+        auto E = HighExpr::makeCall(
+            Name, llvm::StringRef(Name) == "produce_value" ? 0x1100 : 0x1200,
+            {});
+        E->Type = F.ReturnType;
+        return E;
+      };
+      F.Body = {Assign(HighExpr::makeUndef(4), true),
+                Assign(Call("produce_value"))};
+      HighStmt Reset;
+      Reset.Kind = StmtKind::If;
+      Reset.Cond = HighExpr::makeVar(Mode, F.ReturnType);
+      Reset.Body = {Assign(Call("reset_value"))};
+      HighStmt Define;
+      Define.Kind = StmtKind::If;
+      Define.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL,
+                                        HighExpr::makeVar(Mode, F.ReturnType),
+                                        HighExpr::makeConst(2, 4));
+      Define.Body = {Assign(HighExpr::makeConst(41, 4))};
+      Reset.Body.push_back(Define);
+      F.Body.push_back(Reset);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeVar(Value, F.ReturnType);
+      F.Body.push_back(Return);
+      ASSERT_TRUE(HighCEmitter().emit({F}, Output, {}, &Debug));
+    }
+    const std::string Guard = R"(
+static unsigned unavailable_count, produce_count, effect_count;
+static void observe_unavailable(void) { ++unavailable_count; }
+#define __builtin_trap() observe_unavailable()
+)";
+    const std::string Oracle = R"(
+uint32_t produce_value(void) { ++produce_count; return 37; }
+void reset_value(void) { ++effect_count; }
+int main(void) {
+  if (deferred_void(0) != 37 || produce_count != 1 || effect_count || unavailable_count) return 1;
+  if (deferred_void(2) != 41 || produce_count != 2 || effect_count != 1 || unavailable_count) return 2;
+  if (deferred_void(1) != 0 || produce_count != 3 || effect_count != 2 || unavailable_count != 1) return 3;
+  return 0;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      source_call_execution_test::compileAndRun(
+          Guard + Source + Oracle,
+          {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+  }
 }
 
 TEST(CallExitRegisters, UnknownOnlyJoinCopiesAreNotReads) {

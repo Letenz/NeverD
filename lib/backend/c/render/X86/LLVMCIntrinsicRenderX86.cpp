@@ -512,6 +512,50 @@ const char *lookupX86AsmToC(const char *Mnem) {
   return nullptr;
 }
 
+std::optional<InlineAsmRender>
+renderX86PrefetchCall(Arch TheArch, const llvm::CallBase &Call,
+                      const std::vector<std::string> &Args) {
+  const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (!Asm)
+    return std::nullopt;
+  const llvm::StringRef Text = Asm->getAsmString();
+  const auto Mnemonic = Text.split(' ').first;
+  bool Prefetch = false;
+  for (const auto Id :
+       {Intrinsic::PrefetchT0, Intrinsic::PrefetchT1, Intrinsic::PrefetchT2,
+        Intrinsic::PrefetchNta, Intrinsic::PrefetchW, Intrinsic::PrefetchWT1})
+    Prefetch |= Mnemonic == intrinsicAsmMnemonic(Id);
+  if (!Prefetch)
+    return std::nullopt;
+  auto Reject = []() -> std::optional<InlineAsmRender> {
+    throw std::invalid_argument("unsupported x86 prefetch call contract");
+  };
+  if ((TheArch != Arch::X86 && TheArch != Arch::X64) || Args.size() != 1 ||
+      Call.arg_size() != 1 || !Call.getType()->isVoidTy() ||
+      !Call.getArgOperand(0)->getType()->isIntegerTy(
+          TheArch == Arch::X64 ? 64 : 32) ||
+      Call.getFunctionType()->isVarArg() || Call.getNumOperandBundles() ||
+      Call.doesNotReturn() || Call.getCallingConv() != llvm::CallingConv::C ||
+      Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
+      !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
+      Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
+      Asm->getConstraintString() != "r,~{memory}")
+    return Reject();
+  for (const std::string Segment : {"", "fs", "gs"}) {
+    const auto Input = Segment.empty() ? "($0)" : "%" + Segment + ":($0)";
+    if (Text != Mnemonic.str() + " " + Input)
+      continue;
+    const auto Output = Segment.empty() ? "(%0)" : "%%" + Segment + ":(%0)";
+    // C operands remain operands. Substituting an address expression into
+    // MS-style assembly loses its memory indirection and cannot name a GEP.
+    return InlineAsmRender{"__asm__ volatile(\"" + Mnemonic.str() + " " +
+                               Output + "\" : : \"r\"((uintptr_t)(" + Args[0] +
+                               ")) : \"memory\");\n",
+                           false};
+  }
+  return Reject();
+}
+
 InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
                                    const std::string &Mnemonic,
                                    bool IsStructReturn,

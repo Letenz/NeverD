@@ -11,6 +11,32 @@ completed discovery is different from a real function rejected by lifting;
 stated symbols and user identities cannot be removed by that reconciliation.
 COFF instruction-content flags and page execute permissions are separate.
 Full source emission is not proof of executable kernel reconstruction.
+Discovery and CFG recovery now share no-return evidence for loaded targets.
+A loader import binding or a unique immutable relocated code pointer can
+transfer its target's fact; writable, conflicting and user-overridden pointers
+do not acquire it. Public fixtures cover both C routes and their continuations.
+
+Mapped LLVM C pages now leave EH tokens without a storage extent instead of
+querying DataLayout for an unsized type. The same public exception fixture
+checks mapped/unmapped source identity and executes both continuations. SEH
+units include their platform declarations, name filter callees and retain
+implicit exception-code assignments without colliding with header macros.
+
+Debug-named callback storage remains a loaded target unless loader import
+evidence binds its identity. Switching the slot at runtime is covered on
+COFF and ELF. HighC call results use only an admitted declaration, including
+header-owned record argument adapters; a rejected debug prototype cannot
+silently change an integer carrier into a pointer result.
+Deferred unknown copies also preserve a declared void call as an effect and
+clear the destination availability. Both source routes execute the call once;
+an overwritten result becomes known, while reading an unavailable result
+retains the explicit guard.
+
+LLVM C prefetch rendering now checks the full owned assembly contract and
+retains computed memory operands and FS/GS overrides. All six hint forms
+assemble at O0/O2; baseline read hints execute, while write hints and segment
+forms do not assume host features or segment bases. Altered constraints,
+dialect, effects, stack alignment and address width remain refused.
 
 CLAC/STAC, XEND and CLZERO now share the validated system-instruction contract in
 HighC, native LLVM and LLVMC. Their ordered effects survive unused results and

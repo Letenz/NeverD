@@ -5056,8 +5056,12 @@ TEST_F(SessionCAPITest, DeclaredTypesJoinThePDBsAndStayWithTheProject) {
 
   // The declarations stay with the project: saved, they come back with the
   // next load, read again over the PDB's types.
-  llvm::json::Value Rows =
-      *llvm::json::parse(takeString(neverd_type_declarations_json(Session)));
+  auto ParsedRows =
+      llvm::json::parse(takeString(neverd_type_declarations_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(ParsedRows))
+      << llvm::toString(ParsedRows.takeError());
+  llvm::json::Value Rows = std::move(*ParsedRows);
+  ASSERT_TRUE(Rows.getAsArray());
   ASSERT_EQ(Rows.getAsArray()->size(), 4u);
   // The list keeps one origin when asked, and counts every origin's.
   llvm::json::Object Mine =
@@ -5191,7 +5195,11 @@ TEST_F(SessionCAPIKernelInputs, KernelFunctionsDecompileWithTheirPrototypes) {
                         "PIO_STATUS_BLOCK IoStatusBlock"),
             std::string::npos)
       << Create;
-  EXPECT_NE(Create.find("uint32_t EaLength)"), std::string::npos) << Create;
+  EXPECT_NE(Create.find("__typeof__(__builtin_choose_expr(sizeof(unsigned "
+                        "long) == 4, (unsigned long)0, (uint32_t)0)) "
+                        "EaLength)"),
+            std::string::npos)
+      << Create;
   // A pointer a C declaration returns comes back in RAX.
   const std::string Irp = signature("IoAllocateIrp");
   EXPECT_NE(Irp.find("PIRP IoAllocateIrp(CCHAR StackSize, BOOLEAN "
@@ -5236,7 +5244,11 @@ TEST_F(SessionCAPIKernelInputs, KernelExportsTakeTheirPrototypesWithoutThePDB) {
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("ULONG EaLength) */"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("uint32_t EaLength) {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__typeof__(__builtin_choose_expr(sizeof(unsigned "
+                        "long) == 4, (unsigned long)0, (uint32_t)0)) "
+                        "EaLength) {"),
+            std::string::npos)
+      << Source;
   // ExRaiseStatus, which the kernel exports and calls, never returns: the
   // path that raises hands nothing back.
   const int Allocate = neverd_func_find_by_name(Session, "FsRtlAllocatePool");
@@ -10615,7 +10627,14 @@ TEST_F(SessionCAPITest, StartAloneCallsTheBoundStartupImportWithMain) {
   const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
   ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
   EXPECT_NE(LLVMC.find("__libc_start_main("), std::string::npos) << LLVMC;
-  EXPECT_NE(LLVMC.find("main(void);"), std::string::npos) << LLVMC;
+  // A source page retains code pointers in the original image's coordinates.
+  // Check main's exact address, not a declaration of a rebuilt function.
+  const int Main = neverd_func_find_by_name(Session, "main");
+  ASSERT_GE(Main, 0);
+  EXPECT_NE(LLVMC.find("(uintptr_t)(0x" +
+                       llvm::utohexstr(neverd_func_entry(Session, Main)) + ")"),
+            std::string::npos)
+      << LLVMC;
   const std::string HighC = takeString(neverd_decompile(Session, Entry));
   EXPECT_NE(HighC.find("__libc_start_main("), std::string::npos) << HighC;
 #endif
@@ -10729,7 +10748,12 @@ TEST_F(SessionCAPITest, AnalyzedLLVMPagesEmitTheirFunctionAlone) {
   const std::string LLVMC = takeString(neverd_decompile_llvm(Session, Entry));
   ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
   EXPECT_NE(LLVMC.find("__libc_start_main("), std::string::npos) << LLVMC;
-  EXPECT_NE(LLVMC.find("main(void);"), std::string::npos) << LLVMC;
+  const int Main = neverd_func_find_by_name(Session, "main");
+  ASSERT_GE(Main, 0);
+  EXPECT_NE(LLVMC.find("(uintptr_t)(0x" +
+                       llvm::utohexstr(neverd_func_entry(Session, Main)) + ")"),
+            std::string::npos)
+      << LLVMC;
   const std::string IR = takeString(neverd_ir_llvm(Session, Entry));
   ASSERT_FALSE(IR.empty()) << takeString(neverd_last_error(Session));
   EXPECT_NE(IR.find("define "), std::string::npos) << IR;

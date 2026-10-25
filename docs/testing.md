@@ -10637,6 +10637,18 @@ is useful for local comparisons, not a portable throughput guarantee.
 
 ### Android native workloads
 
+`AndroidEnvironmentTests` exercises imported and named `getenv` at O0/O2
+with ordinary, Android-packed and RELR relocations on available ARM64
+transports. Independent guest buffers cover absent/null/empty environments,
+duplicate and empty names, API 28 `=` truncation, borrowed pointer identity,
+live vector/value mutation, constructor and thread sharing, preserved errno,
+closed providers and required-read faults. Page-tail queries and values prove
+that irrelevant tails are not read. Direct model checks bound cumulative scan
+work and reject expired deadlines while preserving read-only input bytes.
+Strict JSON tests retain full-width addresses. The process-public suite
+compares complete C SDK and CLI reports for successful and refused queries.
+No test inherits the host environment.
+
 `AndroidAuxvTests` compares imported and named `getauxval` calls at O0/O2 with
 ordinary, Android-packed and RELR relocations on each available checked ARM64
 transport. It covers complete output buffers and canaries, 64-bit type/value

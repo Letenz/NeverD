@@ -12,6 +12,7 @@
 #include "WindowsQualifiedFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -135,6 +136,151 @@ __attribute__((noreturn, force_align_arg_pointer)) void _start(void) {
   Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
                                      Redirects, 30, 0, &Error);
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+}
+
+TEST(LLVMCValues, DebugNamedCallbackSlotsKeepTheirLoadedTargets) {
+  using namespace neverd;
+  constexpr va_t Address = 0x140003000;
+  class CallbackDebug : public NullDebugContext {
+  public:
+    std::optional<DataObjectSym> resolveDataObject(va_t VA) const override {
+      if (VA == 0x140003000)
+        return DataObjectSym{"runtime_callback", VA, 8, false};
+      return std::nullopt;
+    }
+    bool hasInfo() const override { return true; }
+  } Debug;
+  for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+    SCOPED_TRACE(unsigned(Format));
+    llvm::LLVMContext Context;
+    llvm::Module Module("debug_named_callback", Context);
+    Module.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> B(Context);
+    auto *Slot = new llvm::GlobalVariable(
+        Module, B.getInt64Ty(), false, llvm::GlobalValue::ExternalLinkage,
+        nullptr, (kNdDataPrefix + llvm::utohexstr(Address)).str());
+    auto *Type =
+        llvm::FunctionType::get(B.getInt64Ty(), {B.getInt64Ty()}, false);
+    auto *Function =
+        llvm::Function::Create(Type, llvm::GlobalValue::ExternalLinkage,
+                               "call_runtime_callback", Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Target =
+        B.CreateIntToPtr(B.CreateLoad(B.getInt64Ty(), Slot), B.getPtrTy());
+    B.CreateRet(B.CreateCall(Type, Target, {Function->getArg(0)}));
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = Format;
+    Symbol Data;
+    Data.Name = "runtime_callback";
+    Data.Addr = Address;
+    Image.Symbols.push_back(Data);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = Format;
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    ASSERT_TRUE(LLVMCEmitter().emit(Module, Stream, Options, &Debug, &Image));
+    Source += R"(
+uint64_t runtime_callback;
+static unsigned calls;
+static uint64_t first_target(uint64_t value) { ++calls; return value + 7; }
+static uint64_t second_target(uint64_t value) { ++calls; return value ^ 0x55; }
+int main(void) {
+  runtime_callback = (uintptr_t)&first_target;
+  if (call_runtime_callback(5) != 12) return 1;
+  runtime_callback = (uintptr_t)&second_target;
+  if (call_runtime_callback(5) != 0x50) return 2;
+  return calls != 2;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source, Level, {}, true);
+  }
+}
+
+TEST(LLVMCValues, PrefetchKeepsComputedAndSegmentedMemoryOperands) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("prefetch_addresses", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  for (const char *Mnemonic : {"prefetcht0", "prefetcht1", "prefetcht2",
+                               "prefetchnta", "prefetchw", "prefetchwt1"}) {
+    for (const std::string Segment : {"", "fs", "gs"}) {
+      auto *F = llvm::Function::Create(
+          llvm::FunctionType::get(B.getVoidTy(), {B.getInt64Ty()}, false),
+          llvm::GlobalValue::ExternalLinkage,
+          "probe_" + std::string(Mnemonic) + Segment, Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+      llvm::Value *Address = F->getArg(0);
+      if (Segment.empty()) {
+        auto *Bytes = llvm::ArrayType::get(B.getInt8Ty(), 160);
+        auto *Buffer = B.CreateAlloca(Bytes, nullptr, "buffer");
+        Address = B.CreatePtrToInt(
+            B.CreateInBoundsGEP(Bytes, Buffer,
+                                {B.getInt32(0), B.getInt32(104)}),
+            B.getInt64Ty());
+      }
+      const auto Text = std::string(Mnemonic) + " " +
+                        (Segment.empty() ? "" : "%" + Segment + ":") + "($0)";
+      auto *Asm =
+          llvm::InlineAsm::get(F->getFunctionType(), Text, "r,~{memory}", true);
+      B.CreateCall(Asm, {Address});
+      B.CreateRetVoid();
+    }
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Stream, Options));
+  // Only baseline read-prefetch instructions execute. The remaining hints
+  // and FS/GS forms are assembled without assuming host features or bases.
+  Source += R"(
+int main(void) {
+  probe_prefetcht0(0); probe_prefetcht1(0);
+  probe_prefetcht2(0); probe_prefetchnta(0);
+  return 0;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, {}, true);
+  for (const char *Segment : {"fs", "gs"})
+    EXPECT_NE(Source.find(std::string("prefetchw %%") + Segment + ":(%0)"),
+              std::string::npos)
+        << Source;
+}
+
+TEST(LLVMCValues, PrefetchRejectsChangedAssemblyContracts) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    llvm::LLVMContext Context;
+    llvm::Module Module("prefetch_contract", Context);
+    Module.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> B(Context);
+    auto *F = llvm::Function::Create(
+        llvm::FunctionType::get(B.getVoidTy(), {B.getInt64Ty()}, false),
+        llvm::GlobalValue::ExternalLinkage, "prefetch_contract", Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+    auto *Asm = llvm::InlineAsm::get(
+        F->getFunctionType(), Mutation == 0 ? "prefetchw $0" : "prefetchw ($0)",
+        Mutation == 1 ? "r" : "r,~{memory}", true,
+        /*isAlignStack=*/Mutation == 2,
+        Mutation == 3 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT);
+    auto *Call = B.CreateCall(Asm, {F->getArg(0)});
+    if (Mutation == 4)
+      Call->setMemoryEffects(llvm::MemoryEffects::none());
+    B.CreateRetVoid();
+    neverd::CEmitterOptions Options;
+    Options.TheArch = Mutation == 5 ? neverd::Arch::X86 : neverd::Arch::X64;
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Stream, Options),
+                 std::invalid_argument);
+  }
 }
 
 TEST(LLVMCValues, NativeSHA256KeepsVectorInputsAndInstructionFeatures) {
