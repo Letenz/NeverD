@@ -883,6 +883,16 @@ TEST(SourceCallReturnReads,
   EXPECT_NE(Error.find("complete normal"), std::string::npos);
 }
 
+TEST(SourceCallReturnReads, LinkRegisterCallsDoNotWriteAStackSlot) {
+  for (Arch Architecture : {Arch::ARM, Arch::AArch64}) {
+    auto Image = callSlotImage();
+    Image.Arch = Architecture;
+    std::string Error;
+    EXPECT_TRUE(validateSourceCallReturnReads(observedCallSlot(), Image, Error))
+        << Error;
+  }
+}
+
 TEST(SourceCallReturnReads,
      BudgetExhaustionNeverPublishesAnUncheckedProjection) {
   std::string Error;

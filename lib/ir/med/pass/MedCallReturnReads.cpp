@@ -62,7 +62,7 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   Diagnostic.clear();
   // Link-register targets have no implicit stack write. The current source
   // call encoding authority authenticates x86 near CALL/JMP occurrences.
-  if ((Image.Arch != Arch::X64 && Image.Arch != Arch::X86) ||
+  if (!getTargetRegInfo(Image.Arch).CallPushesReturnAddress ||
       Func.Blocks.empty())
     return true;
   auto Refuse = [&](const std::string &Reason) {

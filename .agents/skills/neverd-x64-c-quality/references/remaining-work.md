@@ -87,6 +87,12 @@ frame projection. Discarding an old save solely because CALL overwrites its
 bytes can turn a later return-slot read into an uninitialized C value. A full
 source projection of the new return-address value is required before admitting
 that optimization; runtime code-address relocation remains a separate proof.
+Shared source preparation now rejects exact x86/x64 loads reached by those
+unrepresented physical CALL writes, including when the old frame content is a
+known constant. Complete later stores permit the read; partial writes, joins,
+loops and unknown call positions retain the diagnostic. Both source routes use
+the same bounded check. This closes stale-value success, not the missing
+machine-state/continuation source ABI, unresolved aliases or native proof.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by
