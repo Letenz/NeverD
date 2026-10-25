@@ -2424,6 +2424,11 @@ private slots:
     LoadDialogAcceptor loads;
     bench.window->openFile(writeFixture(directory, "code-folding.bin"));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    // Fix the document generation for the navigation checks below. A separate
+    // refresh phase then exercises invalidation at an exact request boundary.
+    QTRY_COMPARE_WITH_TIMEOUT(
+        bench.session.background().value("state").toString(),
+        QStringLiteral("ready"), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     assembly->navigate(Base + 0x140);
     QTRY_COMPARE(assembly->currentFunction(),
@@ -2465,6 +2470,15 @@ private slots:
     QVERIFY(listing->searchSelection() != first || text.count(address) == 1);
     QCOMPARE(code->searchSelection(), sourceSelection);
     QCOMPARE(code->documentVersion(), version);
+    listing->refresh();
+    QVERIFY(!listing->searchReady());
+    QCOMPARE(status->text(), QStringLiteral("No searchable text available"));
+    QVERIFY(!dialog->findChild<QPushButton *>("findInViewNext")->isEnabled());
+    QTRY_VERIFY(listing->searchReady());
+    QTRY_VERIFY(
+        dialog->findChild<QPushButton *>("findInViewNext")->isEnabled());
+    QTest::keyClick(input, Qt::Key_Return);
+    QCOMPARE(listing->selectedText(), address);
     QPointer<FindInViewDialog> retired = dialog;
     bench.action(ActionId::FileClose)->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);

@@ -235,7 +235,14 @@ private slots:
              metrics.horizontalAdvance("iiii"));
   }
 
+  void clientResizeKeepsOppositeEdgesAndBounds_data() {
+    QTest::addColumn<bool>("restartAtMaximum");
+    QTest::newRow("held-through-maximum") << false;
+    QTest::newRow("restart-at-maximum") << true;
+  }
+
   void clientResizeKeepsOppositeEdgesAndBounds() {
+    QFETCH(bool, restartAtMaximum);
     const QString platform = QGuiApplication::platformName();
     if (platform != "offscreen" && platform != "cocoa")
       QSKIP("These platforms use native resize; docking tests drive it.");
@@ -259,7 +266,7 @@ private slots:
                          edges & Qt::TopEdge      ? 2
                          : edges & Qt::BottomEdge ? window.height() - 3
                                                   : window.height() / 2);
-      const QPoint global = window.mapToGlobal(press);
+      QPoint global = window.mapToGlobal(press);
       const auto send = [&](QEvent::Type type, QPoint at) {
         QMouseEvent event(
             type, window.mapFromGlobal(at), at,
@@ -278,9 +285,32 @@ private slots:
       send(QEvent::MouseMove, global + delta * 100);
       QCOMPARE(window.width(), delta.x() ? 500 : original.width());
       QCOMPARE(window.height(), delta.y() ? 400 : original.height());
+      if (restartAtMaximum) {
+        send(QEvent::MouseButtonRelease, global + delta * 100);
+        const QPoint edge(edges & Qt::LeftEdge    ? 2
+                          : edges & Qt::RightEdge ? window.width() - 3
+                                                  : window.width() / 2,
+                          edges & Qt::TopEdge      ? 2
+                          : edges & Qt::BottomEdge ? window.height() - 3
+                                                   : window.height() / 2);
+        global = window.mapToGlobal(edge);
+        send(QEvent::MouseButtonPress, global);
+      }
       send(QEvent::MouseMove, global - delta * 100);
       QCOMPARE(window.width(), delta.x() ? 240 : original.width());
       QCOMPARE(window.height(), delta.y() ? 180 : original.height());
+      if (restartAtMaximum) {
+        send(QEvent::MouseButtonRelease, global - delta * 100);
+        if (edges & Qt::LeftEdge)
+          QCOMPARE(window.geometry().right(), original.right());
+        else
+          QCOMPARE(window.x(), original.x());
+        if (edges & Qt::TopEdge)
+          QCOMPARE(window.geometry().bottom(), original.bottom());
+        else
+          QCOMPARE(window.y(), original.y());
+        continue;
+      }
       send(QEvent::MouseMove, global + delta);
       send(QEvent::MouseButtonRelease, global + delta);
       QCOMPARE(window.width(), original.width() + (delta.x() ? 40 : 0));

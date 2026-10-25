@@ -274,6 +274,8 @@ if(BUILD_TESTING)
   if(APPLE)
     target_sources(neverd-gui-docking-tests PRIVATE
       tests/platform/NativeWindowStateMac.mm)
+    target_sources(neverd-gui-unit-tests PRIVATE
+      tests/platform/NativeWindowStateMac.mm)
     # Cocoa window moving/resizing needs real native pointer events, not
     # synthetic Qt events without a current NSEvent.
     target_link_libraries(neverd-gui-docking-tests PRIVATE "-framework ApplicationServices")

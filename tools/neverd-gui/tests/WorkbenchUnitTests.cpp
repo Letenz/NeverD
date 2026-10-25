@@ -1,4 +1,12 @@
-// Unit tests of workbench building blocks that need no worker.
+//===- WorkbenchUnitTests.cpp - Workbench component contracts ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Workbench building blocks that need no worker.
+//===----------------------------------------------------------------------===//
+
 #include "ActionRegistry.h"
 #include "Address.h"
 #include "AddressSpace.h"
@@ -11,6 +19,7 @@
 #include "ItemViewActivation.h"
 #include "LinkDispatch.h"
 #include "LoadFileDialog.h"
+#include "NativeWindowState.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
 #include "SymbolTablePromptDialog.h"
@@ -1863,7 +1872,13 @@ private slots:
     // before an animation ends, and reports full screen alone over maximized.
     const auto request = [&](Qt::WindowStates states, const char *step) {
       const int before = applied.count;
-      window.setWindowState(states);
+      bool nativeFinished = true;
+#ifdef Q_OS_MACOS
+      if (QGuiApplication::platformName() == QLatin1String("cocoa"))
+        nativeFinished = test::setNativeWindowState(window, states);
+      else
+#endif
+        window.setWindowState(states);
       const bool confirmed = QTest::qWaitFor(
           [&] {
             return applied.count > before &&
@@ -1872,7 +1887,7 @@ private slots:
           10000);
       QTest::qWait(300);
       report(step);
-      return confirmed;
+      return nativeFinished && confirmed;
     };
     report("normal");
     const QSize normal = window.size();

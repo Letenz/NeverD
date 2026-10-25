@@ -1,4 +1,14 @@
-#pragma once
+//===- WindowFrame.h - Owned window frame and resize gestures ---*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Application frame ownership across native window transitions.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_TOOLS_NEVERD_GUI_APP_WINDOWFRAME_H
+#define NEVERD_TOOLS_NEVERD_GUI_APP_WINDOWFRAME_H
 
 #include <QMargins>
 #include <QObject>
@@ -79,8 +89,11 @@ private:
   Qt::WindowStates states_;
   Qt::Edges shown_;
   Qt::Edges resizing_;
+  bool resizingGeometry_ = false;
   QPoint resizeOrigin_;
   QRect resizeGeometry_;
 };
 
 } // namespace neverd::gui
+
+#endif // NEVERD_TOOLS_NEVERD_GUI_APP_WINDOWFRAME_H

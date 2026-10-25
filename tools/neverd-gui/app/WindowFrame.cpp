@@ -1,3 +1,12 @@
+//===- WindowFrame.cpp - Owned window frame and resize gestures -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Keep the application frame consistent with native window transitions.
+//===----------------------------------------------------------------------===//
+
 #include "WindowFrame.h"
 
 #include "../Config.h"
@@ -12,6 +21,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScopedValueRollback>
 #include <QSurfaceFormat>
 #include <QWidget>
 #include <QWindow>
@@ -181,8 +191,12 @@ Qt::Edges WindowFrame::edgesAt(QPoint at, QSize size, QMargins shadow) {
 }
 
 bool WindowFrame::resizable() const {
-  if (states_ &
-      (Qt::WindowMaximized | Qt::WindowFullScreen | Qt::WindowMinimized))
+  if (states_ & (Qt::WindowFullScreen | Qt::WindowMinimized))
+    return false;
+  // AppKit also reports a manually sized window as zoomed when it reaches
+  // its size ceiling. Cocoa's zoomed windows can still be resized by an edge.
+  if ((states_ & Qt::WindowMaximized) &&
+      QGuiApplication::platformName() != QLatin1String("cocoa"))
     return false;
   return window_.minimumSize() != window_.maximumSize();
 }
@@ -206,7 +220,11 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   // applies it; the native window receives this event only when the window
   // system has applied a state, such as with a Wayland configure.
   if (event->type() == QEvent::WindowStateChange) {
-    finishResize();
+    // A synchronous zoom notification caused by our own setGeometry is part
+    // of this gesture. Retain its grab so a reversal can leave the size bound.
+    if (!resizingGeometry_ ||
+        (handle_.windowStates() & (Qt::WindowFullScreen | Qt::WindowMinimized)))
+      finishResize();
     states_ = handle_.windowStates();
     updateMargins();
     return false;
@@ -278,6 +296,7 @@ void WindowFrame::resizeTo(QPoint globalPosition) {
     if (resizing_ & Qt::TopEdge)
       next.moveBottom(resizeGeometry_.bottom());
   }
+  const QScopedValueRollback<bool> sizing(resizingGeometry_, true);
   window_.setGeometry(next);
 }
 

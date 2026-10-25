@@ -19,11 +19,21 @@
 namespace neverd::gui::test {
 
 bool setNativeFullScreen(QWidget &Window, bool FullScreen) {
+  return setNativeWindowState(Window, FullScreen ? Qt::WindowFullScreen
+                                                 : Qt::WindowNoState);
+}
+
+bool setNativeWindowState(QWidget &Window, Qt::WindowStates States) {
   if (QGuiApplication::platformName() != QLatin1String("cocoa"))
     return false;
   NSWindow *Native = reinterpret_cast<NSView *>(Window.winId()).window;
   if (!Native)
     return false;
+  const bool FullScreen = States.testFlag(Qt::WindowFullScreen);
+  if (FullScreen == bool(Native.styleMask & NSWindowStyleMaskFullScreen)) {
+    Window.setWindowState(States);
+    return true;
+  }
   bool Finished = false;
   bool *Completion = &Finished;
   NSNotificationCenter *Center = NSNotificationCenter.defaultCenter;
@@ -35,10 +45,7 @@ bool setNativeFullScreen(QWidget &Window, bool FullScreen) {
               usingBlock:^(NSNotification *) {
                 *Completion = true;
               }];
-  if (FullScreen)
-    Window.showFullScreen();
-  else
-    Window.showNormal();
+  Window.setWindowState(States);
   const bool Result = QTest::qWaitFor([&] { return Finished; });
   [Center removeObserver:Observer];
   return Result;
