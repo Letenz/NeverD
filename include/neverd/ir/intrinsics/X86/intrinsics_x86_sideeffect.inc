@@ -41,7 +41,6 @@ SIDEEFFECT(Intrinsic::Str);
 SIDEEFFECT(Intrinsic::Smsw);
 SIDEEFFECT(Intrinsic::Xabort);
 SIDEEFFECT(Intrinsic::Xbegin);
-SIDEEFFECT(Intrinsic::Xend);
 SIDEEFFECT(Intrinsic::Bound);
 SIDEEFFECT(Intrinsic::Wbinvd);
 SIDEEFFECT(Intrinsic::Swapgs);
@@ -185,10 +184,6 @@ SIDEEFFECT(Intrinsic::ApxRaoAnd);
 SIDEEFFECT(Intrinsic::ApxRaoOr);
 SIDEEFFECT(Intrinsic::ApxRaoXor);
 SIDEEFFECT(Intrinsic::ApxCmpccXadd);
-SIDEEFFECT(Intrinsic::CetWrss);
-SIDEEFFECT(Intrinsic::CetWruss);
-SIDEEFFECT(Intrinsic::Enqcmd);
-SIDEEFFECT(Intrinsic::Enqcmds);
 SIDEEFFECT(Intrinsic::X86Invalidate);
 SIDEEFFECT(Intrinsic::X86RequireDivPrecondition);
 SIDEEFFECT(Intrinsic::X86SEHRegisterRead);
@@ -253,15 +248,15 @@ SIDEEFFECT(Intrinsic::X86FPMaskCompareMemoryState);
 #undef NEVERD_X86_VIRTUALIZATION
 
 #define NEVERD_X86_SYSTEM_STATE(Id, Mnemonic, ...) SIDEEFFECT(Intrinsic::Id);
+#define NEVERD_X86_EXISTING_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #define NEVERD_X86_APPENDED_SYSTEM_STATE NEVERD_X86_SYSTEM_STATE
 #include "neverd/ir/intrinsics/X86/X86SystemState.def"
 #undef NEVERD_X86_APPENDED_SYSTEM_STATE
+#undef NEVERD_X86_EXISTING_SYSTEM_STATE
 #undef NEVERD_X86_SYSTEM_STATE
 
 SIDEEFFECT(Intrinsic::X86Encls);
 SIDEEFFECT(Intrinsic::X86Enclv);
-
-SIDEEFFECT(Intrinsic::X86SegmentedBlockMemory);
 
 SIDEEFFECT(Intrinsic::X86AMXState);
 

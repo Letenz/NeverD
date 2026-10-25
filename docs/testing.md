@@ -2607,11 +2607,17 @@ compiled by the linked SDK rather than sent to an incompatible system Clang.
 `LLVMCValues.NativeVirtualizationKeepsStatusAndFailedReadPrior` supplies controlled
 VMX completion values to check C status conversion, exact operand evaluation
 and failed-read preservation without executing privileged instructions.
-`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 84 modules for
-CLTS, WRMSRNS, MSRLIST, default-address LKGS, INVLPGB and TLBSYNC. The corresponding
-NeverC test requires 240 C-to-native-IR compilations with no inline assembly;
+`X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls` checks 288 modules for
+CLAC/STAC, XEND, CLTS, WRMSRNS, MSRLIST, LKGS, LAR/LSL, INVLPGB and TLBSYNC.
+The corresponding NeverC test requires 744 C-to-native-IR compilations with no inline assembly;
 its fixtures explicitly initialize RSI/RDI across ABIs. The native-call refusal
 test checks mode, result identity and lost memory/nonreturning effects.
+SMAP regressions retain distinct ordinary reads before, between and after its
+controls, plus the intervening store, through optimization on x86/x64 in
+ELF/COFF/Mach-O. Both C routes compile at O0/O2 without executing privileged
+controls. LowIR rejects invented scalar results, operands, address spaces and
+architectures; the scalar emulator cannot claim successful SMAP or XEND
+completion. Missing NeverC remains an explicit unqualified compiler route.
 `X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart` compiles both C
 routes with NeverC and executes the existing fault/register/completion/restart
 oracle at O0/O2. This uses controlled signal continuation and does not qualify

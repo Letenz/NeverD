@@ -133,6 +133,9 @@ inline std::vector<SystemEncoding> systemExtensionEncodings(Arch A) {
 
 inline std::vector<SystemEncoding> systemEncodings(Arch A) {
   std::vector<SystemEncoding> E = {
+      {{0x0f, 0x01, 0xca}, Intrinsic::Clac, "clac"},
+      {{0x0f, 0x01, 0xcb}, Intrinsic::Stac, "stac"},
+      {{0x0f, 0x01, 0xd5}, Intrinsic::Xend, "xend"},
       {{0x0f, 0x01, 0xc6}, Intrinsic::X86WriteMsrNonSerializing, "wrmsrns"},
       {{0xf3, 0x0f, 0xc7, 0xf8}, Intrinsic::X86ReadPid, "rdpid"},
       {{0x0f, 0x06}, Intrinsic::X86ClearTaskSwitched, "clts"},

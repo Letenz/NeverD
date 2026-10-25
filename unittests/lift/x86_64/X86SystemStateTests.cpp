@@ -77,6 +77,40 @@ TEST(X86SystemState, InstructionsHaveValidatedEffectsAndNoInventedResult) {
     }
 }
 
+TEST(X86SystemState, SmapAccessControlsHaveNoScalarOperandsOrFlagResult) {
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Id : {Intrinsic::Clac, Intrinsic::Stac}) {
+      const auto Ops =
+          lift(A, {0x0f, 0x01,
+                   static_cast<uint8_t>(Id == Intrinsic::Clac ? 0xca : 0xcb)});
+      ASSERT_EQ(Ops.size(), 1u);
+      const auto Shape = x86SystemStateLowShape(Ops.front(), A);
+      ASSERT_TRUE(x86SystemStateShapeIsValid(Id, Shape));
+      EXPECT_EQ(Shape.Arguments, 0);
+      EXPECT_EQ(Shape.OutputSize, 0);
+      const auto Plan =
+          x86SystemStateAsm(Id, A, 0, NdMemoryAddressSpace::Default);
+      ASSERT_TRUE(Plan);
+      EXPECT_TRUE(Plan->InputBytes.empty());
+      EXPECT_TRUE(Plan->OutputBytes.empty());
+      // AC is hidden architectural state. CF/PF/AF/ZF/SF/OF are preserved.
+      EXPECT_FALSE(Plan->ChangesFlags);
+      EXPECT_NE(Plan->Constraints.find("~{memory}"), std::string::npos);
+      for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+        auto Bad = Shape;
+        if (Mutation == 0)
+          Bad.Arguments = 1;
+        else if (Mutation == 1)
+          Bad.OutputSize = 1;
+        else if (Mutation == 2)
+          Bad.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        else
+          Bad.TargetArch = Arch::AArch64;
+        EXPECT_FALSE(x86SystemStateShapeIsValid(Id, Bad));
+      }
+    }
+}
+
 TEST(X86SystemState, WaitReadsControlAndBothDeadlineHalvesAndClearsOtherFlags) {
   for (const auto Prefix : {0x66, 0xf2}) {
     const auto Ops =

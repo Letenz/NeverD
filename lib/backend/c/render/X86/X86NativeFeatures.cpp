@@ -18,6 +18,7 @@
 
 #include "neverd/backend/llvm/X86/LLVMX86SHA.h"
 #include "neverd/backend/llvm/X86/X86SgxNative.h"
+#include "neverd/backend/llvm/X86/X86SystemStateNative.h"
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
@@ -166,8 +167,11 @@ std::string x86NativeFunctionPreamble(const llvm::Function &Function) {
         Rep = true;
         Compare |= P->Contract.Compare;
       }
-      if (const auto *Callee = Call->getCalledFunction())
+      if (const auto *Callee = Call->getCalledFunction()) {
         Sgx |= isX86SgxNativeName(Callee->getName().str());
+        if (isX86RtmNativeName(Callee->getName().str()))
+          Required.insert("rtm");
+      }
       if (const auto *Asm =
               llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())) {
         const auto Mnemonic =

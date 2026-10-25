@@ -12,6 +12,13 @@ stated symbols and user identities cannot be removed by that reconciliation.
 COFF instruction-content flags and page execute permissions are separate.
 Full source emission is not proof of executable kernel reconstruction.
 
+CLAC/STAC and XEND now share the validated system-instruction contract in
+HighC, native LLVM and LLVMC. Their ordered effects survive unused results and
+source optimization; scalar emulation cannot silently claim completion.
+Instruction IDs remain unchanged, and native RTM code generation enables its
+required feature. SYSRETQ, like interrupt/far returns, still requires the
+complete state-transfer source boundary described below.
+
 Large LLVM source functions no longer retain redundant entry stores on private
 SSA temporaries whose single later definition dominates every read. The proof
 runs after exception edges are installed; bypasses, loop-first reads, ordering

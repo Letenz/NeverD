@@ -1174,7 +1174,7 @@ void compileNativeC(const std::string &Compiler, llvm::StringRef Directory,
                     BinaryFormat Format, const std::string &Source,
                     const std::string &LLVMName, unsigned &Cases,
                     std::optional<uint16_t> RequiredPort = std::nullopt,
-                    bool CompileObject = false) {
+                    bool CompileObject = false, bool NeverC = true) {
   llvm::SmallString<128> Input(Directory), Output(Directory), Errors(Directory);
   llvm::sys::path::append(Input, "source.c");
   llvm::sys::path::append(Output, "source.ll");
@@ -1190,20 +1190,15 @@ void compileNativeC(const std::string &Compiler, llvm::StringRef Directory,
         Format == BinaryFormat::COFF    ? "--target=x86_64-pc-windows-msvc"
         : Format == BinaryFormat::MachO ? "--target=x86_64-apple-darwin"
                                         : "--target=x86_64-linux-gnu";
-    const std::vector<llvm::StringRef> Arguments = {
-        Compiler,
-        Target,
-        "-std=gnu23",
-        "-ffreestanding",
-        "-fno-lto",
-        "-fno-builtin-mimalloc",
-        "-Werror=implicit-function-declaration",
-        "-S",
-        "-emit-llvm",
-        Opt,
-        Input,
-        "-o",
-        Output};
+    std::vector<llvm::StringRef> Arguments = {
+        Compiler,     Target,
+        "-std=gnu23", "-ffreestanding",
+        "-fno-lto",   "-Werror=implicit-function-declaration",
+        "-S",         "-emit-llvm",
+        Opt,          Input,
+        "-o",         Output};
+    if (NeverC)
+      Arguments.push_back("-fno-builtin-mimalloc");
     const std::optional<llvm::StringRef> Redirects[] = {
         std::nullopt, std::nullopt, Errors.str()};
     const int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments,
@@ -2210,6 +2205,12 @@ std::vector<uint8_t> nativeSystemFunction(Arch A, const SystemEncoding &E,
 
 std::string nativeSystemName(const SystemEncoding &E, Arch A) {
   switch (E.Id) {
+  case Intrinsic::Clac:
+    return "llvm.x86.clac";
+  case Intrinsic::Stac:
+    return "llvm.x86.stac";
+  case Intrinsic::Xend:
+    return "llvm.x86.xend";
   case Intrinsic::X86LoadAccessRights:
   case Intrinsic::X86LoadAccessRightsMemory:
   case Intrinsic::X86LoadSegmentLimit:
@@ -2276,8 +2277,143 @@ TEST(X86SystemStateSource, QualifiedSdkUsesNativeSystemCalls) {
           EXPECT_EQ(IR.find(" asm "), std::string::npos) << IR;
           ++Cases;
         }
-  EXPECT_EQ(Cases, 252u);
+  EXPECT_EQ(Cases, 288u);
   RecordProperty("native_system_modules", Cases);
+}
+
+TEST(X86SystemStateSource, SmapPreservesMemoryAccessOrderAcrossBothControls) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
+    GTEST_SKIP() << "requires the qualified native system SDK";
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (const bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(NoOpt);
+        std::vector<uint8_t> Bytes;
+        if (A == Arch::X86)
+          Bytes = {0x8b, 0x4c, 0x24, 0x04}; // mov ecx, [esp+4]
+        else if (Format != BinaryFormat::COFF)
+          Bytes = {0x48, 0x89, 0xf9};            // mov rcx, rdi
+        Bytes.insert(Bytes.end(), {0x8b, 0x11}); // mov edx, [rcx/ecx]
+        const auto Offset = Bytes.size();
+        Bytes.insert(Bytes.end(), {0x0f, 0x01, 0xcb, // stac
+                                   0x8b, 0x01,       // mov eax, [rcx/ecx]
+                                   0x89, 0x11,       // mov [rcx/ecx], edx
+                                   0x0f, 0x01, 0xca, // clac
+                                   0x33, 0x01,       // xor eax, [rcx/ecx]
+                                   0xc3});
+        auto Image = image(A, Format, std::move(Bytes));
+        std::string High, LLVM, IR;
+        std::vector<uint8_t> Object;
+        sourceRoutes(Image, NoOpt, Entry + Offset, "stac", &High, &LLVM, {}, {},
+                     &IR, &Object);
+        if (::testing::Test::HasFailure())
+          return;
+        const auto Before = IR.find("load i32");
+        const auto Open = IR.find("call void @llvm.x86.stac()");
+        const auto During = IR.find("load i32", Before + 1);
+        const auto Store = IR.find("store i32");
+        const auto Close = IR.find("call void @llvm.x86.clac()");
+        const auto After = IR.find("load i32", During + 1);
+        ASSERT_NE(After, std::string::npos) << IR;
+        EXPECT_LT(Before, Open) << IR;
+        EXPECT_LT(Open, During) << IR;
+        EXPECT_LT(During, Store) << IR;
+        EXPECT_LT(Store, Close) << IR;
+        EXPECT_LT(Close, After) << IR;
+        for (const auto &Source : {High, LLVM}) {
+          EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+          EXPECT_NE(Source.find("clac"), std::string::npos) << Source;
+        }
+        for (const uint8_t Last : {0xcau, 0xcbu}) {
+          const std::vector<uint8_t> Instruction = {0x0f, 0x01, Last};
+          EXPECT_NE(std::search(Object.begin(), Object.end(),
+                                Instruction.begin(), Instruction.end()),
+                    Object.end());
+        }
+        // Compile both emitted routes at O0/O2 without executing privileged
+        // controls on the host. The native SDK object is checked above.
+        if (Format == BinaryFormat::ELF)
+          compileRoutes(Image, NoOpt, Entry + Offset, "stac");
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+TEST(X86SystemStateSource, TransactionCommitRetainsSurroundingMemory) {
+  if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
+    GTEST_SKIP() << "requires the qualified native system SDK";
+  for (const auto A : {Arch::X86, Arch::X64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (const bool NoOpt : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(A));
+        SCOPED_TRACE(static_cast<unsigned>(Format));
+        SCOPED_TRACE(NoOpt);
+        std::vector<uint8_t> Bytes;
+        if (A == Arch::X86)
+          Bytes = {0x8b, 0x4c, 0x24, 0x04}; // mov ecx, [esp+4]
+        else if (Format != BinaryFormat::COFF)
+          Bytes = {0x48, 0x89, 0xf9}; // mov rcx, rdi
+        Bytes.insert(Bytes.end(), {0xc7, 0x01, 7, 0, 0, 0});
+        const auto Offset = Bytes.size();
+        const std::vector<uint8_t> Instruction = {0x0f, 0x01, 0xd5};
+        Bytes.insert(Bytes.end(), Instruction.begin(), Instruction.end());
+        Bytes.insert(Bytes.end(), {0x8b, 0x01, 0xc3}); // mov eax, [rcx]; ret
+        auto Image = image(A, Format, std::move(Bytes));
+        std::string IR;
+        sourceRoutes(Image, NoOpt, Entry + Offset, "xend", nullptr, nullptr, {},
+                     {}, &IR);
+        if (::testing::Test::HasFailure())
+          return;
+        const auto Store = IR.find("store i32 7,");
+        const auto Commit = IR.find("call void @llvm.x86.xend()");
+        const auto Load = IR.find("load i32");
+        ASSERT_NE(Load, std::string::npos) << IR;
+        EXPECT_LT(Store, Commit) << IR;
+        EXPECT_LT(Commit, Load) << IR;
+        if (Format == BinaryFormat::ELF)
+          compileRoutes(Image, NoOpt, Entry + Offset, "xend", std::nullopt,
+                        false, false, {}, Instruction);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+}
+
+TEST(X86SystemStateSource, XendBuiltinCompilesWithoutCallerFeatureFlags) {
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "Clang is unavailable";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-rtm-native-c", Directory));
+  const auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  unsigned Cases = 0;
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (const bool NoOpt : {false, true}) {
+      auto Image = image(Arch::X64, Format,
+                         {0xb8, 0x11, 0, 0, 0, 0x0f, 0x01, 0xd5, 0xc3});
+      std::string High, LLVM;
+      sourceRoutes(Image, NoOpt, Entry + 5, "xend", &High, &LLVM);
+      if (::testing::Test::HasFailure())
+        return;
+      for (const auto &Source : {High, LLVM}) {
+        // Stock Clang owns XEND too. Select the generated native branch,
+        // without claiming support for the fork's other system builtins.
+        const auto Native =
+            "#define NEVERD_X86_SYSTEM_STATE(native, ...) native\n" + Source;
+        compileNativeC(Compiler, Directory, Format, Native, "llvm.x86.xend",
+                       Cases, std::nullopt, true, false);
+        if (::testing::Test::HasFailure())
+          return;
+      }
+    }
+  EXPECT_EQ(Cases, 24u);
+  RecordProperty("xend_native_c_compilations", Cases);
 }
 
 TEST(X86SystemStateSource, NeverCCompilesBothRoutesToNativeSystemCalls) {
@@ -2314,14 +2450,17 @@ TEST(X86SystemStateSource, NeverCCompilesBothRoutesToNativeSystemCalls) {
             return;
         }
       }
-  EXPECT_EQ(Cases, 672u);
+  EXPECT_EQ(Cases, 744u);
   RecordProperty("native_system_c_compilations", Cases);
 }
 
 TEST(X86SystemStateSource, NativeCallsCannotLoseModeResultsOrEffects) {
   if (!llvm::Intrinsic::lookupIntrinsicID("llvm.x86.invlpgb.addr32"))
     GTEST_SKIP() << "requires the qualified native system SDK";
-  for (const char *Name : {"llvm.x86.clts",
+  for (const char *Name : {"llvm.x86.clac",
+                           "llvm.x86.stac",
+                           "llvm.x86.xend",
+                           "llvm.x86.clts",
                            "llvm.x86.wrmsrns",
                            "llvm.x86.rdmsrlist",
                            "llvm.x86.wrmsrlist",

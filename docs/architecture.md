@@ -6078,6 +6078,11 @@ LLVM, HighC and LLVMC share `X86SystemStateAsm.h` for native operand constraints
 LAR preserves its destination on failure; ARPL retains conditional memory
 writes; WAITPKG carries its deadline, address space and flag completion.
 Environment-dependent results remain unavailable to the scalar emulator.
+The existing CLAC/STAC and XEND IDs use this contract too. They produce no
+scalar result and remain ordered memory effects in both source routes. SMAP
+controls change hidden AC state while preserving arithmetic flags; transaction
+commit and its possible abort remain native. Native LLVM uses the corresponding
+intrinsics, and RTM intrinsic names select the code generator's RTM feature.
 The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
 INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
 returns CF and the lifter clears its other arithmetic flags. LKGS selector and
