@@ -4398,8 +4398,16 @@ BinaryImage registerQueryImage(unsigned Mutation = 0) {
   else if (Mutation == 8)
     Leaf.erase(Leaf.begin() + 12, Leaf.begin() + 15); // RBX is not restored
   put(Code, Producer, Leaf);
-  return makeImage(Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}},
-                   {});
+  auto Image = makeImage(
+      Code, {{Text, "observe_cpu_words"}, {Producer, "cpu_words"}}, {});
+  if (Mutation == 12) {
+    ExceptionFunction Exception;
+    Exception.CodeRange = {Producer, Producer + Leaf.size()};
+    Exception.Personality = ExceptionPersonality::Unknown;
+    Exception.ParseStatus = ExceptionParseStatus::Partial;
+    Image.ExceptionMetadata.Functions.push_back(std::move(Exception));
+  }
+  return Image;
 }
 
 TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
@@ -4477,7 +4485,7 @@ int main(void) {
 
 TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
   constexpr va_t Producer = Text + 0x80;
-  for (unsigned Mutation = 1; Mutation <= 8; ++Mutation) {
+  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 12u}) {
     SCOPED_TRACE(Mutation);
     auto Image = registerQueryImage(Mutation);
     llvm::LLVMContext Context;
