@@ -2630,9 +2630,12 @@ button, which a plain-widget screenshot misses, and a correctly sized glyph
 crowded against the edge despite padding around the tab text.
 
 The menu case injects macOS's hidden-icon default and checks registry actions
-and Output's dynamically created context menu after theme application. Screenshot
-color checks convert logical points using the captured image's device-pixel
-ratio. Cocoa native-pointer docking cases skip when
+and Output's dynamically created context menu after theme application. The
+menu-column case measures the painted icon-to-label gap, checks that plain,
+checkable and submenu labels align, and that a checked icon's border does not
+move its glyph. Optional captures include File, Edit and Options menus in both
+themes. Screenshot color checks convert logical points using the captured
+image's device-pixel ratio. Cocoa native-pointer docking cases skip when
 `CGPreflightPostEventAccess()` denies event posting; report that missing coverage
 separately from passing offscreen behavior.
 
