@@ -367,6 +367,8 @@ private slots:
     QTest::newRow("nested-v3") << 3 << 4;
     QTest::newRow("selected-updates-v4") << 4 << 5;
     QTest::newRow("common-update-v4") << 4 << 6;
+    QTest::newRow("nowrap-proof-v5") << 5 << 6;
+    QTest::newRow("modular-proof-v5") << 5 << 7;
   }
   void loopProgressExplainsProofAndRestoresSelection() {
     QFETCH(int, Version);
@@ -438,6 +440,16 @@ private slots:
                               "f9027c1dffc989c740f6c70175df83c71131d789f8c1e007"
                               "01f031f883f9017fe331f0"
                               "83c003c3");
+      QVERIFY(write(A, Bytes));
+      QVERIFY(write(B, Bytes));
+    }
+    if (Family == 7) {
+      // Owned modular_progress_fixture.c, x64 O0; never executed.
+      const auto Bytes = QByteArray::fromHex(
+          "554889e5897dfc8975f88b45f88945f48b45fc83e00183f80074228b45fc83f0176b"
+          "c00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b"
+          "4df40d31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f4837d"
+          "f40173a68b45fc3345f883c0035dc3");
       QVERIFY(write(A, Bytes));
       QVERIFY(write(B, Bytes));
     }
@@ -519,10 +531,11 @@ private slots:
       QCOMPARE(Latches.size(), 2);
       Table->selectRow(Proved);
     }
-    if (Version == 4) {
+    if (Version >= 4) {
+      const int GuardCount = Family == 7 ? 1 : 2;
       QVERIFY(Status->text().contains("Counter loops: 1"));
       QVERIFY(Status->text().contains("Backedges: 1"));
-      QVERIFY(Status->text().contains("Guards: 2"));
+      QVERIFY(Status->text().contains(QString("Guards: %1").arg(GuardCount)));
       QSet<int> Guards, Latches;
       for (int N = 0; N < Rows->rowCount(); ++N) {
         const auto Witness = Rows->row(N)["progress_loop"].toObject();
@@ -537,8 +550,15 @@ private slots:
             LoopStatus->text().contains(QString("guard #%1 in block %2")
                                             .arg(Witness["compare"].toInt())
                                             .arg(Witness["block"].toInt())));
+        if (Version == 5) {
+          QCOMPARE(Witness["proof"].toString(),
+                   QString(Family == 7 ? "modular" : "nowrap"));
+          QVERIFY(LoopStatus->text().contains(
+              Family == 7 ? "every counter cycle reaches a shared exit"
+                          : "monotone counter with a no-overflow contract"));
+        }
       }
-      QCOMPARE(Guards.size(), 2);
+      QCOMPARE(Guards.size(), GuardCount);
       QCOMPARE(Latches.size(), 1);
       Table->selectRow(Proved);
     }
@@ -554,7 +574,9 @@ private slots:
         Dialog->resize(1280, 800);
         QTest::qWait(40);
         QVERIFY(Dialog->grab().save(Captures +
-                                    (Family == 6    ? "/common-update"
+                                    (Family == 7    ? "/modular-proof"
+                                     : Version == 5 ? "/nowrap-proof"
+                                     : Family == 6  ? "/common-update"
                                      : Family == 5  ? "/selected-updates"
                                      : Version == 3 ? "/nested"
                                      : Version == 2 ? "/multiblock"
@@ -1582,6 +1604,116 @@ private slots:
     QCOMPARE(Dialog.session().summary(), BeforeFailure);
     QVERIFY(Status->text().contains("Could not replace"));
     QVERIFY(Status->text().contains("previous comparison"));
+    Dialog.close();
+  }
+
+  void cancellingSavedRestoreKeepsSelectionEditsAndAllowsRetry() {
+    const auto Input = Directory.filePath("restore-input.bin");
+    QVERIFY(write(Input, QByteArray::fromHex("b80700000083c003c3")));
+    const auto Saved = Directory.filePath("restore-review.nddiff");
+    ComparisonDialog Dialog(TEST_COMPARISON_WORKER);
+    auto &Session = Dialog.session();
+    Dialog.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    for (const char *Name : {"comparisonPrimary", "comparisonSecondary"})
+      Dialog.findChild<QLineEdit *>(Name)->setText(Input);
+    for (const char *Name : {"primaryLoader", "secondaryLoader"})
+      Dialog.findChild<QComboBox *>(Name)->setCurrentIndex(1);
+    for (const char *Name : {"primaryBase", "secondaryBase"})
+      Dialog.findChild<QLineEdit *>(Name)->setText("0x1000");
+    auto *Start = Dialog.findChild<QPushButton *>("comparisonStart");
+    auto *Cancel = Dialog.findChild<QPushButton *>("comparisonCancel");
+    auto *Status = Dialog.findChild<QLabel *>("comparisonStatus");
+    QTest::mouseClick(Start, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Failures.count(), 0);
+    Session.command("comparison_save", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QFile Report(Saved);
+    QVERIFY(Report.open(QIODevice::ReadOnly));
+    const auto Original = Report.readAll();
+    Report.close();
+    QVERIFY(write(Saved, Original + QByteArray(64 * 1024 * 1024, ' ')));
+    Session.command(
+        "comparison_override",
+        {{"kind", "confirm"}, {"primary", "0x1000"}, {"secondary", "0x1000"}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    auto *Functions = Dialog.findChild<QTableView *>("comparisonFunctions");
+    QTRY_COMPARE_WITH_TIMEOUT(Functions->model()->rowCount(), 1, Timeout);
+    Functions->setCurrentIndex(Functions->model()->index(0, 0));
+    auto *Instructions =
+        Dialog.findChild<QTableView *>("comparisonInstructions");
+    QTRY_VERIFY_WITH_TIMEOUT(Instructions->model()->rowCount() >= 3, Timeout);
+    const auto Before = Session.summary();
+    const auto Selection = Functions->currentIndex();
+    QVERIFY(Before["can_undo"].toBool());
+    int Ticks = 0;
+    QTimer Heartbeat;
+    connect(&Heartbeat, &QTimer::timeout, this, [&] { ++Ticks; });
+    Heartbeat.start(1);
+    const QJsonObject Binary{
+        {"path", Input},
+        {"load_options", QJsonObject{{"loader", "binary"},
+                                     {"processor", "x86_64"},
+                                     {"platform", "sysv"},
+                                     {"base", "0x1000"}}}};
+    for (const bool Replace : {false, true}) {
+      bool Clicked = false, StillRunning = false;
+      QString StageText;
+      const auto Connection = connect(
+          &Session, &ComparisonSession::progress, &Dialog, [&](const auto &P) {
+            if (Clicked || P["phase"] != QJsonValue("restore:read"))
+              return;
+            StageText = Status->text();
+            if (!Cancel->isEnabled())
+              return;
+            Clicked = true;
+            QTest::mouseClick(Cancel, Qt::LeftButton);
+            StillRunning = Session.busy();
+          });
+      if (Replace)
+        Session.start(Binary, Binary, {}, Saved);
+      else
+        Session.command("comparison_restore", {{"path", Saved}});
+      QTRY_VERIFY_WITH_TIMEOUT(Clicked && !Session.busy(), Timeout);
+      disconnect(Connection);
+      QVERIFY(StillRunning);
+      QVERIFY(StageText.contains("Reading saved comparison"));
+      QCOMPARE(Session.summary(), Before);
+      QCOMPARE(Functions->currentIndex(), Selection);
+      QVERIFY(Instructions->model()->rowCount() >= 3);
+      QVERIFY(Status->text().contains("Restore stopped"));
+      QVERIFY(Status->text().contains("previous comparison"));
+      QVERIFY(Dialog.findChild<QPushButton *>("comparisonUndo")->isEnabled());
+      QVERIFY(Start->isEnabled());
+      QVERIFY(!Cancel->isEnabled());
+      QCOMPARE(Failures.count(), 0);
+    }
+    QVERIFY(Ticks > 0);
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty()) {
+      QDir().mkpath(Captures);
+      for (const auto Mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(100);
+        QVERIFY(Dialog.grab().save(Captures +
+                                   (Mode == Theme::Mode::Dark
+                                        ? "/restore-stopped-dark.png"
+                                        : "/restore-stopped-light.png")));
+      }
+    }
+    // The prior edit is still undoable; a successful retry resets its history.
+    Session.command("comparison_undo");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QVERIFY(Session.summary()["can_redo"].toBool());
+    QVERIFY(write(Saved, Original));
+    Session.command("comparison_restore", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Failures.count(), 0);
+    QVERIFY(Session.summary()["restore_completed"].toBool());
+    QVERIFY(Session.operationMessage().isEmpty());
+    QVERIFY(!Session.summary()["can_redo"].toBool());
     Dialog.close();
   }
 

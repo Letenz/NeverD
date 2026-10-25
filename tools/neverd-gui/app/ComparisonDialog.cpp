@@ -58,6 +58,22 @@ namespace neverd::gui {
 namespace {
 namespace limits = ::neverd::limits::gui;
 QString progressLabel(const QString &Phase) {
+  if (Phase.startsWith("restore:")) {
+    const char *Label =
+        QT_TRANSLATE_NOOP("ComparisonDialog", "Checking saved evidence");
+    if (Phase == "restore:read" || Phase == "restore:scan")
+      Label = QT_TRANSLATE_NOOP("ComparisonDialog", "Reading saved comparison");
+    else if (Phase == "restore:settings" || Phase == "restore:parse" ||
+             Phase == "restore:records")
+      Label =
+          QT_TRANSLATE_NOOP("ComparisonDialog", "Checking saved comparison");
+    else if (Phase == "restore:measure")
+      Label = QT_TRANSLATE_NOOP("ComparisonDialog",
+                                "Recomputing saved measurements");
+    else if (Phase == "restore:publish")
+      Label = QT_TRANSLATE_NOOP("ComparisonDialog", "Restoring comparison");
+    return QCoreApplication::translate("ComparisonDialog", Label);
+  }
   const auto Step = Phase.section(':', -1);
   const std::pair<const char *, const char *> Labels[] = {
       {"load", QT_TRANSLATE_NOOP("ComparisonDialog", "Loading input")},
@@ -307,6 +323,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
                        ::neverd::limits::diff::kLLVMNestedProgressSSAProfile);
   FlowProfile->addItem(tr("Optimized SSA with branching loop analysis"),
                        ::neverd::limits::diff::kLLVMBranchProgressSSAProfile);
+  FlowProfile->addItem(tr("Optimized SSA with wrapping loop analysis"),
+                       ::neverd::limits::diff::kLLVMModularProgressSSAProfile);
   FlowProfile->setEnabled(false);
   FlowProfile->setToolTip(
       tr("Optimized SSA reduces compiler scaffolding for comparison. Functions "
@@ -705,7 +723,9 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
     const auto Phase = P["phase"].toString();
     const auto Done = P["done"].toDouble();
     const auto Total = P["total"].toDouble();
-    const bool Bytes = Phase.endsWith(":hash") || Phase.endsWith(":copy");
+    const bool Bytes = Phase.endsWith(":hash") || Phase.endsWith(":copy") ||
+                       Phase == "restore:read" || Phase == "restore:scan" ||
+                       Phase == "restore:parse";
     const auto Amount = [&](double Value) {
       return Bytes ? locale().formattedDataSize(qint64(Value))
                    : locale().toString(qulonglong(Value));

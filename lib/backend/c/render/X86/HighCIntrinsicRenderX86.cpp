@@ -2156,6 +2156,8 @@ renderX86MultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      std::function<std::string(const HighExpr &)> ExprFn,
                      std::function<std::string(const MedVar &)> VarFn,
                      IsAliveFn IsAlive, bool GnuToolchain) {
+  if (const char *Reason = x86NonlocalControlTransferReason(IID))
+    throw std::invalid_argument(Reason);
   using I = Intrinsic;
   switch (IID) {
   case I::Cpuid:
@@ -2190,6 +2192,8 @@ const char *x86HighCIntrinsicFatalReason(Intrinsic Id) {
 std::string renderX86IntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
                                    bool &HasCIntrinsics, bool GnuToolchain) {
+  if (const char *Reason = x86NonlocalControlTransferReason(Id))
+    throw std::invalid_argument(Reason);
   if (const char *Reason = x86HighCIntrinsicFatalReason(Id))
     llvm::report_fatal_error(Reason);
   // An x87 value instruction runs in its helper, on its operands' bits.

@@ -5586,6 +5586,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>저장된 분석 적용 중</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>저장된 근거 확인 중</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>저장된 비교 읽는 중</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>저장된 비교 확인 중</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>저장된 측정값 다시 계산 중</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>비교 복원 중</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6409,6 +6429,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>분기 루프 분석이 포함된 최적화 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>순환 오버플로 루프 분석을 포함한 최적화 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6563,6 +6587,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>증명된 루프: 헤더 블록 %1 → 래치 블록 %2 · 카운터 #%3 → 갱신 #%4 · 블록 %6의 가드 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>순환 오버플로 루프 분석을 포함한 최적화 SSA</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>증명 근거: 오버플로가 없다는 계약을 따르는 단조 카운터입니다.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>증명 근거: 값이 순환한 뒤에도 모든 카운터 주기는 공통 출구에 도달합니다.</translation>
     </message>
 </context>
 <context>
@@ -7719,6 +7755,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>이 작업 프로세스는 바이너리 비교를 지원하지 않습니다.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>복원이 중지되었습니다. 다시 시도할 수 있습니다.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>복원이 중지되었습니다. 이전 비교를 계속 사용할 수 있습니다.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>비교를 복원할 수 없습니다. 이전 비교를 계속 사용할 수 있습니다. %1</translation>
     </message>
 </context>
 <context>

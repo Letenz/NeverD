@@ -362,14 +362,29 @@ def main():
                 assert graphs[0]['progress']['kind'] == 'counter_loops'
                 assert graphs[0]['progress']['loop_count'] == loop_count
                 if version == 4:
-                    # The other optimization level loses a proof premise. Its
-                    # different observed contract must not create anchors.
-                    crossed = compare(prefix + '-cross-level', a, b, progress_profile, False)
+                    cross_report = root / f'{prefix}-cross-level.nddiff'
+                    crossed = compare(prefix + '-cross-level', a, b,
+                                      [*progress_profile, '--save', str(cross_report)], False)
                     other = crossed['dataflow']['secondary']['entries'][0]['graph']['progress']
-                    assert other['kind'] == 'unproven'
-                    assert other['source_contract'] == other['observed_contract']
+                    if family == 5:
+                        # O2 retains the bounded unsigned decrement, either at
+                        # a common latch or in both selected arms. Recovering
+                        # that proof is valid: the source takes at most eight
+                        # iterations. Require and authenticate its witnesses.
+                        assert other['kind'] == 'counter_loops', (prefix, other)
+                        assert other['loop_count'] == 1 and other['backedge_count'] == 1, (prefix, other)
+                        assert other['guard_count'] == len(other['loops']) > 0, (prefix, other)
+                        assert 'willreturn' not in other['source_contract'], (prefix, other)
+                        assert 'willreturn' in other['observed_contract'], (prefix, other)
+                    else:
+                        # The common-update O0 shape still lacks a proof
+                        # premise; its unchanged contract cannot add anchors.
+                        assert other['kind'] == 'unproven', (prefix, other)
+                        assert other['source_contract'] == other['observed_contract'], (prefix, other)
+                        assert crossed['flow_regions']['anchor_count'] == 0, prefix
                     assert crossed['dataflow']['primary']['entries'][0]['graph'] == graphs[0]
-                    assert crossed['flow_regions']['anchor_count'] == 0
+                    assert compare(prefix + '-cross-level-reopen', a, b,
+                                   ['--reopen', str(cross_report)], False) == crossed
                     proof = graphs[0]['progress']
                     assert proof['backedge_count'] == 1 and proof['guard_count'] == 2
                     assert len({loop['latch'] for loop in proof['loops']}) == 1
@@ -421,6 +436,106 @@ def main():
                 assert all(pair[1] not in multiplications
                            for anchor in changed_body['flow_regions']['anchors']
                            for pair in anchor['nodes'])
+                if version == 4:
+                    modular = compare(prefix + '-modular', a, b,
+                        ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments'],
+                        arch == 'aarch64' or family == 6)
+                    proof = modular['dataflow']['secondary']['entries'][0]['graph']['progress']
+                    if arch == 'x64' and family == 5:
+                        # This real O2 component still has multiple entries.
+                        assert proof['kind'] == 'unproven' and not proof['loops']
+                        assert modular['flow_regions']['anchor_count'] == 0
+                    else:
+                        assert proof['kind'] == 'counter_loops'
+                        assert proof['loop_count'] == 1 and proof['guard_count'] == 2
+                        assert {w['proof'] for w in proof['loops']} <= {'nowrap', 'modular'}
+
+    modular_profile = ['--dataflow-profile=llvm-progress-ssa-v5', '--flow-fragments']
+    for arch, targets in (
+            ('x64', (('elf', 'x86_64-unknown-linux-gnu'),
+                     ('coff', 'x86_64-pc-windows-msvc'),
+                     ('macho', 'x86_64-apple-darwin'))),
+            ('aarch64', (('elf', 'aarch64-unknown-linux-gnu'),
+                         ('coff', 'aarch64-pc-windows-msvc'),
+                         ('macho', 'arm64-apple-macos11')))):
+        for fmt, triple in targets:
+            for shape, step, exit_width in (('odd', 3, 1), ('even', 2, 2)):
+                prefix = f'modular-{shape}-{arch}-{fmt}'
+
+                def modular_input(name, level, changes=None):
+                    definitions = {'COUNT_STEP': step, 'EXIT_WIDTH': exit_width,
+                                   'LOOP_MUL': 7, 'FINAL_ADD': 3}
+                    definitions.update(changes or {})
+                    return build(f'{prefix}-{name}', args.clang,
+                        [f'--target={triple}', f'-O{level}', '-fno-asynchronous-unwind-tables',
+                         *[f'-D{k}={v}u' for k, v in definitions.items()]],
+                        control.with_name('modular_progress_fixture.c'))
+
+                a, b = modular_input('O0', 0), modular_input('O2', 2)
+                saved = root / f'{prefix}.nddiff'
+                document = compare(prefix, a, a, [*modular_profile, '--save', str(saved)])
+                graph = document['dataflow']['primary']['entries'][0]['graph']
+                proof = graph['progress']
+                assert graph['schema_version'] == 9 and proof['kind'] == 'counter_loops'
+                assert proof['loop_count'] == proof['backedge_count'] == proof['guard_count'] == 1
+                # The ordinary optimizer can recover a monotone contract for
+                # the O0 even-step form; v5 must prefer that existing proof.
+                assert {w['proof'] for w in proof['loops']} == {
+                    'nowrap' if shape == 'even' else 'modular'}
+                assert document['flow_regions']['profile'] == 'llvm-progress-fragments-v5'
+                assert compare(prefix + '-reopen', a, a, ['--reopen', str(saved)]) == document
+                old = compare(prefix + '-legacy', a, a,
+                    ['--dataflow-profile=llvm-progress-ssa-v4', '--flow-fragments'], False)
+                old_proof = old['dataflow']['primary']['entries'][0]['graph']['progress']
+                if shape == 'odd':
+                    assert old_proof['kind'] == 'unproven' and not old_proof['loops']
+                else:
+                    assert old_proof['kind'] == 'counter_loops'
+                qualified = arch == 'aarch64' or shape == 'even'
+                cross = compare(prefix + '-cross-level', a, b, modular_profile, qualified)
+                optimized = cross['dataflow']['secondary']['entries'][0]['graph']['progress']
+                if qualified:
+                    assert optimized['kind'] == 'counter_loops'
+                    assert {w['proof'] for w in optimized['loops']} == {'modular'}
+                    assert any(anchor['node_count'] >= 4 for anchor in cross['flow_regions']['anchors'])
+                else:
+                    # Clang rewrites the x64 equality to a nonliteral bound.
+                    assert optimized['kind'] == 'unproven'
+                    assert optimized['source_contract'] == optimized['observed_contract']
+                    assert cross['flow_regions']['anchor_count'] == 0
+                for name, changes, opcode, constant in (
+                        ('patch', {'FINAL_ADD': 5}, 'add', '0x5'),
+                        ('body', {'LOOP_MUL': 11}, 'mul', '0xb')):
+                    other = modular_input(name, 0, changes)
+                    changed = compare(prefix + '-' + name, a, other, modular_profile)
+                    changed_graph = changed['dataflow']['secondary']['entries'][0]['graph']
+                    changed_nodes = {i for i, n in enumerate(changed_graph['nodes'])
+                        if n['opcode'] == opcode and any(v[0] == 1 and v[3] == constant for v in n['inputs'])}
+                    assert changed_nodes
+                    assert all(pair[1] not in changed_nodes
+                        for anchor in changed['flow_regions']['anchors'] for pair in anchor['nodes'])
+                other = modular_input('step', 0, {'COUNT_STEP': 5 if step == 3 else 6})
+                changed = compare(prefix + '-step', a, other, modular_profile)
+                new_graph = changed['dataflow']['secondary']['entries'][0]['graph']
+                updates = {w['update'] for w in new_graph['progress']['loops']}
+                assert updates and new_graph['progress']['kind'] == 'counter_loops'
+                assert all(pair[1] not in updates for anchor in changed['flow_regions']['anchors']
+                           for pair in anchor['nodes'])
+                other = modular_input('bound', 0, {'EXIT_WIDTH': exit_width + 1})
+                changed = compare(prefix + '-bound', a, other, modular_profile)
+                changed_graph = changed['dataflow']['secondary']['entries'][0]['graph']
+                assert changed_graph['progress']['kind'] == 'counter_loops'
+                assert changed_graph['nodes'] != graph['nodes']
+                # Even delta with a single exit misses every odd seed. Both
+                # real optimization levels must retain the original contract.
+                for level in (0, 2):
+                    other = modular_input(f'infinite-O{level}', level,
+                                           {'COUNT_STEP': 2, 'EXIT_WIDTH': 1})
+                    negative = compare(prefix + f'-infinite-O{level}', a, other, modular_profile, False)
+                    unproved = negative['dataflow']['secondary']['entries'][0]['graph']['progress']
+                    assert unproved['kind'] == 'unproven' and not unproved['loops']
+                    assert unproved['source_contract'] == unproved['observed_contract']
+                    assert negative['flow_regions']['anchor_count'] == 0
     manifest['status'] = 'passed'
     save_manifest()
     print(f"{len(manifest['comparisons'])} compiler/patch fixture comparisons; artifacts: {root}")

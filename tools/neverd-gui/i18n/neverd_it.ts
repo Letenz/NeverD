@@ -5622,6 +5622,26 @@ Caricare comunque i suoi nomi? Nomi agli indirizzi sbagliati fuorviano l&apos;an
         <source>Applying saved analysis</source>
         <translation>Applicazione dell’analisi salvata</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Verifica delle evidenze salvate</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Lettura del confronto salvato</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Verifica del confronto salvato</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Ricalcolo delle misurazioni salvate</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Ripristino del confronto</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6445,6 +6465,10 @@ Copertura: %7</translation>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>SSA ottimizzata con analisi dei cicli ramificati</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli a ritorno modulare</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6623,18 @@ La terminazione non dimostra che il numero di iterazioni o i risultati delle fun
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Ciclo dimostrato: blocco iniziale %1 → blocco di ritorno %2 · contatore #%3 → aggiornamento #%4 · guardia #%5 nel blocco %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA ottimizzata con analisi dei cicli a ritorno modulare</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Prova: un contatore monotono con un contratto senza overflow.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Prova: ogni ciclo del contatore raggiunge un’uscita comune, anche dopo un ritorno modulare.</translation>
     </message>
 </context>
 <context>
@@ -7755,6 +7791,18 @@ Sostituisce: %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Questo processo non supporta il confronto binario.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Ripristino interrotto. È possibile riprovare.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Ripristino interrotto. Il confronto precedente è ancora disponibile.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Impossibile ripristinare il confronto. Il confronto precedente è ancora disponibile. %1</translation>
     </message>
 </context>
 <context>

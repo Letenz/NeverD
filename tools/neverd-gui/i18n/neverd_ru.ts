@@ -5658,6 +5658,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>Применение сохранённого анализа</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Проверка сохранённых свидетельств</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Чтение сохранённого сравнения</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Проверка сохранённого сравнения</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Пересчёт сохранённых измерений</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Восстановление сравнения</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6481,6 +6501,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>Оптимизированная SSA с анализом разветвлённых циклов</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Оптимизированная SSA с анализом циклов с переходом через границу диапазона</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6635,6 +6659,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Доказанный цикл: блок заголовка %1 → блок возврата %2 · счётчик #%3 → обновление #%4 · условие #%5 в блоке %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Оптимизированная SSA с анализом циклов с переходом через границу диапазона</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Основание доказательства: монотонный счётчик с контрактом отсутствия переполнения.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Основание доказательства: каждый цикл счётчика достигает общего выхода, в том числе после перехода через границу диапазона.</translation>
     </message>
 </context>
 <context>
@@ -7791,6 +7827,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Этот рабочий процесс не поддерживает сравнение бинарных файлов.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Восстановление остановлено. Можно повторить попытку.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Восстановление остановлено. Предыдущее сравнение по-прежнему доступно.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Не удалось восстановить сравнение. Предыдущее сравнение по-прежнему доступно. %1</translation>
     </message>
 </context>
 <context>

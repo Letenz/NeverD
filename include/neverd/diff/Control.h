@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 
 namespace neverd::diff {
 
@@ -30,6 +31,13 @@ enum class ComparisonState : uint8_t {
 llvm::StringRef stateName(ComparisonState State);
 std::optional<ComparisonState> stateNamed(llvm::StringRef Name);
 
+/// A transactional operation stopped without publishing a partial result.
+class ComparisonInterrupted : public std::runtime_error {
+public:
+  ComparisonState State;
+  explicit ComparisonInterrupted(ComparisonState State);
+};
+
 struct ComparisonControl {
   /// Set from any thread to stop at the next cooperative check.
   const std::atomic<bool> *Cancel = nullptr;
@@ -38,6 +46,11 @@ struct ComparisonControl {
   std::function<void(llvm::StringRef Phase, uint64_t Done, uint64_t Total)>
       Progress;
   std::optional<ComparisonState> stop() const;
+  /// Throws ComparisonInterrupted on cancellation or deadline expiry.
+  void check() const;
+  /// Coordinator-only progress, with stop checks before and after callbacks.
+  void report(llvm::StringRef Phase, uint64_t Done = 0,
+              uint64_t Total = 0) const;
 };
 
 } // namespace neverd::diff

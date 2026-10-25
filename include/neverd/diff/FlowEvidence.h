@@ -11,6 +11,7 @@
 #ifndef NEVERD_DIFF_FLOWEVIDENCE_H
 #define NEVERD_DIFF_FLOWEVIDENCE_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/DataFlow.h"
 
 namespace neverd::diff {
@@ -60,13 +61,17 @@ struct DataFlowEvidence {
 /// output.
 std::optional<std::string>
 validateDataFlowEvidence(const DataFlowEvidence *Evidence,
-                         const DataFlowSettings &Settings,
-                         const Program &Input);
+                         const DataFlowSettings &Settings, const Program &Input,
+                         const ComparisonControl &Control = {});
 /// A stopped saved collection may retain a verified prefix of a fresh one.
+/// LLVM PHI renumbering may be authenticated through an exact complete node
+/// bijection with unchanged ordinary instruction order and source metadata.
+/// Saved IDs are retained; this does not establish behavioral equivalence.
 std::optional<std::string>
 bindDataFlowEvidence(const DataFlowEvidence *Saved,
                      const DataFlowEvidence *Fresh,
-                     const DataFlowSettings &Settings, const Program &Input);
+                     const DataFlowSettings &Settings, const Program &Input,
+                     const ComparisonControl &Control = {});
 
 } // namespace neverd::diff
 

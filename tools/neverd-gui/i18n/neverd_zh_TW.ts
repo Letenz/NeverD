@@ -5586,6 +5586,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>正在套用儲存的分析</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>正在檢查已儲存的證據</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>正在讀取已儲存的比較</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>正在檢查已儲存的比較</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>正在重新計算已儲存的度量</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>正在還原比較</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6409,6 +6429,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>含分支迴圈分析的最佳化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>最佳化 SSA（含回繞迴圈分析）</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6563,6 +6587,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>已證明的迴圈：標頭區塊 %1 → 回邊區塊 %2 · 計數器 #%3 → 更新 #%4 · 區塊 %6 中的守衛 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>最佳化 SSA（含回繞迴圈分析）</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>證明依據：計數器單調變化，且遵守無溢位約束。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>證明依據：每個計數週期都會到達共同出口，包括發生回繞的週期。</translation>
     </message>
 </context>
 <context>
@@ -7719,6 +7755,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>此工作程序不支援二進位比較。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>還原已停止，可以重試。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>還原已停止，原來的比較結果仍可使用。</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>無法還原比較。原來的比較結果仍可使用。%1</translation>
     </message>
 </context>
 <context>

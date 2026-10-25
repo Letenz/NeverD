@@ -152,6 +152,8 @@ Object loopProgress(const FlowLoopProgress &L) {
     Out["header"] = L.Header;
   if (L.Latch != NoIndex)
     Out["latch"] = L.Latch;
+  if (L.Proof != FlowCounterProof::None)
+    Out["proof"] = flowCounterProofName(L.Proof);
   return Out;
 }
 Object progress(const FlowProgress &P, llvm::StringRef Profile) {
@@ -159,7 +161,8 @@ Object progress(const FlowProgress &P, llvm::StringRef Profile) {
              {"source_contract", P.SourceContract},
              {"observed_contract", P.ObservedContract},
              {"loop_count", P.LoopCount}};
-  if (Profile == LLVMBranchProgressDataFlowProfile) {
+  if (Profile == LLVMBranchProgressDataFlowProfile ||
+      Profile == LLVMModularProgressDataFlowProfile) {
     Out["backedge_count"] = P.BackedgeCount;
     Out["guard_count"] = P.Loops.size();
   }
@@ -308,7 +311,9 @@ void writeDataFlowEvidence(llvm::json::OStream &Out,
   });
 }
 std::shared_ptr<const DataFlowEvidence>
-readDataFlowEvidence(const Value &V, const DataFlowSettings &S) {
+readDataFlowEvidence(const Value &V, const DataFlowSettings &S,
+                     const ComparisonControl &Control) {
+  Control.check();
   if (auto Error = S.validate())
     throw std::invalid_argument(*Error);
   if (V.kind() == Value::Null) {
@@ -326,6 +331,7 @@ readDataFlowEvidence(const Value &V, const DataFlowSettings &S) {
   E->EligibleFunctions = count(field(O, "eligible_functions"));
   uint64_t Nodes = 0;
   for (const auto &RowValue : array(field(O, "entries"), S.MaxFunctions)) {
+    Control.check();
     const auto &Row = object(RowValue);
     DataFlowEntry Entry;
     Entry.Function = address(field(Row, "function"));
@@ -340,7 +346,7 @@ readDataFlowEvidence(const Value &V, const DataFlowSettings &S) {
       auto Options = S.Graph;
       Options.MaxNodes =
           std::min<uint64_t>(Options.MaxNodes, S.MaxTotalNodes - Nodes);
-      Entry.Graph = readDataFlowGraph(Graph, Options);
+      Entry.Graph = readDataFlowGraph(Graph, Options, Control);
       Nodes += Entry.Graph->retainedItems();
     }
     require(bool(Entry.Graph) ==
@@ -408,8 +414,9 @@ void writeDataFlowGraph(llvm::json::OStream &Out, const DataFlowGraph &G) {
     });
   });
 }
-DataFlowGraph readDataFlowGraph(const Value &V,
-                                const DataFlowOptions &Options) {
+DataFlowGraph readDataFlowGraph(const Value &V, const DataFlowOptions &Options,
+                                const ComparisonControl &Control) {
+  Control.check();
   if (auto Error = Options.validate())
     throw std::invalid_argument(*Error);
   const auto &O = object(V);
@@ -446,7 +453,9 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   uint64_t Edges = 0, ProgressRows = 0;
   if (Progress) {
     const auto &P = object(field(O, "progress"));
-    const bool Branched = G.Profile == LLVMBranchProgressDataFlowProfile;
+    const bool Modular = G.Profile == LLVMModularProgressDataFlowProfile;
+    const bool Branched =
+        G.Profile == LLVMBranchProgressDataFlowProfile || Modular;
     if (Branched)
       fields(P, {"kind", "source_contract", "observed_contract", "loop_count",
                  "backedge_count", "guard_count", "loops"});
@@ -470,12 +479,16 @@ DataFlowGraph readDataFlowGraph(const Value &V,
     Edges += 1 + Record.SourceContract.size() + Record.ObservedContract.size();
     require(Edges <= Options.MaxWork, "progress exceeds work allowance");
     for (const auto &Row : array(field(P, "loops"), Options.MaxNodes - 1)) {
+      Control.check();
       require(++Edges <= Options.MaxWork, "loop proofs exceed work allowance");
       const auto &L = object(Row);
       const bool MultiBlock =
           G.Profile == LLVMMultiBlockProgressDataFlowProfile ||
           G.Profile == LLVMNestedProgressDataFlowProfile || Branched;
-      if (Branched)
+      if (Modular)
+        fields(L, {"block", "counter", "update", "compare", "header", "latch",
+                   "proof"});
+      else if (Branched)
         fields(L, {"block", "counter", "update", "compare", "header", "latch"});
       else if (MultiBlock)
         fields(L, {"block", "counter", "update", "compare", "header"});
@@ -488,6 +501,15 @@ DataFlowGraph readDataFlowGraph(const Value &V,
            uint32_t(count(field(L, "compare"))),
            MultiBlock ? uint32_t(count(field(L, "header"))) : NoIndex,
            Branched ? uint32_t(count(field(L, "latch"))) : NoIndex});
+      if (Modular) {
+        const auto Proof =
+            text(field(L, "proof"), limits::kMaxFlowIdentityBytes);
+        require(Proof == "nowrap" || Proof == "modular",
+                "unknown counter proof basis");
+        Record.Loops.back().Proof = Proof == "nowrap"
+                                        ? FlowCounterProof::NoWrap
+                                        : FlowCounterProof::Modular;
+      }
     }
     Record.LoopCount = count(field(P, "loop_count"));
     Record.BackedgeCount =
@@ -501,6 +523,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   if (Parameters) {
     for (const auto &Row :
          array(field(O, "parameter_views"), Options.MaxNodes - ProgressRows)) {
+      Control.check();
       const auto &P = object(Row);
       fields(P, {"source_bits", "view_bits", "attributes", "native_site",
                  "elided_truncations"});
@@ -529,6 +552,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
             "parameter inventory counts disagree");
   }
   for (const auto &Row : array(field(O, "blocks"), Options.MaxBlocks)) {
+    Control.check();
     const auto &B = object(Row);
     if (Parameters)
       fields(B, {"begin", "end", "terminator", "successors", "gap_mask"});
@@ -538,6 +562,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
     Block.Terminator = index(field(B, "terminator"));
     Block.Gaps = count(field(B, "gap_mask"), AllFlowGaps);
     for (const auto &I : array(field(B, "successors"), Options.MaxBlocks)) {
+      Control.check();
       require(++Edges <= Options.MaxWork, "CFG exceeds work allowance");
       Block.Successors.push_back(count(I));
     }
@@ -546,6 +571,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   for (const auto &Row :
        array(field(O, "nodes"),
              Options.MaxNodes - G.ParameterViews.size() - ProgressRows)) {
+    Control.check();
     const auto &N = object(Row);
     if (Parameters)
       fields(N, {"opcode", "result_bytes", "memory_ordering",
@@ -578,6 +604,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
       Edges += Node.Semantics.size();
       require(Edges <= Options.MaxWork, "metadata exceeds work allowance");
       for (const auto &Origin : array(field(N, "origins"), Options.MaxWork)) {
+        Control.check();
         require(++Edges <= Options.MaxWork, "origins exceed work allowance");
         const auto &O = object(Origin);
         if (Parameters)
@@ -591,6 +618,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
               "MedIR graph contains optimized metadata");
     }
     for (const auto &Input : array(field(N, "inputs"), Options.MaxWork)) {
+      Control.check();
       require(++Edges <= Options.MaxWork, "operands exceed work allowance");
       const auto &A = array(Input, Extended ? 8 : 7);
       require(A.size() == (Extended ? 8u : 7u), "invalid operand field count");
@@ -618,7 +646,7 @@ DataFlowGraph readDataFlowGraph(const Value &V,
   require(count(field(O, "node_count")) == G.Nodes.size() &&
               count(field(O, "block_count")) == G.Blocks.size(),
           "graph inventory counts disagree");
-  if (auto Error = G.validate(Options))
+  if (auto Error = G.validate(Options, Control))
     throw std::invalid_argument(*Error);
   return G;
 }

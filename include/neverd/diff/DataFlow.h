@@ -50,11 +50,14 @@ inline constexpr llvm::StringLiteral LLVMNestedProgressDataFlowProfile(
     limits::diff::kLLVMNestedProgressSSAProfile);
 inline constexpr llvm::StringLiteral LLVMBranchProgressDataFlowProfile(
     limits::diff::kLLVMBranchProgressSSAProfile);
+inline constexpr llvm::StringLiteral LLVMModularProgressDataFlowProfile(
+    limits::diff::kLLVMModularProgressSSAProfile);
 inline bool hasProgressProof(llvm::StringRef Profile) {
   return Profile == LLVMProgressDataFlowProfile ||
          Profile == LLVMMultiBlockProgressDataFlowProfile ||
          Profile == LLVMNestedProgressDataFlowProfile ||
-         Profile == LLVMBranchProgressDataFlowProfile;
+         Profile == LLVMBranchProgressDataFlowProfile ||
+         Profile == LLVMModularProgressDataFlowProfile;
 }
 inline bool hasParameterViews(llvm::StringRef Profile) {
   return Profile == LLVMParameterDataFlowProfile || hasProgressProof(Profile);
@@ -171,6 +174,8 @@ struct FlowParameterView {
 
 enum class FlowProgressKind : uint8_t { Unproven, Acyclic, CounterLoops };
 llvm::StringRef flowProgressName(FlowProgressKind Kind);
+enum class FlowCounterProof : uint8_t { None, NoWrap, Modular };
+llvm::StringRef flowCounterProofName(FlowCounterProof Proof);
 struct FlowLoopProgress {
   uint32_t Block = NoIndex, Counter = NoIndex, Update = NoIndex,
            Compare = NoIndex;
@@ -181,6 +186,8 @@ struct FlowLoopProgress {
   /// separately. Several guards can justify one latch; earlier versions keep
   /// NoIndex and their original wire fields.
   uint32_t Latch = NoIndex;
+  /// v5 records the rederived proof basis; None retains the v1-v4 encoding.
+  FlowCounterProof Proof = FlowCounterProof::None;
   bool operator==(const FlowLoopProgress &) const = default;
 };
 struct FlowProgress {
@@ -214,7 +221,9 @@ struct DataFlowGraph {
            (Progress ? 1 + Progress->Loops.size() : 0);
   }
   bool operator==(const DataFlowGraph &) const = default;
-  std::optional<std::string> validate(const DataFlowOptions &Options) const;
+  std::optional<std::string>
+  validate(const DataFlowOptions &Options,
+           const ComparisonControl &Control = {}) const;
 };
 
 struct FlowFingerprints {

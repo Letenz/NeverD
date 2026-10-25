@@ -2369,6 +2369,8 @@ _declare("neverd_comparison_run", "int",
 _declare("neverd_comparison_run_owned", "int",
          ["neverd_comparison_t", "neverd_session_t *", "neverd_session_t *",
           "const char *", "neverd_comparison_progress_t", "void *"])
+_declare("neverd_comparison_restore_json_with_progress", "int",
+         ["neverd_comparison_t", "const char *", "neverd_comparison_progress_t", "void *"])
 for _comparison_report in ("status_json", "last_error", "summary_json", "export_json"):
     _declare(f"neverd_comparison_{_comparison_report}", "const char *",
              ["neverd_comparison_t"], ownership=Ownership.OWNED_STRING)

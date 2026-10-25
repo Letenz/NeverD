@@ -24,6 +24,9 @@
 namespace neverd::diff {
 llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
                                   bool Fragments) {
+  if (GraphProfile == LLVMModularProgressDataFlowProfile)
+    return Fragments ? LLVMModularProgressFlowFragmentProfile
+                     : LLVMModularProgressFlowRegionProfile;
   if (GraphProfile == LLVMBranchProgressDataFlowProfile)
     return Fragments ? LLVMBranchProgressFlowFragmentProfile
                      : LLVMBranchProgressFlowRegionProfile;
@@ -205,24 +208,28 @@ void anchors(const Index &A, const Index &B, const DataFlowSettings &Evidence,
              Budget &Work, const ComparisonControl &Control) {
   std::vector<FlowMatchInput> PreparedA, PreparedB;
   std::vector<FlowFragmentInput> FragmentsA, FragmentsB;
-  if (Settings.Fragments) {
-    for (const auto &[From, To] :
-         {std::pair{&A, &FragmentsA}, {&B, &FragmentsB}}) {
-      To->reserve(From->Graphs.size());
-      for (const auto &G : From->Graphs) {
-        Work.charge(G.ValidationWork + G.Fragments.Layers.size());
-        To->emplace_back(*G.Graph, G.Fragments, Evidence.Graph);
+  try {
+    if (Settings.Fragments) {
+      for (const auto &[From, To] :
+           {std::pair{&A, &FragmentsA}, {&B, &FragmentsB}}) {
+        To->reserve(From->Graphs.size());
+        for (const auto &G : From->Graphs) {
+          Work.charge(G.ValidationWork + G.Fragments.Layers.size());
+          To->emplace_back(*G.Graph, G.Fragments, Evidence.Graph, Control);
+        }
+      }
+    } else {
+      for (const auto &[From, To] :
+           {std::pair{&A, &PreparedA}, {&B, &PreparedB}}) {
+        To->reserve(From->Graphs.size());
+        for (const auto &G : From->Graphs) {
+          Work.charge(G.ValidationWork);
+          To->emplace_back(*G.Graph, G.Keys, Evidence.Graph, Control);
+        }
       }
     }
-  } else {
-    for (const auto &[From, To] :
-         {std::pair{&A, &PreparedA}, {&B, &PreparedB}}) {
-      To->reserve(From->Graphs.size());
-      for (const auto &G : From->Graphs) {
-        Work.charge(G.ValidationWork);
-        To->emplace_back(*G.Graph, G.Keys, Evidence.Graph);
-      }
-    }
+  } catch (const ComparisonInterrupted &Stopped) {
+    Work.stop(Stopped.State);
   }
   std::set<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>> Accepted;
   size_t I = 0, J = 0;
@@ -510,12 +517,20 @@ FlowRegionAnalysis findFlowRegions(FlowRegionInput P, FlowRegionInput S,
     return R;
   if (!Evidence.Enabled)
     throw std::invalid_argument("SSA regions require dependency evidence");
-  for (const auto Input : {P, S}) {
-    if (auto Error = Input.Native.validate())
-      throw std::invalid_argument(*Error);
-    if (auto Error =
-            validateDataFlowEvidence(Input.Evidence, Evidence, Input.Native))
-      throw std::invalid_argument(*Error);
+  try {
+    for (const auto Input : {P, S}) {
+      if (auto Error = Input.Native.validate(Control))
+        throw std::invalid_argument(*Error);
+      if (auto Error = validateDataFlowEvidence(Input.Evidence, Evidence,
+                                                Input.Native, Control))
+        throw std::invalid_argument(*Error);
+    }
+  } catch (const ComparisonInterrupted &Stopped) {
+    R.State = Stopped.State;
+    // Preparation belongs to the first indexing phase in the persisted
+    // contract. Keep its existing spelling for older report readers.
+    R.StoppedPhase = "flow-regions:index-primary";
+    return R;
   }
   if (P.Native.Identity.Architecture != S.Native.Identity.Architecture ||
       P.Native.Identity.Bits != S.Native.Identity.Bits ||
@@ -548,7 +563,9 @@ FlowRegionAnalysis findFlowRegions(FlowRegionInput P, FlowRegionInput S,
 std::optional<std::string>
 validateFlowRegions(const FlowRegionAnalysis &Saved, FlowRegionInput P,
                     FlowRegionInput S, const DataFlowSettings &Evidence,
-                    const FlowRegionSettings &Settings) {
+                    const FlowRegionSettings &Settings,
+                    const ComparisonControl &Control) {
+  Control.check();
   FlowRegionAnalysis Empty;
   Empty.Profile = flowRegionProfile(Evidence.Profile, Settings.Fragments).str();
   if (Saved.Profile != Empty.Profile)
@@ -565,7 +582,11 @@ validateFlowRegions(const FlowRegionAnalysis &Saved, FlowRegionInput P,
   if (Saved.Work > Settings.MaxWork)
     return "saved SSA region work exceeds its allowance";
   try {
-    auto Fresh = findFlowRegions(P, S, Evidence, Settings);
+    auto Fresh = findFlowRegions(P, S, Evidence, Settings, Control);
+    if (Fresh.State == ComparisonState::Cancelled ||
+        Fresh.State == ComparisonState::TimedOut)
+      throw ComparisonInterrupted(*Fresh.State);
+    Control.check();
     // Work is historical diagnostic bookkeeping. Cache improvements and host
     // sort implementations can change it without changing any evidence.
     Fresh.Work = Saved.Work;
@@ -592,6 +613,8 @@ validateFlowRegions(const FlowRegionAnalysis &Saved, FlowRegionInput P,
         (Saved.PrimaryScopeComplete && !Fresh.PrimaryScopeComplete) ||
         (Saved.SecondaryScopeComplete && !Fresh.SecondaryScopeComplete))
       return "stopped SSA region evidence is not a verified completed prefix";
+  } catch (const ComparisonInterrupted &) {
+    throw;
   } catch (const std::exception &E) {
     return E.what();
   }

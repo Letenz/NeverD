@@ -185,6 +185,17 @@ model. Symbol versions are not used to select alternate implementations.
 The supported Bionic subset is:
 
 - `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`.
+- `__strlen_chk` uses the same NUL scan as `strlen`, then requires the returned
+  length to be strictly smaller than the full LP64 object extent. The NUL must
+  fit inside that extent; an empty string therefore needs at least one byte.
+  Even a zero extent does not skip the scan. Inaccessible memory, the scan
+  limit or an expired deadline can stop the call before the fortify check.
+  Large extents, including `SIZE_MAX`, do not require a whole-object read and
+  do not relax the process scan limit. Success preserves guest bytes and errno.
+  A failed extent check uses the existing string-fortify `runtime_failure`
+  boundary without a returned value; abort-triggered signal delivery and
+  logging are not modeled. This independently implemented ordering follows the
+  pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
 - `strncpy` copies at most the requested count through the first NUL, then pads
   the destination to exactly that count with zeros. Truncated copies need not
   terminate. It returns the original destination and retains errno; zero count
@@ -193,9 +204,20 @@ The supported Bionic subset is:
   model stages all bytes and refuses overlapping accessed ranges, inaccessible
   memory or an expired budget before committing guest writes. This atomic
   refusal is a model diagnostic, not native fault/undefined-behavior emulation.
-  Checked `__strncpy_chk`/`__strncpy_chk2` entry points remain unsupported.
   The valid-call contract follows the pinned API 28
   [Bionic implementation](https://android.googlesource.com/platform/bionic/+/refs/tags/android-9.0.0_r1/libc/upstream-openbsd/lib/libc/string/strncpy.c).
+- `__strncpy_chk` and `__strncpy_chk2` share that copy owner. Both require the
+  requested count to fit the full LP64 destination extent before any memory
+  access or copy limit check. `__strncpy_chk2` additionally checks the actual
+  source bytes read after the scan, including a consumed NUL but excluding
+  destination padding. An inaccessible source byte can therefore fail before
+  the source-extent check, even when that extent is zero. A truncated copy needs
+  only its count of source bytes, without a terminator. Zero count touches
+  neither pointer; large object extents do not relax the process memory limit.
+  Fortify violations use a non-returning `runtime_failure`. The shared model
+  stages all writes and rejects atomically, so native pre-abort writes, logging
+  and abort-triggered signal delivery are not simulated. The checks follow the
+  pinned [API 28 implementation](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/bionic/fortify.cpp).
 - `__FD_SET_chk`, `__FD_CLR_chk`, `__FD_ISSET_chk`, using the Bionic LP64
   1024-bit descriptor bitmap. The signed low 32-bit descriptor must be 0..1023,
   then the full-width object extent must be at least 128 bytes. Invalid values
@@ -508,6 +530,16 @@ The supported Bionic subset is:
   provider lifetime checks. The scalar conversion follows Android 9's
   [Bionic contract](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-freebsd/lib/libc/gen/usleep.c)
   and [32-bit type](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/sys/types.h).
+- `sleep` shares the same duration admission, clock and cooperative wait. Its
+  unsigned 32-bit seconds argument follows the
+  [API 28 wrapper](https://github.com/aosp-mirror/platform_bionic/blob/android-9.0.0_r1/libc/upstream-freebsd/lib/libc/gen/sleep.c):
+  a request above `INT_MAX` waits for `INT_MAX` seconds and returns the excess.
+  An interrupted wait returns the remaining seconds rounded up, plus that
+  excess. Other nanosleep errors return the original requested seconds.
+  Success preserves errno; interrupted errno conversion occurs after the guest
+  handler returns. Nested handlers retain separate remainder values and mutable
+  signal contexts still control return or bypass of the wrapper. Missing clock
+  policy, clock overflow and inactive dynamic providers stop explicitly.
 
 TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 `__errno` addresses slot 2, and the stack guard occupies slot 5. The guard is a

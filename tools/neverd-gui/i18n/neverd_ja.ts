@@ -5586,6 +5586,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>保存済みの解析を適用しています</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>保存済みの根拠を確認中</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>保存済みの比較を読み込み中</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>保存済みの比較を確認中</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>保存済みの測定値を再計算中</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>比較を復元中</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6409,6 +6429,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>分岐ループ解析付き最適化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>ラップアラウンドループ解析付き最適化 SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6563,6 +6587,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>証明済みループ: ヘッダーブロック %1 → ラッチブロック %2 · カウンター #%3 → 更新 #%4 · ブロック %6 のガード #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>ラップアラウンドループ解析付き最適化 SSA</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>証明根拠：オーバーフローしない契約を持つ単調カウンター。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>証明根拠：ラップアラウンド後も、すべてのカウンター周期が共通の出口に到達します。</translation>
     </message>
 </context>
 <context>
@@ -7719,6 +7755,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>このワーカーはバイナリ比較に対応していません。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>復元を停止しました。再試行できます。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>復元を停止しました。以前の比較は引き続き利用できます。</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>比較を復元できませんでした。以前の比較は引き続き利用できます。%1</translation>
     </message>
 </context>
 <context>

@@ -5622,6 +5622,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>Aplicando el análisis guardado</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Comprobando las evidencias guardadas</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Leyendo la comparación guardada</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Comprobando la comparación guardada</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Recalculando las mediciones guardadas</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Restaurando la comparación</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6445,6 +6465,10 @@ Cobertura: %7</translation>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>SSA optimizada con análisis de bucles ramificados</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles con retorno modular</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6623,18 @@ La terminación no demuestra que coincidan los números de iteraciones ni los re
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Bucle demostrado: bloque de cabecera %1 → bloque de retorno %2 · contador #%3 → actualización #%4 · guarda #%5 en el bloque %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA optimizada con análisis de bucles con retorno modular</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Prueba: un contador monótono con un contrato sin desbordamiento.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Prueba: cada ciclo del contador alcanza una salida común, incluso tras un retorno modular.</translation>
     </message>
 </context>
 <context>
@@ -7755,6 +7791,18 @@ Sustituye a: %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Este proceso no admite comparación binaria.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Restauración detenida. Puede volver a intentarlo.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Restauración detenida. Su comparación anterior sigue disponible.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>No se pudo restaurar la comparación. Su comparación anterior sigue disponible. %1</translation>
     </message>
 </context>
 <context>

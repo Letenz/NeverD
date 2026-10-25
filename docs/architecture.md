@@ -699,6 +699,21 @@ does not run another matcher or promote a candidate. Mapping edits and restore
 invalidate that inventory cache. CLI and the Qt counterpart picker consume this
 projection; the picker keeps bounded pages and invalidates its selection when
 the worker's comparison revision changes.
+`ComparisonJSON` owns strict saved-report validation and transactional binding.
+Its optional `ComparisonControl` carries cooperative cancellation/deadlines
+through record readers, graph/native/region validators and measurement workers.
+`ComparisonInterrupted` distinguishes a stopped restore from invalid evidence;
+worker exceptions are joined and rethrown by the shared parallel owner. Progress
+callbacks remain on the coordinator, including the last checkpoint before
+publication. The C ABI admits one operation, parses one DOM and commits only a
+fully validated replacement; failure/stop leaves the prior result, histories and
+caches intact. Restore operation status is separate from the saved result state.
+The worker resolves the additive progress export at runtime and uses that same
+capability for advertisement and cancellation admission. Neither adapter owns a
+second evidence validator or a separate persistence format. JSON DOM parsing,
+individual allocations/copies and whole-value equality are explicit indivisible
+checkpoints, so this remains cooperative cancellation rather than a deadline
+for every host operation.
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
@@ -795,6 +810,45 @@ the guard count. Production and replay derive them independently. Metadata
 paging uses these totals in constant time; guard-sorted witnesses retain the
 existing logarithmic node lookup. Legacy scanners, charge order and wire
 fields remain exact, and frontend adapters introduce no new proof rules.
+`llvm-progress-ssa-v5` adds modular counter progress in the same owner. A guard
+may observe one direct fixed affine translation of the counter. The common
+nowrap domain takes priority; otherwise every recurrence arm must have the same
+nonzero width-normalized delta. Each guard compares against a literal or another
+fixed affine observation of that same counter.
+`ConstantRange` constructs each continuation region after operand/polarity
+normalization and affine translation. Ignoring observation overflow flags gives
+a continuation superset, so the complement of their union contains only common
+exits. Width+1 APInt endpoints retain 2^64 exactly. Sorted interval unions and
+their complemented gaps project onto residues modulo 2^ctz(delta); coverage of
+every residue proves that every possible counter orbit encounters a common exit.
+No iteration simulation, fixed seed or native noundef attribute is introduced.
+For an unfrozen undef seed, a defined continuation must hold for every
+contributing choice, including a coherent initial value following that orbit;
+at a common exit the selected guard exits or is undefined. Exact forwarding
+and final residual acyclicity prevent resets or an unrelated infinite suffix.
+For `(counter+A) pred (counter+B)`, the fixed difference `D=B-A` determines the
+wrap point `-D`; equal offsets give a constant comparison. Signed predicates
+rotate both observations by the sign bit. This yields an exact concrete region
+without treating independently varying undef uses as correlated; the proof
+uses the coherent choices included among all contributing undef choices.
+The new interval work is charged O(G log G), with O(G) scratch for G guards;
+residual component rounds retain their existing accounting and final DAG check.
+Schema 9 adds the canonical `proof` marker (`nowrap` or `modular`) to each guard
+witness. Replay rederives that marker with the complete group, and paged adapters
+only present it. The v1-v4 model default omits this field and preserves their
+published charge order and serialized bytes.
+Fresh source binding first compares exact graph records. If LLVM PHI numbering
+changed, `FlowBinding` anchors every non-PHI operation in its existing order and
+block, then propagates a bidirectional map through ordered inputs. Every node
+must be bound; conflicts, unanchored PHI cycles and ordinary instruction
+reordering refuse. Fresh graph validation precedes reference traversal. Only
+node references, block terminators and progress counter/update/compare IDs are
+translated before complete graph equality, including origins, predecessor
+labels, attributes, contracts and counts. Saved nodes and report IDs remain
+untouched. This is exact source authentication under renumbering, not semantic
+equivalence. The additional binding pass charges allocation, traversal and
+copy/comparison payloads to the existing per-graph work allowance; validation
+retains its own bounded pass. Public restore remains synchronous.
 Data fingerprints report open dependency frontiers. Control slices use
 postdominators of observed exit paths; missing exits, aliases, opaque calls,
 exceptional flow and unknown inputs remain gaps rather than inferred effects.
@@ -2342,6 +2396,13 @@ scale; off-diagonal entries partition the remaining minterms between the two
 factors. It checks every matrix entry, including absent edges and coefficients
 that wrap to zero, within shared work and storage limits. The independent
 polynomial difference verifier still authorizes the replacement.
+Polynomial synthesis also restricts the linear remainder's corner table to
+the inputs that remainder actually uses. Variables confined to higher-degree
+products no longer replicate its coefficients or dilute its synthesis budget.
+Support discovery consumes the shared work allowance, and constants keep a
+single coefficient with the minterm basis's negative sign. Projection does
+not authorize a replacement: the complete polynomial difference must still
+be proved before CLI or GUI source output uses the result.
 Cubic recovery uses a minterm shared by all three factors as an anchor. Its
 diagonal coefficient fixes the scale; coefficients with two copies of the
 anchor identify how many factors select each other minterm. Coefficients with
@@ -2546,6 +2607,13 @@ Pairing indexes are constructed only for an admitted search and are confined
 to its active odd assumption, avoiding setup in ordinary low-word searches.
 All signature, pairing and reconstruction work uses the existing cumulative
 work/storage allowances and decision-node limit.
+Full-block two-bit admission caches structural identities before constructing
+Boolean corrections. Partial cache entries can answer only identity queries
+and must be completed before arithmetic reads their correction. A full block
+can search past a failed positional probe without repeatedly materializing
+upper carries. Partial factor blocks retain complete probes, preserving their
+existing work headroom. These rules remain in the shared symbolic owner used
+by CLI and GUI source optimization.
 Boolean polynomial reconstruction can factor shared cofactors across groups
 with disjoint remaining variables. Exact symmetric differences retain every
 unmatched term. Larger decision graphs try this construction before expanding
@@ -5003,6 +5071,10 @@ otherwise print as an unassigned local or a zero.
 
 The pipeline runs both annotations through `markSourceStackAccesses`, sharing
 one batch of entry-stack offset proofs and the resulting load/store ranges.
+Nontrapping scalar parity counts may precede an explicit scratch overwrite.
+A physical CALL return-slot write cannot substitute for a represented store:
+source C does not yet materialize that write, and later reads or escaping frame
+pointers could observe the missing value. Calls remain observation barriers.
 Only annotation flags change between the two consumers. The ranges are discarded
 before returning; no result survives a later IR mutation, and the proof's
 join, provenance, depth and work-limit rules are unchanged.
@@ -6130,6 +6202,18 @@ scalar result and remain ordered memory effects in both source routes. SMAP
 controls change hidden AC state while preserving arithmetic flags; transaction
 commit and its possible abort remain native. Native LLVM uses the corresponding
 intrinsics, and RTM intrinsic names select the code generator's RTM feature.
+CLZERO also retains its implicit address-sized AX/EAX/RAX input. The lifter
+wraps the offset before FS/GS base addition, and the shared instruction contract
+preserves the native cache-line effect and arithmetic flags. The CPU owns line
+size, alignment, store checks and weak ordering; an ordinary fixed-size clear
+cannot substitute for it. Native LLVM and C select the CLZERO target feature.
+
+Both source routes retain a complete constant carried by an integer RETURN
+after copy propagation. A later synthetic low-register read is not another
+machine write and cannot truncate that reaching value. The shared
+`MedReturnValue` decision still requires the operand to cover the return width;
+narrow operands retain the existing ABI reconstruction checks.
+Unrepresented segment identities and malformed decode details are refused.
 The inventory also owns CLUI/STUI/TESTUI/SENDUIPI, LKGS, HRESET and
 INVLPGB/TLBSYNC. Long-mode-only forms are admitted by the shared shape. TESTUI
 returns CF and the lifter clears its other arithmetic flags. LKGS selector and
@@ -6158,6 +6242,10 @@ ENCLU's entry, exit, resume and asynchronous continuation remain unsupported.
 Far/interrupt returns do not use the bounded system contract or ordinary ABI
 RETURN. RETF/IRET strict lifting refuses until architectural frame restoration
 and its nonlocal continuation are represented.
+The same boundary excludes SYSENTER/SYSEXIT/SYSRET and RSM, including permissive
+decoding. Legacy nonlocal intrinsic IDs retain their serialized identities;
+LowIR validation, MedIR conversion, verification and both source routes reject
+them before an ordinary return, generic syscall or bare assembly can be emitted.
 The same contract owns CET shadow-stack writes and long-mode ENQCMD/ENQCMDS.
 Their historical intrinsic IDs remain stable. Both enqueue operands are
 addresses; only the command-source address inherits FS/GS, while the portal
@@ -7748,6 +7836,15 @@ for the owning scheduler or advancing an otherwise single-threaded workload.
 Bionic's `usleep` narrows its scalar argument to unsigned 32-bit microseconds
 and admits the converted duration through that same owner. Completion and errno
 conversion share the kernel-call path, including suspended native events.
+Bionic's `sleep` admits at most `INT32_MAX` seconds and retains the original
+unsigned argument in a typed libc continuation. `LinuxSleep` alone computes the
+interrupted remainder, either copying it to a raw caller's guest address or
+retaining a typed value for the modeled libc automatic. The scheduler carries
+that continuation through both ordinary waits and nested signal-return frames;
+it does not interpret the seconds or create another deadline. After the handler,
+Bionic applies kernel errno conversion, narrows the libc return to `int`, and converts the
+retained remainder into rounded-up seconds with the unattempted excess. A signal
+context redirect leaves the abandoned native event incomplete.
 Android's typed waits retain the consumed request, complete CPU context and
 native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
 readiness and completion; `GuestThreads` advances to the earliest deadline only
@@ -9263,10 +9360,12 @@ original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and
-bytes remain unchanged. Unknown or overlapping writes invalidate facts;
-calls, ordered memory, malformed graphs and control-flow joins prevent this
-proof. Replayed operations must be total and explicitly typed, store/load
-truncation is retained, and budgets count rendered trees including repeated
+bytes remain unchanged. Unknown or overlapping writes invalidate facts. A
+statement's outermost direct call can consume forwarded arguments, then clears
+all stored-memory facts. Nested calls, indirect targets, ordered memory,
+malformed graphs and control-flow joins prevent this proof. Replayed operations
+must be total and explicitly typed; store/load truncation and the read's signed
+interpretation are retained. Budgets count rendered trees including repeated
 DAG edges. The proof applies to both 32-bit and 64-bit targets.
 HighIR's scalar-definition proof also survives an ordinary store whose address
 and value contain no hidden effects: the store changes memory, not an
@@ -9568,7 +9667,9 @@ libraries supplied by the CMake helper.
 | `lib/support` | Shared binary-loading helpers and independent SHA-256 | Support: Loader; Digest: LLVM Support/TargetParser |
 | `lib/translate` | Versioned guest state/policy/exits, fixed runtime ABI, checked guest memory, generated-IR/object/LinkGraph audits, sealed native linking, and the experimental x86-64-to-AArch64 C++ dispatcher | IR, LLVM, LLVM Object, and JITLink contracts |
 
-`NeverDDigest` owns the existing one-shot SHA-256 implementation in `lib/support`, with unchanged runtime feature checks and portable fallback, and no Loader or IR dependency. `loader/InputDigest.h` remains a forwarding header. `NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
+`NeverDDigest` owns one-shot SHA-256 in `lib/support`, with no Loader or IR dependency. Runtime dispatch selects x86 SHA extensions or little-endian ARM64 SHA2 only when the host reports support, otherwise retaining LLVM's portable implementation. Linux ARM64 checks the kernel's `AT_HWCAP` SHA2/Advanced SIMD bits, including when `/proc` is unavailable; Windows uses LLVM's processor-feature mapping. Darwin ARM64 uses the documented `hw.optional.arm.FEAT_SHA256` sysctl because LLVM's host map is empty there. The decision is cached, unknown or failed queries fall back, and target-specific instructions stay inside the compression function. Both accelerated implementations share the `.def` constants, padding, digest encoding and bounded cancellation checkpoints. `loader/InputDigest.h` remains a forwarding header.
+
+`NeverDIRLowValidation` owns `lowUndefinedOperationDigest`; Lift links that owner explicitly. The v1 identity retains the same domain, little-endian words, all six stored input slots, provenance and source coordinates. Serialization uses at most 64 KiB for up to 199 operations; larger spans use the original incremental path. Both paths enumerate the same fields and preserve evidence checks.
 
 ### Analysis and simplification ownership
 

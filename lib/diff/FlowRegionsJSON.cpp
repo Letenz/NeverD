@@ -80,9 +80,11 @@ Array pairs(const std::vector<std::pair<uint32_t, uint32_t>> &Pairs) {
     Out.push_back(Array{A, B});
   return Out;
 }
-std::vector<std::pair<uint32_t, uint32_t>> pairs(const Value &V, uint64_t Max) {
+std::vector<std::pair<uint32_t, uint32_t>>
+pairs(const Value &V, uint64_t Max, const ComparisonControl &Control) {
   std::vector<std::pair<uint32_t, uint32_t>> Out;
   for (const auto &Item : array(V, Max)) {
+    Control.check();
     const auto &P = array(Item, 2);
     require(P.size() == 2, "correspondence needs two coordinates");
     Out.emplace_back(count(P[0], NoIndex - 1), count(P[1], NoIndex - 1));
@@ -241,7 +243,9 @@ void writeFlowRegionAnalysisFields(llvm::json::OStream &Out,
   });
 }
 FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
-                                          const FlowRegionSettings &Settings) {
+                                          const FlowRegionSettings &Settings,
+                                          const ComparisonControl &Control) {
+  Control.check();
   const auto &O = object(V);
   const auto Profile = text(field(O, "profile"));
   const bool Fragments = isFlowFragmentProfile(Profile);
@@ -284,6 +288,7 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
   R.SecondaryScopeComplete = boolean(field(O, "secondary_scope_complete"));
   uint64_t StoredPairs = 0;
   for (const auto &Value : array(field(O, "anchors"), Settings.MaxAnchors)) {
+    Control.check();
     const auto &A = object(Value);
     FlowRegionAnchor Row;
     Row.Id = text(field(A, "id"));
@@ -291,17 +296,18 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
     Row.SecondaryFunction = address(field(A, "secondary_function"));
     Row.PrimaryRoot = count(field(A, "primary_root"), NoIndex - 1);
     Row.SecondaryRoot = count(field(A, "secondary_root"), NoIndex - 1);
-    Row.Nodes = pairs(field(A, "nodes"), Settings.MaxNodePairs - StoredPairs);
+    Row.Nodes =
+        pairs(field(A, "nodes"), Settings.MaxNodePairs - StoredPairs, Control);
     StoredPairs += Row.Nodes.size();
-    Row.PhiBlocks =
-        pairs(field(A, "phi_blocks"), Settings.MaxNodePairs - StoredPairs);
+    Row.PhiBlocks = pairs(field(A, "phi_blocks"),
+                          Settings.MaxNodePairs - StoredPairs, Control);
     StoredPairs += Row.PhiBlocks.size();
     if (Fragments) {
       Row.Depth = count(field(A, "depth"), limits::kMaxFlowRounds);
       require(Row.Depth && Row.PhiBlocks.empty(),
               "fragment depth or PHI inventory is invalid");
-      Row.Frontier =
-          pairs(field(A, "frontier"), Settings.MaxNodePairs - StoredPairs);
+      Row.Frontier = pairs(field(A, "frontier"),
+                           Settings.MaxNodePairs - StoredPairs, Control);
       StoredPairs += Row.Frontier.size();
       require(Row.Frontier.size() == count(field(A, "frontier_count")),
               "fragment frontier count disagrees with coordinates");
@@ -327,6 +333,7 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
   }
   uint64_t GroupedAnchors = 0;
   for (const auto &Value : array(field(O, "hypotheses"), Settings.MaxAnchors)) {
+    Control.check();
     const auto &A = object(Value);
     FlowRegionHypothesis H;
     H.Id = text(field(A, "id"));
@@ -334,6 +341,7 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
          array(field(A, "anchors"),
                std::min<uint64_t>(limits::kMaxFlowRegionGroupAnchors,
                                   R.Anchors.size() - GroupedAnchors))) {
+      Control.check();
       const auto N = count(I);
       require(N < R.Anchors.size(), "hypothesis names an absent anchor");
       H.Anchors.push_back(N);
@@ -346,6 +354,7 @@ FlowRegionAnalysis readFlowRegionAnalysis(const Value &V,
         To->push_back(address(F));
     for (const auto &K : array(field(A, "explanations"),
                                unsigned(RegionKind::Redistribution) + 1)) {
+      Control.check();
       const auto Kind = regionKindNamed(text(K));
       require(Kind.has_value(), "unknown relationship explanation");
       H.Explanations.push_back(*Kind);

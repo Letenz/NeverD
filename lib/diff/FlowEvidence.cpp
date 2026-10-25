@@ -10,6 +10,8 @@
 
 #include "neverd/diff/FlowEvidence.h"
 
+#include "FlowBinding.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -83,9 +85,10 @@ const DataFlowEntry *DataFlowEvidence::find(uint64_t Function) const {
       [](const auto &E, uint64_t A) { return E.Function < A; });
   return I != Entries.end() && I->Function == Function ? &*I : nullptr;
 }
-std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
-                                                    const DataFlowSettings &S,
-                                                    const Program &P) {
+std::optional<std::string>
+validateDataFlowEvidence(const DataFlowEvidence *E, const DataFlowSettings &S,
+                         const Program &P, const ComparisonControl &Control) {
+  Control.check();
   if (auto Error = S.validate())
     return Error;
   if (bool(E) != S.Enabled)
@@ -98,15 +101,18 @@ std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
       E->retainedItems() > S.MaxTotalNodes)
     return "dataflow collection exceeds its bounds or has no recipe";
   std::vector<uint64_t> Eligible;
-  for (const auto &F : P.Functions)
+  for (const auto &F : P.Functions) {
+    Control.check();
     if (P.instructionCount(F))
       Eligible.push_back(F.Address);
+  }
   if (E->EligibleFunctions != Eligible.size() ||
       E->Entries.size() > Eligible.size() ||
       (E->State == ComparisonState::Complete &&
        E->Entries.size() != Eligible.size()))
     return "dataflow coverage disagrees with the decoded function inventory";
   for (size_t I = 0; I < E->Entries.size(); ++I) {
+    Control.check();
     const auto &Row = E->Entries[I];
     if (Row.Function != Eligible[I] ||
         !availabilityNamed(availabilityName(Row.Availability)) ||
@@ -122,7 +128,7 @@ std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
     if (!Row.Graph)
       continue;
     const auto &G = *Row.Graph;
-    if (auto Error = G.validate(S.Graph))
+    if (auto Error = G.validate(S.Graph, Control))
       return Error;
     if (G.Profile != S.Profile || G.Function != Row.Function ||
         G.Revision != P.Identity.Revision || G.ABI != P.Identity.ABI)
@@ -132,9 +138,12 @@ std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
       return "dataflow graph exceeds the native instruction admission bound";
     std::set<uint64_t> Addresses;
     for (const auto &B : P.blocks(F))
-      for (const auto &Insn : P.instructions(B))
+      for (const auto &Insn : P.instructions(B)) {
+        Control.check();
         Addresses.insert(Insn.Address);
+      }
     for (const auto &N : G.Nodes) {
+      Control.check();
       std::optional<std::string> Error;
       N.forEachOrigin([&](const FlowOrigin &Origin) {
         if (!Addresses.contains(Origin.Address))
@@ -153,20 +162,46 @@ std::optional<std::string> validateDataFlowEvidence(const DataFlowEvidence *E,
 std::optional<std::string>
 bindDataFlowEvidence(const DataFlowEvidence *Saved,
                      const DataFlowEvidence *Fresh,
-                     const DataFlowSettings &Settings, const Program &Input) {
-  if (auto Error = validateDataFlowEvidence(Saved, Settings, Input))
+                     const DataFlowSettings &Settings, const Program &Input,
+                     const ComparisonControl &Control) {
+  if (auto Error = validateDataFlowEvidence(Saved, Settings, Input, Control))
     return Error;
   if (bool(Saved) != bool(Fresh))
     return "saved dataflow requires fresh extraction with the same settings";
   if (!Saved)
     return {};
+  const auto Disagrees = [] {
+    return std::optional<std::string>(
+        "saved dataflow facts disagree with the current native SSA projection");
+  };
   if (Saved->Recipe != Fresh->Recipe ||
       Saved->EligibleFunctions != Fresh->EligibleFunctions ||
-      Saved->Entries.size() > Fresh->Entries.size() ||
-      !std::equal(Saved->Entries.begin(), Saved->Entries.end(),
-                  Fresh->Entries.begin()))
-    return "saved dataflow facts disagree with the current native SSA "
-           "projection";
+      Saved->Entries.size() > Fresh->Entries.size())
+    return Disagrees();
+  for (size_t I = 0; I < Saved->Entries.size(); ++I) {
+    Control.check();
+    const auto &A = Saved->Entries[I], &B = Fresh->Entries[I];
+    if (A == B)
+      continue;
+    if (A.Function != B.Function || A.Availability != B.Availability ||
+        A.Reason != B.Reason || !A.Graph || !B.Graph)
+      return Disagrees();
+    uint64_t Work = 0;
+    try {
+      if (!sameLLVMGraphAfterPhiRenumbering(
+              *A.Graph, *B.Graph, Settings.Graph,
+              [&](uint64_t Amount) {
+                Control.check();
+                if (Amount > Settings.Graph.MaxWork - Work)
+                  throw DataFlowInterrupted(ComparisonState::ResourceLimited);
+                Work += Amount;
+              },
+              Control))
+        return Disagrees();
+    } catch (const DataFlowInterrupted &) {
+      return "saved dataflow PHI binding exceeds its work allowance";
+    }
+  }
   return {};
 }
 } // namespace neverd::diff

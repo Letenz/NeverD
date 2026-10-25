@@ -5586,6 +5586,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>正在应用保存的分析</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>正在检查已保存的证据</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>正在读取已保存的比较</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>正在检查已保存的比较</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>正在重新计算已保存的度量</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>正在恢复比较</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6409,6 +6429,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>带分支循环分析的优化 SSA</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>优化 SSA（含回绕循环分析）</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6563,6 +6587,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>已证明的循环：头块 %1 → 回边块 %2 · 计数器 #%3 → 更新 #%4 · 块 %6 中的守卫 #%5</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>优化 SSA（含回绕循环分析）</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>证明依据：计数器单调变化，且遵守无溢出约束。</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>证明依据：每个计数周期都会到达共同出口，包括发生回绕的周期。</translation>
     </message>
 </context>
 <context>
@@ -7719,6 +7755,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>此工作进程不支持二进制对比。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>恢复已停止，可以重试。</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>恢复已停止，原来的比较结果仍可使用。</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>无法恢复比较。原来的比较结果仍可使用。%1</translation>
     </message>
 </context>
 <context>

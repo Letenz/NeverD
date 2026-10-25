@@ -1400,7 +1400,42 @@ bool collectLowAddressUses(
             Op.Opcode == NdOp::ATOMIC_CMPXCHG;
         if (IsMemoryEffect && !Memory.Complete)
           return false;
-        if (Op.Opcode == NdOp::LOAD && Memory.Complete) {
+        if (Img.Arch == Arch::AArch64 &&
+            lowAArch64AddressMemoryShapeIsValid(Op)) {
+          // The original checked load observes its address without publishing
+          // it or clobbering ABI argument registers. Keep both operand roots
+          // as a conservative read footprint; neither the effective address
+          // nor the loaded value is an unchecked base-plus-index expression.
+          ModuleAddressFacts Address =
+              factsFor(Op.Inputs[kAddressMemoryBaseOperand + 1]);
+          if (!mergeFacts(Address,
+                          factsFor(Op.Inputs[kAddressMemoryIndexOperand + 1])))
+            return false;
+          reclassifyExactRoots(Address);
+          Address.Imprecise = true;
+          if (!addUse(Op, ModuleAddressUse::Kind::Load, Address,
+                      Op.Output.Size))
+            return false;
+          if (!Address.FrameOffsets.empty()) {
+            // A dynamic checked address can read any retained private spill.
+            // Preserve their possible pointee roots without claiming an exact
+            // address, frame-cell identity, or successful access. A later use
+            // of the loaded pointer must still expose a writable table.
+            ModuleAddressFacts Loaded;
+            for (const auto &[Key, Stored] :
+                 entriesIn(State, VnodeSpace::STACK))
+              if (std::get<2>(Key) != 0 && !mergeFacts(Loaded, Stored))
+                return false;
+            reclassifyExactRoots(Loaded);
+            Loaded.ExactValues.clear();
+            Loaded.FrameCellEscaped = false;
+            Loaded.FrameCellPresent = false;
+            Loaded.FrameCellOutgoingSeed = false;
+            Loaded.MayBeNonFrame = true;
+            Loaded.Imprecise = true;
+            MemoryEffectOutput = std::move(Loaded);
+          }
+        } else if (Op.Opcode == NdOp::LOAD && Memory.Complete) {
           if (!addUse(Op, ModuleAddressUse::Kind::Load,
                       factsFor(*Memory.Address), Memory.AccessSize))
             return false;
@@ -1927,6 +1962,10 @@ bool collectLowAddressUses(
             // above and do not forward operand provenance into their outputs.
             break;
           case NdOp::INTRINSIC:
+            if (MemoryEffectOutput) {
+              Output = *MemoryEffectOutput;
+              break;
+            }
             if (!lowIntrinsicHasOnlyValueEffects(Op))
               break;
             [[fallthrough]];

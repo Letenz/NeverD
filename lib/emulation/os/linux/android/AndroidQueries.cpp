@@ -16,6 +16,12 @@ llvm::Error Bionic::setErrno(uint32_t Value) {
   llvm::support::endian::write32le(Bytes, Value);
   return CPU.write(tlsAddress() + ErrnoAddress - TLSAddress, Bytes);
 }
+llvm::Expected<uint32_t> Bionic::errnoValue() {
+  uint8_t Bytes[4];
+  if (auto E = CPU.read(tlsAddress() + ErrnoAddress - TLSAddress, Bytes))
+    return std::move(E);
+  return llvm::support::endian::read32le(Bytes);
+}
 BionicResult Bionic::getErrno(const NativeCallEvent &) {
   return value(tlsAddress() + ErrnoAddress - TLSAddress);
 }

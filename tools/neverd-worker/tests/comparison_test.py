@@ -68,6 +68,56 @@ def ambiguity_pages(client, root):
         assert client.call("comparison_functions", {**query, "ambiguous_with": source})["status"] == "error"
 
 
+def cancellable_restore(client, root, start):
+    """The restored result is transactional across read, bind and replacement."""
+    original = ok(client, "comparison_start", start)
+    rows = ok(client, "comparison_functions")["items"]
+    pair = next(row for row in rows if row.get("counterpart"))
+    address, counterpart = pair["address"], pair["counterpart"]
+    if isinstance(counterpart, dict):
+        counterpart = counterpart["address"]
+    ok(client, "comparison_override", {"kind": "confirm", "primary": address,
+                                        "secondary": counterpart})
+    saved = root / "restore-cancel.nddiff"
+    ok(client, "comparison_save", {"path": str(saved)})
+    document = ok(client, "comparison_export")
+    with saved.open("a") as out:
+        out.write(" " * (64 * 1024 * 1024))
+    # Keep a redo record as well as selected-row queries across both paths.
+    ok(client, "comparison_undo")
+    before = ok(client, "comparison_export")
+    summary = ok(client, "comparison_summary")
+    rows = ok(client, "comparison_functions")
+    for operation, payload in (("comparison_restore", {"path": str(saved)}),
+                               ("comparison_start", {**start, "restore_path": str(saved)})):
+        request = client.send(operation, payload)
+        client.next(lambda m: m.get("request_id") == request and m.get("status") == "progress"
+                    and m.get("payload", {}).get("phase") == "restore:read", timeout=30)
+        ack = ok(client, "cancel", {"request_id": request})
+        assert ack["accepted"] and not ack["requires_restart"], ack
+        stopped = client.response(request)
+        assert stopped["status"] == "error" and stopped["error"]["code"] == "cancelled", stopped
+        assert stopped["calculation_stopped"] and not stopped["completed_before_cancellation"], stopped
+        assert not stopped["partial_result_retained"], stopped
+        assert ok(client, "comparison_export") == before
+        assert ok(client, "comparison_functions") == rows
+        after = ok(client, "comparison_summary")
+        assert after["comparison_revision"] == summary["comparison_revision"]
+        assert after["can_redo"] and after["counts"] == summary["counts"]
+    ok(client, "comparison_redo")
+    assert ok(client, "comparison_export") == document
+    # Old result state describes the saved computation, not this new restore.
+    for state in ("complete", "cancelled", "timed_out", "resource_limited"):
+        historical = {**document, "state": state, "stopped_phase": "" if state == "complete" else "measure"}
+        saved.write_text(json.dumps(historical))
+        restored = ok(client, "comparison_restore", {"path": str(saved)})
+        assert restored["restore_completed"] and restored["job"]["restore_state"] == "complete", restored
+        assert restored["state"] == state
+        replaced = ok(client, "comparison_start", {**start, "restore_path": str(saved)})
+        assert replaced["restore_completed"] and replaced["state"] == state
+    ok(client, "comparison_start", start)
+
+
 def aarch64_profiles(client, args, root, fixture):
     """Qualified object-format cells, original evidence and CLI/worker parity."""
     for target, format_name in (("aarch64-unknown-linux-gnu", "elf"),
@@ -287,8 +337,10 @@ def parameter_views(client, args, root, fixture):
 
 def loop_progress(client, args, root, fixture):
     source = fixture.with_name("control_regions_fixture.c")
-    for family, version in ((2, 1), (3, 2), (4, 3), (5, 4), (6, 4)):
-        source = fixture.with_name("branch_progress_fixture.c" if family >= 5
+    for family, version in ((2, 1), (3, 2), (4, 3), (5, 4), (6, 4),
+                            (5, 5), (6, 5), (7, 5)):
+        source = fixture.with_name("modular_progress_fixture.c" if family == 7
+                                   else "branch_progress_fixture.c" if family >= 5
                                    else "control_regions_fixture.c")
         for arch, target in (("x64", "x86_64-unknown-linux-gnu"),
                              ("aarch64", "aarch64-unknown-linux-gnu")):
@@ -299,7 +351,7 @@ def loop_progress(client, args, root, fixture):
                                 str(source), "-o", str(path)], check=True, capture_output=True)
             if family == 6:
                 paths.reverse()
-            paired = paths[0] if version == 4 else paths[1]
+            paired = paths[0] if version >= 4 else paths[1]
             start = {"primary": {"path": str(paths[0])}, "secondary": {"path": str(paired)},
                      "options": {"use_names": False, "dataflow": {"profile": f"llvm-progress-ssa-v{version}"},
                                  "flow_regions": {"fragments": True}}}
@@ -324,12 +376,16 @@ def loop_progress(client, args, root, fixture):
                         assert proof["header"] != proof["block"]
                     witnesses.append(proof)
             assert witnesses
-            if version == 4:
+            if version >= 4:
+                guard_count = 1 if family == 7 else 2
                 assert page["progress"]["loop_count"] == 1
                 assert page["progress"]["backedge_count"] == 1
-                assert page["progress"]["guard_count"] == 2
+                assert page["progress"]["guard_count"] == guard_count
                 assert len({proof["latch"] for proof in witnesses}) == 1
-                assert len({proof["block"] for proof in witnesses}) == 2
+                assert len({proof["block"] for proof in witnesses}) == guard_count
+                if version == 5:
+                    assert {proof["proof"] for proof in witnesses} == {
+                        "modular" if family == 7 else "nowrap"}
                 for proof in {w["block"]: w for w in witnesses}.values():
                     assert ok(client, "comparison_slice", {"side": "primary", "address": address,
                               "seeds": [proof["compare"]], "limit": 1})["rows"]
@@ -349,6 +405,15 @@ def loop_progress(client, args, root, fixture):
             assert json.loads(cli.stdout) == document
             ok(client, "comparison_start", {**start, "restore_path": str(saved)})
             assert ok(client, "comparison_export") == document
+            if version == 5:
+                forged = json.loads(json.dumps(document))
+                witness = forged["dataflow"]["primary"]["entries"][0]["graph"]["progress"]["loops"][0]
+                witness["proof"] = "nowrap" if witness["proof"] == "modular" else "modular"
+                tampered = saved.with_suffix(".tampered.nddiff")
+                tampered.write_text(json.dumps(forged))
+                assert client.call("comparison_start", {**start, "restore_path": str(tampered)})["status"] == "error"
+                ok(client, "comparison_start", {**start, "restore_path": str(saved)})
+                assert ok(client, "comparison_export") == document
             if version == 4:
                 # Only one optimization level retains the required premises.
                 # Keep the unproved side visible without claiming a match.
@@ -436,7 +501,7 @@ def main():
             assert "comparison_start" in client.hello["capabilities"]
             assert {"comparison_start", "comparison_slice", "comparison_impact", "comparison_observations",
                     "comparison_function_page", "comparison_function",
-                    "comparison_cfg_summary", "comparison_cfg_viewport", "comparison_cfg_focus"}.issubset(
+                    "comparison_cfg_summary", "comparison_cfg_viewport", "comparison_cfg_focus", "comparison_restore"}.issubset(
                         client.hello["comparison_cancellable_operations"])
             assert client.call("comparison_functions")["error"]["code"] == "comparison_not_loaded"
             ambiguity_pages(client, root)
@@ -664,6 +729,7 @@ def main():
                 assert ok(client, "comparison_summary") == retained_summary
                 assert ok(client, "comparison_functions") == retained_rows
                 print(f"{side} input loading stop and retained comparison: {time.monotonic() - load_stop_began:.3f}s")
+            cancellable_restore(client, root, start)
             retried = ok(client, "comparison_start", start)
             assert retried["state"] == "complete", retried
             # Actual cooperative cancellation: acknowledge request while work is running;

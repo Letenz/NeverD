@@ -17,12 +17,15 @@
 #include "neverd/diff/Limits.h"
 #include "neverd/diff/Program.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Operator.h"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
@@ -30,6 +33,17 @@
 #include <vector>
 
 namespace neverd::diff {
+llvm::StringRef flowCounterProofName(FlowCounterProof Proof) {
+  switch (Proof) {
+  case FlowCounterProof::None:
+    return "none";
+  case FlowCounterProof::NoWrap:
+    return "nowrap";
+  case FlowCounterProof::Modular:
+    return "modular";
+  }
+  return "invalid";
+}
 llvm::StringRef flowProgressName(FlowProgressKind Kind) {
   switch (Kind) {
   case FlowProgressKind::Unproven:
@@ -53,13 +67,15 @@ enum CounterDomain : unsigned {
 struct CounterStep {
   FlowLoopProgress Loop;
   unsigned Domains = 0;
+  unsigned Width = 0;
+  uint64_t Delta = 0;
 };
 
 std::optional<CounterStep>
 counterUpdate(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
               uint32_t Update, uint32_t Compare, llvm::StringRef Contract,
               llvm::function_ref<void(uint64_t)> Charge,
-              bool CheckIncoming = true) {
+              bool CheckIncoming = true, bool Modular = false) {
   const auto &U = G.Nodes[Update];
   Charge(1 + U.Semantics.size());
   // The update is local to the header or its represented continuation block.
@@ -89,7 +105,8 @@ counterUpdate(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
   // Every nonzero fixed step exhausts its finite nowrap domain, even when
   // the exit value is skipped. No signed conversion or iteration count is
   // needed, including the i64 minimum signed step and maximum unsigned step.
-  if (!Step->Value || (Flags & ~(NSW | NUW)) || !(Flags & (NSW | NUW)))
+  if ((Flags & ~(NSW | NUW)) ||
+      (!Modular && (!Step->Value || !(Flags & (NSW | NUW)))))
     return {};
   const auto Counter = Phi->Node;
   const auto &P = G.Nodes[Counter];
@@ -98,14 +115,21 @@ counterUpdate(const DataFlowGraph &G, uint32_t Block, uint32_t Header,
       P.Semantics != Contract.str() + ";result=" + Step->Semantics + ";flags=0")
     return {};
   unsigned Domains = 0;
-  if (Flags & NSW) {
+  if (Step->Value && (Flags & NSW)) {
     const bool Negative = (Step->Value >> (Width - 1)) & 1;
     Domains |=
         (U.Opcode == "sub") == Negative ? SignedIncreasing : SignedDecreasing;
   }
-  if (Flags & NUW)
+  if (Step->Value && (Flags & NUW))
     Domains |= U.Opcode == "sub" ? UnsignedDecreasing : UnsignedIncreasing;
   CounterStep Result{{Block, Counter, Update, Compare}, Domains};
+  if (Modular) {
+    Result.Width = Width;
+    const auto Mask = std::numeric_limits<uint64_t>::max() >>
+                      (std::numeric_limits<uint64_t>::digits - Width);
+    Result.Delta =
+        (U.Opcode == "sub" ? uint64_t(0) - Step->Value : Step->Value) & Mask;
+  }
   // v4 checks the complete header PHI once for a whole group, including
   // every physical backedge. Published modes retain their original scan.
   if (!CheckIncoming)
@@ -280,13 +304,126 @@ FlowComponents components(const DataFlowGraph &G,
   return C;
 }
 
-/// v4 groups all paths that advance one header counter. Original predecessor
+/// Compare (counter + A) with (counter + B). For X = counter + A and nonzero
+/// D = B - A, X < X + D holds exactly before the wrap at -D. Signed comparison
+/// rotates both operands by the sign bit. All arithmetic uses the source width.
+llvm::ConstantRange sameCounterRegion(llvm::CmpInst::Predicate Pred,
+                                      llvm::APInt A, const llvm::APInt &B) {
+  const auto Width = A.getBitWidth();
+  const auto D = B - A;
+  if (D.isZero())
+    return llvm::CmpInst::isTrueWhenEqual(Pred)
+               ? llvm::ConstantRange::getFull(Width)
+               : llvm::ConstantRange::getEmpty(Width);
+  if (Pred == llvm::CmpInst::ICMP_EQ)
+    return llvm::ConstantRange::getEmpty(Width);
+  if (Pred == llvm::CmpInst::ICMP_NE)
+    return llvm::ConstantRange::getFull(Width);
+  if (llvm::CmpInst::isSigned(Pred))
+    A += llvm::APInt::getSignMask(Width);
+  const bool Less =
+      Pred == llvm::CmpInst::ICMP_ULT || Pred == llvm::CmpInst::ICMP_ULE ||
+      Pred == llvm::CmpInst::ICMP_SLT || Pred == llvm::CmpInst::ICMP_SLE;
+  return llvm::ConstantRange::makeExactICmpRegion(
+             Less ? llvm::CmpInst::ICMP_ULT : llvm::CmpInst::ICMP_UGE, -D)
+      .subtract(A);
+}
+
+/// The shared nonzero delta visits exactly one residue class modulo its gcd
+/// with 2^Width. Every residue class must contain a value excluded by ALL
+/// continuation guards. Individual ranges may conservatively include poison
+/// cases; their union therefore never invents a common exit.
+/// This does not freeze undef: a defined branch must continue for every
+/// contributing undef choice, including a coherent initial value following
+/// the fixed orbit. At its common exit the branch exits or becomes undefined.
+/// Two undef observations may vary independently; the coherent same-counter
+/// choice is included, without assuming those uses are correlated in LLVM.
+/// Exact recurrence forwarding and final residual acyclicity are essential.
+bool modularExitCoverage(llvm::ArrayRef<llvm::ConstantRange> Continued,
+                         unsigned Width, uint64_t Delta,
+                         llvm::function_ref<void(uint64_t)> Charge) {
+  if (!Delta)
+    return false;
+  struct Interval {
+    llvm::APInt Begin, End;
+  };
+  // The extra bit represents the half-open endpoint 2^64 without overflow.
+  const auto Limit = llvm::APInt::getOneBitSet(Width + 1, Width);
+  const auto Period =
+      llvm::APInt::getOneBitSet(Width + 1, std::countr_zero(Delta));
+  const llvm::APInt Zero(Width + 1, 0);
+  std::vector<Interval> Intervals, Residues;
+  for (const auto &Range : Continued) {
+    Charge(1);
+    if (Range.isEmptySet())
+      continue;
+    if (Range.isFullSet())
+      return false;
+    auto Begin = Range.getLower().zext(Width + 1);
+    auto End = Range.getUpper().zext(Width + 1);
+    if (Begin.ult(End))
+      Intervals.push_back({std::move(Begin), std::move(End)});
+    else {
+      Intervals.push_back({std::move(Begin), Limit});
+      if (!End.isZero())
+        Intervals.push_back({Zero, std::move(End)});
+    }
+  }
+  const auto Sort = [&](std::vector<Interval> &Values) {
+    std::sort(Values.begin(), Values.end(),
+              [&](const Interval &A, const Interval &B) {
+                Charge(1);
+                return A.Begin.ult(B.Begin);
+              });
+  };
+  Sort(Intervals);
+  const auto ProjectExit = [&](const llvm::APInt &Begin,
+                               const llvm::APInt &End) {
+    Charge(1);
+    const auto Length = End - Begin;
+    if (Length.uge(Period))
+      return true;
+    if (Length.isZero())
+      return false;
+    auto Low = Begin & (Period - 1);
+    auto High = Low + Length;
+    if (High.ule(Period))
+      Residues.push_back({std::move(Low), std::move(High)});
+    else {
+      Residues.push_back({std::move(Low), Period});
+      Residues.push_back({Zero, High - Period});
+    }
+    return false;
+  };
+  auto Covered = Zero;
+  for (const auto &I : Intervals) {
+    Charge(1);
+    if (I.Begin.ugt(Covered) && ProjectExit(Covered, I.Begin))
+      return true;
+    if (I.End.ugt(Covered))
+      Covered = I.End;
+  }
+  if (ProjectExit(Covered, Limit))
+    return true;
+  Sort(Residues);
+  Covered = Zero;
+  for (const auto &I : Residues) {
+    Charge(1);
+    if (I.Begin.ugt(Covered))
+      return false;
+    if (I.End.ugt(Covered))
+      Covered = I.End;
+  }
+  return Covered == Period;
+}
+
+/// v4/v5 group all paths that advance one header counter. Original predecessor
 /// inventories and scratch are shared across candidates/components. A funnel
 /// has one unconditional physical backedge and several consuming guards; its
 /// witnesses belong to those guards, not duplicate rows for the same latch.
 class BranchProof {
   struct Guard {
-    uint32_t Block, Compare;
+    uint32_t Block, Compare, Target;
   };
   struct Backedge {
     uint32_t Latch;
@@ -296,6 +433,7 @@ class BranchProof {
   const DataFlowGraph &G;
   llvm::StringRef Contract;
   llvm::function_ref<void(uint64_t)> Charge;
+  const bool Modular;
   std::vector<std::vector<uint32_t>> Predecessors;
   std::vector<uint32_t> HeaderValues, ArmValues, Owners;
   std::vector<uint8_t> Seen;
@@ -346,7 +484,7 @@ class BranchProof {
     const auto Compare = guardCompare(G, Block, Target, Contract, Charge);
     if (!Compare)
       return false;
-    Guards.push_back({Block, *Compare});
+    Guards.push_back({Block, *Compare, Target});
     return true;
   }
 
@@ -439,10 +577,141 @@ class BranchProof {
     return true;
   }
 
+  struct Observation {
+    unsigned Operand;
+    uint64_t Offset;
+  };
+  std::optional<uint64_t> observationOffset(const FlowOperand &Input,
+                                            const Guard &Guard,
+                                            uint32_t Counter, uint32_t Header) {
+    Charge(1);
+    if (Input.Type != FlowOperand::Kind::Node)
+      return {};
+    if (Input.Node == Counter)
+      return 0;
+    const auto Step =
+        counterUpdate(G, Guard.Block, Header, Input.Node, Guard.Compare,
+                      Contract, Charge, false, true);
+    if (Step && Step->Loop.Counter == Counter)
+      return Step->Delta;
+    return {};
+  }
+  std::optional<Observation> observation(const Guard &Guard, uint32_t Counter,
+                                         uint32_t Header) {
+    const auto &Inputs = G.Nodes[Guard.Compare].Inputs;
+    for (unsigned I = 0; I < Inputs.size(); ++I)
+      if (const auto Offset =
+              observationOffset(Inputs[I], Guard, Counter, Header))
+        return Observation{I, *Offset};
+    return {};
+  }
+
+  bool modularCandidate(uint32_t Counter, uint32_t Header) {
+    Trial.clear();
+    if (!indexPhi(Counter, Header, G.Nodes[Counter].Semantics, HeaderValues))
+      return false;
+    unsigned Domains = AllCounterDomains, Width = 0;
+    uint64_t Delta = 0;
+    bool Uniform = true;
+    std::vector<Observation> Observations;
+    const auto Accumulate = [&](const CounterStep &Step) {
+      Domains &= Step.Domains;
+      if (!Width) {
+        Width = Step.Width;
+        Delta = Step.Delta;
+      } else {
+        Uniform &= Width == Step.Width && Delta == Step.Delta;
+      }
+    };
+    for (const auto &Edge : Backedges) {
+      Charge(1);
+      const auto Incoming = HeaderValues[Edge.Latch];
+      if (Incoming == NoIndex)
+        return false;
+      const bool Selected = Edge.Funnel && G.Nodes[Incoming].Phi &&
+                            G.Nodes[Incoming].Block == Edge.Latch;
+      if (Selected && !indexPhi(Incoming, Edge.Latch,
+                                G.Nodes[Counter].Semantics, ArmValues))
+        return false;
+      if (!Selected) {
+        const auto Step = counterUpdate(G, Edge.Latch, Header, Incoming,
+                                        NoIndex, Contract, Charge, false, true);
+        if (!Step || Step->Loop.Counter != Counter)
+          return false;
+        Accumulate(*Step);
+      }
+      for (size_t I = Edge.Begin; I < Edge.End; ++I) {
+        Charge(1);
+        const auto &Guard = Guards[I];
+        const auto Update = Selected ? ArmValues[Guard.Block] : Incoming;
+        if (Update == NoIndex)
+          return false;
+        if (Selected) {
+          const auto Step =
+              counterUpdate(G, Guard.Block, Header, Update, Guard.Compare,
+                            Contract, Charge, false, true);
+          if (!Step || Step->Loop.Counter != Counter)
+            return false;
+          Accumulate(*Step);
+        }
+        const auto Observed = observation(Guard, Counter, Header);
+        if (!Observed)
+          return false;
+        Observations.push_back(*Observed);
+        Trial.push_back({Guard.Block, Counter, Update, Guard.Compare, Header,
+                         Edge.Latch, FlowCounterProof::NoWrap});
+      }
+    }
+    // NoWrap needs strict poison propagation, but no bound or equal-step
+    // restrictions. Only modular fallback requires concrete counter regions.
+    if (Domains)
+      return true;
+    if (!Uniform || !Delta)
+      return false;
+    std::vector<llvm::ConstantRange> Continued;
+    for (size_t I = 0; I < Guards.size(); ++I) {
+      const auto &Guard = Guards[I];
+      const auto &Observed = Observations[I];
+      const auto &Cmp = G.Nodes[Guard.Compare];
+      const auto &Bound = Cmp.Inputs[1 - Observed.Operand];
+      Charge(1 + Cmp.Semantics.size() + Bound.Semantics.size());
+      llvm::StringRef Suffix(Cmp.Semantics);
+      unsigned Predicate = 0;
+      if (!Suffix.consume_front(Contract) ||
+          !Suffix.consume_front(";result=i1;flags=0;predicate=") ||
+          Suffix.getAsInteger(10, Predicate))
+        return false;
+      auto Pred = llvm::CmpInst::Predicate(Predicate);
+      if (Observed.Operand)
+        Pred = llvm::CmpInst::getSwappedPredicate(Pred);
+      if (G.Blocks[Guard.Block].Successors[0] != Guard.Target)
+        Pred = llvm::CmpInst::getInversePredicate(Pred);
+      if (Bound.Type == FlowOperand::Kind::Constant &&
+          Bound.Semantics == "i" + std::to_string(Width))
+        Continued.push_back(llvm::ConstantRange::makeExactICmpRegion(
+                                Pred, llvm::APInt(Width, Bound.Value))
+                                .subtract(llvm::APInt(Width, Observed.Offset)));
+      else if (const auto Other =
+                   observationOffset(Bound, Guard, Counter, Header))
+        Continued.push_back(
+            sameCounterRegion(Pred, llvm::APInt(Width, Observed.Offset),
+                              llvm::APInt(Width, *Other)));
+      else
+        return false;
+    }
+    if (!modularExitCoverage(Continued, Width, Delta, Charge))
+      return false;
+    for (auto &L : Trial) {
+      Charge(1);
+      L.Proof = FlowCounterProof::Modular;
+    }
+    return true;
+  }
+
 public:
   BranchProof(const DataFlowGraph &Graph, llvm::StringRef Contract,
-              llvm::function_ref<void(uint64_t)> Charge)
-      : G(Graph), Contract(Contract), Charge(Charge) {
+              llvm::function_ref<void(uint64_t)> Charge, bool Modular)
+      : G(Graph), Contract(Contract), Charge(Charge), Modular(Modular) {
     Charge(5 * uint64_t(G.Blocks.size()));
     Predecessors.resize(G.Blocks.size());
     HeaderValues.resize(G.Blocks.size(), NoIndex);
@@ -476,16 +745,17 @@ public:
         auto Counter = NoIndex;
         if (G.Nodes[Input.Node].Phi && G.Nodes[Input.Node].Block == Header)
           Counter = Input.Node;
-        else if (const auto Step =
-                     counterUpdate(G, First.Block, Header, Input.Node,
-                                   First.Compare, Contract, Charge, false))
+        else if (const auto Step = counterUpdate(
+                     G, First.Block, Header, Input.Node, First.Compare,
+                     Contract, Charge, false, Modular))
           Counter = Step->Loop.Counter;
         if (Counter != NoIndex && (!Count || Candidates[0] != Counter))
           Candidates[Count++] = Counter;
       }
       for (size_t I = 0; I < Count; ++I) {
         Charge(1);
-        if (!candidate(Candidates[I], Header))
+        if (!(Modular ? modularCandidate(Candidates[I], Header)
+                      : candidate(Candidates[I], Header)))
           continue;
         if (Trial.size() > Allowance - P.Loops.size())
           throw DataFlowInterrupted(ComparisonState::ResourceLimited);
@@ -518,11 +788,12 @@ FlowProgress proveFlowProgress(const DataFlowGraph &G, llvm::StringRef Contract,
   const uint64_t Retained = G.Nodes.size() + G.ParameterViews.size() + 1;
   if (Retained > Options.MaxNodes)
     throw DataFlowInterrupted(ComparisonState::ResourceLimited);
-  const bool Branched = Mode == FlowProgressMode::Branched;
+  const bool Modular = Mode == FlowProgressMode::Modular;
+  const bool Branched = Mode == FlowProgressMode::Branched || Modular;
   const bool Nested = Mode == FlowProgressMode::Nested || Branched;
   std::optional<BranchProof> Branches;
   if (Branched)
-    Branches.emplace(G, Contract, Charge);
+    Branches.emplace(G, Contract, Charge, Modular);
   do {
     const auto Previous = P.Loops.size();
     std::optional<FlowComponents> C;

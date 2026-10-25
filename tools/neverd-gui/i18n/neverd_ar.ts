@@ -5766,6 +5766,26 @@ Load its names anyway? Names at the wrong addresses mislead the analysis.</sourc
         <source>Applying saved analysis</source>
         <translation>جارٍ تطبيق التحليل المحفوظ</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>جارٍ التحقق من الأدلة المحفوظة</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>جارٍ قراءة المقارنة المحفوظة</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>جارٍ التحقق من المقارنة المحفوظة</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>جارٍ إعادة حساب القياسات المحفوظة</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>جارٍ استعادة المقارنة</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6589,6 +6609,10 @@ Coverage: %7</source>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>SSA محسّنة مع تحليل الحلقات المتفرعة</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات الالتفاف العددي</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6743,6 +6767,18 @@ Progress does not establish equal loop counts or function results.</source>
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>حلقة مثبتة: كتلة الرأس %1 → كتلة الرجوع %2 · العدّاد #%3 → التحديث #%4 · الشرط الحارس #%5 في الكتلة %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA محسّنة مع تحليل حلقات الالتفاف العددي</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>دليل الإثبات: عدّاد رتيب يلتزم بعقد يمنع تجاوز النطاق.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>دليل الإثبات: تصل كل دورة للعدّاد إلى مخرج مشترك، حتى بعد الالتفاف العددي.</translation>
     </message>
 </context>
 <context>
@@ -7899,6 +7935,18 @@ Supersedes: %11</source>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>هذه العملية لا تدعم مقارنة الملفات الثنائية.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>توقفت الاستعادة. يمكنك إعادة المحاولة.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>توقفت الاستعادة. لا تزال المقارنة السابقة متاحة.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>تعذرت استعادة المقارنة. لا تزال المقارنة السابقة متاحة. %1</translation>
     </message>
 </context>
 <context>

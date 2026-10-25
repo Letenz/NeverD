@@ -5622,6 +5622,26 @@ Charger quand même ses noms ? Des noms placés aux mauvaises adresses induisent
         <source>Applying saved analysis</source>
         <translation>Application de l’analyse enregistrée</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Vérification des éléments enregistrés</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Lecture de la comparaison enregistrée</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Vérification de la comparaison enregistrée</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Nouveau calcul des mesures enregistrées</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Restauration de la comparaison</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6445,6 +6465,10 @@ Couverture : %7</translation>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>SSA optimisée avec analyse des boucles à branches</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à rebouclage numérique</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6623,18 @@ La terminaison ne prouve pas l’égalité des nombres d’itérations ou des r�
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Boucle prouvée : bloc d’en-tête %1 → bloc de retour %2 · compteur #%3 → mise à jour #%4 · garde #%5 dans le bloc %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>SSA optimisée avec analyse des boucles à rebouclage numérique</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Preuve : un compteur monotone avec un contrat sans débordement.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Preuve : chaque cycle du compteur atteint une sortie commune, même après rebouclage numérique.</translation>
     </message>
 </context>
 <context>
@@ -7755,6 +7791,18 @@ Remplace : %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Ce processus ne prend pas en charge la comparaison binaire.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Restauration arrêtée. Vous pouvez réessayer.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Restauration arrêtée. Votre comparaison précédente reste disponible.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Impossible de restaurer la comparaison. Votre comparaison précédente reste disponible. %1</translation>
     </message>
 </context>
 <context>

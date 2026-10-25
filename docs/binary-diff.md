@@ -452,6 +452,41 @@ The recipes are `llvm-progress-neighborhoods-v4` and
 All scans, grouping and ordering use the existing work/storage/cancellation
 allowances, without a fixed limit on loop depth or the number of backedges.
 
+**Optimized SSA with wrapping loop analysis**
+(`--dataflow-profile=llvm-progress-ssa-v5`) also handles fixed-step counters
+without an overflow prohibition. For example, an unsigned counter adding 3
+eventually visits zero from every initial value. Adding 2 cannot reach zero
+from an odd initial value, but it does reach the exit range `0..1` from every
+initial value. The proof checks this reachability mathematically, without
+executing or counting iterations.
+
+Every recurrence arm must use the same nonzero modular step. Guards may compare
+the current counter, its exact update, or one fixed add/sub translation against
+a literal or another such observation of the same counter. This includes
+compiler-generated wrap tests such as `counter + 4 < counter + 2`.
+All possible continuation paths must share enough exit values to
+cover every counter cycle. Different modular steps, incompatible exits, resets,
+freezes in the recurrence and more complex observations remain unproven. The
+existing monotone nowrap proof is preferred when available; it also admits a
+single affine guard and can still use nonliteral bounds or different steps.
+Unique-entry, complete-PHI and final residual-acyclicity requirements remain.
+This does not prove an iteration count or equivalence between functions.
+
+Schema 9 adds `proof: "nowrap"` or `proof: "modular"` to each witness. The
+selected operation explains this basis alongside its guard, counter and latch.
+Totals, paging, slicing and fresh-source report validation use the same core
+model. Recipes are `llvm-progress-neighborhoods-v5` and
+`llvm-progress-fragments-v5`. Existing profiles and report bytes stay supported.
+Ordinary native optimization is unchanged: compiler transformations can still
+produce unsupported shapes or require seed/bound relationships outside this
+proof, which remain explicitly unproven.
+
+Reopening LLVM reports also tolerates changes in PHI numbering when every
+operation, input, source observation and proof still matches exactly after an
+authenticated node mapping. The saved IDs and report contents stay intact.
+Different constants, origins, contracts or ordinary instruction order are not
+accepted through this path; ambiguous unanchored PHIs remain a refusal.
+
 Native-to-SSA change associations and call-effect contracts currently require
 the original MedIR profile. Change review explicitly reports an unsupported
 association profile for LLVM evidence while retaining native changes. Local
@@ -1006,6 +1041,34 @@ revision. Clients may send `expected_comparison_revision` to reject obsolete
 reads or edits. Input file stamp changes invalidate interactive review; explicit
 validation and reopening re-read content and verify its identity. Large exports
 should use `comparison_save` instead of a transport frame.
+
+Saved-report restoration is transactional and cooperatively cancellable through
+`neverd_comparison_restore_json` and the additive
+`neverd_comparison_restore_json_with_progress`. Progress identifies reading,
+parsing, evidence validation and measurement stages. On a stop or invalid report,
+the previous result, analyst edits, undo/redo and inspection caches remain
+available. Successful restoration replaces them only after validation completes.
+SDK status separates `restore_state` from the saved computation's `state` and
+reports `previous_result_retained`; opening an old cancelled, timed-out or
+resource-limited report can therefore complete successfully. The saved
+`timeout_ms` is historical and does not impose a restore deadline.
+
+The worker advertises standalone `comparison_restore` cancellation only when
+the linked engine provides the new progress entry point. Older engines retain
+the synchronous restore path. A successful restore/reopen reply includes
+`restore_completed:true`; a late cancellation cannot undo its commit or leave
+the revision unchanged. A cancelled `comparison_start` replacement is discarded
+before the existing session is swapped. Qt preserves the existing selection and
+review on a stopped restore and allows retry. CLI SIGINT during `--reopen`
+returns exit code 3 without publishing stdout or overwriting a `--save` target.
+
+File I/O checks bounded chunks, record readers and validators check their loops,
+and parallel measurement workers propagate a typed stop after joining. SDK
+restoration constructs one JSON DOM. LLVM JSON parsing, the CLI/worker settings
+parse, individual allocation/copy and full graph equality remain indivisible
+checkpoints; cancellation is cooperative, without a hard latency guarantee or
+unsafe thread termination. Report schemas, evidence profiles and allowances are
+unchanged.
 
 The standard worker `cancel` operation acknowledges the request first. Only the
 terminal comparison reply reports computation stopped and whether a partial

@@ -11,6 +11,7 @@
 #ifndef NEVERD_DIFF_REGIONSJSON_H
 #define NEVERD_DIFF_REGIONSJSON_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/Regions.h"
 
 #include "llvm/Support/JSON.h"
@@ -26,7 +27,8 @@ llvm::json::Object regionAnalysisJSON(const RegionAnalysis &Regions,
 void writeRegionAnalysisFields(llvm::json::OStream &Out,
                                const RegionAnalysis &Regions, bool SummaryOnly);
 RegionAnalysis readRegionAnalysis(const llvm::json::Value &Value,
-                                  const RegionSettings &Settings);
+                                  const RegionSettings &Settings,
+                                  const ComparisonControl &Control = {});
 /// Bounded hypothesis preview; anchor coordinates have their own page query.
 llvm::json::Object regionHypothesisJSON(const RegionHypothesis &Hypothesis,
                                         const Program &Primary,

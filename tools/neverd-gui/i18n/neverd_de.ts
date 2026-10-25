@@ -5622,6 +5622,26 @@ Ihre Namen trotzdem laden? Namen an falschen Adressen führen die Analyse in die
         <source>Applying saved analysis</source>
         <translation>Gespeicherte Analyse wird angewendet</translation>
     </message>
+    <message>
+      <source>Checking saved evidence</source>
+      <translation>Gespeicherte Belege werden geprüft</translation>
+    </message>
+    <message>
+      <source>Reading saved comparison</source>
+      <translation>Gespeicherter Vergleich wird gelesen</translation>
+    </message>
+    <message>
+      <source>Checking saved comparison</source>
+      <translation>Gespeicherter Vergleich wird geprüft</translation>
+    </message>
+    <message>
+      <source>Recomputing saved measurements</source>
+      <translation>Gespeicherte Messwerte werden neu berechnet</translation>
+    </message>
+    <message>
+      <source>Restoring comparison</source>
+      <translation>Vergleich wird wiederhergestellt</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6445,6 +6465,10 @@ Abdeckung: %7</translation>
         <source>Optimized SSA with branching loop analysis</source>
         <translation>Optimierte SSA mit Analyse verzweigter Schleifen</translation>
     </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Optimierte SSA mit Analyse von Schleifen mit Zahlenüberlauf</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -6599,6 +6623,18 @@ Terminierung belegt keine gleichen Schleifenzahlen oder Funktionsergebnisse.</tr
     <message>
         <source>Proved loop: header block %1 → latch block %2 · counter #%3 → update #%4 · guard #%5 in block %6</source>
         <translation>Bewiesene Schleife: Kopfblock %1 → Rücksprungblock %2 · Zähler #%3 → Aktualisierung #%4 · Wächter #%5 in Block %6</translation>
+    </message>
+    <message>
+        <source>Optimized SSA with wrapping loop analysis</source>
+        <translation>Optimierte SSA mit Analyse von Schleifen mit Zahlenüberlauf</translation>
+    </message>
+    <message>
+        <source>Proof: a monotone counter with a no-overflow contract.</source>
+        <translation>Beweis: ein monotoner Zähler mit einem Vertrag ohne Überlauf.</translation>
+    </message>
+    <message>
+        <source>Proof: every counter cycle reaches a shared exit, including after wraparound.</source>
+        <translation>Beweis: Jeder Zählerzyklus erreicht einen gemeinsamen Ausgang, auch nach einem Zahlenüberlauf.</translation>
     </message>
 </context>
 <context>
@@ -7755,6 +7791,18 @@ Ersetzt: %11</translation>
     <message>
         <source>This worker does not support binary comparison.</source>
         <translation>Dieser Prozess unterstützt keinen Binärvergleich.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Ready to try again.</source>
+      <translation>Wiederherstellung angehalten. Ein erneuter Versuch ist möglich.</translation>
+    </message>
+    <message>
+      <source>Restore stopped. Your previous comparison is still available.</source>
+      <translation>Wiederherstellung angehalten. Ihr vorheriger Vergleich ist weiterhin verfügbar.</translation>
+    </message>
+    <message>
+      <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
+      <translation>Der Vergleich konnte nicht wiederhergestellt werden. Ihr vorheriger Vergleich ist weiterhin verfügbar. %1</translation>
     </message>
 </context>
 <context>

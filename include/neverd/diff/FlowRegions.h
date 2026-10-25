@@ -13,6 +13,7 @@
 #ifndef NEVERD_DIFF_FLOWREGIONS_H
 #define NEVERD_DIFF_FLOWREGIONS_H
 
+#include "neverd/diff/Control.h"
 #include "neverd/diff/FlowEvidence.h"
 #include "neverd/diff/FlowMatch.h"
 #include "neverd/diff/Regions.h"
@@ -44,13 +45,18 @@ inline constexpr llvm::StringLiteral LLVMBranchProgressFlowRegionProfile =
     "llvm-progress-neighborhoods-v4";
 inline constexpr llvm::StringLiteral LLVMBranchProgressFlowFragmentProfile =
     "llvm-progress-fragments-v4";
+inline constexpr llvm::StringLiteral LLVMModularProgressFlowRegionProfile =
+    "llvm-progress-neighborhoods-v5";
+inline constexpr llvm::StringLiteral LLVMModularProgressFlowFragmentProfile =
+    "llvm-progress-fragments-v5";
 inline bool isFlowFragmentProfile(llvm::StringRef Profile) {
   return Profile == FlowFragmentProfile || Profile == LLVMFlowFragmentProfile ||
          Profile == LLVMParameterFlowFragmentProfile ||
          Profile == LLVMProgressFlowFragmentProfile ||
          Profile == LLVMMultiBlockProgressFlowFragmentProfile ||
          Profile == LLVMNestedProgressFlowFragmentProfile ||
-         Profile == LLVMBranchProgressFlowFragmentProfile;
+         Profile == LLVMBranchProgressFlowFragmentProfile ||
+         Profile == LLVMModularProgressFlowFragmentProfile;
 }
 inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
   return Profile == LLVMFlowRegionProfile ||
@@ -60,11 +66,13 @@ inline bool isLLVMFlowRegionProfile(llvm::StringRef Profile) {
          Profile == LLVMMultiBlockProgressFlowRegionProfile ||
          Profile == LLVMNestedProgressFlowRegionProfile ||
          Profile == LLVMBranchProgressFlowRegionProfile ||
+         Profile == LLVMModularProgressFlowRegionProfile ||
          Profile == LLVMParameterFlowFragmentProfile ||
          Profile == LLVMProgressFlowFragmentProfile ||
          Profile == LLVMMultiBlockProgressFlowFragmentProfile ||
          Profile == LLVMNestedProgressFlowFragmentProfile ||
-         Profile == LLVMBranchProgressFlowFragmentProfile;
+         Profile == LLVMBranchProgressFlowFragmentProfile ||
+         Profile == LLVMModularProgressFlowFragmentProfile;
 }
 llvm::StringRef flowRegionProfile(llvm::StringRef GraphProfile,
                                   bool Fragments = false);
@@ -137,11 +145,10 @@ FlowRegionAnalysis findFlowRegions(FlowRegionInput Primary,
 /// completed prefix of anchors/groups; completed and resource-limited evidence
 /// must reproduce exactly. Historical work counters need only fit their bound.
 /// This never trusts saved coverage or node mappings.
-std::optional<std::string>
-validateFlowRegions(const FlowRegionAnalysis &Saved, FlowRegionInput Primary,
-                    FlowRegionInput Secondary,
-                    const DataFlowSettings &EvidenceSettings,
-                    const FlowRegionSettings &Settings);
+std::optional<std::string> validateFlowRegions(
+    const FlowRegionAnalysis &Saved, FlowRegionInput Primary,
+    FlowRegionInput Secondary, const DataFlowSettings &EvidenceSettings,
+    const FlowRegionSettings &Settings, const ComparisonControl &Control = {});
 } // namespace neverd::diff
 
 #endif // NEVERD_DIFF_FLOWREGIONS_H

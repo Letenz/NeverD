@@ -135,6 +135,7 @@ inline constexpr char kLLVMMultiBlockProgressSSAProfile[] =
     "llvm-progress-ssa-v2";
 inline constexpr char kLLVMNestedProgressSSAProfile[] = "llvm-progress-ssa-v3";
 inline constexpr char kLLVMBranchProgressSSAProfile[] = "llvm-progress-ssa-v4";
+inline constexpr char kLLVMModularProgressSSAProfile[] = "llvm-progress-ssa-v5";
 inline constexpr uint32_t kDefaultFlowMaxNodes = 65536;
 inline constexpr uint32_t kMaxFlowNodes = 1u << 20;
 inline constexpr uint32_t kDefaultFlowMaxBlocks = 1024;
@@ -269,6 +270,9 @@ inline constexpr uint64_t kEffectPollWork = 1024;
 
 /// Largest saved comparison read back, in bytes.
 inline constexpr uint64_t kMaxSavedComparisonBytes = 1ull << 31;
+/// Cooperative file/C-string admission and progress; not a report size limit.
+inline constexpr size_t kSavedComparisonChunkBytes = 64 * 1024;
+inline constexpr size_t kSavedComparisonProgressRecords = 256;
 /// Most overrides one saved comparison may record.
 inline constexpr size_t kMaxSavedOverrides = 1u << 20;
 

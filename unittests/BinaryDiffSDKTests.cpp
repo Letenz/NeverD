@@ -154,7 +154,9 @@ protected:
         << take(neverd_comparison_last_error(C));
     return C;
   }
-  void checkBranchProgress(llvm::StringRef Hex);
+  void checkBranchProgress(llvm::StringRef Hex, unsigned Version = 4,
+                           unsigned GuardCount = 2,
+                           llvm::StringRef ProofKind = {});
   static std::vector<uint8_t> body(uint8_t Immediate = 7) {
     return {0xb8, Immediate, 0, 0, 0, 0x83, 0xc0, 3, 0xc3};
   }
@@ -2603,7 +2605,7 @@ TEST_F(BinaryDiffSDK,
        ParameterViewsStoppedAndEmptyCollectionsKeepTheirProfile) {
   for (const auto *Profile :
        {"llvm-parameter-ssa-v1", "llvm-progress-ssa-v1", "llvm-progress-ssa-v2",
-        "llvm-progress-ssa-v3", "llvm-progress-ssa-v4"})
+        "llvm-progress-ssa-v3", "llvm-progress-ssa-v4", "llvm-progress-ssa-v5"})
     for (bool Fragments : {false, true})
       for (const auto *Phase :
            {"primary:discovery", "primary:decode", "primary:dataflow"}) {
@@ -2635,7 +2637,10 @@ TEST_F(BinaryDiffSDK,
         EXPECT_EQ(Document->getAsObject()
                       ->getObject("flow_regions")
                       ->getString("profile"),
-                  std::string(Profile) == "llvm-progress-ssa-v4"
+                  std::string(Profile) == "llvm-progress-ssa-v5"
+                      ? (Fragments ? "llvm-progress-fragments-v5"
+                                   : "llvm-progress-neighborhoods-v5")
+                  : std::string(Profile) == "llvm-progress-ssa-v4"
                       ? (Fragments ? "llvm-progress-fragments-v4"
                                    : "llvm-progress-neighborhoods-v4")
                   : std::string(Profile) == "llvm-progress-ssa-v3"
@@ -2906,18 +2911,28 @@ TEST_F(BinaryDiffSDK, NestedProgressPagesEveryLayerAndRechecksFreshSource) {
   }
 }
 
-void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex) {
+void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex, unsigned Version,
+                                        unsigned GuardCount,
+                                        llvm::StringRef ProofKind) {
   const auto Bytes = llvm::fromHex(Hex);
   const auto Raw = llvm::ArrayRef<uint8_t>(
       reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size());
   const auto A = input(Raw, 0x1000), B = input(Raw, 0x8000);
-  const auto Options =
-      R"({"discover":false,"dataflow":{"profile":"llvm-progress-ssa-v4"},"flow_regions":{"fragments":true}})";
-  const auto C = compare(A, B, Options);
+  const auto Options = render(llvm::json::Object{
+      {"discover", false},
+      {"dataflow",
+       llvm::json::Object{
+           {"profile", "llvm-progress-ssa-v" + std::to_string(Version)}}},
+      {"flow_regions", llvm::json::Object{{"fragments", true}}}});
+  const auto C = compare(A, B, Options.c_str());
   const auto Summary = parsed(neverd_comparison_summary_json(C));
   EXPECT_EQ(
       Summary.getAsObject()->getObject("flow_regions")->getString("profile"),
-      "llvm-progress-fragments-v4");
+      "llvm-progress-fragments-v" + std::to_string(Version));
+  EXPECT_GT(Summary.getAsObject()
+                ->getObject("flow_regions")
+                ->getInteger("anchor_count"),
+            0);
   std::set<int64_t> Guards, Latches;
   uint64_t Total = 1;
   for (uint64_t Offset = 0; Offset < Total; ++Offset) {
@@ -2929,12 +2944,12 @@ void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex) {
                .c_str()));
     const auto *O = Page.getAsObject();
     ASSERT_EQ(O->getString("availability"), "available") << render(Page);
-    EXPECT_EQ(O->getInteger("schema_version"), 8);
+    EXPECT_EQ(O->getInteger("schema_version"), 4 + Version);
     ASSERT_EQ(O->getObject("progress")->getString("kind"), "counter_loops")
         << render(Page);
     EXPECT_EQ(O->getObject("progress")->getInteger("loop_count"), 1);
     EXPECT_EQ(O->getObject("progress")->getInteger("backedge_count"), 1);
-    EXPECT_EQ(O->getObject("progress")->getInteger("guard_count"), 2);
+    EXPECT_EQ(O->getObject("progress")->getInteger("guard_count"), GuardCount);
     EXPECT_FALSE(O->getObject("progress")->get("loops"));
     Total = *O->getInteger("total");
     const auto *Rows = O->getArray("rows");
@@ -2944,7 +2959,10 @@ void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex) {
       EXPECT_EQ(Loop->getInteger("block"), Row->getInteger("block"));
       EXPECT_LT(*Loop->getInteger("header"), *O->getInteger("block_count"));
       Latches.insert(*Loop->getInteger("latch"));
-      EXPECT_NE(Loop->getInteger("latch"), Loop->getInteger("block"));
+      if (Version == 4)
+        EXPECT_NE(Loop->getInteger("latch"), Loop->getInteger("block"));
+      else
+        EXPECT_EQ(Loop->getString("proof"), ProofKind);
       if (Guards.insert(*Loop->getInteger("block")).second) {
         const auto Slice = parsed(neverd_comparison_slice_json(
             C, render(llvm::json::Object{
@@ -2952,18 +2970,20 @@ void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex) {
                           {"seeds",
                            llvm::json::Array{*Loop->getInteger("update")}}})
                    .c_str()));
-        EXPECT_EQ(Slice.getAsObject()->getInteger("schema_version"), 8);
+        EXPECT_EQ(Slice.getAsObject()->getInteger("schema_version"),
+                  4 + Version);
       }
     }
   }
-  EXPECT_EQ(Guards.size(), 2u);
+  EXPECT_EQ(Guards.size(), GuardCount);
   EXPECT_EQ(Latches.size(), 1u);
   const auto Saved = take(neverd_comparison_export_json(C));
-  const auto Reopened = compare(A, B, Options);
+  const auto Reopened = compare(A, B, Options.c_str());
   ASSERT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1)
       << take(neverd_comparison_last_error(Reopened));
   EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
-  for (unsigned Forgery = 0; Forgery < 8; ++Forgery) {
+  for (unsigned Forgery = 0;
+       Forgery < 2 * GuardCount + 4 + (Version == 5 ? 4 : 0); ++Forgery) {
     auto V = llvm::json::parse(Saved);
     auto *Proof = V->getAsObject()
                       ->getObject("dataflow")
@@ -2973,16 +2993,28 @@ void BinaryDiffSDK::checkBranchProgress(llvm::StringRef Hex) {
                       .getAsObject()
                       ->getObject("graph")
                       ->getObject("progress");
-    if (Forgery < 2)
+    if (Forgery < GuardCount)
       (*(*Proof->getArray("loops"))[Forgery].getAsObject())["header"] = 0;
-    else if (Forgery < 4)
-      (*(*Proof->getArray("loops"))[Forgery - 2].getAsObject())["latch"] = 0;
-    else if (Forgery < 7)
-      (*Proof)[std::array<const char *, 3>{"loop_count", "backedge_count",
-                                           "guard_count"}[Forgery - 4]] = 99;
-    else
+    else if (Forgery < 2 * GuardCount)
+      (*(*Proof->getArray("loops"))[Forgery - GuardCount]
+            .getAsObject())["latch"] = 0;
+    else if (Forgery < 2 * GuardCount + 3)
+      (*Proof)[std::array<const char *, 3>{
+          "loop_count", "backedge_count",
+          "guard_count"}[Forgery - 2 * GuardCount]] = 99;
+    else if (Forgery == 2 * GuardCount + 3)
       (*Proof)["source_contract"] =
           Proof->getString("observed_contract")->str();
+    else {
+      auto *Loop = Proof->getArray("loops")->front().getAsObject();
+      if (Forgery == 2 * GuardCount + 4)
+        Loop->erase("proof");
+      else
+        (*Loop)["proof"] = Forgery == 2 * GuardCount + 5
+                               ? (ProofKind == "nowrap" ? "modular" : "nowrap")
+                           : Forgery == 2 * GuardCount + 6 ? "none"
+                                                           : "unsupported";
+    }
     EXPECT_EQ(neverd_comparison_restore_json(C, render(*V).c_str()), 0);
     EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
   }
@@ -3004,4 +3036,219 @@ TEST_F(BinaryDiffSDK, CommonUpdatePagesEveryGuardAndRechecksFreshSource) {
       "89f183e1078d04768d1486eb1e0f1f0083f7178d04fd0000000029f883c009c1c01b83"
       "f9027c1dffc989c740f6c70175df83c71131d789f8c1e00701f031f883f9017fe331f0"
       "83c003c3");
+}
+
+TEST_F(BinaryDiffSDK, ModularProgressPagesAndAuthenticatesProofKind) {
+  // Owned modular_progress_fixture.c, clang x64 ELF O0. Inspect only.
+  checkBranchProgress(
+      "554889e5897dfc8975f88b45f88945f48b45fc83e00183f80074228b45fc83f0176b"
+      "c00783c0098945fc8b45fcc1e8058b4dfcc1e11b09c88945fceb1e8b45fc83c0116b"
+      "4df40d31c88945fc8b45fcc1e0070345f83345fc8945fc8b45f483c0038945f4837d"
+      "f40173a68b45fc3345f883c0035dc3",
+      5, 1, "modular");
+  // Same v5 API also authenticates the preferred monotone proof.
+  checkBranchProgress(
+      "89f183e1078d04768d1486eb1e0f1f0083f7178d04fd0000000029f883c009c1c01b83"
+      "f9027c1dffc989c740f6c70175df83c71131d789f8c1e00701f031f883f9017fe331f0"
+      "83c003c3",
+      5, 2, "nowrap");
+}
+
+TEST_F(BinaryDiffSDK, RestoresPhiNumberingWhileAuthenticatingEverySourceFact) {
+  // Owned family6 x64 O2 has two header PHIs whose placement may change when
+  // native SSA construction changes. The saved node IDs remain authoritative.
+  const auto Bytes = llvm::fromHex(
+      "89f183e1078d04768d1486eb1e0f1f0083f7178d04fd0000000029f883c009c1c01b83"
+      "f9027c1dffc989c740f6c70175df83c71131d789f8c1e00701f031f883f9017fe331f0"
+      "83c003c3");
+  const auto Raw = llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size());
+  const auto A = input(Raw, 0x1000), B = input(Raw, 0x8000);
+  for (unsigned Version : {4, 5}) {
+    const auto Options = render(llvm::json::Object{
+        {"discover", false},
+        {"dataflow",
+         llvm::json::Object{
+             {"profile", "llvm-progress-ssa-v" + std::to_string(Version)}}}});
+    const auto C = compare(A, B, Options.c_str());
+    const auto Original = take(neverd_comparison_export_json(C));
+    auto Document = llvm::json::parse(Original);
+    ASSERT_TRUE(bool(Document));
+    for (const auto *Side : {"primary", "secondary"}) {
+      auto *Graph = Document->getAsObject()
+                        ->getObject("dataflow")
+                        ->getObject(Side)
+                        ->getArray("entries")
+                        ->front()
+                        .getAsObject()
+                        ->getObject("graph");
+      auto &Nodes = *Graph->getArray("nodes");
+      int64_t Left = -1, Right = -1;
+      for (size_t I = 0; I < Nodes.size() && Right < 0; ++I)
+        if (Nodes[I].getAsObject()->getBoolean("phi").value_or(false))
+          for (size_t J = I + 1; J < Nodes.size(); ++J)
+            if (Nodes[J].getAsObject()->getBoolean("phi").value_or(false) &&
+                Nodes[I].getAsObject()->getInteger("block") ==
+                    Nodes[J].getAsObject()->getInteger("block")) {
+              Left = I;
+              Right = J;
+              break;
+            }
+      ASSERT_GE(Left, 0);
+      ASSERT_GE(Right, 0);
+      const auto Remap = [&](int64_t Id) {
+        return Id == Left ? Right : Id == Right ? Left : Id;
+      };
+      std::swap(Nodes[Left], Nodes[Right]);
+      for (auto &Node : Nodes)
+        for (auto &Value : *Node.getAsObject()->getArray("inputs")) {
+          auto &Input = *Value.getAsArray();
+          if (Input[0].getAsInteger() == 0)
+            Input[1] = Remap(*Input[1].getAsInteger());
+        }
+      for (auto &Block : *Graph->getArray("blocks"))
+        if (const auto Id = Block.getAsObject()->getInteger("terminator"))
+          (*Block.getAsObject())["terminator"] = Remap(*Id);
+      for (auto &Loop : *Graph->getObject("progress")->getArray("loops"))
+        for (const auto *Key : {"counter", "update", "compare"})
+          (*Loop.getAsObject())[Key] =
+              Remap(*Loop.getAsObject()->getInteger(Key));
+    }
+    ASSERT_EQ(neverd_comparison_restore_json(C, render(*Document).c_str()), 1)
+        << take(neverd_comparison_last_error(C));
+    const auto Canonical = take(neverd_comparison_export_json(C));
+    EXPECT_NE(Canonical, Original);
+    auto Restored = llvm::json::parse(Canonical);
+    ASSERT_TRUE(bool(Restored));
+    EXPECT_EQ(*Restored, *Document);
+    ASSERT_EQ(neverd_comparison_restore_json(C, Canonical.c_str()), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Canonical);
+    auto *Nodes = Restored->getAsObject()
+                      ->getObject("dataflow")
+                      ->getObject("primary")
+                      ->getArray("entries")
+                      ->front()
+                      .getAsObject()
+                      ->getObject("graph")
+                      ->getArray("nodes");
+    bool Altered = false;
+    for (auto &Node : *Nodes) {
+      auto *Origins = Node.getAsObject()->getArray("origins");
+      if (!Origins->empty()) {
+        (*Origins->front().getAsObject())["sequence"] = 999;
+        Altered = true;
+        break;
+      }
+    }
+    ASSERT_TRUE(Altered);
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Restored).c_str()), 0);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Canonical);
+  }
+}
+
+TEST_F(BinaryDiffSDK, RestoreCancellationRetainsEditsHistoryAndInspection) {
+  auto A = input(body()), B = input(body(9), 0x8000);
+  const auto C = compare(
+      A, B,
+      R"({"discover":false,"dataflow":true,"regions":true,"flow_regions":true})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"confirm","primary":"0x1000","secondary":"0x8000"})"),
+      1);
+  const auto Edited = take(neverd_comparison_export_json(C));
+  ASSERT_NE(Edited, Saved);
+  const auto Summary = take(neverd_comparison_summary_json(C));
+  const auto Detail = take(neverd_comparison_function_json(C, 0, 0x1000));
+  ASSERT_FALSE(Detail.empty());
+  struct Probe {
+    neverd_comparison_t Handle;
+    const char *Stage;
+    std::thread::id Caller = std::this_thread::get_id();
+    bool Seen = false;
+    static void report(void *User, const char *Phase, neverd_va_t,
+                       neverd_va_t) {
+      auto &P = *static_cast<Probe *>(User);
+      EXPECT_EQ(std::this_thread::get_id(), P.Caller);
+      const auto Status = parsed(neverd_comparison_status_json(P.Handle));
+      EXPECT_EQ(Status.getAsObject()->getBoolean("running"), true);
+      EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "running");
+      EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+                true);
+      if (llvm::StringRef(Phase) == P.Stage) {
+        P.Seen = true;
+        neverd_comparison_cancel(P.Handle);
+      }
+    }
+  };
+  for (const auto *Stage :
+       {"restore:scan", "restore:parse", "restore:records", "restore:identity",
+        "restore:dataflow", "restore:reviews", "restore:regions",
+        "restore:flow_regions", "restore:measure", "restore:publish"}) {
+    SCOPED_TRACE(Stage);
+    Probe P{C, Stage};
+    EXPECT_EQ(neverd_comparison_restore_json_with_progress(C, Saved.c_str(),
+                                                           Probe::report, &P),
+              0);
+    EXPECT_TRUE(P.Seen);
+    const auto Status = parsed(neverd_comparison_status_json(C));
+    EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "cancelled");
+    EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+              true);
+    EXPECT_EQ(Status.getAsObject()->getBoolean("partial_result_retained"),
+              false);
+    EXPECT_EQ(Status.getAsObject()->getBoolean("running"), false);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+    EXPECT_EQ(take(neverd_comparison_summary_json(C)), Summary);
+    EXPECT_EQ(take(neverd_comparison_function_json(C, 0, 0x1000)), Detail);
+  }
+  // A malformed document follows the same retention contract and does not
+  // consume an existing edit or redo record.
+  EXPECT_EQ(neverd_comparison_restore_json(C, "{}"), 0);
+  auto Status = parsed(neverd_comparison_status_json(C));
+  EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "failed");
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  ASSERT_EQ(neverd_comparison_redo(C), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+  neverd_comparison_cancel(C);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  Status = parsed(neverd_comparison_status_json(C));
+  EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "complete");
+  EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+            false);
+  EXPECT_EQ(parsed(neverd_comparison_summary_json(C))
+                .getAsObject()
+                ->getBoolean("can_undo"),
+            false);
+}
+
+TEST_F(BinaryDiffSDK, RestoreCompletionIsIndependentOfTheSavedStopState) {
+  auto A = input(body()), B = input(body(), 0x8000);
+  const auto C = compare(A, B);
+  const auto Saved = take(neverd_comparison_export_json(C));
+  for (const auto *State :
+       {"complete", "cancelled", "timed_out", "resource_limited"}) {
+    SCOPED_TRACE(State);
+    auto Document = llvm::json::parse(Saved);
+    ASSERT_TRUE(bool(Document));
+    (*Document->getAsObject())["state"] = State;
+    (*Document->getAsObject())["stopped_phase"] =
+        llvm::StringRef(State) == "complete" ? "" : "measure";
+    // This historical setting is not a deadline for the restore operation.
+    (*Document->getAsObject()->getObject("settings"))["timeout_ms"] = 1;
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Document).c_str()), 1)
+        << take(neverd_comparison_last_error(C));
+    auto Status = parsed(neverd_comparison_status_json(C));
+    EXPECT_EQ(Status.getAsObject()->getString("restore_state"), "complete");
+    EXPECT_EQ(Status.getAsObject()->getString("state"), State);
+    EXPECT_EQ(Status.getAsObject()->getBoolean("previous_result_retained"),
+              false);
+    EXPECT_EQ(parsed(neverd_comparison_export_json(C))
+                  .getAsObject()
+                  ->getString("state"),
+              State);
+  }
 }

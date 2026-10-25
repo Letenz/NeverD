@@ -38,6 +38,7 @@
 #include "neverd/ir/high/X86/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
+#include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
@@ -4558,6 +4559,9 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     }
     if (isAArch64ExceptionReturnIntrinsic(Expr->IntrinsicId))
       throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
+    if (const char *Reason =
+            x86NonlocalControlTransferReason(Expr->IntrinsicId))
+      throw std::invalid_argument(Reason);
     if (isPortableX87Intrinsic(Expr->IntrinsicId) && !Portable)
       throw std::invalid_argument(
           "portable x87 helpers require a prepared emission entry");

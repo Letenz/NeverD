@@ -100,6 +100,8 @@ NEVERD_ANDROID_DIAGNOSTIC(
     DecimalRange, "out-of-range decimal integer conversion is unmodeled")
 NEVERD_ANDROID_DIAGNOSTIC(FortifyReadPrefix,
                           "FORTIFY read exceeds object bounds in ")
+NEVERD_ANDROID_DIAGNOSTIC(FortifyWritePrefix,
+                          "FORTIFY destination extent exceeded: ")
 NEVERD_ANDROID_DIAGNOSTIC(StringCompareLimit,
                           "string comparison exceeds memory limit")
 NEVERD_ANDROID_DIAGNOSTIC(ReallocationOwnership,

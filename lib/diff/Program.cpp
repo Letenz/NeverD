@@ -61,7 +61,9 @@ std::optional<uint32_t> Program::functionContaining(uint64_t Address) const {
   return std::nullopt;
 }
 
-std::optional<std::string> Program::validate() const {
+std::optional<std::string>
+Program::validate(const ComparisonControl &Control) const {
+  Control.check();
   std::string Error;
   llvm::raw_string_ostream OS(Error);
   const auto Fail = [&](const char *What, size_t Index) {
@@ -69,6 +71,7 @@ std::optional<std::string> Program::validate() const {
     return Error;
   };
   for (size_t I = 0; I < Functions.size(); ++I) {
+    Control.check();
     const Function &F = Functions[I];
     if (I && Functions[I - 1].Address >= F.Address)
       return Fail("functions are not in ascending address order", I);
@@ -83,18 +86,25 @@ std::optional<std::string> Program::validate() const {
       return Fail("a function's entry block is not one of its blocks", I);
     if (F.BlockCount == 0 && F.EdgeCount != 0)
       return Fail("a function without blocks has edges", I);
-    for (const Edge &E : edges(F))
+    for (const Edge &E : edges(F)) {
+      Control.check();
       if (E.From >= F.BlockCount || E.To >= F.BlockCount)
         return Fail("an edge leaves its function", I);
-    for (const Reference &R : references(F))
+    }
+    for (const Reference &R : references(F)) {
+      Control.check();
       if (R.Block >= F.BlockCount)
         return Fail("a reference names a block outside its function", I);
-    for (const Block &B : blocks(F))
+    }
+    for (const Block &B : blocks(F)) {
+      Control.check();
       if (uint64_t(B.FirstInstruction) + B.InstructionCount >
           Instructions.size())
         return Fail("a block's instructions lie outside the program", I);
+    }
   }
   for (size_t I = 0; I < Instructions.size(); ++I) {
+    Control.check();
     const Instruction &Insn = Instructions[I];
     if (uint64_t(Insn.CodeOffset) + Insn.Size > Code.size())
       return Fail("an instruction's bytes lie outside the program", I);

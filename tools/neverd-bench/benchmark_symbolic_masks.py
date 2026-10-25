@@ -901,22 +901,76 @@ def multiple_residual_corpus(width, count):
     return rows
 
 
+def _carry_product_parts(kind):
+    degree = (8, 16, 24, 32, 48, 64, 96, 128)[kind // 16]
+    needed = 5 + kind % 16 // 4
+    flavor = kind % 4
+    bits = 3 if flavor % 2 else 2
+    factors = []
+    for i in range(degree):
+        high = (f"((y+{i})&{-1 << bits})" if flavor < 2 else
+                f"(((y+{i})&-2)*((z+{2*i})&{-1 << (bits-1)}))")
+        factors.append(f"((x+{2*i})^{high})")
+    return needed, factors
+
+
 def carry_product_corpus(width, count):
     """Higher-degree nonzero products with five to eight observed low bits."""
     rows = []
     for index in range(count):
-        kind = index % 128
-        degree = (8, 16, 24, 32, 48, 64, 96, 128)[kind // 16]
-        needed = 5 + kind % 16 // 4
-        flavor = kind % 4
-        bits = 3 if flavor % 2 else 2
-        factors = []
-        for i in range(degree):
-            high = (f"((y+{i})&{-1 << bits})" if flavor < 2 else
-                    f"(((y+{i})&-2)*((z+{2*i})&{-1 << (bits-1)}))")
-            factors.append(f"((x+{2*i})^{high})")
+        needed, factors = _carry_product_parts(index % 128)
         rows.append(f"({3 << (width-needed)}*{'*'.join(factors)})"
                     "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
+def permuted_carry_product_corpus(width, count):
+    """Equivalent degree-48–128 products with four factor construction orders."""
+    kinds = (72, 73, 88, 89, 92, 93, 100, 101, 104, 105, 124, 125)
+    rows = []
+    for index in range(count):
+        kind = kinds[(index // 4) % len(kinds)]
+        needed, factors = _carry_product_parts(kind)
+        order = index % 4
+        if order == 0:
+            factors.reverse()
+        elif order == 1:
+            factors = factors[3:] + factors[:3]
+        elif order == 2:
+            factors = factors[::2] + factors[1::2]
+        else:
+            random.Random(0x4D4241 + kind).shuffle(factors)
+        rows.append(f"({3 << (width-needed)}*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
+def sparse_linear_mixed_degree_corpus(width, count):
+    """Degree-4–18 products with disjoint constant, linear and perturbed tails.
+
+    The 135-case cycle varies degree, mixed/partitioned products, tail support,
+    and factor order. Product-only variables must not enlarge the linear table.
+    """
+    rows = []
+    for index in range(count):
+        degree = (4, 8, 12, 16, 18)[(index // 27) % 5]
+        kind, tail, order = (index // 9) % 3, (index // 3) % 3, index % 3
+        variables = [f"v{i}" for i in range(2, degree + 2)]
+        if order == 1:
+            variables.reverse()
+        elif order == 2:
+            variables = variables[::2] + variables[1::2]
+        body = f"3*{'*'.join(variables)}"
+        if kind == 1:
+            body += f"+5*{'*'.join(variables[:degree//2])}"
+        elif kind == 2:
+            left, right = variables[:2]
+            common = '*'.join(variables[2:])
+            body = (f"3*({left}&{right})*({left}|{right})*{common}"
+                    f"+3*({left}&~{right})*(~{left}&{right})*{common}")
+        linear = ("13", "13+7*(v0^v1)+14*(v0&v1)",
+                  f"13+7*(v0^v1)+14*(v0&v1)+(v0&{1 << (width-1)})")[tail]
+        rows.append(f"({body})+({linear})")
     return rows
 
 
@@ -1062,7 +1116,8 @@ def main():
                  "cubic", "higher", "perturbed", "completion", "residual", "deep-residual",
                  "row-residual", "mixed-frontier", "extreme-frontier",
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
-                 "distributed-prefix", "multiple-residual", "carry-product"),
+                 "distributed-prefix", "multiple-residual", "carry-product",
+                 "permuted-carry-product", "sparse-linear-mixed-degree"),
         default="complement",
     )
     args = parser.parse_args()
@@ -1100,6 +1155,8 @@ def main():
                 "distributed-prefix": distributed_prefix_corpus,
                 "multiple-residual": multiple_residual_corpus,
                 "carry-product": carry_product_corpus,
+                "permuted-carry-product": permuted_carry_product_corpus,
+                "sparse-linear-mixed-degree": sparse_linear_mixed_degree_corpus,
             }[args.family]
             expressions = generate(width, args.count)
             path.write_text("\n".join(expressions) + "\n", encoding="utf-8")
