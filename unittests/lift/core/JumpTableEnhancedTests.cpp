@@ -25,6 +25,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -37,6 +38,7 @@
 
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <optional>
@@ -5412,6 +5414,8 @@ expectIndirectDispatchHasNoStaticSuccessors(const std::string &Body) {
 
 #define JUMP_TABLE_ENTRY_OBSERVATION_TEXT(Name, Text)                          \
   static constexpr char Name[] = Text;
+#define JUMP_TABLE_ENTRY_OBSERVATION_VALUE(Type, Name, Value)                  \
+  static constexpr Type Name = Value;
 #include "JumpTableEntryObservation.def"
 
 static void expectSwitchNotOnLoadedEntry(const std::string &Body,
@@ -10975,6 +10979,21 @@ TEST_F(JTE_AArch64, CheckedIndexedLoadsKeepReadAndEscapeEffectsDistinct) {
   EXPECT_TRUE(Independent.UnsafeBranches.empty());
   EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr));
   EXPECT_TRUE(Independent.ProtectedRelocationSlots.count(Table.BaseAddr + 8));
+
+  // An original indexed store cannot acquire the validated read-only
+  // contract. Its write through the writable table keeps the branch unsafe.
+  auto Writer = Reader;
+  auto &Write = Writer.Blocks.front().Ops.back();
+  Write.Output = neverd::NdVar{};
+  Write.Output.Size = 0;
+  Write.Inputs[0].Offset =
+      static_cast<uint64_t>(neverd::Intrinsic::A64_StoreRegisterOffset);
+  Write.Inputs[3].Offset &= ~kOriginalTableStoreLoadBit;
+  Write.addInput(neverd::NdVar::scalar(0, Image.getPointerSize()));
+  ASSERT_TRUE(neverd::lowAArch64AddressMemoryShapeIsValid(Write));
+  const auto Written = arbitrate({Owner, Writer});
+  ASSERT_TRUE(Written.AnalysisComplete);
+  EXPECT_TRUE(Written.UnsafeBranches.count(Table.InsnAddr));
 
   // A checked read of a private spill does not escape the spill's address,
   // but a pointer read from it can still escape through a later call.
