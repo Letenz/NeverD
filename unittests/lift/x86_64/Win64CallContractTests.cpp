@@ -2929,6 +2929,107 @@ TEST(Win64CallContract, CallersPassWhatAnExportedRoutinesPrototypeDeclares) {
   EXPECT_EQ(Reads.at(Extra)[family(x86reg::R9)], 8u);
 }
 
+TEST(Win64CallContract, AnOutgoingArgumentMayReuseAnAddressTakenLocal) {
+  constexpr va_t Initialize = Text + 0x80, Consume = Text + 0xA0;
+  std::vector<uint8_t> Code(0xC0, 0xCC);
+  // sub rsp,38h; lea rcx,[rsp+20h]; call initialize_local
+  std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38, 0x48,
+                                 0x8D, 0x4C, 0x24, 0x20, 0xE8};
+  auto Displacement = rel32(Text + Caller.size() + 4, Initialize);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  // The same slot now supplies the fifth argument, with a new value.
+  // mov qword [rsp+20h],23; mov r9d,19; mov r8d,17; mov edx,13;
+  // mov ecx,11; call consume_values; add rsp,38h; ret
+  Caller.insert(Caller.end(),
+                {0x48, 0xC7, 0x44, 0x24, 0x20, 23,   0,  0, 0, 0x41, 0xB9,
+                 19,   0,    0,    0,    0x41, 0xB8, 17, 0, 0, 0,    0xBA,
+                 13,   0,    0,    0,    0xB9, 11,   0,  0, 0, 0xE8});
+  Displacement = rel32(Text + Caller.size() + 4, Consume);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x38, 0xC3});
+  put(Code, Text, Caller);
+  put(Code, Initialize, {0x48, 0xC7, 0x01, 37, 0, 0, 0, 0x31, 0xC0, 0xC3});
+  // Only the fifth parameter is read by this body; its prototype fixes
+  // all five positions, including the four registers.
+  put(Code, Consume, {0x48, 0x8B, 0x44, 0x24, 0x28, 0xC3});
+  BinaryImage Image = makeImage(Code, {{Text, "reuse_outgoing_slot"}}, {});
+  Image.Exports.push_back({"initialize_local", 1, Initialize});
+  Image.Exports.push_back({"consume_values", 2, Consume});
+  class Prototypes : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != Initialize && Address != Consume)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.PrototypeLibrary = "windows-user-x64";
+      const TypeRef Integer = NdType::makeInt(8, false);
+      if (Address == Initialize) {
+        Function.Name = "initialize_local";
+        Function.ReturnType = Integer;
+        Function.Params = {{"slot", Integer}};
+      } else {
+        Function.Name = "consume_values";
+        Function.ReturnType = Integer;
+        Function.Params = {{"a", Integer},
+                           {"b", Integer},
+                           {"c", Integer},
+                           {"d", Integer},
+                           {"e", Integer}};
+      }
+      return Function;
+    }
+  } Debug;
+  for (bool LLVM : {false, true})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(LLVM);
+      SCOPED_TRACE(NoOpt);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text};
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = true;
+      Options.NoOpt = NoOpt;
+      auto Result = Pipeline().run(Image, Context, Options, &Debug);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_TRUE(Result.CallEntryStackArgs.count(Consume));
+      ASSERT_EQ(Result.CallEntryStackArgs.at(Consume), 5);
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                        &Debug, &Image));
+      } else
+        ASSERT_TRUE(
+            HighCEmitter().emit(Result.HighFuncs, Output, COptions, &Debug));
+      const std::string Oracle = R"(
+static unsigned initialized;
+uint64_t initialize_local(uint64_t slot) {
+  *(uint64_t *)(uintptr_t)slot = 37;
+  ++initialized;
+  return 0;
+}
+uint64_t consume_values(uint64_t a, uint64_t b, uint64_t c,
+                        uint64_t d, uint64_t e) {
+  return a == 11 && b == 13 && c == 17 && d == 19 && e == 23;
+}
+int main(void) { return reuse_outgoing_slot() != 1 || initialized != 1; }
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
+}
+
 TEST(Win64CallContract, TheStartupsKernel32CallsReadWhatTheyDeclare) {
   // MSVC's startup code calls these through their slots.  IsDebuggerPresent
   // takes no argument, GetModuleHandleW one, and RtlVirtualUnwind four in

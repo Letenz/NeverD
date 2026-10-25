@@ -24,6 +24,11 @@ Missing fixed stack positions remain unavailable while later arguments survive;
 the defined-input variant executes against an independent sum at O0/O2 with
 UBSan. Run the System V and other call-contract owners after changing the
 shared omitted-callee signature policy.
+`Win64CallContract.AnOutgoingArgumentMayReuseAnAddressTakenLocal` checks a
+fifth argument stored into a slot whose address an earlier call received.
+The callee's stack summary must override the local-slot heuristic. Both C
+routes compile and execute the independently checked argument values at O0/O2
+with UBSan, with pipeline optimization enabled and disabled.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
