@@ -194,6 +194,8 @@ llvm::Expected<int> applyRequestedSignatures(neverd_session_t Sess,
 extern llvm::cl::SubCommand LiftCmd;
 extern llvm::cl::SubCommand DecompileCmd;
 extern llvm::cl::SubCommand PatchCmd;
+extern llvm::cl::SubCommand PatchBytesCmd;
+int runPatchBytes(neverd_session_t Sess);
 extern llvm::cl::SubCommand InfoCmd;
 extern llvm::cl::SubCommand StringsCmd;
 extern llvm::cl::SubCommand XrefsCmd;

@@ -1479,7 +1479,13 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       // indirect call its stack arguments.
       const bool SetupConvention =
           Convention && Convention->ArgumentsFromCallSetup;
-      const bool CompleteSetup = SetupConvention && !CI->IsIndirect;
+      // A direct call's final recovered list also owns Win64 stack slots.
+      // Appending this block's adjacent locals can revive parameters removed
+      // by the shared callee bound, or turn a required unknown into a stale
+      // value from the emitter's independent setup scan.
+      const bool CompleteSetup =
+          !CI->IsIndirect &&
+          (SetupConvention || (Convention && Convention->StackArgumentSummary));
       size_t Recovered = CI->Args.size();
       if (SetupConvention && CI->IsIndirect) {
         // The scan gives such a call its stack arguments, though not the
@@ -1500,9 +1506,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
           }
         }
       }
-      if (SetupConvention ? CompleteSetup || Recovered ||
-                                TargetLimit < static_cast<size_t>(MaxArgs)
-                          : !CI->Args.empty()) {
+      if (CompleteSetup ||
+          (SetupConvention
+               ? Recovered || TargetLimit < static_cast<size_t>(MaxArgs)
+               : !CI->Args.empty())) {
         std::vector<ExprPtr> FromABI;
         FromABI.reserve(Recovered);
         for (size_t K = 0; K < Recovered; ++K) {
@@ -1550,7 +1557,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         // The scan numbers registers in the convention's order, which does
         // not index arguments passed in the callee's own.
         for (size_t I = 0; I < FromABI.size(); ++I)
-          if ((!FromABI[I] || FromABI[I]->Kind == ExprKind::Undef) &&
+          if (!CompleteSetup &&
+              (!FromABI[I] || FromABI[I]->Kind == ExprKind::Undef) &&
               !CI->ArgumentsInCalleeRegisterOrder && Found[I] &&
               Found[I]->Kind != ExprKind::Undef)
             FromABI[I] = Found[I];

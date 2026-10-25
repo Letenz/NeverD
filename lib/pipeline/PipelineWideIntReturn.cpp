@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineRegisterCalls.h"
 #include "PipelineReturnModelingDetail.h"
 #include "PipelineWideIntReturnDetail.h"
 
@@ -597,7 +598,10 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
         // Reconversion replaces the operation sequence. Repeat the same stack
         // proofs as the initial conversion before either source emitter reads
         // it.
-        prepareMedStackAccesses(NewMF, Img, StackProjection);
+        prepareMedStackAccesses(NewMF, Result.LowFuncs[I], Img,
+                                StackProjection);
+        if (StackProjection == MedStackProjection::Source)
+          expandSourceRegisterCalls(NewMF, Img, Result.CallRegisterLeaves);
         Result.MedFuncs[I] = std::move(NewMF);
         inferMedTypes(Result.MedFuncs[I], Img.Arch);
         if (SelfWide)

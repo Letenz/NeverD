@@ -17,6 +17,7 @@
 #include "../common/transport/ResourceLimits.h"
 
 #include "neverd/diff/Limits.h"
+#include "neverd/patch/Limits.h"
 #include "neverd/sdk/Limits.h"
 #include "neverd/support/Limits.h"
 
@@ -25,6 +26,19 @@
 #include <cstdint>
 
 namespace neverd::limits::gui {
+inline constexpr int kPatchPreviewDelayMs = 180;
+inline constexpr int kPatchEditorWidth = 620;
+inline constexpr int kPatchAnchorGap = 4;
+inline constexpr int kPatchPreviewHeight = 200;
+inline constexpr int kPatchAssemblyPreviewLines = 4;
+inline constexpr int kPatchBytePreviewLines = 2;
+inline constexpr int kPatchPreviewHexCharacters = 256;
+inline constexpr int kPatchConfirmationHexCharacters = 64;
+inline constexpr int kPatchConfirmationInstructions = 4;
+inline constexpr int kPatchLogHexCharacters = 64;
+inline constexpr int kPatchLogInstructions = 4;
+inline constexpr int kRewriteDialogWidth = 960;
+inline constexpr int kRewriteDialogHeight = 720;
 
 // Binary comparison views. Rows and request admission stay bounded separately.
 inline constexpr int kComparisonPageSize =

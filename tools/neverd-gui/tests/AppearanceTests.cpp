@@ -43,6 +43,7 @@
 #include <QScopeGuard>
 #include <QScreen>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QStyle>
 #include <QStyleOption>
 #include <QTabBar>
@@ -50,6 +51,7 @@
 #include <QTest>
 #include <QTextLayout>
 #include <QToolButton>
+#include <QWheelEvent>
 #include <QWindow>
 #include <algorithm>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
@@ -341,6 +343,89 @@ private slots:
                                     QTest::currentDataTag() + ".png"));
       }
     }
+  }
+
+  void longMenusScrollWithinOneColumn_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void longMenusScrollWithinOneColumn() {
+    QFETCH(bool, dark);
+    Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    Theme::instance().apply();
+    class Menu : public QMenu {
+    public:
+      using QMenu::columnCount;
+      using QMenu::QMenu;
+    };
+    QWidget anchor;
+    anchor.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&anchor));
+    Menu menu(&anchor);
+    auto *first = menu.addAction("First command");
+    menu.ensurePolished();
+    const QRect available = anchor.screen()->availableGeometry();
+    const QRect screen = anchor.screen()->geometry();
+    const int rowHeight = menu.actionGeometry(first).height();
+    QVERIFY(rowHeight > 0);
+    // Windows/KDE may use the taskbar area for popups; Cocoa/GNOME use the
+    // available area. Overflow either policy, regardless of resolution/font.
+    const int rows = screen.height() / rowHeight + 12;
+    for (int i = 1; i < rows; ++i)
+      menu.addAction(QString("Command %1").arg(i));
+    auto *last = menu.actions().last();
+    QSignalSpy triggered(&menu, &QMenu::triggered);
+    menu.popup(available.topLeft() + QPoint(20, 20));
+    QVERIFY(menu.isVisible());
+    QCOMPARE(menu.columnCount(), 1);
+    QVERIFY(menu.height() <= screen.height());
+    const int left = menu.actionGeometry(first).left();
+    for (auto *action : menu.actions())
+      QCOMPARE(menu.actionGeometry(action).left(), left);
+    QVERIFY(menu.actionGeometry(last).top() >= menu.height());
+
+    const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(menu.grab().save(captures + "/long-menu-" +
+                               QTest::currentDataTag() + ".png"));
+    }
+    const auto wheel = [&](int delta) {
+      const QPoint center = menu.rect().center();
+      QWheelEvent event(center, menu.mapToGlobal(center), {}, QPoint(0, delta),
+                        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+      QApplication::sendEvent(&menu, &event);
+    };
+    const int beforeWheel = menu.actionGeometry(first).top();
+    wheel(-120);
+    const int afterWheel = menu.actionGeometry(first).top();
+    QVERIFY(afterWheel < beforeWheel);
+    wheel(120);
+    QVERIFY(menu.actionGeometry(first).top() > afterWheel);
+
+    // The bottom scroller consumes a click and scrolls without activating a
+    // command or dismissing the popup. Moving away stops its repeat timer.
+    const int scrollerHeight = menu.style()->pixelMetric(
+        QStyle::PM_MenuScrollerHeight, nullptr, &menu);
+    QVERIFY(scrollerHeight > 0);
+    const QPoint down(menu.width() / 2, menu.height() - scrollerHeight / 2 - 1);
+    const int beforeArrow = menu.actionGeometry(first).top();
+    QTest::mouseClick(&menu, Qt::LeftButton, Qt::NoModifier, down);
+    QTRY_VERIFY(menu.actionGeometry(first).top() < beforeArrow);
+    QTest::mouseMove(&menu, menu.rect().center());
+    QVERIFY(menu.isVisible());
+    QCOMPARE(triggered.count(), 0);
+
+    QTest::keyClick(&menu, Qt::Key_End);
+    QCOMPARE(menu.activeAction(), last);
+    QVERIFY(menu.rect().contains(menu.actionGeometry(last).center()));
+    QTest::keyClick(&menu, Qt::Key_Home);
+    QCOMPARE(menu.activeAction(), first);
+    QVERIFY(menu.rect().contains(menu.actionGeometry(first).center()));
+    QTest::keyClick(&menu, Qt::Key_Escape);
+    QVERIFY(!menu.isVisible());
   }
 
   void tabCloseIconKeepsItsSizeAndInset_data() {

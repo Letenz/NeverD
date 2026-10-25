@@ -799,6 +799,25 @@ class NeverDSourcePatchDependencyV1(ctypes.Structure):
     ]
 
 
+class NeverDBytePatchOptionsV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t), ("address", ctypes.c_uint64),
+        ("kind", ctypes.c_char_p), ("bytes", ctypes.c_char_p),
+        ("text", ctypes.c_char_p), ("value", ctypes.c_uint64),
+        ("size", ctypes.c_uint64), ("fill_nops", ctypes.c_int),
+        ("allow_overlap", ctypes.c_int), ("dialect", ctypes.c_int),
+        ("expected", ctypes.c_char_p), ("symbols", ctypes.c_char_p),
+    ]
+
+
+class NeverDAssembleOptionsV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t), ("pc", ctypes.c_uint64),
+        ("dialect", ctypes.c_int), ("mode", ctypes.c_int),
+        ("text", ctypes.c_char_p), ("symbols", ctypes.c_char_p),
+    ]
+
+
 class NeverDSourcePatchOptionsV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t),
@@ -865,6 +884,7 @@ class Ownership(Enum):
 
 
 _C_TYPES: dict[str, object] = {
+    "int64_t": ctypes.c_int64,
     "void": None,
     "int": ctypes.c_int,
     "uint32_t": ctypes.c_uint32,
@@ -959,6 +979,8 @@ _C_TYPES: dict[str, object] = {
     "const neverd_driver_options_v1 *": ctypes.POINTER(NeverDDriverOptionsV1),
     "const neverd_sanitize_options_v1 *": ctypes.POINTER(NeverDSanitizeOptionsV1),
     "neverd_sanitize_result_v1 *": ctypes.POINTER(NeverDSanitizeResultV1),
+    "const neverd_byte_patch_options_v1 *": ctypes.POINTER(NeverDBytePatchOptionsV1),
+    "const neverd_assemble_options_v1 *": ctypes.POINTER(NeverDAssembleOptionsV1),
     "const neverd_source_patch_options_v1 *": ctypes.POINTER(
         NeverDSourcePatchOptionsV1
     ),
@@ -1729,6 +1751,19 @@ _declare(
     ["neverd_session_t"],
     ownership=Ownership.OWNED_STRING,
 )
+for _patch_function in ("neverd_byte_patch_preview", "neverd_byte_patch_apply"):
+    _declare(_patch_function, "const char *", ["neverd_session_t", "const neverd_byte_patch_options_v1 *"], ownership=Ownership.OWNED_STRING)
+for _patch_function in ("neverd_byte_patches_save", "neverd_byte_patches_load"):
+    _declare(_patch_function, "int", ["neverd_session_t"])
+_declare("neverd_byte_patch_revert", "int", ["neverd_session_t", "neverd_va_t", "uint64_t"])
+_declare("neverd_byte_patches_export", "int", ["neverd_session_t", "const char *", "int"])
+_declare("neverd_byte_patches_json", "const char *", ["neverd_session_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patch_context_json", "const char *", ["neverd_session_t", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patch_source_target_json", "const char *", ["neverd_session_t", "neverd_va_t", "const char *", "size_t", "int64_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patch_source_preview_json", "const char *", ["neverd_session_t", "neverd_va_t", "const char *", "const neverd_byte_patch_options_v1 *"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_source_patch_context_json", "const char *", ["neverd_session_t", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_assemble_json", "const char *", ["neverd_session_t", "const neverd_assemble_options_v1 *"], ownership=Ownership.OWNED_STRING)
+
 _declare("neverd_set_inst_substitution", "void", ["neverd_session_t", "int", "int"])
 _declare("neverd_patch_substitution_count", "int", ["neverd_session_t"])
 _declare("neverd_set_constant_encryption", "void", ["neverd_session_t", "int"])

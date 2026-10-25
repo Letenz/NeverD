@@ -2150,3 +2150,28 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 `NeverDInterpreterSpecializationTests`, `NeverDPEFixedImageTests`, `NeverDRawEnvironmentRequirementTests`, `NeverDOriginalBinaryUndefinedIndependenceTests`, `NeverDLowIRRefinementTests`.
 
 `NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）と `NeverDCSourcePresentationTests` を実行し、バイトの由来、経路の一致、上書きまたは逸出した記憶領域、不変のイメージ範囲、予算、文字コード、メタデータ境界を確認します。`NeverDWorkerStackText` は公開の x64/ARM64 PE 例をコンパイルし、未知の上書きを含めて両方の C 経路を検証します。Clang と lld-link が必要で、Windows のネイティブ実行は別途検証します。
+
+<!-- i18n-section: interactive-byte-patches -->
+## 対話的パッチの責務
+
+`NeverDBytePatchTests` はバイトの上書き層、再配置の拒否、PC 相対アセンブル、PE 署名とチェックサムを検査します。`NeverDWorkerPatch` はプレビュー、古い入力、取り消しとやり直し、一括復元、読み取り専用レプリカ、再オープン、排他的エクスポートを検査します。
+
+`NeverDWorkerNativePatch` は実際の SDK でも同じ動作を検証します。`NeverDWorkerSourceBytePatch` は Linux 上でソースの証明、独立したプレビュー、スタックフレームのシンボル、ネイティブ C 関数の置換を検証します。
+
+`NeverDGuiPatchKeys` は `QWindow` のショートカット処理を通して、すべての第2キー、読込中のメニュー、キャンセル、エディター入力を検証します。`NeverDGuiNativePatchKeys` は実際の SDK バイト、Hex、独立ウィンドウ、元に戻す・やり直す・復元を検証します。同じ実行ファイルを X11 で動かすとネイティブのポップアップ処理も検証できます。
+
+```sh
+cmake --build build-gui --target neverd-gui-patch-tests
+ctest --test-dir build-gui -R 'NeverDGui(Native)?PatchKeys$' --output-on-failure
+NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  python3 tools/neverd-gui/tests/run_wayland_docking.py \
+  build-gui/bin/neverd-gui-patch-tests
+ctest --test-dir build-release/unittests/patch --output-on-failure
+ctest --test-dir build-gui -R 'NeverDWorker(Patch|NativePatch|SourceBytePatch)$' --output-on-failure
+PYTHONPATH=pluginsdk/python NEVERD_TEST_LIBNEVERD="$PWD/build-release/bin/libneverd.so" \
+  NEVERD_TEST_CLI="$PWD/build-release/bin/neverd" \
+  python3 -m unittest discover -s pluginsdk/python/tests -p test_byte_patch_integration.py -v
+QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNotTakeHexRaysKeys patchMenuUsesEngineChoicesAndFixedKeys cancelledPatchMenuDiscardsItsPendingKey
+QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
+  build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
+```

@@ -37,9 +37,23 @@ U64 residency_call(U64 Op, U64 Address, U64 Length, unsigned char *Vector,
 #else
 extern U64 linux_service(U64, U64, U64, U64);
 #if defined(__aarch64__)
-enum { Mincore = 232, Write = 64, Exit = 93 };
+enum {
+  Mincore = 232,
+  Madvise = 233,
+  Mprotect = 226,
+  Munmap = 215,
+  Write = 64,
+  Exit = 93
+};
 #else
-enum { Mincore = 27, Write = 1, Exit = 60 };
+enum {
+  Mincore = 27,
+  Madvise = 28,
+  Mprotect = 10,
+  Munmap = 11,
+  Write = 1,
+  Exit = 60
+};
 #endif
 static U64 anonymous_pages(void) {
 #if defined(__aarch64__)
@@ -78,7 +92,25 @@ void process_main(U64 *Stack) {
   unsigned char Vector[32];
   for (unsigned I = 0; I != sizeof(Vector); ++I)
     Vector[I] = 0xa5;
-  if (((const char **)(Stack + 1))[1][0] == 'o') {
+  if (((const char **)(Stack + 1))[1][0] == 'd') {
+    U64 Address = anonymous_pages();
+    if (Address != 0x60000000UL)
+      linux_service(Exit, 92, 0, 0);
+    volatile U64 *Pages = (volatile U64 *)Address;
+    for (U64 I = 0; I != 1536; ++I)
+      Pages[I] = 0x3131313131313131UL + I / 512 * 0x0101010101010101UL;
+    if (linux_service(Mprotect, Address + 4096, 4096, 0) ||
+        linux_service(Madvise, Address + 4096, 1, (1UL << 32) | 4) ||
+        linux_service(Mprotect, Address + 4096, 4096, 3))
+      linux_service(Exit, 93, 0, 0);
+    linux_service(Write, 1, Address, 12288);
+    if (linux_service(Munmap, Address + 4096, 4096, 0) ||
+        linux_service(Madvise, Address, 12288, 4) != (U64)-12)
+      linux_service(Exit, 94, 0, 0);
+    linux_service(Write, 1, Address, 4096);
+    linux_service(Write, 1, Address + 8192, 4096);
+    linux_service(Exit, 0, 0, 0);
+  } else if (((const char **)(Stack + 1))[1][0] == 'o') {
     U64 Address = anonymous_pages();
     if (Address != 0x60000000UL)
       linux_service(Exit, 92, 0, 0);

@@ -382,7 +382,7 @@ static int realMain(int Argc, char *Argv[]) {
     }
   }
 
-  if (!JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd &&
+  if (!PatchBytesCmd && !JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd &&
       !(PatchCmd && PatchReport)) {
     const char *ArchStr = neverd_session_arch_name(Sess);
     outs() << "=== " << ProjectName << " v" << VersionString << " (" << Command
@@ -489,6 +489,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runLift(Sess);
   if (DecompileCmd)
     return runDecompile(Sess);
+  if (PatchBytesCmd)
+    return runPatchBytes(Sess);
   if (PatchCmd)
     return runPatch(Sess);
 

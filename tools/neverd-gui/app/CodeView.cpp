@@ -1609,6 +1609,21 @@ int CodeText::textLeft() const {
          int((gutterChars_ + 2) * charWidth_) - horizontalScrollBar()->value();
 }
 
+QRect CodeText::cursorViewportRect() const {
+  qreal x = textLeft();
+  if (cursorLine_ >= 0 && cursorLine_ < lines_.size()) {
+    auto &theme = Theme::instance();
+    auto &layout = lines_[cursorLine_].styled.layout(
+        theme.codeFont(), styleStamp_,
+        [&theme](int role) { return theme.listingRole(role); });
+    if (layout.lineCount())
+      x += layout.lineAt(0).cursorToX(cursorColumn_);
+  }
+  return QRect(qRound(x),
+               (cursorLine_ - verticalScrollBar()->value()) * lineHeight_, 1,
+               lineHeight_);
+}
+
 int CodeText::lineAt(int y) const {
   return verticalScrollBar()->value() + y / std::max(1, lineHeight_);
 }

@@ -31,7 +31,13 @@ bool cacheable(const QString &operation) {
 }
 
 bool readable(const QString &operation) {
-  static const QSet<QString> operations{"metadata",
+  static const QSet<QString> operations{"patch_context",
+                                        "patch_preview",
+                                        "patches",
+                                        "patch_source_target",
+                                        "patch_source_preview",
+                                        "source_patch_context",
+                                        "metadata",
                                         "analysis_snapshot",
                                         "code_edit_prepare",
                                         "history",
@@ -88,6 +94,10 @@ bool command(const QString &operation) {
                                         "function_delete",
                                         "function_edit",
                                         "item_define",
+                                        "patch_apply",
+                                        "patch_revert",
+                                        "patch_export",
+                                        "source_patch",
                                         "operand_format",
                                         "save",
                                         "reload",

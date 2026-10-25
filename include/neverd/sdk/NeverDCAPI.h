@@ -40,6 +40,7 @@
 #ifndef NEVERD_SDK_CAPI_H
 #define NEVERD_SDK_CAPI_H
 
+#include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIBytecode.h"
 #include "neverd/sdk/NeverDCAPICPU.h"
 #include "neverd/sdk/NeverDCAPIDevirtualize.h"

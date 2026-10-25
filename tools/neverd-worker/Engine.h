@@ -68,6 +68,9 @@ public:
   static bool statesFunctionAttributes();
   /// Whether the engine keeps the user's data items.
   static bool keepsDataItems();
+  static bool keepsBytePatches();
+  static bool keepsSourcePatches();
+  static bool provesSourcePatches();
   /// Whether the engine keeps how the user shows operands' numbers.
   static bool keepsOperandFormats();
   /// Whether the engine lists the ways it can load a file (identify).
@@ -280,6 +283,9 @@ private:
   bool reloadDataItems();
   /// The user's data items as rows; none from an older engine.
   Json dataItemRows() const;
+  Json bytePatchRows() const;
+  bool reloadBytePatches();
+  Json patchOperation(const std::string &Operation, const Json &Payload);
   /// Read the operand formats sidecar: true when it loaded or the engine
   /// keeps no operand formats.  Changed formats show in the listing.
   bool reloadOperandFormats();

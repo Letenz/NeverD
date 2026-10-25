@@ -20,6 +20,7 @@
 #include "LinkDispatch.h"
 #include "LoadFileDialog.h"
 #include "NativeWindowStates.h"
+#include "PatchMenu.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
 #include "SymbolTablePromptDialog.h"
@@ -58,6 +59,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSet>
+#include <QSignalSpy>
 #include <QSplitter>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -484,25 +486,23 @@ private slots:
     registry.buildMenus(window.menuBar(), [](QMenu *, const QString &) {});
     registry.buildToolbars(&window);
     QSet<QString> ids;
-    QHash<QString, QString> globalKeys, viewKeys;
-    const auto &views = registry.viewActions();
+    QHash<QString, QString> keys;
     for (auto *action : registry.allActions()) {
       QVERIFY2(!ids.contains(action->objectName()),
                qPrintable(action->objectName()));
       ids.insert(action->objectName());
       QVERIFY2(!action->text().isEmpty(), qPrintable(action->objectName()));
       QVERIFY2(!action->icon().isNull(), qPrintable(action->objectName()));
-      const auto key = action->shortcut().toString(QKeySequence::PortableText);
-      if (key.isEmpty())
-        continue;
-      auto &keys = views.contains(action) ? viewKeys : globalKeys;
-      QVERIFY2(!keys.contains(key),
-               qPrintable(key + QStringLiteral(": ") + keys.value(key) +
-                          QStringLiteral(" and ") + action->objectName()));
-      keys.insert(key, action->objectName());
-      // A view shortcut must not also be a window-wide one.
-      if (views.contains(action))
-        QVERIFY2(!globalKeys.contains(key), qPrintable(key));
+      // Check aliases too: a view shortcut and a window shortcut can both
+      // be active while an analysis view has focus.
+      for (const auto &shortcut : action->shortcuts()) {
+        const auto key = shortcut.toString(QKeySequence::PortableText);
+        QVERIFY2(!key.isEmpty(), qPrintable(action->objectName()));
+        QVERIFY2(!keys.contains(key),
+                 qPrintable(key + QStringLiteral(": ") + keys.value(key) +
+                            QStringLiteral(" and ") + action->objectName()));
+        keys.insert(key, action->objectName());
+      }
     }
     QCOMPARE(ids.size(), int(ActionId::Count));
     // Every command is reachable from a menu.
@@ -517,6 +517,13 @@ private slots:
     for (auto *action : window.menuBar()->actions())
       if (action->menu())
         walk(action->menu());
+    // Patch is populated from the engine when opened. Its popup action and
+    // dynamic inventory share the production table; fixed keys/filtering are
+    // exercised by patchMenuUsesEngineChoicesAndFixedKeys below.
+    reachable.insert(registry.action(ActionId::EditPatchMenu));
+#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
+  reachable.insert(registry.action(ActionId::Id));
+#include "PatchMenu.def"
     for (auto *action : registry.allActions())
       QVERIFY2(reachable.contains(action), qPrintable(action->objectName()));
   }
@@ -558,6 +565,64 @@ private slots:
     QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
     action->setShortcut({});
     QCOMPARE(entry->toolButtonStyle(), Qt::ToolButtonIconOnly);
+  }
+
+  void commentKeysShareOneViewScopedAction() {
+    QMainWindow window;
+    auto *view = new QWidget(&window);
+    view->setFocusPolicy(Qt::StrongFocus);
+    auto *layout = new QVBoxLayout(view);
+    auto *input = new QLineEdit(view);
+    auto *editor = new QPlainTextEdit(view);
+    layout->addWidget(input);
+    layout->addWidget(editor);
+    window.setCentralWidget(view);
+    ActionRegistry registry;
+    registry.buildMenus(window.menuBar(), [](QMenu *, const QString &) {});
+    registry.attachViewShortcuts(view);
+    auto *comment = registry.action(ActionId::EditRepeatableComment);
+    QCOMPARE(comment->shortcuts(), QList({QKeySequence(Qt::Key_Semicolon),
+                                          QKeySequence(Qt::Key_Slash)}));
+    QCOMPARE(comment->shortcutContext(), Qt::WidgetWithChildrenShortcut);
+    QVERIFY(comment->toolTip().contains(QStringLiteral(";, /")));
+    QVERIFY(!registry.findChild<QAction *>(QStringLiteral("EditComment")));
+    for (auto *action : registry.allActions())
+      QVERIFY(!action->shortcuts().contains(QKeySequence(Qt::Key_Colon)));
+    auto *menu = window.findChild<QMenu *>(QStringLiteral("menuComments"));
+    QVERIFY(menu);
+    QCOMPARE(menu->actions(), QList({comment}));
+    QSignalSpy triggered(comment, &QAction::triggered);
+    window.show();
+    window.raise();
+    window.activateWindow();
+    const bool active = QTest::qWaitForWindowActive(&window);
+    if (!active && QGuiApplication::platformName() == QLatin1String("cocoa"))
+      QSKIP("Comment key dispatch requires a foreground Cocoa window.");
+    QVERIFY(active);
+    view->setFocus();
+    QTRY_VERIFY(view->hasFocus());
+    auto *handle = window.windowHandle();
+    QTest::keyClick(handle, Qt::Key_Semicolon);
+    QCOMPARE(triggered.size(), 1);
+    QTest::keyClick(handle, Qt::Key_Slash);
+    QCOMPARE(triggered.size(), 2);
+    QTest::keyClick(handle, Qt::Key_Colon, Qt::ShiftModifier);
+    QCOMPARE(triggered.size(), 2);
+    input->setFocus();
+    QTRY_VERIFY(input->hasFocus());
+    QTest::keyClicks(input, ";/:");
+    QCOMPARE(input->text(), QStringLiteral(";/:"));
+    editor->setFocus();
+    QTRY_VERIFY(editor->hasFocus());
+    QTest::keyClicks(editor, ";/:");
+    QCOMPARE(editor->toPlainText(), QStringLiteral(";/:"));
+    QCOMPARE(triggered.size(), 2);
+    view->setFocus();
+    QTRY_VERIFY(view->hasFocus());
+    comment->setEnabled(false);
+    QTest::keyClick(handle, Qt::Key_Semicolon);
+    QTest::keyClick(handle, Qt::Key_Slash);
+    QCOMPARE(triggered.size(), 2);
   }
 
   void deepLinksTakeIdasFormAndRefuseWhatTheyCannotName() {
@@ -748,7 +813,12 @@ private slots:
   for (const auto &key : idaKeys(QLatin1StringView(Shortcut)))                 \
     idaCommands.insert(key, QStringLiteral(IdaAction));
 #include "IdaActions.def"
-    QVERIFY(shared.size() > int(ActionId::Count) * 3 / 4);
+    int patchOnly = 1; // NeverD's menu opener, whose free key is tested below.
+#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
+  if (!shared.contains(registry.action(ActionId::Id)))                         \
+    ++patchOnly;
+#include "PatchMenu.def"
+    QVERIFY(shared.size() > (int(ActionId::Count) - patchOnly) * 3 / 4);
     for (auto *action : registry.allActions())
       if (!shared.contains(action) && !action->shortcut().isEmpty())
         QVERIFY2(!idaCommands.contains(action->shortcut()),
@@ -762,6 +832,61 @@ private slots:
              QList{QKeySequence(Qt::Key_Return)});
     QCOMPARE(idaKeys(QLatin1StringView("sys(ZoomOut)")),
              QKeySequence::keyBindings(QKeySequence::ZoomOut));
+  }
+
+  void patchShortcutsDoNotTakeHexRaysKeys() {
+    ActionRegistry registry;
+    QSet<QKeySequence> keys;
+#define NEVERD_HEXRAYS_KEY(Name, Key)                                          \
+  keys.insert(QKeySequence(QStringLiteral(Key)));
+#include "HexRaysShortcuts.def"
+    QVERIFY(keys.contains(QKeySequence("Z")));
+    const auto patch = registry.action(ActionId::EditPatchMenu)->shortcut();
+    QCOMPARE(patch, QKeySequence("J"));
+    QVERIFY(!keys.contains(patch));
+    QCOMPARE(registry.action(ActionId::EditPatchedBytes)->shortcut(),
+             QKeySequence("Ctrl+Alt+P"));
+    QVERIFY(registry.action(ActionId::EditPatchAssemble)->shortcut().isEmpty());
+  }
+
+  void patchMenuUsesEngineChoicesAndFixedKeys() {
+    ActionRegistry registry;
+    QMenu menu;
+    PatchMenu binding(&menu);
+    registry.action(ActionId::EditPatchNop)
+        ->setText(QString::fromUtf8("填充空指令"));
+    QSignalSpy nop(registry.action(ActionId::EditPatchNop),
+                   &QAction::triggered);
+    QSignalSpy rename(registry.action(ActionId::EditRename),
+                      &QAction::triggered);
+    binding.fill(registry, {"nop", "bytes"});
+    QCOMPARE(menu.actions().size(), 2);
+    menu.show();
+    QTest::keyClick(&menu, Qt::Key_N);
+    QCOMPARE(rename.size(), 0);
+    QTest::keyClick(&menu, Qt::Key_J);
+    QCOMPARE(nop.size(), 1);
+    QMenu pending;
+    PatchMenu waiting(&pending);
+    pending.show();
+    QTest::keyClick(&pending, Qt::Key_J);
+    waiting.fill(registry, {"nop"});
+    QCOMPARE(nop.size(), 2);
+  }
+
+  void cancelledPatchMenuDiscardsItsPendingKey() {
+    ActionRegistry registry;
+    QMenu menu;
+    PatchMenu binding(&menu);
+    menu.addAction(QStringLiteral("Checking available patches"));
+    QSignalSpy nop(registry.action(ActionId::EditPatchNop),
+                   &QAction::triggered);
+    menu.show();
+    QTest::keyClick(&menu, Qt::Key_J);
+    QTest::keyClick(&menu, Qt::Key_Escape);
+    QVERIFY(!menu.isVisible());
+    binding.fill(registry, {"nop"});
+    QCOMPARE(nop.size(), 0);
   }
 
   void everyIconRenders() {
@@ -1060,6 +1185,9 @@ private slots:
     QVERIFY(write(binary + ".neverd/debug.json", R"({"pdb":{"mode":"none"}})"));
     QVERIFY(write(binary + ".neverd/types.json", R"({"types":["struct T"]})"));
     QVERIFY(write(binary + ".neverd/items.json", "[]"));
+    QVERIFY(write(
+        binary + ".neverd/patches.json",
+        R"([{"addr":"0x0","file_off":"0x0","va":"0x0","size":1,"original":"90","current":"cc","kind":"bytes"}])"));
     // A workbench file is the user's own; a database keeps its own state.
     QVERIFY(write(binary + ".neverd/local/workbench.json", "{}"));
 
@@ -1087,6 +1215,8 @@ private slots:
              read(binary + ".neverd/bookmarks.json"));
     QCOMPARE(read(unpacked + ".neverd/debug.json"),
              read(binary + ".neverd/debug.json"));
+    QCOMPARE(read(unpacked + ".neverd/patches.json"),
+             read(binary + ".neverd/patches.json"));
 
     // A database written before it named the files it packs packed no local
     // types: unpacking it keeps the types beside the input, while a table it

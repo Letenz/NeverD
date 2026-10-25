@@ -57,6 +57,8 @@ else()
   set(NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE "")
 endif()
 
+add_subdirectory(patch)
+
 add_neverd_unittest(NeverDTestProcessTests
   TestProcessTests.cpp
 )

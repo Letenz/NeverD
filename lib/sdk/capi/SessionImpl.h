@@ -43,6 +43,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/SymbolSpelling.h"
 #include "neverd/pass/Limits.h"
+#include "neverd/patch/PatchOverlay.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/sbf/emit/SBFLLVMEmitter.h"
 #include "neverd/sdk/Limits.h"
@@ -118,6 +119,9 @@ struct Session {
   std::optional<uint64_t> MemoryInputBytes;
   std::string WebNativeProvenance;
   BinaryImage Img;
+  patch::PatchOverlay BytePatches;
+  std::optional<std::array<uint8_t, 32>> BytePatchesSavedDigest;
+  std::optional<patch::InputFile> PatchInput;
   bool Loaded = false;
 
   // Debug information for the loaded image.  DbgRequest is the caller's search

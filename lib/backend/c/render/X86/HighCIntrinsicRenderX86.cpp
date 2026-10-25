@@ -1413,6 +1413,7 @@ bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
     return true;
   switch (Id) {
   // What Microsoft's <intrin.h> declares and the GNU headers do not.
+  case Intrinsic::Cpuid:
   case Intrinsic::CetWrss:
   case Intrinsic::CetWruss:
   case Intrinsic::Lidt:

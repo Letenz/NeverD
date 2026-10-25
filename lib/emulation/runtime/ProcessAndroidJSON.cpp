@@ -19,6 +19,12 @@
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace neverd::emulation {
 namespace {
 namespace field = process_report;
@@ -46,28 +52,129 @@ llvm::Expected<std::string> string(const llvm::json::Value &V,
   return S->str();
 }
 std::string bits(uint64_t V) { return llvm::utohexstr(V, true); }
+llvm::Expected<int32_t> integer32(const llvm::json::Value &Value,
+                                  llvm::StringRef Name) {
+  auto Integer = process_json::integer<int32_t>(Value);
+  if (!Integer)
+    return invalid(Name);
+  return *Integer;
+}
 llvm::Expected<mobile::dalvik::AndroidApplicationSnapshot::ApplicationInfo>
 applicationInfo(const llvm::json::Value &Value) {
   const auto *Info = Value.getAsObject();
-  if (!Info || Info->size() < 1 || Info->size() > 2 ||
-      !Info->get("source_dir") ||
-      (Info->size() == 2 && !Info->get("native_library_dir")))
+  if (!Info || !Info->get("source_dir"))
     return invalid(field::ApplicationInfo);
+  for (const auto &[Key, Entry] : *Info)
+    if (Key != "source_dir" && Key != "native_library_dir" &&
+        Key != "non_localized_label" && Key != "target_sdk_version" &&
+        Key != "split_source_dirs" && Key != "split_public_source_dirs")
+      return invalid(field::ApplicationInfo);
   mobile::dalvik::AndroidApplicationSnapshot::ApplicationInfo Result;
   const auto &Entry = *Info->get("source_dir");
   if (auto Text = Entry.getAsString())
     Result.source_dir = Text->str();
   else if (Entry.kind() != llvm::json::Value::Null)
     return invalid(field::ApplicationInfo);
-  if (const auto *Native = Info->get("native_library_dir")) {
-    auto &Directory = Result.native_library_dir.emplace();
-    if (auto Text = Native->getAsString())
-      Directory = Text->str();
-    else if (Native->kind() != llvm::json::Value::Null)
-      return invalid(field::ApplicationInfo);
+  for (auto [Name, Destination] :
+       {std::pair{"native_library_dir", &Result.native_library_dir},
+        {"non_localized_label", &Result.non_localized_label}}) {
+    if (const auto *Initial = Info->get(Name)) {
+      auto &Value = Destination->emplace();
+      if (auto Text = Initial->getAsString())
+        Value = Text->str();
+      else if (Initial->kind() != llvm::json::Value::Null)
+        return invalid(field::ApplicationInfo);
+    }
+  }
+  for (auto [Name, Destination] :
+       {std::pair{"split_source_dirs", &Result.split_source_dirs},
+        {"split_public_source_dirs", &Result.split_public_source_dirs}}) {
+    const auto *Initial = Info->get(Name);
+    if (!Initial)
+      continue;
+    auto &Values = Destination->emplace();
+    if (Initial->kind() != llvm::json::Value::Null) {
+      const auto *Array = Initial->getAsArray();
+      if (!Array ||
+          Array->size() >
+              ::neverd::limits::dalvik::kMaxAndroidApplicationSplitSources)
+        return invalid(field::ApplicationInfo);
+      Values.emplace();
+      for (const auto &Element : *Array) {
+        if (auto Text = Element.getAsString())
+          Values->emplace_back(Text->str());
+        else if (Element.kind() == llvm::json::Value::Null)
+          Values->emplace_back();
+        else
+          return invalid(field::ApplicationInfo);
+      }
+    }
+  }
+  if (const auto *Initial = Info->get("target_sdk_version")) {
+    auto Value = integer32(*Initial, field::ApplicationInfo);
+    if (!Value)
+      return Value.takeError();
+    Result.target_sdk_version = *Value;
   }
   return Result;
 }
+llvm::Expected<mobile::dalvik::AndroidApplicationSnapshot::PackageInfo>
+packageInfo(const llvm::json::Value &Value) {
+  const auto *Info = Value.getAsObject();
+  if (!Info)
+    return invalid(field::PackageInfoQueries);
+  mobile::dalvik::AndroidApplicationSnapshot::PackageInfo Result;
+  for (const auto &[Key, Entry] : *Info) {
+    if (Key == field::ApplicationInfo) {
+      auto &Nested = Result.application_info.emplace();
+      if (Entry.kind() != llvm::json::Value::Null) {
+        auto Decoded = applicationInfo(Entry);
+        if (!Decoded)
+          return Decoded.takeError();
+        Nested = std::move(*Decoded);
+      }
+    } else if (Key == "version_code") {
+      auto Code = integer32(Entry, field::PackageInfoQueries);
+      if (!Code)
+        return Code.takeError();
+      Result.version_code = *Code;
+    } else if (Key == "package_name" || Key == "version_name") {
+      auto &Text =
+          (Key == "package_name" ? Result.package_name : Result.version_name)
+              .emplace();
+      if (auto String = Entry.getAsString())
+        Text = String->str();
+      else if (Entry.kind() != llvm::json::Value::Null)
+        return invalid(field::PackageInfoQueries);
+    } else
+      return invalid(field::PackageInfoQueries);
+  }
+  return Result;
+}
+template <class Query, class Decode>
+llvm::Error packageQueries(const llvm::json::Value &Value, llvm::StringRef Key,
+                           std::vector<Query> &Result, size_t Maximum,
+                           Decode decode) {
+  const auto *Queries = Value.getAsArray();
+  if (!Queries || Queries->size() > Maximum)
+    return invalid(Key);
+  for (const auto &Entry : *Queries) {
+    const auto *Record = Entry.getAsObject();
+    if (!Record || Record->size() != 3 || !Record->getString("package_name") ||
+        !Record->get("flags") || !Record->get("info"))
+      return invalid(Key);
+    auto Flags = process_json::integer<int32_t>(*Record->get("flags"));
+    if (!Flags)
+      return invalid(Key);
+    auto Info = decode(*Record->get("info"));
+    if (!Info)
+      return Info.takeError();
+    Result.push_back(
+        {Record->getString("package_name")->str(), *Flags, std::move(*Info)});
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<std::vector<NativeMemoryRead>>
 memoryReads(const llvm::json::Value &Value) {
   const auto *Array = Value.getAsArray();
@@ -294,8 +401,100 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       mobile::dalvik::AndroidApplicationSnapshot Snapshot;
       bool HasPhase = false;
       for (const auto &[Key, Value] : *Input) {
-        if (Key == field::ApplicationSecureSettingsCache ||
-            Key == field::ApplicationGlobalSettingsCache) {
+        if (Key == field::ApplicationURLFailureHandlers) {
+          const auto *Handlers = Value.getAsArray();
+          if (!Handlers ||
+              Handlers->size() >
+                  ::neverd::limits::dalvik::kMaxAndroidURLFailureHandlers)
+            return invalid(Key);
+          for (const auto &Entry : *Handlers) {
+            const auto *Handler = Entry.getAsObject();
+            if (!Handler || Handler->size() != 2 ||
+                !Handler->getString("scheme") || !Handler->get("message"))
+              return invalid(Key);
+            mobile::dalvik::AndroidApplicationSnapshot::URLHandlerFailure H;
+            H.scheme = Handler->getString("scheme")->str();
+            const auto &Message = *Handler->get("message");
+            if (auto Text = Message.getAsString())
+              H.message = Text->str();
+            else if (Message.kind() != llvm::json::Value::Null)
+              return invalid(Key);
+            Snapshot.url_open_failure_handlers.push_back(std::move(H));
+          }
+          continue;
+        } else if (Key == field::ApplicationInitialMainQueue) {
+          const auto *Queue = Value.getAsObject();
+          if (!Queue || !Queue->getBoolean("blocked"))
+            return invalid(Key);
+          for (const auto &Member : *Queue)
+            if (Member.first != "blocked" &&
+                Member.first != field::ApplicationQueueNativeCallbacksEmpty)
+              return invalid(Key);
+          auto &State = Snapshot.initial_main_queue.emplace();
+          State.blocked = *Queue->getBoolean("blocked");
+          if (const auto *Callbacks =
+                  Queue->get(field::ApplicationQueueNativeCallbacksEmpty)) {
+            const auto Empty = Callbacks->getAsBoolean();
+            if (!Empty)
+              return invalid(Key);
+            State.native_callbacks_empty = *Empty;
+          }
+          continue;
+        } else if (Key == field::ApplicationMessagePoolEmpty) {
+          auto Empty = Value.getAsBoolean();
+          if (!Empty)
+            return invalid(Key);
+          Snapshot.initial_message_pool_empty = *Empty;
+          continue;
+        } else if (Key == field::ApplicationMainLooperPrepared) {
+          auto Prepared = Value.getAsBoolean();
+          if (!Prepared)
+            return invalid(Key);
+          Snapshot.main_looper_prepared = *Prepared;
+          continue;
+        } else if (Key == field::ApplicationLoaderPaths ||
+                   Key == field::SystemLoaderPaths) {
+          const auto *Paths = Value.getAsObject();
+          if (!Paths || Paths->size() != 3)
+            return invalid(Key);
+          auto &State = Key == field::ApplicationLoaderPaths
+                            ? Snapshot.application_loader_paths.emplace()
+                            : Snapshot.system_loader_paths.emplace();
+          for (const auto &[Kind, Entry] : *Paths) {
+            auto *Destination = Kind == "dex_zip_files" ? &State.dex_zip_files
+                                : Kind == "native_library_directories"
+                                    ? &State.native_library_directories
+                                : Kind == "system_native_library_directories"
+                                    ? &State.system_native_library_directories
+                                    : nullptr;
+            const auto *List = Entry.getAsArray();
+            if (!Destination || !List ||
+                List->size() >
+                    ::neverd::limits::dalvik::kMaxAndroidClassLoaderPaths)
+              return invalid(Key);
+            for (const auto &Element : *List) {
+              auto Text = Element.getAsString();
+              if (!Text)
+                return invalid(Key);
+              Destination->push_back(Text->str());
+            }
+          }
+          continue;
+        } else if (Key == field::ApplicationDefaultLocale) {
+          const auto *Locale = Value.getAsObject();
+          if (!Locale)
+            return invalid(Key);
+          auto &State = Snapshot.default_locale.emplace();
+          for (const auto &[Component, Entry] : *Locale) {
+            auto Text = Entry.getAsString();
+            if (!Text || (Component != "language" && Component != "country"))
+              return invalid(Key);
+            (Component == "language" ? State.language : State.country) =
+                Text->str();
+          }
+          continue;
+        } else if (Key == field::ApplicationSecureSettingsCache ||
+                   Key == field::ApplicationGlobalSettingsCache) {
           const bool Secure = Key == field::ApplicationSecureSettingsCache;
           const char *Setting = Secure ? "android_id" : "adb_enabled";
           const auto *Cache = Value.getAsObject();
@@ -316,28 +515,34 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
             return Info.takeError();
           Snapshot.application_info = std::move(*Info);
           continue;
-        } else if (Key == field::ApplicationInfoQueries) {
-          const auto *Queries = Value.getAsArray();
-          if (!Queries ||
-              Queries->size() >
-                  ::neverd::limits::dalvik::kMaxAndroidApplicationInfoQueries)
+        } else if (Key == field::ApplicationInfoQueries ||
+                   Key == field::PackageInfoQueries) {
+          auto Error =
+              Key == field::ApplicationInfoQueries
+                  ? packageQueries(Value, Key,
+                                   Snapshot.application_info_queries,
+                                   ::neverd::limits::dalvik::
+                                       kMaxAndroidApplicationInfoQueries,
+                                   applicationInfo)
+                  : packageQueries(
+                        Value, Key, Snapshot.package_info_queries,
+                        ::neverd::limits::dalvik::kMaxAndroidPackageInfoQueries,
+                        packageInfo);
+          if (Error)
+            return std::move(Error);
+          continue;
+        } else if (Key == field::ApplicationPackageResourcePath) {
+          auto &Path = Snapshot.package_resource_path.emplace();
+          if (auto Text = Value.getAsString())
+            Path = Text->str();
+          else if (Value.kind() != llvm::json::Value::Null)
             return invalid(Key);
-          for (const auto &Entry : *Queries) {
-            const auto *Query = Entry.getAsObject();
-            if (!Query || Query->size() != 3 ||
-                !Query->getString("package_name") || !Query->get("flags") ||
-                !Query->get("info"))
-              return invalid(Key);
-            auto Flags = process_json::integer<int32_t>(*Query->get("flags"));
-            if (!Flags)
-              return invalid(Key);
-            auto Info = applicationInfo(*Query->get("info"));
-            if (!Info)
-              return Info.takeError();
-            Snapshot.application_info_queries.push_back(
-                {Query->getString("package_name")->str(), *Flags,
-                 std::move(*Info)});
-          }
+          continue;
+        } else if (Key == field::PackageItemForceSafeLabels) {
+          auto Force = Value.getAsBoolean();
+          if (!Force)
+            return invalid(Key);
+          Snapshot.package_item_force_safe_labels = *Force;
           continue;
         } else if (Key == field::ApplicationPackageManagerAvailable) {
           auto Available = Value.getAsBoolean();
@@ -362,8 +567,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           for (const auto &Entry : *Failures) {
             const auto *Failure = Entry.getAsObject();
             if (!Failure || Failure->size() != 3 ||
-                !Failure->getString("loader") ||
-                !Failure->getString("binary_name") || !Failure->get("message"))
+                !Failure->getString("loader") || !Failure->get("message"))
+              return invalid(Key);
+            auto BinaryName = Failure->getString("binary_name");
+            auto ExactQuery = Failure->getString("exact_query");
+            if (bool(BinaryName) == bool(ExactQuery))
               return invalid(Key);
             using Outcome =
                 mobile::dalvik::AndroidApplicationSnapshot::ClassLookupFailure;
@@ -377,7 +585,10 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
               Result.loader = Outcome::Loader::Application;
             else
               return invalid(Key);
-            Result.binary_name = Failure->getString("binary_name")->str();
+            if (ExactQuery)
+              Result.exact_query = ExactQuery->str();
+            else
+              Result.binary_name = BinaryName->str();
             const auto &Message = *Failure->get("message");
             if (auto Text = Message.getAsString())
               Result.message = Text->str();
@@ -466,6 +677,32 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         mobile::dalvik::validateAndroidApplicationInfoQueries(Snapshot);
       } catch (const mobile::Error &) {
         return invalid(field::ApplicationInfoQueries);
+      }
+      try {
+        mobile::dalvik::validateAndroidPackageResourcePath(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationPackageResourcePath);
+      }
+      try {
+        mobile::dalvik::validateAndroidPackageInfoQueries(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::PackageInfoQueries);
+      }
+      try {
+        mobile::dalvik::validateAndroidDefaultLocale(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationDefaultLocale);
+      }
+      try {
+        mobile::dalvik::validateAndroidClassLoaderPaths(Snapshot);
+        mobile::dalvik::validateAndroidMessageQueue(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationSnapshot);
+      }
+      try {
+        mobile::dalvik::validateAndroidURLHandlers(Snapshot);
+      } catch (const mobile::Error &) {
+        return invalid(field::ApplicationURLFailureHandlers);
       }
       Out.Application = std::move(Snapshot);
     } else if (Name == field::JNIClassLookupFailures) {
@@ -829,6 +1066,23 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
         {field::ApplicationInstrumentation,
          F.instrumentation ? llvm::json::Value(bits(*F.instrumentation))
                            : nullptr}};
+    if (F.main_message_queue) {
+      const auto &Queue = *F.main_message_queue;
+      llvm::json::Array Messages;
+      for (const auto &Message : Queue.messages)
+        Messages.push_back(
+            llvm::json::Object{{"identity", bits(Message.identity)},
+                               {"target", bits(Message.target)},
+                               {"callback", bits(Message.callback)},
+                               {"next", bits(Message.next)},
+                               {"when", Message.when},
+                               {"flags", Message.flags}});
+      Framework[field::JavaMainMessageQueue] =
+          llvm::json::Object{{"identity", bits(Queue.identity)},
+                             {"blocked", Queue.blocked},
+                             {"complete", Queue.complete},
+                             {"messages", std::move(Messages)}};
+    }
     llvm::json::Array Classes;
     for (const auto &C : State.classes)
       Classes.push_back(llvm::json::Object{

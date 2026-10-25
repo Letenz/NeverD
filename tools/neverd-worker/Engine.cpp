@@ -822,7 +822,9 @@ bool Engine::reloadUserState() {
   const bool items = reloadDataItems();
   const bool operands = reloadOperandFormats();
   const bool types = reloadTypeDeclarations();
-  return annotations && renames && functions && items && operands && types;
+  const bool patches = reloadBytePatches();
+  return annotations && renames && functions && items && operands && types &&
+         patches;
 }
 bool Engine::reloadOperandFormats() {
   const auto &formats = operandFormats();
@@ -1689,6 +1691,7 @@ ProjectHistory &Engine::history() {
          {"renames", backendJson(neverd_renames_json(session_))},
          {"functions", functionEditRows()},
          {"items", dataItemRows()},
+         {"patches", bytePatchRows()},
          {"operands", operandFormatRows()},
          {"code_edits", codeEdits_},
          {"types", declaresLocalTypes()
@@ -1777,6 +1780,7 @@ Json Engine::userState() const {
           {"renames", backendJson(neverd_renames_json(session_))},
           {"functions", functionEditRows()},
           {"items", dataItemRows()},
+          {"patches", bytePatchRows()},
           {"operands", operandFormatRows()},
           {"code_edits", codeEdits_}};
 }
@@ -1996,8 +2000,9 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   // still match the version exported by that writer. A racing edit causes
   // rejection; the GUI retires this replica on the new owner revision.
   for (const char *table :
-       {"renames", "functions", "items", "operands", "code_edits"})
-    if (actual.at(table) != (std::string_view(table) == "code_edits"
+       {"renames", "functions", "items", "operands", "code_edits", "patches"})
+    if (actual.at(table) != ((std::string_view(table) == "code_edits" ||
+                              std::string_view(table) == "patches")
                                  ? expected.value(table, Json::array())
                                  : expected.at(table)))
       throw Error("stale_snapshot",
@@ -3039,7 +3044,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     auto result = store.listing(0, 128);
     result["dirty"] = dirty_;
     result["saved"] = !dirty_;
-    result["address"] = hexAddress(address);
+    result["address"] = hexAddress(ProjectHistory::displayAddress(command));
     return result;
   }
   if (operation == "analyze") {
@@ -4096,6 +4101,13 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
             node["name"] = alias->second;
     return result;
   }
+  if (operation == "source_patch" || operation == "source_patch_context" ||
+      operation == "patch_source_target" ||
+      operation == "patch_source_preview" || operation == "patch_context" ||
+      operation == "patch_preview" || operation == "patch_apply" ||
+      operation == "patch_revert" || operation == "patches" ||
+      operation == "patch_export")
+    return patchOperation(operation, p);
   if (operation != "disasm" && operation != "bytes" &&
       operation != "annotation_set" && operation != "rename" &&
       operation != "function_create" && operation != "function_delete" &&

@@ -329,6 +329,18 @@ Json hello() {
     result["capabilities"].push_back("function_type");
   if (Engine::keepsDataItems())
     result["capabilities"].push_back("item_define");
+  if (Engine::keepsBytePatches())
+    for (const char *operation :
+         {"patch_context", "patch_preview", "patch_apply", "patch_revert",
+          "patches", "patch_export"})
+      result["capabilities"].push_back(operation);
+  if (Engine::keepsSourcePatches())
+    for (const char *operation : {"source_patch", "source_patch_context"})
+      result["capabilities"].push_back(operation);
+  if (Engine::provesSourcePatches())
+    for (const char *operation :
+         {"patch_source_target", "patch_source_preview"})
+      result["capabilities"].push_back(operation);
   if (Engine::keepsOperandFormats())
     result["capabilities"].push_back("operand_format");
   if (Engine::identifiesFiles())

@@ -501,6 +501,10 @@ SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
 
 void SignatureDB::apply(const BinaryImage &Img,
                         const std::vector<uint64_t> &FuncEntries) {
+  if (Img.BytePatchOriginal) {
+    apply(*Img.BytePatchOriginal, FuncEntries);
+    return;
+  }
   clearMatches();
   if (Modules.empty() || FuncEntries.empty())
     return;
@@ -765,6 +769,15 @@ std::unordered_map<uint64_t, std::string> SignatureDB::buildNameMap() const {
   for (const auto &[Address, Decision] : NameDecisions)
     Map.emplace(Address, Decision.Name);
   return Map;
+}
+
+SignatureDB SignatureDB::snapshotForAnalysis() const {
+  SignatureDB Snapshot;
+  Snapshot.Matches = Matches;
+  Snapshot.NameDecisions = NameDecisions;
+  Snapshot.FeaturePacks = FeaturePacks;
+  Snapshot.FeatureGeneration = FeatureGeneration;
+  return Snapshot;
 }
 
 std::unordered_map<uint64_t, std::string>

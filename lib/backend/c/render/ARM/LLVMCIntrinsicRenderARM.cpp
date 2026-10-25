@@ -99,10 +99,14 @@ bool validateAArch64AddressMemoryCall(Arch TheArch,
   const auto Instruction =
       Word ? aarch64AddressMemoryInstruction(Word->getZExtValue())
            : std::nullopt;
+  const auto *Index = llvm::dyn_cast<llvm::ConstantInt>(
+      Call.getArgOperand(kAddressMemoryIndexOperand));
   if (!Instruction || Instruction->isLoad() == Store ||
       Instruction->isVector() != Vector ||
       Instruction->base() != kAddressMemoryScratchBase ||
-      Instruction->index() != kAddressMemoryScratchIndex ||
+      (Instruction->hasRegisterIndex()
+           ? Instruction->index() != kAddressMemoryScratchIndex
+           : !Index || !Index->isZero()) ||
       Instruction->destination() != kAddressMemoryScratchValue)
     throw std::invalid_argument(kAddressMemoryMalformed);
   return true;
