@@ -286,6 +286,7 @@ private:
                 const ProcessServiceEvent &Event);
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
+  BionicResult checkedRead(const NativeCallEvent &Call);
   BionicResult usleep(const NativeCallEvent &Call);
   BionicResult sleep(const NativeCallEvent &Call);
   BionicResult sleepResult(uint64_t Returned,
