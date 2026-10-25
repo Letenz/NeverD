@@ -550,6 +550,53 @@ void SignatureDB::apply(const BinaryImage &Img,
     }
   }
   checkReferences(Img, FuncEntries, std::move(Hits));
+  admitStatedNames(Img);
+}
+
+void SignatureDB::admitStatedNames(const BinaryImage &Img) {
+  const auto IsStatedFunction = [](const Symbol &Sym) {
+    return Sym.IsFunc && !Sym.IsSection && !Sym.IsBoundaryGuess &&
+           Sym.Origin == NameOrigin::Stated && !Sym.Name.empty();
+  };
+  if (Matches.empty() ||
+      (Img.Exports.empty() && llvm::none_of(Img.Symbols, IsStatedFunction)))
+    return;
+  // Index producer evidence once. Looking up the entire symbol table for each
+  // hit makes larger signature sets unnecessarily expensive. Views live only
+  // for this call; retained decisions own their names.
+  std::unordered_map<uint64_t, llvm::SmallDenseSet<llvm::StringRef, 4>> Stated;
+  for (const SigMatch &M : Matches)
+    Stated.try_emplace(M.Address);
+  const auto Add = [&](uint64_t Address, std::string_view Name) {
+    const auto It = Stated.find(Address);
+    if (It != Stated.end() && !Name.empty())
+      It->second.insert(llvm::StringRef(Name));
+  };
+  for (const Symbol &Sym : Img.Symbols)
+    if (IsStatedFunction(Sym))
+      Add(Sym.Addr, Sym.Name);
+  for (const Export &Exp : Img.Exports)
+    Add(Exp.Addr, Exp.Name);
+  for (const SigMatch &M : Matches) {
+    const auto It = Stated.find(M.Address);
+    if (It == Stated.end())
+      continue;
+    // Hash membership avoids comparing every stated ICF alias with every
+    // candidate alias. Neither the preferred spelling nor duplicates get
+    // special authority.
+    const auto Admit = [&](std::string_view Name) {
+      if (!It->second.contains(llvm::StringRef(Name)))
+        return;
+      auto [Decision, Fresh] = NameDecisions.try_emplace(
+          M.Address, SignatureNameDecision{std::string(Name),
+                                           SignatureNameEvidence::ImageSymbol});
+      if (!Fresh && preferredAliasOrder(Name, Decision->second.Name))
+        Decision->second.Name = Name;
+    };
+    Admit(M.Name);
+    for (const std::string &Alias : M.Aliases)
+      Admit(Alias);
+  }
 }
 
 size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
@@ -615,6 +662,9 @@ size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
       continue;
     Matches.push_back(Match);
     MatchModules.push_back(NoModule);
+    NameDecisions.insert_or_assign(
+        Addr, SignatureNameDecision{
+                  Match.Name, SignatureNameEvidence::ExceptionPersonality});
     ++Named;
   }
 
@@ -636,6 +686,11 @@ const SigMatch *SignatureDB::findMatch(uint64_t Addr) const {
       return &M;
   }
   return nullptr;
+}
+
+const SignatureNameDecision *SignatureDB::nameDecision(uint64_t Addr) const {
+  const auto It = NameDecisions.find(Addr);
+  return It == NameDecisions.end() ? nullptr : &It->second;
 }
 
 std::optional<SignatureDB::SettledRoutine>
@@ -703,6 +758,15 @@ SignatureDB::settleRoutines() const {
 
 std::unordered_map<uint64_t, std::string> SignatureDB::buildNameMap() const {
   std::unordered_map<uint64_t, std::string> Map;
+  Map.reserve(NameDecisions.size());
+  for (const auto &[Address, Decision] : NameDecisions)
+    Map.emplace(Address, Decision.Name);
+  return Map;
+}
+
+std::unordered_map<uint64_t, std::string>
+SignatureDB::buildCandidateNameMap() const {
+  std::unordered_map<uint64_t, std::string> Map;
   for (const auto &[Address, Routine] : settleRoutines())
     Map.emplace(Address, std::string(Routine.Name));
   return Map;
@@ -765,6 +829,7 @@ SignatureDB::loadFeatureDirectory(const std::filesystem::path &Dir) {
 void SignatureDB::clearMatches() {
   Matches.clear();
   MatchModules.clear();
+  NameDecisions.clear();
 }
 
 llvm::Error SignatureDB::loadForImage(const BinaryImage &Image,
