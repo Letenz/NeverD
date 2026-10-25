@@ -293,9 +293,21 @@ private slots:
       send(QEvent::MouseMove, global + delta * 100);
       QCOMPARE(window.width(), delta.x() ? 500 : original.width());
       QCOMPARE(window.height(), delta.y() ? 400 : original.height());
+      // Cocoa may classify the constrained maximum as a zoomed window.
+      // Reproduce that notification on the headless backend as well.
+      if (platform == QLatin1String("offscreen")) {
+        window.windowHandle()->setWindowStates(Qt::WindowMaximized);
+        QWindowStateChangeEvent maximized(Qt::WindowNoState);
+        QCoreApplication::sendEvent(window.windowHandle(), &maximized);
+      }
       QVERIFY2(QWidget::mouseGrabber() == &window,
                qPrintable(QStringLiteral("Resize lost its grab in state %1")
                               .arg(int(window.windowState()))));
+      if (platform == QLatin1String("offscreen")) {
+        window.windowHandle()->setWindowStates(Qt::WindowNoState);
+        QWindowStateChangeEvent restored(Qt::WindowMaximized);
+        QCoreApplication::sendEvent(window.windowHandle(), &restored);
+      }
       // Cocoa can report the same normal state during a geometry change.
       // That notification must not end the gesture before its release.
       QWindowStateChangeEvent unchanged(window.windowState());
