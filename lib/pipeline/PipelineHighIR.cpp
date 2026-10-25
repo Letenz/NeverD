@@ -201,11 +201,15 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   for (const auto &[Address, Name] :
        pipeline_detail::debugFunctionNames(Result, AllFuncNames, Dbg))
     Names.assign(Address, Name);
-  // Both source routes apply the same callee signature bounds, including
-  // stack arguments that a register summary alone cannot bound.
+  // A positional register/stack ABI needs one final argument prefix on both
+  // source routes. Independent register banks keep their existing source
+  // recovery, including floating return veneers and variadic format joins.
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
-  if (needsCallSignatureRecovery(Convention)) {
+  if (Convention &&
+      (Convention->ArgumentsFromCallSetup ||
+       (Convention->StackArgumentSummary &&
+        Convention->PositionalArgumentSlots))) {
     recoverModuleCallAbi(Img, Result, AllFuncNames);
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
     // A variadic callee takes its call sites' overflow arguments as trailing

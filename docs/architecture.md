@@ -158,6 +158,8 @@ HighIR consumes a direct call's recovered argument list as a whole, including
 empty lists and unavailable interior slots. Its local setup scan cannot append
 adjacent frame variables or replace those unknown operands with stale stores.
 Module call recovery finalizes this boundary for both C routes.
+HighIR adds this recovery for positional register/stack conventions. Independent
+register banks retain their source variadic and floating-return preparation.
 
 After all native exception edges exist, the LLVM emitter removes an entry seed
 only when its private slot has one later definition dominating every read.

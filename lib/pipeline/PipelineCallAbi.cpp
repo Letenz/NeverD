@@ -7,8 +7,8 @@
 /// \file
 /// Recovery of every call's arguments and every forwarder's passed-through
 /// parameters from the setup each caller writes, bounded by its callee's
-/// recovered signature (recoverCallAbi). Both source routes use it for
-/// conventions that recover call setup or stack argument summaries.
+/// recovered signature (recoverCallAbi). Source routes share this owner where
+/// their call convention requires setup recovery or a positional stack prefix.
 ///
 //===----------------------------------------------------------------------===//
 
