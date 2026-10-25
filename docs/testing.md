@@ -54,6 +54,15 @@ limitation through module preparation.
 
 # Testing NeverD
 
+`*LookupFailures*` and `ProcessReport.AndroidLoaderFailures*` cover strict
+binary names and literal `exact_query` strings, whitespace preservation,
+loader scope, fresh throwable identities, nullable messages, duplicate and
+visible-declaration refusal, typed/JSON bounds and terminal resource limits.
+Rebuild the Android JNI fixtures for detach/reattach and `FindClass` isolation
+checks. `ProcessPublic.AndroidExactClassQueriesMatchSDKAndCLI` compares full
+reports through both public interfaces. Run Dalvik, AndroidNative, LinuxProcess
+and ExecutionSession owner suites after this shared snapshot layout changes.
+
 `*HandlerPost*` checks initial-state validation, nullable Runnable transport,
 retained Message fields, stable ordering, zero deadlines, thread detach,
 actual Linux clock advancement, final-method admission, override refusal,
@@ -929,6 +938,9 @@ after changing frame-member queries.
 `*PackageApplicationInfo*` tests exact name/flag keys, independent mutable
 query results, retained Context fields, nullable and unknown field states,
 UTF-16 names, invalid typed/JSON responses and terminal work/storage limits.
+`AndroidFrameworkTest.PackageQueriesAdmitOneResultAllocation` compares the
+shared query allocation budget and checks that exhaustion leaves no result
+object allocated.
 The native fixture checks ordinary and jvalue-array calls and field ownership
 across detach and a second thread; DEX queries enter the same owner. Run the
 full Dalvik, Android JNI and ProcessReport suites for this shared contract.
@@ -1175,6 +1187,19 @@ invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
 ownership and an AArch64 scalar transfer. Discontiguous and backward targets
 retain the original frame across another entry's search bound; independently
 known targets remain tail calls with their original instruction address.
+Immutable scalar reads extend this matrix to all three architectures and
+formats, retaining mutable, ambiguous, relocated, ordered, segment-relative
+and unaffordable loads as runtime inputs. Revalidation shares a read cache
+throughout one CFG build. `NeverDReadOnlyBytesTests` checks scalar width,
+relocation identity and cold-read budget boundaries. `LowScalarConstant.*`
+in `NeverDSEHRuntimeMemoryTests` compares unary arithmetic and sign extension
+with concrete LowIR execution.
+
+`NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
+both C routes for readonly loads, NOT, NEG and sign-extended target offsets.
+Independent native ELF x64 fixtures return a known result past an overlapping
+unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
+the native test is skipped on other hosts.
 
 `NeverDWorkerConstantBranch` also checks cold expression resolution and literal
 GUI listing jumps into forward and backward fragments, both C routes, retained
@@ -2806,13 +2831,19 @@ and that a click on the last text cell, scrolled sideways, takes its byte.
 
 `NeverDGuiUnits::toolbarButtonsKeepKeysInTooltips` checks compact toolbar icons
 and shortcut tooltips through action changes, translation and disabled actions.
+`commentKeysShareOneViewScopedAction` routes `;` and `/` through Qt's window
+shortcut dispatch to the same comment action, checks that `:` is unbound and
+the duplicate menu entry is gone, and preserves punctuation in single-line
+and multiline text fields. The shortcut collision check includes aliases.
+Cocoa key dispatch skips if macOS refuses to activate the background test
+window; report that missing native coverage separately from offscreen checks.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
 Ctrl+E/P/L/S keys, filtering, Enter, cancellation and navigation history with
 the fixture worker. `shortcutsCanBeFoundByKeyAndScope` checks the shortcut
-browser's scoped Ctrl+E commands and unassigned actions using native and
-portable key spellings. `commandButtonsExposeTheirKeys` checks local action
-buttons in both themes, including compact Close and Back buttons whose Escape
-binding stays functional without visible key text.
+browser's scoped Ctrl+E commands, both comment keys and unassigned actions
+using native and portable key spellings. `commandButtonsExposeTheirKeys` checks
+local action buttons in both themes, including compact Close and Back buttons
+whose Escape binding stays functional without visible key text.
 Set `NEVERD_SHORTCUT_CAPTURES` to an artifact directory for real Qt captures;
 repeat with `QT_SCALE_FACTOR=1.5` for fractional scaling. Existing Local Types
 and function-edit controller cases check that their scoped Ctrl+E still wins.
@@ -11146,6 +11177,13 @@ errno and mapped-page refusal. `LinuxMemoryTests.cpp` checks precise user-range
 boundaries, PROT_NONE and a mapped prefix before a hole without changing bytes,
 mapping generation or allocation counts. `LinuxProcessTests.cpp` executes the
 corresponding x64/ARM64 raw syscall callers and verifies the full output vector.
+
+`*NegativePrctl*` and `LinuxMemory.PositiveUnmodeledPrctl*` check kernel `int`
+narrowing, EINVAL for negative options, unreadable unused arguments, unchanged
+memory and mappings, raw versus libc errno, and inactive dynamic providers.
+The Linux fixtures execute O0/O2 callers on both LP64 ISAs. Android proc
+fixtures and `ProcessPublic.AndroidNegativePrctlMatchesSDKAndCLI` cover named,
+raw, variadic and dynamic calls, full output guards, and nonnegative refusal.
 
 `LinuxProc.Prctl*` checks the opt-in legacy anonymous VMA name contract through
 both LP64 syscall numbers: argument widths and error order, borrowed-pointer

@@ -71,7 +71,7 @@ NEVERD_IDA_ACTION("MakeName", "N", EditRename)
 NEVERD_IDA_ACTION("MakeFunction", "P", EditCreateFunction)
 NEVERD_IDA_ACTION("EditFunction", "Alt-P", EditFunction)
 NEVERD_IDA_ACTION("DelFunction", "", EditDeleteFunction)
-NEVERD_IDA_ACTION("MakeComment", ":", EditComment)
+// NeverD keeps one comment command; MakeComment's ':' is intentionally omitted.
 NEVERD_IDA_ACTION("MakeRptCmt", ";", EditRepeatableComment)
 NEVERD_IDA_ACTION("MarkPosition", "Alt-M", EditBookmark)
 NEVERD_IDA_ACTION("OpNumber", "#", EditOperandNumber)

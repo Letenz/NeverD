@@ -24,6 +24,10 @@
 
 namespace neverd::mobile::dalvik {
 namespace {
+const std::string &
+classLookupName(const AndroidApplicationSnapshot::ClassLookupFailure &failure) {
+  return failure.exact_query ? *failure.exact_query : failure.binary_name;
+}
 bool platformType(std::string_view type) {
   return type.starts_with("Ljava/") || type.starts_with("Ljavax/") ||
          type.starts_with("Landroid/") || type.starts_with("Ldalvik/");
@@ -142,24 +146,34 @@ void validateAndroidClassLookupFailures(
          failure.loader != Loader::Application) ||
         (failure.loader == Loader::Application && loader_state != true))
       throw Error("invalid Android class lookup failure loader");
-    const auto &name = failure.binary_name;
-    bool first = true;
+    const auto &name = classLookupName(failure);
     if (name.empty() ||
         name.size() > ::neverd::limits::dalvik::kMaxAndroidClassNameBytes)
-      throw Error("invalid Android class lookup failure binary name");
-    for (unsigned char byte : name) {
-      if (byte == '.' && !first) {
-        first = true;
-        continue;
+      throw Error("invalid Android class lookup failure name");
+    if (failure.exact_query) {
+      if (!failure.binary_name.empty() || name.front() == '[' ||
+          std::any_of(name.begin(), name.end(), [](unsigned char byte) {
+            return byte < 0x20 || byte > 0x7e || byte == '/';
+          }))
+        throw Error("invalid Android class lookup failure exact query");
+    } else {
+      bool first = true;
+      for (unsigned char byte : name) {
+        if (byte == '.' && !first) {
+          first = true;
+          continue;
+        }
+        if (!((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+              byte == '_' || byte == '$' ||
+              (!first && byte >= '0' && byte <= '9')))
+          throw Error("invalid Android class lookup failure binary name");
+        first = false;
       }
-      if (!((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
-            byte == '_' || byte == '$' ||
-            (!first && byte >= '0' && byte <= '9')))
+      if (first)
         throw Error("invalid Android class lookup failure binary name");
-      first = false;
     }
-    if (first || !seen.emplace(failure.loader, name).second)
-      throw Error("duplicate or invalid Android class lookup failure");
+    if (!seen.emplace(failure.loader, name).second)
+      throw Error("duplicate Android class lookup failure");
     if (failure.message) {
       if (failure.message->size() >
           ::neverd::limits::dalvik::kMaxAndroidLookupMessageBytes)
@@ -585,7 +599,7 @@ AndroidFramework::AndroidFramework(
     main_queue_blocked = snapshot->initial_main_queue->blocked;
   validateAndroidURLHandlers(*snapshot);
   for (const auto &failure : snapshot->class_lookup_failures) {
-    std::string type = "L" + failure.binary_name + ";";
+    std::string type = "L" + classLookupName(failure) + ";";
     std::replace(type.begin(), type.end(), '.', '/');
     if (program.knownReference(type) &&
         (platformType(type) || failure.loader ==
@@ -1704,8 +1718,8 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
                              ? find(snapshot->application_info_queries)
                              : find(snapshot->package_info_queries);
       if (index) {
-        tick();
         if (method.Op == PackageInfoQuery) {
+          tick();
           auto result = ref(heap.allocate(
               Object::Instance, "android/content/pm/PackageInfo", 0,
               sizeof(PackageInfoState) +
@@ -1823,7 +1837,7 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
       std::string binary = text;
       std::replace(binary.begin(), binary.end(), '/', '.');
       for (const auto &failure : snapshot->class_lookup_failures) {
-        if (failure.loader != loader || failure.binary_name != binary)
+        if (failure.loader != loader || classLookupName(failure) != binary)
           continue;
         uint32_t message = failure.message ? string(*failure.message) : 0;
         tick();

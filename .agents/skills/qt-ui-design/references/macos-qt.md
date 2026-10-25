@@ -98,6 +98,11 @@ actual event modifiers before adding platform-specific key swaps.
 
 ## Cocoa and Retina validation
 
+- Queue the application quit after the workbench accepts a close event.
+  A synchronous `shutdownAccepted` → `QCoreApplication::quit` connection can
+  reenter Cocoa's termination callback and crash Qt's thread-local cleanup.
+  Verify native startup and shutdown with a loaded file, not only an empty
+  window or an offscreen controller.
 - Run focused tests with `QT_QPA_PLATFORM=cocoa` as well as offscreen. Use
   isolated `QSettings`, and exercise both themes and fractional scaling.
 - A captured image stores physical pixels. Convert widget-local logical

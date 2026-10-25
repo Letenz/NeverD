@@ -2083,6 +2083,7 @@ TEST(ProcessReport, AndroidLoaderFailuresRequireExactTypedOutcomes) {
     const auto &Rows = Good->Android->Application->class_lookup_failures;
     ASSERT_EQ(Rows.size(), 1u);
     EXPECT_EQ(Rows[0].binary_name, "test.Absent");
+    EXPECT_FALSE(Rows[0].exact_query);
     EXPECT_FALSE(Rows[0].message);
   }
   auto Text = processOptionsFromJSON(Wrap(
@@ -2102,6 +2103,59 @@ TEST(ProcessReport, AndroidLoaderFailuresRequireExactTypedOutcomes) {
     auto Result = processOptionsFromJSON(Wrap(Bad));
     EXPECT_FALSE(bool(Result)) << Bad;
     llvm::consumeError(Result.takeError());
+  }
+}
+
+TEST(ProcessReport, AndroidExactQueryLookupFailuresPreserveTypedNames) {
+  auto Wrap = [](std::string Body) {
+    return std::string(
+               R"({"android":{"jni":true,"application_snapshot":{"phase":"application","class_lookup_failures":)") +
+           Body + "}}}";
+  };
+  for (const char *Loader : {"boot", "system", "application"}) {
+    auto Good = processOptionsFromJSON(
+        Wrap(std::string(R"([{"loader":")") + Loader +
+             R"(","exact_query":" test. Absent ","message":null}])"));
+    ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+    const auto &Rows = Good->Android->Application->class_lookup_failures;
+    ASSERT_EQ(Rows.size(), 1u);
+    EXPECT_TRUE(Rows[0].binary_name.empty());
+    EXPECT_EQ(Rows[0].exact_query, " test. Absent ");
+    EXPECT_FALSE(Rows[0].message);
+  }
+  auto Text = processOptionsFromJSON(Wrap(
+      R"([{"loader":"boot","exact_query":"test.Absent ","message":"explicit"}])"));
+  ASSERT_TRUE(bool(Text)) << llvm::toString(Text.takeError());
+  EXPECT_EQ(Text->Android->Application->class_lookup_failures[0].message,
+            "explicit");
+  for (
+      const char *Bad :
+      {R"([{"loader":"boot","exact_query":"test.Absent "}])",
+       R"([{"loader":"boot","exact_query":null,"message":null}])",
+       R"([{"loader":"boot","exact_query":42,"message":null}])",
+       R"([{"loader":"boot","exact_query":"","message":null}])",
+       R"([{"loader":"boot","exact_query":"test/Absent","message":null}])",
+       R"([{"loader":"boot","exact_query":"[I","message":null}])",
+       R"([{"loader":"boot","exact_query":"test.\u0000Absent","message":null}])",
+       R"([{"loader":"boot","exact_query":"test.\tAbsent","message":null}])",
+       R"([{"loader":"boot","exact_query":"test.\u007fAbsent","message":null}])",
+       R"([{"loader":"boot","exact_query":"test.\u00e9","message":null}])",
+       R"([{"loader":"boot","binary_name":"","exact_query":"test.Absent ","message":null}])",
+       R"([{"loader":"boot","binary_name":"test.Absent ","message":null}])",
+       R"([{"loader":"boot","binary_name":"test.Absent","message":null},{"loader":"boot","exact_query":"test.Absent","message":null}])"}) {
+    auto Result = processOptionsFromJSON(Wrap(Bad));
+    EXPECT_FALSE(bool(Result)) << Bad;
+    llvm::consumeError(Result.takeError());
+  }
+  for (auto Size : {::neverd::limits::dalvik::kMaxAndroidClassNameBytes,
+                    ::neverd::limits::dalvik::kMaxAndroidClassNameBytes + 1}) {
+    auto Result = processOptionsFromJSON(
+        Wrap(std::string(R"([{"loader":"boot","exact_query":")") +
+             std::string(Size, 'x') + R"(","message":null}])"));
+    EXPECT_EQ(bool(Result),
+              Size == ::neverd::limits::dalvik::kMaxAndroidClassNameBytes);
+    if (!Result)
+      llvm::consumeError(Result.takeError());
   }
 }
 

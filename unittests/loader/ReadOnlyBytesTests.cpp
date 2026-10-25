@@ -161,6 +161,72 @@ TEST(ImmutablePE32Code, IndexedAndOrdinaryReadersKeepEveryFixupBoundary) {
   }
 }
 
+TEST(ImmutableScalar, ScalarBitsDoNotGrantPointerIdentity) {
+  auto Image = codeImage();
+  Image.BaseRelocations.clear();
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  for (uint32_t Size : {1, 2, 4, 8}) {
+    writeLE<uint64_t>(Image.Segments.front().Data.data() + 0x40,
+                      UINT64_C(0xfedcba9876543210));
+    EXPECT_EQ(readImmutableImageScalar(Image, TextVA + 0x40, Size),
+              UINT64_C(0xfedcba9876543210) & (UINT64_MAX >> ((8 - Size) * 8)));
+  }
+  writeLE<uint64_t>(Image.Segments.front().Data.data() + 0x40, TextVA);
+  EXPECT_FALSE(readImmutableImageScalar(Image, TextVA + 0x40, 8));
+  EXPECT_EQ(readImmutableImageScalar(Image, TextVA + 0x40, 4), TextVA);
+  EXPECT_FALSE(readImmutableImageScalar(Image, TextVA + 0x40, 0));
+  EXPECT_FALSE(readImmutableImageScalar(Image, TextVA + 0x40, 9));
+  Image.BaseRelocations.push_back({TextVA + 0x42, 3});
+  EXPECT_FALSE(readImmutableImageScalar(Image, TextVA + 0x40, 4));
+}
+
+TEST(ImmutableScalar, BudgetChargesTheInventoryBeforeARead) {
+  auto Image = codeImage();
+  Image.BaseRelocations.clear();
+  size_t Remaining = 10000;
+  ASSERT_EQ(readImmutableImageScalar(Image, ReadVA, 1, &Remaining), 0xb8u);
+  const size_t Required = 10000 - Remaining;
+  ASSERT_GT(Required, 0u);
+  for (size_t Budget : {size_t{0}, Required - 1, Required}) {
+    Remaining = Budget;
+    EXPECT_EQ(
+        readImmutableImageScalar(Image, ReadVA, 1, &Remaining).has_value(),
+        Budget == Required);
+    EXPECT_EQ(Remaining, Budget == Required ? 0 : Budget);
+  }
+  // An unrelated fixup still contributes to the cold-query work. The failed
+  // reservation must leave room for the caller's independent arithmetic.
+  Image.BaseRelocations.push_back({ReadVA + 0x40, 3});
+  Remaining = Required;
+  EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1, &Remaining));
+  EXPECT_EQ(Remaining, Required);
+  ++Remaining;
+  EXPECT_EQ(readImmutableImageScalar(Image, ReadVA, 1, &Remaining), 0xb8u);
+  EXPECT_EQ(Remaining, 0u);
+}
+
+TEST(ImmutableScalar, WideOperandFixupsCannotSupplyStableBytes) {
+  for (bool CodeOperand : {false, true})
+    for (uint8_t Width : {8, 16, UINT8_MAX}) {
+      auto Image = codeImage();
+      Image.BaseRelocations.clear();
+      RelocatedAddressField Field;
+      Field.Width = Width;
+      auto &Operands = CodeOperand ? Image.CodeAddressRelocOperands
+                                   : Image.DataAddressRelocOperands;
+      // The field starts more than one pointer width before the read but its
+      // final byte still changes that byte when relocated. Malformed wide
+      // metadata is not permission to freeze the file's initial contents.
+      Operands.emplace(ReadVA - (Width - 1), Field);
+      EXPECT_FALSE(readImmutableCodeBytes(Image, ReadVA, 1));
+      EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
+      Operands.clear();
+      Operands.emplace(ReadVA - Width, Field);
+      EXPECT_EQ(readImmutableImageScalar(Image, ReadVA, 1), 0xb8u);
+    }
+}
+
 TEST(ImmutablePE32Code, IndexedQueriesChargeColdAndRepeatedWork) {
   const auto Image = codeImage();
   size_t Required = 0;
