@@ -2385,7 +2385,10 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     // a comment spells as its language does.
     std::string Comment;
     if (Fn.isDeclaration()) {
-      const llvm::StringRef CName = cNameOfGlobal(RawName, true);
+      // Identifier allocation may have recovered the image symbol from a
+      // synthesized LLVM declaration. The linker label must use that same
+      // identity, including when another declaration already uses its stem.
+      const llvm::StringRef CName = FunctionSymbolNames.at(&Fn);
       if (linksByLabel(CName, Name)) {
         std::string Label;
         llvm::raw_string_ostream(Label).write_escaped(

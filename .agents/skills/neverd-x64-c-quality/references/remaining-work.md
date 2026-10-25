@@ -27,6 +27,11 @@ evidence binds its identity. Switching the slot at runtime is covered on
 COFF and ELF. HighC call results use only an admitted declaration, including
 header-owned record argument adapters; a rejected debug prototype cannot
 silently change an integer carrier into a pointer result.
+Function-address expressions now resolve their final allocated identifier.
+Reconstructed data steps aside from an external function's linker label, and
+LLVM C declarations retain the same recovered symbol used for name allocation.
+Direct calls, mutable callback slots and address-taking execute against one
+external provider even when their source spellings collide.
 Deferred unknown copies also preserve a declared void call as an effect and
 clear the destination availability. Both source routes execute the call once;
 an overwritten result becomes known, while reading an unavailable result

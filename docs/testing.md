@@ -18,6 +18,11 @@ The latter does not execute privileged or tile-state instructions.
 transport and original-image byte-storage identity. The image test preserves
 mutable pointer slots and overlapping fields across COFF/ELF/Mach-O; native
 and relocatable output retain their stricter address rules.
+`Win64CallContract.RelocatedCallbacksBindTheFinalExternalIdentifier` executes
+direct calls, relocated callback loads and address-taking through both C
+routes at O0/O2 with UBSan. An omitted provider and colliding data/function
+spellings require the generated source to link to the actual function label;
+syntax-only compilation cannot validate this contract.
 `Win64CallContract.MissingInteriorStackSlotCannotDiscardLaterArguments`
 checks whole-module and selected-function recovery through both C routes.
 Missing fixed stack positions remain unavailable while later arguments survive;

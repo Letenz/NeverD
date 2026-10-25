@@ -1047,7 +1047,8 @@ TEST(Win64CallContract, RelocatedCallbacksBindTheFinalExternalIdentifier) {
       COptions.Format = Image.Format;
       COptions.Image = &Image;
       ASSERT_TRUE(
-          LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions)
+          LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                     nullptr, &Image)
                : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
       std::string Oracle = R"(
 uint64_t callback_provider(void) __asm__("callback.target");
