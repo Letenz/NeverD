@@ -2404,6 +2404,7 @@ TEST(X86SystemStateSource, TransactionAbortRetainsSurroundingMemory) {
 
 TEST(X86SystemStateSource, TransactionAbortUsesNativeByteAcrossEveryRoute) {
   const char *NeverC = std::getenv("NEVERD_TEST_NEVERC");
+  unsigned Cases = 0, NeverCCases = 0;
   for (Arch A : {Arch::X86, Arch::X64})
     for (BinaryFormat Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
@@ -2413,8 +2414,18 @@ TEST(X86SystemStateSource, TransactionAbortUsesNativeByteAcrossEveryRoute) {
           SCOPED_TRACE(static_cast<unsigned>(Format));
           SCOPED_TRACE(NoOpt);
           SCOPED_TRACE(Code);
-          auto Image =
-              image(A, Format, {0xc6, 0xf8, Code, 0xb8, 7, 0, 0, 0, 0xc3});
+          std::vector<uint8_t> Bytes{0xc6, 0xf8, Code};
+          // A dword memory result fixes the observable return width. A bare
+          // constant can legitimately be inferred as a full-register value.
+          if (A == Arch::X86)
+            Bytes.insert(Bytes.end(), {0x8b, 0x44, 0x24, 0x04, 0x8b, 0x00});
+          else
+            Bytes.insert(
+                Bytes.end(),
+                {0x8b, static_cast<uint8_t>(
+                           Format == BinaryFormat::COFF ? 0x01 : 0x07)});
+          Bytes.push_back(0xc3);
+          auto Image = image(A, Format, std::move(Bytes));
           std::string High, C, IR;
           sourceRoutes(Image, NoOpt, Entry, "xabort", &High, &C, {}, {}, &IR);
           if (::testing::Test::HasFailure())
@@ -2431,13 +2442,18 @@ TEST(X86SystemStateSource, TransactionAbortUsesNativeByteAcrossEveryRoute) {
                         false, {}, Instruction, 4, true);
           if (::testing::Test::HasFailure())
             return;
+          ++Cases;
           if (A == Arch::X64 && NeverC && llvm::sys::fs::exists(NeverC)) {
             compileRoutes(Image, NoOpt, Entry, "xabort", std::nullopt, false,
                           false, {}, Instruction, 4, true, NeverC);
             if (::testing::Test::HasFailure())
               return;
+            ++NeverCCases;
           }
         }
+  EXPECT_EQ(Cases, 48u);
+  RecordProperty("transaction_abort_fixtures", Cases);
+  RecordProperty("transaction_abort_neverc_fixtures", NeverCCases);
 }
 
 TEST(X86SystemStateSource, TransactionAbortRequiresConstantTypedEffects) {
