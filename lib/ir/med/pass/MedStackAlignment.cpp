@@ -16,6 +16,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedProvenStackOffsets.h"
 #include "neverd/ir/med/X86/X86RegistrationFrame.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -103,6 +104,7 @@ class StackOffsetProof {
     bool Active = false;
     bool EntryChecked = false;
     bool EntryLiveIn = false;
+    std::optional<int64_t> ProvenOffset;
   };
 
 public:
@@ -110,10 +112,13 @@ public:
   /// entry stack pointer no operation defines, which SSA makes the incoming
   /// value.  The alignment rewrite keeps the stricter proof.
   StackOffsetProof(const MedFunc &Func, Arch Architecture, BinaryFormat Format,
-                   StackEntryKind Entry, bool FollowJoins = false)
+                   StackEntryKind Entry, bool FollowJoins = false,
+                   llvm::ArrayRef<ProvenStackOffset> Seeds = {},
+                   bool OnlySeededRoots = false)
       : Func(Func), TRI(getTargetRegInfo(Architecture)),
         Architecture(Architecture), Format(Format), Entry(Entry),
-        FollowJoins(FollowJoins), Definitions(definitionCapacity(Func)) {
+        FollowJoins(FollowJoins), OnlySeededRoots(OnlySeededRoots),
+        Definitions(definitionCapacity(Func)) {
     for (const MedBlock &Block : Func.Blocks) {
       for (const PhiNode &Phi : Block.Phis) {
         auto &Definition = Definitions[key(Phi.Output)];
@@ -131,6 +136,21 @@ public:
         if (!Definition.Op)
           Definition.Op = &Op;
       }
+    }
+    for (const auto &Seed : Seeds) {
+      if (!Seed.Definition)
+        continue;
+      const auto Found = Definitions.find(key(Seed.Definition->Output));
+      if (Found == Definitions.end() || Found->second.Ambiguous ||
+          Found->second.Op != Seed.Definition || Seed.Definition->Dead ||
+          Seed.Definition->Output.Size != TRI.PointerSize ||
+          !fitsPointerOffset(Seed.Offset))
+        continue;
+      auto &Definition = Found->second;
+      if (Definition.ProvenOffset && Definition.ProvenOffset != Seed.Offset)
+        Definition.Ambiguous = true;
+      else
+        Definition.ProvenOffset = Seed.Offset;
     }
   }
 
@@ -201,6 +221,8 @@ private:
   /// itself is checked against the offset the other ways agree on.
   std::optional<int64_t> join(const PhiNode &Phi, ValueDefinition &Definition,
                               unsigned Depth) {
+    if (OnlySeededRoots && Phi.ExceptionalEntry)
+      return std::nullopt;
     std::optional<int64_t> Agreed;
     std::vector<const MedVar *> Cyclic;
     for (const auto &[Pred, Arg] : Phi.Args) {
@@ -323,11 +345,15 @@ private:
       Definition->Active = false;
       return Result;
     }
-    if (Value.Kind == MedVar::Reg && Value.RegOff == TRI.StackPointer &&
+    if (!OnlySeededRoots && Value.Kind == MedVar::Reg &&
+        Value.RegOff == TRI.StackPointer &&
         (authenticatedEntryLiveIn(Value, Definition) ||
          (FollowJoins && Value.SSAVer == 0 &&
           (!Definition || !Definition->Op))))
       return 0;
+    if (Definition && Definition->ProvenOffset && Definition->Op &&
+        sameOccurrence(Definition->Op->Output, Value))
+      return Definition->ProvenOffset;
     if (auto It = Assumed.find(K); It != Assumed.end()) {
       ++ContextUses;
       return It->second;
@@ -353,7 +379,8 @@ private:
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           Op.IntrinsicOutputs.empty()) {
         if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None) {
-          if (Architecture == Arch::X86 && Format == BinaryFormat::COFF) {
+          if (!OnlySeededRoots && Architecture == Arch::X86 &&
+              Format == BinaryFormat::COFF) {
             const auto Coordinate = registrationRootFrameCoordinate(Func, Op);
             if (Coordinate && Coordinate->Alignment == 1)
               Result =
@@ -379,7 +406,7 @@ private:
               Result = safety::detail::checkedStackOffset(
                   *BaseOffset, *Signed, Op.Opcode == NdOp::INT_SUB);
           }
-        } else if (Op.Opcode == NdOp::INT_AND) {
+        } else if (!OnlySeededRoots && Op.Opcode == NdOp::INT_AND) {
           if (auto Aligned = alignment(Op, Depth + 1))
             Result = Aligned->Offset;
         }
@@ -397,6 +424,7 @@ private:
   BinaryFormat Format;
   StackEntryKind Entry;
   bool FollowJoins;
+  bool OnlySeededRoots;
   // A realignment root must be established by the exact entry prefix already
   // executed before its mask. Ordinary entry-offset queries also follow joins.
   const std::set<const MedOp *> *AllowedDefinitions = nullptr;
@@ -479,6 +507,37 @@ entryStackOffsets(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
     return Offsets;
   StackOffsetProof Proof(Func, Architecture, Format, Entry,
                          /*FollowJoins=*/true);
+  for (size_t I = 0; I < Values.size(); ++I)
+    Offsets[I] = Proof.offset(Values[I]);
+  return Offsets;
+}
+
+std::vector<std::optional<int64_t>> entryStackOffsetsFromProvenDefinitions(
+    const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
+    llvm::ArrayRef<ProvenStackOffset> Seeds, Arch Architecture,
+    BinaryFormat Format, StackEntryKind Entry) {
+  std::vector<std::optional<int64_t>> Offsets(Values.size());
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
+    return Offsets;
+  StackOffsetProof Proof(Func, Architecture, Format, Entry,
+                         /*FollowJoins=*/true, Seeds);
+  for (size_t I = 0; I < Values.size(); ++I)
+    Offsets[I] = Proof.offset(Values[I]);
+  return Offsets;
+}
+
+std::vector<std::optional<int64_t>> stackOffsetsRelativeToDefinition(
+    const MedFunc &Func, llvm::ArrayRef<MedVar> Values, const MedOp &Root,
+    Arch Architecture, BinaryFormat Format) {
+  std::vector<std::optional<int64_t>> Offsets(Values.size());
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
+    return Offsets;
+  const ProvenStackOffset Seed{&Root, 0};
+  StackOffsetProof Proof(Func, Architecture, Format, StackEntryKind::Call,
+                         /*FollowJoins=*/true, {Seed},
+                         /*OnlySeededRoots=*/true);
   for (size_t I = 0; I < Values.size(); ++I)
     Offsets[I] = Proof.offset(Values[I]);
   return Offsets;

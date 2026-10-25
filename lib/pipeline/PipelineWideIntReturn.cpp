@@ -597,7 +597,8 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
         // Reconversion replaces the operation sequence. Repeat the same stack
         // proofs as the initial conversion before either source emitter reads
         // it.
-        prepareMedStackAccesses(NewMF, Img, StackProjection);
+        prepareMedStackAccesses(NewMF, Result.LowFuncs[I], Img,
+                                StackProjection);
         Result.MedFuncs[I] = std::move(NewMF);
         inferMedTypes(Result.MedFuncs[I], Img.Arch);
         if (SelfWide)

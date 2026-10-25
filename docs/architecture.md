@@ -11805,6 +11805,23 @@ Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
 
+Exceptional memory histories follow the source instruction's possible prefixes,
+including before and after a throwing CALL or STORE. A complete local store
+ends only its own bytes. Completed byte histories are shared across later
+queries within the same immutable function, keeping repeated reads bounded
+without publishing a partially explored cycle. Exceptional predecessor and
+successor identities must agree.
+
+Immediately after conversion, the guard can bind complete PE32 SEH state facts
+from that exact LowIR input. Current source occurrences locate restored ESP
+definitions and prove unreachable calls; the shared stack-offset proof carries
+those definitions through synthetic stack cleanup and joins. These facts stay
+local to the query and never become reusable annotations on mutable MedIR.
+Checked SEH callback ownership separates a CALL below its private callback ESP
+from the parent frame. A relative-origin query rejects joins with the parent
+stack, another callback, or an unresolved restore. Native memory effects and
+the emitted source operations remain intact.
+
 The shared entry-stack offset proof follows the lifter's exact zero-extension
 of a native 32-bit address into its 64-bit memory-address container. It does
 not authenticate a wider incoming SP, a signed extension, a truncated 64-bit

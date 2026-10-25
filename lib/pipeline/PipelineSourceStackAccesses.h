@@ -16,6 +16,7 @@
 namespace neverd {
 
 struct BinaryImage;
+struct LowFunc;
 struct MedFunc;
 struct PipelineOptions;
 struct PipelineResult;
@@ -29,7 +30,8 @@ MedStackProjection medStackProjection(const PipelineOptions &Options);
 
 /// Recompute entry kind, alignment and source stack annotations on this fresh
 /// conversion. Never copy annotation flags from another operation sequence.
-void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
+void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
+                             const BinaryImage &Image,
                              MedStackProjection Projection);
 
 /// Shared source-only frame observation proof after call ABI recovery.

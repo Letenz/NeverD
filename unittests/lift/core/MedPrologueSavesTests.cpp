@@ -814,6 +814,30 @@ TEST(SourceCallReturnReads, EarlierReadsAndSeparatedSlotsStayValid) {
       << Error;
 }
 
+TEST(SourceCallReturnReads, RepeatedReadsShareCompleteByteHistories) {
+  auto Func = observedCallSlot();
+  auto &Ops = Func.Blocks[0].Ops;
+  const auto Call = Ops[4];
+  auto Return = Ops[6];
+  Return.Inputs[0] = temp(227);
+  Ops.resize(4);
+  for (int I = 0; I != 128; ++I) {
+    Ops.push_back(op(NdOp::NOP, none(), {}));
+    Ops.push_back(op(NdOp::LOAD, temp(100 + I), {temp(20)}));
+  }
+  Ops.insert(Ops.end(), {Call, Return});
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error, 8192))
+      << Error;
+  // A later observation still reaches the CALL, even when earlier reads of
+  // the same bytes have populated the completed-history cache.
+  Ops.insert(Ops.end() - 1, op(NdOp::LOAD, temp(300), {temp(20)}));
+  EXPECT_FALSE(
+      validateSourceCallReturnReads(Func, callSlotImage(), Error, 8192));
+  EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+      << Error;
+}
+
 TEST(SourceCallReturnReads, TailJumpsDoNotAcquireAPush) {
   std::string Error;
   EXPECT_TRUE(validateSourceCallReturnReads(observedCallSlot(),
@@ -821,6 +845,219 @@ TEST(SourceCallReturnReads, TailJumpsDoNotAcquireAPush) {
       << Error;
   EXPECT_FALSE(validateSourceCallReturnReads(observedCallSlot(),
                                              callSlotImage(0x90), Error));
+}
+
+TEST(SourceCallReturnReads, LocalByteWritesBoundExceptionalEntryObservations) {
+  for (bool Incoming : {false, true})
+    for (unsigned Bytes : {0u, 1u, 8u}) {
+      SCOPED_TRACE(testing::Message() << Incoming << ":" << Bytes);
+      auto Func = observedCallSlot();
+      auto &Block = Func.Blocks.front();
+      if (Incoming)
+        Block.ExceptionalPreds.emplace_back(-1, Block.StartAddr);
+      else
+        Block.ExceptionalSuccs.emplace_back(-1, 0x3000);
+      if (Bytes)
+        Block.Ops.insert(
+            Block.Ops.begin() + 5,
+            op(NdOp::STORE, none(), {temp(20), MedVar::makeConst(29, Bytes)}));
+      std::string Error;
+      EXPECT_EQ(validateSourceCallReturnReads(Func, callSlotImage(), Error),
+                Bytes == 8)
+          << Error;
+      // Reading before CALL is protected by the initial complete store,
+      // including when dispatch can enter this block exceptionally.
+      Func = observedCallSlot();
+      if (Incoming)
+        Func.Blocks[0].ExceptionalPreds.emplace_back(-1, Func.Entry);
+      else
+        Func.Blocks[0].ExceptionalSuccs.emplace_back(-1, 0x3000);
+      std::swap(Func.Blocks[0].Ops[4], Func.Blocks[0].Ops[5]);
+      EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error))
+          << Error;
+      // Without that local definition, an exceptional entry cannot inherit
+      // the ordinary caller's frame history merely from its normal CFG.
+      if (Incoming) {
+        Func.Blocks[0].Ops.erase(Func.Blocks[0].Ops.begin() + 3);
+        EXPECT_FALSE(
+            validateSourceCallReturnReads(Func, callSlotImage(), Error));
+        EXPECT_NE(Error.find("exceptional entry"), std::string::npos);
+      }
+    }
+}
+
+MedFunc exceptionalCallSlot(va_t Source) {
+  auto Func = observedCallSlot();
+  MedBlock Handler;
+  Handler.Id = 1;
+  Handler.StartAddr = 0x1020;
+  Handler.Ops = {Func.Blocks[0].Ops[5], Func.Blocks[0].Ops[6]};
+  Handler.Ops[0].Addr = Handler.StartAddr;
+  auto &Entry = Func.Blocks[0];
+  Entry.Ops.resize(5);
+  Entry.Ops[3].Addr = 0x1006;
+  Entry.Ops.push_back(
+      op(NdOp::STORE, none(), {temp(20), MedVar::makeConst(29, 8)}));
+  Entry.Ops.back().Addr = 0x100d;
+  Entry.Ops.push_back(op(NdOp::COPY, temp(23), {MedVar::makeConst(31, 8)}));
+  Entry.Ops.back().Addr = 0x1010;
+  Entry.ExceptionalSuccs.emplace_back(Handler.Id, Handler.StartAddr,
+                                      ExceptionalEdgeKind::SEHFilter, 0, -1,
+                                      Source);
+  Handler.ExceptionalPreds = Entry.ExceptionalSuccs;
+  Handler.ExceptionalPreds[0].BlockId = Entry.Id;
+  Func.Blocks.push_back(std::move(Handler));
+  return Func;
+}
+
+TEST(SourceCallReturnReads, ExceptionalSourcesRetainEveryPossibleCallWrite) {
+  for (va_t Source :
+       {va_t{0x1006}, va_t{0x1008}, va_t{0x100d}, va_t{0x1010}, InvalidVA})
+    for (unsigned Bytes : {0u, 4u, 8u}) {
+      SCOPED_TRACE(testing::Message() << Source << ":" << Bytes);
+      auto Func = exceptionalCallSlot(Source);
+      if (Bytes)
+        Func.Blocks[1].Ops.insert(
+            Func.Blocks[1].Ops.begin(),
+            op(NdOp::STORE, none(), {temp(20), MedVar::makeConst(37, Bytes)}));
+      std::string Error;
+      // The filter can observe a CALL push even if the throwing CALL never
+      // returns. A later parent store helps only when it definitely completed
+      // before the exception; a handler store kills just its own bytes.
+      EXPECT_EQ(validateSourceCallReturnReads(Func, callSlotImage(), Error),
+                Bytes == 8 || Source == 0x1006 || Source == 0x1010)
+          << Error;
+    }
+}
+
+TEST(SourceCallReturnReads, ExceptionalHistoryRequiresTheCurrentSourceEdge) {
+  for (unsigned Change = 0; Change != 5; ++Change) {
+    SCOPED_TRACE(Change);
+    auto Func = exceptionalCallSlot(0x1010);
+    auto &Entry = Func.Blocks[0];
+    auto &Handler = Func.Blocks[1];
+    switch (Change) {
+    case 0:
+      Entry.ExceptionalSuccs.clear();
+      break;
+    case 1:
+      Handler.ExceptionalPreds.clear();
+      break;
+    case 2:
+      Handler.ExceptionalPreds[0].SourceVA = 0x1006;
+      break;
+    case 3:
+      Entry.ExceptionalSuccs[0].SourceVA = 0x1030;
+      Handler.ExceptionalPreds[0].SourceVA = 0x1030;
+      break;
+    case 4:
+      Entry.ExceptionalSuccs[0].TargetVA = 0x1030;
+      Handler.ExceptionalPreds[0].TargetVA = 0x1030;
+      break;
+    }
+    std::string Error;
+    EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+    EXPECT_NE(Error.find("exceptional entry"), std::string::npos) << Error;
+  }
+}
+
+TEST(SourceCallReturnReads, RestoredRegistrationStacksNeedFreshSourceFacts) {
+  for (unsigned Change = 0; Change != 12; ++Change) {
+    SCOPED_TRACE(Change);
+    auto Func = observedCallSlot();
+    auto &Ops = Func.Blocks[0].Ops;
+    Ops[2].Inputs[1].ConstVal = 4;
+    const auto Call = Ops[4], Load = Ops[5], Return = Ops[6];
+    Ops.resize(4);
+    Ops.push_back(op(NdOp::INT_SUB, temp(23),
+                     {sp(1), MedVar::makeConst(Change == 11 ? 0 : 16, 8)}));
+    Ops.push_back(
+        op(NdOp::INT_ADD, temp(24), {sp(1), MedVar::makeConst(8, 8)}));
+    Ops.push_back(op(NdOp::STORE, none(), {temp(24), temp(23)}));
+    Ops.push_back(op(NdOp::LOAD, temp(25), {temp(24)}));
+    Ops.push_back(op(NdOp::COPY, sp(2), {temp(25)}));
+    Ops.insert(Ops.end(), {Call, Load, Return});
+    for (size_t I = 0; I < Ops.size(); ++I) {
+      auto &Op = Ops[I];
+      Op.Addr = I == 9 ? 0x1008 : 0x1100 + I;
+      Op.OriginSeq = 0;
+      Op.Output.TheArch = Arch::X86;
+      if (Op.Output.Size)
+        Op.Output.Size = 4;
+      for (unsigned K = 0; K < Op.NumInputs; ++K) {
+        Op.Inputs[K].TheArch = Arch::X86;
+        Op.Inputs[K].Size = 4;
+      }
+    }
+    LowFunc Source;
+    Source.Entry = Func.Entry;
+    Source.ExceptionMetadata.emplace();
+    auto &EH = *Source.ExceptionMetadata;
+    EH.CodeRange = {Func.Entry, 0x1200};
+    EH.ParseStatus = ExceptionParseStatus::Complete;
+    EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+    EH.Registration.emplace();
+    Source.RegistrationStates.emplace();
+    auto &States = *Source.RegistrationStates;
+    States.Complete = States.CallbackStatesComplete =
+        States.RegistrationLifetimeComplete = true;
+    States.FrameValues = {{Ops[1].Addr, 0, -28},
+                          {Ops[8].Addr, 0, Change == 11 ? -28 : -44}};
+    Source.Blocks.emplace_back();
+    auto ToLow = [](const MedVar &V) {
+      return V.isConst()             ? NdVar::cst(V.ConstVal, V.Size)
+             : V.Kind == MedVar::Reg ? NdVar::reg(V.RegOff, V.Size)
+                                     : NdVar::tmp(V.Id, V.Size);
+    };
+    for (const auto &Op : Ops) {
+      LowOp Original;
+      Original.Addr = Op.Addr;
+      Original.Seq = Op.OriginSeq;
+      Original.Opcode = Op.Opcode;
+      Original.Output = ToLow(Op.Output);
+      for (unsigned K = 0; K < Op.NumInputs; ++K)
+        Original.addInput(ToLow(Op.Inputs[K]));
+      Source.Blocks[0].Ops.push_back(Original);
+    }
+    auto Image = callSlotImage();
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::COFF;
+    switch (Change) {
+    case 2:
+      States.Complete = false;
+      break;
+    case 3:
+      States.CallbackStatesComplete = false;
+      break;
+    case 4:
+      States.RegistrationLifetimeComplete = false;
+      break;
+    case 5:
+      Ops[8].OriginSeq = 1;
+      break;
+    case 6:
+      Source.Blocks[0].Ops[8].Opcode = NdOp::INT_ZEXT;
+      break;
+    case 7:
+      Source.Blocks[0].Ops[9].Inputs[0].Offset += 4;
+      break;
+    case 8:
+      EH.Registration->RealignedFrame.emplace();
+      break;
+    case 9:
+      Image.Format = BinaryFormat::ELF;
+      break;
+    case 10:
+      States.FrameValues[1].EstablishedFrameOffset.reset();
+      break;
+    }
+    std::string Error;
+    EXPECT_EQ(validateSourceCallReturnReads(
+                  Func, Image, Error, limits::ir::kSourceCallReturnReadWork,
+                  Change == 1 ? nullptr : &Source),
+              Change == 0)
+        << Error;
+  }
 }
 
 TEST(SourceCallReturnReads, AStoreOnAnotherPathDoesNotHideACall) {

@@ -17,6 +17,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallReturnReads.h"
@@ -51,7 +52,8 @@ MedStackProjection medStackProjection(const PipelineOptions &Options) {
              : MedStackProjection::Machine;
 }
 
-void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
+void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
+                             const BinaryImage &Image,
                              MedStackProjection Projection) {
   Func.EntryKind = functionEntryKind(Func, Image.stackEntryKindAt(Func.Entry));
   if (Projection != MedStackProjection::Source)
@@ -59,7 +61,9 @@ void prepareMedStackAccesses(MedFunc &Func, const BinaryImage &Image,
   simplifyProvenStackAlignment(Func, Image.Arch, Image.abiFormat(),
                                Func.EntryKind);
   std::string Diagnostic;
-  if (!validateSourceCallReturnReads(Func, Image, Diagnostic))
+  if (!validateSourceCallReturnReads(Func, Image, Diagnostic,
+                                     limits::ir::kSourceCallReturnReadWork,
+                                     &Source))
     throw LowToMedConversionError(Diagnostic);
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
 }
@@ -230,7 +234,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         auto &MF = Result.MedFuncs[I];
         auto &LF = Result.LowFuncs[I];
         trimFuncStorage(MF);
-        prepareMedStackAccesses(MF, Img, medStackProjection(Opts));
+        prepareMedStackAccesses(MF, Projected ? *Projected : LF, Img,
+                                medStackProjection(Opts));
         MF.OriginalSize = LF.OriginalSize;
         MF.DebugName = LF.DebugName;
         MF.SourceFile = LF.SourceFile;
