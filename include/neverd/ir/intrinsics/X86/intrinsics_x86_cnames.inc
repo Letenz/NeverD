@@ -285,3 +285,9 @@ C(Intrinsic::X86EncluBounded, "__neverd_enclu_bounded");
 C(Intrinsic::X86GetsecBounded, "__neverd_getsec_bounded");
 
 C(Intrinsic::X86FourSourceMemory, "neverd_x86_four_source_memory");
+
+C(Intrinsic::X86LegacyRaoAdd, "neverd_x86_legacy_aadd");
+C(Intrinsic::X86LegacyRaoAnd, "neverd_x86_legacy_aand");
+C(Intrinsic::X86LegacyRaoOr, "neverd_x86_legacy_aor");
+C(Intrinsic::X86LegacyRaoXor, "neverd_x86_legacy_axor");
+C(Intrinsic::X86LegacyCmpccXadd, "neverd_x86_legacy_cmpccxadd");

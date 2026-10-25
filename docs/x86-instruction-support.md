@@ -36,6 +36,7 @@ complete instruction support or semantic test coverage.
 | AMX tile/configuration, compute and row operations | Versioned architectural bank ownership across strict LowIR, concrete execution, LLVM, HighC and LLVM-to-C; native restart and encoding distinctions are retained. See the AMX qualification below. |
 | ENCLS, ENCLV | Native supervisor/VMM completion on x86/x64, preserving rAX/rBX results, rCX/rDX inputs and leaf-dependent arithmetic flags. Enclave memory and fault ordering remain instruction-owned. |
 | RDPID | Explicit natural-width query result; ordered hardware effect. |
+| XTEST | Retains the native transaction query, its actual ZF and the required clearing of CF/PF/AF/SF/OF; no GPR or DF modification. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
 | CLTS | Ordered processor-state effect with no fabricated register output. |
 | Operand-free WRMSRNS | Distinct nonserializing instruction with explicit ECX/EAX/EDX inputs on x86 and x64. |
@@ -52,6 +53,7 @@ complete instruction support or semantic test coverage.
 | VMASKMOVPS/PD and VPMASKMOVD/Q stores | A void output replaces an invalid zero-width RAX result. Tests cover both vector widths, both architectures and inactive lanes over unmapped memory. |
 | VPCOMPRESSB/W/D/Q, VCOMPRESSPS/PD, VPEXPANDB/W/D/Q and VEXPANDPS/PD memory forms | Native contiguous masked accesses across LLVM, HighC and LLVM-to-C. Integer/FP opcode identity, merging/zeroing, segment offsets and zero-mask effects are retained; the compact-memory section below records the address boundary and qualification. |
 | V4FMADDPS/SS, V4FNMADDPS/SS, VP4DPWSSD and VP4DPWSSDS | Four explicit source values and the accumulator survive native LLVM, HighC and LLVM-to-C. Native instructions retain the four arithmetic steps, masks, memory transaction and floating-point status. See the four-source qualification below for addressing and hardware limits. |
+| AADD, AAND, AOR, AXOR and CMPccXADD | Legacy/EVEX RAO and VEX/EVEX CMPccXADD keep their encoding through strict lifting, native LLVM and both C routes. Legacy RAO includes i386. The atomic sections below record the remaining address/fault boundary and qualification. |
 | Shared 32-bit VEX3/EVEX register and address validators | Mode-aware register-bank selection for their callers, including F16C, FMA4, SHA512 and EVEX integer/vector families. Ignored extension fields select the low bank; reserved fields still fail clearly. |
 | REX2 and 32-bit VEX floating-point forms | Shared prefix validation replaces eight local parsers. The 13 previously failing REX2 and nine 32-bit VEX examples now strictly lift, retaining distinct GPR/vector/address extension rules. Concrete and executable source/native-route regressions cover the new behavior. |
 | WRSSD/Q, WRUSSD/Q, ENQCMD and ENQCMDS native output | The shared system contract emits the real instruction in LLVM, HighC and LLVM-to-C. Memory stays inside the instruction, enqueue returns its actual ZF, and FS/GS qualifies only the explicit memory operand. |
@@ -116,10 +118,11 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 | SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Complete register, privilege, segment and SMM continuation state. The integrated nonlocal-control boundary rejects these forms before an ordinary call/return or bare assembly can lose that state. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
-| XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation; legacy standalone placeholder intrinsics cannot become NOPs. |
+| XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
+| XBEGIN and full RTM regions | Original abort target, register/memory checkpoint, nesting and rollback continuation. A C `_xbegin()` status result cannot substitute for the decoded instruction. Strict/permissive lifting and legacy IR admission explicitly refuse that incomplete representation. |
 | Remaining compact-memory address forms | Native LLVM and both C routes now support DS/FS/GS compact memory. A 64-bit RSP/RBP-based address without FS/GS still lacks its #SS fault provenance. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
-| Remaining RAO-INT/CMPccXADD forms | EVEX AADD/AAND/AOR/AXOR and all sixteen CMPccXADD conditions now have native LLVM and both C routes. Legacy RAO-INT and VEX CMPccXADD still lack strict lifter admission. Default-stack RSP/RBP memory with 64-bit addressing and no FS/GS override remains refused until the normalized address retains its #SS fault class. Physical APX execution is not qualified. |
+| Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
@@ -143,6 +146,36 @@ AMX instructions now use the separate architectural-bank contract below. An
 opaque helper declaration, assembly that loses state, or a NOP does not close
 a missing semantic contract.
 
+The HLE admission check reads raw prefix bytes: Capstone can report LOCK in
+its normalized prefix slot without retaining F2/F3 there. An earlier lift of
+`XACQUIRE LOCK XADD` silently emitted a plain LLVM `atomicrmw`. Both strict
+and permissive lifting now reject the affected memory operations without
+appending effects. The regression covers both prefix orders, all eighteen
+LOCK instruction families, implicit-lock byte/dword XCHG and four XRELEASE
+MOV store encodings on x86/x64 through all three decode routes. Unrelated
+mandatory/repeat prefixes retain their existing behavior. This is explicit
+unsupported-state admission, not completed HLE execution support. The native
+contract must retain transactional checkpoint/abort/restart state and ordinary
+memory ordering across the critical section, as specified by the
+[Intel XACQUIRE/XRELEASE reference](https://cdrdv2-public.intel.com/782156/325383-sdm-vol-2abcd.pdf).
+Whole-module lift/patch reports the rejected entry and instruction address when
+no attempted body survives. An empty LLVM module is no longer reported as a
+successful lift of an unsupported HLE-only input; read-only analysis retains
+the rejection audit.
+
+XTEST keeps its native transaction-state query and defines all six arithmetic
+flags: ZF reflects the query and CF/PF/AF/SF/OF are cleared. The concrete suite
+checks both completions against all 64 incoming arithmetic-flag states on
+x86/x64, without fabricating an unknown transaction state. Native LLVM, HighC
+and LLVM-to-C compile across ELF/COFF/Mach-O at O0/O2; the x64 C routes also
+compile with NeverC's standard transaction headers. LLVM IR carries `+rtm`
+and both C routes use `_xtest`. This qualification does not execute physical
+RTM regions. XBEGIN remains refused because its original abort target and
+complete checkpoint are absent; the previous status-only lowering could
+lose both the abort branch and the successful path's EAX value. These
+instruction contracts follow the
+[Intel XBEGIN/XTEST reference](https://cdrdv2-public.intel.com/874247/334569-090-sdm-vol-2d.pdf).
+
 MPX memory forms retain their decoded identity in both full and lightweight
 decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.
 Only the unprefixed register forms of `0F 1A/1B` remain architectural NOPs, as
@@ -150,7 +183,7 @@ specified by the SDM's BNDLDX/BNDSTX descriptions. Strict lifting rejects the
 seven unmodeled MPX operations without appending partial effects. Existing
 serialized MPX, standalone HLE and generic SHA placeholder IDs remain readable,
 but both LLVM and HighC output fail explicitly instead of silently dropping
-them. Specific SHA and RTM instruction contracts are separate.
+them. Specific SHA and bounded RTM instruction contracts are separate.
 Qualification covers 192 strict MPX form/register/mode/decode-route cases,
 60 legacy emitter refusals, the pinned decoder corpus, and all 86 instruction
 boundary tests. The related source and system-sideeffect suites pass too.
@@ -1658,7 +1691,7 @@ checks the same 48 signatures, alongside 76 passing frontend tests. This
 does not change the production SDK pin or qualify physical atomicity.
 
 The remaining row above is deliberately narrower than full RAO/CMPccXADD
-support. Legacy RAO and VEX CMPccXADD still need strict admission. Unoverridden
+support. Legacy RAO and VEX CMPccXADD are covered below. Unoverridden
 RSP/RBP bases with 64-bit addressing need explicit stack-fault provenance;
 ignored CS/DS/ES/SS prefixes cannot restore it after normalization. See
 [Intel's canonical-address rule, section 3.3.7.1](https://www.intel.com/content/dam/support/us/en/documents/processors/pentium4/sb/25366521.pdf)
@@ -1667,6 +1700,62 @@ The concrete executor still restricts atomic accesses to aligned ordinary
 memory. Controlled completions do not prove physical atomicity, coherence or
 hardware fault behavior. LLVM release and production pinning remain deferred
 while the remaining instruction contracts are unfinished.
+
+## Legacy RAO and VEX CMPccXADD
+
+Legacy AADD/AAND/AOR/AXOR and all sixteen VEX CMPccXADD conditions retain
+separate LowIR identities from their APX forms. Capstone validates raw
+prefixes, code mode, addressing, operand widths/access and implicit flags.
+The lifter independently checks those details against the instruction bytes
+before admitting a transaction. Both encoding families share the operand
+shape and arithmetic contract; decoding, LLVM and the C renderers preserve
+which encoding was requested.
+
+The LLVM fork adds ten `llvm.x86.<operation><width>.legacy.address` interfaces
+for x86-64 and four `llvm.x86.<rao-operation>32.legacy.address32` interfaces
+for i386. The former support 32/64-bit operands and addresses; the latter
+support 32-bit operands with 16/32-bit effective addressing. Address controls
+wrap offsets before native segment-base addition. Native data operands use
+register classes excluding APX-only registers. NeverC exposes the ten x86-64
+`__builtin_ia32_<operation><width>_legacy_address` builtins and
+`__NEVERC_X86_LEGACY_ATOMIC__=1`; its C frontend remains x86-64-only.
+
+The pinned SDK uses validated owned assembly with encoding controls and
+legacy register constraints. The native SDK calls the new LLVM intrinsics.
+The C renderer shares these controls across HighC and LLVM-to-C. i386 C
+output uses Clang's assembly fallback. The concrete executor now also
+rejects unknown address, source or comparator bytes before an atomic access;
+an uninitialized input cannot become an accidental transaction with zero.
+
+Direct native APIs expose all segment controls. Normalized lifter addresses
+currently admit DS-default/DS override and FS/GS forms on i386; implicit
+SS stack bases and explicit CS/ES/SS forms are refused. x86-64 default-stack
+RSP/RBP accesses with 64-bit addressing remain refused without FS/GS.
+These guards preserve the outstanding segment-fault distinction rather than
+emitting an instruction with a different fault class. Hardware atomicity,
+write-back memory-type behavior and fault ordering remain unqualified.
+
+The standalone LLVM, NeverC and NeverC-IR-to-LLVM matrices each pass 10,080
+functions, 120,960 controlled completions and twelve ATT/Intel assembly round
+trips. Capstone's 80 focused x86 tests, NeverC's 85 x86 tests and six atomic
+generator tests pass. LLVM's four new legacy tests and nineteen neighboring
+codegen/assembler tests pass, including APX-only inputs copied into encodable
+registers and invalid i386 mode/address controls.
+
+For each pinned/native SDK, NeverD exports 360 x86-64 wrappers and 504 decoded
+pipeline cases, including original flags, addressing and returned values.
+The wrapper qualification passes 37 compiled programs and 159,840 controlled
+completions per SDK. The pipeline matrix covers 504 production objects and
+4,032 HighC/LLVMC compilations with Clang and NeverC at O0/O2. Native pipeline
+C and case metadata match the qualified pinned exports byte-for-byte; only
+that exact source work is reused, with all native production objects checked.
+
+i386 adds 112 wrappers per format, 21 compiled programs and 35,280 controlled
+completions per SDK. Its 144 decoded pipeline cases pass all 720 production/C
+objects, including 576 Clang compilations per SDK. The test loader validates
+ELF/COFF code relocations and Mach-O local section-difference pairs rather
+than executing unresolved object bytes. These results qualify operand
+transport, effects, flags and ABI preservation, not physical atomicity.
 
 ## Native compact-memory qualification
 

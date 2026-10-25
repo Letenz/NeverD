@@ -163,9 +163,10 @@ encodeCmpccXadd(unsigned Condition, unsigned Width, unsigned Compare = 26,
   return Bytes;
 }
 
-LiftedInstruction liftX64(const std::vector<uint8_t> &Bytes) {
+LiftedInstruction liftX64(const std::vector<uint8_t> &Bytes,
+                          Arch A = Arch::X64) {
   Decoder Dec;
-  if (!Dec.init(Arch::X64)) {
+  if (!Dec.init(A)) {
     ADD_FAILURE() << "failed to initialize x86-64 decoder";
     return {};
   }
@@ -1592,6 +1593,169 @@ TEST(X86APXAtomic, SegmentBaseParticipatesInNaturalAlignment) {
   EXPECT_TRUE(Emulator.getLoadRecords().empty());
   EXPECT_EQ(probeMemory(Emulator, Target, 8), Old);
   EXPECT_FALSE(Emulator.skips().any());
+}
+
+TEST(X86LegacyAtomic, RaoPreservesOperationWidthAddressWrappingAndFlags) {
+  constexpr Intrinsic Ids[] = {
+      Intrinsic::X86LegacyRaoAdd, Intrinsic::X86LegacyRaoAnd,
+      Intrinsic::X86LegacyRaoOr, Intrinsic::X86LegacyRaoXor};
+  constexpr uint8_t Prefixes[] = {0, 0x66, 0xf2, 0xf3};
+  constexpr uint64_t Address = 0x5000, Old = UINT64_C(0x8877665544332211);
+  constexpr uint64_t Source = UINT64_C(0xa5a55a5af0f00f0f);
+  const Flags Initial{true, false, true, false, true, false, true};
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (unsigned Width : {4u, 8u}) {
+      if (A == Arch::X86 && Width == 8)
+        continue;
+      for (bool Narrow : {false, true})
+        for (unsigned Kind = 0; Kind != 4; ++Kind) {
+          SCOPED_TRACE(::testing::Message() << unsigned(A) << "/" << Width
+                                            << "/" << Narrow << "/" << Kind);
+          std::vector<uint8_t> Bytes;
+          if (Narrow)
+            Bytes.push_back(0x67);
+          if (Prefixes[Kind])
+            Bytes.push_back(Prefixes[Kind]);
+          if (Width == 8)
+            Bytes.push_back(0x48);
+          const bool Address16 = A == Arch::X86 && Narrow;
+          Bytes.insert(Bytes.end(),
+                       {0x0f, 0x38, 0xfc, uint8_t(Address16 ? 0x0f : 0x08)});
+          const auto Lifted = liftX64(Bytes, A);
+          ASSERT_NE(findIntrinsic(Lifted.Ops, Ids[Kind]), nullptr);
+          auto Image =
+              makeImage(Address, Width,
+                        SegmentFlags::Readable | SegmentFlags::Writable, Old);
+          Image.Arch = A;
+          Image.Bits = A == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
+          NdOpEmulator E(Image);
+          E.setStrictMode(true);
+          E.setRegister(Address16 ? x86reg::RBX : x86reg::RAX,
+                        Address |
+                            (Narrow ? (Address16 ? UINT64_C(0xabcdef00) << 16
+                                                 : UINT64_C(0xabcdef00) << 32)
+                                    : 0));
+          E.setRegister(x86reg::RCX, Source);
+          setFlags(E, Initial);
+          ASSERT_EQ(E.run(Lifted.Ops), Lifted.Ops.size());
+          EXPECT_EQ(
+              probeMemory(E, Address, Width),
+              raoResult(static_cast<RaoOperation>(Kind), Width, Old, Source));
+          EXPECT_EQ(E.getRegister(x86reg::RCX), Source);
+          expectFlags(E, Initial);
+        }
+    }
+}
+
+TEST(X86LegacyAtomic, VexConditionsUseOldMemoryAndPreserveRegisterInputs) {
+  constexpr uint64_t Address = 0x6000, Add = UINT64_C(0x123456789abcdef0);
+  for (unsigned Width : {4u, 8u})
+    for (unsigned CC = 0; CC != 16; ++CC)
+      for (bool Narrow : {false, true})
+        for (const auto Values : {std::pair<uint64_t, uint64_t>{1, 2},
+                                  {5, 5},
+                                  {2, 1},
+                                  {UINT64_C(0x8000000000000000), 1}}) {
+          SCOPED_TRACE(::testing::Message()
+                       << Width << "/" << CC << "/" << Narrow);
+          const auto Old = Values.first & widthMask(Width),
+                     Compare = Values.second & widthMask(Width);
+          std::vector<uint8_t> Bytes;
+          if (Narrow)
+            Bytes.push_back(0x67);
+          Bytes.insert(Bytes.end(),
+                       {0xc4, 0xe2, uint8_t(0x69 | (Width == 8 ? 0x80 : 0)),
+                        uint8_t(0xe0 | CC), 0x08});
+          const auto Lifted = liftX64(Bytes);
+          ASSERT_NE(findIntrinsic(Lifted.Ops, Intrinsic::X86LegacyCmpccXadd),
+                    nullptr);
+          auto Image =
+              makeImage(Address, Width,
+                        SegmentFlags::Readable | SegmentFlags::Writable, Old);
+          NdOpEmulator E(Image);
+          E.setStrictMode(true);
+          E.setRegister(x86reg::RAX,
+                        Address | (Narrow ? UINT64_C(0x8765432100000000) : 0));
+          E.setRegister(x86reg::RCX, Compare);
+          E.setRegister(x86reg::RDX, Add);
+          setFlags(E, Flags{true, true, true, true, true, true, true});
+          const auto Expected = subtractionFlags(Width, Old, Compare, true);
+          ASSERT_EQ(E.run(Lifted.Ops), Lifted.Ops.size());
+          EXPECT_EQ(E.getRegister(x86reg::RCX), Old);
+          EXPECT_EQ(E.getRegister(x86reg::RDX), Add);
+          expectFlags(E, Expected);
+          EXPECT_EQ(probeMemory(E, Address, Width),
+                    conditionHolds(CC, Expected)
+                        ? ((Old + Add) & widthMask(Width))
+                        : Old);
+        }
+}
+
+TEST(X86LegacyAtomic, MutatedDecoderDetailsCannotChangeRawTransactions) {
+  for (const std::vector<uint8_t> Bytes :
+       {std::vector<uint8_t>{0x48, 0x0f, 0x38, 0xfc, 0x08},
+        {0xc4, 0xe2, 0xe9, 0xe4, 0x08}})
+    for (unsigned Change = 0; Change != 10; ++Change)
+      expectMutatedLiftRejected(Bytes, [=](cs_insn &Insn) {
+        auto &X = Insn.detail->x86;
+        switch (Change) {
+        case 0:
+          X.addr_size = 2;
+          break;
+        case 1:
+          X.operands[0].access = CS_AC_READ;
+          break;
+        case 2:
+          X.operands[1].size = 2;
+          break;
+        case 3:
+          X.rex ^= 4;
+          break;
+        case 4:
+          X.opcode[1] ^= 1;
+          break;
+        case 5:
+          ++X.encoding.modrm_offset;
+          break;
+        case 6:
+          ++X.encoding.disp_size;
+          break;
+        case 7:
+          X.eflags ^= X86_EFLAGS_MODIFY_CF;
+          break;
+        case 8:
+          ++Insn.detail->regs_read_count;
+          break;
+        case 9:
+          X.operands[0].mem.base = X86_REG_RBX;
+          break;
+        }
+      });
+}
+
+TEST(X86LegacyAtomic, UnknownAddressOrDataCannotBecomeZeroTransactions) {
+  constexpr uint64_t Address = 0x7000, Old = 0x23456789;
+  for (Intrinsic Id :
+       {Intrinsic::ApxRaoAdd, Intrinsic::X86LegacyRaoAdd,
+        Intrinsic::ApxCmpccXadd, Intrinsic::X86LegacyCmpccXadd}) {
+    const bool Compare = isX86CmpccXaddIntrinsic(Id);
+    for (unsigned Input = 1; Input != (Compare ? 4u : 3u); ++Input) {
+      auto Op = Compare ? makeCmpIntrinsic(4, Address, 3, Old, 4)
+                        : makeRaoIntrinsic(Id, 4, Address, 3);
+      Op.Inputs[0] = NdVar::cst(uint64_t(Id), 2);
+      Op.Inputs[Input] = NdVar::tmp(0x7c000000, Op.Inputs[Input].Size);
+      auto Image = makeImage(
+          Address, 4, SegmentFlags::Readable | SegmentFlags::Writable, Old);
+      NdOpEmulator E(Image);
+      E.setStrictMode(true);
+      E.setLoadCollect(true);
+      E.setRegister(kAtomicOutputTemp, 0xabcdef);
+      EXPECT_FALSE(E.step(Op));
+      EXPECT_TRUE(E.getLoadRecords().empty());
+      EXPECT_EQ(E.getRegister(kAtomicOutputTemp), 0xabcdefu);
+      EXPECT_EQ(probeMemory(E, Address, 4), Old);
+    }
+  }
 }
 
 } // namespace

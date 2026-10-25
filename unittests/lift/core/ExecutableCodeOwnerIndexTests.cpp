@@ -18,6 +18,56 @@
 
 using namespace neverd;
 
+TEST(ExecutableCodeOwnerIndex, DenseAddressSetsMatchLiveMetadata) {
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    for (const auto ISA : {Arch::X64, Arch::AArch64, Arch::ARM}) {
+      const bool Thumb = ISA == Arch::ARM;
+      const va_t Base = Thumb ? 0x100000 : (uint64_t{1} << 63);
+      BinaryImage Image;
+      Image.Format = Format;
+      Image.Arch = ISA;
+      Image.Mode = Thumb ? InstructionMode::Thumb : InstructionMode::Default;
+      Segment Mapping;
+      Mapping.VA = Base;
+      Mapping.Size = 0x4000;
+      Mapping.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Image.Segments.push_back(Mapping);
+      // A non-code section forces the metadata ownership path inside the
+      // coarse executable mapping, including the dense import-address index.
+      Section Data;
+      Data.VA = Base;
+      Data.Size = Mapping.Size;
+      Data.Flags = SegmentFlags::Readable;
+      Image.Sections.push_back(Data);
+      for (size_t I = 0; I != 257; ++I) {
+        Symbol Sym;
+        Sym.Addr = Base + I * 32 + Thumb;
+        Sym.IsFunc = true;
+        Sym.IsBoundaryGuess = I % 3 == 0;
+        Image.Symbols.push_back(Sym);
+        Image.ImportStubIndices.emplace(Base + I * 32 + 8,
+                                        Image.Imports.size());
+        Image.Imports.emplace_back();
+      }
+      const ExecutableCodeOwnerIndex Index(Image);
+      for (size_t I = 0; I != 258; ++I) {
+        for (const va_t Offset : {0u, 1u, 2u, 8u, 9u, 10u, 31u}) {
+          const va_t Addr = Base + I * 32 + Offset;
+          SCOPED_TRACE(::testing::Message() << unsigned(Format) << ' '
+                                            << unsigned(ISA) << ' ' << Addr);
+          EXPECT_EQ(Image.hasFunctionSymbolAt(Addr, &Index),
+                    Image.hasFunctionSymbolAt(Addr));
+          EXPECT_EQ(Image.hasFunctionSymbolAt(Addr, &Index, false),
+                    Image.hasFunctionSymbolAt(Addr, nullptr, false));
+          EXPECT_EQ(Image.hasExecutableCodeOwnerAt(Addr, &Index),
+                    Image.hasExecutableCodeOwnerAt(Addr));
+        }
+      }
+    }
+  }
+}
+
 namespace {
 
 BinaryImage makeMetadataImage(BinaryFormat Format = BinaryFormat::MachO,

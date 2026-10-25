@@ -45,12 +45,16 @@ namespace neverd {
 
 std::optional<uint8_t>
 MedLLVMEmitter::atomicIntrinsicAddressInput(const MedOp &Op) const {
-  if (TargetArch != Arch::AArch64 || Op.NumInputs == 0 ||
-      !Op.Inputs[0].isConst())
+  if (!hasValidMedIntrinsicId(Op))
     return std::nullopt;
 
   using I = Intrinsic;
   const auto IC = static_cast<I>(Op.Inputs[0].ConstVal);
+  if (isX86AtomicIntrinsic(IC) &&
+      intrinsicApxAtomicShapeIsValid(IC, apxAtomicMedShape(Op, TargetArch)))
+    return 1;
+  if (TargetArch != Arch::AArch64)
+    return std::nullopt;
   switch (IC) {
   case I::A64_AtomicAnd:
   case I::A64_AtomicOr:
@@ -196,7 +200,7 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   if (IC == I::X86FourFMA || isX86VP4DPIntrinsic(IC))
     llvm::report_fatal_error(
         "legacy x86 four-source lowering requires explicit source SSA values");
-  if (isApxAtomicIntrinsic(IC))
+  if (isX86AtomicIntrinsic(IC))
     return emitX86APXAtomic(Op, IC, Builder);
 
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
