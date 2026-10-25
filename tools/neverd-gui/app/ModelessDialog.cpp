@@ -50,7 +50,14 @@ public:
 
 private:
   bool eventFilter(QObject *object, QEvent *event) override {
-    // Qt retains the old transient parent when an ancestor is reparented.
+    // A floating native owner may be destroyed before the queued update.
+    // Detach while the old ancestry still exists: Windows destroys owned
+    // windows with their owner even when the QObject parent survives.
+    if (event->type() == QEvent::ParentAboutToChange)
+      if (auto *widget = qobject_cast<QWidget *>(object);
+          widget && (widget == Source || widget->isAncestorOf(Source)))
+        if (auto *window = Dialog->windowHandle())
+          window->setTransientParent(nullptr);
     // Wait until the destination window exists, including grouped docking.
     if (event->type() == QEvent::ParentChange || event->type() == QEvent::Show)
       if (auto *widget = qobject_cast<QWidget *>(object);
