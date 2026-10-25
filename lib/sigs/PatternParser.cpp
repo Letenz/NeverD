@@ -197,6 +197,7 @@ struct DraftModule {
   uint32_t ReferenceCount = 0;
   uint16_t CRC16 = 0;
   uint8_t CRCLen = 0;
+  bool RequireReferences = false;
 };
 
 /// Where the modules of a chunk are written: each module's bytes, then its
@@ -398,7 +399,7 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   // with, is no name.
   auto CannotBeName = [](llvm::StringRef Field) {
     return Field.starts_with(PublicNamePrefix) ||
-           Field.starts_with(ReferencePrefix) ||
+           Field.starts_with(ReferencePrefix) || Field == RequiredReferences ||
            Field.starts_with(UnstatedByte);
   };
 
@@ -406,6 +407,12 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   // followed by at most one tail.
   bool SawTail = false;
   for (size_t I = OpeningFields; I < Tokens.size(); ++I) {
+    if (Tokens[I] == RequiredReferences) {
+      if (I != OpeningFields)
+        return patternError("!refs must immediately follow total length");
+      Mod.RequireReferences = true;
+      continue;
+    }
     if (Tokens[I].starts_with(ReferencePrefix)) {
       if (SawTail)
         return patternError("reference follows the tail pattern");
@@ -456,6 +463,11 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
 
   if (Mod.PublicNameCount == 0)
     return patternError("no public names found");
+  if (Mod.RequireReferences &&
+      (Mod.ReferenceCount == 0 ||
+       uint64_t(Mod.LeadingCount) + Mod.CRCLen + Mod.TailCount < Mod.TotalLen))
+    return patternError(
+        "!refs requires references and whole-function coverage");
 
   // The stated bits follow the bytes.
   const size_t Count = size_t{Mod.LeadingCount} + Mod.TailCount;
@@ -501,6 +513,7 @@ StoredModule storedModule(const DraftModule &Draft, const uint8_t *Bytes,
   Module.ReferenceCount = Draft.ReferenceCount;
   Module.CRC16 = Draft.CRC16;
   Module.CRCLen = Draft.CRCLen;
+  Module.RequireReferences = Draft.RequireReferences;
   return Module;
 }
 
@@ -519,6 +532,7 @@ PatternModule PatternParser::toPatternModule(const StoredModule &Module) {
   Result.LeadingBytes = Pattern(0, Module.LeadingCount);
   Result.CRC16 = Module.CRC16;
   Result.CRCLen = Module.CRCLen;
+  Result.RequireReferences = Module.RequireReferences;
   Result.TotalLen = Module.TotalLen;
   for (const StoredName &Name : Module.publicNames())
     Result.PublicNames.push_back({Name.Offset, std::string(Name.Name)});

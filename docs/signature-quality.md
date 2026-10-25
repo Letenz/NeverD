@@ -35,6 +35,31 @@ remain unknown, and unsupported prefixed instructions are not guessed. The
 slot is data, so reference checking never scans it as a function. Confirmation
 still does not establish the caller's independent source identity.
 
+For x64 COFF, a canonical RIP-relative address of a primary MSVC vftable
+can also supply its exact mangled type. The loader checks its complete-object
+locator, self RVA, hierarchy, self base descriptor and bounded type name.
+Unreadable or unsupported RTTI remains unknown; a valid different type
+contradicts the candidate. These reads are lazy and cached within one match
+application. The data addresses never enter the function-reference graph.
+
+The optional NeverD `!refs` token immediately after a pattern's total length
+requires whole-function coverage and at least one reference. Every reference
+must be confirmed before the hit becomes a candidate or supports another
+candidate. Required hits cannot bootstrap each other from raw bytes; a cycle
+without independent evidence stays unresolved. The existing bounded withdrawal
+algorithm removes dependent claims when their evidence changes. Older parsers
+reject this extension, and cache format 2 preserves its requirement.
+`neverd-sigmaker --contextual` emits this form for referenced functions,
+including those below the ordinary fixed-byte floor, and covers their entire
+body. Unreferenced functions retain the ordinary floor. This changes candidate
+eligibility, not the independent identity gate.
+
+Required context can distinguish claims from independently selected packs,
+but the supplement builder still checks every overlapping raw source claim,
+including short, ambiguous and previously discarded functions. No missing
+rival pack is treated as proof of uniqueness. Pack publication also requires
+held-out image checks and index/reference cost measurements.
+
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
 fields. Its additive `auto_name` field reports the address's admitted spelling,
 or an empty string. `name_evidence` is `image_symbol`, `exception_personality`,

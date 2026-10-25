@@ -63,6 +63,11 @@ struct PatternModule {
   uint16_t CRC16 = 0;
   uint8_t CRCLen = 0;
 
+  /// `!refs`: every reference must be confirmed before this byte hit can
+  /// become a candidate or support another candidate. This is a NeverD
+  /// extension; older readers must reject it, not ignore the requirement.
+  bool RequireReferences = false;
+
   uint32_t TotalLen = 0;
 
   std::vector<FuncRef> PublicNames;
@@ -121,6 +126,7 @@ struct StoredModule {
   uint32_t ReferenceCount = 0;
   uint16_t CRC16 = 0;
   uint8_t CRCLen = 0;
+  bool RequireReferences = false;
 
   bool isStated(size_t Byte) const {
     return (Stated[Byte / CHAR_BIT] >> (Byte % CHAR_BIT)) & 1;

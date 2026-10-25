@@ -1372,3 +1372,27 @@ TEST(PatternGeneratorELF, AFunctionEndsAtItsSymbolsSize) {
   EXPECT_TRUE(StringRef(Out.Lines[0]).ends_with(" 0020 :0000 padded"))
       << Out.Lines[0];
 }
+
+TEST(PatternGeneratorCOFF, ContextualFunctionsRequireTheirWholeBodyAndReferences) {
+  std::vector<uint8_t> Code{0x48, 0x83, 0xec, 0x28, 0xff, 0x15, 0, 0, 0, 0,
+                            0x48, 0x83, 0xc4, 0x28, 0xc3};
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+  Builder.addFunction("wrapper", 0);
+  Builder.addRelocation(6, COFF::IMAGE_REL_AMD64_REL32);
+  Builder.setRelocationTarget("__imp_RuntimeAPI");
+  PatternGeneratorOptions Opts;
+  Opts.EmitReferences = true;
+  EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
+  Opts.RequireReferences = true;
+  Opts.LeadingLen = 4;
+  Opts.TailLen = 0; // Contextual output still covers the entire routine.
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines.front());
+  ASSERT_TRUE(bool(Mod)) << toString(Mod.takeError());
+  EXPECT_TRUE(Mod->RequireReferences);
+  EXPECT_TRUE(SignatureMatcher::isFullyVerified(*Mod));
+  EXPECT_LT(SignatureMatcher::fixedByteCount(*Mod), SignatureMatcher::MinStatedBytes);
+  Opts.EmitReferences = false;
+  EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
+}

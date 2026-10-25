@@ -43,6 +43,35 @@ class SupplementTests(unittest.TestCase):
         self.assertEqual({line.names for line in lines}, {(':0000 a',), (':0000 b',)})
         self.assertEqual(self.select(a, [("runtime", a), ("another", b)]), [])
 
+    def test_required_context_can_distinguish_independently_selected_packs(self):
+        a = "AABBCCDD.... 00 0000 0006 !refs :0000 a ^0004 __imp_a\n"
+        b = "AABBCCDD.... 00 0000 0006 :0000 b ^0004 __imp_b\n"
+        result = self.select(a, [("runtime", a), ("another", b)])
+        self.assertEqual([line.text for line in result], [a.strip()])
+        self.assertTrue(result[0].require_references)
+        unknown = "AABBCCDD.... 00 0000 0006 :0000 unknown\n"
+        self.assertEqual(self.select(a, [("runtime", a), ("another", b + unknown)]), [])
+
+    def test_required_context_checks_every_covering_counterclaim(self):
+        a = "AABBCCDD.... 00 0000 0006 !refs :0000 a ^0004 __imp_a\n"
+        b = "AABBCCDDEEFF00 00 0000 0007 :0000 b ^0004 __imp_b\n"
+        self.assertEqual(len(self.select(a, [("runtime", a), ("another", b)])), 1)
+        same = b.replace("__imp_b", "__imp_a")
+        self.assertEqual(self.select(a, [("runtime", a), ("another", same)]), [])
+
+    def test_context_requirement_survives_ordinary_raw_evidence(self):
+        a = "E9........ 00 0000 0005 !refs :0000 a ^0001 target\n"
+        raw = a.replace(" !refs", "")
+        result = self.select(a, [("runtime", raw)])
+        self.assertEqual([line.text for line in result], [a.strip()])
+        covering = "E9........C3 00 0000 0006 :0000 other ^0001 target\n"
+        self.assertEqual(self.select(a, [("runtime", raw), ("another", covering)]), [])
+
+    def test_missing_common_context_is_not_downgraded_to_byte_only(self):
+        a = "AABBCCDD.... 00 0000 0006 !refs :0000 a ^0004 callee\n"
+        b = "AABBCCDD.... 00 0000 0006 :0000 a\n"
+        self.assertEqual(self.select(a + b, [("runtime", a + b)]), [])
+
     def test_aliases_do_not_duplicate_an_existing_claim(self):
         aliases = "AABBCCDD 00 0000 0004 :0000 copy :0000 move\n"
         old = "AABBCCDD 00 0000 0004 :0000 copy\n"

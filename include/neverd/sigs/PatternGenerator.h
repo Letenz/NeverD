@@ -5,8 +5,9 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Turns the functions an object file defines into FLIRT-compatible .pat
-/// lines, the format PatternParser reads back.
+/// Turns the functions an object file defines into .pat lines, the format
+/// PatternParser reads back. Ordinary output is FLIRT-compatible; optional
+/// required-reference constraints use NeverD's explicit extension.
 ///
 /// A signature states the bytes a function has in every image it is linked
 /// into. A relocated byte holds a placeholder in the object and an address in
@@ -60,6 +61,10 @@ struct PatternGeneratorOptions {
   /// default: a loader older than the references rejects a line with one.
   /// COFF x86/x64 also states canonical indirect import-pointer references.
   bool EmitReferences = false;
+  /// Emit referenced functions with the NeverD `!refs` constraint and full
+  /// byte coverage, including functions below the ordinary fixed-byte floor.
+  /// Unreferenced functions retain the ordinary floor and output format.
+  bool RequireReferences = false;
   /// The names a COFF link resolves a symbol to when no object defines it,
   /// as `/alternatename:symbol=alternate` directives give them (see
   /// collectAlternateNames).  A reference to the symbol also names each
@@ -191,7 +196,8 @@ size_t statedByteCount(llvm::ArrayRef<bool> Wildcard,
 /// the linker may rewrite and \p References, sorted by offset, the routines it
 /// branches to. Returns false, writing nothing, when the function is shorter
 /// than Opts.MinFuncSize or its line would state fewer than
-/// SignatureMatcher::MinStatedBytes bytes exactly.
+/// SignatureMatcher::MinStatedBytes bytes exactly, unless reference context
+/// is explicitly required. Required-reference lines cover the whole function.
 bool emitPatternLine(llvm::raw_ostream &OS,
                      llvm::ArrayRef<llvm::StringRef> Names,
                      llvm::ArrayRef<uint8_t> Data,

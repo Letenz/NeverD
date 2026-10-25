@@ -5854,6 +5854,12 @@ or absent metadata, evidence withdrawal, and the separate identity gate.
 The COFF cases also check primary x64 vftable references: exact RTTI types,
 locator and hierarchy consistency, bounded strings, unsupported secondary
 layouts, malformed data, instruction prefixes and negative displacements.
+`SignatureDBContext.*` verifies that `!refs` rejects unresolved byte hits,
+cannot bootstrap cycles, propagates anchored chains in either order and
+withdraws their dependent candidates. Parser and cache tests preserve the
+constraint; producer tests keep the ordinary byte floor and require complete
+bodies for contextual patterns. The Python supplement tests retain short and
+discarded counterclaims across independently selected packs.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,

@@ -37,7 +37,7 @@ namespace {
 /// at one offset, and references, alternatives among them.
 constexpr llvm::StringLiteral Lines =
     "40534883EC2033D2488BD94881C1EC000000448D4206E8........48837B4000 0F 6061 "
-    "0041 :0000 ?ResetKey@CMFCAcceleratorKeyAssignCtrl@@QEAAXXZ ^0017 memset "
+    "0041 !refs :0000 ?ResetKey@CMFCAcceleratorKeyAssignCtrl@@QEAAXXZ ^0017 memset "
     "^0037 ?SetWindowTextA@CWnd@@QEAAXPEBD@Z ^0037 "
     "?SetWindowTextW@CWnd@@QEAAXPEB_W@Z ........488BCBE8........4883C4205BC3\n"
     "0330010023000000........0228........0A062D170228........2C0C0228 00 0000 "
@@ -122,6 +122,7 @@ void expectSameModules(llvm::ArrayRef<StoredModule> Expected,
     EXPECT_EQ(E.TotalLen, A.TotalLen) << "module " << I;
     EXPECT_EQ(E.CRC16, A.CRC16) << "module " << I;
     EXPECT_EQ(E.CRCLen, A.CRCLen) << "module " << I;
+    EXPECT_EQ(E.RequireReferences, A.RequireReferences) << "module " << I;
     const size_t Count = E.LeadingCount + E.TailCount;
     for (size_t B = 0; B < Count; ++B) {
       ASSERT_EQ(E.isStated(B), A.isStated(B))

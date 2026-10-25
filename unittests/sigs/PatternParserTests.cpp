@@ -395,3 +395,19 @@ TEST(PatternParserHex, DecodesEveryPairAtAnyLength) {
     }
   }
 }
+
+TEST(PatternParserReferences, RequiredReferencesAreExplicitAndComplete) {
+  auto Mod = PatternParser::parseLine("E8........C3 00 0000 0006 !refs :0000 wrapper ^0001 callee");
+  ASSERT_TRUE(bool(Mod)) << llvm::toString(Mod.takeError());
+  EXPECT_TRUE(Mod->RequireReferences);
+  for (const char *Line : {
+    "E8........C3 00 0000 0006 !refs :0000 wrapper",
+    "E8........C3 00 0000 0007 !refs :0000 wrapper ^0001 callee",
+    "E8........C3 00 0000 0006 :0000 wrapper !refs ^0001 callee",
+    "E8........C3 00 0000 0006 !refs !refs :0000 wrapper ^0001 callee",
+    "E8........C3 00 0000 0006 :0000 !refs ^0001 callee"}) {
+    auto Bad = PatternParser::parseLine(Line);
+    EXPECT_FALSE(bool(Bad)) << Line;
+    if (!Bad) llvm::consumeError(Bad.takeError());
+  }
+}

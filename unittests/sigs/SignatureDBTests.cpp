@@ -1511,3 +1511,101 @@ TEST(SignatureDBAliases, ACallByAnyNameOfTheCalleeConfirms) {
   EXPECT_EQ(Names.at(0x1100), "callee");
   EXPECT_EQ(Names.at(0x1000), "caller");
 }
+
+namespace {
+std::string requireReferences(std::string Line) {
+  Line.insert(Line.find(" :"), " !refs");
+  return Line;
+}
+} // namespace
+
+TEST(SignatureDBContext, UnknownReferenceNeverAdmitsAByteCandidate) {
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(requireReferences(callerLine("wrapper", " ^0005 callee")), "context"));
+  Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
+  EXPECT_TRUE(Database.matches().empty());
+  EXPECT_TRUE(Database.buildCandidateNameMap().empty());
+  ASSERT_FALSE(Database.loadPatternText(CalleeLine, "ordinary"));
+  Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
+  EXPECT_EQ(Database.buildCandidateNameMap().at(0x1000), "wrapper");
+  EXPECT_TRUE(Database.buildNameMap().empty());
+}
+
+TEST(SignatureDBContext, ImportAndTypeMetadataCanAnchorARequiredCandidate) {
+  for (bool Type : {false, true}) {
+    auto Image = Type ? makeVTableImage() : makeIndirectImportImage(neverd::Arch::X64);
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(requireReferences(Type
+       ? vtableCallerLine("wrapper", "??_7Widget@@6B@")
+       : importCallerLine("wrapper", "__imp_RuntimeB")), "context"));
+    Database.apply(Image, {0x1000});
+    ASSERT_EQ(Database.matches().size(), 1u);
+    EXPECT_TRUE(Database.matches().front().Confirmed);
+    EXPECT_TRUE(Database.buildNameMap().empty());
+    if (Type) Image.Segments.back().Data[0x140] = 0;
+    else Image.Imports.clear();
+    Database.apply(Image, {0x1000});
+    EXPECT_TRUE(Database.matches().empty());
+  }
+}
+
+TEST(SignatureDBContext, RequiredCandidatesDoNotBootstrapCycles) {
+  auto Image = makeNestedCallingImage();
+  Image.Imports.clear();
+  neverd::writeLE<uint32_t>(Image.Segments.front().Data.data() + 0x102,
+                           uint32_t(0x1000 - 0x1106));
+  const std::string Outer = requireReferences(callerLine("outer", " ^0005 inner"));
+  const std::string Inner = "53E8........5BC3 00 0000 0008 !refs :0000 inner ^0002 outer\n";
+  for (bool Reverse : {false, true}) {
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(Reverse ? Inner + Outer : Outer + Inner, "context"));
+    Database.apply(Image, {0x1000, 0x1100});
+    EXPECT_TRUE(Database.matches().empty());
+    // A raw hit at a target outside the entry set cannot bypass !refs either.
+    Database.apply(Image, {0x1000});
+    EXPECT_TRUE(Database.matches().empty());
+  }
+  SignatureDB Recursive;
+  ASSERT_FALSE(Recursive.loadPatternText(requireReferences(callerLine("self", " ^0005 self")), "context"));
+  Recursive.apply(makeCallingImage(0x1000), {0x1000});
+  EXPECT_TRUE(Recursive.matches().empty());
+}
+
+TEST(SignatureDBContext, AnchoredChainsSettleAndWithdrawInEitherOrder) {
+  const std::string Outer = requireReferences(callerLine("outer", " ^0005 inner"));
+  const std::string Inner = "53E8........5BC3 00 0000 0008 !refs :0000 inner ^0002 import_a\n";
+  for (bool Reverse : {false, true}) {
+    auto Image = makeNestedCallingImage();
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(Reverse ? Inner + Outer : Outer + Inner, "context"));
+    Database.apply(Image, {0x1000, 0x1100});
+    const auto Names = Database.buildCandidateNameMap();
+    ASSERT_EQ(Names.size(), 2u);
+    EXPECT_EQ(Names.at(0x1000), "outer");
+    EXPECT_EQ(Names.at(0x1100), "inner");
+    EXPECT_TRUE(Database.buildNameMap().empty());
+    Image.Imports.front().Name = "import_b";
+    Database.apply(Image, {0x1000, 0x1100});
+    EXPECT_TRUE(Database.matches().empty());
+  }
+}
+
+TEST(SignatureDBContext, EveryRequiredReferenceMustBeConfirmed) {
+  auto Image = makeIndirectImportImage(neverd::Arch::X64);
+  auto &Code = Image.Segments.front().Data;
+  Code[16] = 0xff; Code[17] = 0x15;
+  neverd::writeLE<uint32_t>(Code.data() + 18, 0x2008 - 0x1016);
+  Image.Segments.back().Data.resize(16, 0);
+  Image.Segments.back().Size = Image.Segments.back().FileSz = 16;
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "90909090FF15........909090909090FF15........90909090909090909090"
+      " 00 0000 0020 !refs :0000 wrapper ^0006 __imp_RuntimeB ^0012 __imp_Other\n", "context"));
+  Database.apply(Image, {0x1000});
+  EXPECT_TRUE(Database.matches().empty());
+  auto Imp = Image.Imports.front(); Imp.Name = "Other"; Imp.IATAddr = 0x2008;
+  Image.Imports.push_back(Imp);
+  Database.apply(Image, {0x1000});
+  ASSERT_EQ(Database.matches().size(), 1u);
+  EXPECT_TRUE(Database.matches().front().Confirmed);
+}

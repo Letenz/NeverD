@@ -72,7 +72,7 @@ struct ModuleRecord {
   uint32_t ReferenceCount;
   uint16_t CRC16;
   uint8_t CRCLen;
-  uint8_t Reserved;
+  uint8_t RequireReferences;
 };
 
 /// A StoredName, with its text at \c TextOffset of the names' text.
@@ -211,7 +211,10 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     const uint64_t Names = uint64_t(R.PublicNameCount) + R.ReferenceCount;
     if (R.BlobOffset > BlobBytes ||
         Count + statedBytes(Count) > BlobBytes - R.BlobOffset ||
-        R.FirstName > NameCount || Names > NameCount - R.FirstName)
+        R.FirstName > NameCount || Names > NameCount - R.FirstName ||
+        R.RequireReferences > 1 ||
+        (R.RequireReferences &&
+         (R.ReferenceCount == 0 || Count + R.CRCLen < R.TotalLen)))
       return false;
     StoredModule &M = Modules[I];
     M.Bytes = Bytes + R.BlobOffset;
@@ -224,6 +227,7 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     M.ReferenceCount = R.ReferenceCount;
     M.CRC16 = R.CRC16;
     M.CRCLen = R.CRCLen;
+    M.RequireReferences = R.RequireReferences != 0;
   }
   return true;
 }
@@ -385,7 +389,7 @@ void SignatureCache::store(const std::filesystem::path &Source,
     writeRecord(Written.data() + L->ModuleRecords + I * sizeof(ModuleRecord),
                 ModuleRecord{Blob, Name, M.LeadingCount, M.TailCount,
                              M.TotalLen, M.PublicNameCount, M.ReferenceCount,
-                             M.CRC16, M.CRCLen, 0});
+                             M.CRC16, M.CRCLen, uint8_t(M.RequireReferences)});
     if (Count != 0) {
       std::memcpy(Written.data() + L->Blob + Blob, M.Bytes, Count);
       std::memcpy(Written.data() + L->Blob + Blob + Count, M.Stated,

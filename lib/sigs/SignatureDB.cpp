@@ -629,7 +629,7 @@ size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
       const StoredModule &Mod = Modules[Hit.Module];
       // Whole-function agreement is the main gate, but on its own it would
       // also be satisfied by a short pattern that is mostly wildcards.
-      if (!SignatureMatcher::isFullyVerified(Mod) ||
+      if (Mod.RequireReferences || !SignatureMatcher::isFullyVerified(Mod) ||
           SignatureMatcher::fixedByteCount(Mod) <
               SignatureMatcher::MinStatedBytes)
         continue;
@@ -1045,6 +1045,10 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     return MatchModules[I] == NoModule ? llvm::ArrayRef<StoredName>()
                                        : Modules[MatchModules[I]].references();
   };
+  auto RequiresReferences = [&](size_t I) {
+    return MatchModules[I] != NoModule &&
+           Modules[MatchModules[I]].RequireReferences;
+  };
   auto ModuleStartOf = [&](size_t I) {
     const uint64_t Address = Matches[I].Address;
     for (const StoredName &Name : Modules[MatchModules[I]].publicNames())
@@ -1233,11 +1237,17 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     PatternsAt.emplace_back(Hit.Address, Hit.Module);
   llvm::sort(PatternsAt);
   auto PatternAt = [&](std::string_view Name, uint64_t Address) {
-    for (const Entry &Hit : Range(PatternsAt, Address))
+    for (const Entry &Hit : Range(PatternsAt, Address)) {
+      // Context-dependent patterns cannot bootstrap each other from bytes.
+      // Only their confirmed settlement can support a caller; an unvisited
+      // target's contextual byte hit remains insufficient evidence.
+      if (Modules[Hit.second].RequireReferences)
+        continue;
       for (const StoredName &Public : Modules[Hit.second].publicNames())
         if (Public.Offset == 0 && Public.Name == Name &&
             !DisprovedPatterns.contains(Hit))
           return true;
+    }
     return false;
   };
 
@@ -1247,6 +1257,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // routine may be entered with the interworking bit set.
   std::unordered_map<uint64_t, SettledRoutine> Settled;
   std::vector<bool> Dropped(Matches.size(), false);
+  for (size_t I = 0; I < Matches.size(); ++I)
+    Dropped[I] = RequiresReferences(I);
   auto SettleAt = [&](uint64_t Address) {
     llvm::SmallVector<const SigMatch *, 4> Proposals;
     for (const Entry &Match : Range(At, Address))
@@ -1381,8 +1393,9 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     std::vector<uint64_t> ChangedPatterns;
     for (size_t W = 0; W < Work.size(); ++W) {
       const size_t I = Work[W];
-      const bool Contradicted = Outcomes[W] == Outcome::Contradicted;
       const bool Confirmed = Outcomes[W] == Outcome::Confirmed;
+      const bool Contradicted = Outcomes[W] == Outcome::Contradicted ||
+                                (RequiresReferences(I) && !Confirmed);
       if (Contradicted == Dropped[I] && Confirmed == Matches[I].Confirmed)
         continue;
       if (Contradicted != Dropped[I]) {

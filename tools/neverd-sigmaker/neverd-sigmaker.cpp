@@ -87,6 +87,12 @@ static cl::opt<bool> References(
              "such lines"),
     cl::init(false));
 static cl::opt<bool>
+    Contextual("contextual",
+               cl::desc("Require verified references for referenced functions, "
+                        "including short functions; emits whole-function "
+                        "NeverD !refs patterns and implies --references"),
+               cl::init(false));
+static cl::opt<bool>
     Verify("verify",
            cl::desc("Parse the positional .pat files with the signature "
                     "loader's parser instead of generating"),
@@ -207,7 +213,8 @@ int main(int Argc, char *Argv[]) {
   Opts.LeadingLen = LeadingLen;
   Opts.MinFuncSize = MinFuncSize;
   Opts.TailLen = TailLen;
-  Opts.EmitReferences = References;
+  Opts.EmitReferences = References || Contextual;
+  Opts.RequireReferences = Contextual;
 
   auto ForMachine = [&](const ObjectFile &Obj) {
     return !Required || isObjectForMachine(Obj, *Required);

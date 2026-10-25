@@ -461,7 +461,8 @@ void countOrEmit(raw_ostream &OS, ArrayRef<StringRef> Names,
                  ArrayRef<FuncRef> References = {}) {
   if (Data.size() < Opts.MinFuncSize)
     ++Stats.TooSmall;
-  else if (statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes)
+  else if (statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes &&
+           !(Opts.RequireReferences && !References.empty()))
     ++Stats.TooWeak;
   else if (emitPatternLine(OS, Names, Data, Wildcard, Opts, References))
     ++Stats.Functions;
@@ -1275,8 +1276,10 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
                      const PatternGeneratorOptions &Opts,
                      ArrayRef<FuncRef> References) {
   const size_t Size = Data.size();
+  const bool RequireReferences = Opts.RequireReferences && !References.empty();
   if (Names.empty() || Size < Opts.MinFuncSize || Wildcard.size() != Size ||
-      statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes)
+      (!RequireReferences &&
+       statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes))
     return false;
 
   const size_t LeadBytes = std::min(static_cast<size_t>(Opts.LeadingLen), Size);
@@ -1290,6 +1293,8 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
 
   OS << format(CRCFieldsFormat, static_cast<unsigned>(CRCLen), CRC,
                static_cast<unsigned>(Size));
+  if (RequireReferences)
+    OS << FieldSeparator << RequiredReferences;
   // Every name labels the function's start.
   for (StringRef Name : Names)
     OS << FieldSeparator << PublicNamePrefix << format(OffsetFormat, 0u)
@@ -1305,7 +1310,9 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
   // difference between a name worth displaying and a name worth acting on.
   const size_t TailStart = CRCStart + CRCLen;
   const size_t TailEnd =
-      std::min(Size, TailStart + static_cast<size_t>(Opts.TailLen));
+      RequireReferences
+          ? Size
+          : std::min(Size, TailStart + static_cast<size_t>(Opts.TailLen));
   if (TailEnd > TailStart) {
     OS << FieldSeparator;
     emitPatternBytes(OS, Data, Wildcard, TailStart, TailEnd);

@@ -256,15 +256,19 @@ class PatternLine:
     key: str
     names: tuple[str, ...]
     refs: tuple[tuple[int, str], ...] = ()
+    require_references: bool = False
 
-    def with_refs(self, refs: tuple[tuple[int, str], ...]) -> "PatternLine":
+    def with_refs(self, refs: tuple[tuple[int, str], ...],
+                  require: bool | None = None) -> "PatternLine":
         """This line stating only `refs`."""
 
         tokens = self.key.split()
         head, tail = tokens[:4], tokens[4:]
         stated = [f"^{offset:04X} {name}" for offset, name in refs]
-        text = " ".join([*head, *self.names, *stated, *tail])
-        return PatternLine(text, self.key, self.names, refs)
+        required = self.require_references if require is None else require
+        constraint = ["!refs"] if required else []
+        text = " ".join([*head, *constraint, *self.names, *stated, *tail])
+        return PatternLine(text, self.key, self.names, refs, required)
 
 
 def alias_order(name: str) -> tuple:
@@ -302,8 +306,9 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     merged = common_refs(lines)
     tokens = merged.key.split()
     stated = [f"^{offset:04X} {name}" for offset, name in merged.refs]
-    text = " ".join([*tokens[:4], *names, *stated, *tokens[4:]])
-    return PatternLine(text, merged.key, names, merged.refs)
+    constraint = ["!refs"] if merged.require_references else []
+    text = " ".join([*tokens[:4], *constraint, *names, *stated, *tokens[4:]])
+    return PatternLine(text, merged.key, names, merged.refs, merged.require_references)
 
 
 def ref_table(refs: tuple[tuple[int, str], ...]) -> dict[int, set[str]]:
@@ -345,11 +350,13 @@ def common_refs(lines: list[PatternLine]) -> PatternLine:
     """
 
     first = lines[0]
-    if all(line.refs == first.refs for line in lines[1:]):
+    required = any(line.require_references for line in lines)
+    if all(line.refs == first.refs and line.require_references == required
+           for line in lines):
         return first
     offsets = set.intersection(*(set(ref_table(line.refs)) for line in lines))
     refs = {(offset, name) for line in lines for offset, name in line.refs if offset in offsets}
-    return first.with_refs(tuple(sorted(refs)))
+    return first.with_refs(tuple(sorted(refs)), required)
 
 
 @dataclass(frozen=True)
@@ -430,6 +437,9 @@ def parse_line(text: str) -> PatternLine | None:
     refs: list[tuple[int, str]] = []
     rest = tokens[:4]
     index = 4
+    required = tokens[index] == "!refs"
+    if required:
+        index += 1
     while index < len(tokens):
         token = tokens[index]
         if token.startswith(":") and index + 1 < len(tokens):
@@ -444,7 +454,7 @@ def parse_line(text: str) -> PatternLine | None:
         index += 1
     if not names:
         raise BuildError(f"pattern line names nothing: {stripped[:120]}")
-    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)))
+    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required)
 
 
 @dataclass
@@ -499,6 +509,11 @@ def fold(lines: list[str]) -> FoldResult:
     for key, by_names in copies.items():
         variants = {names: common_refs(lines) for names, lines in by_names.items()}
         result.evidence.extend(variants.values())
+        if any(line.require_references and not line.refs for line in variants.values()):
+            result.ambiguous_keys.add(key)
+            result.conflicting_groups += 1
+            result.conflicting_lines += len(variants)
+            continue
         if len(variants) > 1 and shared_names(list(variants)):
             result.lines.append(
                 aliases_of([line for lines in by_names.values() for line in lines]))
