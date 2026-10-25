@@ -84,6 +84,9 @@
 #include <kddockwidgets/qtwidgets/views/Separator.h>
 #include <limits>
 #include <memory>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 using namespace neverd::gui;
 
@@ -94,6 +97,7 @@ public:
   QPointer<QDialog> Dialog;
   bool SawParentChange = false;
   bool DetachedBeforeChange = false;
+  bool NativeDetachedBeforeChange = false;
 
 protected:
   bool event(QEvent *event) override {
@@ -101,6 +105,11 @@ protected:
         Dialog->windowHandle()) {
       SawParentChange = true;
       DetachedBeforeChange = !Dialog->windowHandle()->transientParent();
+#ifdef Q_OS_WIN
+      if (QGuiApplication::platformName() == QStringLiteral("windows"))
+        NativeDetachedBeforeChange =
+            !GetWindow(reinterpret_cast<HWND>(Dialog->winId()), GW_OWNER);
+#endif
     }
     return QWidget::event(event);
   }
@@ -220,12 +229,23 @@ private slots:
     moving->setParent(&destination);
     QVERIFY(moving->SawParentChange);
     QVERIFY(moving->DetachedBeforeChange);
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == QStringLiteral("windows"))
+      QVERIFY(moving->NativeDetachedBeforeChange);
+#endif
     origin.reset();
     moving->show();
     source->show();
     QTRY_VERIFY(dialog && dialog->isVisible());
     QTRY_COMPARE(dialog->windowHandle()->transientParent(),
                  destination.windowHandle());
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+      QVERIFY(IsWindow(reinterpret_cast<HWND>(dialog->winId())));
+      QCOMPARE(GetWindow(reinterpret_cast<HWND>(dialog->winId()), GW_OWNER),
+               reinterpret_cast<HWND>(destination.winId()));
+    }
+#endif
     dialog->close();
     QTRY_VERIFY(!dialog);
   }
