@@ -74,6 +74,7 @@ target_include_directories(NeverDSupportThreadTests PRIVATE
   "${CMAKE_SOURCE_DIR}/include")
 
 add_subdirectory(acceleration)
+add_subdirectory(digest)
 
 add_neverd_unittest(NeverDExportTableTests
   ExportTableTests.cpp
