@@ -7,6 +7,8 @@
 #include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
 
+#include "neverd/support/ISAEncoding.h"
+
 #include <algorithm>
 
 namespace neverd {
@@ -285,7 +287,7 @@ static bool parseCanonicalThreeBytePrefix(const cs_insn *Insn,
                                           uint8_t Escape,
                                           CanonicalVex3EncodingInfo &Encoding) {
   Encoding = {};
-  if (!Insn || Insn->size == 0 || Insn->size > 15 ||
+  if (!Insn || Insn->size == 0 || Insn->size > x86::kMaxInstructionLen ||
       (TargetArch != Arch::X64 && TargetArch != Arch::X86))
     return false;
   Encoding.Is64Bit = TargetArch == Arch::X64;
@@ -315,8 +317,8 @@ static bool parseCanonicalThreeBytePrefix(const cs_insn *Insn,
     return false;
   Encoding.AddressSize = Encoding.Is64Bit ? (Encoding.AddressOverride ? 4 : 8)
                                           : (Encoding.AddressOverride ? 2 : 4);
-  // Capstone synthesizes the VEX REX view only in 64-bit mode. The raw W bit
-  // remains in P1 for instruction families that use it in 32-bit mode.
+  // Capstone synthesizes the VEX/XOP REX view only in 64-bit mode. The raw W
+  // bit remains in P1 for instruction families that use it in 32-bit mode.
   const uint8_t ExpectedRex =
       Encoding.Is64Bit
           ? static_cast<uint8_t>(0x40 | ((Encoding.P1 & 0x80) != 0 ? 0x08 : 0) |
