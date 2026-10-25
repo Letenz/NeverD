@@ -20839,6 +20839,172 @@ int main(void) {
   compileAndRunCallOrdering(Source + Harness, true);
 }
 
+TEST(LLVMCPointerAddresses, AdjacentReleaseRegionsKeepTheirSharedExitLabels) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  const char *IR = R"(
+declare i64 @record_acquire(i64)
+declare i64 @record_priority(i64)
+declare i64 @record_wait(i64)
+define void @nested_release(i64 %lock, i64 %thread, ptr %flags) {
+bb_188:
+  %ld6633 = load volatile i8, ptr %flags, align 1
+  %and6634 = and i8 %ld6633, 33
+  %eq6635 = icmp eq i8 %and6634, 0
+  br i1 %eq6635, label %bb_190, label %bb_189
+
+bb_189:
+  %call6646 = call i64 @record_acquire(i64 %lock)
+  br label %bb_200.sink.split
+
+bb_190:
+  %ld6666 = add i64 %thread, 0
+  %add6669 = add i64 %ld6666, 16
+  %memptr6671 = inttoptr i64 %add6669 to ptr
+  %ld6672 = load i64, ptr %memptr6671, align 1
+  %eq6679 = icmp eq i64 %ld6672, 0
+  br i1 %eq6679, label %bb_194, label %bb_191
+
+bb_191:
+  %add6684 = add i64 %ld6666, 32
+  %memptr6685 = inttoptr i64 %add6684 to ptr
+  %ld6686 = load i8, ptr %memptr6685, align 1
+  %ult6687 = icmp ugt i8 %ld6686, 1
+  br i1 %ult6687, label %bb_194, label %bb_192
+
+bb_192:
+  %add6690 = add i64 %ld6672, 24
+  %memptr6691 = inttoptr i64 %add6690 to ptr
+  %ld6692 = load i32, ptr %memptr6691, align 1
+  %add6696 = add i32 %ld6692, 1
+  store i32 %add6696, ptr %memptr6691, align 1
+  %ne6708.not = icmp eq i32 %add6696, 0
+  br i1 %ne6708.not, label %bb_193, label %bb_194
+
+bb_193:
+  %call6717 = call i64 @record_priority(i64 %ld6666)
+  br label %bb_194
+
+bb_194:
+  %memptr6738 = inttoptr i64 %lock to ptr
+  %ld6739 = load i64, ptr %memptr6738, align 1
+  %or6744 = or i64 %ld6739, 1
+  store i64 %or6744, ptr %memptr6738, align 1
+  %number44 = and i64 %ld6739, 1
+  %bnot6748 = icmp eq i64 %number44, 0
+  br i1 %bnot6748, label %bb_200, label %bb_195
+
+bb_195:
+  %ld6754 = load i64, ptr %memptr6671, align 1
+  %eq6761 = icmp eq i64 %ld6754, 0
+  br i1 %eq6761, label %bb_199, label %bb_196
+
+bb_196:
+  %add6766 = add i64 %ld6666, 32
+  %memptr6767 = inttoptr i64 %add6766 to ptr
+  %ld6768 = load i8, ptr %memptr6767, align 1
+  %ult6769 = icmp ugt i8 %ld6768, 1
+  br i1 %ult6769, label %bb_199, label %bb_197
+
+bb_197:
+  %add6772 = add i64 %ld6754, 24
+  %memptr6773 = inttoptr i64 %add6772 to ptr
+  %ld6774 = load i32, ptr %memptr6773, align 1
+  %sub6778 = add i32 %ld6774, -1
+  store i32 %sub6778, ptr %memptr6773, align 1
+  %ne6790.not = icmp eq i32 %sub6778, 0
+  br i1 %ne6790.not, label %bb_198, label %bb_199
+
+bb_198:
+  %call6799 = call i64 @record_priority(i64 %ld6666)
+  br label %bb_199
+
+bb_199:
+  %call6825 = call i64 @record_wait(i64 %lock)
+  br label %bb_200.sink.split
+
+bb_200.sink.split:
+  br label %bb_200
+
+bb_200:
+  %ld6845 = load volatile i8, ptr %flags, align 1
+  %and6846 = and i8 %ld6845, 1
+  %eq6847 = icmp eq i8 %and6846, 0
+  ret void
+}
+)";
+  auto Module = llvm::parseIR(
+      llvm::MemoryBuffer::getMemBuffer(IR)->getMemBufferRef(), Error, Context);
+  ASSERT_TRUE(Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+  // The first region discovers a goto after the label-reference prepass.
+  // Check both observable paths through the adjacent region, including the
+  // shared wait block after the conditional priority callback.
+  const std::string Harness = R"(
+static uint64_t trace, wanted_lock, wanted_thread;
+static int bad_argument;
+uint64_t record_acquire(uint64_t lock) {
+  bad_argument |= lock != wanted_lock;
+  trace = trace * 10 + 1;
+  return 0;
+}
+uint64_t record_priority(uint64_t thread) {
+  bad_argument |= thread != wanted_thread;
+  trace = trace * 10 + 2;
+  return 0;
+}
+uint64_t record_wait(uint64_t lock) {
+  bad_argument |= lock != wanted_lock;
+  trace = trace * 10 + 3;
+  return 0;
+}
+int main(void) {
+  const uint32_t counts[] = {0, 1, UINT32_MAX};
+  for (unsigned instrumented = 0; instrumented != 2; ++instrumented)
+    for (unsigned present = 0; present != 2; ++present)
+      for (unsigned priority = 0; priority != 3; ++priority)
+        for (unsigned i = 0; i != 3; ++i)
+          for (uint64_t initial_lock = 0; initial_lock != 4; ++initial_lock) {
+            uint64_t thread[5] = {0}, owner[4] = {0};
+            uint64_t lock = initial_lock, expected_lock = initial_lock;
+            uint8_t flags = instrumented ? 1 : 0;
+            uint32_t count = counts[i], expected_count = count;
+            uint64_t expected_trace = 0;
+            thread[2] = present ? (uintptr_t)owner : 0;
+            ((uint8_t *)thread)[32] = priority;
+            __builtin_memcpy((uint8_t *)owner + 24, &count, sizeof(count));
+            if (instrumented) {
+              expected_trace = 1;
+            } else {
+              if (present && priority <= 1 && ++expected_count == 0)
+                expected_trace = 2;
+              expected_lock |= 1;
+              if (initial_lock & 1) {
+                if (present && priority <= 1 && --expected_count == 0)
+                  expected_trace = expected_trace * 10 + 2;
+                expected_trace = expected_trace * 10 + 3;
+              }
+            }
+            wanted_lock = (uintptr_t)&lock;
+            wanted_thread = (uintptr_t)thread;
+            trace = 0;
+            bad_argument = 0;
+            nested_release(wanted_lock, wanted_thread, &flags);
+            __builtin_memcpy(&count, (uint8_t *)owner + 24, sizeof(count));
+            if (bad_argument || trace != expected_trace ||
+                lock != expected_lock || count != expected_count)
+              return 1;
+          }
+  return 0;
+}
+)";
+  compileAndRunCallOrdering(Source + Harness, true);
+}
+
 TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenTrueTargetIsNotNext) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-skip-far", Context);
