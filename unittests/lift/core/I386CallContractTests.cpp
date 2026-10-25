@@ -110,6 +110,10 @@ TEST(I386CallContract, PhysicalCallReturnSlotsDoNotKeepOldSourceConstants) {
       Code.insert(Code.end(), {0x8b, 0x44, 0x24, 0xfc, 0x83, 0xc4, 16, 0xc3});
       auto Image = makeImage(Code, {"rand"});
       Image.Format = Format;
+      if (Format == BinaryFormat::ELF)
+        Image.Symbols.front().Name = "wrap";
+      ASSERT_TRUE(Image.recordImportStorageSlot(
+          Iat, "rand", 0, ImportStorageEvidence::LoaderBind));
       for (bool LLVM : {false, true})
         for (bool NoOpt : {false, true}) {
           SCOPED_TRACE(testing::Message() << Rewrite << ':' << unsigned(Format)
@@ -136,6 +140,7 @@ TEST(I386CallContract, PhysicalCallReturnSlotsDoNotKeepOldSourceConstants) {
           COptions.TheArch = Image.Arch;
           COptions.Format = Format;
           COptions.Image = &Image;
+          COptions.EmitIncludes = false;
           if (LLVM) {
             ASSERT_TRUE(Result.LlvmModule);
             ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
@@ -145,13 +150,21 @@ TEST(I386CallContract, PhysicalCallReturnSlotsDoNotKeepOldSourceConstants) {
             ASSERT_TRUE(
                 HighCEmitter().emit(Result.HighFuncs, Output, COptions));
           EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+          const std::string Standalone =
+              "#include <stdint.h>\nint rand(void);\n" + Source;
+          source_call_execution_test::checkSyntax(
+              Standalone, {"--target=i686-pc-windows-msvc", "-ffreestanding"});
+#if defined(__linux__) && (defined(__i386__) || defined(__x86_64__))
           for (llvm::StringRef Level : {"-O0", "-O2"})
             source_call_execution_test::compileAndRun(
-                Source +
+                Standalone +
                     "\nstatic unsigned calls;\n"
                     "int rand(void) { ++calls; return 13; }\n"
                     "int main(void) { return wrap() != 19 || calls != 1; }\n",
-                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+                {"-m32", Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+#else
+          RecordProperty("native_i386_execution", "requires Linux x86");
+#endif
         }
     }
 }

@@ -11600,3 +11600,10 @@ candidate graphs and exhausted observation budgets cannot grant separation.
 Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
+
+The shared entry-stack offset proof follows the lifter's exact zero-extension
+of a native 32-bit address into its 64-bit memory-address container. It does
+not authenticate a wider incoming SP, a signed extension, a truncated 64-bit
+pointer or an ambiguous definition. Alignment rewrites keep their existing
+native-width rules. Source call-slot observation therefore sees the same frame
+bytes for direct pointer-width addresses and canonical widened addresses.

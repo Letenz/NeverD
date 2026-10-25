@@ -12927,4 +12927,13 @@ continuation materialization remains a separate source-ABI requirement.
 four-byte CALL slots across the same three formats, both source routes and
 source optimization settings. A complete later DWORD store permits host C
 execution at O0/O2; a reaching physical CALL write requires a diagnostic.
-This is source projection coverage, not native execution on each OS.
+The generated C is checked for the i686 Windows target and executes with
+`-m32` on Linux x86 hosts. Other hosts record the missing native execution
+while retaining the source checks. This does not qualify native calls on each
+OS.
+
+`MedStackAlignment.Native32BitMemoryAddressContainersKeepTheirFrameOrigin`
+checks exact zero-extended x86/ARM32 frame addresses across all three formats.
+Signed extensions, mixed-width copies and duplicate definitions are rejected;
+`WiderSeedsAndTruncatedPointersAreNotNativeAddresses` protects the entry-SP
+and native pointer-width boundaries.

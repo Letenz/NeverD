@@ -93,6 +93,9 @@ known constant. Complete later stores permit the read; partial writes, joins,
 loops and unknown call positions retain the diagnostic. Both source routes use
 the same bounded check. This closes stale-value success, not the missing
 machine-state/continuation source ABI, unresolved aliases or native proof.
+The shared stack-address owner also recognizes canonical zero-extended
+32-bit memory-address containers. This closes the i386 observation gap without
+treating truncated 64-bit pointers or wider incoming registers as frame roots.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Integer call recovery now retains the complete SSA operand prefix published by
