@@ -907,6 +907,9 @@ after changing frame-member queries.
 `*PackageApplicationInfo*` tests exact name/flag keys, independent mutable
 query results, retained Context fields, nullable and unknown field states,
 UTF-16 names, invalid typed/JSON responses and terminal work/storage limits.
+`AndroidFrameworkTest.PackageQueriesAdmitOneResultAllocation` compares the
+shared query allocation budget and checks that exhaustion leaves no result
+object allocated.
 The native fixture checks ordinary and jvalue-array calls and field ownership
 across detach and a second thread; DEX queries enter the same owner. Run the
 full Dalvik, Android JNI and ProcessReport suites for this shared contract.
@@ -1153,6 +1156,19 @@ invalidate an earlier proof. It covers x86/x64 with ELF/COFF/Mach-O image
 ownership and an AArch64 scalar transfer. Discontiguous and backward targets
 retain the original frame across another entry's search bound; independently
 known targets remain tail calls with their original instruction address.
+Immutable scalar reads extend this matrix to all three architectures and
+formats, retaining mutable, ambiguous, relocated, ordered, segment-relative
+and unaffordable loads as runtime inputs. Revalidation shares a read cache
+throughout one CFG build. `NeverDReadOnlyBytesTests` checks scalar width,
+relocation identity and cold-read budget boundaries. `LowScalarConstant.*`
+in `NeverDSEHRuntimeMemoryTests` compares unary arithmetic and sign extension
+with concrete LowIR execution.
+
+`NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
+both C routes for readonly loads, NOT, NEG and sign-extended target offsets.
+Independent native ELF x64 fixtures return a known result past an overlapping
+unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
+the native test is skipped on other hosts.
 
 `NeverDWorkerConstantBranch` also checks cold expression resolution and literal
 GUI listing jumps into forward and backward fragments, both C routes, retained
@@ -11130,6 +11146,13 @@ errno and mapped-page refusal. `LinuxMemoryTests.cpp` checks precise user-range
 boundaries, PROT_NONE and a mapped prefix before a hole without changing bytes,
 mapping generation or allocation counts. `LinuxProcessTests.cpp` executes the
 corresponding x64/ARM64 raw syscall callers and verifies the full output vector.
+
+`*NegativePrctl*` and `LinuxMemory.PositiveUnmodeledPrctl*` check kernel `int`
+narrowing, EINVAL for negative options, unreadable unused arguments, unchanged
+memory and mappings, raw versus libc errno, and inactive dynamic providers.
+The Linux fixtures execute O0/O2 callers on both LP64 ISAs. Android proc
+fixtures and `ProcessPublic.AndroidNegativePrctlMatchesSDKAndCLI` cover named,
+raw, variadic and dynamic calls, full output guards, and nonnegative refusal.
 
 `LinuxProc.Prctl*` checks the opt-in legacy anonymous VMA name contract through
 both LP64 syscall numbers: argument widths and error order, borrowed-pointer

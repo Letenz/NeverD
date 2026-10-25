@@ -3,6 +3,7 @@
 
 #include "neverd/Common.h"
 
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -31,6 +32,17 @@ readInitialImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
 /// semantics. Ordinary data reads continue to reject executable addresses.
 std::optional<std::vector<uint8_t>>
 readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
+
+/// Read a little-endian scalar (one through eight bytes) using the immutable
+/// data/code readers. Full pointer-width values that could be image addresses
+/// remain unknown: raw bytes do not establish a relocatable pointer identity.
+/// An optional budget charges metadata inventories, nested ownership queries
+/// and result bytes before reading. An unaffordable read leaves the budget
+/// intact so callers can continue memory-independent proofs; callers may cache
+/// reads only while the image and all of its metadata remain unchanged.
+std::optional<uint64_t>
+readImmutableImageScalar(const BinaryImage &Image, va_t Address, uint32_t Size,
+                         size_t *RemainingWork = nullptr);
 
 /// Prove unique, complete file-backed instruction storage. Code may be
 /// writable, execute-only or contain fixups; this establishes neither
