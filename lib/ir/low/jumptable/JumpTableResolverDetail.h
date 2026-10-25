@@ -57,8 +57,10 @@ originalAArch64TableLoad(const LowOp &Operation) {
     return std::nullopt;
   const auto Instruction = aarch64AddressMemoryInstruction(
       Operation.Inputs[kAddressMemoryWordOperand + 1].Offset);
-  return Instruction->stackBase() || Instruction->isVector() ? std::nullopt
-                                                             : Instruction;
+  return Instruction->stackBase() || Instruction->isVector() ||
+                 !Instruction->hasRegisterIndex()
+             ? std::nullopt
+             : Instruction;
 }
 
 struct BinaryImage;

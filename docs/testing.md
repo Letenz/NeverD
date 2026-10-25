@@ -366,6 +366,18 @@ declarations remain unqualified; the integer bridges do not certify those
 interfaces.
 The shared identity regression pins the published scalar and concurrent x86
 identities before admitting the appended vector operations.
+`AArch64ImmediateMemory` checks the explicit raw-operation contract with 177
+independent LLVM MC samples: unsigned, unscaled and GPR unprivileged immediate
+accesses. An independent Capstone operand-detail comparison also checks all
+112,640 immediate encodings and their scratch rewrites. The suite covers encoded
+displacements, signed result widths,
+neighboring writeback/pair exclusions, zero-index shape requirements, finite
+tracing in both modes and complete 64-bit byte spans. Both C routes and linked
+LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes,
+extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
+These are explicit-IR tests; they do not
+qualify automatic decoding/lifting, relocated-image projection or native
+half/whole-vector ABI. Stack and image requirements fail before body filtering.
 SP-origin source execution remains explicitly unsupported. Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the

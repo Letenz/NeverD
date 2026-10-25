@@ -38,6 +38,7 @@ struct BodyProof {
     const auto Instruction = aarch64AddressMemoryInstruction(
         E->Operands[kAddressMemoryWordOperand]->ConstVal);
     return Instruction->isLoad() && !Instruction->stackBase() &&
+           Instruction->hasRegisterIndex() &&
            Instruction->usesFullWidthIndex() &&
            Instruction->accessBytes() == kAddressMemoryPointerBytes &&
            !Instruction->indexShift();
