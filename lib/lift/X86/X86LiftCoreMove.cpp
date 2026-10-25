@@ -644,7 +644,7 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       const NdVar Old = S.makeTemp(Memory.size);
       S.emit(NdOp::ATOMIC_XCHG, Old, {Address, New},
              NdMemoryOrdering::SequentiallyConsistent,
-             LiftState::memoryAddressSpace(Memory));
+             X86Lifter::LiftState::memoryAddressSpace(Memory));
       S.emit(NdOp::COPY, L.operandWrite(Register), {Old});
       if (L.targetArch() == Arch::X64 && Memory.size == 4) {
         const RegInfo RI = mapCapstoneReg(static_cast<x86_reg>(Register.reg));
