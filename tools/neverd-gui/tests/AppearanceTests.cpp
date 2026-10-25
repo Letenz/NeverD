@@ -213,11 +213,17 @@ private slots:
       auto line = layout.createLine();
       line.setLineWidth(2000);
       layout.endLayout();
-      const auto runs = layout.glyphRuns();
+      const auto runs = layout.glyphRuns(0, -1, QTextLayout::RetrieveAll);
       QVERIFY(!runs.isEmpty());
       for (const auto &run : runs) {
+        const auto diagnostic =
+            QStringLiteral("%1: %2 at string offset %3")
+                .arg(language.code, run.rawFont().familyName())
+                .arg(run.stringIndexes().isEmpty()
+                         ? -1
+                         : run.stringIndexes().front());
         QVERIFY2(run.rawFont().familyName().startsWith("Noto "),
-                 qPrintable(run.rawFont().familyName()));
+                 qPrintable(diagnostic));
         for (const auto glyph : run.glyphIndexes())
           QVERIFY(glyph != 0);
       }

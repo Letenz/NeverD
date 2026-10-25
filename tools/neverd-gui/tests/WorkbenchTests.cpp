@@ -98,7 +98,6 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalSpy>
-#include <QSizeGrip>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabBar>
@@ -8329,23 +8328,28 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(&dialog));
     auto *recent =
         dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
-    auto *grip = dialog.findChild<QSizeGrip *>();
     auto *action =
         dialog.findChild<QPushButton *>(QStringLiteral("quickStartAction"));
-    QVERIFY(recent && grip && grip->isVisible() && action);
+    QVERIFY(recent && action && dialog.windowHandle());
     const QSize initialSize = dialog.size();
     const QSize initialListSize = recent->size();
     const QSize actionSize = action->size();
 
-    // Drag the actual resize control, then check the content gained the space.
-    const QPoint start = grip->rect().center();
-    const QPoint destination = grip->mapToGlobal(start) + QPoint(24, 24);
-    QTest::mousePress(grip, Qt::LeftButton, Qt::NoModifier, start);
-    QMouseEvent move(QEvent::MouseMove, grip->mapFromGlobal(destination),
-                     destination, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(grip, &move);
-    QTest::mouseRelease(grip, Qt::LeftButton, Qt::NoModifier,
-                        grip->mapFromGlobal(destination));
+    // The owned window frame supplies the visible resize edge. Exercise its
+    // input route before checking content layout and persisted geometry.
+    const QPoint start =
+        dialog.mapToGlobal(dialog.rect().bottomRight() - QPoint(2, 2));
+    const auto send = [&](QEvent::Type type, QPoint at) {
+      QMouseEvent event(
+          type, dialog.mapFromGlobal(at), at,
+          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+          Qt::NoModifier);
+      QCoreApplication::sendEvent(dialog.windowHandle(), &event);
+    };
+    send(QEvent::MouseButtonPress, start);
+    send(QEvent::MouseMove, start + QPoint(24, 24));
+    send(QEvent::MouseButtonRelease, start + QPoint(24, 24));
     QTRY_VERIFY(dialog.width() > initialSize.width());
     QTRY_VERIFY(dialog.height() > initialSize.height());
     const QSize chosenSize = dialog.size();

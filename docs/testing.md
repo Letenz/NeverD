@@ -2046,6 +2046,11 @@ icon theme, palette and font, then checks the clear button, every palette role,
 menu ownership, button ordering and bundled glyph coverage across interface
 languages. `NEVERD_APPEARANCE_CAPTURES` saves actual dialog captures. Run it
 with a native window manager at 100% and 150% scaling as well as offscreen.
+Glyph failures include the language and text offset. The UI font also carries
+the bundled fallback families for CoreText shaping; unchanged script lists
+must not clear Qt's font cache on every theme application. Quick Start's
+geometry test drags the owned frame edge and checks content growth and reopen
+size, rather than relying on a retired platform size-grip widget.
 `nativeFrameKeepsTheTitleBarOnScreen` checks native maximize/full-screen/restore
 transitions for the shared frameless chrome on Linux, Windows and macOS.
 All desktop windows use the application frame and shadow; native APIs still
