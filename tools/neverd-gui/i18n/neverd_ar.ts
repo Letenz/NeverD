@@ -148,10 +148,6 @@
         <translation>إعادة تسمية العنوان الحالي</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>إدخال تعليق(&amp;C)...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>إضافة تعليق إلى العنوان الحالي</translation>
     </message>

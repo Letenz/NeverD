@@ -148,10 +148,6 @@
         <translation>現在のアドレスの名前を変更します</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>コメントを入力(&amp;C)...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>現在のアドレスにコメントを追加します</translation>
     </message>
