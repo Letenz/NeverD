@@ -188,6 +188,43 @@ TEST(X86TBM, ResultsFlagsAliasesAndMemoryAcrossDecodeRoutes) {
   RecordProperty("value_and_flag_cases", Cases);
 }
 
+TEST(X86TBM, IgnoredXopFieldsSelectTheLowRegisterBankIn32BitMode) {
+  unsigned Cases = 0;
+  for (const auto &E : Encodings)
+    for (bool W : {false, true})
+      for (unsigned Destination : {1u, 9u})
+        for (unsigned Source : {1u, 9u})
+          for (unsigned Route : {0u, 1u, 2u}) {
+            Decoder D;
+            ASSERT_TRUE(D.init(Arch::X86));
+            D.setStrict(true);
+            const auto Bytes = encode(E, W, Destination, Source);
+            SCOPED_TRACE(testing::PrintToString(Bytes));
+            DecodedInsn Insn{};
+            ASSERT_EQ(decode(D, Bytes, Route, Insn), Bytes.size());
+            ASSERT_EQ(Insn.Raw->detail->x86.operands[0].reg, X86_REG_ECX);
+            ASSERT_EQ(Insn.Raw->detail->x86.operands[1].reg, X86_REG_ECX);
+            std::vector<LowOp> Ops;
+            LowInstructionUndefinedEffects Effects;
+            ASSERT_NO_THROW(D.liftToLow(Insn, Ops, {}, {}, &Effects));
+            EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+                << Effects.Diagnostic;
+            for (uint64_t Value : {UINT64_C(0), UINT64_C(0xffffffff)}) {
+              auto Image = image(Arch::X86, 0, 4);
+              NdOpEmulator Emulator(Image);
+              Emulator.setStrictMode(true);
+              Emulator.setRegister(x86reg::RCX, Value);
+              Emulator.setRegister(x86reg::R9, 0x12345678);
+              ASSERT_EQ(Emulator.run(Ops), Ops.size());
+              EXPECT_EQ(Emulator.getRegister(x86reg::RCX),
+                        expected(E.Id, Value, 4));
+              EXPECT_EQ(Emulator.getRegister(x86reg::R9), 0x12345678u);
+              ++Cases;
+            }
+          }
+  RecordProperty("ignored_32_bit_xop_field_cases", Cases);
+}
+
 TEST(X86TBM, MemoryAddressesAndSegmentOverridesRetainTheirEncoding) {
   unsigned Cases = 0;
   for (Arch Target : {Arch::X86, Arch::X64})
