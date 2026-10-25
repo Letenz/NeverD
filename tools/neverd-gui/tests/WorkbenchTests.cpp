@@ -3874,6 +3874,48 @@ private slots:
     QVERIFY(!action(menu, "outputClear")->isEnabled());
   }
 
+  void outputLogFollowsTheTheme_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("dark-to-light") << true;
+    QTest::newRow("light-to-dark") << false;
+  }
+
+  void outputLogFollowsTheTheme() {
+    // Lines written before a theme change take the new theme's colors: the
+    // dark theme's light gray all but vanished on the light theme's white.
+    QFETCH(bool, dark);
+    auto &theme = Theme::instance();
+    const auto previous = theme.mode();
+    const auto restoreTheme = qScopeGuard([&] { theme.setMode(previous); });
+    theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    theme.apply();
+    Workbench bench;
+    auto *output = bench.window->findChild<OutputWindow *>();
+    QVERIFY(output);
+    auto *log = output->findChild<QPlainTextEdit *>();
+    QVERIFY(log);
+    log->clear();
+    for (int level = 0; level <= 2; ++level)
+      output->append(QStringLiteral("level %1").arg(level), level);
+    const auto written = [log] {
+      QList<QColor> colors;
+      for (auto block = log->document()->begin(); block.isValid();
+           block = block.next())
+        colors << block.begin().fragment().charFormat().foreground().color();
+      return colors;
+    };
+    const auto levels = [&theme] {
+      return QList<QColor>{theme.color(ColorRole::CodeDefault),
+                           theme.color(ColorRole::CodePreprocessor),
+                           theme.color(ColorRole::ListingError)};
+    };
+    QCOMPARE(written(), levels());
+    const auto before = written();
+    theme.setMode(dark ? Theme::Mode::Light : Theme::Mode::Dark);
+    QCOMPARE(written(), levels());
+    QVERIFY(written() != before);
+  }
+
   void copyingCharacterSelections() {
     QFETCH(QString, view);
     QFETCH(bool, reverse);
@@ -10924,6 +10966,51 @@ private slots:
     QVERIFY(!disassembly->graph()->function());
     QVERIFY(!disassembly->graph()->currentAddress());
     QVERIFY(!disassembly->listing()->currentItem());
+  }
+
+  void narrowHexViewScrollsToItsText() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == QLatin1String("hex-1"))
+        dock->raise();
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_VERIFY(hex->isVisible());
+    hex->setCurrent(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(hex->byteAt(Base).has_value(), OpenTimeoutMs);
+    // A pane narrower than a row scrolls sideways to the text column, which
+    // it used to cut off.
+    hex->setFixedWidth(360);
+    auto *sideways = hex->horizontalScrollBar();
+    QTRY_VERIFY(sideways->maximum() > 0);
+    QVERIFY(sideways->isVisible());
+    // Keys keep the byte they reach in view.
+    sideways->setValue(0);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    hex->setFocus();
+    QTRY_VERIFY(hex->hasFocus());
+    for (int byte = 0; byte < 15; ++byte)
+      QTest::keyClick(hex, Qt::Key_Right);
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 15));
+    QVERIFY(sideways->value() > 0);
+    // A click on the last character at the end of the row takes its byte.
+    sideways->setValue(sideways->maximum());
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const qreal character = metrics.horizontalAdvance(QLatin1Char('0'));
+    const QPoint last(int(hex->viewport()->width() -
+                          ::neverd::limits::gui_config::kHexViewMargin -
+                          character / 2),
+                      int(std::ceil(metrics.lineSpacing())) / 2);
+    QTest::mouseClick(hex->viewport(), Qt::LeftButton, Qt::NoModifier, last);
+    QVERIFY(hex->currentAddress());
+    QCOMPARE(*hex->currentAddress() % 16, Address(15));
   }
 
   void hexViewShownBeforeOpeningLoadsItsBytes() {

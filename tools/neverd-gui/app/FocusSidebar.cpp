@@ -50,6 +50,7 @@ FocusSidebar::FocusSidebar(QWidget &host, QWidget &area, QWidget &content,
   toggle_->setToolTip(title);
   toggle_->setFocusPolicy(Qt::TabFocus);
   toggle_->setCheckable(true);
+  toggle_->setProperty("disclosure", true);
   toggle_->setArrowType(Qt::RightArrow);
   connect(toggle_, &QToolButton::toggled, this, [this](bool open) {
     if (open)
