@@ -6,6 +6,7 @@
 #include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/debug/UserPrototype.h"
@@ -4296,7 +4297,11 @@ int main(void) {
 }
 
 TEST(HighCSourceCalls, PartialIntegerAtomicsRejectWidenedMemoryAccess) {
-  EXPECT_THROW(typeToC(NdType::makeInt(65)), std::invalid_argument);
+  EXPECT_EQ(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes)),
+            "_BitInt(" + std::to_string(limits::kMaxCSourceIntegerBytes * 8) +
+                ")");
+  EXPECT_THROW(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes + 1)),
+               std::invalid_argument);
   const auto Partial = NdType::makeInt(3, false);
   const auto Pointer = NdType::makePtr(NdType::makeInt(1, false));
   auto Load = HighExpr::makeLoad(parameter(0, Pointer), Partial);
