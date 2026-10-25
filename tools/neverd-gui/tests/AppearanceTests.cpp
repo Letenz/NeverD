@@ -33,15 +33,18 @@
 #include <QFontInfo>
 #include <QGlyphRun>
 #include <QInputDialog>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPixmap>
 #include <QScopeGuard>
 #include <QScreen>
 #include <QSettings>
 #include <QStyle>
+#include <QStyleOption>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -238,6 +241,93 @@ private slots:
         continue;
       QVERIFY(!action->icon().pixmap(16, 16).isNull());
       QVERIFY(action->isIconVisibleInMenu());
+    }
+  }
+
+  void menuColumnsStayTogether_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void menuColumnsStayTogether() {
+    QFETCH(bool, dark);
+    Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    Theme::instance().apply();
+    QMenu menu;
+    menu.ensurePolished();
+    QStyleOption option;
+    option.initFrom(&menu);
+    const int iconExtent =
+        menu.style()->pixelMetric(QStyle::PM_SmallIconSize, &option, &menu);
+    QPixmap marker(iconExtent, iconExtent);
+    marker.fill(Qt::magenta);
+    auto *withIcon = menu.addAction(QIcon(marker), "Menu entry");
+    withIcon->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
+    auto *plain = menu.addAction("Menu entry");
+    auto *checked = menu.addAction("Menu entry");
+    checked->setCheckable(true);
+    checked->setChecked(true);
+    auto *checkedIcon = menu.addAction(QIcon(marker), "Menu entry");
+    checkedIcon->setCheckable(true);
+    checkedIcon->setChecked(true);
+    auto *submenu = menu.addMenu(QIcon(marker), "Menu entry");
+    submenu->addAction("Child entry");
+    // Rendering columns does not need popup activation. Cocoa can dismiss
+    // an unfocused popup before an exposure wait, unrelated to its layout.
+    menu.resize(menu.sizeHint());
+    const auto capture = menu.grab().toImage();
+    const qreal dpr = capture.devicePixelRatio();
+    const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(capture.save(captures + "/menu-columns-" +
+                           QTest::currentDataTag() + ".png"));
+    }
+    // Measure painted columns: Qt adds its icon column after item padding,
+    // so checking the style-sheet literal alone misses a double reservation.
+    const auto bounds = [&](QAction *action, const QColor &color, int fromX) {
+      const QRect row = menu.actionGeometry(action);
+      QRect ink;
+      for (int y = qRound(row.top() * dpr);
+           y < qRound((row.bottom() + 1) * dpr); ++y)
+        for (int x = fromX; x < capture.width(); ++x) {
+          const auto pixel = capture.pixelColor(x, y);
+          if (qAbs(pixel.red() - color.red()) < 12 &&
+              qAbs(pixel.green() - color.green()) < 12 &&
+              qAbs(pixel.blue() - color.blue()) < 12)
+            ink |= QRect(x, y, 1, 1);
+        }
+      return ink;
+    };
+    const QRect iconInk = bounds(withIcon, Qt::magenta, 0);
+    QVERIFY(!iconInk.isEmpty());
+    const auto foreground = Theme::instance().chrome("MenuText");
+    const QRect labelInk = bounds(withIcon, foreground, iconInk.right() + 1);
+    QVERIFY(!labelInk.isEmpty());
+    const qreal gap = (labelInk.left() - iconInk.right() - 1) / dpr;
+    qInfo() << "Menu icon-to-label gap" << gap << "DPR" << dpr
+            << "icon physical bounds" << iconInk << "label bounds" << labelInk;
+    QVERIFY(gap >= 6 && gap <= 10);
+    for (auto *action : {plain, checked, checkedIcon, submenu->menuAction()}) {
+      const QRect label = bounds(action, foreground, iconInk.right() + 1);
+      QVERIFY(!label.isEmpty());
+      QCOMPARE(label.left(), labelInk.left());
+    }
+    // Checking an icon must not move it when the active border appears.
+    QCOMPARE(bounds(checkedIcon, Qt::magenta, 0).left(), iconInk.left());
+    if (!captures.isEmpty()) {
+      ActionRegistry registry;
+      QMenuBar bar;
+      registry.buildMenus(&bar, [](QMenu *, const QString &) {});
+      for (const auto *name : {"menuFile", "menuEdit", "menuOptions"}) {
+        auto *actual = bar.findChild<QMenu *>(QLatin1String(name));
+        QVERIFY(actual);
+        actual->ensurePolished();
+        actual->resize(actual->sizeHint());
+        QVERIFY(actual->grab().save(captures + "/" + QLatin1String(name) + "-" +
+                                    QTest::currentDataTag() + ".png"));
+      }
     }
   }
 
