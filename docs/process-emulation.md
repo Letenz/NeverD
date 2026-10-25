@@ -983,7 +983,7 @@ explicitly without choosing libc-specific wrapping or saturation. This subset
 follows [C11 section 7.22.1.2](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf);
 it does not add general `strtol` bases, end pointers or locale mutation.
 
-### Private anonymous page discard
+**Private anonymous page discard.**
 
 `madvise(MADV_DONTNEED)` shares the LinuxMemory implementation across raw LP64
 syscalls and Android Bionic direct, syscall and dynamic-import routes. It admits
