@@ -645,14 +645,14 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrTy, AddrTy, I16Ty, AddrTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mnemonic, "={di},={cx},0,1,{dx},r,~{memory},~{dirflag},~{cc}",
-          true);
+          FnTy, Mnemonic,
+          "={di},={cx},0,1,{dx},r,~{memory},~{dirflag},~{flags}", true);
       Call = Builder.CreateCall(IA, {RDI, RCX, RDX, DF}, "rep_ins");
     } else {
       auto *FnTy =
           llvm::FunctionType::get(RetTy, {AddrTy, AddrTy, I16Ty}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mnemonic, "={di},={cx},0,1,{dx},~{memory},~{dirflag},~{cc}",
+          FnTy, Mnemonic, "={di},={cx},0,1,{dx},~{memory},~{dirflag},~{flags}",
           true);
       Call = Builder.CreateCall(IA, {RDI, RCX, RDX}, "rep_ins");
     }
@@ -711,14 +711,14 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
       auto *FnTy = llvm::FunctionType::get(
           RetTy, {AddrTy, AddrTy, I16Ty, AddrTy}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mnemonic, "={si},={cx},0,1,{dx},r,~{memory},~{dirflag},~{cc}",
-          true);
+          FnTy, Mnemonic,
+          "={si},={cx},0,1,{dx},r,~{memory},~{dirflag},~{flags}", true);
       Call = Builder.CreateCall(IA, {RSI, RCX, RDX, DF}, "rep_outs");
     } else {
       auto *FnTy =
           llvm::FunctionType::get(RetTy, {AddrTy, AddrTy, I16Ty}, false);
       auto *IA = llvm::InlineAsm::get(
-          FnTy, Mnemonic, "={si},={cx},0,1,{dx},~{memory},~{dirflag},~{cc}",
+          FnTy, Mnemonic, "={si},={cx},0,1,{dx},~{memory},~{dirflag},~{flags}",
           true);
       Call = Builder.CreateCall(IA, {RSI, RCX, RDX}, "rep_outs");
     }
@@ -739,7 +739,7 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
         llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx), {AsmTy}, false);
     auto *IA = llvm::InlineAsm::get(
         FnTy, Wide ? "pushq $0\n\tpopfq" : "pushl $0\n\tpopfl",
-        "r,~{memory},~{cc},~{dirflag},~{flags}", /*hasSideEffects=*/true);
+        "r,~{memory},~{dirflag},~{flags}", /*hasSideEffects=*/true);
     markX86StackTemporary(*Builder.CreateCall(IA, {Flags}));
     return true;
   }

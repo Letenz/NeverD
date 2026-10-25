@@ -8348,26 +8348,16 @@ private slots:
         dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
     auto *action =
         dialog.findChild<QPushButton *>(QStringLiteral("quickStartAction"));
-    QVERIFY(recent && action && dialog.windowHandle());
+    QVERIFY(recent && action);
+    QVERIFY(dialog.findChild<TitleBar *>());
+    QVERIFY(!dialog.isSizeGripEnabled());
     const QSize initialSize = dialog.size();
     const QSize initialListSize = recent->size();
     const QSize actionSize = action->size();
 
-    // The owned window frame supplies the visible resize edge. Exercise its
-    // input route before checking content layout and persisted geometry.
-    const QPoint start =
-        dialog.mapToGlobal(dialog.rect().bottomRight() - QPoint(2, 2));
-    const auto send = [&](QEvent::Type type, QPoint at) {
-      QMouseEvent event(
-          type, dialog.mapFromGlobal(at), at,
-          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
-          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
-          Qt::NoModifier);
-      QCoreApplication::sendEvent(dialog.windowHandle(), &event);
-    };
-    send(QEvent::MouseButtonPress, start);
-    send(QEvent::MouseMove, start + QPoint(24, 24));
-    send(QEvent::MouseButtonRelease, start + QPoint(24, 24));
+    // Native edge gestures are covered by the shared frame tests. Here the
+    // dialog's content and saved size must follow the resulting geometry.
+    dialog.resize(initialSize + QSize(24, 24));
     QTRY_VERIFY(dialog.width() > initialSize.width());
     QTRY_VERIFY(dialog.height() > initialSize.height());
     const QSize chosenSize = dialog.size();

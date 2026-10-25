@@ -625,7 +625,6 @@ QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
                  Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
   setAcceptDrops(true);
   setMinimumSize(::neverd::limits::gui_config::kQuickStartMinimumDialogSize);
-  setSizeGripEnabled(true);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);

@@ -78,10 +78,17 @@ constexpr char StyleSheetResource[] = ":/neverd/theme.qss";
 constexpr char ModePlaceholder[] = "Mode";
 constexpr char CodeFontPlaceholder[] = "CodeFont";
 
+QFont withWorkbenchMetrics(QFont font) {
+  // Horizontal grid fitting can give variable monospace fonts different
+  // advances for W and i. Keep fractional widths and vertical hinting.
+  font.setHintingPreference(QFont::PreferVerticalHinting);
+  return font;
+}
+
 void loadFonts() {
   static const bool loaded = [] {
     for (const auto *file :
-         {"NotoSans.ttf", "NotoSansMono.ttf", "NotoSansArabic.ttf",
+         {"NotoSans.ttf", "JetBrainsMonoNL-Regular.ttf", "NotoSansArabic.ttf",
           "NotoSansSymbols2.ttf", "NotoSansCJK.ttc"})
       if (QFontDatabase::addApplicationFont(QStringLiteral(":/neverd/fonts/") +
                                             QLatin1String(file)) < 0)
@@ -98,8 +105,16 @@ QStringList configureFontFallbacks() {
                    : language == QLatin1String("ko")    ? "Noto Sans CJK KR"
                    : language == QLatin1String("zh-TW") ? "Noto Sans CJK TC"
                                                         : "Noto Sans CJK SC";
-  const auto fallback = [](QChar::Script script, const char *family) {
-    const QStringList families{QLatin1String(family)};
+  // Punctuation and symbols can inherit the adjacent text's script. Keep
+  // their bundled fallbacks on every script, not just Common; otherwise an
+  // arrow after Cyrillic or Arabic can pick up a desktop font.
+  const QStringList symbols{QStringLiteral("Noto Sans Symbols 2"),
+                            QStringLiteral("JetBrains Mono NL"),
+                            QLatin1String(cjk)};
+  const auto fallback = [&](QChar::Script script, const char *family) {
+    QStringList families{QLatin1String(family)};
+    families.append(symbols);
+    families.removeDuplicates();
     // Qt clears the font cache even when the fallback list is unchanged.
     if (QFontDatabase::applicationFallbackFontFamilies(script) != families)
       QFontDatabase::setApplicationFallbackFontFamilies(script, families);
@@ -111,17 +126,15 @@ QStringList configureFontFallbacks() {
   fallback(QChar::Script_Arabic, "Noto Sans Arabic");
   fallback(QChar::Script_Cyrillic, "Noto Sans");
   fallback(QChar::Script_Greek, "Noto Sans");
-  const QStringList symbols{QStringLiteral("Noto Sans Symbols 2"),
-                            QLatin1String(cjk)};
   if (QFontDatabase::applicationFallbackFontFamilies(QChar::Script_Common) !=
       symbols)
     QFontDatabase::setApplicationFallbackFontFamilies(QChar::Script_Common,
                                                       symbols);
-  // Qt's CoreText shaping can use a font's own fallback list even when its
-  // application script fallback is registered. Keep both routes bundled.
+  // CoreText shaping can also use the font's own fallback list.
   return {QStringLiteral("Noto Sans"), QLatin1String(cjk),
           QStringLiteral("Noto Sans Arabic"),
-          QStringLiteral("Noto Sans Symbols 2")};
+          QStringLiteral("Noto Sans Symbols 2"),
+          QStringLiteral("JetBrains Mono NL")};
 }
 
 struct PaletteRole {
@@ -166,7 +179,7 @@ Theme::Theme() {
   if (const auto saved = settings.value(FontKey).toString(); !saved.isEmpty()) {
     QFont font;
     if (font.fromString(saved))
-      codeFont_ = font;
+      codeFont_ = withWorkbenchMetrics(font);
   }
   loadColors();
 }
@@ -189,16 +202,16 @@ void Theme::setMode(Mode mode) {
 
 QFont Theme::defaultCodeFont() {
   loadFonts();
-  QFont font(QStringLiteral("Noto Sans Mono"));
+  QFont font(QStringLiteral("JetBrains Mono NL"));
   font.setPointSize(::neverd::limits::gui_config::kThemeDefaultCodePointSize);
   font.setStyleHint(QFont::Monospace, QFont::PreferAntialias);
   font.setFixedPitch(true);
-  return font;
+  return withWorkbenchMetrics(font);
 }
 
 void Theme::setCodeFont(const QFont &font) {
   const bool family = font.family() != codeFont_.family();
-  codeFont_ = font;
+  codeFont_ = withWorkbenchMetrics(font);
   QSettings().setValue(FontKey, font.toString());
   // Text fields take the family, but not the zoomed size, from the style
   // sheet.
@@ -247,9 +260,9 @@ void Theme::apply() {
       !qobject_cast<WorkbenchStyle *>(style) &&
       !style->findChild<WorkbenchStyle *>(Qt::FindDirectChildrenOnly))
     application->setStyle(new WorkbenchStyle);
-  application->setFont(
+  application->setFont(withWorkbenchMetrics(
       QFont(configureFontFallbacks(),
-            ::neverd::limits::gui_config::kThemeDefaultUiPointSize));
+            ::neverd::limits::gui_config::kThemeDefaultUiPointSize)));
   QPalette palette;
   for (const auto &entry : PaletteRoles)
     palette.setColor(entry.role,

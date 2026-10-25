@@ -114,6 +114,17 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The old ordinary ABI-return approximation has been removed; strict lifting now refuses these forms. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation; legacy standalone placeholder intrinsics cannot become NOPs. |
+| EVEX compress stores and expand loads | LowIR has masked contiguous-memory semantics, but `EVEXCompressStore` and `EVEXExpandLoad` still stop at the LLVM backend guard. Native memory/fault behavior and both executable C routes remain to be completed. |
+| V4FMADDPS/SS, V4FNMADDPS/SS | The exact four-iteration floating-point contract exists in LowIR; `X86FourFMA` still has no LLVM lowering. Native source groups, rounding/flags and memory completion need qualification. |
+| VP4DPWSSD, VP4DPWSSDS | LowIR owns the four-source word dot product; the LLVM backend still rejects both IDs. Native register grouping, saturation and memory/mask behavior remain open. |
+| APX AADD/AAND/AOR/AXOR and CMPccXADD | LowIR/concrete atomic contracts exist, but LLVM rejects the five `Apx*` IDs. The existing LLVM RAO-INT/CMPCCXADD APIs must be checked for APX encoding, segment/address, synchronization and completion requirements before integration. |
+| VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
+
+This list includes backend guards as well as strict-lifter refusals. A decoded
+instruction and passing LowIR/concrete tests do not establish native LLVM or C
+support. The additional vector/atomic rows were found by inspecting explicit
+refusals in `lib/backend/llvm/emit/MedLLVMIntrinsic.cpp`; they were absent from
+the earlier strict-lifter census.
 
 The direct-store execution checks cover ordinary memory. Native instructions
 retain WC protocol, concurrent write completion and device transactions, but
@@ -1487,6 +1498,32 @@ transport AEX, VM exits or nonlocal machine continuations. The final LLVM
 release, production pin and LLVM submodule update remain pending.
 
 
+## LLVM assembly arithmetic-flag effects
+
+A native VERR counterexample exposed an independent lowering gap: LLVM's x86
+assembly constraint parser ignores `~{cc}`, so a comparison used before and
+after VERR could reuse VERR's ZF. Four equal-input cases returned -1 instead
+of 0. Replacing that constraint with `~{flags}` restores the original comparison
+and all four cases return 0. This is distinct from GNU C assembly's valid
+`"cc"` clobber and does not change AArch64's constraint vocabulary.
+
+The corrected shared contracts cover SGX supervisor/VMM completion, VMX status,
+system/descriptor checks, legacy REP paths, segment-limit and random-number
+results. LLVM-to-C recognizes the corrected exact contracts and rejects old
+windows with the ignored condition-code spelling. Native LLVM intrinsics keep
+their separate machine-instruction effects.
+
+`NeverDX86AsmFlagsTests` independently executes VERR/VERW/LAR/LSL register and
+memory probes across i386/x64 production objects, O0/O2 LLVM IR and emitted C,
+plus NeverC x64 source. Production objects use the normal Codegen profile;
+their independent driver runs at both levels. Each SDK profile runs 7,168 comparisons. Both
+profiles also compile 99 i386 and 95 x64 owned flag-writing forms across three
+object formats. An external machine-IR audit checks 420 instruction boundaries
+across both profiles, including the native execution probes; each declares
+EFLAGS. Privileged forms are compilation/effect coverage, not hardware-success
+qualification. These checks do not close the remaining state/continuation gaps
+or authorize an intermediate LLVM release.
+
 ## NeverD bounded SGX/SMX state integration
 
 NeverD now admits ENCLU leaves 0, 1 and 5..11, and GETSEC leaves 0 and 6..8,
@@ -1537,3 +1574,19 @@ completion values are not a complete guest exception context and do not
 implement AEX, VM exits, enclave entry/exit/resume, measured-environment
 transitions or other machine continuations. Release and production pinning
 remain deferred until the remaining instruction work is complete.
+
+## Unsigned immediate port transport
+
+The LLVM-to-C scalar-system recognizer now renders a validated 8-bit port
+immediate from its unsigned LLVM constant. Previously, the signed spelling
+of byte 0x80 could widen directly to the 16-bit value 0xff80. DX operands
+retain all 16 bits. The correction applies to both native-builtin and MSVC
+selection and the shared assembly fallback expression.
+
+`NeverDX86PortSourceTests` covers all 256 immediate ports and eight DX boundary
+values across the six byte/word/dword IN/OUT forms. Two SDK configurations
+each pass 20 compiled observer programs at O0/O2 with Clang, GCC and NeverC,
+for 63,360 controlled operand comparisons. The four exported observer sources
+are identical between SDKs. Restoring the signed-widening expression makes
+all four observers fail. These are C operand-transport checks; they do not
+execute privileged port I/O.
