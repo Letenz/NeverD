@@ -2464,13 +2464,22 @@ TEST(LLVMCIntrinsicSemantics, CPUQueriesRejectChangedAssemblyContracts) {
       llvm::SmallVector<llvm::Type *, 4> Fields(
           Mutation == 0 ? Words - 1 : Words,
           Mutation == 1 ? B.getInt64Ty() : B.getInt32Ty());
-      auto *Result = llvm::StructType::get(C, Fields, Mutation == 2);
+      llvm::Type *Result = llvm::StructType::get(C, Fields, Mutation == 2);
+      if (Mutation == 0 && XCR)
+        Result = B.getInt32Ty();
       llvm::SmallVector<llvm::Type *, 2> Inputs(
           XCR ? 1 : 2, Mutation == 3 ? B.getInt64Ty() : B.getInt32Ty());
       const std::string Mnemonic = XCR ? "xgetbv" : "cpuid";
       std::string Constraints =
           XCR ? "={eax},={edx},{ecx},~{memory}"
               : "={eax},={ebx},={ecx},={edx},{eax},{ecx},~{memory}";
+      // The shortened register tuple is invalid for the CPU query, but must
+      // remain valid LLVM assembly so construction reaches our recognizer.
+      // Newer LLVM checks output-count/type consistency in InlineAsm::get;
+      // a single remaining output also requires a scalar result above.
+      if (Mutation == 0)
+        Constraints = XCR ? "={eax},{ecx},~{memory}"
+                          : "={eax},={ebx},={ecx},{eax},{ecx},~{memory}";
       if (Mutation == 4)
         Constraints += ",~{cc}";
       auto *IA = llvm::InlineAsm::get(
