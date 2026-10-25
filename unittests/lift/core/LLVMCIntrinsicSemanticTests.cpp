@@ -1841,8 +1841,8 @@ TEST(LLVMCIntrinsicSemantics, FloatToIntegerPreservesSignedResultBits) {
               SignValue +
               " / 2};\n"
               "const bits signed_bits[] = {sign, ~(bits)0, 0, 0, 0, " +
-              (Bits == 1 ? "0" : "1") +
-              ", sign >> 1};\n"
+              (Bits == 1 ? "0" : "1") + ", " + (Bits == 1 ? "0" : "sign >> 1") +
+              "};\n"
               "const " +
               FloatType + " unsigned_values[] = {-0.75, 0, 0.75, 1.75, " +
               SignValue +
