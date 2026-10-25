@@ -366,6 +366,7 @@ private:
   BionicResult getAPILevel(const NativeCallEvent &Call);
   BionicResult queryConfiguration(const NativeCallEvent &Call);
   BionicResult queryAuxiliaryVector(const NativeCallEvent &Call);
+  BionicResult queryEnvironment(const NativeCallEvent &Call);
   BionicResult getTime(const NativeCallEvent &Call);
   BionicResult calendarTime(const NativeCallEvent &Call);
   BionicResult getProperty(const NativeCallEvent &Call);

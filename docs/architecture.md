@@ -8218,6 +8218,15 @@ the scheduler records a per-thread continuation at the import's post-trap PC
 and current signal-frame depth. After `rt_sigreturn`, Bionic converts the
 restored raw result, including guest edits, to errno/-1. A guest PC redirect
 bypasses that adapter without fabricating a returned native-call event.
+`AndroidEnvironment` owns Bionic lookup over an explicitly supplied guest
+environment vector. It reads live guest storage through the existing bounded
+memory helpers and returns borrowed value pointers. Imported and named calls,
+constructors and threads use that same owner; no host string map, cached
+environment copy or additional process state is maintained. The vector's
+presence is a public input fact, while pointer validity is checked only when
+the API needs to read it. Linux ELF startup still owns its independent initial
+stack construction; there is no kernel getenv service.
+
 `AndroidAuxv` owns admission and lookup of the native workload's explicit,
 complete auxiliary vector. Bionic alone applies `getauxval`'s full-width
 lookup and thread-local errno behavior; constructors and dynamic imports use
