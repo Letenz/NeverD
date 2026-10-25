@@ -4522,4 +4522,32 @@ TEST(CallExitRegisters, RegisterQueryDoesNotRewriteMachineCalls) {
         Calls += Op.Opcode == NdOp::CALL;
   EXPECT_EQ(Calls, 1u);
 }
+
+TEST(Win64CallContract, RegisterQueryWindowsSourceCompilesWithItsHeaders) {
+  auto Image = registerQueryImage();
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Text};
+    Options.LiftMode = LLVM;
+    Options.SourceProjection = true;
+    auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    CEmitterOptions COptions;
+    COptions.TheArch = Image.Arch;
+    COptions.Format = Image.Format;
+    COptions.Image = &Image;
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    if (LLVM) {
+      ASSERT_TRUE(Result.LlvmModule);
+      ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+    } else
+      ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+    source_call_execution_test::checkSyntax(
+        Source, {"--target=x86_64-pc-windows-msvc", "-ffreestanding"});
+  }
+}
 } // namespace
