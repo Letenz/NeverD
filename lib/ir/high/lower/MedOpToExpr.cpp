@@ -164,8 +164,15 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None)
       return CurMed ? lowerX86RegistrationRoot(*CurMed, Op)
                     : HighExpr::makeUndef(Op.Output.Size);
-    if (Op.NumInputs >= 1)
-      return medvarToExpr(Op.Inputs[0]);
+    if (Op.NumInputs >= 1) {
+      auto Value = medvarToExpr(Op.Inputs[0]);
+      // COPY writes only the destination's bytes. Keep its truncation in
+      // the expression before inlining or copy propagation removes the
+      // assignment (for example, KMOVW from a 32-bit general register).
+      if (Op.Output.Size && Op.Output.Size < Op.Inputs[0].Size)
+        return sourceBitSlice(Value, 0, Op.Output.Size);
+      return Value;
+    }
     break;
 
   case NdOp::INT_ADD:
