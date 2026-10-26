@@ -3046,6 +3046,120 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
   }
 }
 
+TEST(COFFExceptionIR, LLVMCSharedHandlerKeepsNestedUnwindOnlyCleanup) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("shared-seh-nested-cleanup", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::IRBuilder<> B(Context);
+  auto Declare = [&](llvm::StringRef Name, llvm::Type *Return,
+                     llvm::ArrayRef<llvm::Type *> Args = {}) {
+    return llvm::Function::Create(llvm::FunctionType::get(Return, Args, false),
+                                  llvm::GlobalValue::ExternalLinkage, Name,
+                                  Module);
+  };
+  auto *F = Declare("nested_cleanup", B.getInt32Ty(), {B.getInt32Ty()});
+  F->getArg(0)->setName("take_inner");
+  F->setPersonalityFn(Declare("__C_specific_handler", B.getInt32Ty()));
+  auto Block = [&](llvm::StringRef Name) {
+    return llvm::BasicBlock::Create(Context, Name, F);
+  };
+  auto *Entry = Block("entry");
+  auto *Choice = Block("choice");
+  auto *BeginInner = Block("begin_inner");
+  auto *Body = Block("body");
+  auto *EndInner = Block("end_inner");
+  auto *AfterInner = Block("after_inner");
+  auto *EndOuter = Block("end_outer");
+  auto *EarlyEnd = Block("early_end");
+  auto *Tail = Block("tail");
+  auto *Dispatch = Block("dispatch");
+  auto *PadBlock = Block("pad");
+  auto *Handler = Block("handler");
+  auto *CleanupBlock = Block("cleanup");
+  auto *CleanupEnd = Block("cleanup_end");
+  auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_begin);
+  auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_end);
+  auto *Step = Declare("protected_step", B.getVoidTy());
+  auto *CleanupCall = Declare("cleanup_step", B.getVoidTy(), {B.getInt32Ty()});
+  B.SetInsertPoint(Entry);
+  B.CreateInvoke(TryBegin, Choice, Dispatch);
+  B.SetInsertPoint(Choice);
+  B.CreateCondBr(B.CreateICmpNE(F->getArg(0), B.getInt32(0)), BeginInner,
+                 EarlyEnd);
+  B.SetInsertPoint(BeginInner);
+  B.CreateInvoke(TryBegin, Body, CleanupBlock);
+  B.SetInsertPoint(Body);
+  B.CreateInvoke(Step, EndInner, CleanupBlock);
+  B.SetInsertPoint(EndInner);
+  B.CreateInvoke(TryEnd, AfterInner, CleanupBlock);
+  B.SetInsertPoint(AfterInner);
+  B.CreateInvoke(CleanupCall, EndOuter, Dispatch, {B.getInt32(0)});
+  B.SetInsertPoint(EndOuter);
+  B.CreateInvoke(TryEnd, Tail, Dispatch);
+  B.SetInsertPoint(EarlyEnd);
+  B.CreateInvoke(TryEnd, Tail, Dispatch);
+  B.SetInsertPoint(Tail);
+  auto *Value = B.CreatePHI(B.getInt32Ty(), 3, "result");
+  Value->addIncoming(B.getInt32(7), EndOuter);
+  Value->addIncoming(B.getInt32(11), EarlyEnd);
+  Value->addIncoming(B.getInt32(99), Handler);
+  B.CreateRet(Value);
+  B.SetInsertPoint(Dispatch);
+  auto *Switch =
+      B.CreateCatchSwitch(llvm::ConstantTokenNone::get(Context), nullptr, 1);
+  Switch->addHandler(PadBlock);
+  B.SetInsertPoint(PadBlock);
+  auto *Pad =
+      B.CreateCatchPad(Switch, {llvm::ConstantPointerNull::get(B.getPtrTy())});
+  B.CreateCatchRet(Pad, Handler);
+  B.SetInsertPoint(Handler);
+  B.CreateBr(Tail);
+  B.SetInsertPoint(CleanupBlock);
+  auto *Cleanup = B.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+  B.CreateInvoke(CleanupCall, CleanupEnd, Dispatch, {B.getInt32(1)});
+  B.SetInsertPoint(CleanupEnd);
+  B.CreateCleanupRet(Cleanup, Dispatch);
+  ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+  const std::string Source = emitLLVMC(Module);
+  EXPECT_NE(Source.find("if (!neverd_seh_normal)"), std::string::npos)
+      << Source;
+  const std::string Prelude =
+      "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
+  if (hasHostFixtureCompiler())
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      const auto Compiled = runCCompiler(
+          Prelude + Source,
+          {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
+           "-Xclang", "-fasync-exceptions", "-c", Level});
+      EXPECT_EQ(Compiled.ExitCode, 0) << Compiled.Error << "\n" << Source;
+    }
+  // A host check of normal paths: cleanup's normal counterpart runs exactly
+  // once and the unwind-only body never substitutes for it. Native Windows
+  // object generation above checks the actual nested SEH and every goto.
+  const std::string Harness = R"(
+#define __try if (1)
+#define __except(filter) else
+#define __finally if (1)
+static unsigned normal_calls, unwind_calls, steps;
+void protected_step(void) { ++steps; }
+void cleanup_step(uint32_t abnormal) {
+  if (abnormal) ++unwind_calls; else ++normal_calls;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(Prelude + Harness + Source + R"(
+int main(void) {
+  if (nested_cleanup(0) != 11 || normal_calls || unwind_calls || steps) return 1;
+  if (nested_cleanup(1) != 7 || normal_calls != 1 || unwind_calls || steps != 1)
+    return 2;
+  return 0;
+}
+)",
+                                              {Level});
+}
+
 TEST(COFFExceptionIR, LLVMCFinallyAndFilterShareTheParentLocalAddress) {
   REQUIRE_HOST_FIXTURE_COMPILER();
   for (bool FilterUsesFrame : {false, true}) {
