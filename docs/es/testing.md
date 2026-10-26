@@ -2290,3 +2290,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `NeverDSourceCallABITests` comprueba bancos mixtos, anchuras, agotamiento de registros, desplazamientos de pila y rechazo variádico en Windows ARM64. `NeverDWorkerCallSiteTypes` recupera una llamada entero/double/puntero de un PE ARM64 y ejecuta ambas salidas C con una función C independiente en O0/O2; el rechazo conserva la instantánea del análisis. Esto no valida ejecución nativa en Windows ARM64.
 
 La regresión del worker también cubre dieciocho parámetros mixtos de registro/pila, un retorno flotante y el rechazo de un argumento de pila escrito solo a la mitad.
+
+`LLVMAddressModelOverlayTests` comprueba por separado las correcciones de especificadores AArch64, GOT de i386 y GOTPCREL de Mach-O. Cubre las dos formas conocidas de protección AArch64 y las doce combinaciones de correcciones parciales, conserva la entrada LLVM y la copia en caché, aísla la configuración Git heredada y rechaza una protección desconocida. Estas comprobaciones de configuración no sustituyen las pruebas nativas de reubicación.
