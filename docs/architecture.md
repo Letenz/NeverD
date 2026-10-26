@@ -10618,9 +10618,14 @@ lifter throws `UnliftedInstruction`. The exception records the instruction
 address, mnemonic, and operand string; unsupported semantics must therefore
 fail visibly instead of being omitted or guessed.
 
-The internal non-strict path emits `NdOp::NOP`, but it is a diagnostic escape
-hatch, not an acceptable implementation of an instruction. Contributor and CI
-tests should keep strict mode enabled. When a strict failure appears:
+x86 enforces that refusal in both strict and permissive modes. Missing decoded
+detail, unmapped registers and handled forms that emit no semantic operations
+also throw. A failed instruction retracts its
+entire appended LowIR transaction, preserving previously lifted instructions;
+it publishes no successful undefined-output or preserved-state certificate.
+Architectural NOP encodings still lift normally. Permissive mode continues to
+withhold complete semantic-audit certificates for otherwise supported lifts.
+Contributor and CI tests should keep strict mode enabled. When a failure appears:
 
 1. Reproduce it with the smallest architecture-specific fixture.
 2. Add the missing semantics in `lib/lift/<ISA>`.

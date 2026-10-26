@@ -21,6 +21,13 @@ software emulation are separate capabilities. A switch label does not prove
 any of them. Valid instruction forms can also differ in operand width,
 encoding, mask, rounding, segment or addressing mode.
 
+x86 strict and permissive lifting both reject unsupported forms, missing
+decoded detail, unmapped registers and empty semantic results. Refusal rolls
+back the current
+instruction's partial LowIR and clears its semantic evidence; it cannot append
+a synthetic NOP. The caller's earlier LowIR remains intact. Disabling strict
+mode still disables complete semantic-audit certification for supported forms.
+
 The audit baseline has 1,652 instruction IDs; the MSRLIST decoder follow-up
 appended two; the bounded-system follow-up adds eight more, bringing the
 current census to 1,662. Twenty IDs without literal

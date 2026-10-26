@@ -1016,6 +1016,15 @@ shifts; PDEP/PEXT retain native BMI2 and execute only on hosts advertising
 BMI2. The test reports any compile-only profiles explicitly. It requires no
 APX hardware and does not qualify native memory faults or opaque state.
 
+`NeverDX86InstructionCoverageTests` checks that x86 strict and permissive
+policies both refuse unknown instruction IDs, unmapped register results,
+malformed operand counts that emit no operations and unqualified compact-memory
+stack references. Full, lightweight and lift decode
+routes must retain preceding LowIR and retract the failed instruction's partial
+address/load effects. Missing detail fails explicitly; real architectural NOPs
+remain supported. Pair it with `NeverDX86UndefinedEffectsTests` to check stale
+undefined-output and preserved-state certificates after refusal.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 75 independent
 encoding fixtures cover every bank operation, register/immediate and extended
