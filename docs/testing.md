@@ -1405,6 +1405,18 @@ missing clock IDs, zero, the exact signed-nanosecond maximum and one-nanosecond
 overflow, plus refusal of unmodeled members. Run full Dalvik, Android JNI,
 callback/thread and Linux clock tests after changing these shared services;
 these checks do not execute a device JVM or infer suspended-device time.
+`AndroidHashMapTest.*` checks independent state, UTF-16 value keys, equal-hash
+Strings, null keys/values, reference cycles, replacement/removal/clear, DEX
+construction/interface dispatch and library reads of the same objects. It also
+checks explicit refusals and unchanged contents on work/heap exhaustion.
+`AndroidPropertyTest.*` checks API 28 integer conversion, ART key encoding,
+null-key exceptions, shared DEX/library callbacks and terminal service/resource
+stops. `AndroidJNI.HashMap*` and `AndroidJNI.SystemProperty*` run independent
+AArch64 JNI callers using ordinary, va_list and jvalue-array forms, retain map
+references across detach, compare native properties and reject mutated/unmapped
+property records. Run full Dalvik, Android JNI/thread/callback and Android
+property suites after changing these owners. Tests remain offline and do not
+claim full HashMap/ART, property callback or ServiceManager initialization.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction

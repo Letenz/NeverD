@@ -12256,6 +12256,20 @@ second version cache. Nonempty property strings and interned defaults retain
 their distinct allocation rules. This projection does not execute the enclosing
 framework initializer or infer application state.
 
+`SystemProperties.getInt(String, int)` is a read-only API 28 projection over
+the existing Bionic property record owner. JNI and DEX use the same Runtime
+service; reads validate the guest record before conversion, so changed or
+unmapped property pages cannot fall back to the original input dictionary.
+Missing, empty, invalid and out-of-int32-range values use the caller's default;
+an absent Runtime service remains unsupported. `AndroidProperties.cpp` owns
+the integer parser shared with Build.VERSION. Heap's ART JNI encoder preserves
+NUL and surrogate key units for both JNI string APIs and property lookups.
+This projection does not expose property writes, callback lists, tracking or
+framework initializer bodies. Its contract follows API 28
+[SystemProperties](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/SystemProperties.java),
+the [native getter](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_SystemProperties.cpp)
+and [integer conversion](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
+
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
 Its bounded identities are separate from native reference handles and guest
 addresses. JNI borrows, object arrays and DEX array instructions all refer to the
@@ -12302,6 +12316,21 @@ arrays or capacity, and other overloads remain unsupported.
 The contract follows the public API 28
 [StringBuilder](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/StringBuilder.java)
 and its abstract base; no implementation bodies are incorporated.
+
+The same Library/Heap owners provide HashMap's default constructor, `size`,
+`isEmpty`, `get`, `put`, `containsKey`, `remove` and `clear`, including calls
+through the Map interface. Each constructed object retains independent entries
+with exact UTF-16 String or null keys and arbitrary reference/null values.
+Equal Strings replace a value without replacing its key; HashMap hash collisions
+do not merge different Strings. The bounded projection uses a linear entry
+search, charges traversal/copy work and retained storage before mutation, and
+does not expose bucket layout or iteration order. Raw AllocObject storage,
+subclass behavior and custom key hashCode/equals execution are unsupported;
+Map equality, hashing and rendering do not fall back to Object identity.
+The public contract follows API 28
+[HashMap](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/HashMap.java).
+These prerequisites do not establish ServiceManager's process cache or Binder
+state; its unmodeled-initializer guard remains in force.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
