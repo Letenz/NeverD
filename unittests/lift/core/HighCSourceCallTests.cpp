@@ -4279,18 +4279,22 @@ TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)((uintptr_t)value);"),
-            std::string::npos)
-      << Source;
-  compileAndRun(Source + R"(
+  // Pointer inference may retain the pointer in the copied local. Its bits
+  // must pass through uintptr_t at the integer boundary, wherever the copy
+  // is converted; the temporary's declaration is not that contract.
+  EXPECT_NE(Source.find("(int64_t)(uintptr_t)"), std::string::npos) << Source;
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
 int main(void) {
-    int object = 0;
-    return (uintptr_t)pointer_temp_bits((uint8_t *)&object) ==
-                   (uintptr_t)&object
-               ? 0
-               : 1;
+    uint8_t objects[17];
+    if (pointer_temp_bits((uint8_t *)0) != 0) return 1;
+    for (unsigned i = 0; i <= sizeof(objects); ++i)
+        if ((uintptr_t)pointer_temp_bits(objects + i) !=
+                (uintptr_t)(objects + i)) return 2;
+    return 0;
 }
-)");
+)",
+                  {Optimization});
 }
 
 TEST(HighCSourceCalls, PartialIntegerCarriersPreserveWideValuesAndShiftBounds) {
