@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <map>
 #include <optional>
+#include <tuple>
 
 namespace neverd {
 
@@ -41,6 +42,33 @@ resolveMedCallTarget(const MedBlock &Block, size_t Before, const MedVar &Value,
 std::optional<MedCallTarget>
 resolvePreSSAMedCallTarget(const MedBlock &Block, const MedVar &Value,
                            Arch Architecture, size_t *WorkRemaining = nullptr);
+
+/// The same proof for successive queries of one block that only grows
+/// between them: each query versions just the operations appended since the
+/// previous one, instead of the whole prefix again. Every query must use the
+/// same work budget; exhausting it ends the later queries too. Observation
+/// indexes refer to the queried block, as for resolvePreSSAMedCallTarget.
+class PreSSAMedCallTargets {
+public:
+  explicit PreSSAMedCallTargets(Arch Architecture)
+      : Architecture(Architecture) {}
+
+  std::optional<MedCallTarget>
+  resolve(const MedBlock &Block, const MedVar &Value, size_t *WorkRemaining);
+
+private:
+  using Key = std::tuple<MedVar::VarKind, int, uint64_t, uint16_t>;
+
+  MedVar read(MedVar Value);
+  bool version(const MedOp &Original, size_t *WorkRemaining);
+
+  Arch Architecture;
+  std::map<Key, int> Versions;
+  int Next = 1;
+  /// The versioned copy of the block prefix seen so far.
+  MedBlock Proof;
+  bool Failed = false;
+};
 
 /// Adapt original machine operations to the same reaching-value proof before
 /// call summaries run. Keys are original block operation indexes. Neither

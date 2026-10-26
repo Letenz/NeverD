@@ -11,13 +11,17 @@
 // jumps to RAX with the caller's argument registers.  A C runtime import
 // with a fixed prototype reads exactly its parameters, whether the code
 // calls it through its import address slot (`call [__imp_free]`) or a thunk
-// that jumps there (`jmp [__imp_free]`).
+// that jumps there (`jmp [__imp_free]`); a WDK routine's prototype fixes each
+// of its operands.  A call returns one register value at most: a larger
+// record travels through caller-owned memory.
 //
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86/X86Regs.h"
+
+#include <vector>
 
 namespace neverd {
 
@@ -28,6 +32,23 @@ std::optional<size_t> wdkPrototypeArgCount(llvm::StringRef Name) {
           libc::windowsKernelPrototype(Name))
     return Proto->ArgCount;
   return std::nullopt;
+}
+
+/// It also authenticates each operand's width, the stack operands' too:
+/// counts alone lose those when recovery moves RSP between a private spill
+/// and the call's outgoing area.  It publishes arguments only, never a result
+/// type.
+std::optional<FixedIntegerCallArguments>
+wdkPrototypeIntegerArguments(llvm::StringRef Name) {
+  const libc::WindowsKernelPrototype *Proto =
+      libc::windowsKernelPrototype(Name);
+  if (!Proto)
+    return std::nullopt;
+  std::vector<TypeRef> Parameters;
+  for (unsigned I = 0; I < Proto->ArgCount; ++I)
+    Parameters.push_back(NdType::makeInt(Proto->ArgWidths[I], false));
+  return fixedIntegerCallArguments(Arch::X64, BinaryFormat::COFF,
+                                   NdType::makeInt(8, false), Parameters);
 }
 } // namespace
 
@@ -45,6 +66,8 @@ const CallArgumentConvention Win64CallArguments = {
     .ReservedOutgoingArea = true,
     .ParametersFromIncomingReads = true,
     .PrototypeArgCount = wdkPrototypeArgCount,
+    .PrototypeIntegerArguments = wdkPrototypeIntegerArguments,
+    .SingleRegisterReturns = true,
 };
 
 } // namespace neverd

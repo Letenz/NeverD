@@ -532,73 +532,87 @@ std::optional<MedCallTarget> resolveMedCallTarget(const MedBlock &Block,
   return std::nullopt;
 }
 
+MedVar PreSSAMedCallTargets::read(MedVar Value) {
+  if (!Value.isConst())
+    Value.SSAVer =
+        Versions[Key{Value.Kind, Value.Id, Value.RegOff, Value.Size}];
+  return Value;
+}
+
+bool PreSSAMedCallTargets::version(const MedOp &Original,
+                                   size_t *WorkRemaining) {
+  if (!consumeCallTargetWork(WorkRemaining))
+    return false;
+  MedOp Op = Original;
+  for (unsigned I = 0; I < Op.NumInputs; ++I)
+    Op.Inputs[I] = read(Op.Inputs[I]);
+  if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+      Op.Opcode == NdOp::INTRINSIC)
+    for (auto &[K, Version] : Versions) {
+      if (!consumeCallTargetWork(WorkRemaining))
+        return false;
+      if (std::get<0>(K) == MedVar::Reg &&
+          (Op.Opcode == NdOp::INTRINSIC ||
+           std::get<2>(K) != getTargetRegInfo(Architecture).StackPointer))
+        Version = Next++;
+    }
+  if (Op.Output.Size && !Op.Output.isConst()) {
+    // A narrow write also invalidates the old wider register value. Its
+    // missing definition becomes an opaque root, never the preceding bits.
+    if (Op.Output.Kind == MedVar::Reg) {
+      if (Op.Output.RegOff > UINT64_MAX - Op.Output.Size)
+        return false;
+      for (auto &[K, Version] : Versions) {
+        if (!consumeCallTargetWork(WorkRemaining))
+          return false;
+        if (std::get<0>(K) == MedVar::Reg &&
+            std::get<2>(K) < Op.Output.RegOff + Op.Output.Size &&
+            Op.Output.RegOff < std::get<2>(K) + std::get<3>(K))
+          Version = Next++;
+      }
+    }
+    Op.Output.SSAVer = Versions[Key{Op.Output.Kind, Op.Output.Id,
+                                    Op.Output.RegOff, Op.Output.Size}] = Next++;
+  }
+  for (auto &Auxiliary : Op.IntrinsicOutputs) {
+    if (!consumeCallTargetWork(WorkRemaining))
+      return false;
+    if (Auxiliary.Size && !Auxiliary.isConst())
+      Auxiliary.SSAVer = Versions[Key{Auxiliary.Kind, Auxiliary.Id,
+                                      Auxiliary.RegOff, Auxiliary.Size}] =
+          Next++;
+  }
+  Proof.Ops.push_back(std::move(Op));
+  return true;
+}
+
+std::optional<MedCallTarget>
+PreSSAMedCallTargets::resolve(const MedBlock &Block, const MedVar &Value,
+                              size_t *WorkRemaining) {
+  if (Failed || Architecture == Arch::Unknown ||
+      Block.Ops.size() > limits::kMaxCallSetupStackProofWork ||
+      Value.Size != getTargetRegInfo(Architecture).PointerSize)
+    return std::nullopt;
+  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!WorkRemaining)
+    WorkRemaining = &OwnWork;
+  // The versions of earlier operations do not depend on later ones, so the
+  // block's prefix is versioned once across queries.
+  while (Proof.Ops.size() < Block.Ops.size())
+    if (!version(Block.Ops[Proof.Ops.size()], WorkRemaining)) {
+      Failed = true;
+      return std::nullopt;
+    }
+  return resolveMedCallTarget(Proof, Proof.Ops.size(), read(Value),
+                              WorkRemaining);
+}
+
 std::optional<MedCallTarget> resolvePreSSAMedCallTarget(const MedBlock &Block,
                                                         const MedVar &Value,
                                                         Arch Architecture,
                                                         size_t *WorkRemaining) {
-  if (Architecture == Arch::Unknown ||
-      Block.Ops.size() > limits::kMaxCallSetupStackProofWork ||
-      Value.Size != getTargetRegInfo(Architecture).PointerSize)
-    return std::nullopt;
-  using Key = std::tuple<MedVar::VarKind, int, uint64_t, uint16_t>;
-  const auto KeyOf = [](const MedVar &V) {
-    return Key{V.Kind, V.Id, V.RegOff, V.Size};
-  };
-  std::map<Key, int> Versions;
-  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
-  if (!WorkRemaining)
-    WorkRemaining = &OwnWork;
-  int Next = 1;
-  const auto Read = [&](MedVar V) {
-    if (!V.isConst())
-      V.SSAVer = Versions[KeyOf(V)];
-    return V;
-  };
-  MedBlock Proof;
-  Proof.Ops.reserve(Block.Ops.size());
-  for (const auto &Original : Block.Ops) {
-    if (!consumeCallTargetWork(WorkRemaining))
-      return std::nullopt;
-    MedOp Op = Original;
-    for (unsigned I = 0; I < Op.NumInputs; ++I)
-      Op.Inputs[I] = Read(Op.Inputs[I]);
-    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-        Op.Opcode == NdOp::INTRINSIC)
-      for (auto &[K, Version] : Versions) {
-        if (!consumeCallTargetWork(WorkRemaining))
-          return std::nullopt;
-        if (std::get<0>(K) == MedVar::Reg &&
-            (Op.Opcode == NdOp::INTRINSIC ||
-             std::get<2>(K) != getTargetRegInfo(Architecture).StackPointer))
-          Version = Next++;
-      }
-    if (Op.Output.Size && !Op.Output.isConst()) {
-      // A narrow write also invalidates the old wider register value. Its
-      // missing definition becomes an opaque root, never the preceding bits.
-      if (Op.Output.Kind == MedVar::Reg) {
-        if (Op.Output.RegOff > UINT64_MAX - Op.Output.Size)
-          return std::nullopt;
-        for (auto &[K, Version] : Versions) {
-          if (!consumeCallTargetWork(WorkRemaining))
-            return std::nullopt;
-          if (std::get<0>(K) == MedVar::Reg &&
-              std::get<2>(K) < Op.Output.RegOff + Op.Output.Size &&
-              Op.Output.RegOff < std::get<2>(K) + std::get<3>(K))
-            Version = Next++;
-        }
-      }
-      Op.Output.SSAVer = Versions[KeyOf(Op.Output)] = Next++;
-    }
-    for (auto &Auxiliary : Op.IntrinsicOutputs) {
-      if (!consumeCallTargetWork(WorkRemaining))
-        return std::nullopt;
-      if (Auxiliary.Size && !Auxiliary.isConst())
-        Auxiliary.SSAVer = Versions[KeyOf(Auxiliary)] = Next++;
-    }
-    Proof.Ops.push_back(std::move(Op));
-  }
-  return resolveMedCallTarget(Proof, Proof.Ops.size(), Read(Value),
-                              WorkRemaining);
+  return PreSSAMedCallTargets(Architecture)
+      .resolve(Block, Value, WorkRemaining);
 }
 
 std::map<size_t, MedCallTarget>
@@ -635,6 +649,7 @@ resolveLowBlockCallTargets(const LowBlock &Block, Arch Architecture,
     return M;
   };
   MedBlock Prefix;
+  PreSSAMedCallTargets Targets(Architecture);
   for (size_t I = 0; I < Block.Ops.size(); ++I) {
     if (!consumeCallTargetWork(WorkRemaining))
       return {};
@@ -643,8 +658,8 @@ resolveLowBlockCallTargets(const LowBlock &Block, Arch Architecture,
       return {};
     if (O.Opcode == NdOp::INDIR_CALL && O.NumInputs == 1 &&
         !O.Inputs[0].isConst())
-      if (const auto Target = resolvePreSSAMedCallTarget(
-              Prefix, Convert(O.Inputs[0]), Architecture, WorkRemaining))
+      if (const auto Target =
+              Targets.resolve(Prefix, Convert(O.Inputs[0]), WorkRemaining))
         Result.emplace(I, *Target);
     MedOp M;
     M.Opcode = O.Opcode;
