@@ -8284,6 +8284,14 @@ Both diagnostic options share the stopped-backing reader, bounded errors and
 one per-range output reservation. They do not relax entry mapping requirements;
 ordinary final reads and the failure-only option retain their existing scope.
 
+The shared checked execution owner reuses successful run-entry mapping
+validation only for the same live address space and mapping generation.
+Its architecture and device-admission policy are fixed by the backend's
+execution contract. The startup instruction lease protects both validation
+and reuse; external mapping changes require another check, and a failed
+check never records a successful epoch. Instruction access checks and CPU
+state admission remain independent of this reuse.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage and uses the architecture's shared normalization directly after all

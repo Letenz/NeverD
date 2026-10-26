@@ -2527,6 +2527,17 @@ restoration. Run these with ARM64 memory/atomic, FP/state, cache and cancellatio
 regressions when changing Unicorn single-step translation reuse. Keep timing
 measurements separate from exact execution-state comparisons.
 
+Run-entry mapping validation also uses these lifecycle tests.
+`ChecksExternalMappingsAtAttachmentAndBeforeExecution` warms execution before
+an external invalid mapping, rejects repeated attempts without CPU effects,
+and recovers after removal. `RebindingUsesSpaceIdentityEvenWithMatchingGenerations`
+checks distinct spaces with equal epochs.
+`ExternalDeviceMappingsRetainEntryAdmissionAfterWarmRuns` covers external
+device mappings after warm user/supervisor entries, rejection before any
+observation or device callback, repeated rejection and recovery after removal.
+Measure throughput separately; no timing threshold substitutes for these
+state and admission checks.
+
 Tests are disabled unless `BUILD_TESTING` is enabled. A Release build is the
 normal choice for the full suite; Debug preserves assertions and stepping but
 is intentionally unoptimized and is not representative for decode benchmarks.
