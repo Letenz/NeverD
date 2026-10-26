@@ -112,13 +112,20 @@ The helper copies the GUI, worker, engine, Qt plugins and recursive non-system
 dependencies. It rewrites library IDs and dependencies, supplies
 bundle-relative search paths, rejects unresolved references and escaping or
 dangling symlinks, and derives `LSMinimumSystemVersion` from every bundled
-Mach-O image. `Info.plist` declares the `neverd` URL scheme
+Mach-O image. Engine frameworks' dependencies are collected before
+`macdeployqt` rewrites their original paths, including Python extension
+libraries such as Homebrew's keg-only SQLite. The final repair pass also covers
+the plugins deployed by Qt. `Info.plist` declares the `neverd` URL scheme
 (`CFBundleURLTypes`), so that LaunchServices hands a clicked `neverd://` link
 to the workbench; on Linux and Windows, `neverd-gui --register-link-handler`
 registers it for the user instead. `Contents/Resources/dependency-audit.json` records that audit;
 hashes are taken before signing. The app icon comes from the repository's SVG
 logo. Every Mach-O image is ad-hoc signed before the complete bundle is signed
 and verified.
+
+Build a new bundle in a staging directory. Move it to the user-facing path only
+after the helper completes and a native launch succeeds; a failed dependency
+repair leaves an unfinished bundle whose Mach-O signatures are invalid.
 
 For a smaller portable GUI, configure the engine with
 `NEVERD_ENABLE_PYTHON_PLUGINS=OFF`; the GUI, worker and MCP server then do not

@@ -17,26 +17,32 @@ BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   const uint64_t Count = A[2];
   llvm::StringRef Name(Call.Name);
+  const bool Complete = Name == symbol::Strcpy || Name == symbol::StrcpyChk;
   if ((Name == symbol::StrncpyChk || Name == symbol::StrncpyChk2 ||
        Name == symbol::StrlcpyChk) &&
       Count > A[3])
     return failure(diagnostic::FortifyWritePrefix + Name);
-  if (Name == symbol::Strlcpy || Name == symbol::StrlcpyChk) {
+  if (Complete || Name == symbol::Strlcpy || Name == symbol::StrlcpyChk) {
     // strlcpy returns the complete source length even when no bytes fit.
-    // Stage the terminated source before publishing a truncated destination.
+    // Stage the terminated source before publishing either copy's effect.
     auto Text = string(A[1]);
     if (!Text)
       return Text.takeError();
     const uint64_t Length = Text->size();
-    if (!Count)
+    // API 28 ARM64 checks strlen(src) + 1 before accessing the destination.
+    // Source faults and scan budgets therefore precede fortify refusal.
+    if (Name == symbol::StrcpyChk && Length >= Count)
+      return failure(diagnostic::FortifyWritePrefix + Name);
+    if (!Complete && !Count)
       return value(Length);
-    const uint64_t Copied = std::min(Length, Count - 1);
+    const uint64_t Copied = Complete ? Length : std::min(Length, Count - 1);
     const uint64_t Written = Copied + 1;
     // Only the actual write extent is required; capacity does not imply
     // padding or reads beyond the source terminator. All source bytes read,
     // including that terminator, participate in undefined-overlap rejection.
     if (A[0] <= A[1] ? A[1] - A[0] < Written : A[0] - A[1] < Length + 1)
-      return failure(diagnostic::SizedStringCopyOverlap);
+      return failure(Complete ? diagnostic::TerminatedStringCopyOverlap
+                              : diagnostic::SizedStringCopyOverlap);
     Text->resize(Copied);
     Text->push_back('\0');
     if (auto E = access(A[0], Written, Write))
@@ -46,7 +52,7 @@ BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
             llvm::ArrayRef(reinterpret_cast<const uint8_t *>(Text->data()),
                            Text->size())))
       return std::move(E);
-    return value(Length);
+    return value(Complete ? A[0] : Length);
   }
   if (!Count)
     return value(A[0]);

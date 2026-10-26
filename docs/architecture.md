@@ -8205,6 +8205,12 @@ termination and atomic refusal. `__strlcpy_chk` checks the supplied capacity
 against the destination object size before either pointer is accessed, then
 reuses the same copy and full-source-length result. A zero capacity still scans
 the source; a short source does not relax the fortify capacity check.
+`strcpy` and `__strcpy_chk` share this staging and access owner, copy through
+NUL without padding and return the destination. API 28 ARM64 uses the C
+`__strcpy_chk` implementation: it scans the source before comparing its
+NUL-inclusive length to the destination object size. Scan faults and budgets
+precede that fortify check; the destination and overlap checks follow it.
+Undefined overlap and unsupported abort paths refuse without partial writes.
 `__read_chk` owns only the Bionic extent checks;
 descriptor state and suspended reads stay in the shared Linux read owner.
 Pathname-only `stat` and `lstat` aliases adapt arguments into the existing

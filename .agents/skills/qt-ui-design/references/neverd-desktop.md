@@ -91,6 +91,16 @@ judge each change in the real window.
   `;, /` menu hint. Show both bindings in tooltips, shortcut help and the
   command palette, and check aliases for conflicts. Let Qt render the primary
   menu shortcut; do not append aliases to the action's label.
+- Keep code-window generation separate from Tab navigation. Local IDA 9.4
+  verification showed that F5 from disassembly creates another pseudocode
+  window, even for the same function, while F5 inside pseudocode refreshes
+  that window. Tab reuses a code window. In NeverD, preserve the last code
+  pane for Tab round trips; use the same generate/refresh rule for MedIR and
+  the other representations. Additional documents become tabs and may float
+  independently. Resolve the function from the originating code pane when
+  it differs from the background disassembly. Check pending jumps, independent
+  contents, language choices, detached panes, saved layouts and project close
+  across the shared Qt controller, without platform-specific key branches.
 - Open the command palette where it was asked for. A click on the title bar's
   command center drops it from the bar's bottom edge, centered under the field
   and at least as wide (`TitleBar::clickedCommandCenter`), as in Visual Studio

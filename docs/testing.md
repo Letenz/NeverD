@@ -1253,6 +1253,13 @@ page-boundary behavior. The shared memory-refusal test also covers this entry,
 including fortify refusal before an expired deadline. The
 `ProcessPublic.AndroidFortifySizedCopyReportsMatchSDKAndCLI` case compares
 complete reports for truncation, fortify refusal and an invalid source.
+The `TerminatedCopy*` and `CheckedTerminatedCopy*` cases cover `strcpy` and
+`__strcpy_chk`: exact destination returns and bytes including NUL, no padding,
+full-width object sizes, empty strings, source-scan precedence over fortify,
+page boundaries, permissions, overlap and dynamic provider lifetime. Direct
+memory cases retain the complete backing on pointer, overlap, scan-limit,
+fortify and deadline refusal. `ProcessPublic.AndroidTerminatedCopyReportsMatchSDKAndCLI`
+compares whole SDK/CLI reports for both entries on success and failure.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -2883,6 +2890,16 @@ provenance-only changes, changed native bodies, engine/input mismatches and
 missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
+
+`generationCreatesIndependentWindows` checks the shared desktop controller's
+F5/Tab and IR commands: independent functions, repeated generation of the same
+function, refresh within a code pane, pending assembly jumps, tab placement,
+and reuse after closing a pane. `generationFromFloatingSourceKeepsItsFunctionAndLanguage`
+checks that source refresh and MedIR generation use the detached pane's own
+function and preserve its language. `generatedViewsStayClosedAfterReopening`
+saves multiple generated panes and checks their restoration and retirement when
+reopening or changing projects. Run these in `neverd-gui-tests`; native Cocoa
+runs also exercise focus delivery and floating-window ownership.
 
 `NeverDGuiWheelInput` replays precision wheel and trackpad events through the
 production disassembly, source and hex views. It compares small-event batches
