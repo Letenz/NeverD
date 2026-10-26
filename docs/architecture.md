@@ -180,6 +180,11 @@ then removes dead PHI definitions, including unknown inputs of a local that is
 defined again before its observable uses. A store, value return or unresolved
 control-flow path retains the corresponding observation and availability check.
 
+`MedSSA` seeds entry liveness with upward-exposed uses, then propagates each
+newly live block/variable pair through real predecessor edges until a definition
+blocks it. The synthetic dominance root carries no variable values. Block-local
+use/kill construction owns register aliases and call clobbers for this analysis.
+
 `CallRegisterUnread` proves absent GPR input observations independently of
 argument inference. Opaque calls read every candidate family, and a nested
 call's may-write mask never kills a later input observation. Partial writes,
@@ -248,6 +253,8 @@ pipeline paths therefore receive a diagnostic instead of executable output.
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
+
+Linked x64 PE discovery collects canonical RIP-relative LEA code addresses during the existing call sweep. Targets still need independent ownership and a bounded callable-exit proof; internal labels, continuations and unsupported bodies remain excluded. Discovery and signature references share the address-encoding classifier. COFF conditional rel32 references additionally require explicit source function symbols and zero-addend relocations. Offline `--single-reference-context` audits each complete single-site clause against every overlapping raw source claim, retaining all alternatives at that site.
 
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting
@@ -488,11 +495,14 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-Automatic lifting still selects only register-offset operations. Image-backed
-immediate source projection fails explicitly until exact page/relocation
-occurrences, accessed-byte ownership and raw-base rebasing agree; source body
-filtering cannot bypass that requirement. This is not automatic immediate
-CPA2 lifting coverage.
+An explicit runtime GPR parameter remains in runtime coordinates even when the
+module also has an image: LLVM bypasses image resolution for that base, and
+both source boundaries share the same admission owner. Other image-context
+immediate bases fail explicitly until exact page/relocation occurrences,
+accessed-byte ownership and raw-base rebasing agree; source body filtering
+cannot bypass that requirement. Automatic lifting still selects only
+register-offset operations. This is not automatic immediate CPA2 lifting
+coverage or support for image-derived immediate addresses.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. The common machine table also owns literal
 SP forms. With no image, an explicit raw-SP parameter can select the physical SP
@@ -8021,12 +8031,28 @@ backend.
 It publishes a complete packet or an error and never saves/restores a context,
 executes an instruction, or reads guest memory. Width validation rejects invalid
 backend values; architecture transports retain ownership of normalization.
+Its saved-context overload reads the same inventory directly from a context
+owned by that backend and its current address space. It uses the same register
+extraction and normalization as current-state reads, without restoring the
+context, accessing guest memory, or releasing faults or pending events. Expired,
+moved-from, foreign-owner and foreign-space contexts fail clearly; external
+backends without saved-state observation return an explicit unsupported error.
 Android's opt-in `observe_cpu_state` reserves its raw register-byte budget before
 execution and reports the current thread under `android.cpu_state`, even after a
 terminal CPU fault. Registers are named pairs of hexadecimal low/high 64-bit
 words. Capture failure has `registers: null` and a separate diagnostic, preserving
 the original workload stop. This is an observation of modeled architectural
 registers, not suspended-thread state or a resumable VM checkpoint.
+
+The separate `observe_thread_cpu_states` option reserves register bytes for the
+configured thread limit and emits `android.thread_cpu_states` in thread-creation
+order. It captures each unfinished thread: `current_cpu: true` reads the stopped
+CPU; other entries read the scheduler's saved context at its last switch. A
+failed capture retains that thread's diagnostic and does not prevent later
+observations or replace the workload stop. Completed and retired threads are
+omitted because their former contexts do not represent final state. An enabled
+option with no unfinished threads emits an empty array; the disabled option
+omits the field. Neither option captures guest memory or a resumable checkpoint.
 
 Android's separate `observe_memory_on_failure` option uses the existing
 `ExecutionBackend::snapshotBacking` owner for requested terminal RAM ranges.
@@ -8035,13 +8061,31 @@ Each failed range retains its own bounded diagnostic and publishes no partial
 bytes, without changing the execution failure or preventing later captures.
 The default report and resumable-stop memory contract remain unchanged.
 
+`observe_memory_at_stop` explicitly selects the same diagnostic RAM capture
+at every final stop, including instruction/event limits and normal returns.
+A range unmapped by a completed thread retains its own diagnostic instead of
+turning the workload's stop into a runtime failure or discarding later ranges.
+Both diagnostic options share the stopped-backing reader, bounded errors and
+one per-range output reservation. They do not relax entry mapping requirements;
+ordinary final reads and the failure-only option retain their existing scope.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
-storage: partial failures, cancellation and deadline expiry cannot publish a
-prefix. `captureAArch64State` remains the sole owner of architectural widths
+storage and uses the architecture's shared normalization directly after all
+transport reads succeed. Callback-based backends use the same normalization;
+neither route imports transport metadata as the configured privilege mode.
+Partial failures, cancellation and deadline expiry cannot publish a
+prefix. `normalizeAArch64State` remains the sole owner of architectural widths
 and NZCV normalization. Retrying a failed transfer reinstalls the entire input;
 instruction admission, RAM transactions and translation-cache invalidation
 retain their existing boundaries.
+
+After a successful EL0 capture, an identical input packet may reuse the engine's
+registers while its address space, mapping generation and transport base remain
+unchanged. The comparison includes every scalar and vector field from the raw
+capture; normalization remains owned by `normalizeAArch64State`. Any changed input,
+mapping change or failed step requires a complete install. Supervisor steps keep
+complete installs, and every step still captures the complete output packet.
 
 Serial checked ARM64 steps reuse Unicorn's one-instruction translation only
 after comparing all four executable bytes with a bounded transport cache.
@@ -8169,7 +8213,17 @@ Fortify paths requiring unmodeled process-abort effects stop before publishing
 output. Existing memory, deadline and representable-result limits still apply.
 
 `AndroidStrings` owns bounded copies, including `strlcpy` source scanning,
-termination and atomic refusal. `__read_chk` owns only the Bionic extent checks;
+termination and atomic refusal. `__strlcpy_chk` checks the supplied capacity
+against the destination object size before either pointer is accessed, then
+reuses the same copy and full-source-length result. A zero capacity still scans
+the source; a short source does not relax the fortify capacity check.
+`strcpy` and `__strcpy_chk` share this staging and access owner, copy through
+NUL without padding and return the destination. API 28 ARM64 uses the C
+`__strcpy_chk` implementation: it scans the source before comparing its
+NUL-inclusive length to the destination object size. Scan faults and budgets
+precede that fortify check; the destination and overlap checks follow it.
+Undefined overlap and unsupported abort paths refuse without partial writes.
+`__read_chk` owns only the Bionic extent checks;
 descriptor state and suspended reads stay in the shared Linux read owner.
 Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
 `fstatat` service rather than duplicating pathname resolution or status layouts.

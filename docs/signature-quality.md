@@ -129,6 +129,10 @@ complete bodies and without size/fixed-byte floors. Its `!evidence` records
 are accepted only as supplement `--evidence` inputs: the matching parser
 rejects them, so an unfiltered audit cannot accidentally become a pack.
 Architecture filtering and unsupported-relocation diagnostics still apply.
+Raw COFF, ELF and Mach-O evidence retains references to the function itself
+and its aliases. A self-address constraint must not disappear from a rival
+body during collision auditing. Runtime patterns still omit those references;
+self references cannot bootstrap a match or certify an identity.
 
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
 fields. Its `caller_confirmed` field identifies incoming reference support;

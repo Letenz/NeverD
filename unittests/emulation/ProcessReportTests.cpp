@@ -74,6 +74,80 @@ TEST(ProcessReport,
   EXPECT_EQ((*Registers->getArray("V31"))[0].getAsString(), "123456789abcdef");
   EXPECT_EQ((*Registers->getArray("V31"))[1].getAsString(), "fedcba9876543210");
 }
+TEST(ProcessReport, MemoryAtStopObservationRequiresAnExplicitBoolean) {
+  auto Default = llvm::cantFail(processOptionsFromJSON(R"({"android":{}})"));
+  EXPECT_FALSE(Default.Android->ObserveMemoryAtStop);
+  for (auto Value : {"true", "false"}) {
+    auto Parsed = llvm::cantFail(processOptionsFromJSON(
+        std::string(R"({"android":{"observe_memory_at_stop":)") + Value +
+        "}}"));
+    EXPECT_EQ(Parsed.Android->ObserveMemoryAtStop,
+              std::string(Value) == "true");
+  }
+  for (auto Value : {"1", "null", "[]", "{}", "\"true\""}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"android":{"observe_memory_at_stop":)") + Value + "}}");
+    ASSERT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
+TEST(ProcessReport, ThreadCPUStatesDistinguishOmittedEmptyAndFailedCaptures) {
+  auto Default = llvm::cantFail(processOptionsFromJSON(R"({"android":{}})"));
+  EXPECT_FALSE(Default.Android->ObserveThreadCPUStates);
+  for (auto Value : {"true", "false"}) {
+    auto Parsed = llvm::cantFail(processOptionsFromJSON(
+        std::string(R"({"android":{"observe_thread_cpu_states":)") + Value +
+        "}}"));
+    EXPECT_EQ(Parsed.Android->ObserveThreadCPUStates,
+              std::string(Value) == "true");
+  }
+  for (auto Value : {"1", "null", "[]", "{}", "\"true\""}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"android":{"observe_thread_cpu_states":)") + Value +
+        "}}");
+    ASSERT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+  ProcessResult R{ProcessProfile::AndroidNativeAArch64,
+                  GuestArchitecture::AArch64,
+                  ExecutionBackendKind::Unicorn,
+                  {}};
+  R.Stop = ProcessStopReason::CPUFailure;
+  R.Diagnostic = "original CPU fault";
+  auto JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_FALSE(
+      JSON.getAsObject()->getObject("android")->get("thread_cpu_states"));
+  auto &States = R.ThreadCPUStates.emplace();
+  JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_TRUE(JSON.getAsObject()
+                  ->getObject("android")
+                  ->getArray("thread_cpu_states")
+                  ->empty());
+  States.push_back({{1000, std::nullopt, "saved register read failed"}, false});
+  States.push_back(
+      {{1001,
+        std::vector<RegisterSnapshot>{
+            {CPURegister::AArch64V31, {UINT64_MAX, UINT64_MAX - 1}}},
+        ""},
+       true});
+  JSON = llvm::cantFail(llvm::json::parse(processResultJSON(R)));
+  EXPECT_EQ(JSON.getAsObject()->getString("stop_reason"), "cpu_failure");
+  EXPECT_EQ(JSON.getAsObject()->getString("diagnostic"), "original CPU fault");
+  const auto *Threads =
+      JSON.getAsObject()->getObject("android")->getArray("thread_cpu_states");
+  ASSERT_EQ(Threads->size(), 2u);
+  const auto *Failed = (*Threads)[0].getAsObject();
+  EXPECT_EQ(Failed->getInteger("thread_id"), 1000);
+  EXPECT_EQ(Failed->getBoolean("current_cpu"), false);
+  EXPECT_EQ(*Failed->get("registers"), llvm::json::Value(nullptr));
+  EXPECT_EQ(Failed->getString("diagnostic"), "saved register read failed");
+  const auto *Current = (*Threads)[1].getAsObject();
+  EXPECT_EQ(Current->getInteger("thread_id"), 1001);
+  EXPECT_EQ(Current->getBoolean("current_cpu"), true);
+  const auto *Value = Current->getObject("registers")->getArray("V31");
+  EXPECT_EQ((*Value)[0].getAsString(), "ffffffffffffffff");
+  EXPECT_EQ((*Value)[1].getAsString(), "fffffffffffffffe");
+}
 TEST(ProcessReport,
      SignalTerminationIsDistinctFromExitAndCompletedEntryReturn) {
   ProcessResult R{ProcessProfile::AndroidNativeAArch64,

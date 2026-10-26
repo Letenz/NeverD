@@ -28,11 +28,18 @@ class RegisterReader final : public ExecutionBackend {
 public:
   GuestArchitecture ISA;
   std::optional<CPURegister> Fail, Oversize;
-  std::vector<CPURegister> Reads;
+  mutable std::vector<CPURegister> Reads;
+  bool SavedSupported = false;
   explicit RegisterReader(GuestArchitecture ISA) : ISA(ISA) {}
   GuestArchitecture architecture() const override { return ISA; }
   std::shared_ptr<AddressSpace> addressSpace() const override { return {}; }
   llvm::Expected<RegisterValue> readRegister(CPURegister R) override {
+    return value(R);
+  }
+  std::unique_ptr<BackendContext> saved() {
+    return makeContext(std::make_unique<BackendContext::Storage>());
+  }
+  llvm::Expected<RegisterValue> value(CPURegister R) const {
     Reads.push_back(R);
     if (R == Fail)
       return llvm::createStringError("authored register read failure");
@@ -82,6 +89,15 @@ public:
     return {};
   }
   bool executable(uint64_t) const override { return false; }
+
+protected:
+  llvm::Expected<RegisterValue>
+  readContextRegister(const BackendContext &Context,
+                      CPURegister R) const override {
+    if (!SavedSupported)
+      return ExecutionBackend::readContextRegister(Context, R);
+    return value(R);
+  }
 };
 TEST(RegisterSnapshot,
      CompleteInventoryHasUniqueStableNamesAndFullWidthValues) {
@@ -133,6 +149,34 @@ TEST(RegisterSnapshot, EveryReadFailureRejectsTheWholeSnapshotWithoutMutation) {
     EXPECT_EQ(CPU.Reads.size(), 1u);
   }
 }
+TEST(RegisterSnapshot, SavedContextsUseTheSameAtomicWidthCheckedInventory) {
+  for (auto ISA : {GuestArchitecture::AArch64, GuestArchitecture::X64}) {
+    RegisterReader CPU(ISA);
+    auto Context = CPU.saved();
+    auto Unsupported = CPU.readRegisters(*Context);
+    ASSERT_FALSE(bool(Unsupported));
+    EXPECT_EQ(llvm::toString(Unsupported.takeError()),
+              "Saved CPU register observation is unsupported by this backend");
+    EXPECT_TRUE(CPU.Reads.empty());
+    CPU.SavedSupported = true;
+    const auto Expected = llvm::cantFail(CPU.readRegisters());
+    EXPECT_EQ(llvm::cantFail(CPU.readRegisters(*Context)), Expected);
+    for (const auto &R : Expected) {
+      CPU.Reads.clear();
+      CPU.Fail = R.Register;
+      auto Failed = CPU.readRegisters(*Context);
+      ASSERT_FALSE(bool(Failed));
+      EXPECT_EQ(llvm::toString(Failed.takeError()),
+                "authored register read failure");
+      EXPECT_EQ(CPU.Reads.back(), R.Register);
+    }
+    CPU.Fail.reset();
+    CPU.Oversize = Expected.front().Register;
+    auto Invalid = CPU.readRegisters(*Context);
+    ASSERT_FALSE(bool(Invalid));
+    llvm::consumeError(Invalid.takeError());
+  }
+}
 class LiveRegisterSnapshot
     : public testing::TestWithParam<
           std::tuple<GuestArchitecture, ExecutionBackendKind>> {};
@@ -175,6 +219,8 @@ TEST_P(LiveRegisterSnapshot, PreservesEveryModeledRegisterAcrossRepeatedReads) {
   for (const auto &R : First)
     EXPECT_EQ(llvm::cantFail(B->CPU->readRegister(R.Register)), R.Value);
   EXPECT_EQ(llvm::cantFail(B->CPU->readRegisters()), First);
+  auto Context = llvm::cantFail(B->CPU->saveContext());
+  EXPECT_EQ(llvm::cantFail(B->CPU->readRegisters(*Context)), First);
 }
 INSTANTIATE_TEST_SUITE_P(
     Backends, LiveRegisterSnapshot,

@@ -306,7 +306,7 @@ NEVERD_VIEW_ACTION(
                       "Turn the current item back into undefined bytes"))
 // A semicolon key followed by the list separator, then the slash key.
 NEVERD_VIEW_ACTION(EditRepeatableComment,
-                   QT_TRANSLATE_NOOP("Actions", "Enter re&peatable comment..."),
+                   QT_TRANSLATE_NOOP("Actions", "Enter &comment..."),
                    ";; /", "comment_repeatable",
                    QT_TRANSLATE_NOOP("Actions", "Comment the current address"))
 NEVERD_VIEW_ACTION(EditBookmark,

@@ -52,11 +52,15 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       llvm::report_fatal_error(kAddressMemoryMalformed);
     const auto Instruction = *aarch64AddressMemoryInstruction(
         Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
-    // Relocate the base through the existing memory owner. The raw index
-    // remains a separate operand: the original instruction still owns its
-    // extension, scale and checked addition.
+    const bool RawParameter =
+        !Instruction.hasRegisterIndex() &&
+        Op.Inputs[kAddressMemoryBaseOperand + 1].Kind == MedVar::Param;
+    // Image-derived bases use the existing memory owner. An explicit runtime
+    // parameter already supplies its original GPR bits. The raw index remains
+    // separate: the instruction owns its extension, scale and checked addition.
     llvm::Value *Base = nullptr;
-    if (Instruction.isLoad() && OriginalImageStorageForSource && Img)
+    if (!RawParameter && Instruction.isLoad() &&
+        OriginalImageStorageForSource && Img)
       if (const auto *Table = recoveredJumpTableForLoad(Op);
           Table && Table->HasBaseAddr && Table->HasDispatchSlotMap &&
           !Table->SlotIndices.empty()) {
@@ -86,7 +90,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
               Builder.getInt64(Storage->Pad + Table->BaseAddr - Storage->Base));
         }
       }
-    if (!Instruction.stackBase() && !Base)
+    if (!Instruction.stackBase() && !RawParameter && !Base)
       Base = resolveAtomicMemoryPtr(
           Op.Inputs[kAddressMemoryBaseOperand + 1], Instruction.accessBytes(),
           sizeToType(Instruction.accessBytes()), Builder);
@@ -100,7 +104,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       return Builder.CreateZExtOrTrunc(Value, Builder.getInt64Ty());
     };
     auto *BaseInteger =
-        Instruction.stackBase()
+        Instruction.stackBase() || RawParameter
             ? Integer(Op.Inputs[kAddressMemoryBaseOperand + 1])
             : Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
     if (Instruction.isVector()) {

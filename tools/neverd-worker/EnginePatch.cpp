@@ -328,9 +328,12 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
       throw Error("patch_refused", error());
     Result = backendJson(Raw);
   }
-  std::map<uint64_t, std::pair<Json, Json>> Changes;
-  for (const auto &Row : State.at("patches"))
-    Changes[parseAddress(Row.at("addr").get<std::string>())].first = Row;
+  // The committed and replacement tables outlive this diff. Copy only rows
+  // that actually changed into the command, not both complete overlays.
+  std::map<uint64_t, std::pair<const Json *, const Json *>> Changes;
+  for (const auto &Row : Store.committedState().at("patches"))
+    Changes[parseAddress(Row.at("addr").get_ref<const std::string &>())].first =
+        &Row;
   State["patches"] = bytePatchRows();
   if (State["patches"].dump().size() >
       ::neverd::limits::worker::kPatchStateBytes) {
@@ -340,14 +343,17 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
                                "budget; use the SDK for larger overlays");
   }
   for (const auto &Row : State.at("patches"))
-    Changes[parseAddress(Row.at("addr").get<std::string>())].second = Row;
+    Changes[parseAddress(Row.at("addr").get_ref<const std::string &>())]
+        .second = &Row;
   Json Command;
+  const Json Missing;
   for (const auto &[At, Sides] : Changes) {
-    if (Sides.first == Sides.second)
+    const auto &Before = Sides.first ? *Sides.first : Missing;
+    const auto &After = Sides.second ? *Sides.second : Missing;
+    if (Before == After)
       continue;
-    Json Change{{"address", hexAddress(At)},
-                {"before", Sides.first},
-                {"after", Sides.second}};
+    Json Change{
+        {"address", hexAddress(At)}, {"before", Before}, {"after", After}};
     if (Command.is_null()) {
       Command = std::move(Change);
       Command["kind"] = "patch";
