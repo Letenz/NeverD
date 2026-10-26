@@ -40,6 +40,143 @@ protected:
 using Instrumentation = AndroidApplicationSnapshot::Instrumentation;
 using LookupFailure = AndroidApplicationSnapshot::ClassLookupFailure;
 using Loader = LookupFailure::Loader;
+TEST_F(AndroidFrameworkTest, SystemClockKeepsIndependentEpochsAndUnits) {
+  const auto *type = program.findClass("Landroid/os/SystemClock;");
+  ASSERT_NE(type, nullptr);
+  EXPECT_TRUE(type->access.count("final"));
+  EXPECT_EQ(type->superclass, "Ljava/lang/Object;");
+  uint64_t uptime = 10123, elapsed = 50987654321;
+  unsigned uptime_reads = 0, elapsed_reads = 0;
+  RuntimeServices services;
+  services.uptime_milliseconds = [&] {
+    ++uptime_reads;
+    return ExecutionResult{ExecutionStop::Returned, uptime};
+  };
+  services.elapsed_realtime_nanoseconds = [&] {
+    ++elapsed_reads;
+    return ExecutionResult{ExecutionStop::Returned, elapsed};
+  };
+  // Clocks are process services, independent of application lifecycle input.
+  Runtime state(program, heap, {}, services);
+  auto call = [&](const char *name, uint64_t expected) {
+    const auto *method =
+        libraryMethod({"Landroid/os/SystemClock;", name, {}, "J"}, true);
+    ASSERT_NE(method, nullptr);
+    auto result = state.library(*method, 0, {}, Admit);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, expected);
+  };
+  call("uptimeMillis", uptime);
+  call("elapsedRealtime", 50987);
+  call("elapsedRealtimeNanos", elapsed);
+  EXPECT_EQ(uptime_reads, 1u);
+  EXPECT_EQ(elapsed_reads, 2u);
+  elapsed = INT64_MAX;
+  call("elapsedRealtime", uint64_t(INT64_MAX) / 1000000);
+  call("elapsedRealtimeNanos", INT64_MAX);
+  uptime = elapsed = 0;
+  call("uptimeMillis", 0);
+  call("elapsedRealtime", 0);
+  call("elapsedRealtimeNanos", 0);
+  EXPECT_FALSE(libraryMethod(
+      {"Landroid/os/SystemClock;", "currentThreadTimeMillis", {}, "J"}, true));
+}
+TEST_F(AndroidFrameworkTest, SystemClockKeepsMissingInvalidAndResourceStops) {
+  for (const auto *name :
+       {"uptimeMillis", "elapsedRealtime", "elapsedRealtimeNanos"}) {
+    const auto *method =
+        libraryMethod({"Landroid/os/SystemClock;", name, {}, "J"}, true);
+    ASSERT_NE(method, nullptr);
+    unsigned reads = 0;
+    RuntimeServices services;
+    for (unsigned mode = 0; mode != 5; ++mode) {
+      auto callback = [&] {
+        ++reads;
+        if (mode == 1)
+          return ExecutionResult{ExecutionStop::Returned, uint64_t(-1)};
+        return ExecutionResult{mode == 2 ? ExecutionStop::InstructionLimit
+                                         : ExecutionStop::Timeout,
+                               0,
+                               {},
+                               "clock stopped"};
+      };
+      if (mode) {
+        services.uptime_milliseconds = callback;
+        services.elapsed_realtime_nanoseconds = callback;
+      }
+      Runtime state(program, heap, {}, services);
+      auto result = state.library(*method, 0, {}, [=] {
+        return mode == 4 ? ExecutionStop::HeapLimit : ExecutionStop::Returned;
+      });
+      const auto expected = mode < 2    ? ExecutionStop::Unsupported
+                            : mode == 2 ? ExecutionStop::InstructionLimit
+                            : mode == 3 ? ExecutionStop::Timeout
+                                        : ExecutionStop::HeapLimit;
+      EXPECT_EQ(result.stop, expected);
+      EXPECT_EQ(result.value, 0u);
+      EXPECT_TRUE(result.exception.empty());
+      if (mode == 0)
+        EXPECT_NE(result.diagnostic.find("service is not supplied"),
+                  std::string::npos);
+      if (mode == 1)
+        EXPECT_NE(result.diagnostic.find("outside the modeled range"),
+                  std::string::npos);
+      if (mode == 2 || mode == 3)
+        EXPECT_EQ(result.diagnostic, "clock stopped");
+      EXPECT_TRUE(state.snapshot().terminal);
+      const auto before = reads;
+      EXPECT_EQ(state.library(*method, 0, {}, Admit).stop, expected);
+      EXPECT_EQ(reads, before);
+    }
+    EXPECT_EQ(reads, 3u);
+  }
+}
+TEST_F(AndroidFrameworkTest, SystemClockDexUsesTheSharedLibraryServices) {
+  Class caller;
+  caller.name = "Ltest/ClockCaller;";
+  caller.superclass = "Ljava/lang/Object;";
+  caller.access = {"public"};
+  for (const auto *name :
+       {"uptimeMillis", "elapsedRealtime", "elapsedRealtimeNanos"}) {
+    Method method;
+    method.reference = {caller.name, name, {}, "J"};
+    method.access = {"public", "static"};
+    method.registers = 2;
+    Instruction invoke;
+    invoke.opcode = "invoke-static";
+    invoke.reference = MethodRef{"Landroid/os/SystemClock;", name, {}, "J"};
+    Instruction move;
+    move.pc = 3;
+    move.opcode = "move-result-wide";
+    move.registers = {0};
+    Instruction ret;
+    ret.pc = 4;
+    ret.opcode = "return-wide";
+    ret.registers = {0};
+    method.instructions = {invoke, move, ret};
+    method.code_end = 5;
+    caller.methods.push_back(method);
+  }
+  Program declarations({caller}, Properties{});
+  RuntimeServices services;
+  services.uptime_milliseconds = [] {
+    return ExecutionResult{ExecutionStop::Returned, 12345};
+  };
+  services.elapsed_realtime_nanoseconds = [] {
+    return ExecutionResult{ExecutionStop::Returned, 98765432101};
+  };
+  Runtime state(declarations, heap, {}, services);
+  for (const auto &[name, expected] :
+       {std::pair{"uptimeMillis", uint64_t(12345)},
+        {"elapsedRealtime", uint64_t(98765)},
+        {"elapsedRealtimeNanos", uint64_t(98765432101)}}) {
+    auto result =
+        state.execute(*declarations.findStatic({caller.name, name, {}, "J"}),
+                      {}, Admit, 65536);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(result.value, expected);
+  }
+}
 const LibraryMethod &handlerConstructor() {
   return *libraryMethod(
       {"Landroid/os/Handler;", "<init>", {"Landroid/os/Looper;"}, "V"}, false);

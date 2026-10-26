@@ -16,6 +16,7 @@ add_neverd_unittest(NeverDSignatureTests
   SignatureMatcherTests.cpp
   SignatureTreeTests.cpp
   X86ReferenceBoundaryTests.cpp
+  ThrowInfoReferenceTests.cpp
   SynthesizedRoutineTests.cpp
 
   LINK_COMPONENTS Sigs

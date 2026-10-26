@@ -298,6 +298,10 @@ static const LibraryMethod Methods[] = {
      ThrowableConstruct},
     // Append new entries to preserve the existing JNI intrinsic method tokens.
     {"java/lang/String", "getBytes", "(Ljava/lang/String;)[B", StringGetBytes},
+    {"android/os/SystemClock", "uptimeMillis", "()J", UptimeMillis, true},
+    {"android/os/SystemClock", "elapsedRealtime", "()J", ElapsedRealtime, true},
+    {"android/os/SystemClock", "elapsedRealtimeNanos", "()J",
+     ElapsedRealtimeNanos, true},
 };
 
 struct LibraryStop {
@@ -417,7 +421,8 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == ClassLoaderString || M.Op == MainLooper ||
         M.Op == HandlerPost || M.Op == LooperQueue ||
         M.Op == MessageQueueNext || M.Op == MessageCallback ||
-        M.Op == MessageTarget ||
+        M.Op == MessageTarget || M.Op == UptimeMillis ||
+        M.Op == ElapsedRealtime || M.Op == ElapsedRealtimeNanos ||
         (M.Op == Construct &&
          std::string_view(M.Class) == "android/os/Handler")) {
       if (!program || !framework)

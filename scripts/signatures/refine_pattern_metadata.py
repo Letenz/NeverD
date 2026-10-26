@@ -25,7 +25,8 @@ else:
 
 def immutable_reference(name: str) -> bool:
     return (name.startswith("__imp_") and len(name) > len("__imp_")) or \
-        re.fullmatch(r"\?\?_7.+@@6B@", name) is not None
+        re.fullmatch(r"\?\?_7.+@@6B@", name) is not None or \
+        re.fullmatch(r"_TIC?V?U?[1-9][0-9]*\?A[VU].+@@", name) is not None
 
 
 @dataclass

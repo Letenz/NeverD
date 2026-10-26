@@ -106,6 +106,10 @@ parameter, while an earlier definition at entry or before the read kills it.
 Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
+`MedSSACallClobber` in the entry/frame owner checks distinct call occurrences
+at one native address, per-callee GPR preservation, preserving stack probes,
+and chained AArch64/Win64 vector prefixes. It reuses a converter across
+functions and formats so call-local facts cannot leak into later conversions.
 
 `NeverDMedVariadicTests` runs the variadic-prologue proof boundaries directly:
 entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
@@ -1406,6 +1410,16 @@ known type metadata from unmodeled static initialization. They cover class and
 array identity, hierarchy/final constraints, JNI method/field ID lookup and
 allocation, with no successful initialization or fabricated service state.
 Run the full Dalvik and Android JNI suites when changing this boundary.
+`AndroidFrameworkTest.SystemClock*` checks independent uptime and elapsed
+epochs, millisecond truncation, wide DEX returns, missing services, invalid
+signed values and terminal budget/service stops without an application
+snapshot. `AndroidJNI.SystemClock*` runs independent AArch64 callers through
+ordinary, va_list and jvalue-array forms, comparing against Linux clock reads
+before/after Java calls and virtual sleep. It also checks instruction time,
+missing clock IDs, zero, the exact signed-nanosecond maximum and one-nanosecond
+overflow, plus refusal of unmodeled members. Run full Dalvik, Android JNI,
+callback/thread and Linux clock tests after changing these shared services;
+these checks do not execute a device JVM or infer suspended-device time.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -6469,6 +6483,11 @@ control. Producer and incoming-request cases exercise the same boundary owner.
 Reused-buffer cases verify positive and negative cache invalidation after edits.
 The metadata-refinement Python cases require every raw source to own a new
 caller code field, retain alternatives and reject missing or data-kind fields.
+`ThrowInfoReference.*` checks complete x64 exception graphs, all dependent
+records, ranges, pointer roles, qualifiers/counts, writable descriptor caches,
+metadata changes between applications and the separate identity gate. Producer
+cases reject function/static/executable source targets and nonzero addends;
+Python refinements retain missing, alternative and cross-kind raw counterclaims.
 The COFF cases also check primary x64 vftable references: exact RTTI types,
 locator and hierarchy consistency, bounded strings, unsupported secondary
 layouts, malformed data, instruction prefixes and negative displacements.

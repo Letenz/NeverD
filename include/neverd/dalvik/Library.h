@@ -75,7 +75,10 @@ enum LibraryOperation {
   MessageCallback,
   MessageTarget,
   URLOpenConnection,
-  StringGetBytes
+  StringGetBytes,
+  UptimeMillis,
+  ElapsedRealtime,
+  ElapsedRealtimeNanos
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;
