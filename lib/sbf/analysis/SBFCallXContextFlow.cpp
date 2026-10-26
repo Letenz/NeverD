@@ -955,19 +955,30 @@ void ContextFlow::transferValues(const MedInstruction &Instruction,
       Instruction.Op == Operation::Load &&
               Instruction.Semantics.MemoryWidth == kDoubleWordBitWidth
           ? State.Postconditions.read(OriginAddress(Instruction.Src))
-          : RegisterValue{};
+          : ProvenValueSet{};
   MachineState Scalar = State.scalar();
   MachineState OriginMemory = Scalar;
   OriginMemory.Scratch = State.OriginScratch;
   if (Instruction.Op == Operation::Store) {
-    State.Postconditions.store(
-        OriginAddress(Instruction.Dst), Instruction.Width / kBitsPerByte,
+    ProvenValueSet StoredOrigin(
         Instruction.Form == OperandForm::StoreReg
             ? State.Origins[Instruction.Src]
             : RegisterValue{RegisterValue::Kind::Constant,
                             normalizeImmediate(Instruction.Immediate,
                                                Instruction.Semantics.Immediate),
                             0});
+    // Concrete finite integers may survive a join that lost the single formal
+    // origin. Frame-relative values are private analysis coordinates and must
+    // still be expressed relative to an entry input before composition.
+    if (StoredOrigin.unknown() &&
+        std::all_of(State.Registers[Instruction.Src].values().begin(),
+                    State.Registers[Instruction.Src].values().end(),
+                    [](const auto &Value) {
+                      return Value.ValueKind == RegisterValue::Kind::Constant;
+                    }))
+      StoredOrigin = State.Registers[Instruction.Src];
+    State.Postconditions.store(OriginAddress(Instruction.Dst),
+                               Instruction.Width / kBitsPerByte, StoredOrigin);
     MedInstruction Store = Instruction;
     if (Store.Form == OperandForm::StoreReg) {
       Store.Src = Store.Dst == 0 ? 1 : 0;
@@ -991,8 +1002,8 @@ void ContextFlow::transferValues(const MedInstruction &Instruction,
     const auto Origin = OriginMemory.Registers[Instruction.Dst];
     if (Origin.ValueKind != RegisterValue::Kind::Unknown)
       State.Origins[Instruction.Dst] = Origin;
-    else if (LoadedOrigin.ValueKind != RegisterValue::Kind::Unknown)
-      State.Origins[Instruction.Dst] = LoadedOrigin;
+    else if (!LoadedOrigin.unknown())
+      State.Origins[Instruction.Dst] = LoadedOrigin.singleton();
   }
   if (Instruction.Op == Operation::Store) {
     // Lift the canonical store over the complete base/value alternatives.
@@ -1033,6 +1044,12 @@ void ContextFlow::transferValues(const MedInstruction &Instruction,
       Instruction.Semantics.MemoryWidth == kDoubleWordBitWidth) {
     State.Registers[Instruction.Dst] = loadFullWord(
         Instruction, State.Registers[Instruction.Src], State.Scratch.Values);
+    if (State.Registers[Instruction.Dst].unknown() &&
+        std::all_of(LoadedOrigin.values().begin(), LoadedOrigin.values().end(),
+                    [](const auto &Value) {
+                      return Value.ValueKind == RegisterValue::Kind::Constant;
+                    }))
+      State.Registers[Instruction.Dst] = LoadedOrigin;
     return;
   }
 

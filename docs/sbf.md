@@ -369,11 +369,17 @@ Replacement searches examine only the entry's live variants in creation order,
 including after reclamation. Their index is charged to the retained-state
 budget; historical stable IDs do not enlarge the four-variant limit.
 
-Full-width stores also produce entry-relative must-value postconditions. These
-are intersected at joins and composed through nested calls, then substituted
-using the actual caller's arguments before the canonical store transfer applies
-them. Distinct formal pointers may alias: partial writes, unknown writes and
-stores through another formal pointer invalidate the affected postconditions.
+Full-width stores also produce entry-relative must-value postconditions. Joins
+intersect cell presence and union complete stored-value alternatives under the
+same four-value limit. Nested calls compose the formal origins, then substitute
+every complete actual argument alternative before the canonical store transfer
+applies them. Missing stores, unknown substitutions and more than four distinct
+results drop the affected fact. Finite literal loads from these postconditions
+can feed later full-width stores; private formal and frame coordinates cannot
+become literal VM integers. Dynamic alternative storage is included in the
+existing retained-state estimate. Distinct formal pointers may alias: partial
+writes, unknown writes and stores through another formal pointer invalidate the
+affected postconditions.
 This lets a generalized setter return a newly stored function pointer without
 reusing another caller's specialized scratch snapshot. Summary JSON reports
 `output_parameterized_words` and per-edge `applied_stored_values` separately
