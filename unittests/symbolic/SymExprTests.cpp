@@ -18,6 +18,7 @@
 
 #include <array>
 #include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -1077,6 +1078,56 @@ TEST(SymExpr, EvaluationPlanReportsTheVariablesItReads) {
   EXPECT_EQ(Plan.vars()[0], Ctx.varId(X));
   EXPECT_EQ(Plan.vars()[1], Ctx.varId(Y));
   EXPECT_GT(Plan.numSteps(), 0u);
+}
+
+TEST(SymExpr, NativeAssociativeEvaluationMatchesFullWidthArithmetic) {
+  std::mt19937_64 Random(0x6e617279);
+  for (unsigned Width : {1u, 7u, 8u, 16u, 32u, 64u}) {
+    for (unsigned Count : {2u, 3u, 8u, 33u}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "width=" << Width << " operands=" << Count);
+      SymContext Ctx;
+      llvm::SmallVector<SymRef, 8> Inputs;
+      for (unsigned I = 0; I < Count; ++I)
+        Inputs.push_back(Ctx.mkVar("v" + std::to_string(I), Width));
+      const std::array Roots{Ctx.mkAdd(Inputs), Ctx.mkMul(Inputs),
+                             Ctx.mkAnd(Inputs), Ctx.mkOr(Inputs),
+                             Ctx.mkXor(Inputs)};
+      for (unsigned Operation = 0; Operation < Roots.size(); ++Operation) {
+        SymEvalPlan Plan(Ctx, Roots[Operation]);
+        for (unsigned Sample = 0; Sample < 64; ++Sample) {
+          std::vector<uint64_t> Values(Count);
+          std::vector<llvm::APInt> Wide;
+          for (auto &Value : Values) {
+            Value = Sample == 0 ? ~uint64_t(0) : Sample == 1 ? 0 : Random();
+            Wide.emplace_back(Width, Value);
+          }
+          llvm::APInt Expected = Wide.front();
+          for (unsigned I = 1; I < Count; ++I) {
+            switch (Operation) {
+            case 0:
+              Expected += Wide[I];
+              break;
+            case 1:
+              Expected *= Wide[I];
+              break;
+            case 2:
+              Expected &= Wide[I];
+              break;
+            case 3:
+              Expected |= Wide[I];
+              break;
+            case 4:
+              Expected ^= Wide[I];
+              break;
+            }
+          }
+          EXPECT_EQ(Plan.evalU64(Values), Expected.getZExtValue());
+          EXPECT_EQ(Plan.eval(Wide), Expected);
+        }
+      }
+    }
+  }
 }
 
 TEST(SymExpr, EvaluationPlanKeepsSharedInputsAfterContextGrowth) {

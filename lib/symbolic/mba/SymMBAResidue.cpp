@@ -255,11 +255,13 @@ SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   const size_t N = Ctx.numOperands(Root);
   if (N > limits::kMaxResidueProductSummands ||
       !llvm::any_of(Ctx.operands(Root), [&](SymRef Term) {
+        if (Ctx.op(Term) != SymOp::Mul ||
+            Ctx.numOperands(Term) < limits::kMinResidueProductFactors)
+          return false;
+        if (Ctx.numOperands(Term) > limits::kMaxResidueProductFactors)
+          return Ctx.isConst(Ctx.operand(Term, 0));
         return hasOffsetFactors(Ctx, Term) ||
-               hasProjectedResidueFactors(Ctx, Term) ||
-               (Ctx.op(Term) == SymOp::Mul &&
-                Ctx.numOperands(Term) > limits::kMaxResidueProductFactors &&
-                Ctx.isConst(Ctx.operand(Term, 0)));
+               hasProjectedResidueFactors(Ctx, Term);
       }))
     return Root;
   if (N > Storage / (2 * sizeof(SymRef)) || !Budget.consume(2 * N))

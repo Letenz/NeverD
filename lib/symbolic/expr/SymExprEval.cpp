@@ -145,31 +145,37 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
 
     switch (St.Op) {
     case SymOp::Const:
-      Res = St.Aux;
-      break;
+      // The constant builder already truncated this native-width literal.
+      S[I] = St.Aux;
+      continue;
     case SymOp::Var:
       Res = Lookup(static_cast<uint32_t>(St.Aux));
       break;
     case SymOp::Add:
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      // Canonical associative nodes have at least two operands. Evaluate
+      // that common pair directly, then fold any remaining operands.
+      Res = S[A[0]] + S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res += S[A[K]];
       break;
     case SymOp::Mul:
-      Res = 1;
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] * S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res *= S[A[K]];
       break;
     case SymOp::And:
-      Res = ~uint64_t(0);
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] & S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res &= S[A[K]];
       break;
     case SymOp::Or:
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] | S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res |= S[A[K]];
       break;
     case SymOp::Xor:
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] ^ S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res ^= S[A[K]];
       break;
     case SymOp::Not:

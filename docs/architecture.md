@@ -2994,6 +2994,9 @@ The expression evaluation plan uses a compact handle-to-slot table and gathers
 its sorted, unique variable IDs during lowering. It avoids per-node hash
 allocations and a second reachable-DAG walk without changing evaluation steps,
 operand order, arbitrary-width semantics or the solver's work charges.
+Native evaluation starts associative folds with their two guaranteed operands
+and reuses already truncated literals, avoiding empty reductions and repeated
+constant masking in the sampling loop.
 HighC lowers a zero-extended sub-byte extract as a masked native-word operation
 with the exact extraction offset. The fragment is never materialized as a byte
 for signed extension, which would change its sign bit. Other unsupported
