@@ -1,3 +1,11 @@
+//===- SourceABI.cpp - Checked source value and carrier contracts --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Validates complete logical source types and their physical value carriers.
+
 #include "neverd/ir/SourceABI.h"
 
 #include "neverd/Limits.h"
@@ -635,7 +643,16 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
              TRI.isVectorReg(Location.RegisterOffset) &&
              (!IsReturn || Location.RegisterOffset == TRI.FPReturnReg);
     if (Location.Kind == SourceABICarrierKind::IntegerRegister)
-      return Type->Kind != NdTypeKind::Float &&
+      // Windows ARM64 variadic arguments carry floating bits in X registers.
+      // Explicit source declarations retain that logical floating type; the
+      // source boundary reinterprets the complete bits rather than converting
+      // their integer value. Inferred signatures and result carriers keep
+      // their existing restrictions.
+      return (Type->Kind != NdTypeKind::Float ||
+              (!IsReturn && Hint.Architecture == Arch::AArch64 &&
+               Hint.Origin ==
+                   SourceFunctionTypeHint::OriginKind::ExplicitSource &&
+               Hint.Convention == SourceFunctionTypeHint::ConventionKind::C)) &&
              IntegerRegister(Location.RegisterOffset) &&
              (!IsReturn || Location.RegisterOffset == TRI.IntReturnReg);
     return false;

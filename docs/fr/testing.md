@@ -2301,7 +2301,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` vérifie les banques mixtes, largeurs, dépassements de registres, offsets de pile et refus variadiques Windows ARM64. `NeverDWorkerCallSiteTypes` récupère un appel entier/double/pointeur depuis un PE ARM64 et exécute les deux sorties C avec une fonction C séparée à O0/O2 ; un refus doit préserver l’instantané d’analyse. Ces exécutions hôtes ne valident pas l’exécution native Windows ARM64.
+`NeverDSourceCallABITests` vérifie les supports fixes et variadiques Windows ARM64, largeurs, épuisement des registres et positions de pile. `NeverDWorkerCallSiteTypes` exécute les deux sorties C avec des fonctions séparées à O0/O2 : float nommé, double en registres et sur la pile, entiers et résultat flottant. Les arguments non promus et écritures partielles sont refusés sans modifier l’instantané d’analyse. Cela ne valide pas l’exécution native Windows ARM64.
 
 Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile, un retour flottant et le refus d’un argument de pile écrit seulement à moitié.
 

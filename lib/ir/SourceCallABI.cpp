@@ -83,10 +83,6 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
     return refuse(
         Error, "Call-site types support scalar/pointer x64 and AArch64 C ABIs; "
                "aggregate results need separate ABI support");
-  if (Format == BinaryFormat::COFF && Architecture == Arch::AArch64 &&
-      Hint.AnalystFixedCount >= 0)
-    return refuse(Error, "Windows ARM64 variadic call-site types need separate "
-                         "integer-register argument placement");
   std::vector<TypeRef> Types;
   for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
     const auto &T = Signature.Parameters[I].Type;
@@ -100,8 +96,8 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
         return refuse(Error, "Variadic arguments need default promotions: "
                              "int/unsigned int or double");
     }
-    if (Hint.AnalystFixedCount >= 0 && Format == BinaryFormat::COFF && I < 4 &&
-        T->Kind == NdTypeKind::Float)
+    if (Hint.AnalystFixedCount >= 0 && Format == BinaryFormat::COFF &&
+        Architecture == Arch::X64 && I < 4 && T->Kind == NdTypeKind::Float)
       return refuse(Error,
                     "A Windows x64 variadic floating register argument needs a "
                     "verified duplicate integer-register carrier");
@@ -116,8 +112,10 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
       Format == BinaryFormat::ELF)
     return assignSysVX64VariadicSourceABI(Signature, Hint.AnalystFixedCount,
                                           Error);
-  const auto Placement =
-      placeSourceParameters(Architecture, Format, Signature.ReturnType, Types);
+  const auto Placement = placeSourceParameters(
+      Architecture, Format, Signature.ReturnType, Types,
+      Hint.AnalystFixedCount >= 0 && Architecture == Arch::AArch64 &&
+          Format == BinaryFormat::COFF);
   if (!Placement || Placement->ResultPointer ||
       Placement->Parameters.size() != Types.size())
     return refuse(Error, "The selected platform cannot place every argument of "

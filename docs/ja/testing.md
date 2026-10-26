@@ -2186,7 +2186,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` は Windows ARM64 の混合レジスター、幅、レジスター枯渇、スタック位置と可変引数拒否を確認する。`NeverDWorkerCallSiteTypes` は ARM64 PE の整数、double、ポインター呼び出しを両 C 経路で復元し、独立した C 関数と O0/O2 で実行する。拒否された編集で解析スナップショットが変わらないことも確認する。Windows ARM64 ネイティブ実行の検証ではない。
+`NeverDSourceCallABITests` は Windows ARM64 の固定・可変引数のレジスター、幅、枯渇とスタック位置を確認する。`NeverDWorkerCallSiteTypes` は名前付き float、レジスターとスタック上の double、整数、浮動小数点戻り値を両 C 経路で復元し、独立した C 関数と O0/O2 で実行する。未昇格の可変引数や不完全なスタック書き込みは拒否し、解析スナップショットを維持する。Windows ARM64 ネイティブ実行の検証ではない。
 
 worker の回帰には、18 個のレジスター／スタック混合引数、浮動小数点の戻り値、半分しか書かれていないスタック引数の拒否も含む。
 

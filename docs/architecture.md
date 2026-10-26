@@ -11988,9 +11988,13 @@ Windows ARM64 fixed scalar/pointer call-site types reuse `placeAAPCS64` through
 `SourceCallABI`: integer and floating register banks advance independently,
 with overflowing values in eight-byte stack slots. This follows the
 [Microsoft ARM64 ABI](https://learn.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions).
-Windows ARM64 variadic call-site edits remain refused because their arguments
-use integer carriers, including named floating arguments. This does not admit
-ARM64EC, aggregate call-site types or a native Windows driver execution contract.
+Windows ARM64 variadic scalar/pointer calls use the same placement owner with
+one integer bank, including named floating arguments, then eight-byte stack
+slots. Explicit AArch64 source parameters can describe complete floating bits
+in integer registers; both C routes reinterpret those bits at the call boundary.
+Inferred signatures and floating result carriers retain their restrictions.
+This does not admit ARM64EC, aggregate call-site types or a native Windows driver
+execution contract.
 
 `SourceCallOccurrenceKey` owns original instruction/sequence/opcode/target
 identity; names and source anchors cannot bind a per-call policy.

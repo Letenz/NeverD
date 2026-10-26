@@ -58,6 +58,17 @@ def arm64_stack_fixture(partial=False):
         code[80:84] = bytes.fromhex("e8030079")  # STRH supplies only half of uint32_t.
     return pe(bytes(code).ljust(256, b"\0") + bytes.fromhex("00106e1e c0035fd6"), 0xAA64)
 
+def arm64_variadic_fixture(partial=False):
+    # Windows ARM64: named float/int and six unnamed scalars occupy X0-X7;
+    # the final double/integer pair is at SP/SP+8. The double result uses D0.
+    code = bytearray(bytes.fromhex(
+        "fd7bbfa9 fd030091 ff4300d1 00f8a752 e1008052 8200e8d2 630180d2 "
+        "8401f8d2 a50180d2 4602e8d2 270280d2 c802e8d2 e80300f9 "
+        "e80280d2 e80700f9 11000094 0000789e ff430091 fd7bc1a8 c0035fd6"))
+    if partial:
+        code[48:52] = bytes.fromhex("e80300b9")  # STRW cannot supply a double.
+    return pe(bytes(code).ljust(128, b"\0") + bytes.fromhex("00106e1e c0035fd6"), 0xAA64)
+
 def request(view, call, declaration, actuals=()):
     return {"address": view["address"], "representation": view["representation"], "kind": "call_type",
         "call_id": call["id"], "snapshot": view["call_snapshot"], "declaration": declaration,
@@ -259,9 +270,47 @@ int main(void) { return start() != 7 || calls != 1 || errors; }
 """, optimization)
             baseline = ok(client, "analysis_snapshot")
             view = source(client, "c", 0x140001000)
-            refused = client.call("code_edit", request(view, view["source_calls"][0], "uint64_t call(uint32_t first, ...);", ["double", "uintptr_t"]))
-            assert refused["status"] == "error" and "Windows ARM64 variadic" in refused["error"]["message"], refused
+            refused = client.call("code_edit", request(view, view["source_calls"][0], "uint64_t call(uint32_t first, ...);", ["float", "uintptr_t"]))
+            assert refused["status"] == "error" and "default promotions" in refused["error"]["message"], refused
             assert ok(client, "analysis_snapshot") == baseline
+        for partial in (False, True):
+            arm64_varargs = root / ("arm64-varargs-partial.exe" if partial else "arm64-varargs.exe")
+            arm64_varargs.write_bytes(arm64_variadic_fixture(partial))
+            with Client(executable) as client:
+                ok(client, "open", {"path": str(arm64_varargs), "analysis": False})
+                view = source(client, "c", 0x140001000)
+                baseline = ok(client, "analysis_snapshot")
+                edit = request(view, view["source_calls"][0], "double call(float scale, uint32_t first, ...);", ["double", "uint64_t"] * 4)
+                reply = client.call("code_edit", edit)
+                if partial:
+                    assert reply["status"] == "error" and "fully written" in reply["error"]["message"], reply
+                    assert ok(client, "analysis_snapshot") == baseline
+                    continue
+                assert reply["status"] == "ok", reply
+                for route in ("c", "llvmc"):
+                    result = source(client, route, 0x140001000)
+                    assert result["call_type_results"][0]["applied"], result
+                    if compiler:
+                        for optimization in ("O0", "O2"):
+                            harness = """
+#include <stdint.h>
+#include <stdarg.h>
+extern START_RESULT start(void);
+static unsigned calls, errors;
+double sub_140001080(float scale, uint32_t first, ...) {
+  const double floating[] = { 2.5, -3.5, 4.5, 5.5 };
+  const uint64_t integers[] = { 11, 13, 17, 23 };
+  va_list ap; va_start(ap, first);
+  ++calls; errors += scale != 1.5f || first != 7;
+  for (unsigned i = 0; i < 4; ++i) {
+    errors += va_arg(ap, double) != floating[i];
+    errors += va_arg(ap, uint64_t) != integers[i];
+  }
+  va_end(ap); return 42.75;
+}
+int main(void) { return start() != 42 || calls != 1 || errors; }
+""".replace("START_RESULT", "int64_t" if route == "c" else "uint64_t")
+                            execute_source(root, result["text"], "arm64-varargs-" + route + "-" + optimization, compiler, harness, optimization)
         for partial in (False, True):
             arm64_stack = root / ("arm64-stack-partial.exe" if partial else "arm64-stack.exe")
             arm64_stack.write_bytes(arm64_stack_fixture(partial))

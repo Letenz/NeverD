@@ -2302,7 +2302,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` prüft gemischte Register, Breiten, erschöpfte Register, Stapeloffsets und die Ablehnung variadischer Windows-ARM64-Aufrufe. `NeverDWorkerCallSiteTypes` gewinnt einen Ganzzahl-/double-/Zeigeraufruf aus einer ARM64-PE-Datei zurück und führt beide C-Ausgaben mit einer separaten C-Funktion bei O0/O2 aus. Abgewiesene Änderungen müssen den Analysezustand erhalten. Dies validiert keine native Windows-ARM64-Ausführung.
+`NeverDSourceCallABITests` prüft feste und variadische Windows-ARM64-Träger, Breiten, Registerüberlauf und Stapeloffsets. `NeverDWorkerCallSiteTypes` führt beide C-Ausgaben mit separaten C-Funktionen bei O0/O2 aus: benanntes float, double in Registern und auf dem Stapel, Ganzzahlen und Gleitkommaergebnis. Nicht promovierte Varargs und unvollständige Stapelwerte werden ohne Änderung des Analysezustands abgewiesen. Dies validiert keine native Windows-ARM64-Ausführung.
 
 Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparameter, eine Gleitkommarückgabe und die Ablehnung eines nur halb geschriebenen Stapelarguments ab.
 
