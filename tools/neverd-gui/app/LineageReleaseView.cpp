@@ -1,5 +1,4 @@
-//===- LineageReleaseView.cpp - Declared release timelines
-//------------------===//
+//===- LineageReleaseView.cpp - Release timeline workbench ----------------===//
 //
 // NeverD Decompiler
 //

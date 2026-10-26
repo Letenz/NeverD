@@ -17,6 +17,7 @@
 #include "WindowFrame.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QDateTimeEdit>
 #include <QDialogButtonBox>
@@ -913,6 +914,115 @@ private slots:
     Reopened.show();
     QVERIFY(QTest::qWaitForWindowExposed(&Reopened));
     QTRY_COMPARE_WITH_TIMEOUT(Reopened.size(), Chosen, Timeout);
+  }
+
+  void addReleaseChoosesSnapshotAndKeepsUnknownDate() {
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QSignalSpy Saved(&Session, &LineageSession::saved);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Reports}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Releases = View.findChild<LineagePageView *>("lineageReleases");
+    auto *Tabs = View.findChild<QTabWidget *>("lineageTabs");
+    auto *Add = View.findChild<QPushButton *>("lineageReleaseAdd");
+    QVERIFY(Versions && Releases && Tabs && Add);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 3,
+                             Timeout);
+    Tabs->setCurrentWidget(View.findChild<QWidget *>("lineageReleaseView"));
+    QTRY_VERIFY(Add->isEnabled());
+    const auto Before = Session.revision();
+    bool Cancelled = false;
+    QTimer::singleShot(0, this, [&] {
+      auto *D = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QVERIFY(D);
+      const auto Cleanup = qScopeGuard([&] {
+        if (D->isVisible())
+          D->reject();
+      });
+      QCOMPARE(D->objectName(), QString("lineageReleaseEditor"));
+      QTest::keyClick(D, Qt::Key_Escape);
+      Cancelled = true;
+    });
+    Add->setFocus();
+    QTest::keyClick(Add, Qt::Key_Space);
+    QVERIFY(Cancelled);
+    QCOMPARE(Session.revision(), Before);
+    QCOMPARE(Session.summary()["releases"].toInteger(), qint64(0));
+
+    QString ChosenVersion;
+    bool Created = false;
+    QTimer::singleShot(0, this, [&] {
+      auto *D = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QVERIFY(D);
+      const auto Cleanup = qScopeGuard([&] {
+        if (D->isVisible())
+          D->reject();
+      });
+      auto *Name = D->findChild<QLineEdit *>("lineageReleaseLabel");
+      auto *Branch = D->findChild<QLineEdit *>("lineageReleaseBranch");
+      auto *Known = D->findChild<QCheckBox *>("lineageReleaseDateKnown");
+      auto *Change =
+          D->findChild<QPushButton *>("lineageReleaseChooseSnapshot");
+      auto *Buttons = D->findChild<QDialogButtonBox *>();
+      QVERIFY(Name && Branch && Known && Change && Buttons);
+      QVERIFY(!Known->isChecked());
+      QVERIFY(!Buttons->button(QDialogButtonBox::Save)->isEnabled());
+      Name->setText("Stable release 新版");
+      Branch->setText("stable");
+      QTimer::singleShot(0, this, [&] {
+        auto *Chooser =
+            qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        QVERIFY(Chooser && Chooser != D);
+        const auto Cleanup = qScopeGuard([&] {
+          if (Chooser->isVisible())
+            Chooser->reject();
+        });
+        auto *Choices =
+            Chooser->findChild<LineagePageView *>("lineageReleaseChoices");
+        QVERIFY(Choices);
+        QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Choices->rows().size() == 3,
+                                 Timeout);
+        Choices->table()->setCurrentIndex(
+            Choices->table()->model()->index(1, 0));
+        ChosenVersion = Choices->selected()["id"].toString();
+        QVERIFY(!ChosenVersion.isEmpty());
+        QVERIFY(ChosenVersion != Versions->selected()["id"].toString());
+        Choices->table()->setFocus();
+        QTest::keyClick(Choices->table(), Qt::Key_Return);
+      });
+      Change->setFocus();
+      QTest::keyClick(Change, Qt::Key_Space);
+      QVERIFY(!ChosenVersion.isEmpty());
+      QVERIFY(Buttons->button(QDialogButtonBox::Save)->isEnabled());
+      Name->setFocus();
+      QTest::keyClick(Name, Qt::Key_Return);
+      Created = true;
+    });
+    QTest::keyClick(Add, Qt::Key_Space);
+    QVERIFY(Created);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Releases->rows().size() == 1,
+                             Timeout);
+    const auto Release = Releases->selected();
+    QCOMPARE(Release["label"].toString(), QString("Stable release 新版"));
+    QCOMPARE(Release["branch"].toString(), QString("stable"));
+    QCOMPARE(Release["version"].toString(), ChosenVersion);
+    QVERIFY(Release["published_at"].isNull());
+    QCOMPARE(Release["parent_count"].toInteger(), qint64(0));
+    QVERIFY(!Release["id"].toString().isEmpty());
+    const auto Path = Directory.filePath("created-release.ndlineage");
+    Session.save(Path);
+    QTRY_COMPARE_WITH_TIMEOUT(Saved.size(), 1, Timeout);
+    const auto Document = QJsonDocument::fromJson(read(Path)).object();
+    QCOMPARE(Document["schema_version"], QJsonValue(2));
+    const auto Persisted = Document["releases"].toArray().first().toObject();
+    QCOMPARE(Persisted["id"], Release["id"]);
+    QCOMPARE(Persisted["version"].toString(), ChosenVersion);
+    QVERIFY(Persisted["published_at"].isNull());
+    QCOMPARE(Errors.size(), 0);
   }
 
   void releaseEditsKeepSelectionAcrossPagesAndParentNavigation() {

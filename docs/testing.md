@@ -2593,6 +2593,8 @@ missing-export case verifies that optional release editing does not disable
 older graph operations. Desktop tests move a selected release across timeline
 pages after editing its date, disambiguate duplicate labels by ID, and edit one
 of 257 parents on its current page without losing the remaining links. Release
+creation exercises keyboard activation, cancellation, snapshot selection and
+saving an explicitly unknown publication date in a v2 collection. Release
 and parent tabs are also exercised by the eleven-language layout fixture.
 These cases qualify declared chronology, not inferred release relationships.
 
