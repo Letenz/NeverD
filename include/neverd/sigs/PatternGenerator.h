@@ -71,6 +71,10 @@ struct PatternGeneratorOptions {
   /// these independently matchable functions. The anchor's canonical
   /// data operand, not a static symbol's spelling, identifies the relation.
   std::vector<std::string> LocalDataAnchors;
+  /// Also describe signed address deltas within one non-COMDAT data section.
+  /// The anchor keeps its exact zero-addend operand; consumers may reference
+  /// defined static or external data, including checked relocation addends.
+  bool EmitLocalDataLayout = false;
   /// Emit referenced functions with the NeverD `!refs` constraint and full
   /// byte coverage, including functions below the ordinary fixed-byte floor.
   /// Unreferenced functions retain the ordinary floor and output format.

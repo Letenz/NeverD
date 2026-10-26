@@ -2197,6 +2197,13 @@ Only that independently settled ordinary function can bind the relation, after
 all matching source refinements agree. The existing single data pass checks consumers
 without changing anchors or restarting inference. The parser/cache preserve a
 separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+An explicit source-layout mode also proves signed coordinate differences within
+one non-COMDAT data section. Only a canonical zero-addend static operand can
+establish the frozen base; defined consumer data and signed addends must fit
+the same complete source section. Runtime checks a consumer's inverse delta
+against that base and the same mapped segment/section. It creates no derived
+bindings and never feeds relative consumers back into anchor settlement.
+Missing source facts and external/local kind conflicts remain unresolved.
 Anchor-name lookup compares lengths before text, avoiding hashes of unrelated
 template spellings. Frozen reference checks visit only their new outgoing
 sites, skip entry work when no code target is referenced, and borrow sorted

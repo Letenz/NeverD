@@ -7,6 +7,7 @@
 #include "neverd/sigs/SignatureDB.h"
 
 #include "DataReference.h"
+#include "LocalDataReference.h"
 #include "X86/X86ImportReference.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -1498,15 +1499,42 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
           if (const auto Target =
                   dataReferenceTarget(Img, Start, References[R].Offset,
                                       Modules[MatchModules[I]].TotalLen)) {
-            const auto Bound = Data->find(*Target);
-            if (Bound != Data->end() && (Bound->second.Parent != Start ||
-                                         Bound->second.MultipleParents)) {
-              if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
-                               [&](const StoredName &Ref) {
-                                 return Ref.Name == Bound->second.Name &&
-                                        Ref.IsLocalData ==
-                                            Bound->second.IsLocalData;
-                               })) {
+            bool Known = false;
+            const bool Confirmed = llvm::any_of(
+                llvm::ArrayRef(References).slice(R, End - R),
+                [&](const StoredName &Ref) {
+                  // Validated exact keys need only their existing string
+                  // comparison. Decode coordinates only for signed deltas.
+                  const bool Relative =
+                      Ref.IsLocalData &&
+                      Ref.Name[local_data_syntax::
+                                   LocalDataAnchorOffsetDigits] !=
+                          local_data_syntax::LocalDataAnchorSeparator;
+                  const auto Anchor =
+                      Relative ? localDataAnchor(Ref.Name) : std::nullopt;
+                  const auto Base =
+                      Anchor ? localDataReferenceBase(Img, *Target, *Anchor)
+                             : Target;
+                  if (!Base)
+                    return false;
+                  const auto Bound = Data->find(*Base);
+                  if (Bound == Data->end() || (Bound->second.Parent == Start &&
+                                               !Bound->second.MultipleParents))
+                    return false;
+                  Known = true;
+                  if (Ref.IsLocalData != Bound->second.IsLocalData)
+                    return false;
+                  if (!Anchor)
+                    return Ref.Name == Bound->second.Name;
+                  const auto BoundAnchor = localDataAnchor(Bound->second.Name);
+                  // Query only the frozen exact operand. Relative consumers
+                  // never establish bindings, including for another delta.
+                  return !BoundAnchor->Delta &&
+                         BoundAnchor->Offset == Anchor->Offset &&
+                         BoundAnchor->Name == Anchor->Name;
+                });
+            if (Known) {
+              if (Confirmed) {
                 if (ConfirmedMetadata.empty())
                   ConfirmedMetadata.resize(Matches.size(), 0);
                 ++ConfirmedMetadata[I];
