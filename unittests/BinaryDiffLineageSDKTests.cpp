@@ -291,13 +291,14 @@ TEST_F(BinaryDiffLineageSDK,
           neverd_lineage_cancel(P.Handle);
         }
       };
-  for (const auto Phase : {"lineage:release_edit", "lineage:parse",
+  for (const auto Phase : {"lineage:release_edit", "lineage:reuse_graph",
                            "lineage:publish", "lineage:commit"}) {
+    SCOPED_TRACE(Phase);
     Probe P{Handle, Phase};
-    EXPECT_EQ(neverd_lineage_edit_releases_json(Handle, Edit.c_str(), nullptr,
+    ASSERT_EQ(neverd_lineage_edit_releases_json(Handle, Edit.c_str(), nullptr,
                                                 Cancel, &P),
               0);
-    EXPECT_TRUE(P.Reached) << Phase;
+    ASSERT_TRUE(P.Reached);
     EXPECT_EQ(status().getString("operation_state"), "cancelled");
     EXPECT_EQ(status().getString("loaded_revision"), Revision);
     EXPECT_EQ(saved(), Before);
