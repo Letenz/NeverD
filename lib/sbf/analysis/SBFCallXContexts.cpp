@@ -103,6 +103,8 @@ llvm::StringRef generalizationName(CallXInputGeneralization Kind) {
     return "specialization_resource_budget";
   case CallXInputGeneralization::EquivalentGenericInputs:
     return "reused_equivalent_generic_leaf_inputs";
+  case CallXInputGeneralization::EquivalentSpecializedInputs:
+    return "reused_proven_equivalent_specialized_inputs";
   }
   llvm_unreachable("unknown input generalization");
 }
@@ -144,6 +146,7 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
   std::map<size_t, size_t> ContextCounts;
   std::map<size_t, std::set<size_t>> Targets;
   std::map<size_t, std::set<std::vector<va_t>>> TargetSets;
+  std::map<size_t, std::set<std::pair<size_t, size_t>>> TargetInputExpressions;
   size_t ProvenContexts = 0;
   size_t ProvenTargetSetContexts = 0;
   size_t ProvenTargetSetCallerContexts = 0;
@@ -181,7 +184,30 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"dynamic_fallback_required", true}};
     Row["evidence_scope"] = Evidence.EntryPrefixOnly
                                 ? "direct_caller_entry_prefix"
+                            : !Evidence.InputExpressionValues.empty()
+                                ? "instantiated_generic_summary_inputs"
                                 : "whole_function_summary";
+    if (Evidence.InputExpression)
+      Row["target_input_expression"] =
+          static_cast<int64_t>(*Evidence.InputExpression);
+    if (Evidence.InputExpression && !Evidence.EntryPrefixOnly)
+      TargetInputExpressions[Evidence.SummaryID].emplace(
+          Evidence.CallXSlot, *Evidence.InputExpression);
+    if (!Evidence.InputExpressionValues.empty()) {
+      llvm::json::Array Steps;
+      for (const auto &Step : Evidence.InputExpressionValues) {
+        llvm::json::Array Inputs, Values;
+        for (const auto &Value : Step.Inputs.values())
+          Inputs.push_back(valueJSON(Value));
+        for (const auto &Value : Step.Values.values())
+          Values.push_back(valueJSON(Value));
+        Steps.push_back(llvm::json::Object{
+            {"expression", static_cast<int64_t>(Step.Expression)},
+            {"inputs", std::move(Inputs)},
+            {"values", std::move(Values)}});
+      }
+      Row["input_expression_proof"] = std::move(Steps);
+    }
     if (!Evidence.EntryPrefixOnly)
       Row["summary_id"] = static_cast<int64_t>(Evidence.SummaryID);
     if (!Evidence.IsRootContext) {
@@ -321,6 +347,11 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       Expression["register"] = Summary.ReturnInputExpression->first;
       Expression["offset"] = Summary.ReturnInputExpression->second;
     }
+    llvm::json::Array InputExpressions;
+    for (const auto &[Slot, ID] : TargetInputExpressions[Summary.ID])
+      InputExpressions.push_back(
+          llvm::json::Object{{"callx_slot", static_cast<int64_t>(Slot)},
+                             {"expression", static_cast<int64_t>(ID)}});
     Summaries.push_back(llvm::json::Object{
         {"summary_id", static_cast<int64_t>(Summary.ID)},
         {"entry_slot", static_cast<int64_t>(Summary.EntrySlot)},
@@ -337,6 +368,10 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"input_value_alternatives", std::move(Alternatives)},
         {"input_register_dependency_mask", Summary.InputRegisterMask},
         {"may_read_input_memory", Summary.ReadsInputMemory},
+        {"conditional_reuse_input_register_mask",
+         Summary.ReuseInputRegisterMask},
+        {"conditional_reuse_reads_input_memory", Summary.ReuseReadsInputMemory},
+        {"target_input_expressions", std::move(InputExpressions)},
         {"may_return", Summary.MayReturn},
         {"return_value", valueJSON(Summary.ReturnValue)},
         {"return_value_alternatives", std::move(Returns)},
@@ -368,6 +403,30 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
     if (Edge.CallXTargetAddress)
       Row["callx_target_address"] = addressText(*Edge.CallXTargetAddress);
     Edges.push_back(std::move(Row));
+  }
+  llvm::json::Array Expressions;
+  for (size_t ID = 0; ID < Report.InputExpressions.size(); ++ID) {
+    const auto &Expression = Report.InputExpressions[ID];
+    llvm::json::Object Row{{"expression", static_cast<int64_t>(ID)}};
+    switch (Expression.Kind) {
+    case CallXInputExpressionKind::InputRegister:
+      Row["kind"] = "entry_register";
+      Row["register"] = Expression.Register;
+      Row["offset"] = Expression.Offset;
+      break;
+    case CallXInputExpressionKind::Constant:
+      Row["kind"] = "constant";
+      Row["value"] = valueJSON(Expression.Constant);
+      break;
+    case CallXInputExpressionKind::Instruction: {
+      Row["kind"] = "normalized_instruction";
+      Row["input"] = static_cast<int64_t>(*Expression.Input);
+      Row["instruction_slot"] =
+          static_cast<int64_t>(Expression.InstructionSlot);
+      break;
+    }
+    }
+    Expressions.push_back(std::move(Row));
   }
   return llvm::json::Object{
       {"schema", 4},
@@ -411,10 +470,15 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(Report.GeneralizedPublishedSummaries)},
       {"equivalent_generic_leaf_reuses",
        static_cast<int64_t>(Report.EquivalentGenericReuses)},
+      {"equivalent_specialized_summary_reuses",
+       static_cast<int64_t>(Report.EquivalentSpecializedReuses)},
       {"skipped_non_callx_root_specializations",
        static_cast<int64_t>(Report.SkippedNonCallXRootSpecializations)},
       {"constant_branch_successors_skipped",
        static_cast<int64_t>(Report.SkippedConstantBranchSuccessors)},
+      {"instantiated_target_input_expressions",
+       static_cast<int64_t>(Report.InstantiatedTargetInputExpressions)},
+      {"target_input_expressions", std::move(Expressions)},
       {"projected_unused_register_facts",
        static_cast<int64_t>(Report.ProjectedRegisters)},
       {"projected_unread_scratch_snapshots",

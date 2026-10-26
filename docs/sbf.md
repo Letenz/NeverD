@@ -409,6 +409,60 @@ together. Other published dependencies and the current root stay live; reusable
 completed inputs remain cached while no specialization needs their space.
 Function-call-free generic
 summaries with identical projected inputs are reused without losing input facts.
+A completed specialized summary can also serve another caller when every input
+carrier read before definition agrees under its proven call targets. This uses
+each completed specialized callee's conditional dependencies, or its existing
+global mask when the edge uses a generic summary. Dependencies propagate through
+direct and finite indirect call layers; the CALLX carrier and branch operands
+remain reads. The entry frame anchor also stays in the
+reuse condition: symbolic return/store expressions can use an argument's
+relation to that frame even when the machine body never reads r10.
+Unknown, unsupported, recursive, depth,
+resource and legacy-runtime edges keep conservative dependencies. Definite
+definitions meet at CFG joins, and a definition-only change requeues the block
+even when its register values and origins stay equal. Final replay records the
+conditional reuse mask after those definitions converge.
+
+Scratch inputs must agree whenever that context reads input memory or may
+change caller memory. A context with no memory dependency and preserved memory
+keeps the current caller's scratch at the return boundary. Its cached snapshot
+does not replace the caller's memory. Conditional reuse applies to caller edges
+between specialized summaries; standalone roots keep their entry assumptions,
+and generic mode retains its distinct nested-call policy. The original cache
+keys and static dependency masks remain intact. Schema 4 additionally records
+`conditional_reuse_input_register_mask`,
+`conditional_reuse_reads_input_memory` and
+`equivalent_specialized_summary_reuses`. Reused edges state
+`reused_proven_equivalent_specialized_inputs` without marking their inputs as
+generalized unknown. Cached input fields outside the conditional mask are not
+additional requirements on such an edge. The four-summary and resource budgets
+remain unchanged.
+
+Generic summaries can retain a CALLX carrier as an expression of entry
+parameters and full-width loads from entry memory. Copies, supported normalized
+affine operations and canonical return-input expressions compose those values
+across basic blocks. Expressions meet by exact identity at joins; unsupported
+operations and differing expressions become unknown. A new entry-memory load
+is available only while every reaching path has preserved that memory. Stores
+and potentially writing calls invalidate that guarantee, including a change
+that leaves all register values equal. A value captured before a write remains
+available in a carrier that survives the canonical ABI.
+
+When an actual caller uses a completed generic summary, its pre-call parameters
+and scratch can instantiate such a target expression after the frame push.
+This preserves the generic return/memory transfer and four-summary limit.
+Schema 4 reports `target_input_expressions`, normalized instruction slots and
+each `input_expression_proof` step's input/output alternatives. The evidence
+scope is `instantiated_generic_summary_inputs`; `generalized_unknown_inputs`
+still describes the function-summary mode, while the target proof names its
+actual input conditions. Unknown or overflowing alternatives stay unknown;
+legacy dispatch keeps its existing argument and evidence invalidation.
+Expression nodes, proof steps, retained values and evaluations use the existing
+output, retained-state and instruction-work budgets. The instantiation counter
+counts computations, including solver contexts that may later be reclaimed.
+These target proofs do not create candidate-callee summary edges, establish
+that every candidate was summarized, or close unknown runtime callers.
+
 All generic roots remain available, but standalone specialization is skipped
 when the static CFG/direct-call graph cannot reach an unresolved CALLX; actual
 callers can still demand return/memory specializations. Remaining roots retain
