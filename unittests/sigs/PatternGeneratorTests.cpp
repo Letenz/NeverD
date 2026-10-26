@@ -1579,6 +1579,25 @@ TEST(PatternGeneratorCOFF, FunctionAddressReferencesRequireFunctionSymbols) {
   EXPECT_TRUE(generate(Builder.build(), Opts).Lines.empty());
 }
 
+TEST(PatternGeneratorCOFF, FunctionAddressesAfterPrefixLookingOperands) {
+  // F0 is the previous LEA's SIB byte, not a LOCK prefix on the next LEA.
+  COFFObjectBuilder Builder(
+      COFF::IMAGE_FILE_MACHINE_AMD64,
+      {0x48, 0x8d, 0x0c, 0xf0, 0x4c, 0x8d, 0x0d, 0, 0, 0, 0, 0xc3});
+  Builder.addFunction("registration", 0);
+  Builder.setRelocationTarget("callback");
+  Builder.addRelocation(7, COFF::IMAGE_REL_AMD64_REL32);
+  PatternGeneratorOptions Opts;
+  Opts.EmitReferences = Opts.RequireReferences = true;
+  const auto Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines.front());
+  ASSERT_TRUE(bool(Mod)) << toString(Mod.takeError());
+  ASSERT_EQ(Mod->References.size(), 1u);
+  EXPECT_EQ(Mod->References.front().Name, "callback");
+  EXPECT_EQ(Mod->References.front().Offset, 7u);
+}
+
 TEST(PatternGeneratorCOFF, CollisionEvidenceIncludesWeakUnreferencedFunctions) {
   COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, {0x33, 0xc0, 0xc3});
   Builder.addFunction("zero", 0);

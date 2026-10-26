@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDSigs
   SignatureVTableContext.cpp
   SignatureRuntimePointerContext.cpp
   SignatureMatcher.cpp
+  X86/X86ReferenceBoundary.cpp
 
   LINK_COMPONENTS
   Loader

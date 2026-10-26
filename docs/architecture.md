@@ -2253,6 +2253,13 @@ index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
 claims are not opted into incoming inference merely by loading them. Source
 refinements of ordinary anchors share the frozen reference validation pass;
 contradicted refinements withdraw only the incoming names they supported.
+The signature component shares x64 address-field boundary checks between
+generation and matching. A prefix-looking predecessor invokes a bounded
+Capstone walk from the declared function entry; only a reachable canonical
+LEA with nonoverlapping decoded paths is accepted. Unsupported or exhausted
+walks remain unknown. This fallback supplies no identity or lifting semantics.
+Its single per-thread prefix cache compares every byte within the same bound;
+buffer addresses and hashes cannot preserve a proof after input changes.
 The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
 loader owns validation of primary MSVC RTTI metadata. Native `!vtable` records
 are metadata outside the byte index. `SignatureVTableContext` combines exact
