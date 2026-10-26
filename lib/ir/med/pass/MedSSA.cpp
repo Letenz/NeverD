@@ -496,26 +496,29 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       }
     }
 
-    std::vector<std::set<int>> LiveIn(N), LiveOut(N);
-    bool Changed = true;
-    while (Changed) {
-      Changed = false;
+    // Each live-in fact crosses a predecessor edge only once. The transfer
+    // UEVar[B] union (LiveOut[B] - VarKill[B]) distributes over individual
+    // variables, so propagating only new facts reaches the same least fixpoint
+    // without rebuilding successor unions or revisiting unchanged facts.
+    auto LiveIn = std::move(UEVar);
+    // Self-edges cannot add another block's uses to a single-block function.
+    if (N > 1) {
+      std::queue<std::pair<int, int>> Pending;
       for (auto It = RPO.rbegin(); It != RPO.rend(); ++It) {
-        int B = *It;
+        const int B = *It;
         if (B == VirtualRoot)
           continue;
-        std::set<int> NewOut;
-        for (int S : FlowSuccs[B])
-          if (S >= 0 && S < N)
-            NewOut.insert(LiveIn[S].begin(), LiveIn[S].end());
-        std::set<int> NewIn = UEVar[B];
-        for (int V : NewOut)
-          if (!VarKill[B].count(V))
-            NewIn.insert(V);
-        if (NewIn != LiveIn[B] || NewOut != LiveOut[B]) {
-          LiveIn[B] = std::move(NewIn);
-          LiveOut[B] = std::move(NewOut);
-          Changed = true;
+        for (int Id : LiveIn[B])
+          Pending.emplace(B, Id);
+      }
+      while (!Pending.empty()) {
+        const auto [B, Id] = Pending.front();
+        Pending.pop();
+        for (int P : FlowPreds[B]) {
+          // The synthetic root joins dominance, not machine-entry values.
+          if (P != VirtualRoot && !VarKill[P].count(Id) &&
+              LiveIn[P].insert(Id).second)
+            Pending.emplace(P, Id);
         }
       }
     }
