@@ -8353,6 +8353,13 @@ return null only after exhausting the requested count; scan-budget exhaustion
 remains a failure. The checked entry admits the whole count against the object
 extent before pointer or deadline checks. Zero-count searches need no pointer
 access, and a first match does not require the unread suffix to be mapped.
+`memmem` reuses `strstr`'s linear prefix-table search with explicit 64-bit
+lengths and ordinary embedded NUL bytes. An empty needle returns the haystack;
+a shorter haystack returns null, both without reading either input. Otherwise
+the needle and prefix table must fit the model budget, and the haystack is
+read only through the first match or the declared count. Budget exhaustion
+is a failure rather than a guessed no-match. Both searches preserve errno
+and guest bytes and retain the common dynamic-provider lifetime boundary.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
