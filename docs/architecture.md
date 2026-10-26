@@ -2967,7 +2967,10 @@ Dense implicant rounds look up exact one-bit neighbors when that requires
 fewer probes than a complete pair scan. Neighbors retain the original index
 order before merging, preserving prime discovery and greedy-cover tie order.
 The existing quadratic work admission remains unchanged; merge storage stays
-outside the small-recipe synthesis path.
+outside the small-recipe synthesis path. Terms remain ordered by value after
+each merge round, so only zero-to-one neighbor flips need lookup; the reverse
+pair was already visited. Prepared Boolean recipes keep their reconstruction
+memo inline, with ordinary growth for optional larger recipes.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every

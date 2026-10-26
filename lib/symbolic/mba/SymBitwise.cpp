@@ -199,9 +199,13 @@ const SynthTable &synthTable(unsigned NumVars) {
   return Tables[NumVars];
 }
 
+// Every prepared recipe has at most eight distinct nodes. Keep their memo
+// inline; the optional four-input search can still grow it when needed.
+using RecipeMemo = llvm::SmallDenseMap<uint32_t, SymRef, 16>;
+
 SymRef buildRecipe(SymContext &Ctx, const SynthTable &Table, uint32_t Packed,
                    llvm::ArrayRef<SymRef> Atoms, uint32_t Width,
-                   llvm::DenseMap<uint32_t, SymRef> &Memo) {
+                   RecipeMemo &Memo) {
   auto It = Memo.find(Packed);
   if (It != Memo.end())
     return It->second;
@@ -364,7 +368,12 @@ std::vector<Implicant> primeImplicants(const TruthTable &Table,
       llvm::SmallVector<size_t, 8> Neighbors;
       for (size_t I = 0; I < Current.size(); ++I) {
         Neighbors.clear();
-        for (uint32_t Rest = Current[I].Care; Rest; Rest &= Rest - 1) {
+        // Terms stay ordered by value: the initial minterms are ascending,
+        // and each round emits the smaller value of a merge in (I, J) order.
+        // Only a zero-to-one flip can reach a later term. The reverse lookup
+        // would discover the same pair again and immediately discard it.
+        for (uint32_t Rest = Current[I].Care & ~Current[I].Value; Rest;
+             Rest &= Rest - 1) {
           const uint32_t Bit = Rest & -Rest;
           const auto It =
               Positions.find(key(Current[I].Value ^ Bit, Current[I].Care));
@@ -716,7 +725,7 @@ SymRef buildParityKernel(SymContext &Ctx, const ParityKernel &Kernel,
   llvm::SmallVector<SymRef, 3> Core;
   for (unsigned I : Kernel.Inputs)
     Core.push_back(Atoms[I]);
-  llvm::DenseMap<uint32_t, SymRef> Memo;
+  RecipeMemo Memo;
   llvm::SmallVector<SymRef, 8> Parts;
   Parts.push_back(buildRecipe(Ctx, synthTable(Core.size()), Kernel.Packed, Core,
                               Width, Memo));
@@ -842,7 +851,7 @@ std::optional<SymRef> synthesizeBitwise(SymContext &Ctx,
 
     const SynthTable &Table = synthTable(NumVars);
     const auto Packed = static_cast<uint32_t>(Projected.packed());
-    llvm::DenseMap<uint32_t, SymRef> Memo;
+    RecipeMemo Memo;
     SymRef Result = buildRecipe(Ctx, Table, Packed, KeptAtoms, Width, Memo);
     if (Ctx.readabilityCost(Result) > Limits.MaxCost)
       return std::nullopt;
