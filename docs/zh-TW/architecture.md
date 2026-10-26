@@ -1,8 +1,16 @@
 **語言**: [English](../architecture.md) | [简体中文](../zh-CN/architecture.md) | [繁體中文](architecture.md) | [日本語](../ja/architecture.md) | [한국어](../ko/architecture.md) | [Français](../fr/architecture.md) | [Deutsch](../de/architecture.md) | [Español](../es/architecture.md) | [Italiano](../it/architecture.md) | [Русский](../ru/architecture.md) | [العربية](../ar/architecture.md)
 
+LLVM 呼叫型別與具名函式宣告不同時，LLVM C 透過純量複合常值取得轉換後的函式指標，保留呼叫點 ABI，包括 Windows x64 可變參數的浮點暫存器副本，無須修改宣告或加入 volatile 存取。
+
 [← 文件索引](README.md)
 
 # NeverD 架構
+
+## 入口堆疊值的原始碼恢復
+
+`PipelineIncomingStack` 為完整的 x64/ARM64 PE/ELF 葉函式推導有界的整數原始碼宣告。共用入口堆疊證明決定偏移；呼叫者必須完整寫入參數的所有位元組，否則撤銷整組推斷。HighC 與 LLVMC 在 SSA 之前繫結同一宣告，只重新轉換受影響的函式。僅選呼叫者時重用既有被呼叫函式讀取器和快取，並保留固定參數宣告。這不推斷一般 VM 狀態、浮點型別或外部 ABI，也不改變機器提升、修補及分析的契約。 `SourceFrameAnalysis` 必須依據原始 LowIR 的位元組身分，證明 SP、儲存的框架指標和連結暫存器均已還原，並遵循目前格式的保留暫存器規則。儲存的暫存器值不能成為原始碼參數。
+
+確定的暫存器呼叫目標共用有界 LowIR 純量查詢。原始間接呼叫身分仍用於堆疊證明；目標、被呼叫宣告及輸出堆疊位元組一致後，才將原始碼 MedIR 改為具名呼叫。載入、跨區塊值、呼叫破壞和不完整位元組不能確定目標。
 
 對已連結的 x64 PE，函式探索會在既有呼叫掃描中收集標準 RIP 相對 LEA 的程式碼位址。目標仍須通過獨立入口歸屬檢查及有界可呼叫出口證明；內部標籤、接續點及不支援的函式本體不會納入。探索與特徵引用共用位址編碼判定。COFF 條件 rel32 引用還要求來源物件明確宣告函式符號，且重定位附加值為零。離線 `--single-reference-context` 對每個完整的單引用位置條件檢查所有重疊原始來源宣告，並保留該位置的全部備選名稱。
 

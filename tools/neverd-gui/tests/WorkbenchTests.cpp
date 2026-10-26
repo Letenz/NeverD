@@ -1201,6 +1201,11 @@ private slots:
       // Raising an existing floating pane must not move it. Overview's action
       // is a visibility toggle, so it deliberately closes an open overview.
       if (ActionId(command) != ActionId::ViewGraphOverview) {
+        if (auto *code = qobject_cast<CodeView *>(dock->widget())) {
+          QVERIFY(activateTestWindow(floating));
+          code->text()->setFocus();
+          QTRY_VERIFY(code->text()->hasFocus());
+        }
         action->trigger();
         QVERIFY(dock->isOpen());
         QCOMPARE(dock->QWidget::window(), floating);
@@ -4348,6 +4353,165 @@ private slots:
     QVERIFY(texts.contains(bench.action(ActionId::JumpPseudocode)->text()));
     QCOMPARE(bench.action(ActionId::JumpPseudocode)->shortcut(),
              QKeySequence(Qt::Key_Tab));
+  }
+
+  void generationCreatesIndependentWindows_data() {
+    QTest::addColumn<int>("command");
+    QTest::addColumn<QString>("representation");
+    for (const auto &[action, representation] :
+         {std::pair{ActionId::ViewPseudocode, "source"},
+          {ActionId::ViewLLVMC, "llvmc"},
+          {ActionId::ViewLowIR, "low"},
+          {ActionId::ViewMedIR, "med"},
+          {ActionId::ViewHighIR, "high"},
+          {ActionId::ViewLLVMIR, "llvm"}})
+      QTest::newRow(representation)
+          << int(action) << QString::fromLatin1(representation);
+  }
+
+  void generationCreatesIndependentWindows() {
+    QFETCH(int, command);
+    QFETCH(QString, representation);
+    Theme::instance().apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "code-numbers.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(activateTestWindow(bench.window.get()));
+    auto *assembly = bench.window->disassembly();
+    auto *action = bench.action(ActionId(command));
+    const auto generate = [&](QWidget *target) {
+      // Cocoa can deactivate the test between gestures. Establish the
+      // intended input surface instead of sending a key to a null focus.
+      QVERIFY(activateTestWindow(target->window()));
+      target->setFocus();
+      QTRY_VERIFY(target->hasFocus());
+      if (action->shortcut().isEmpty())
+        action->trigger();
+      else
+        QTest::keySequence(target, action->shortcut());
+    };
+    assembly->navigate(Base + 0x140);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    assembly->focusContent();
+    generate(assembly->listing());
+    QTRY_COMPARE(bench.window->findChildren<CodeView *>().size(), 1);
+    auto *first = bench.codeView(representation);
+    QVERIFY(first);
+    QTRY_VERIFY(first->text()->complete());
+    const auto original = first->text()->allText();
+    auto *firstDock = bench.dockFor(first);
+
+    assembly->focusContent();
+    // Generate while the jump is pending: the second window must use its
+    // destination, not the first window's function.
+    assembly->navigate(Base + 0x160);
+    generate(assembly->listing());
+    QTRY_COMPARE(bench.window->findChildren<CodeView *>().size(), 2);
+    auto views = bench.window->findChildren<CodeView *>();
+    auto *second = views[0] == first ? views[1] : views[0];
+    QTRY_VERIFY(second->text()->complete());
+    QCOMPARE(second->representation(), representation);
+    QCOMPARE(second->text()->function(), std::optional<Address>(Base + 0x160));
+    QCOMPARE(first->text()->function(), std::optional<Address>(Base + 0x140));
+    QCOMPARE(first->text()->allText(), original);
+    auto *secondDock = bench.dockFor(second);
+    QVERIFY(firstDock->uniqueName() != secondDock->uniqueName());
+    QVERIFY(firstDock->title() != secondDock->title());
+    QCOMPARE(firstDock->parentWidget(), secondDock->parentWidget());
+
+    // Generate inside a code window refreshes only that document. Tab then
+    // reuses it for another function without replacing the first document.
+    QVERIFY(activateTestWindow(second->window()));
+    QTRY_VERIFY(second->text()->hasFocus());
+    generate(second->text());
+    QTRY_VERIFY(second->text()->complete());
+    QCOMPARE(bench.window->findChildren<CodeView *>().size(), 2);
+    QTest::keyClick(second->text(), Qt::Key_Tab);
+    QTRY_VERIFY(assembly->isAncestorOf(QApplication::focusWidget()));
+    assembly->navigate(Base + 0x180);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    QTest::keyClick(QApplication::focusWidget(), Qt::Key_Tab);
+    QTRY_COMPARE(second->text()->function(),
+                 std::optional<Address>(Base + 0x180));
+    QTRY_VERIFY(second->text()->complete());
+    QCOMPARE(bench.window->findChildren<CodeView *>().size(), 2);
+    QCOMPARE(first->text()->allText(), original);
+
+    // An explicit generation from assembly may open the same function twice.
+    assembly->focusContent();
+    generate(assembly->listing());
+    QTRY_COMPARE(bench.window->findChildren<CodeView *>().size(), 3);
+    secondDock->forceClose();
+    assembly->focusContent();
+    generate(assembly->listing());
+    QTRY_VERIFY(secondDock->isOpen() && second->isVisible());
+    QTRY_VERIFY(second->text()->complete());
+    QCOMPARE(bench.window->findChildren<CodeView *>().size(), 3);
+
+    const auto capture = qEnvironmentVariable("NEVERD_SHORTCUT_CAPTURES");
+    if (!capture.isEmpty()) {
+      QDir().mkpath(capture);
+      auto &theme = Theme::instance();
+      const auto mode = theme.mode();
+      const auto restore = qScopeGuard([&] { theme.setMode(mode); });
+      for (const bool dark : {false, true}) {
+        theme.setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+        theme.apply();
+        QApplication::processEvents();
+        QVERIFY(bench.window->grab().save(capture + "/windows-" +
+                                          representation +
+                                          (dark ? "-dark.png" : "-light.png")));
+      }
+    }
+  }
+
+  void generationFromFloatingSourceKeepsItsFunctionAndLanguage() {
+    Theme::instance().apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "pseudocode-cpp.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *source = bench.codeView("source");
+    QVERIFY(source);
+    QTRY_VERIFY(source->text()->complete());
+    source->setRepresentation("c");
+    QTRY_VERIFY(source->text()->complete());
+    QCOMPARE(source->representation(), QStringLiteral("c"));
+    bench.dockFor(assembly)->setFloating(true);
+    QVERIFY(activateTestWindow(bench.window.get()));
+    source->text()->setFocus();
+    QTRY_VERIFY(source->text()->hasFocus());
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    QCOMPARE(source->window(), bench.window.get());
+    auto *dock = bench.dockFor(source);
+    dock->setFloating(true);
+    auto *floating = source->window();
+    QVERIFY(activateTestWindow(floating));
+    source->text()->setFocus();
+    QTRY_VERIFY(source->text()->hasFocus());
+    assembly->navigate(Base + 0x180);
+    QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    QTRY_VERIFY(source->text()->complete());
+    QCOMPARE(source->representation(), QStringLiteral("c"));
+    QCOMPARE(source->text()->function(), std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewMedIR)->trigger();
+    CodeView *med = nullptr;
+    for (auto *view : floating->findChildren<CodeView *>())
+      if (view->representation() == QLatin1String("med"))
+        med = view;
+    QVERIFY(med);
+    QTRY_VERIFY(med->text()->complete());
+    QCOMPARE(med->text()->function(), std::optional<Address>(Base + 0x140));
+    QCOMPARE(med->window(), floating);
+    QCOMPARE(source->representation(), QStringLiteral("c"));
   }
 
   void assemblyAndCodeCursorsFollowEachOther() {
@@ -12807,15 +12971,15 @@ private slots:
     const Address function = Base + 0x140;
     const auto viewsClosed = [] {
       // Floating docks need not be QObject children of the main window.
-      bool found = false;
+      int count = 0;
       for (auto *widget : QApplication::allWidgets())
         if (auto *view = qobject_cast<CodeView *>(widget)) {
-          found = true;
+          ++count;
           if (view->isVisible() || view->text()->function() ||
               view->text()->loading())
             return false;
         }
-      return found;
+      return count == 3;
     };
     {
       Workbench bench;
@@ -12837,6 +13001,14 @@ private slots:
       if (floating)
         dock->setFloating(true);
       QTRY_VERIFY(view->isVisible());
+      // Save more than the old fixed pair, including independent documents
+      // with the same representation. The factory must restore all their IDs.
+      for (int i = 0; i < 2; ++i) {
+        auto *assembly = bench.window->disassembly();
+        QVERIFY(activateTestWindow(assembly->window()));
+        assembly->focusContent();
+        bench.action(command)->trigger();
+      }
       QSignalSpy saved(&bench.session, &Session::databaseSaved);
       bench.session.packDatabase(database);
       QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, OpenTimeoutMs);

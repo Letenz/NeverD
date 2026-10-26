@@ -7,6 +7,7 @@ add_neverd_unittest(NeverDSignatureTests
   RichHeaderTests.cpp
   SignatureCacheTests.cpp
   SignatureDBTests.cpp
+  SignatureDataContextTests.cpp
   SignatureMatcherTests.cpp
   SignatureTreeTests.cpp
   SynthesizedRoutineTests.cpp

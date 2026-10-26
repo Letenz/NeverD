@@ -11,6 +11,7 @@
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -28,6 +29,7 @@
 #include <limits>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 using namespace neverd;
 using namespace neverd::sigs;
@@ -80,10 +82,14 @@ struct ModuleRecord {
 
 /// A StoredName, with its text at \c TextOffset of the names' text.
 struct NameRecord {
+  // The top bit encodes a typed data reference without enlarging each name.
+  // Text offsets address the mapped payload, which must fit below that bit.
   uint64_t TextOffset;
   uint32_t Length;
   uint32_t Offset;
 };
+
+constexpr uint64_t DataReferenceBit = uint64_t(1) << 63;
 
 static_assert(std::is_trivially_copyable_v<Header> &&
                   std::is_trivially_copyable_v<ModuleRecord> &&
@@ -193,10 +199,11 @@ bool SignatureCache::PendingEntry::makeNames(size_t Run) {
   for (size_t I = Run * NamesPerRun; I < End; ++I) {
     const NameRecord R =
         readRecord<NameRecord>(Data + NameRecords + I * sizeof(NameRecord));
-    if (R.TextOffset > TextBytes || R.Length > TextBytes - R.TextOffset)
+    const uint64_t Offset = R.TextOffset & ~DataReferenceBit;
+    if (Offset > TextBytes || R.Length > TextBytes - Offset)
       return false;
-    Names[I] = {R.Offset,
-                std::string_view(Data + Text + R.TextOffset, R.Length)};
+    Names[I] = {R.Offset, std::string_view(Data + Text + Offset, R.Length),
+                (R.TextOffset & DataReferenceBit) != 0};
   }
   return true;
 }
@@ -228,6 +235,33 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
         if (readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord))
                 .Offset != 0)
           return false;
+    bool HasData = false;
+    for (uint64_t N = R.FirstName; N < R.FirstName + Names; ++N) {
+      const NameRecord Name =
+          readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord));
+      if ((Name.TextOffset & DataReferenceBit) &&
+          (N < R.FirstName + R.PublicNameCount ||
+           R.Context == uint8_t(ContextRequirement::None)))
+        return false;
+      HasData |= (Name.TextOffset & DataReferenceBit) != 0;
+    }
+    if (HasData) {
+      llvm::SmallVector<std::pair<uint32_t, bool>, 8> Sites;
+      for (uint64_t N = R.FirstName + R.PublicNameCount;
+           N < R.FirstName + Names; ++N) {
+        const NameRecord Name =
+            readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord));
+        if (Name.Offset >= R.TotalLen)
+          return false;
+        Sites.emplace_back(Name.Offset,
+                           (Name.TextOffset & DataReferenceBit) != 0);
+      }
+      std::sort(Sites.begin(), Sites.end());
+      for (size_t N = 1; N < Sites.size(); ++N)
+        if (Sites[N].first == Sites[N - 1].first &&
+            Sites[N].second != Sites[N - 1].second)
+          return false;
+    }
     StoredModule &M = Modules[I];
     M.Bytes = Bytes + R.BlobOffset;
     M.Stated = M.Bytes + Count;
@@ -379,6 +413,8 @@ void SignatureCache::store(const std::filesystem::path &Source,
       H.TextBytes += Name.Name.size();
     }
   }
+  if (H.TextBytes >= DataReferenceBit)
+    return;
   // The header and the block hashes keep the payload aligned, so the
   // payload's size does not depend on how many blocks it has.
   H.BlockCount = llvm::divideCeil(
@@ -417,9 +453,9 @@ void SignatureCache::store(const std::filesystem::path &Source,
     Blob += Count + statedBytes(Count);
     for (const StoredName &N :
          llvm::ArrayRef(M.Names, M.PublicNameCount + M.ReferenceCount)) {
-      writeRecord(
-          Written.data() + L->NameRecords + Name * sizeof(NameRecord),
-          NameRecord{Text, static_cast<uint32_t>(N.Name.size()), N.Offset});
+      writeRecord(Written.data() + L->NameRecords + Name * sizeof(NameRecord),
+                  NameRecord{Text | (N.IsData ? DataReferenceBit : 0),
+                             static_cast<uint32_t>(N.Name.size()), N.Offset});
       std::memcpy(Written.data() + L->Text + Text, N.Name.data(),
                   N.Name.size());
       ++Name;

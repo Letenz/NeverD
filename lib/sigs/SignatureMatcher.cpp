@@ -736,6 +736,8 @@ void SignatureMatcher::HashIndex::build(
   IndexBuilder(*this, Modules, *Storage).build();
   CandidateStorage = std::move(Storage);
   CallerStorage.reset();
+  DataContext = false;
+  DataAnchorStorage.reset();
 }
 
 void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
@@ -743,18 +745,33 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
   IndexBuilder(*this, Modules, *Storage).build();
   CandidateStorage = std::move(Storage);
   CallerStorage.reset();
+  DataAnchorStorage.reset();
+  DataContext = llvm::any_of(Modules, [](const StoredModule &Mod) {
+    return Mod.RequireReferences &&
+           llvm::any_of(Mod.references(),
+                        [](const StoredName &Ref) { return Ref.IsData; });
+  });
   if (llvm::none_of(Modules,
                     [](const StoredModule &Mod) { return Mod.RequireCaller; }))
     return;
   auto Callers = std::make_shared<std::vector<CallerEntry>>();
+  std::shared_ptr<std::vector<size_t>> DataAnchors;
+  if (DataContext)
+    DataAnchors = std::make_shared<std::vector<size_t>>();
   for (size_t I = 0; I < Modules.size(); ++I)
     if ((Modules[I].RequireCaller || Modules[I].RequireReferences) &&
-        SignatureMatcher::isFullyVerified(Modules[I]))
+        SignatureMatcher::isFullyVerified(Modules[I])) {
+      if (DataAnchors && Modules[I].RequireCaller &&
+          llvm::any_of(Modules[I].references(),
+                       [](const StoredName &Ref) { return Ref.IsData; }))
+        DataAnchors->push_back(I);
       for (size_t N = 0; N < Modules[I].PublicNameCount; ++N)
         if (Modules[I].publicNames()[N].Offset == 0)
           Callers->push_back({I, N,
                               std::hash<std::string_view>{}(
                                   Modules[I].publicNames()[N].Name)});
+    }
+  DataAnchorStorage = std::move(DataAnchors);
   if (Callers->empty())
     return;
   const auto NameOf = [&](const CallerEntry &Entry) {

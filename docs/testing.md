@@ -1,5 +1,7 @@
 **Languages**: [English](testing.md) | [简体中文](zh-CN/testing.md) | [繁體中文](zh-TW/testing.md) | [日本語](ja/testing.md) | [한국어](ko/testing.md) | [Français](fr/testing.md) | [Deutsch](de/testing.md) | [Español](es/testing.md) | [Italiano](it/testing.md) | [Русский](ru/testing.md) | [العربية](ar/testing.md)
 
+`NeverDLLVMCValueTests` compiles and executes a recast variadic call against a separate Windows x64 ABI callee at O0/O2, with preserved LLVM types enabled and disabled. Native x64 hosts verify the floating value through the callee’s variadic argument reader; other architectures explicitly skip that execution.
+
 [← Documentation Index](README.md)
 
 The source projection regressions include
@@ -18,6 +20,25 @@ PE/ELF inputs at O0/O2, with pipeline optimization enabled and disabled. It
 checks integer and floating bit transport, repeated binding, call indices, and
 isolation from machine lifting, patching and analysis. These host executions
 do not qualify native Windows ARM64 drivers.
+
+Known register calls run through both C routes for x64/ARM64 PE/ELF, whole modules and selected callers. Their original LowIR occurrences remain indirect. Scalar-query controls reject stale partial writes, opaque effects, reused instruction temporaries, memory-call slots and exhausted work.
+
+The same target executes automatically recovered stack inputs for complete
+modules and selected callers, checks unchanged results across cached selections,
+and resets the cache before changing the callee bytes. Selected callers also
+link against independently defined integer and floating-point source callees,
+so lost fixed declarations fail compilation or execution. Negative controls reject
+partial outgoing writes, narrow reads, frame-address returns, preserved-register
+changes, external loads and values initialized by the callee itself. A selected
+call optimized away is checked by compiling and executing its resulting source,
+rather than requiring an intermediate call record to survive optimization.
+The same target runs the shared `SourceFrameAnalysis` suite. Balanced RBP and
+x29/x30 frames, including local stack allocation and `leave`, execute through
+explicit, automatic and selected-caller paths;
+negative controls retain overwritten saved bytes, changed RBP despite balanced
+SP, escaped frame addresses and the distinction between ELF and Windows
+preserved-register banks. An incoming x64 declaration cannot consume the pushed
+return address.
 
 `NeverDLLVMCValueTests` executes byte-shuffle and SHA-256 projections against
 independent scalar oracles and compiles mixed SHA/SGX/AMX feature selection.
@@ -763,6 +784,22 @@ Compilation disables TBM and the test inspects the exact assembly before
 linking it, so the original TBM bytes are never executed on the host. This
 checks emitted-code semantics, not physical TBM faults or performance.
 
+`NeverDX86BEXTRTests` covers XOP immediate controls, VEX register controls,
+APX and APX NF with 32/64-bit operands. It checks register aliases, memory
+sources, ignored i386 fields, all three decode routes, malformed byte/detail
+records and source faults before architectural writes. An independent bit
+loop checks every start/length pair for register-control forms; SF/AF/PF
+have explicit undefined effects, and NF preserves incoming flags. Run the
+same prefix, APX BMI and undefined-effect suites listed above for TBM.
+
+`NeverDX86BEXTRPipeline` projects raw fixtures through LLVM, HighC and
+LLVM-to-C with optimization on/off, compiles at O0/O2, and executes the
+generated value/flag projections against a bit-loop oracle. Compilation
+disables BMI/TBM and the exact assembly is checked before linking. The
+original BMI/TBM/APX instruction bytes are never executed. This qualifies
+the value projections; hardware exception delivery and preservation of a
+faulting load after source optimization remain separate work.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
@@ -1267,6 +1304,15 @@ page boundaries, permissions, overlap and dynamic provider lifetime. Direct
 memory cases retain the complete backing on pointer, overlap, scan-limit,
 fortify and deadline refusal. `ProcessPublic.AndroidTerminatedCopyReportsMatchSDKAndCLI`
 compares whole SDK/CLI reports for both entries on success and failure.
+`CheckedAppend*` exercises `__strcat_chk` and `__strncat_chk` with exact prefix,
+suffix, NUL and errno expectations. It covers empty and truncated appends,
+full-width counts and extents, the zero-count shortcut, checked destination
+scan order, fortify failure before a later source read, read-only prefixes,
+source and tail permissions, overlap, page ends and closed providers. The
+direct memory test verifies complete backing on refusals, including expired
+budgets and space required for a synthesized NUL.
+`ProcessPublic.AndroidCheckedAppendReportsMatchSDKAndCLI` compares complete
+reports for success, read/write fortify failures and zero-count invalid pointers.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -2897,6 +2943,16 @@ provenance-only changes, changed native bodies, engine/input mismatches and
 missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
+
+`generationCreatesIndependentWindows` checks the shared desktop controller's
+F5/Tab and IR commands: independent functions, repeated generation of the same
+function, refresh within a code pane, pending assembly jumps, tab placement,
+and reuse after closing a pane. `generationFromFloatingSourceKeepsItsFunctionAndLanguage`
+checks that source refresh and MedIR generation use the detached pane's own
+function and preserve its language. `generatedViewsStayClosedAfterReopening`
+saves multiple generated panes and checks their restoration and retirement when
+reopening or changing projects. Run these in `neverd-gui-tests`; native Cocoa
+runs also exercise focus delivery and floating-window ownership.
 
 `NeverDGuiWheelInput` replays precision wheel and trackpad events through the
 production disassembly, source and hex views. It compares small-event batches

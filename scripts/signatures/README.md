@@ -284,6 +284,19 @@ including a prefix-looking byte immediately before the opcode when no decoded
 boundary proves otherwise. This evidence can resolve candidates; it cannot
 authorize a caller's automatic name or type.
 
+For complete native outputs, `--data-references` can accompany `--contextual`,
+`--caller-context` or `--collision-evidence`. It emits `&offset name` for
+supported zero-addend x64 COFF external-data operands, including the exact
+REL32_N bias of immediate instructions. Static/local symbols are excluded.
+These fields require independently frozen full-function anchors and mapped
+readable nonexecuting storage. They cannot become code references, bootstrap
+other data candidates or authorize automatic names. The native parser rejects
+mixed kinds at one field and ordinary records containing data references;
+cache format 4 retains the kind without growing packed name records. See
+[signature quality](../../docs/signature-quality.md) for evidence and collision
+requirements. Existing ordinary generation is unchanged unless this option is
+explicitly selected with a complete contextual mode.
+
 Each line also names, as `^offset name`, the routines its function branches
 to directly (`neverd-sigmaker --references`), in COFF and ELF objects alike:
 the rel32 field of an x86 or x64 `call` or `jmp`, the ARM64 `B`/`BL` or

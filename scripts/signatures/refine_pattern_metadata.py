@@ -39,7 +39,11 @@ class Evidence:
         if not shared:
             return
         self.names.update(shared)
-        current = builder.ref_table(source.refs)
+        # Typed data operands never acquire import/RTTI semantics from their
+        # spelling. Keep that distinction even for malformed audit inputs.
+        current = builder.ref_table(tuple(
+            (offset, name) for offset, name in source.refs
+            if offset not in source.data_sites))
         if self.refs is None:
             self.refs = current
         else:

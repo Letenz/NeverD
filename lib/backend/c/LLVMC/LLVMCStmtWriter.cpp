@@ -81,6 +81,25 @@
 namespace neverd {
 
 namespace {
+bool needsCallSiteCType(const llvm::CallBase &Call) {
+  const auto *Declared = llvm::dyn_cast<llvm::Function>(
+      Call.getCalledOperand()->stripPointerCasts());
+  return Declared && (Declared->getFunctionType() != Call.getFunctionType() ||
+                      Declared->getCallingConv() != Call.getCallingConv());
+}
+
+std::string retainCallSiteCType(const llvm::CallBase &Call,
+                                llvm::StringRef Type, std::string Cast) {
+  if (!needsCallSiteCType(Call))
+    return Cast;
+  // Clang can lower a directly cast function designator using its original
+  // declaration's non-variadic ABI, dropping Windows x64's floating GPR copy.
+  // A scalar compound literal supplies a value of the call's own pointer
+  // type. It evaluates the target once, preserves the symbol declaration and
+  // needs no volatile barrier; optimized C can still make a direct call.
+  return "((" + Type.str() + "){" + Cast + "})";
+}
+
 /// ` /* brk #0x3E8 */` for a call or fence that carries the instruction it
 /// was lifted from, where its C leaves out that instruction's operand.
 std::string instructionComment(const llvm::Instruction &I) {
@@ -5698,7 +5717,9 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     Type = declarationToC(cDisplayType(Hint->Signature.ReturnType),
                           "(" + Convention + "*)(" + Params + ")");
   }
-  return "((" + Type + ")(" + valueStr(Call.getCalledOperand()) + "))";
+  return retainCallSiteCType(Call, Type,
+                             "((" + Type + ")(" +
+                                 valueStr(Call.getCalledOperand()) + "))");
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
@@ -5780,7 +5801,9 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   }
 
   std::string CalleeName;
-  if (auto *Callee = Call.getCalledFunction()) {
+  if (needsCallSiteCType(Call)) {
+    CalleeName = preservedIndirectCalleeStr(Call);
+  } else if (auto *Callee = Call.getCalledFunction()) {
     const std::string RawCalleeName = Callee->getName().str();
     const char *CN = llvmIntrinsicToCName(RawCalleeName.c_str());
     if (CN)
@@ -5802,8 +5825,9 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
           Callee = Cast->getOperand(0);
         Target = "(" + valueStr(Callee) + ")";
       }
-      CalleeName = "((" + indirectCalleeType(Call, /*Strict=*/false) + ")" +
-                   Target + ")";
+      const auto Type = indirectCalleeType(Call, /*Strict=*/false);
+      CalleeName =
+          retainCallSiteCType(Call, Type, "((" + Type + ")" + Target + ")");
     }
   }
   if (Call.getCalledFunction() &&
