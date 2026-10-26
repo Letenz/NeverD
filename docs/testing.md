@@ -4914,6 +4914,13 @@ execution of every source architecture.
 whose name binds a prototype, reads the parameters it declares, a system call
 stub's fifth on the stack too, together with any its body reads past them.
 
+`MedFPStackHomes.*` (in `NeverDFPParameterMaskTests`) checks propagation through
+overlapping incoming FP stack homes, independent adjacent components,
+unaligned seeds, forced memory homes and unresolved or malformed reads.
+Long chains retain the same homes in both block orders while querying each
+eligible address at most once. Run this owner and the calling-convention
+contract tests when changing the stack-home closure algorithm.
+
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
 unmasked return paths while discarding only fully cleared or replaced bytes.
