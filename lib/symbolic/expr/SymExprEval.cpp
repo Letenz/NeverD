@@ -16,6 +16,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
@@ -125,6 +126,21 @@ uint64_t SymEvalPlan::evalU64(llvm::ArrayRef<uint64_t> VarVals) {
   return evalU64With(
       [&](uint32_t Id) { return Id < VarVals.size() ? VarVals[Id] : 0; });
 }
+
+namespace {
+
+// Keep arbitrary-precision construction and cleanup out of the common native
+// evaluator's stack frame. General operators still have one semantics owner.
+LLVM_ATTRIBUTE_NOINLINE
+uint64_t evalU64ViaAP(const SymContext &Ctx, SymRef Node,
+                      llvm::ArrayRef<uint32_t> Args, const uint64_t *Values) {
+  llvm::SmallVector<llvm::APInt, 4> APArgs;
+  for (size_t K = 0; K < Args.size(); ++K)
+    APArgs.emplace_back(Ctx.width(Ctx.operand(Node, K)), Values[Args[K]]);
+  return evalNodeAP(Ctx, Node, APArgs).getZExtValue();
+}
+
+} // namespace
 
 uint64_t
 SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
@@ -240,10 +256,7 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
       // stated once in evalNodeAP.  They are rare in the MBA inner loop, so
       // reconstructing operand APInts here costs little and avoids a second,
       // divergent copy of the semantics.
-      llvm::SmallVector<llvm::APInt, 4> APArgs;
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
-        APArgs.emplace_back(Ctx.width(Ctx.operand(St.Node, K)), S[A[K]]);
-      Res = evalNodeAP(Ctx, St.Node, APArgs).getZExtValue();
+      Res = evalU64ViaAP(Ctx, St.Node, {A, St.NumArgs}, S);
       break;
     }
     }

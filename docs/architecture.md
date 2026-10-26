@@ -3106,6 +3106,8 @@ only a missing complete identity reaches the allocation path. Native evaluation
 slots remain normalized to their declared widths, so operations that preserve
 that invariant do not mask their results again. External variable values and
 arithmetic that can introduce high bits still receive their width mask.
+General operators retain the shared APInt semantics in a separate call, keeping
+their operand construction and cleanup out of the native evaluator's hot frame.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
 halves independently. Sum construction collects small coefficient maps in
 inline storage and sorts completed entries by base-node index before rebuilding.
