@@ -4525,6 +4525,33 @@ subsequent writes and floating-point bit patterns; both emitters consume that
 same initialization. This transports an already supplied declaration and does
 not infer an original prototype or authorize a machine-code rewrite.
 
+`PipelineIncomingStack` also derives internal integer source declarations for
+bounded, complete x64/ARM64 PE/ELF leaves that read whole incoming stack words.
+The shared entry-stack proof owns offsets, and a separate value walk rejects
+external memory, frame escape and undefined inputs. Private frame/link spills
+may survive in the leaf: `SourceFrameAnalysis` checks the original LowIR byte
+identities, complete SP restoration and the current format's preserved bank.
+Saved registers cannot become declared scalar inputs or return values. Incoming
+x64 slots start above the pushed return address; ARM64 slots start at entry SP.
+ARM64 return control in LR is proved independently of the result in X0. Both source routes bind these
+declarations before SSA and reconvert only affected definitions and callers.
+Every caller in a request must supply all outgoing bytes through the shared
+`SourceCallABI` write proof; otherwise the declaration is withdrawn as a unit.
+Ordinary signature bounds cannot truncate an already bound source call.
+LLVM source exports retain the fixed declaration of such a call even when the
+selected output omits its callee, instead of falling back to unknown extern
+varargs. Explicit native stack-word source calls use the same declaration path.
+
+Exact register-call targets use the shared bounded LowIR scalar query. The original indirect occurrence remains the stack-proof key; only the source-bound MedIR call becomes a named call after its target, callee declaration and outgoing bytes agree. Loads, cross-block values, call clobbers and incomplete register bytes cannot supply a target.
+
+Selected callers use the existing omitted-callee reader and its image- and
+summary-sensitive memo. A bounded instruction preflight only avoids unnecessary
+CFG builds; the ordinary complete CFG and MedIR still establish the declaration.
+The memo accounts for cached stack locations, and follows its existing reset
+contract when image bytes or analysis policy change. Work limits belong to
+`pipeline/Limits.h`. These projections do not infer arbitrary framed/VM state
+inputs, floating types, or an external calling convention.
+
 The `neverd-bytecode` tool and C/Python plugins accept externally specified
 instruction languages through the shared recovery pipeline. C/Python callers
 can supply a static profile or a synchronous per-instruction decoder callback.
