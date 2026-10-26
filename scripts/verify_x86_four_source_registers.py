@@ -135,8 +135,9 @@ def check(path, prefixes, stack_wide_args=False):
                 if (p0 & 7) == 2 and (p1 & 3) == 3 and opcode in OPCODES:
                     assert OPCODES.index(opcode) == kind and calls < 3
                     assert prefix == prefixes[calls]
-                    assert modrm >> 6 == 0 and modrm & 7 == 3 and p0 & 0x20
-                    assert gprs['rbx'] == saved['rdi']
+                    base = (modrm & 7) | ((~p0 & 0x20) >> 2)
+                    assert modrm >> 6 == 0 and base in (0, 1, 2, 3)
+                    assert gprs[('rax', 'rcx', 'rdx', 'rbx')[base]] == saved['rdi']
                     source = ((~p1 >> 3) & 15) | ((~p2 & 8) << 1)
                     assert source & 3 == 0
                     destination = ((modrm >> 3) & 7) | ((~p0 & 0x10) >> 1) | ((~p0 & 0x80) >> 3)

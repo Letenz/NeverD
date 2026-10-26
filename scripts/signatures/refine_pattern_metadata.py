@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add missing immutable metadata references to existing complete patterns.
+"""Add source-owned missing references to existing complete patterns.
 
 Only unpruned --collision-evidence outputs may supply references. Every raw
 same-body claim sharing an existing name participates, including versions that
@@ -34,6 +34,7 @@ class Evidence:
     names: set[str] = field(default_factory=set)
     refs: dict[int, set[str]] | None = None
     local_data: bool = False
+    caller_code: bool = False
     local_refs: dict[int, set[str]] | None = None
 
     def add(self, source: builder.PatternLine) -> None:
@@ -67,7 +68,9 @@ class Evidence:
             return self.line
         existing = {offset for offset, _ in self.line.refs}
         added = {(offset, name) for offset, names in self.refs.items()
-                 if offset not in existing and all(map(immutable_reference, names))
+                 if offset not in existing and
+                 (all(map(immutable_reference, names)) or
+                  (self.caller_code and self.line.require_caller))
                  for name in names}
         # Every source must own the site, but different builds may use
         # different anchor operands. Preserve their complete alternatives;
@@ -86,7 +89,8 @@ class Evidence:
 
 def refine(existing: list[Path], evidence: list[Path],
            names: set[str] | None = None, *,
-           local_data: bool = False) -> dict[Path, str]:
+           local_data: bool = False,
+           caller_code: bool = False) -> dict[Path, str]:
     records = {}
     by_key = defaultdict(list)
     for path in existing:
@@ -96,10 +100,10 @@ def refine(existing: list[Path], evidence: list[Path],
             state = None
             selected = line is not None and (names is None or any(
                 name.partition(" ")[2] in names for name in line.names))
-            if selected and (local_data or not line.require_caller) and not line.is_vtable and not line.is_load_config:
+            if selected and (local_data or caller_code or not line.require_caller) and not line.is_vtable and not line.is_load_config:
                 shape = builder.Shape.of(line.key)
                 if shape.fully_verified():
-                    state = Evidence(line, local_data=local_data)
+                    state = Evidence(line, local_data=local_data, caller_code=caller_code)
                     by_key[line.key].append(state)
             rows.append((raw, state))
         records[path] = rows
@@ -146,12 +150,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="refine only this linkage name; repeat for a reviewed subset")
     parser.add_argument("--local-data", action="store_true",
                         help="also add unanimous same-object data relations to contextual records")
+    parser.add_argument("--caller-code", action="store_true",
+                        help="also add unanimous code references to complete caller records")
     args = parser.parse_args(argv)
     try:
         if len({path.name for path in args.existing}) != len(args.existing):
             raise builder.BuildError("existing files need distinct output basenames")
         changed = refine(args.existing, args.evidence, set(args.name) if args.name else None,
-                         local_data=args.local_data)
+                         local_data=args.local_data, caller_code=args.caller_code)
         args.output.mkdir(parents=True, exist_ok=True)
         written = []
         for source, text in changed.items():
@@ -163,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         report = {"existing": describe(args.existing), "evidence": describe(args.evidence),
                   "names": args.name or [],
                   "local_data": args.local_data,
+                  "caller_code": args.caller_code,
                   "output": written}
         with (args.output / "metadata.sources.json").open("x", encoding="utf-8") as output:
             output.write(json.dumps(report, indent=2) + "\n")

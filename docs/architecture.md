@@ -33,6 +33,10 @@ symbols or instruction semantics.
 Low-to-Med, Med verification and source output use that contract.
 `X86DescriptorStateNative.h` owns register widths, native API names, memory
 footprints and the assembly fallback. LLVM, HighC and LLVM-to-C share it.
+`X86MemoryAddressAsm.h` selects safe data-address carriers for explicit scalar
+memory fallbacks: AX for address32/64 and DI for i386 address16. Descriptor,
+query and atomic plans share this choice, avoiding compiler-owned realignment
+and PIC registers while retaining the original width and segment controls.
 The four appended legacy table IDs preserve i386's operand-size override
 without changing existing serialized identities. Native memory accesses stay
 inside the instruction. Explicit native addresses retain width/prefix controls;
@@ -2249,6 +2253,13 @@ index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
 claims are not opted into incoming inference merely by loading them. Source
 refinements of ordinary anchors share the frozen reference validation pass;
 contradicted refinements withdraw only the incoming names they supported.
+The signature component shares x64 address-field boundary checks between
+generation and matching. A prefix-looking predecessor invokes a bounded
+Capstone walk from the declared function entry; only a reachable canonical
+LEA with nonoverlapping decoded paths is accepted. Unsupported or exhausted
+walks remain unknown. This fallback supplies no identity or lifting semantics.
+Its single per-thread prefix cache compares every byte within the same bound;
+buffer addresses and hashes cannot preserve a proof after input changes.
 The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
 loader owns validation of primary MSVC RTTI metadata. Native `!vtable` records
 are metadata outside the byte index. `SignatureVTableContext` combines exact

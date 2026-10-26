@@ -85,7 +85,7 @@ std::string expression(const X86FourSourcePlan &P,
   Fallback += std::string("__asm__ __volatile__(\"") + P.Control.mnemonic() +
               " {" + Segment + "(%1), %3, %0" + Suffix + "|%0" + Suffix +
               ", %3, " + IntelSegment + "[%1]}\" : \"+v\"(" + Acc +
-              ") : \"b\"(" + Address + "), \"Yk\"((uint16_t)(" + Mask + "))";
+              ") : \"a\"(" + Address + "), \"Yk\"((uint16_t)(" + Mask + "))";
   for (unsigned I = 0; I < X86FourSourceCount; ++I)
     Fallback += ", \"v\"(" + T + "_r" + std::to_string(I) + ")";
   Fallback += " : \"memory\"); })";
@@ -164,7 +164,8 @@ x86FourSourceCallPlan(Arch A, const llvm::CallInst &Call) {
       throw std::invalid_argument(X86FourSourceMalformed);
     P = x86FourSourcePlan(Kind, Zero, Prefix);
     if (!P || Asm->getAsmString() != P->assembly() ||
-        Asm->getConstraintString() != P->constraints() ||
+        (Asm->getConstraintString() != P->constraints() &&
+         Asm->getConstraintString() != P->constraints(true)) ||
         !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
         Asm->getDialect() != llvm::InlineAsm::AD_ATT || Call.arg_size() != 7 ||
         Call.getFunctionType() != Asm->getFunctionType())

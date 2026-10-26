@@ -51,7 +51,7 @@ def decode(code, mode):
             if ((p0 & 7) == 2 and (p1 & 3) == 1 and modrm >> 6 != 3
                     and op in (0x62, 0x63, 0x88, 0x89, 0x8a, 0x8b)):
                 base = (modrm & 7) | ((~p0 & 0x20) >> 2)
-                assert (modrm >> 6, base) == (0, 3), (start, 'DS-default base changed')
+                assert modrm >> 6 == 0 and base in (0, 1, 2, 3), (start, 'DS-default base changed')
                 assert (p1 & 0x78) == 0x78 and (p2 & 0x18) == 8
                 assert p2 & 7, 'native mask was replaced with k0'
                 ll = p2 >> 5 & 3

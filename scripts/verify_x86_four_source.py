@@ -52,7 +52,7 @@ def decode(code, bits):
                 source = ((~p1 >> 3) & 15) | ((~p2 & 8) << 1)
                 assert source == 4, (start, 'unaligned or wrong source block', source)
                 base = (modrm & 7) | ((~p0 & 0x20) >> 2)
-                assert (modrm >> 6, base) == (0, 3), (start, 'DS-default memory changed')
+                assert modrm >> 6 == 0 and base in (0, 1, 2, 3), (start, 'DS-default memory changed')
                 assert p2 & 7, (start, 'native mask replaced by k0')
                 kind = OPCODES.index(opcode)
                 assert (p2 >> 5 & 3) == (0 if kind in (2, 3) else 2)
