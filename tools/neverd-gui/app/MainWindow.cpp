@@ -490,7 +490,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
             view->showFunction(*function);
       });
     }
-    if (event->type() == QEvent::Hide)
+    // A completed document keeps its exact instruction across tab changes.
+    // Only an active request needs to be stopped while its pane is hidden.
+    if (event->type() == QEvent::Hide && code->text()->loading())
       code->text()->cancel();
   }
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);

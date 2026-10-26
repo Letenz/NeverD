@@ -303,6 +303,24 @@ NeverC's `development.md`. QEMU 10.2.2's explicit limitation mode skips 180/520
 instruction cases and one of six branch-state cases; skipped behavior and
 physical MPX hardware execution are not qualified as passing.
 
+The shared `X86MpxContext` foundation now models enable evidence, all four
+bounds registers with known-bit masks, lower/complemented-upper/raw-upper
+checks, completed loads, store values, BDE/BTE addresses, pointer-match
+initialization and BNDSTATUS. It also applies original branch completion with
+the active BNDPRESERVE setting. Nonzero directory bases and every MAWA/CPL indexing bit
+have independent tests. The model follows
+[SDM Volume 1 Appendix E](https://cdrdv2.intel.com/v1/dl/getContent/671436)
+and the [Volume 2A BND instruction contracts](https://cdrdv2.intel.com/v1/dl/getContent/671199).
+The portable model does not assert high-half values after 32-bit bounds
+updates: Volume 1 E.5.1 contains both clearing and undefined-high-half wording.
+A BNDLDX table-read fault forgets the affected bound because partial update
+order is implementation-dependent. An invalid BDE instead preserves the bank
+and reports its address in BNDSTATUS. Active or unknown transaction contexts
+are refused before state publication; RTM/HLE checkpoint/abort integration is
+still required. This is not yet connected to strict lifting or native output:
+decoded operand authentication, memory-provider completion and original-branch
+effects surviving every IR route remain open.
+
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and
 testing the remaining instruction forms. The bounded system contract added
