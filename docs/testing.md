@@ -894,6 +894,23 @@ BMI/BMI2 disabled and executes only the resulting baseline code. It covers
 pipeline optimization on/off and both operand widths; only defined flags are
 compared. Physical APX execution and native memory faults remain separate.
 
+`NeverDX86ADXTests` covers legacy x86/x64 and APX/NDD ADCX/ADOX with independent
+128-bit reference addition, all status-flag seeds, aliases, full register banks,
+interleaved CF/OF chains, memory tails and fault-before-write checks. The legacy
+prefix cases include ignored 66 on ADOX and REX cancellation. Mutated raw bytes,
+operand/implicit detail and reserved APX fields must fail before appending LowIR,
+including permissive mode. Run the bit-count and APX BMI targets alongside it
+because they share prefix and address admission. The
+`ADXConsumesOnlyItsOwnCarryAndPreservesOtherArbitraryFlags` symbolic test checks
+that ADOX consumes a prior arbitrary OF while ADCX preserves it, and neither
+family erases prior arbitrary AF provenance.
+
+`NeverDX86ADXPipeline` runs legacy, APX and NDD projections through LLVM, HighC
+and LLVMC, pipeline optimization on/off and compiler O0/O2. It tests both widths,
+all four input CF/OF combinations and interleaved chains: 864 source profiles
+and 517,536 value/flag comparisons per SDK. It compiles with ADX disabled and
+executes baseline code, so it does not require or claim APX hardware support.
+
 `NeverDX86BMI2Tests` covers MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX in
 32-bit mode and x64 VEX/APX forms. Independent bit loops and 128-bit products
 check aliases, both MULX destinations, every flag, all low-word controls,

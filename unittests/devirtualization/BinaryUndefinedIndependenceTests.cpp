@@ -157,6 +157,31 @@ TEST(BinaryUndefinedIndependence,
 }
 
 TEST(BinaryUndefinedIndependence,
+     ADXConsumesOnlyItsOwnCarryAndPreservesOtherArbitraryFlags) {
+  for (bool Overflow : {false, true}) {
+    BinaryProgram Program;
+    // TZCNT defines CF and leaves OF arbitrary. Only ADOX consumes that OF.
+    Program.block(0x100, {0x31, 0xd2, 0xf3, 0x48, 0x0f, 0xbc, 0xca,
+                          static_cast<uint8_t>(Overflow ? 0xf3 : 0x66), 0x48,
+                          0x0f, 0x38, 0xf6, 0xc1, 0xc3});
+    Program.expect(Overflow ? Status::Dependent : Status::Proved);
+    if (!Overflow) {
+      Program.Contract.ReturnRegisters.push_back({x86reg::OF, 1});
+      Program.expect(Status::Dependent);
+    }
+  }
+  for (uint8_t PP : {1, 2}) {
+    BinaryProgram Program;
+    Program.block(0x100,
+                  {0x31, 0xc9, 0x62, 0xf4, static_cast<uint8_t>(0xfc | PP), 8,
+                   0x66, 0xc1, 0xc3});
+    Program.expect(Status::Proved);
+    Program.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+    Program.expect(Status::Dependent);
+  }
+}
+
+TEST(BinaryUndefinedIndependence,
      BitCountsDoNotCertifyUndefinedStatusFlagsAsConstants) {
   for (uint8_t Opcode : {0xbc, 0xbd}) {
     BinaryProgram Program;

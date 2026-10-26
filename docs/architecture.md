@@ -216,9 +216,17 @@ winning when destinations alias. Shift counts are masked before LLVM shifts,
 and RORX immediates are scalar values. Their complete undefined-output audit
 has no new arbitrary bits; existing flag producers pass through unchanged.
 PDEP/PEXT retain the shared scalar intrinsic contract and native BMI2 lowering.
-The older BMI/ADX dispatcher now delegates these families and reuses the APX
-validator for ADX, removing its separate address parser. ADX legacy-form
-qualification remains separate.
+`X86LiftADX` owns ADCX/ADOX admission and their independent unsigned CF/OF
+carry chains. It admits legacy map-2 and APX/NDD forms; ADX has no REX2 or NF
+form. It checks raw bytes, all public operands and implicit flags before a
+memory access. ADOX's legacy decoder detail omits TEST_OF and destination read
+access; the architectural inputs remain explicit in LowIR. Both sources and
+carry are consumed before any destination write, including aliases. Its empty
+undefined-output audit preserves earlier arbitrary flags, while the selected
+carry flag is defined by the addition. `X86LegacyScalarPrefixes` shares 66/F3,
+segment, address-size and REX cancellation scanning with bit counts; each
+family owns instruction selection and widths. The old BMI/ADX file is a small
+dispatcher delegating to the family owners.
 
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed

@@ -132,7 +132,16 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
-| Remaining ADX form and undefined-output audits | ADCX/ADOX still need complete legacy-form qualification. BMI2 value operations, BEXTR, bit counts, ANDN/BLS*/BZHI and the separate TBM family have form-specific undefined-output audits. |
+
+ADCX/ADOX now have complete form-specific undefined-output audits for legacy
+x86/x64 and APX/NDD x64, alongside BMI2 values, BEXTR, bit counts, BMI logic and
+TBM. ADOX uses OF as an **unsigned carry**, and each instruction preserves the
+other chain and all unrelated flags. Their LLVM/HighC/LLVMC arithmetic
+projections passed 864 source profiles and 517,536 value/flag comparisons per
+SDK; original legacy instructions passed 356,864 comparisons on an ADX CPU,
+including ignored 66 on ADOX. APX execution is qualified through the lifted
+semantics, not physical APX hardware. This does not certify a complete opaque
+machine-state bank or close the remaining context/continuation rows above.
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
 instruction and passing LowIR/concrete tests do not establish native LLVM or C
