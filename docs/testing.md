@@ -14452,6 +14452,39 @@ Restoring the feature branch and rebuilding passes all 18 scalar/SIMD writeback
 checks and 13 cached-call checks again. Both model profiles pass all ten routes;
 broad whole-project and native Apple CPTA qualification remain false.
 
+`AArch64PairMemory.*` in `NeverDArm64eAnalysisTests` owns ten pair-memory
+checks: GPR W/X, signed LDPSW and SIMD S/D/Q, offset/pre/post/non-temporal forms,
+215 independent LLVM MC samples and all 5,504 encoding/imm7 combinations through
+full and fast decoding. Native HighC/LLVMC O0/O2 and actual LLVM objects compare
+both complete values, the base and every byte of a 4096-byte buffer. The same
+suite checks malformed three-result bindings, the second store operand,
+source filtering, original-word ambiguity, aliases, x1-only admission, finite
+tracer refusal, nominal frame footprints, image spans, returned bases and
+retained effects after all values are discarded.
+The shared regression run also covers all 104 existing scalar register-offset
+native comparisons.
+
+`NEVERD_ARM64E_PAIR_MEMORY_ARTIFACT_DIR` exports `high.c`, `llvm.c`, `llvm.o`
+and `harness.c`, recording `arm64e_pair_memory_artifact_directory`. The separate
+`pair`/`el0-pair` controlled-environment profiles require the complete ten-test
+report, exactly 215 samples and every capability/control/origin gate. All five
+routes at EL1 and EL0 pass all four CPTA/CPTA0 settings: 8,600 generated sample
+calls. The integrated dev export is byte-identical to the model inputs. The
+[pair qualification record](evidence/arm64e-pair-memory-2026-10-26.json) pins the
+source, dependencies, tests, input hashes and bounded Normal WB nonoverflow
+scope. Original SP/frame/call/unwind, other ordinary families, native vector
+ABI, overflow/tag environments and Apple CPTA-on hardware remain unqualified.
+
+The complete selected run registers 638 checks including the new ten: 610
+pass, 18 explicitly skip and ten retained failures remain. The ten failure
+assertions match the previous round after temporary-filename normalization;
+that round independently reproduced them with restored shared owners. Two
+WRMSR style assumptions, four host AArch64 `_BitInt` compiler-limit failures
+and four existing Win64 cases remain recorded as failures. Fresh minimal
+ASan+UBSan compiler controls still reach the original 20-second limit on arm64
+and x86-64, so the separate 41-test SysV sanitizer group is unavailable and is
+not counted as passed. Code Review CI diagnostics remain unavailable.
+
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
 mutable import captures and Win64 scalar results versus ELF aggregate transport.

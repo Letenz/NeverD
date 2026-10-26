@@ -743,6 +743,13 @@ Nominal frame observations cover the entire pair without granting an original
 SP execution environment. Auxiliary carrier completeness, source dominance and
 image occurrence validation reuse the same owners as SIMD single writeback.
 
+The pair-memory integer bridge passes the same model at EL1 and EL0 through
+five output routes and all four CPTA/CPTA0 settings: 215 samples per route and
+control, totaling 8,600 generated sample calls. Integrated dev outputs match
+the tested model inputs byte for byte. The [pair record](evidence/arm64e-pair-memory-2026-10-26.json)
+retains the source and input provenance, regression results and qualification
+limits.
+
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
@@ -765,8 +772,8 @@ rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
 coverage; SIMD single pre/post-index accesses have separate explicit-IR,
 automatic-lifting and image regressions. Pair accesses have separate explicit-IR,
-automatic-lifting, nominal-frame and image regressions. Other ordinary-memory families,
-original-SP stack/call projection and Apple native
+automatic-lifting, nominal-frame and image regressions. Other ordinary-memory families, including ordered unscaled accesses and NEON
+structures/lane/post-index forms, original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
 lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
