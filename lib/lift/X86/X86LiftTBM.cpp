@@ -10,6 +10,7 @@
 #include "X86LiftTBM.h"
 
 #include "X86FPEncoding.h"
+#include "X86UndefinedFlagAudit.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/support/ISAEncoding.h"
@@ -105,22 +106,7 @@ bool form(const cs_insn *Insn, Arch Target) {
 
 bool matches(llvm::ArrayRef<LowOp> Ops,
              const LowInstructionUndefinedEffects &Effects) {
-  if (Effects.Effects.size() != UndefinedFlags.size())
-    return false;
-  for (size_t I = 0; I != UndefinedFlags.size(); ++I) {
-    const auto &E = Effects.Effects[I];
-    if (E.Output != NdVar::reg(UndefinedFlags[I], 1) || E.BitOffset ||
-        E.BitCount != 1 || E.When || !E.AfterOp || E.AfterOp > Ops.size())
-      return false;
-    for (const auto &Later : Ops.drop_front(E.AfterOp)) {
-      if (Later.Output == E.Output)
-        return false;
-      for (unsigned J = 0; J != Later.NumInputs; ++J)
-        if (Later.Inputs[J] == E.Output)
-          return false;
-    }
-  }
-  return true;
+  return undefinedflags::matches(UndefinedFlags, Ops, Effects);
 }
 
 bool lift(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn) {

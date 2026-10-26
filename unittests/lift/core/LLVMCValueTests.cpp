@@ -3601,6 +3601,80 @@ int main(void) {
   }
 }
 
+TEST(LLVMCValues, FoldedImageStringAddressesKeepIntegerCarriers) {
+  // Constant folding can turn ptrtoint(inttoptr(VA)) into an integer that
+  // the image renderer spells as a string. Its C pointer type must survive
+  // folding so calls and returns convert to their declared integer carrier.
+  const char *IR = R"ir(
+target datalayout = "e-p:64:64"
+declare i64 @string_length(i64)
+declare i64 @string_pointer(ptr)
+declare i64 @literal_bits(i64)
+define i64 @image_string_sum() {
+  %empty = call i64 @string_length(i64 ptrtoint (ptr inttoptr (i64 8192 to ptr) to i64))
+  %text = call i64 @string_length(i64 ptrtoint (ptr inttoptr (i64 8200 to ptr) to i64))
+  %pointer = call i64 @string_pointer(ptr inttoptr (i64 8200 to ptr))
+  %bits = call i64 @literal_bits(i64 31)
+  %a = add i64 %empty, %text
+  %b = add i64 %pointer, %bits
+  %sum = add i64 %a, %b
+  ret i64 %sum
+}
+define i64 @image_string_address() {
+  ret i64 ptrtoint (ptr inttoptr (i64 8200 to ptr) to i64)
+}
+)ir";
+  for (auto Arch : {neverd::Arch::X64, neverd::Arch::AArch64}) {
+    for (bool PreserveTypes : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(Arch));
+      SCOPED_TRACE(PreserveTypes);
+      neverd::BinaryImage Image;
+      Image.Arch = Arch;
+      Image.Format = neverd::BinaryFormat::ELF;
+      Image.Bits = neverd::Bitness::Bits64;
+      neverd::Segment Data;
+      Data.VA = 0x2000;
+      Data.Size = Data.FileSz = 16;
+      Data.Flags = neverd::SegmentFlags::Readable;
+      Data.Data = {0, 0, 0, 0, 0, 0, 0, 0, 'h', 'e', 'l', 'l', 'o', 0, 0, 0};
+      Image.Segments.push_back(std::move(Data));
+      llvm::LLVMContext Context;
+      llvm::SMDiagnostic Diagnostic;
+      auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
+      ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      neverd::CEmitterOptions Options;
+      Options.TheArch = Arch;
+      Options.Format = Image.Format;
+      Options.PreserveLLVMFunctionTypes = PreserveTypes;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(
+          neverd::LLVMCEmitter().emit(*Module, Out, Options, nullptr, &Image));
+      Source += R"c(
+static unsigned calls;
+uint64_t string_length(uint64_t address) {
+  ++calls;
+  const char *text = (const char *)(uintptr_t)address;
+  uint64_t length = 0;
+  while (text[length]) ++length;
+  return length;
+}
+uint64_t string_pointer(void *address) {
+  return string_length((uintptr_t)address);
+}
+uint64_t literal_bits(uint64_t value) { return value == 31 ? 1 : 100; }
+int main(void) {
+  return image_string_sum() != 11 || calls != 3 ||
+      string_length(image_string_address()) != 5;
+}
+)c";
+      for (const char *Level : {"-O0", "-O2"})
+        compileAndRun(Source, Level, {}, true);
+    }
+  }
+}
+
 TEST(LLVMCValues, OwnedImageMirrorsRetainBytesBeyondStringPrefixes) {
   // SIMD constant pools can start with an empty UTF-16 string (float 1.0),
   // ASCII, or UTF-16 text while the rest of the access is still binary data.

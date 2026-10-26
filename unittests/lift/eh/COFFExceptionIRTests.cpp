@@ -3160,6 +3160,129 @@ int main(void) {
                                               {Level});
 }
 
+TEST(COFFExceptionIR, LLVMCMixedHandlersKeepUnwindOnlyCleanup) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("mixed-seh-scopes", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::IRBuilder<> B(Context);
+  auto Declare = [&](llvm::StringRef Name, llvm::Type *Return,
+                     llvm::ArrayRef<llvm::Type *> Args = {}) {
+    return llvm::Function::Create(llvm::FunctionType::get(Return, Args, false),
+                                  llvm::GlobalValue::ExternalLinkage, Name,
+                                  Module);
+  };
+  auto *F = Declare("mixed_scopes", B.getInt32Ty(), {B.getInt32Ty()});
+  F->setPersonalityFn(Declare("__C_specific_handler", B.getInt32Ty()));
+  auto Block = [&](llvm::StringRef Name) {
+    return llvm::BasicBlock::Create(Context, Name, F);
+  };
+  auto *Entry = Block("entry");
+  auto *BeginA = Block("begin_a");
+  auto *BodyA = Block("body_a");
+  auto *EndA = Block("end_a");
+  auto *TailA = Block("tail_a");
+  auto *BeginCleanup = Block("begin_cleanup");
+  auto *BeginB = Block("begin_b");
+  auto *BodyB = Block("body_b");
+  auto *EndB = Block("end_b");
+  auto *EndCleanup = Block("end_cleanup");
+  auto *TailB = Block("tail_b");
+  auto *DispatchA = Block("dispatch_a");
+  auto *PadA = Block("pad_a");
+  auto *HandlerA = Block("handler_a");
+  auto *DispatchB = Block("dispatch_b");
+  auto *PadB = Block("pad_b");
+  auto *HandlerB = Block("handler_b");
+  auto *CleanupBlock = Block("cleanup");
+  auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_begin);
+  auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_end);
+  auto *Step = Declare("mixed_step", B.getVoidTy(), {B.getInt32Ty()});
+  auto *CleanupCall = Declare("mixed_cleanup", B.getVoidTy(), {B.getInt32Ty()});
+  B.SetInsertPoint(Entry);
+  B.CreateCondBr(B.CreateICmpEQ(F->getArg(0), B.getInt32(0)), BeginA,
+                 BeginCleanup);
+  B.SetInsertPoint(BeginA);
+  B.CreateInvoke(TryBegin, BodyA, DispatchA);
+  B.SetInsertPoint(BodyA);
+  B.CreateInvoke(Step, EndA, DispatchA, {B.getInt32(10)});
+  B.SetInsertPoint(EndA);
+  B.CreateInvoke(TryEnd, TailA, DispatchA);
+  B.SetInsertPoint(TailA);
+  B.CreateRet(B.getInt32(17));
+  B.SetInsertPoint(BeginCleanup);
+  B.CreateInvoke(TryBegin, BeginB, CleanupBlock);
+  B.SetInsertPoint(BeginB);
+  B.CreateInvoke(TryBegin, BodyB, DispatchB);
+  B.SetInsertPoint(BodyB);
+  B.CreateInvoke(Step, EndB, DispatchB, {B.getInt32(20)});
+  B.SetInsertPoint(EndB);
+  B.CreateInvoke(TryEnd, EndCleanup, DispatchB);
+  B.SetInsertPoint(EndCleanup);
+  B.CreateInvoke(TryEnd, TailB, CleanupBlock);
+  B.SetInsertPoint(TailB);
+  B.CreateCall(CleanupCall, {B.getInt32(0)});
+  B.CreateRet(B.getInt32(23));
+  for (bool Nested : {false, true}) {
+    auto *Dispatch = Nested ? DispatchB : DispatchA;
+    auto *PadBlock = Nested ? PadB : PadA;
+    auto *Handler = Nested ? HandlerB : HandlerA;
+    B.SetInsertPoint(Dispatch);
+    auto *Switch = B.CreateCatchSwitch(llvm::ConstantTokenNone::get(Context),
+                                       Nested ? CleanupBlock : nullptr, 1);
+    Switch->addHandler(PadBlock);
+    B.SetInsertPoint(PadBlock);
+    auto *Pad = B.CreateCatchPad(
+        Switch, {llvm::ConstantPointerNull::get(B.getPtrTy())});
+    B.CreateCatchRet(Pad, Handler);
+    B.SetInsertPoint(Handler);
+    B.CreateRet(B.getInt32(Nested ? 102 : 101));
+  }
+  B.SetInsertPoint(CleanupBlock);
+  auto *Cleanup = B.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+  B.CreateCall(CleanupCall, {B.getInt32(1)},
+               {llvm::OperandBundleDef("funclet", Cleanup)});
+  B.CreateCleanupRet(Cleanup, nullptr);
+  ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+  const std::string Source = emitLLVMC(Module);
+  EXPECT_EQ(Source.find("return; /* __finally */"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("if (!neverd_seh_normal)"), std::string::npos)
+      << Source;
+  const std::string Prelude =
+      "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
+  if (hasHostFixtureCompiler())
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      const auto Compiled = runCCompiler(
+          Prelude + Source,
+          {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
+           "-Xclang", "-fasync-exceptions", "-c", Level});
+      EXPECT_EQ(Compiled.ExitCode, 0) << Compiled.Error << "\n" << Source;
+    }
+  // Execute the normal paths independently. Native Windows object emission
+  // above checks the real nested SEH, including the cleanup on filter refusal.
+  const std::string Harness = R"(
+#define __try if (1)
+#define __except(filter) else
+#define __finally if (1)
+static unsigned normal_calls, unwind_calls, steps;
+void mixed_step(uint32_t n) { steps += n; }
+void mixed_cleanup(uint32_t abnormal) {
+  if (abnormal) ++unwind_calls; else ++normal_calls;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(Prelude + Harness + Source + R"(
+int main(void) {
+  if (mixed_scopes(0) != 17 || steps != 10 || normal_calls || unwind_calls) return 1;
+  if (mixed_scopes(1) != 23 || steps != 30 || normal_calls != 1 || unwind_calls) return 2;
+  return 0;
+}
+)",
+                                              {Level});
+}
+
 TEST(COFFExceptionIR, LLVMCFinallyAndFilterShareTheParentLocalAddress) {
   REQUIRE_HOST_FIXTURE_COMPILER();
   for (bool FilterUsesFrame : {false, true}) {

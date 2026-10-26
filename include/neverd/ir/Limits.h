@@ -827,10 +827,6 @@ inline constexpr int kCallArgCollectionAttachProducingLoadFromWindowsPeelLimit =
 // lib/ir/high/lower/MedToHigh.cpp
 inline constexpr int kMedToHighMedToHighConverterReduceLateGotosRoundLimit = 8;
 
-// lib/ir/high/lower/NdOpCallIndLowering.cpp
-inline constexpr int
-    kNdOpCallIndLoweringMedToHighConverterResolveCallIndTargetHopLimit = 4;
-
 // lib/ir/high/pass/HighDCE.cpp
 inline constexpr int kHighDCEPreDCEPreIterLimit = 8;
 inline constexpr int kHighDCEFollowingHasObservableWorkKBeginLimit = 32;

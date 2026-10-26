@@ -21,11 +21,13 @@
 #include "neverd/ir/X86/X87GuardedValue.h"
 #include "neverd/ir/X86/X87Stack.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86/X86Regs.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
 #include <array>
@@ -512,6 +514,57 @@ bool NdOpEmulator::step(const LowOp &Op) {
   if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
       Op.Inputs[0].isConst()) {
     const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+    if (isAArch64WritebackMemoryIntrinsic(Id)) {
+      if (Img.Arch != Arch::AArch64 ||
+          !lowAArch64WritebackMemoryShapeIsValid(Op))
+        return false;
+      const auto Instruction = *aarch64WritebackMemoryInstruction(
+          Op.Inputs[kWritebackWordOperand + 1].Offset);
+      const auto &Base = Op.Inputs[kWritebackBaseOperand + 1];
+      if (!knownOperandBytes(Base, 0, Base.Size))
+        return false;
+      const uint64_t OriginalBase = readOperand(Base);
+      const auto Updated =
+          Instruction.adjustment().controlIndependentAddress(OriginalBase, 0);
+      if (!Updated || !Instruction.controlIndependentSpan(OriginalBase, 0))
+        return false;
+      const uint64_t Address = Instruction.preIndex() ? *Updated : OriginalBase;
+      std::vector<uint8_t> Result(Op.Output.Size, 0);
+      if (!Instruction.isLoad()) {
+        const auto &Data = Op.Inputs[kWritebackDataOperand + 1];
+        if (!knownOperandBytes(Data, 0, Data.Size))
+          return false;
+        for (unsigned I = 0; I != Instruction.accessBytes(); ++I) {
+          const auto *Mapped = Img.getSegmentFor(Address + I);
+          if (!Mapped || !Mapped->isWritable() || Address + I < Mapped->VA ||
+              Address + I - Mapped->VA >= Mapped->Size)
+            return false;
+        }
+        auto Bytes = readOperandBytes(Data);
+        Bytes.resize(Instruction.accessBytes());
+        if (!storeMemoryBytes(Address, Bytes))
+          return false;
+        writeLE<uint64_t>(Result.data(), *Updated);
+      } else {
+        const auto Bytes = loadMemoryBytes(Address, Instruction.accessBytes());
+        if (!Bytes)
+          return false;
+        const auto Operation = Instruction.adjustment().operation();
+        // The encoded W form zeroes the upper X half after its signed result.
+        std::fill_n(Result.begin(), Operation.ResultBytes,
+                    Operation.Signed && (Bytes->back() & kWritebackByteSignBit)
+                        ? kWritebackByteMask
+                        : 0);
+        std::copy(Bytes->begin(), Bytes->end(), Result.begin());
+        writeLE<uint64_t>(Result.data() + kAddressMemoryPointerBytes, *Updated);
+        if (CollectLoads &&
+            static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
+          LoadLog.push_back(
+              {Address, static_cast<uint16_t>(Instruction.accessBytes())});
+      }
+      writeOutputBytes(Op.Output, Result);
+      return true;
+    }
     if (isAArch64AddressMemoryIntrinsic(Id)) {
       if (Img.Arch != Arch::AArch64 || !lowAArch64AddressMemoryShapeIsValid(Op))
         return false;

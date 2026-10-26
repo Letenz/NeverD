@@ -6614,15 +6614,26 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
                        " ZwClose(void *Handle);"),
             std::string::npos)
       << Probe;
-  // ExitProcess takes the code and returns to no caller.
+  // ExitProcess takes the code. A captured import keeps its pointer type and
+  // BRK; a proven unchanged observation may name the no-return import.
   const std::string Finish = decompile("Finish");
-  EXPECT_NE(Finish.find("ExitProcess(uint32_t uExitCode) "
-                        "__attribute__((noreturn));"),
-            std::string::npos)
-      << Finish;
-  EXPECT_NE(Finish.find("ExitProcess(arg0);"), std::string::npos) << Finish;
+  if (Finish.find("__imp_ExitProcess") != std::string::npos) {
+    EXPECT_NE(Finish.find("extern void (*__imp_ExitProcess)(uint32_t);"),
+              std::string::npos)
+        << Finish;
+    EXPECT_NE(Finish.find("__imp_ExitProcess(arg0);"), std::string::npos)
+        << Finish;
+    EXPECT_NE(Finish.find("brk #0x1"), std::string::npos) << Finish;
+  } else {
+    EXPECT_NE(Finish.find("ExitProcess(uint32_t uExitCode) "
+                          "__attribute__((noreturn));"),
+              std::string::npos)
+        << Finish;
+    EXPECT_NE(Finish.find("ExitProcess(arg0);"), std::string::npos) << Finish;
+  }
+  EXPECT_EQ(Finish.find("unknown value"), std::string::npos) << Finish;
   // LLVM C uses the same import contracts, including the zero-argument call.
-  for (const char *Name : {"Open", "Probe", "Window"}) {
+  for (const char *Name : {"Open", "Probe", "Window", "Finish"}) {
     SCOPED_TRACE(Name);
     const int Index = neverd_func_find_by_name(Session, Name);
     ASSERT_GE(Index, 0);
@@ -6634,7 +6645,11 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
     const auto Source = View->getAsObject()->getString("text");
     ASSERT_TRUE(Source.has_value()) << JSON;
     EXPECT_FALSE(Source->contains("unknown value")) << Source->str();
-    EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
+    if (std::string_view(Name) == "Finish") {
+      EXPECT_TRUE(Source->contains("void ExitProcess(uint32_t uExitCode)"))
+          << Source->str();
+    } else
+      EXPECT_FALSE(Source->contains("__builtin_trap")) << Source->str();
     if (std::string_view(Name) == "Probe")
       EXPECT_TRUE(Source->contains("GetLastError()")) << Source->str();
   }
@@ -9121,7 +9136,8 @@ TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
   SessionTestAccess::resetFunctions(State);
   SessionTestAccess::selectFunction(State, Entry);
   const auto Own = takeString(neverd_decompile(Session, Entry));
-  EXPECT_NE(Own.find("strlen("), std::string::npos) << Own;
+  EXPECT_NE(Own.find("strlen_"), std::string::npos) << Own;
+  EXPECT_NE(Own.find("__asm__(\"strlen\")"), std::string::npos) << Own;
   EXPECT_EQ(Own.find("#include <string.h>"), std::string::npos) << Own;
   // Any other change to the symbols goes with retiring the pipeline, which
   // drops the names read before, even when the table keeps its size.

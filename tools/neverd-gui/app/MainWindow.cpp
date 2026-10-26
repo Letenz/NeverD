@@ -326,7 +326,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   instances_.setLinkHandler(
       [this](const DeepLink &link, std::function<void(const QString &)> done) {
         if (isMinimized())
-          showNormal();
+          setWindowState(windowState() & ~Qt::WindowMinimized);
         raise();
         activateWindow();
         openLink(link, std::move(done));

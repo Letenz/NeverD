@@ -547,19 +547,34 @@ void LowToMedConverter::runDce(MedFunc &Func) {
       for (MedOp *Op : It->second)
         markInputs(*Op);
   }
-  for (auto &Blk : Func.Blocks)
+  for (auto &Blk : Func.Blocks) {
+    bool EntryCopies = &Blk == &Func.Blocks.front();
     for (auto &Op : Blk.Ops) {
+      EntryCopies &= Op.Opcode == NdOp::COPY;
       if (const auto *Flags = FlagResult(Op);
           Flags && !LiveDefs.count({Flags->Id, Flags->SSAVer}))
         Op.Inputs[X86BoundedLeafFlagOperand] = MedVar::makeConst(
             0, X86ArithmeticFlagsBytes, ConstantAddressProvenance::Scalar);
       const bool OutputLive =
           Op.Output.Id >= 0 && LiveDefs.count({Op.Output.Id, Op.Output.SSAVer});
-      if (isEssential(Op) || OutputLive)
+      // Multi-root SSA can number an entry copy after version zero. Copy
+      // propagation then leaves readers of its incoming operand while the
+      // copy's result is unused. Retain the live-in declaration: stack and
+      // callee-save proofs still need its entry provenance.
+      const bool IncomingLive =
+          EntryCopies && Op.NumInputs == 1 && Op.Output.Kind == MedVar::Reg &&
+          Op.Output.Size && Op.Inputs[0].Kind == MedVar::Reg &&
+          Op.Inputs[0].SSAVer == 0 && Op.Output.Id == Op.Inputs[0].Id &&
+          Op.Output.RegOff == Op.Inputs[0].RegOff &&
+          Op.Output.Size == Op.Inputs[0].Size &&
+          Op.Output.TheArch == Op.Inputs[0].TheArch &&
+          LiveDefs.count({Op.Inputs[0].Id, Op.Inputs[0].SSAVer});
+      if (isEssential(Op) || OutputLive || IncomingLive)
         Op.Dead = false;
       else if (Op.Output.Id >= 0)
         Op.Dead = true;
     }
+  }
 
   for (auto &Blk : Func.Blocks) {
     Blk.Ops.erase(std::remove_if(Blk.Ops.begin(), Blk.Ops.end(),
