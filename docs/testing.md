@@ -2492,8 +2492,9 @@ automatic row selection, graph-to-table navigation, unchanged native coordinates
 and mirrored paging arrows. Selected evidence rows must remain fully visible
 at the minimum window width, including Arabic native font metrics and the
 additional height of an invalid-file message. Table minimum heights derive
-from their actual header, row, scrollbar and frame geometry. Invalid-file
-messages are localized and preserve the current selection and collection. Worker checks distinguish invalid JSON
+from their actual header, row, scrollbar and frame geometry. Resizing keeps a
+previously visible selected row in view without changing horizontal scrolling.
+Invalid-file messages are localized and preserve the current selection and collection. Worker checks distinguish invalid JSON
 syntax/UTF-8 from unreadable files while retaining the original error codes.
 Source-key validation uses
 `python3 scripts/check_gui_i18n.py --check-sources`; compiled catalogs are also

@@ -25,6 +25,7 @@
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
+#include <QResizeEvent>
 #include <QScrollBar>
 #include <QSpinBox>
 #include <QStandardItemModel>
@@ -35,6 +36,28 @@
 
 namespace neverd::gui {
 namespace {
+class EvidenceTable final : public QTableView {
+public:
+  using QTableView::QTableView;
+
+protected:
+  void resizeEvent(QResizeEvent *Event) override {
+    const auto Before = visualRect(currentIndex());
+    const bool Visible = Before.isValid() && Before.top() >= 0 &&
+                         Before.bottom() < Event->oldSize().height();
+    QTableView::resizeEvent(Event);
+    const auto After = visualRect(currentIndex());
+    if (Visible &&
+        (After.top() < 0 || After.bottom() >= viewport()->height())) {
+      // A growing status message or a smaller window must not clip a row the
+      // user was inspecting. Keep an intentional horizontal scroll unchanged.
+      const auto Horizontal = horizontalScrollBar()->value();
+      scrollTo(currentIndex());
+      horizontalScrollBar()->setValue(Horizontal);
+    }
+  }
+};
+
 QString cell(const QJsonValue &Value) {
   if (Value.isString())
     return Value.toString();
@@ -114,7 +137,7 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   Root->setContentsMargins(0, 0, 0, 0);
   Model = new QStandardItemModel(this);
   Model->setHorizontalHeaderLabels(Headers);
-  Table = new QTableView(this);
+  Table = new EvidenceTable(this);
   Table->setModel(Model);
   Table->setSelectionBehavior(QAbstractItemView::SelectRows);
   Table->setSelectionMode(QAbstractItemView::SingleSelection);
