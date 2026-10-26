@@ -1,6 +1,6 @@
 **Lingue**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
 
 # Contribuire a NeverD
 
@@ -189,6 +189,11 @@ build universali devono usare la build LLVM locale predefinita. Le
 personalizzazioni avanzate, come `NEVERD_LLVM_PREBUILT_TAG`, URL del mirror,
 directory della cache e checksum esplicito, sono documentate in
 `cmake/NeverDLLVMPrebuilt.cmake`.
+
+Le correzioni LLVM appartengono al [fork LLVM NeverSight](https://github.com/NeverSight/llvm-project).
+Eseguirne commit e merge nel fork, poi aggiornare la revisione del sottomodulo LLVM di NeverD.
+La compilazione integrata compila direttamente questi sorgenti; non aggiungere file patch LLVM o copie modificate nella directory di build di NeverD.
+I pacchetti precompilati devono essere ricostruiti dal fork corretto per qualificare lo stesso comportamento.
 
 <!-- i18n-section: workflow -->
 ## Flusso di branch e pull request

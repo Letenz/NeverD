@@ -2305,4 +2305,4 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 
 Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile, un retour flottant et le refus d’un argument de pile écrit seulement à moitié.
 
-`LLVMAddressModelOverlayTests` vérifie séparément les corrections des spécificateurs AArch64, du GOT i386 et de GOTPCREL Mach-O. Il couvre les deux formes connues de garde AArch64 et les douze combinaisons de corrections partielles, préserve la source LLVM et la copie en cache, isole les réglages Git hérités et rejette une garde inconnue. Ces contrôles de configuration ne remplacent pas les tests natifs de relocalisation.
+`BinaryRewriteRelocationTest`, dans le fork LLVM NeverSight, vérifie les octets finaux de x64 PLT, GOT i386, GOTPCREL Mach-O et PAGE/PAGEOFF AArch64. La compilation intégrée de NeverD compile directement le fork enregistré. Ces contrôles MC ne valident pas l’exécution native des exceptions.

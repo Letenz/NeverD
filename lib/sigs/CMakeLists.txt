@@ -4,11 +4,13 @@ add_neverd_component_library(NeverDSigs
   LibraryByteRecognition.cpp
   PatternGenerator.cpp
   VTableEvidence.cpp
+  RuntimePointerEvidence.cpp
   PatternParser.cpp
   SignatureCache.cpp
   SignatureDB.cpp
   SignatureDataContext.cpp
   SignatureVTableContext.cpp
+  SignatureRuntimePointerContext.cpp
   SignatureMatcher.cpp
 
   LINK_COMPONENTS

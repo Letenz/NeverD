@@ -198,6 +198,12 @@ must use the default local LLVM build. Advanced overrides such as
 `NEVERD_LLVM_PREBUILT_TAG`, mirror URL, cache directory, and an explicit
 checksum are documented in `cmake/NeverDLLVMPrebuilt.cmake`.
 
+LLVM fixes belong in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project).
+Commit and merge them there, then update NeverD's LLVM submodule revision.
+Integrated builds compile that source directly; do not add LLVM patch files or
+build-directory source overlays to NeverD. Prebuilt packages must be rebuilt
+from the corrected fork before they can qualify the same behavior.
+
 <!-- i18n-section: workflow -->
 ## Branch and pull-request workflow
 

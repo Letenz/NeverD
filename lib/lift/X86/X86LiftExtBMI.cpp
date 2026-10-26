@@ -14,6 +14,7 @@
 
 #include "X86LiftAPXValidation.h"
 #include "X86LiftBEXTR.h"
+#include "X86LiftBitCount.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -303,9 +304,6 @@ ApxBmiEncoding decodeApxBmiEncoding(const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_BLSI:
   case X86_INS_BLSMSK:
   case X86_INS_BLSR:
-  case X86_INS_LZCNT:
-  case X86_INS_TZCNT:
-  case X86_INS_POPCNT:
   case X86_INS_ANDN:
   case X86_INS_BZHI:
   case X86_INS_MULX:
@@ -340,40 +338,6 @@ ApxBmiEncoding decodeApxBmiEncoding(const cs_insn *Insn, const cs_x86 &X86) {
   const unsigned Vvvvv = ((~H.P2 & 0x08) << 1) | ((~H.P1 & 0x78) >> 3);
   unsigned Width = (H.P1 & 0x80) ? 8 : 4;
   Result.Width = Width;
-
-  if (Id == X86_INS_LZCNT || Id == X86_INS_TZCNT || Id == X86_INS_POPCNT) {
-    const uint8_t ExpectedOpcode = Id == X86_INS_LZCNT   ? 0xf5
-                                   : Id == X86_INS_TZCNT ? 0xf4
-                                                         : 0x88;
-    const unsigned PP = H.P1 & 3;
-    if (PP > 1)
-      return Result;
-    Width = (H.P1 & 0x80) ? 8 : PP == 1 ? 2 : 4;
-    Result.Width = Width;
-    const bool NF = (H.P2 & 4) != 0;
-    const uint64_t ExpectedFlags =
-        NF ? 0
-        : Id == X86_INS_POPCNT
-            ? X86_EFLAGS_RESET_OF | X86_EFLAGS_RESET_SF | X86_EFLAGS_MODIFY_ZF |
-                  X86_EFLAGS_RESET_AF | X86_EFLAGS_RESET_PF |
-                  X86_EFLAGS_RESET_CF
-            : X86_EFLAGS_UNDEFINED_OF | X86_EFLAGS_UNDEFINED_SF |
-                  X86_EFLAGS_MODIFY_ZF | X86_EFLAGS_UNDEFINED_AF |
-                  X86_EFLAGS_UNDEFINED_PF | X86_EFLAGS_MODIFY_CF;
-    if ((H.P0 & 7) != 4 || H.Opcode != ExpectedOpcode ||
-        (H.P1 & 0x78) != 0x78 || (H.P2 & 8) == 0 || (H.P2 & 0xf3) != 0 ||
-        (!H.Memory && (H.P1 & 4) == 0) || X86.op_count != 2 ||
-        !validateApxDetail(Insn, X86, ExpectedFlags, X86_REG_INVALID,
-                           NF ? X86_REG_INVALID : X86_REG_EFLAGS) ||
-        !apxRegisterOperand(X86.operands[0], ModRMReg, Width, CS_AC_WRITE) ||
-        !validateApxRM(Insn, X86, H, X86.operands[1], Width))
-      return Result;
-    Result.NF = NF;
-    Result.Destination = 0;
-    Result.Source = 1;
-    Result.Valid = true;
-    return Result;
-  }
 
   if (Id == X86_INS_RORX) {
     const cs_x86_op &Immediate = X86.operands[2];
@@ -586,6 +550,8 @@ void emitMulx64(X86Lifter::LiftState &S, NdVar Left, NdVar Right, NdVar &Low,
 
 bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                 const cs_x86 &X86) {
+  if (bitcount::isInstruction(Insn->id))
+    return bitcount::lift(L, S, Insn);
   if (Insn->id == X86_INS_BEXTR)
     return bextr::lift(L, S, Insn);
   unsigned InsnId = Insn->id;
@@ -593,51 +559,6 @@ bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   if (Apx.Present && !Apx.Valid)
     return false;
   switch (InsnId) {
-
-  // ========================================================================
-  // Bit counting: TZCNT, LZCNT, POPCNT
-  // ========================================================================
-  case X86_INS_TZCNT:
-  case X86_INS_LZCNT:
-  case X86_INS_POPCNT: {
-    if (!Apx.Present && X86.op_count < 2)
-      break;
-    const unsigned DstIndex = Apx.Present ? Apx.Destination : 0;
-    const unsigned SrcIndex = Apx.Present ? Apx.Source : 1;
-    NdVar Src = L.operandRead(S, X86.operands[SrcIndex]);
-    NdVar Dst = L.operandWrite(X86.operands[DstIndex]);
-    NdVar SourceWasZero;
-    if (!Apx.NF && InsnId != X86_INS_POPCNT) {
-      SourceWasZero = S.makeTemp(1);
-      S.emit(NdOp::INT_EQUAL, SourceWasZero, {Src, NdVar::scalar(0, Src.Size)});
-    }
-    if (InsnId == X86_INS_TZCNT) {
-      NdVar NotX = S.makeTemp(Src.Size);
-      S.emit(NdOp::INT_NOT, NotX, {Src});
-      NdVar XM1 = S.makeTemp(Src.Size);
-      S.emit(NdOp::INT_SUB, XM1, {Src, NdVar::scalar(1, Src.Size)});
-      NdVar Iso = S.makeTemp(Src.Size);
-      S.emit(NdOp::INT_AND, Iso, {NotX, XM1});
-      S.emit(NdOp::POPCOUNT, Dst, {Iso});
-    } else {
-      NdOp Opc = (InsnId == X86_INS_LZCNT) ? NdOp::LZCOUNT : NdOp::POPCOUNT;
-      S.emit(Opc, Dst, {Src});
-    }
-    if (!Apx.NF) {
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      if (InsnId == X86_INS_POPCNT) {
-        S.emit(NdOp::COPY, NdVar::reg(x86reg::CF, 1), {NdVar::scalar(0, 1)});
-        S.emit(NdOp::COPY, NdVar::reg(x86reg::AF, 1), {NdVar::scalar(0, 1)});
-        S.emit(NdOp::COPY, NdVar::reg(x86reg::PF, 1), {NdVar::scalar(0, 1)});
-      } else {
-        S.emit(NdOp::COPY, NdVar::reg(x86reg::CF, 1), {SourceWasZero});
-      }
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::SF, 1), {NdVar::scalar(0, 1)});
-    }
-    break;
-  }
 
   // ========================================================================
   // BMI1: BLSI, BLSMSK, BLSR, ANDN, BEXTR
