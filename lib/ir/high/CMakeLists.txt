@@ -41,6 +41,7 @@ add_neverd_component_library(NeverDIRHigh
   pass/HighSharedExpressions.cpp
   pass/HighSymSimplify.cpp
   pass/HighTypeInference.cpp
+  pass/HighPointerTypeInference.cpp
   pass/HighVarRename.cpp
   structure/HighCFSimplify.cpp
   structure/HighCFSimplifyIfElse.cpp

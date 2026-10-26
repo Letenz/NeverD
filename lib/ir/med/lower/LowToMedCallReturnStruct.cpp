@@ -84,6 +84,12 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
   // pointer or the wide-int register pair (handled by modelCallWideIntReturn).
   if (TRI.PointerSize != 8)
     return;
+  // Windows x64 returns scalar values and small records in one register;
+  // larger records use caller-owned storage. Reading volatile RDX after a
+  // call does not establish a second source result. Explicit source contracts
+  // are already bound separately, before this heuristic inference.
+  if (TargetArch == Arch::X64 && TargetFormat == BinaryFormat::COFF)
+    return;
   if (TRI.IntReturnRegs.empty() && TRI.FPReturnRegs.empty())
     return;
 
