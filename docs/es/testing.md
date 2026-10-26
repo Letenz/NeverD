@@ -2286,3 +2286,5 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`NeverDSourceCallABITests` comprueba bancos mixtos, anchuras, agotamiento de registros, desplazamientos de pila y rechazo variádico en Windows ARM64. `NeverDWorkerCallSiteTypes` recupera una llamada entero/double/puntero de un PE ARM64 y ejecuta ambas salidas C con una función C independiente en O0/O2; el rechazo conserva la instantánea del análisis. Esto no valida ejecución nativa en Windows ARM64.

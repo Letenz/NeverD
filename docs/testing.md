@@ -3744,6 +3744,12 @@ The engine's C is Clang's dialect (`__builtin_bit_cast`, calls through casts
 to a call site's own ABI, which GCC folds into the declared one), so a host
 without Clang skips it after the analysis checks, naming the routes it did not
 execute.
+`NeverDSourceCallABITests` checks Windows ARM64 fixed mixed register banks,
+scalar widths, register exhaustion, stack offsets and the distinct variadic
+refusal. `NeverDWorkerCallSiteTypes` uses an ARM64 PE caller with integer,
+double and pointer operands; both C routes execute against a separate C
+callee at O0/O2, and a refused variadic edit preserves the analysis snapshot.
+These host C executions do not establish native Windows ARM64 execution.
 `NeverDWorkerHeaderRecords` builds a program with the host compiler that reads
 `<netdb.h>`'s `struct addrinfo` and `struct servent` through a pointer
 `getaddrinfo` stores in a local and through `getservbyname`'s result, and

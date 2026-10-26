@@ -1396,9 +1396,10 @@ in the context menu resets every call policy of this function. Undo/redo,
 database reopen and read-only replicas use the usual project history.
 
 This feature currently accepts scalar and pointer C ABIs on x64 PE/ELF/Mach-O
-and AArch64 ELF/Mach-O. Types declared in Local types can be used as pointer
-pointees. By-value aggregates, special conventions and Windows ARM64 require
-additional ABI support. An unproved register value, incomplete outgoing stack
+and AArch64 PE/ELF/Mach-O. Windows ARM64 accepts fixed parameter lists; its
+variadic convention still requires separate support. Types declared in Local
+types can be used as pointer pointees. By-value aggregates and special
+conventions require additional ABI support. An unproved register value, incomplete outgoing stack
 write or unsupported variadic floating carrier refuses the edit and reports its
 reason in Output. No missing argument is filled with an invented value.
 

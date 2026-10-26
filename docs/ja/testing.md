@@ -2185,3 +2185,5 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`NeverDSourceCallABITests` は Windows ARM64 の混合レジスター、幅、レジスター枯渇、スタック位置と可変引数拒否を確認する。`NeverDWorkerCallSiteTypes` は ARM64 PE の整数、double、ポインター呼び出しを両 C 経路で復元し、独立した C 関数と O0/O2 で実行する。拒否された編集で解析スナップショットが変わらないことも確認する。Windows ARM64 ネイティブ実行の検証ではない。
