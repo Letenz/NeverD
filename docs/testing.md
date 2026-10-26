@@ -865,6 +865,23 @@ original BMI/TBM/APX instruction bytes are never executed. This qualifies
 the value projections; hardware exception delivery and preservation of a
 faulting load after source optimization remain separate work.
 
+`NeverDX86BitCountTests` checks TZCNT/LZCNT/POPCNT in both execution modes,
+with 16/32/64-bit operands, legacy/REX2/APX/NF encodings and all three decode
+routes. Independent bit loops cover every 16-bit source value; register-bank,
+alias, upper-bit preservation, memory-tail, source-fault and malformed-field
+cases exercise admission and effects. Run it with `NeverDX86FPEncodingTests`,
+`NeverDX86APXBMISemanticTests` and `NeverDX86UndefinedEffectsTests`.
+`NeverDLowIRUndefinedIndependenceTests` checks that observing an undefined
+count flag is dependent, that NF retains an earlier arbitrary AF producer,
+and that ordinary POPCNT kills that producer.
+
+`NeverDX86BitCountPipeline` projects raw count fixtures through LLVM, HighC
+and LLVM-to-C, with pipeline optimization on/off and O0/O2 compilation.
+Compilation disables BMI/LZCNT/POPCNT; executed code is compared with bit-loop
+values and only architecturally defined flags, including NF preservation.
+The original APX/REX2 bytes are not executed. This does not qualify physical
+APX execution, CPU-feature fallback to BSF/BSR or native memory exceptions.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended

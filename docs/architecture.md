@@ -188,6 +188,16 @@ preserves all flags. The shared prefix and APX validators retain address
 ownership. Decoder flag metadata is checked separately from architectural
 effects: legacy BEXTR metadata currently over-reports control-flag resets.
 
+`X86LiftBitCount` owns TZCNT, LZCNT and POPCNT admission, arithmetic and
+undefined-output effects across legacy, REX2 and APX/NF forms. F3 selection,
+66 operand size and REX cancellation are authenticated independently; shared
+address validators retain memory-tail ownership. The source-zero carry value
+is captured before an aliased destination write. TZCNT/LZCNT record OF/SF/AF/PF
+as undefined, POPCNT defines all status flags, and NF preserves them. Legacy
+Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
+the architectural carry calculation. Completeness of this flag audit does not
+certify runtime CPU-feature selection or a complete opaque machine-state bank.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR

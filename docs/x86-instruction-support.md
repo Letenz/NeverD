@@ -129,7 +129,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
-| Other BMI/BMI2/ADX form and undefined-output audits | Existing arithmetic lifting and APX tests do not qualify every legacy encoding or its undefined flags. BEXTR and the separate TBM family now have complete form-specific undefined-output audits; the other families still need that qualification. |
+| Other BMI/BMI2/ADX form and undefined-output audits | Existing arithmetic lifting and APX tests do not qualify every legacy encoding or its undefined flags. BEXTR, TZCNT/LZCNT/POPCNT and the separate TBM family have form-specific undefined-output audits; the remaining families still need that qualification. |
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
 instruction and passing LowIR/concrete tests do not establish native LLVM or C
@@ -255,6 +255,32 @@ without executing BEXTR on the host.
 Memory-tail admission does not qualify every address at runtime. Hardware
 exception delivery and faulting loads removed by source optimization remain
 unqualified, as does a complete opaque machine-state audit.
+
+`X86LiftBitCount` authenticates TZCNT/LZCNT/POPCNT legacy, REX2 and APX/NF
+forms before emitting any effects. The independent F3/66 prefixes, effective
+REX, register banks and memory addresses must agree with decoder detail.
+TZCNT/LZCNT define source-zero CF and result-zero ZF; OF/SF/AF/PF are explicitly
+undefined. POPCNT clears the other status flags, and NF preserves incoming
+flags. A concrete zero chosen for an undefined bit cannot become a proof that
+the architecture defines it. This follows the
+[Intel SDM instruction definitions](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
+
+Count tests include independent bit loops, all 16-bit inputs, complete register
+bank combinations, all decode routes, memory tails, fault-before-write ordering
+and malformed/reserved-field refusals. The undefined-independence tests observe
+the arbitrary flags and their preservation through NF. Source projection checks
+cover LLVM and both C routes, pipeline optimization on/off and O0/O2 compilation.
+These contracts assume the input CPU enables the named count instruction;
+runtime selection of BSF/BSR behavior on processors lacking those features remains
+separate, as do physical APX execution and native memory exceptions.
+
+NeverC exposes LZCNT/POPCNT headers for function-level target attributes in
+Microsoft mode. Its regression covers eight public count interfaces across
+ELF/COFF/Mach-O at O0/O2 with translation-unit features explicitly disabled.
+LLVM `ctlz`, `cttz` and `ctpop` already provide native selection, with a defined
+zero operand for the count-zero APIs; no new intrinsic ID or inline assembly
+is needed. Native NeverC output passes 1,048,624 value comparisons, and the
+independent raw-instruction reference passes 627,033 legacy count/flag cases.
 
 NeverC now installs the native `tbmintrin.h` interfaces through `x86intrin.h`:
 20 value interfaces across ten operations and two widths, including BEXTR's
