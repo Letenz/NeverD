@@ -41,6 +41,7 @@ complete instruction support or semantic test coverage.
 | BLCFILL, BLCI, BLCIC, BLCMSK, BLCS, BLSFILL, BLSIC, T1MSKC, TZMSK | Validated XOP forms with source-dependent CF, result-dependent ZF/SF, cleared OF and explicit undefined AF/PF. LLVM, HighC and LLVM-to-C consume the same arithmetic semantics; see the TBM qualification below. |
 | BEXTR | Validated XOP immediate, VEX register-control and APX forms, including NF. Bounded shifts avoid out-of-range LLVM shifts; ordinary forms define CF/OF/ZF and record SF/AF/PF as undefined. See the BEXTR qualification below. |
 | TZCNT, LZCNT, POPCNT | Validated legacy, REX2 and APX/NF forms; aliased inputs, zero operands, destination width and defined/undefined flags retain their architectural meanings. See the count qualification below. |
+| ANDN, BLSI, BLSMSK, BLSR, BZHI | Validated VEX and APX/NF forms; independent value/flag semantics, source-before-destination carry and explicit undefined AF/PF. Shared address validators retain memory-tail ownership. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
 | CLTS | Ordered processor-state effect with no fabricated register output. |
 | Operand-free WRMSRNS | Distinct nonserializing instruction with explicit ECX/EAX/EDX inputs on x86 and x64. |
@@ -130,7 +131,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
-| Other BMI/BMI2/ADX form and undefined-output audits | Existing arithmetic lifting and APX tests do not qualify every legacy encoding or its undefined flags. BEXTR, TZCNT/LZCNT/POPCNT and the separate TBM family have form-specific undefined-output audits; the remaining families still need that qualification. |
+| Remaining BMI2/ADX form and undefined-output audits | MULX, PDEP/PEXT, RORX, SARX/SHLX/SHRX and ADCX/ADOX still need complete legacy-form qualification. BEXTR, bit counts, ANDN/BLS*/BZHI and the separate TBM family have form-specific undefined-output audits. |
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
 instruction and passing LowIR/concrete tests do not establish native LLVM or C
@@ -285,6 +286,27 @@ LLVM `ctlz`, `cttz` and `ctpop` already provide native selection, with a defined
 zero operand for the count-zero APIs; no new intrinsic ID or inline assembly
 is needed. Native NeverC output passes 1,048,624 value comparisons, and the
 independent raw-instruction reference passes 627,033 legacy count/flag cases.
+
+`X86LiftBMILogic` authenticates ANDN, BLSI/BLSMSK/BLSR and BZHI VEX and APX/NF
+forms before any effects. The VEX i386 W/B/high-vvvv fields retain their actual
+ignored-field behavior, APX register banks and reserved fields are checked,
+and memory uses the shared address-tail validators. Ordinary forms define
+CF/OF/SF/ZF and explicitly record AF/PF as undefined; NF retains the incoming
+flags. BZHI uses only the index's low byte and bounds shifts before LLVM lowering.
+Pinned decoder VEX BLSR metadata says RESET_ZF, but the architectural ZF still
+tests the result. Independent bit-loop tests and 485,464 raw VEX execution
+comparisons qualify values and defined flags, following the
+[Intel SDM definitions](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+and [Intel APX specification](https://www.intel.com/content/www/us/en/content-details/836198/intel-advanced-performance-extensions-intel-apx-architecture-specification.html).
+Each SDK also passes 360 LLVM/HighC/LLVM-to-C source profiles and 992,160
+value/defined-flag comparisons after compiling with BMI/BMI2 disabled. The
+original VEX/APX bytes are not executed by these source-projection checks.
+NeverC's ten public 32/64-bit interfaces pass 970,928 native value comparisons
+and six ELF/COFF/Mach-O O0/O2 profiles, including the LLVM fork bridge. Existing
+LLVM arithmetic selection and BZHI intrinsics provide native O2 output for all
+five families without inline assembly; no new compiler intrinsic is required.
+Complete undefined-output coverage is not a complete machine-state or native
+fault-delivery contract. Physical APX execution remains unqualified.
 
 NeverC now installs the native `tbmintrin.h` interfaces through `x86intrin.h`:
 20 value interfaces across ten operations and two widths, including BEXTR's

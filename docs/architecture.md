@@ -198,6 +198,16 @@ Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
 the architectural carry calculation. Completeness of this flag audit does not
 certify runtime CPU-feature selection or a complete opaque machine-state bank.
 
+`X86LiftBMILogic` owns ANDN, BLSI/BLSMSK/BLSR and BZHI VEX/APX/NF forms.
+Its raw encoding, operand and implicit-effect admission precedes every load
+and architectural write. Source-dependent carry is captured before aliased
+destinations, BZHI masks only the low eight index bits and bounds every shift,
+and ordinary forms record AF/PF as undefined. VEX BLSR decoder metadata reports
+RESET_ZF; the owner still computes the architectural result-zero ZF.
+`X86UndefinedFlagAudit` shares the effect-shape and later-use checks across
+BMI logic, bit counts, BEXTR and TBM; each family owns its admitted forms and
+the actual set of undefined flags.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR

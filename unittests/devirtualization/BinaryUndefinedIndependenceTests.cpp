@@ -11,6 +11,8 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/lift/X86/X86Regs.h"
 
+#include <array>
+
 using namespace neverd;
 using namespace neverd::analysis;
 
@@ -89,6 +91,43 @@ TEST(BinaryUndefinedIndependence,
   Program.expect(Status::Proved);
   Program.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
   Program.expect(Status::Dependent);
+}
+
+TEST(BinaryUndefinedIndependence,
+     BMILogicDoesNotCertifyArbitraryAuxiliaryCarryOrParity) {
+  for (auto Bytes : {std::array<uint8_t, 5>{0xc4, 0xe2, 0xf0, 0xf2, 0xc2},
+                     std::array<uint8_t, 5>{0xc4, 0xe2, 0xf8, 0xf3, 0xd9},
+                     std::array<uint8_t, 5>{0xc4, 0xe2, 0xf8, 0xf3, 0xd1},
+                     std::array<uint8_t, 5>{0xc4, 0xe2, 0xf8, 0xf3, 0xc9},
+                     std::array<uint8_t, 5>{0xc4, 0xe2, 0xe8, 0xf5, 0xc1}}) {
+    BinaryProgram Program;
+    Program.block(0x100,
+                  {Bytes[0], Bytes[1], Bytes[2], Bytes[3], Bytes[4], 0xc3});
+    for (unsigned Flag : {x86reg::CF, x86reg::ZF, x86reg::SF, x86reg::OF})
+      Program.Contract.ReturnRegisters.push_back({Flag, 1});
+    Program.expect(Status::Proved);
+    for (unsigned Flag : {x86reg::AF, x86reg::PF}) {
+      Program.Contract.ReturnRegisters.push_back({Flag, 1});
+      Program.expect(Status::Dependent);
+      Program.Contract.ReturnRegisters.pop_back();
+    }
+  }
+}
+
+TEST(BinaryUndefinedIndependence,
+     BMILogicNFTransportsThePriorArbitraryAuxiliaryCarry) {
+  for (auto Tail : {std::array<uint8_t, 4>{0xf4, 0x0c, 0xf2, 0xc2},
+                    std::array<uint8_t, 4>{0xfc, 0x0c, 0xf3, 0xd9},
+                    std::array<uint8_t, 4>{0xfc, 0x0c, 0xf3, 0xd1},
+                    std::array<uint8_t, 4>{0xfc, 0x0c, 0xf3, 0xc9},
+                    std::array<uint8_t, 4>{0xec, 0x0c, 0xf5, 0xc1}}) {
+    BinaryProgram Program;
+    Program.block(0x100, {0x31, 0xd2, 0x62, 0xf2, Tail[0], Tail[1], Tail[2],
+                          Tail[3], 0xc3});
+    Program.expect(Status::Proved);
+    Program.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+    Program.expect(Status::Dependent);
+  }
 }
 
 TEST(BinaryUndefinedIndependence,

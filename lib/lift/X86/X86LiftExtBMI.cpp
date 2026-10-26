@@ -14,6 +14,7 @@
 
 #include "X86LiftAPXValidation.h"
 #include "X86LiftBEXTR.h"
+#include "X86LiftBMILogic.h"
 #include "X86LiftBitCount.h"
 #include "X86LiftDetail.h"
 
@@ -301,11 +302,6 @@ bool validateApxDetail(const cs_insn *Insn, const cs_x86 &X86,
 ApxBmiEncoding decodeApxBmiEncoding(const cs_insn *Insn, const cs_x86 &X86) {
   ApxBmiEncoding Result;
   switch (Insn ? Insn->id : X86_INS_INVALID) {
-  case X86_INS_BLSI:
-  case X86_INS_BLSMSK:
-  case X86_INS_BLSR:
-  case X86_INS_ANDN:
-  case X86_INS_BZHI:
   case X86_INS_MULX:
   case X86_INS_PDEP:
   case X86_INS_PEXT:
@@ -353,64 +349,6 @@ ApxBmiEncoding decodeApxBmiEncoding(const cs_insn *Insn, const cs_x86 &X86) {
     Result.Destination = 0;
     Result.Source = 1;
     Result.Source2 = 2;
-    Result.Valid = true;
-    return Result;
-  }
-
-  if (Id == X86_INS_ANDN || Id == X86_INS_BZHI) {
-    const uint8_t ExpectedOpcode = Id == X86_INS_ANDN ? 0xf2 : 0xf5;
-    const bool NF = (H.P2 & 4) != 0;
-    const uint64_t ExpectedFlags =
-        NF ? 0
-           : X86_EFLAGS_RESET_OF | X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF |
-                 X86_EFLAGS_UNDEFINED_AF | X86_EFLAGS_UNDEFINED_PF |
-                 (Id == X86_INS_BZHI ? X86_EFLAGS_MODIFY_CF
-                                     : X86_EFLAGS_RESET_CF);
-    if ((H.P0 & 7) != 2 || H.Opcode != ExpectedOpcode || (H.P1 & 3) != 0 ||
-        (!H.Memory && (H.P1 & 4) == 0) || (H.P2 & 0xf3) != 0 ||
-        X86.op_count != 3 ||
-        !validateApxDetail(Insn, X86, ExpectedFlags, X86_REG_INVALID,
-                           NF ? X86_REG_INVALID : X86_REG_EFLAGS) ||
-        !apxRegisterOperand(X86.operands[0], ModRMReg, Width, CS_AC_WRITE))
-      return Result;
-    // ANDN reads VVVVV and then ModRM.r/m.  BZHI masks its ModRM.r/m source
-    // with the index in VVVVV, and Capstone lists them in that order.
-    const unsigned VvvvvIndex = Id == X86_INS_BZHI ? 2 : 1;
-    const unsigned RMIndex = Id == X86_INS_BZHI ? 1 : 2;
-    if (!apxRegisterOperand(X86.operands[VvvvvIndex], Vvvvv, Width,
-                            CS_AC_READ) ||
-        !validateApxRM(Insn, X86, H, X86.operands[RMIndex], Width))
-      return Result;
-    Result.NF = NF;
-    Result.Destination = 0;
-    Result.Source = 1;
-    Result.Source2 = 2;
-    Result.Valid = true;
-    return Result;
-  }
-
-  if (Id == X86_INS_BLSI || Id == X86_INS_BLSMSK || Id == X86_INS_BLSR) {
-    const unsigned Group = (H.ModRM >> 3) & 7;
-    const unsigned ExpectedGroup = Id == X86_INS_BLSR     ? 1
-                                   : Id == X86_INS_BLSMSK ? 2
-                                                          : 3;
-    const bool NF = (H.P2 & 4) != 0;
-    const uint64_t ExpectedFlags =
-        NF ? 0
-           : X86_EFLAGS_RESET_OF | X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF |
-                 X86_EFLAGS_UNDEFINED_AF | X86_EFLAGS_UNDEFINED_PF |
-                 X86_EFLAGS_MODIFY_CF;
-    if ((H.P0 & 7) != 2 || H.Opcode != 0xf3 || (H.P1 & 3) != 0 ||
-        (!H.Memory && (H.P1 & 4) == 0) || (H.P2 & 0xf3) != 0 ||
-        Group != ExpectedGroup || X86.op_count != 2 ||
-        !validateApxDetail(Insn, X86, ExpectedFlags, X86_REG_INVALID,
-                           NF ? X86_REG_INVALID : X86_REG_EFLAGS) ||
-        !apxRegisterOperand(X86.operands[0], Vvvvv, Width, CS_AC_WRITE) ||
-        !validateApxRM(Insn, X86, H, X86.operands[1], Width))
-      return Result;
-    Result.NF = NF;
-    Result.Destination = 0;
-    Result.Source = 1;
     Result.Valid = true;
     return Result;
   }
@@ -550,6 +488,8 @@ void emitMulx64(X86Lifter::LiftState &S, NdVar Left, NdVar Right, NdVar &Low,
 
 bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                 const cs_x86 &X86) {
+  if (bmilogic::isInstruction(Insn->id))
+    return bmilogic::lift(L, S, Insn);
   if (bitcount::isInstruction(Insn->id))
     return bitcount::lift(L, S, Insn);
   if (Insn->id == X86_INS_BEXTR)
@@ -560,136 +500,7 @@ bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     return false;
   switch (InsnId) {
 
-  // ========================================================================
-  // BMI1: BLSI, BLSMSK, BLSR, ANDN, BEXTR
-  // ========================================================================
-  case X86_INS_BLSI: {
-    if (!Apx.Present && X86.op_count < 2)
-      break;
-    const unsigned DstIndex = Apx.Present ? Apx.Destination : 0;
-    const unsigned SrcIndex = Apx.Present ? Apx.Source : 1;
-    NdVar Src = L.operandRead(S, X86.operands[SrcIndex]);
-    NdVar Dst = L.operandWrite(X86.operands[DstIndex]);
-    NdVar Neg = S.makeTemp(Dst.Size);
-    S.emit(NdOp::INT_NEG2, Neg, {Src});
-    S.emit(NdOp::INT_AND, Dst, {Neg, Src});
-    if (!Apx.NF) {
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::INT_SLESS, NdVar::reg(x86reg::SF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::INT_NOTEQUAL, NdVar::reg(x86reg::CF, 1),
-             {Src, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
-    }
-    break;
-  }
-  case X86_INS_BLSMSK: {
-    if (!Apx.Present && X86.op_count < 2)
-      break;
-    const unsigned DstIndex = Apx.Present ? Apx.Destination : 0;
-    const unsigned SrcIndex = Apx.Present ? Apx.Source : 1;
-    NdVar Src = L.operandRead(S, X86.operands[SrcIndex]);
-    NdVar Dst = L.operandWrite(X86.operands[DstIndex]);
-    // CF depends on the source before a possibly aliased destination write.
-    if (!Apx.NF)
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::CF, 1),
-             {Src, NdVar::scalar(0, Dst.Size)});
-    NdVar Dec = S.makeTemp(Dst.Size);
-    S.emit(NdOp::INT_SUB, Dec, {Src, NdVar::scalar(1, Dst.Size)});
-    S.emit(NdOp::INT_XOR, Dst, {Dec, Src});
-    if (!Apx.NF) {
-      S.emit(NdOp::INT_SLESS, NdVar::reg(x86reg::SF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::ZF, 1), {NdVar::scalar(0, 1)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
-    }
-    break;
-  }
-  case X86_INS_BLSR: {
-    if (!Apx.Present && X86.op_count < 2)
-      break;
-    const unsigned DstIndex = Apx.Present ? Apx.Destination : 0;
-    const unsigned SrcIndex = Apx.Present ? Apx.Source : 1;
-    NdVar Src = L.operandRead(S, X86.operands[SrcIndex]);
-    NdVar Dst = L.operandWrite(X86.operands[DstIndex]);
-    // CF depends on the source before a possibly aliased destination write.
-    if (!Apx.NF)
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::CF, 1),
-             {Src, NdVar::scalar(0, Dst.Size)});
-    NdVar Dec = S.makeTemp(Dst.Size);
-    S.emit(NdOp::INT_SUB, Dec, {Src, NdVar::scalar(1, Dst.Size)});
-    S.emit(NdOp::INT_AND, Dst, {Dec, Src});
-    if (!Apx.NF) {
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::INT_SLESS, NdVar::reg(x86reg::SF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
-    }
-    break;
-  }
-  case X86_INS_ANDN: {
-    if (!Apx.Present && X86.op_count < 3)
-      break;
-    const unsigned DstIndex = Apx.Present ? Apx.Destination : 0;
-    const unsigned AIndex = Apx.Present ? Apx.Source : 1;
-    const unsigned BIndex = Apx.Present ? Apx.Source2 : 2;
-    NdVar A = L.operandRead(S, X86.operands[AIndex]);
-    NdVar B = L.operandRead(S, X86.operands[BIndex]);
-    NdVar Dst = L.operandWrite(X86.operands[DstIndex]);
-    NdVar NotA = S.makeTemp(Dst.Size);
-    S.emit(NdOp::INT_NOT, NotA, {A});
-    S.emit(NdOp::INT_AND, Dst, {NotA, B});
-    if (!Apx.NF) {
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::INT_SLESS, NdVar::reg(x86reg::SF, 1),
-             {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::CF, 1), {NdVar::scalar(0, 1)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
-    }
-    break;
-  }
-
-  // ========================================================================
-  // BMI2: BZHI, MULX, PDEP, PEXT, RORX, SARX, SHLX, SHRX
-  // ========================================================================
-  case X86_INS_BZHI: {
-    if (!Apx.Present && X86.op_count < 3)
-      break;
-    const unsigned DstIndex = Apx.Present ? Apx.Destination : 0;
-    const unsigned SrcIndex = Apx.Present ? Apx.Source : 1;
-    const unsigned IdxIndex = Apx.Present ? Apx.Source2 : 2;
-    NdVar Src = L.operandRead(S, X86.operands[SrcIndex]);
-    NdVar Idx = L.operandRead(S, X86.operands[IdxIndex]);
-    NdVar Dst = L.operandWrite(X86.operands[DstIndex]);
-    uint16_t Sz = Dst.Size;
-    NdVar IdxLow = S.makeTemp(Sz);
-    S.emit(NdOp::INT_AND, IdxLow, {Idx, NdVar::scalar(0xFF, Sz)});
-    const uint64_t BitWidth = Sz * 8;
-    NdVar IdxInRange = S.makeTemp(1);
-    S.emit(NdOp::INT_LESS, IdxInRange, {IdxLow, NdVar::scalar(BitWidth, Sz)});
-    NdVar SafeIndex = S.makeTemp(Sz);
-    S.emit(NdOp::SELECT, SafeIndex, {IdxInRange, IdxLow, NdVar::scalar(0, Sz)});
-    NdVar PartialMask = S.makeTemp(Sz);
-    S.emit(NdOp::INT_LEFT, PartialMask, {NdVar::scalar(1, Sz), SafeIndex});
-    S.emit(NdOp::INT_SUB, PartialMask, {PartialMask, NdVar::scalar(1, Sz)});
-    NdVar Mask = S.makeTemp(Sz);
-    S.emit(NdOp::SELECT, Mask,
-           {IdxInRange, PartialMask, NdVar::scalar(UINT64_MAX, Sz)});
-    S.emit(NdOp::INT_AND, Dst, {Src, Mask});
-    if (!Apx.NF) {
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
-             {Dst, NdVar::scalar(0, Sz)});
-      S.emit(NdOp::INT_SLESS, NdVar::reg(x86reg::SF, 1),
-             {Dst, NdVar::scalar(0, Sz)});
-      S.emit(NdOp::BOOL_NOT, NdVar::reg(x86reg::CF, 1), {IdxInRange});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
-    }
-    break;
-  }
-
+  // BMI2 value operations preserve every arithmetic flag.
   case X86_INS_MULX: {
     if (!Apx.Present && X86.op_count < 3)
       break;

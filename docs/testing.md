@@ -882,6 +882,18 @@ values and only architecturally defined flags, including NF preservation.
 The original APX/REX2 bytes are not executed. This does not qualify physical
 APX execution, CPU-feature fallback to BSF/BSR or native memory exceptions.
 
+`NeverDX86BMILogicTests` checks ANDN, BLSI/BLSMSK/BLSR and BZHI values,
+source/destination aliases, flag effects, both execution modes, register banks,
+ignored i386 fields, memory tails, fault-before-write ordering and malformed
+or reserved fields. Independent bit loops cover every low-word BLS source and
+every 16-bit BZHI control. Run it with `NeverDX86APXBMISemanticTests`, the TBM,
+BEXTR and bit-count targets, and `NeverDLowIRUndefinedIndependenceTests` for the
+shared scalar flag audit. The latter also observes AF/PF and NF preservation.
+`NeverDX86BMILogicPipeline` compiles LLVM and both C projections at O0/O2 with
+BMI/BMI2 disabled and executes only the resulting baseline code. It covers
+pipeline optimization on/off and both operand widths; only defined flags are
+compared. Physical APX execution and native memory faults remain separate.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended

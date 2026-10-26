@@ -16,6 +16,7 @@
 #include "X86DoubleShiftUndefined.h"
 #include "X86LegacyVectorMoveAudit.h"
 #include "X86LiftBEXTR.h"
+#include "X86LiftBMILogic.h"
 #include "X86LiftBitCount.h"
 #include "X86LiftDetail.h"
 #include "X86LiftTBM.h"
@@ -1328,6 +1329,10 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
             ? bitcount::matches(
                   Insn, llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
                   EffectsDraft)
+        : bmilogic::isInstruction(Id)
+            ? bmilogic::matches(
+                  Insn, llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
+                  EffectsDraft)
         : Logic ? HasLogicEffect
                 : EffectsDraft.Effects.empty();
     if (!Handled) {
@@ -1343,7 +1348,8 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
                 !nativestateaudit::form(Insn, TargetArch) &&
                 !tbm::form(Insn, TargetArch) &&
                 !bextr::form(Insn, TargetArch) &&
-                !bitcount::form(Insn, TargetArch))) {
+                !bitcount::form(Insn, TargetArch) &&
+                !bmilogic::form(Insn, TargetArch))) {
       EffectsDraft.Diagnostic =
           "instruction form has no complete undefined-output audit";
     } else if (!HasExpectedEffects) {
