@@ -216,8 +216,9 @@ general pointer-escape or kernel continuation contract.
 `MedStackAlignment` also owns signed entry-relative offset bounds for dynamic
 allocations. Machine-width scalar ranges, complete PHI components and checked
 offset arithmetic can separate their CALL return slots from fixed frame loads
-without inventing an exact stack address. Every PHI component needs an outside
-origin; an unrelated unseeded cycle remains unknown. The return-slot reader
+without inventing an exact stack address. Identity copies join the same PHI
+component. Every component needs an outside origin; an unrelated unseeded cycle
+remains unknown. The return-slot reader
 canonicalizes nonmemory operation prefixes before sharing completed byte
 histories, and charges graph work only when that graph is traversed.
 The omitted-callee reader also visits scalar direct calls carrying a proven

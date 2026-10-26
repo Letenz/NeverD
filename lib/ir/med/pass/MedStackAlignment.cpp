@@ -406,8 +406,9 @@ private:
   /// A set of mutually dependent PHIs denotes one offset only when every
   /// value entering the set proves that same offset. Proving one PHI at a
   /// time cannot establish this invariant for overlapping loop backedges:
-  /// each nested proof can encounter another still-active PHI. Collapse only
-  /// the PHI edges here; ordinary definitions retain resolve()'s semantics.
+  /// each nested proof can encounter another still-active PHI. Copies carry
+  /// the same value around these cycles; other definitions remain boundaries
+  /// and retain resolve()'s semantics.
   std::optional<std::vector<std::pair<MedVar, unsigned>>>
   phiComponentBoundaries(const MedVar &Root, unsigned Depth, bool &HasCycle) {
     std::set<Key> Visited, Active;
@@ -426,22 +427,33 @@ private:
         return false;
       const Key K = key(Value);
       const auto Found = Definitions.find(K);
-      const ValueDefinition *Definition =
+      ValueDefinition *Definition =
           Found == Definitions.end() ? nullptr : &Found->second;
       if (Definition && Definition->Ambiguous)
         return false;
-      if (!Definition || !Definition->Join || Assumed.count(K) ||
-          (!OnlySeededRoots && Value.Kind == MedVar::Reg &&
-           Value.RegOff == TRI.StackPointer && Value.SSAVer == 0 &&
-           !Definition->Op)) {
+      const MedOp *Op = Definition ? Definition->Op : nullptr;
+      const bool EntryOrigin = !OnlySeededRoots && Value.Kind == MedVar::Reg &&
+                               Value.RegOff == TRI.StackPointer &&
+                               (authenticatedEntryLiveIn(Value, Definition) ||
+                                (Value.SSAVer == 0 && !Op));
+      const bool Copy =
+          Op && sameOccurrence(Op->Output, Value) && !Op->Dead &&
+          Op->Opcode == NdOp::COPY && Op->NumInputs == 1 &&
+          Op->Inputs[0].Size == Value.Size &&
+          Op->RegistrationRoot == MedOp::RegistrationRootKind::None &&
+          Op->MemoryOrdering == NdMemoryOrdering::None &&
+          Op->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Op->IntrinsicOutputs.empty();
+      if (!Definition || (!Definition->Join && !Copy) || Assumed.count(K) ||
+          Definition->ProvenOffset || EntryOrigin) {
         Boundaries.emplace_back(Value, AtDepth);
         if (Parent)
           Seeded.insert(*Parent);
         return true;
       }
-      const PhiNode &Phi = *Definition->Join;
-      if (!sameOccurrence(Phi.Output, Value) || Phi.Args.empty() ||
-          (OnlySeededRoots && Phi.ExceptionalEntry) ||
+      const PhiNode *Phi = Definition->Join;
+      if ((Phi && (!sameOccurrence(Phi->Output, Value) || Phi->Args.empty() ||
+                   (OnlySeededRoots && Phi->ExceptionalEntry))) ||
           (Definition->Active && K != RootKey))
         return false;
       if (Parent)
@@ -453,9 +465,14 @@ private:
       if (!Visited.insert(K).second)
         return true;
       Active.insert(K);
-      for (const auto &[Pred, Arg] : Phi.Args) {
-        (void)Pred;
-        if (!Self(Self, Arg, AtDepth + 1, K))
+      if (Phi) {
+        for (const auto &[Pred, Arg] : Phi->Args) {
+          (void)Pred;
+          if (!Self(Self, Arg, AtDepth + 1, K))
+            return false;
+        }
+      } else {
+        if (!Self(Self, Op->Inputs[0], AtDepth + 1, K))
           return false;
       }
       Active.erase(K);

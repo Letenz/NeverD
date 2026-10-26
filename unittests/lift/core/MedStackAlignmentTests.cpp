@@ -175,6 +175,51 @@ TEST(MedStackAlignment, EveryPhiComponentNeedsItsOwnOutsideOrigin) {
     }
 }
 
+TEST(MedStackAlignment, CopiesPreserveLoopStackOriginsAndRanges) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM})
+    for (bool Dynamic : {false, true})
+      for (bool Unseeded : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(Dynamic);
+        SCOPED_TRACE(Unseeded);
+        auto Func = frameWithEntrySP(Architecture);
+        const auto Width = getTargetRegInfo(Architecture).PointerSize;
+        const auto Initial = reg(1, Architecture);
+        const auto LoopValue = reg(2, Architecture);
+        const auto Copy = reg(3, Architecture);
+        const auto Exit = reg(4, Architecture);
+        const auto Amount = temp(10, Architecture);
+        auto &Ops = Func.Blocks.front().Ops;
+        Ops.push_back(op(NdOp::INT_ZEXT, Amount,
+                         MedVar::makeUnspecified(1, Architecture)));
+        Ops.push_back(op(NdOp::INT_SUB, Initial, reg(0, Architecture),
+                         Dynamic ? Amount : MedVar::makeConst(64, Width)));
+        MedBlock Loop;
+        Loop.Id = 1;
+        Loop.Phis = {{LoopValue, {{0, Unseeded ? Copy : Initial}, {1, Copy}}},
+                     {Exit, {{0, Initial}, {1, Copy}}}};
+        Loop.Ops.push_back(op(NdOp::COPY, Copy, LoopValue));
+        Func.Blocks.push_back(std::move(Loop));
+        const auto Bounds = entryStackOffsetRanges(
+            Func, {Exit, Copy, LoopValue}, Architecture, BinaryFormat::ELF);
+        for (const auto &Range : Bounds) {
+          EXPECT_EQ(Range.has_value(), !Unseeded);
+          if (Range) {
+            EXPECT_EQ(Range->Min, Dynamic ? -255 : -64);
+            EXPECT_EQ(Range->Max, Dynamic ? 0 : -64);
+          }
+        }
+        EXPECT_EQ(entryStackOffset(Func, Exit, Architecture, BinaryFormat::ELF),
+                  !Dynamic && !Unseeded ? std::optional<int64_t>(-64)
+                                        : std::nullopt);
+        // A changing backedge cannot inherit the invariant of a copy cycle.
+        Func.Blocks.back().Ops.back() =
+            op(NdOp::INT_SUB, Copy, LoopValue, MedVar::makeConst(1, Width));
+        EXPECT_FALSE(entryStackOffsetRanges(Func, {Exit}, Architecture,
+                                            BinaryFormat::ELF)[0]);
+      }
+}
+
 TEST(MedStackAlignment, ProvenDefinitionsComposeOnlyWithinTheirQuery) {
   auto Func = frameWithEntrySP(Arch::X86);
   const auto Loaded = temp(2, Arch::X86);

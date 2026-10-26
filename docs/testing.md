@@ -91,7 +91,10 @@ and partial-register cases exercise the same block-local use/kill facts.
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
 and separate unseeded cycles. Scaled allocation bounds also cover x86 and ARM,
 checking every byte-sized count against an independent multiplication oracle
-and refusing unconstrained machine-width products. `NeverDMedPrologueSavesTests` checks that only
+and refusing unconstrained machine-width products. Copy edges in stack PHI
+cycles preserve exact or bounded outside origins on all four architectures;
+unseeded cycles and changing backedges remain unknown.
+`NeverDMedPrologueSavesTests` checks that only
 disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
 and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,
 loop backedges and exceptional prefixes retain their negative controls. Run both
