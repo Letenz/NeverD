@@ -19,6 +19,9 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+#if __has_include("llvm/IR/X86NativeMemoryAddress.h")
+#include "llvm/IR/X86NativeMemoryAddress.h"
+#endif
 #include "llvm/Support/ErrorHandling.h"
 
 #include <vector>
@@ -34,7 +37,12 @@ llvm::Value *MedLLVMEmitter::emitX86AmxState(const MedOp &Op,
   // Older pinned SDKs retain the exact owned assembly implementation below.
   const auto ID =
       llvm::Intrinsic::lookupIntrinsicID("llvm.x86." + x86AmxNativeSuffix(D));
-  if (llvm::Intrinsic::lookupIntrinsicID("llvm.x86.ldtilecfg.address") && ID) {
+  bool NativeAddress = !(D & X86AmxStackReference);
+#ifdef LLVM_X86_NATIVE_MEMORY_STACK_REFERENCE
+  NativeAddress = true;
+#endif
+  if (NativeAddress &&
+      llvm::Intrinsic::lookupIntrinsicID("llvm.x86.ldtilecfg.address") && ID) {
     auto *Function = B.GetInsertBlock()->getParent();
     std::string Features =
         Function->getFnAttribute("target-features").getValueAsString().str();

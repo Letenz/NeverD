@@ -806,9 +806,8 @@ target_include_directories(NeverDX86AMXStateTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
-# Pins the LLVM boundary independently from concrete AMX emulation.  Until the
-# versioned runtime owns tile state, restartable strided memory and fault
-# continuation, every exact AMX MedIR shape must fail before emitting effects.
+# Pins the LLVM boundary independently from concrete AMX emulation: legacy
+# value transfers remain guarded; native bank operations retain exact shapes.
 add_neverd_unittest(NeverDX86AMXLLVMGuardTests
   x86_64/X86_64_AMXLLVMGuardTests.cpp
 
@@ -819,6 +818,16 @@ add_neverd_unittest(NeverDX86AMXLLVMGuardTests
 )
 
 target_include_directories(NeverDX86AMXLLVMGuardTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
+add_neverd_unittest(NeverDX86AMXAddressTests
+  x86_64/X86AMXAddressTests.cpp
+
+  LINK_COMPONENTS BackendLLVM BackendC Decode Lift Loader
+)
+target_include_directories(NeverDX86AMXAddressTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )

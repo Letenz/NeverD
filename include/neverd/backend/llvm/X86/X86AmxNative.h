@@ -21,6 +21,7 @@
 #include <string_view>
 
 namespace neverd {
+inline constexpr unsigned X86AmxNativeStackReference = 0x100;
 inline std::string x86AmxNativeSuffix(uint32_t D) {
   constexpr std::array<const char *, unsigned(X86AmxOp::Count)> Names = {
       "ldtilecfg",       "sttilecfg",       "tilerelease",   "tilezero",
@@ -52,10 +53,11 @@ inline std::optional<uint32_t> x86AmxNativeDescriptor(std::string_view Name) {
   return {};
 }
 inline unsigned x86AmxNativePrefix(uint32_t D, NdMemoryAddressSpace Space) {
-  return Space == NdMemoryAddressSpace::X86FS   ? 0x64
-         : Space == NdMemoryAddressSpace::X86GS ? 0x65
-         : D & X86AmxStackSegment               ? 0x36
-                                                : 0x3e;
+  const unsigned Prefix = Space == NdMemoryAddressSpace::X86FS   ? 0x64
+                          : Space == NdMemoryAddressSpace::X86GS ? 0x65
+                          : D & X86AmxStackSegment               ? 0x36
+                                                                 : 0x3e;
+  return Prefix | (D & X86AmxStackReference ? X86AmxNativeStackReference : 0);
 }
 inline std::string x86AmxNativeFeatures(uint32_t D) {
   const auto K = x86AmxOperation(D);

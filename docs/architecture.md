@@ -127,6 +127,19 @@ separate and guarded at native emission. See
 [x86 instruction support](x86-instruction-support.md#architectural-amx-bank-and-native-output)
 for feature distinctions, historical TF32 encoding and qualification limits.
 
+AMX descriptor version 2 separates an explicit SS prefix from the original
+SP/BP default-stack reference. Configuration transfers retain the latter under
+CS/DS/ES/SS overrides; FS/GS and address32 do not need long-mode noncanonical
+stack provenance. Native configuration APIs carry control bit `0x100` when the
+SDK advertises it. Older SDKs use an owned `[RBP + (offset - RBP)]` access,
+preserving the compiler's RBP and declaring the arithmetic scratch/flags.
+Data-address fallbacks use AX, and row strides use CX, under the shared scalar
+carrier authority. Tile row-memory with default-stack addr64 remains refused:
+its architectural stride occupies the index needed by the configuration plan.
+Legacy version-1 FS/GS, address32 and non-memory forms remain readable, including
+their exact old assembly contracts. Unsegmented version-1 addr64 memory must be
+lifted again from the original bytes because it lost default-stack provenance.
+
 `X86RepState.h` owns the versioned REP input and completion contract. One
 natural-width register tuple, packed arithmetic flags/DF and a constant encoding
 descriptor fit the LowIR operand boundary. LLVM and both C routes retain actual
@@ -3465,6 +3478,9 @@ spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
 surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
 statement anchors. Library folding retains its separate region projection.
+Private-frame forwarding keeps a call's observed expression identity when
+none of its inputs change. A rewritten input still rebuilds the call and
+cannot borrow the old node's instruction anchor.
 This supplies navigation evidence rather than complete expression provenance.
 Conditional runtime call evidence consumes these same exact occurrences through
 `CSourceEvidence`, independently of binary format or architecture. Producers

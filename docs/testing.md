@@ -1013,14 +1013,25 @@ BMI2. The test reports any compile-only profiles explicitly. It requires no
 APX hardware and does not qualify native memory faults or opaque state.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
-and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
+and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 75 independent
 encoding fixtures cover every bank operation, register/immediate and extended
-row selectors, APX memory, FS/GS/SS and address-size overrides. The source
+row selectors, APX memory, FS/GS/SS and address-size overrides, including RSP
+configuration accesses with absent, DS and SS prefixes. The source
 matrix compiles LLVM and both C routes at O0/O2 for ELF/COFF/Mach-O, checks
 exact fixed-bank object bytes, and compares native faults or completion with
 original machine bytes. Malformed LowIR, MedIR, HighIR and native assembly
 cannot drop bank, memory or feature effects. Concrete tests retain arithmetic,
 row conversion and partial-progress oracles.
+`NeverDX86AMXAddressTests` independently checks default-stack provenance across
+all decoder routes, rejects unqualified stack row strides before LowIR effects,
+and covers versioned/native/legacy-assembly source admission. Set
+`NEVERD_TEST_AMX_ADDRESS_EXPORT` to export its HighC and LLVMC memory wrappers.
+`scripts/verify_x86_amx_addresses.py --exports DIR --clang CLANG --compiler NEVERC
+--llc LLC --keep RESULTS` compiles those exports in realigned dynamic frames
+through Clang, NeverC fallback, NeverC native and NeverC-to-fork routes at O0/O2
+for ELF/COFF/Mach-O. It independently reads the native VEX/EVEX address fields
+and uses controlled completions to check address/stride transport, stack canaries
+and saved registers. This does not qualify physical AMX faults or tile restart.
 `RowSelectorsIgnoreHighBitsAndZeroOutOfRangeRows` covers all six operations,
 both selector forms, ignored high bits and an independent exact-value oracle.
 It follows ISE 062 rather than the superseded row-chunk exception rules.
@@ -6748,6 +6759,9 @@ argument cases cover assignment, expression, call and return statements, keep
 the original stores and invalidate memory facts after each call. Nested calls
 and indirect targets retain their reads. Same-width signed/unsigned views
 execute at O0/O2 with UBSan against an independent byte-copy reference.
+`UnchangedCallInputsRetainSourceIdentity` checks direct and assigned calls on
+x86, x64, ARM and AArch64: forwarding must retain an unchanged call's original
+source observation while still clearing memory facts across the call.
 `NeverDSessionCAPITests` checks these forwarded x64/ARM64 import arguments and
 the V7/V8 recovery optimization paths. On macOS this SDK consumer resolves
 LLVM from the shared engine alone, preserving pass-analysis key identity.

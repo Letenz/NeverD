@@ -131,6 +131,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Remaining compact-memory address forms | Native LLVM and both C routes now support DS/FS/GS compact memory. A 64-bit RSP/RBP-based address without FS/GS still lacks its #SS fault provenance. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
+| AMX tile row-memory with addr64 SP/BP bases | Its SIB index is the architectural stride and cannot also carry the configuration API's offset relative to RBP. These forms fail before LowIR effects unless FS/GS selects the segment. LDTILECFG/STTILECFG use the independent version-2 stack-reference contract below. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
 ADCX/ADOX now have complete form-specific undefined-output audits for legacy
@@ -984,9 +985,10 @@ it retains an original stack-default operand's noncanonical `#SS` provenance
 using `[RBP + (offset - RBP)]`, without replacing RBP or probing memory. An SS
 prefix alone still describes a data-default reference. FS/GS and address32
 cannot use the bit. Descriptor/VMX, compact/four-source, RAO/CMPccXADD and AMX
-configuration APIs support it; AMX row-memory and MPX do not. NeverD's decoded
-stack-address admission remains guarded until its IR and all output routes
-transport the same provenance.
+configuration APIs support it; AMX row-memory and MPX do not. NeverD's AMX
+configuration path now carries it through descriptor version 2 and both source
+routes; the other decoded native-memory families remain guarded until their IR
+and all output routes transport the same provenance.
 
 The compiler change passes 82 LLVM regression files, 84 NeverC native/frontend
 tests, 91 plugin checks, 53 generator tests and 89 binary tests. Independent LAR
@@ -1607,13 +1609,44 @@ and [SDM Volume 2B](https://cdrdv2.intel.com/v1/dl/getContent/671241).
 
 ## Architectural AMX bank and native output
 
-`X86AmxState.h` owns the version-1 descriptor for 28 operation kinds. The new
+`X86AmxState.h` owns the version-2 descriptor for 28 operation kinds. The
 append-only `X86AMXState` intrinsic carries a base address, a constant descriptor,
 and a stride or row selector where required. The descriptor distinguishes tile
 register indices, four load hints, address-size wrapping, APX-promoted memory,
-register/immediate row selection, extended row GPRs and the default SS segment.
-FS/GS use the existing address-space authority. All validation layers consume
-this shape; malformed versions, modes, widths and effects fail explicitly.
+register/immediate row selection, extended row GPRs, explicit SS prefixes and
+stack-default address provenance. The last two are independent: in long mode,
+an SS prefix on a data-default base does not make it a stack reference, and a
+DS override does not remove the stack default of RSP/RBP. R12/R13 remain
+data-default bases. FS/GS use the existing address-space authority. All
+validation layers consume this shape; malformed versions, modes, widths and
+effects fail explicitly.
+
+Configuration loads/stores retain stack provenance through the native address
+control's `0x100` bit when the compiler advertises that contract. Older SDKs
+use owned assembly with RBP plus an offset computed in a scratch register;
+the compiler's RBP is never replaced and no extra memory access is introduced.
+Data-default memory uses AX as the address carrier and tile memory uses CX for
+the stride, preventing allocation to a compiler frame base. This also applies
+to generated HighC and LLVM-to-C source. Stack-default addr64 tile-row memory
+is still rejected before emitting LowIR effects: its SIB index is the row
+stride and cannot also carry the configuration operation's frame-relative
+offset. FS/GS and addr32 tile memory retain their supported contracts.
+
+Version-1 nonmemory operations, addr32 memory and FS/GS memory remain readable,
+including their exact historical owned-assembly forms. Version-1 unsegmented
+addr64 memory is rejected as ambiguous: it conflated explicit SS with a stack
+default and lost that default under DS overrides. A reader cannot safely
+reconstruct the missing provenance from the old descriptor.
+
+Both SDK profiles pass the six address-contract tests, including 420 decode
+and admission combinations and 300 strict/permissive early refusals. Their
+128 exported HighC/LLVM-to-C wrappers and case manifests are byte-identical.
+Clang fallback, NeverC fallback, NeverC native and NeverC IR through the full
+LLVM fork pass 3,072 ELF/COFF/Mach-O objects and 36,864 controlled completions
+at O0/O2. The independent opcode/address oracle checks VEX/EVEX selection,
+stack-default bases, exact address/stride transport, realigned dynamic frames,
+canaries and saved registers. These completions do not execute AMX or qualify
+physical noncanonical faults, tile arithmetic or restart.
 
 The operation owns the complete architectural TILECFG/TILEDATA bank. Native
 LLVM and both C routes emit the real instruction with volatile ordering,
@@ -1660,7 +1693,7 @@ the shared concrete evaluator. Out-of-range rows do not require known tile
 contents, while rows that are actually read still do. Invalid configuration
 and column shapes continue to fail before output publication.
 
-Qualification uses 63 independently assembled/reference encodings, all three
+Qualification uses 75 independently assembled/reference encodings, all three
 native object formats and both pipeline optimization settings. HighC,
 LLVM-to-C and LLVM IR compile at O0/O2, and the repository backend emits native
 objects. Fixed-bank operations are checked against exact object bytes. Isolated

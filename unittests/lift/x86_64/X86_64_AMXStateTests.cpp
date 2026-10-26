@@ -863,7 +863,7 @@ TEST(X86AMXState, InvalidBankDescriptorsFailBeforeChangingState) {
       Op.Inputs[2].Offset &= ~X86AmxStateVersion;
       break;
     case 1:
-      Op.Inputs[2].Offset |= 1u << 25;
+      Op.Inputs[2].Offset |= 1u << 26;
       break;
     case 2:
       Op.Inputs[2].Offset |= X86AmxAddress32;
