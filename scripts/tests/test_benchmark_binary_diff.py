@@ -1,10 +1,12 @@
 """Independent truth, result-admission and tool-format regression checks."""
+import argparse
 import copy
 import json
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts import benchmark_binary_diff as bench
 
@@ -107,6 +109,35 @@ class ArtifactTests(unittest.TestCase):
         self.assertTrue(result["metrics"]["exact_mapping"])
         self.assertEqual(result["metrics"]["accepted_pairs"], 1)
         self.assertEqual(result["input_binding"], "native-and-receipt")
+
+    def test_invalid_corpus_is_rejected_before_runtime_or_output_creation(self):
+        invalid_cases = [[], [self.case, self.case],
+                         [dict(self.case, truth_complete=False)],
+                         [dict(self.case, truth=[])]]
+        for identity in ("", ".", "..", "../outside", "/absolute",
+                         "nested/case", "nested\\case", "a:b", "line\nname", None):
+            invalid_cases.append([dict(self.case, id=identity)])
+        output = self.root / "run-output"
+        with mock.patch.object(bench.subprocess, "check_output") as launch:
+            for cases in invalid_cases:
+                corpus = self.write("corpus.json", {
+                    "schema": bench.CORPUS_SCHEMA, "cases": cases,
+                })
+                args = argparse.Namespace(corpus=corpus, output_dir=output,
+                                          neverd=self.root / "neverd",
+                                          library=self.root / "libneverd.so",
+                                          threads=1, timeout=1)
+                with self.subTest(cases=cases), self.assertRaises(ValueError):
+                    bench.run_neverd(args)
+                self.assertFalse(output.exists())
+            launch.assert_not_called()
+
+    def test_evaluator_rejects_empty_corpus_and_duplicate_case_identities(self):
+        corpus, run, _ = self.receipt()
+        for cases in ([], [self.case, self.case]):
+            self.write(corpus.name, {"schema": bench.CORPUS_SCHEMA, "cases": cases})
+            with self.subTest(cases=cases), self.assertRaises(ValueError):
+                bench.evaluate(corpus, run)
 
     def test_changed_input_or_result_is_rejected(self):
         for target in ("primary.bin", "report.json"):

@@ -115,7 +115,11 @@ inventories equivalent. Never combine those tracks into one leaderboard.
 ## Truth and metrics
 
 Each case supplies complete one-to-one function truth, with unique IDs and
-addresses. A removed function has a null secondary address; an added function
+addresses. A corpus must contain at least one case; case IDs must be unique
+single directory names containing only ASCII letters, digits, dots, underscores
+and hyphens, starting with a letter or digit. Invalid corpus declarations are
+rejected before starting the runtime or creating output directories. A removed
+function has a null secondary address; an added function
 has a null primary address. Matching either to an unrelated function is a false
 positive. This evaluator does not cover incomplete truth, aliases at one
 address, split/merge regions or semantic equivalence.

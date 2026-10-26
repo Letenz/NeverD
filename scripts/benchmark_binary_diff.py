@@ -90,6 +90,24 @@ def truth_pairs(rows: list[dict]) -> set[tuple[int, int]]:
     return pairs
 
 
+def corpus_cases(corpus: dict) -> list[dict]:
+    require(corpus["schema"] == CORPUS_SCHEMA, "unsupported corpus schema")
+    cases = corpus["cases"]
+    require(isinstance(cases, list) and bool(cases), "corpus must contain cases")
+    identities = set()
+    for case in cases:
+        identity = case["id"]
+        require(isinstance(identity, str) and
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", identity) is not None,
+                "case identity must be a single portable directory name")
+        require(identity not in identities, "case identities must be unique")
+        identities.add(identity)
+        require(case["truth_complete"] is True,
+                "this evaluator requires complete function truth")
+        truth_pairs(case["truth"])
+    return cases
+
+
 def score(expected: set[tuple[int, int]], observed: list[tuple[int, int]]) -> dict:
     actual = set(observed)
     correct, wrong, missed = actual & expected, actual - expected, expected - actual
@@ -156,12 +174,10 @@ def read_pairs(kind: str, path: Path, inputs: list[Path]) -> list[tuple[int, int
 
 def evaluate(corpus_path: Path, run_path: Path) -> dict:
     corpus, run = load(corpus_path), load(run_path)
-    require(corpus["schema"] == CORPUS_SCHEMA and run["schema"] == RUN_SCHEMA,
-            "unsupported corpus or run schema")
-    cases = [case for case in corpus["cases"] if case["id"] == run["case"]]
+    require(run["schema"] == RUN_SCHEMA, "unsupported run schema")
+    cases = [case for case in corpus_cases(corpus) if case["id"] == run["case"]]
     require(len(cases) == 1, "run must identify exactly one corpus case")
     case = cases[0]
-    require(case["truth_complete"] is True, "this evaluator requires complete function truth")
     expected = truth_pairs(case["truth"])
     inputs = [checked_artifact(case[side], corpus_path.parent) for side in ("primary", "secondary")]
     require(run["input_sha256"] == [digest(path) for path in inputs],
@@ -309,7 +325,7 @@ def generate(args: argparse.Namespace) -> int:
 def run_neverd(args: argparse.Namespace) -> int:
     corpus_path = args.corpus.resolve()
     corpus = load(corpus_path)
-    require(corpus["schema"] == CORPUS_SCHEMA, "unsupported corpus schema")
+    cases = corpus_cases(corpus)
     executable, library = args.neverd.absolute(), args.library.absolute()
     require(sys.platform.startswith("linux") and library.name == "libneverd.so",
             "run requires Linux and an explicit libneverd.so runtime")
@@ -319,8 +335,7 @@ def run_neverd(args: argparse.Namespace) -> int:
     version = subprocess.check_output([str(executable), "--version"], env=env, text=True, stderr=subprocess.STDOUT).strip()
     runtime = [artifact(path, output) for path in (executable, library)]
     results = []
-    for case in corpus["cases"]:
-        truth_pairs(case["truth"])
+    for case in cases:
         inputs = [checked_artifact(case[side], corpus_path.parent) for side in ("primary", "secondary")]
         folder = output / case["id"]
         folder.mkdir()
