@@ -26,7 +26,6 @@ namespace med_variadic_detail {
 bool hasDarwinVariadicPrologue(VariadicScan &S) {
   const MedFunc &Func = S.Func;
   const TargetRegInfo &TRI = S.TRI;
-  const uint64_t SpOff = S.SpOff;
   auto getValueIndex = [&S]() -> const VariadicValueIndex & {
     return S.values();
   };
@@ -56,20 +55,20 @@ bool hasDarwinVariadicPrologue(VariadicScan &S) {
         if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
             Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
             !Op.Inputs[1].isConst())
-          if (auto VD = entrySpDelta(getValueIndex(), SpOff, Op.Inputs[1], 0))
+          if (auto VD = entrySpDelta(S, Op.Inputs[1], 0))
             if (*VD >= 0 && *VD <= limits::kVariadicOverflowBaseMax &&
                 TRI.PointerSize > 0 && (*VD % TRI.PointerSize) == 0)
-              if (auto AD =
-                      entrySpDelta(getValueIndex(), SpOff, Op.Inputs[0], 0))
+              if (auto AD = entrySpDelta(S, Op.Inputs[0], 0))
                 HomeSlots.insert(*AD);
     bool Reloaded = false;
-    for (const auto &Blk : Func.Blocks)
-      for (const auto &Op : Blk.Ops)
-        if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1 &&
-            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-          if (auto AD = entrySpDelta(getValueIndex(), SpOff, Op.Inputs[0], 0))
-            if (HomeSlots.count(*AD))
-              Reloaded = true;
+    if (!HomeSlots.empty())
+      for (const auto &Blk : Func.Blocks)
+        for (const auto &Op : Blk.Ops)
+          if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1 &&
+              Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+            if (auto AD = entrySpDelta(S, Op.Inputs[0], 0))
+              if (HomeSlots.count(*AD))
+                Reloaded = true;
     Marked = !HomeSlots.empty() && Reloaded;
   }
   // -O2 direct-overflow walk (no home slot): at -O2 clang keeps the va_list
@@ -113,7 +112,7 @@ bool hasDarwinVariadicPrologue(VariadicScan &S) {
           ::neverd::limits::ir::
               kMedVariadicDarwinHasDarwinVariadicPrologueOvfDeltaDepthLimit)
         return std::nullopt;
-      if (auto D = entrySpDelta(getValueIndex(), SpOff, V, 0))
+      if (auto D = entrySpDelta(S, V, 0))
         return D;
       const auto &Ors = getValueIndex().OrDefinitions;
       auto It = Ors.find(VariadicValueIndex::walkKeyOf(V));

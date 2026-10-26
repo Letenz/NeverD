@@ -107,6 +107,12 @@ Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
 
+`NeverDMedVariadicTests` runs the variadic-prologue proof boundaries directly:
+entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
+fresh queries after edits across x86, x64, ARM and AArch64. The i386 cases
+require a homed incoming pointer plus a reload or an advanced-pointer read;
+Darwin's register-only walk remains independently recognizable without a home.
+
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
 and separate unseeded cycles. Scaled allocation bounds also cover x86 and ARM,
@@ -4936,6 +4942,13 @@ execution of every source architecture.
 (`NeverDWin64CallContractTests`) checks that a routine the image exports,
 whose name binds a prototype, reads the parameters it declares, a system call
 stub's fifth on the stack too, together with any its body reads past them.
+
+`MedCallingConvX86Stack.*` (in `NeverDFPParameterMaskTests`) checks that i386
+incoming stack addresses count as transparent uses only when their output
+definition proves the forwarding. Its cyclic PHIs require independent root
+queries to retain both escaped homes, including distinct SSA versions and
+reversed block order. Run this owner and `NeverDI386CallContractTests` when
+changing CDECL stack-offset query reuse.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and

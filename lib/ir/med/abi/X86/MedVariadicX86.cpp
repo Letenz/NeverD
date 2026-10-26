@@ -50,7 +50,7 @@ bool hasX64VariadicPrologue(VariadicScan &S, uint64_t &VaStartWord) {
         }
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           Op.Inputs[1].isConst() && Op.Inputs[1].Size == sizeof(uint32_t))
-        if (auto Delta = entrySpDelta(S.values(), S.SpOff, Op.Inputs[0], 0))
+        if (auto Delta = entrySpDelta(S, Op.Inputs[0], 0))
           FieldStores[*Delta] = Op.Inputs[1].ConstVal & 0xFFFFFFFFu;
     }
   for (const auto &[Delta, GpOffset] : FieldStores)
@@ -94,7 +94,7 @@ std::optional<X64VaStartGeometry> x64VaStartGeometry(VariadicScan &S,
       if (Op.Opcode != NdOp::STORE || Op.NumInputs < 2 ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         continue;
-      const auto At = entrySpDelta(Values, S.SpOff, Op.Inputs[0], 0);
+      const auto At = entrySpDelta(S, Op.Inputs[0], 0);
       if (!At)
         continue;
       const MedVar &Value = Op.Inputs[1];
@@ -109,7 +109,7 @@ std::optional<X64VaStartGeometry> x64VaStartGeometry(VariadicScan &S,
       }
       if (Value.Size != S.TRI.PointerSize)
         continue;
-      const auto Address = entrySpDelta(Values, S.SpOff, Value, 0);
+      const auto Address = entrySpDelta(S, Value, 0);
       auto [It, Inserted] = Pointers.emplace(*At, Address);
       if (!Inserted && It->second != Address)
         It->second.reset();
@@ -137,11 +137,6 @@ std::optional<X64VaStartGeometry> x64VaStartGeometry(VariadicScan &S,
 bool hasI386VariadicPrologue(VariadicScan &S) {
   const MedFunc &Func = S.Func;
   const TargetRegInfo &TRI = S.TRI;
-  const uint64_t SpOff = S.SpOff;
-  auto getValueIndex = [&S]() -> const VariadicValueIndex & {
-    return S.values();
-  };
-  bool Marked = false;
   // i386 cdecl passes every argument (named and variadic) on the stack, so a
   // variadic prologue has no register save area.  va_start instead points a
   // va_list at the first unnamed argument -- entry_sp + PointerSize (return
@@ -160,22 +155,23 @@ bool hasI386VariadicPrologue(VariadicScan &S) {
     for (const auto &Op : Blk.Ops)
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-        if (auto VD = entrySpDelta(getValueIndex(), SpOff, Op.Inputs[1], 0))
+        if (auto VD = entrySpDelta(S, Op.Inputs[1], 0))
           if (*VD >= MinPtrDelta && *VD <= limits::kVariadicOverflowBaseMax &&
               TRI.PointerSize > 0 && (*VD % TRI.PointerSize) == 0)
-            if (auto AD =
-                    entrySpDelta(getValueIndex(), SpOff, Op.Inputs[0], 0)) {
+            if (auto AD = entrySpDelta(S, Op.Inputs[0], 0)) {
               HomeSlots.insert(*AD);
               DirectSeeds.push_back(Op.Inputs[1]);
             }
-  bool Reloaded = false;
+  // Both the reload and direct-walk proofs require a homed incoming pointer.
+  if (HomeSlots.empty())
+    return false;
   for (const auto &Blk : Func.Blocks)
     for (const auto &Op : Blk.Ops)
       if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1 &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-        if (auto AD = entrySpDelta(getValueIndex(), SpOff, Op.Inputs[0], 0))
+        if (auto AD = entrySpDelta(S, Op.Inputs[0], 0))
           if (HomeSlots.count(*AD))
-            Reloaded = true;
+            return true;
 
   // At -O2 the va_list pointer can remain live in registers after its
   // mandatory home store, so va_arg walks it directly and never reloads the
@@ -221,18 +217,18 @@ bool hasI386VariadicPrologue(VariadicScan &S) {
           AdvancedSeeds.push_back(Op.Output);
           break;
         }
+  if (AdvancedSeeds.empty())
+    return false;
   auto AdvancedWalkPtrs =
       computeForwardValueClosure(Func, AdvancedSeeds, forwardsTransparent);
 
-  bool UsedAsLoad = false;
   for (const auto &Blk : Func.Blocks)
     for (const auto &Op : Blk.Ops)
       if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1 &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           containsValue(AdvancedWalkPtrs, Op.Inputs[0]))
-        UsedAsLoad = true;
-  Marked = !HomeSlots.empty() && (Reloaded || UsedAsLoad);
-  return Marked;
+        return true;
+  return false;
 }
 
 } // namespace med_variadic_detail
