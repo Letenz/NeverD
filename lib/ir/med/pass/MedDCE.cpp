@@ -25,8 +25,10 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -236,24 +238,41 @@ void LowToMedConverter::runDce(MedFunc &Func) {
         MarkLive(Prev.Output);
     }
   };
+  // Widen block IDs so every int value stays distinct from the hash sentinels.
+  llvm::SmallDenseMap<int64_t, const MedBlock *> Blocks;
+  bool UniqueBlockIds = true;
+  for (const auto &Block : Func.Blocks)
+    if (!Blocks.try_emplace(Block.Id, &Block).second)
+      UniqueBlockIds = false;
   auto blockById = [&](int Id) -> const MedBlock * {
-    for (const auto &Cand : Func.Blocks)
-      if (Cand.Id == Id)
-        return &Cand;
-    return nullptr;
+    const auto It = Blocks.find(Id);
+    return It == Blocks.end() ? nullptr : It->second;
   };
+  // Queries only add live definitions, and the graph stays unchanged until
+  // every query finishes. Share completed walks across calls and returns.
+  // Duplicate block IDs retain the original query-local visitation: a root
+  // may differ from the first block that a predecessor ID names.
+  // Each call/return prefix is queried once per register. Only predecessor
+  // block ends recur, so the shared set needs no record for each call site.
+  llvm::DenseSet<std::pair<const MedBlock *, uint64_t>> ReachedEnds;
+  llvm::SmallVector<std::pair<const MedBlock *, int>> ReachingWorklist;
   // Keep the definition of register \p RegOff that reaches the point after
   // op \p Before of \p Start on every incoming path: the newest write there,
   // else the register's PHI, else what reaches the end of each predecessor.
   auto seedReachingDef = [&](const MedBlock &Start, int Before,
                              uint64_t RegOff) {
-    std::vector<std::pair<const MedBlock *, int>> Pending{{&Start, Before}};
+    ReachingWorklist.push_back({&Start, Before});
     std::set<std::pair<int, int>> Visited;
-    while (!Pending.empty()) {
-      const auto [Block, Last] = Pending.back();
-      Pending.pop_back();
-      if (!Visited.insert({Block->Id, Last}).second)
+    while (!ReachingWorklist.empty()) {
+      const auto [Block, Last] = ReachingWorklist.back();
+      ReachingWorklist.pop_back();
+      if (UniqueBlockIds) {
+        if (Last == static_cast<int>(Block->Ops.size()) - 1 &&
+            !ReachedEnds.insert({Block, RegOff}).second)
+          continue;
+      } else if (!Visited.insert({Block->Id, Last}).second) {
         continue;
+      }
       bool Found = false;
       for (int J = Last; J >= 0; --J) {
         const MedVar &Output = Block->Ops[static_cast<size_t>(J)].Output;
@@ -276,7 +295,8 @@ void LowToMedConverter::runDce(MedFunc &Func) {
         continue;
       for (int PredId : Block->Preds)
         if (const MedBlock *Pred = blockById(PredId))
-          Pending.push_back({Pred, static_cast<int>(Pred->Ops.size()) - 1});
+          ReachingWorklist.push_back(
+              {Pred, static_cast<int>(Pred->Ops.size()) - 1});
     }
   };
   // A call reads SP to locate outgoing stack arguments, but its implicit input
@@ -287,6 +307,7 @@ void LowToMedConverter::runDce(MedFunc &Func) {
     seedReachingDef(Start, Before, TRI.StackPointer);
   };
   for (auto &Blk : Func.Blocks) {
+    bool HasCall = false;
     for (size_t I = 0; I < Blk.Ops.size(); ++I) {
       bool IsCall = (Blk.Ops[I].Opcode == NdOp::CALL ||
                      Blk.Ops[I].Opcode == NdOp::INDIR_CALL ||
@@ -307,13 +328,9 @@ void LowToMedConverter::runDce(MedFunc &Func) {
       // `mov edx, eax` before its call while the shared `lea ecx` stays in
       // the dominating block.  Unless another call precedes this one in its
       // block, the predecessors' trailing parameter writes are its setup.
-      if (std::any_of(Blk.Ops.begin(), Blk.Ops.begin() + I,
-                      [](const MedOp &Prev) {
-                        return Prev.Opcode == NdOp::CALL ||
-                               Prev.Opcode == NdOp::INDIR_CALL ||
-                               Prev.Opcode == NdOp::INTRINSIC;
-                      }))
+      if (HasCall)
         continue;
+      HasCall = IsCall;
       for (int PredId : Blk.Preds)
         if (const MedBlock *Pred = blockById(PredId))
           seedParamWrites(Pred->Ops, static_cast<int>(Pred->Ops.size()) - 1,

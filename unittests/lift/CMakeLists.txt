@@ -100,6 +100,10 @@ add_neverd_unittest(NeverDMedStackDeltaTests
   LINK_COMPONENTS IRMed
 )
 
+add_neverd_unittest(NeverDMedDceTests
+  core/MedDceImplicitSpTests.cpp
+  LINK_COMPONENTS IRMed)
+
 add_neverd_unittest(NeverDFPParameterMaskTests
   core/FPParameterMaskTests.cpp
   core/MedCallingConvTests.cpp
