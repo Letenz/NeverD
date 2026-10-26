@@ -34,6 +34,7 @@
 #define NEVERD_SYMBOLIC_SYMEXPR_H
 
 #include "neverd/Common.h"
+#include "neverd/symbolic/Limits.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -642,11 +643,13 @@ private:
 
   const SymContext &Ctx;
   SymRef Root;
-  std::vector<Step> Steps;
+  llvm::SmallVector<Step, limits::symbolic::kSymEvalPlanInlineSteps> Steps;
   /// Concatenated operand slot lists, indexed by Step::FirstArg.
-  std::vector<uint32_t> ArgSlots;
-  std::vector<uint32_t> Vars;
-  std::vector<uint64_t> ScratchU64;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineOperands>
+      ArgSlots;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineSteps> Vars;
+  llvm::SmallVector<uint64_t, limits::symbolic::kSymEvalPlanInlineSteps>
+      ScratchU64;
   std::vector<llvm::APInt> ScratchAP;
   uint32_t RootSlot = 0;
   bool FitsU64 = true;

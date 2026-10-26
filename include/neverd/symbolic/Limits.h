@@ -46,6 +46,13 @@ inline constexpr size_t kSymMBAMBARewriteCacheCapacity = 65536;
 // normally when a graph needs more entries; this is not an analysis limit.
 inline constexpr unsigned kSymExprTraversalInlineBuckets = 32;
 
+// include/neverd/symbolic/SymExpr.h
+// Repeated small measurements keep their plans and native scratch inline.
+// Larger plans grow normally; these capacities do not limit evaluation.
+inline constexpr unsigned kSymEvalPlanInlineSteps = 16;
+inline constexpr unsigned kSymEvalPlanInlineOperands =
+    2 * kSymEvalPlanInlineSteps;
+
 // lib/symbolic/expr/SymExprCompare.cpp
 inline constexpr unsigned kSymExprCompareMaxNodes = 32;
 inline constexpr unsigned kSymExprCompareMaxEdges = 64;
