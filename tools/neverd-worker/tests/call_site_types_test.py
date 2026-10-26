@@ -205,10 +205,12 @@ struct QA_CONTEXT *sub_40008D(struct QA_CONTEXT *context) { return context; }
 extern int32_t start(uintptr_t context);
 int main(void) { struct QA_CONTEXT context = { 1, 7, 9 }; return start((uintptr_t)&context) != 16; }
 """)
-        for count in (0, 1):
+        for count in (0, 1, 2):
             floating = root / ("floating-%d.elf" % count)
             code = bytes.fromhex("48b8000000000000f83f 66480f6ec0 bf07000000")
-            code += b"\xb8" + struct.pack("<I", count)
+            # The third caller computes the exact AL count as 3 - 2. A COPY-only
+            # proof loses that value even though the shared scalar owner knows it.
+            code += bytes.fromhex("b803000000 83e802") if count == 2 else b"\xb8" + struct.pack("<I", count)
             code += b"\xe8" + struct.pack("<i", 64 - len(code) - 5) + b"\xc3"
             floating.write_bytes(elf(code.ljust(64, b"\x90") + bytes.fromhex("89f8c3")))
             with Client(executable) as client:

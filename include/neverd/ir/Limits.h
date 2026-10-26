@@ -389,8 +389,9 @@ inline constexpr size_t kConstantRegisterCallOperations = 20000;
 // lib/ir/SourceCallABI.cpp
 inline constexpr int
     kSourceCallABINeverdAssignAnalystCallABISignatureParametersSizeLimit = 32;
-inline constexpr int
-    kSourceCallABINeverdSourceCallVariadicStateDefinedWorkLimit = 20000;
+// Vector counts share the exact register-call constant query and its budget.
+inline constexpr uint16_t kSourceCallStackWriteBytes = 16;
+inline constexpr int64_t kSourceCallStackAddressMagnitude = int64_t{1} << 30;
 inline constexpr int
     kSourceCallABINeverdSourceCallStackArgumentsDefinedWorkLimit = 20000;
 inline constexpr int

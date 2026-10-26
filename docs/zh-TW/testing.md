@@ -2135,3 +2135,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `NeverDSourceCallABITests` 檢查 Windows ARM64 的混合暫存器、位寬、暫存器耗盡、堆疊偏移及變參拒絕。`NeverDWorkerCallSiteTypes` 從 ARM64 PE 還原整數、double 與指標呼叫，在 O0/O2 下經兩條 C 路徑與獨立 C 被呼叫函式執行驗證，並檢查拒絕變參編輯後分析快照不變。這不是 Windows ARM64 原生執行驗證。
 
 該 worker 迴歸另涵蓋十八個混合暫存器／堆疊參數、浮點回傳，以及堆疊參數僅寫入一半時的拒絕。
+
+`SourceCallABI` 與 `CallRegisterConstant` 迴歸檢查過期暫存值、不透明效果、位元組範圍、呼叫位置歧義及精確預算邊界。worker 另經兩條 C 路徑執行呼叫者以減法計算變參向量計數的案例。

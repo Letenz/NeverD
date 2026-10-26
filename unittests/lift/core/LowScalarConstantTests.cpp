@@ -334,4 +334,66 @@ TEST(ConstantRegisterCall, ExhaustedWorkCannotPublishAPrefix) {
       limits::ir::kConstantRegisterCallOperations);
   EXPECT_TRUE(constantRegisterCallTargets(Function).empty());
 }
+TEST(CallRegisterConstant, ExactOccurrenceAndRegisterByteWidths) {
+  const auto Seed = unary(NdOp::COPY, 8, 0x1234567800000302, 8);
+  auto Function = registerCall({Seed}, Seed.Output);
+  for (const auto Opcode : {NdOp::CALL, NdOp::INDIR_CALL}) {
+    auto &Call = Function.Blocks.front().Ops.back();
+    Call.Opcode = Opcode;
+    Call.Inputs[0] = Opcode == NdOp::CALL ? NdVar::cst(0x2000, 8) : Seed.Output;
+    const auto Site = *sourceCallOccurrenceKey(Call);
+    for (const uint16_t Width : {1, 2, 4, 8}) {
+      const auto Result =
+          constantRegisterValueAtCall(Function, Site, NdVar::reg(0, Width));
+      EXPECT_TRUE(Result.OccurrenceFound);
+      EXPECT_FALSE(Result.BudgetExceeded);
+      EXPECT_EQ(Result.Value,
+                Seed.Inputs[0].Offset & (UINT64_MAX >> ((8 - Width) * 8)));
+    }
+    auto Stale = Site;
+    ++Stale.Sequence;
+    EXPECT_FALSE(constantRegisterValueAtCall(Function, Stale, Seed.Output)
+                     .OccurrenceFound);
+  }
+}
+
+TEST(CallRegisterConstant, UpperByteWritesCannotInventOrEraseLowByteFacts) {
+  const auto Seed = unary(NdOp::COPY, 8, 2, 8);
+  auto Unknown = Seed;
+  Unknown.Output = NdVar::reg(1, 1);
+  Unknown.Inputs[0] = NdVar::reg(32, 1);
+  auto Function = registerCall({Seed, Unknown}, Seed.Output);
+  const auto Site =
+      *sourceCallOccurrenceKey(Function.Blocks.front().Ops.back());
+  EXPECT_EQ(constantRegisterValueAtCall(Function, Site, NdVar::reg(0, 1)).Value,
+            2u);
+  EXPECT_FALSE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  Function.Blocks.front().Ops[1].Output.Offset = 0;
+  EXPECT_FALSE(
+      constantRegisterValueAtCall(Function, Site, NdVar::reg(0, 1)).Value);
+}
+
+TEST(CallRegisterConstant,
+     AmbiguousOccurrencesAndBudgetExhaustionDiscardFacts) {
+  const auto Seed = unary(NdOp::COPY, 8, 0x140001040, 8);
+  auto Function = registerCall({Seed}, Seed.Output);
+  const auto Site =
+      *sourceCallOccurrenceKey(Function.Blocks.front().Ops.back());
+  ASSERT_TRUE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  auto Other = Function.Blocks.front();
+  Other.Id = 1;
+  Other.Ops.front().Inputs[0].Offset += 16;
+  Function.Blocks.push_back(Other);
+  EXPECT_TRUE(constantRegisterCallTargets(Function).empty());
+  EXPECT_FALSE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  Function.Blocks.resize(1);
+  Function.Blocks.emplace_back();
+  Function.Blocks.back().Ops.resize(19998);
+  EXPECT_TRUE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  Function.Blocks.back().Ops.emplace_back();
+  const auto Result = constantRegisterValueAtCall(Function, Site, Seed.Output);
+  EXPECT_TRUE(Result.BudgetExceeded);
+  EXPECT_FALSE(Result.Value);
+}
+
 } // namespace

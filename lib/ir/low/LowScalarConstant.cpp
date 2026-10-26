@@ -13,6 +13,7 @@
 #include "llvm/ADT/APInt.h"
 
 #include <algorithm>
+#include <set>
 #include <utility>
 
 namespace neverd {
@@ -143,18 +144,18 @@ std::optional<uint64_t> lowScalarConstantResult(
                 : std::nullopt;
 }
 
-std::map<SourceCallOccurrenceKey, va_t>
-constantRegisterCallTargets(const LowFunc &Function) {
-  std::map<SourceCallOccurrenceKey, va_t> Targets;
+namespace {
+using ValueLookup = llvm::function_ref<std::optional<uint64_t>(const NdVar &)>;
+
+bool visitScalarCallValues(
+    const LowFunc &Function, llvm::function_ref<bool(const LowOp &)> Select,
+    llvm::function_ref<void(const LowOp &, ValueLookup)> Observe) {
   size_t Work = 0;
   for (const auto &Block : Function.Blocks) {
     if (Block.Ops.size() > limits::ir::kConstantRegisterCallOperations - Work)
-      return {};
+      return false;
     Work += Block.Ops.size();
-    if (std::none_of(Block.Ops.begin(), Block.Ops.end(), [](const LowOp &Op) {
-          return Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs == 1 &&
-                 !Op.Inputs[0].isConst();
-        }))
+    if (std::none_of(Block.Ops.begin(), Block.Ops.end(), Select))
       continue;
     std::map<uint64_t, uint8_t> Registers;
     std::map<uint64_t, std::pair<uint16_t, uint64_t>> Temps;
@@ -186,10 +187,8 @@ constantRegisterCallTargets(const LowFunc &Function) {
         Temps.clear();
         Instruction = Op.Addr;
       }
-      if (const auto Site = sourceCallOccurrenceKey(Op);
-          Site && Site->Opcode == NdOp::INDIR_CALL && !Site->StaticTarget)
-        if (const auto Target = ValueOf(Op.Inputs[0]))
-          Targets.emplace(*Site, *Target);
+      if (Select(Op))
+        Observe(Op, ValueOf);
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
           Op.Opcode == NdOp::INTRINSIC) {
         Registers.clear();
@@ -221,7 +220,56 @@ constantRegisterCallTargets(const LowFunc &Function) {
         Registers.clear();
     }
   }
+  return true;
+}
+} // namespace
+
+std::map<SourceCallOccurrenceKey, va_t>
+constantRegisterCallTargets(const LowFunc &Function) {
+  std::map<SourceCallOccurrenceKey, va_t> Targets;
+  std::set<SourceCallOccurrenceKey> Seen;
+  const bool Complete = visitScalarCallValues(
+      Function,
+      [](const LowOp &Op) {
+        return Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs == 1 &&
+               !Op.Inputs[0].isConst();
+      },
+      [&](const LowOp &Op, ValueLookup ValueOf) {
+        if (const auto Site = sourceCallOccurrenceKey(Op)) {
+          if (!Seen.insert(*Site).second)
+            Targets.erase(*Site);
+          else if (const auto Target = ValueOf(Op.Inputs[0]))
+            Targets.emplace(*Site, *Target);
+        }
+      });
+  if (!Complete)
+    return {};
   return Targets;
+}
+
+LowCallRegisterConstant
+constantRegisterValueAtCall(const LowFunc &Function,
+                            const SourceCallOccurrenceKey &Site,
+                            const NdVar &Register) {
+  LowCallRegisterConstant Result;
+  if (!Register.isReg() || !Register.Size || Register.Size > 8)
+    return Result;
+  const bool Complete = visitScalarCallValues(
+      Function,
+      [&](const LowOp &Op) { return sourceCallOccurrenceKey(Op) == Site; },
+      [&](const LowOp &, ValueLookup ValueOf) {
+        if (Result.OccurrenceFound)
+          Result.Value.reset();
+        else {
+          Result.OccurrenceFound = true;
+          Result.Value = ValueOf(Register);
+        }
+      });
+  if (!Complete) {
+    Result = {};
+    Result.BudgetExceeded = true;
+  }
+  return Result;
 }
 
 } // namespace neverd

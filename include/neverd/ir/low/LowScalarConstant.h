@@ -27,6 +27,22 @@ std::optional<uint64_t> lowScalarConstantResult(
     const LowOp &Operation,
     llvm::function_ref<std::optional<uint64_t>(const NdVar &)> ValueOf);
 
+/// Result of one exact physical register query at an original call. An
+/// unavailable value is not a zero. Budget exhaustion discards all facts.
+struct LowCallRegisterConstant {
+  std::optional<uint64_t> Value;
+  bool OccurrenceFound = false;
+  bool BudgetExceeded = false;
+};
+
+/// Uses the same bounded, instruction-local temporary and register-byte facts
+/// as constantRegisterCallTargets. Only the requested call's block contributes
+/// values; calls and opaque effects invalidate earlier register facts.
+LowCallRegisterConstant
+constantRegisterValueAtCall(const LowFunc &Function,
+                            const SourceCallOccurrenceKey &Site,
+                            const NdVar &Register);
+
 /// Exact register-call values established in the same basic block. The keys
 /// retain the original indirect occurrences. Calls and opaque operations kill
 /// facts; loads, predecessor values and constant memory-call slots supply none.

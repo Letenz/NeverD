@@ -13974,3 +13974,9 @@ SDK/CLI report pairs with independently expected guarded bytes, across ordinary
 and RELR callers, four service routes, permission changes, holes and a closed
 dynamic provider. Named input RAM and unmap/replacement regressions verify that
 VMA names and address reuse cannot manufacture anonymous allocation provenance.
+
+`SourceCallABI` tests reject expired temporary facts and opaque-effect reuse
+in both vector counts and outgoing stack writes. `CallRegisterConstant` checks
+physical byte lanes, exact occurrence identity, ambiguity and exact/exhausted
+work boundaries. `NeverDWorkerCallSiteTypes` also executes both C routes when
+the original x64 caller computes its variadic vector count by subtraction.

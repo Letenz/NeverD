@@ -12215,3 +12215,11 @@ VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
 this authority. Discard replaces each target page through AddressSpace while
 retaining permissions and VMA policy; old physical aliases and pinned views
 keep their bytes. Device/GPU admission remains in the shared service dispatch.
+
+`LowScalarConstant` owns both exact register-call targets and the System V
+variadic AL count. Their byte facts share fixed-width arithmetic, temporary
+lifetimes, opaque-effect invalidation and one bounded work policy. Ambiguous
+original call occurrences or exhausted work publish no constant. The outgoing
+stack-write proof independently tracks affine addresses, expires temporaries
+at instruction boundaries and discards earlier writes across opaque effects.
+No cross-block values or implicit memory contents are introduced.

@@ -241,6 +241,28 @@ TEST(SourceCallABI, StackWriteProofCannotSurviveExpiredTempsOrOpaqueEffects) {
       sourceCallStackArgumentsDefined(Function, Hint, Arch::X64, 8, Error));
 }
 
+TEST(SourceCallABI, VariadicCountUsesSharedWidthCorrectArithmeticFacts) {
+  auto Hint = contract({NdType::makeInt(4), NdType::makeFloat(8)}, 1);
+  std::string Error;
+  ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::X64, BinaryFormat::ELF, Error));
+  const auto RAX = NdVar::reg(getTargetRegInfo(Arch::X64).IntReturnReg, 8);
+  LowFunc Function;
+  Function.Blocks.emplace_back();
+  auto &Ops = Function.Blocks.front().Ops;
+  Ops = {op(NdOp::COPY, RAX, {NdVar::cst(3, 8)}),
+         op(NdOp::INT_SUB, RAX, {RAX, NdVar::cst(2, 8)}),
+         op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)})};
+  Ops[0].Addr = 0xf00;
+  Ops[1].Addr = 0xf04;
+  Ops.back().Addr = 0x1000;
+  Ops.back().Seq = 3;
+  EXPECT_TRUE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  Ops[1].Inputs[1] = NdVar::cst(4, 8);
+  EXPECT_FALSE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+}
+
 MedVar value(int Id) {
   MedVar V;
   V.Kind = MedVar::Temp;
