@@ -72,6 +72,8 @@ enum class CallXInputExpressionKind : uint8_t {
   InputRegister,
   Constant,
   Instruction,
+  /// A complete union of affine entry-input/constant leaves.
+  InputAlternatives,
 };
 
 /// Report-local entry-input expressions. Instruction nodes refer to the
@@ -83,6 +85,8 @@ struct CallXInputExpression {
   RegisterValue Constant;
   std::optional<size_t> Input;
   size_t InstructionSlot = 0;
+  std::vector<size_t> Alternatives;
+  /// Upper bound on the steps in one instantiated proof.
   size_t Depth = 1;
 };
 
@@ -165,6 +169,9 @@ struct CallXFunctionSummary {
   RegisterValue ReturnValue;
   ProvenValueSet ReturnAlternatives;
   std::optional<std::pair<unsigned, int64_t>> ReturnInputExpression;
+  /// Complete finite affine entry-input/constant origins, when non-singleton.
+  /// These are inline expressions, not frame coordinates or DAG references.
+  std::vector<CallXInputExpression> ReturnInputAlternatives;
   bool MayReturn = false;
   bool IsRoot = false;
   bool GeneralizedInputs = false;

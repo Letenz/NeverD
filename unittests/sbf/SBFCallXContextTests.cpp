@@ -20,6 +20,7 @@
 #include "neverd/sbf/runtime/SBFInterpreter.h"
 #include "neverd/sbf/runtime/SBFSemantics.h"
 #include "neverd/sbf/runtime/SBFSyscalls.h"
+#include "neverd/sbf/runtime/SBFVMConfig.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
@@ -214,7 +215,7 @@ TEST(SBFCallXContexts, JoinsEveryFiniteCalleeReturnAndMemoryOutcome) {
           }
         EXPECT_TRUE(CompleteSet);
         const auto JSON = callXContextReportJSON(*Program, *Report);
-        EXPECT_EQ(JSON.getInteger("schema"), 4);
+        EXPECT_EQ(JSON.getInteger("schema"), 5);
         EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_context"), 1);
         EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_target_set_context"),
                   1);
@@ -2333,6 +2334,7 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
     Joined,
     Reloaded,
     Parameters,
+    JoinedParameters,
     Missing,
     Unknown,
     Partial,
@@ -2340,8 +2342,8 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
   };
   for (const auto Case :
        {StoreCase::Branches, StoreCase::Joined, StoreCase::Reloaded,
-        StoreCase::Parameters, StoreCase::Missing, StoreCase::Unknown,
-        StoreCase::Partial, StoreCase::Aliased})
+        StoreCase::Parameters, StoreCase::JoinedParameters, StoreCase::Missing,
+        StoreCase::Unknown, StoreCase::Partial, StoreCase::Aliased})
     for (size_t Alternatives : {2u, 4u, 5u}) {
       SCOPED_TRACE(::testing::Message()
                    << "case=" << static_cast<unsigned>(Case)
@@ -2397,14 +2399,15 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
       for (size_t N = 0; N < Alternatives; ++N) {
         const size_t I = (N + Alternatives - 1) % Alternatives;
         Choices[I] = Text.size();
-        if (Case == StoreCase::Parameters) {
+        if (Case == StoreCase::Parameters ||
+            Case == StoreCase::JoinedParameters) {
           Text.push_back(encode(Opcode::MOV64_REG, 0, I % 2 ? 3 : 2));
         } else if (Case == StoreCase::Unknown && I + 1 == Alternatives) {
           Text.push_back(encode(Opcode::LD_DW_REG, 0, 8, 8));
         } else {
           Literal(0, I);
         }
-        if (Case != StoreCase::Joined &&
+        if (Case != StoreCase::Joined && Case != StoreCase::JoinedParameters &&
             !(Case == StoreCase::Missing && I + 1 == Alternatives)) {
           Text.push_back(encode(Opcode::ST_DW_REG, 1, 0));
           if (Case != StoreCase::Reloaded)
@@ -2414,7 +2417,7 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
         Text.push_back({});
       }
       const size_t Join = Text.size();
-      if (Case == StoreCase::Joined) {
+      if (Case == StoreCase::Joined || Case == StoreCase::JoinedParameters) {
         Text.push_back(encode(Opcode::ST_DW_REG, 1, 0));
         Text.push_back(encode(Opcode::ST_DW_REG, 1, 0, 8));
       }
@@ -2452,6 +2455,7 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
           << llvm::toString(Report.takeError());
       const bool Complete =
           Case == StoreCase::Parameters ||
+          Case == StoreCase::JoinedParameters ||
           (Alternatives <= kCallXContextValueAlternatives &&
            (Case == StoreCase::Branches || Case == StoreCase::Joined ||
             Case == StoreCase::Reloaded));
@@ -2471,7 +2475,8 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
               if (Complete) {
                 EXPECT_EQ(Site.Result, CallXContextResult::ProvenTargetSet);
                 std::set<uint64_t> Expected, Actual;
-                if (Case == StoreCase::Parameters) {
+                if (Case == StoreCase::Parameters ||
+                    Case == StoreCase::JoinedParameters) {
                   Expected.insert(kBytecodeStart + (Targets + I * 2) * 8);
                   Expected.insert(kBytecodeStart + (Targets + Count * 2) * 8);
                 } else {
@@ -2515,7 +2520,9 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
         } else {
           EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
           const size_t Selected =
-              Case == StoreCase::Parameters ? (Selector % 2 ? Count : Count - 1)
+              (Case == StoreCase::Parameters ||
+               Case == StoreCase::JoinedParameters)
+                  ? (Selector % 2 ? Count : Count - 1)
               : Case == StoreCase::Missing && Selector + 1 == Alternatives
                   ? Count
                   : Selector;
@@ -2524,6 +2531,265 @@ TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
         }
       }
     }
+}
+
+TEST(SBFCallXContexts, GenericReturnsKeepCompleteParameterOrigins) {
+  enum class Binding { Known, Unknown, Finite };
+  for (size_t Alternatives : {2u, 4u, 5u})
+    for (bool Frames : {false, true})
+      for (bool UnknownLast : {false, true})
+        for (bool InsideCall : {false, true})
+          for (const auto InputBinding :
+               {Binding::Known, Binding::Unknown, Binding::Finite}) {
+            if (InputBinding != Binding::Known &&
+                (!InsideCall || Frames || UnknownLast))
+              continue;
+            SCOPED_TRACE(::testing::Message()
+                         << "alternatives=" << Alternatives
+                         << ", frames=" << Frames << ", unknown=" << UnknownLast
+                         << ", inside=" << InsideCall << ", binding="
+                         << static_cast<unsigned>(InputBinding));
+            const size_t Count = kCallXContextSpecializationsPerEntry + 2;
+            std::vector<test::EncodedInstruction> Text;
+            std::vector<std::tuple<size_t, unsigned, size_t>> Literals;
+            std::vector<size_t> Calls, CallXs, Branches, Choices(Alternatives),
+                Joins;
+            const auto Input = test::loadImm64(8, kInputStart);
+            Text.insert(Text.end(), Input.begin(), Input.end());
+            for (size_t I = 0; I < Count; ++I) {
+              Text.push_back(encode(Opcode::LD_DW_REG, 7, 8));
+              for (unsigned R = 1; R <= Alternatives; ++R) {
+                const unsigned Register = Frames ? 6 : R;
+                Literals.emplace_back(Text.size(), Register, I + R - 1);
+                const auto Value = test::loadImm64(Register, 0);
+                Text.insert(Text.end(), Value.begin(), Value.end());
+                if (Frames) {
+                  Text.push_back(encode(Opcode::MOV64_REG, R, 10));
+                  Text.push_back(
+                      encode(Opcode::ADD64_IMM, R, 0, 0,
+                             -static_cast<int32_t>((I * 5 + R) * 8)));
+                  Text.push_back(encode(Opcode::ST_DW_REG, R, 6));
+                }
+              }
+              if (InputBinding == Binding::Unknown)
+                Text.push_back(encode(Opcode::LD_DW_REG, 1, 8, 8));
+              if (InputBinding == Binding::Finite) {
+                // Each argument stays complete, but four symbolic alternatives
+                // can bind to five different values. Never select an arbitrary
+                // four-value subset.
+                Text.push_back(encode(Opcode::JEQ64_IMM, 7, 0, 2));
+                Literals.emplace_back(Text.size(), 1, Count + Alternatives - 1);
+                const auto Extra = test::loadImm64(1, 0);
+                Text.insert(Text.end(), Extra.begin(), Extra.end());
+              }
+              Text.push_back(encode(Opcode::MOV64_IMM, 9, 0, 0, I));
+              Calls.push_back(Text.size());
+              Text.push_back({});
+              if (!InsideCall) {
+                Text.push_back(Frames ? encode(Opcode::LD_DW_REG, 2, 0)
+                                      : encode(Opcode::MOV64_REG, 2, 0));
+                CallXs.push_back(Text.size());
+                Text.push_back(encode(Opcode::CALL_REG, 2));
+              }
+            }
+            Text.push_back(encode(Opcode::EXIT));
+            const size_t Middle = Text.size();
+            Text.push_back(encode(Opcode::MOV64_REG, 6, 9));
+            Text.push_back(encode(Opcode::CALL_IMM, 0, 1, 0, 1));
+            Text.push_back(encode(Opcode::EXIT));
+            const size_t Leaf = Text.size();
+            Text.push_back(encode(Opcode::MOV64_REG, 6, 9));
+            for (size_t I = 0; I + 1 < Alternatives; ++I) {
+              Branches.push_back(Text.size());
+              Text.push_back({});
+            }
+            for (size_t N = 0; N < Alternatives; ++N) {
+              const size_t I = (N + Alternatives - 1) % Alternatives;
+              Choices[I] = Text.size();
+              Text.push_back(UnknownLast && I + 1 == Alternatives
+                                 ? encode(Opcode::LD_DW_REG, 0, 8, 8)
+                                 : encode(Opcode::MOV64_REG, 0, I + 1));
+              Joins.push_back(Text.size());
+              Text.push_back({});
+            }
+            const size_t Join = Text.size();
+            if (InsideCall) {
+              if (Frames)
+                Text.push_back(encode(Opcode::LD_DW_REG, 0, 0));
+              CallXs.push_back(Text.size());
+              Text.push_back(encode(Opcode::CALL_REG, 0));
+            }
+            Text.push_back(encode(Opcode::EXIT));
+            const size_t Targets = Text.size();
+            for (size_t I = 0; I < Count + Alternatives; ++I) {
+              Text.push_back(encode(Opcode::MOV64_IMM, 0, 0, 0, 77 + I));
+              Text.push_back(encode(Opcode::EXIT));
+            }
+            for (const auto &[Slot, Register, Target] : Literals) {
+              const auto Value = test::loadImm64(
+                  Register, kBytecodeStart + (Targets + Target * 2) * 8);
+              std::copy(Value.begin(), Value.end(), Text.begin() + Slot);
+            }
+            for (size_t I = 0; I < Branches.size(); ++I)
+              Text[Branches[I]] = encode(Opcode::JEQ64_IMM, 7, 0,
+                                         Choices[I] - Branches[I] - 1, I);
+            for (size_t Jump : Joins)
+              Text[Jump] = encode(Opcode::JA, 0, 0, Join - Jump - 1);
+            for (size_t Call : Calls)
+              Text[Call] = encode(Opcode::CALL_IMM, 0, 1, 0,
+                                  (InsideCall ? Leaf : Middle) - Call - 1);
+            auto Program = analyze(test::makeImage(Text, {}));
+            ASSERT_TRUE(static_cast<bool>(Program))
+                << llvm::toString(Program.takeError());
+            auto Report = recoverCallXContexts(*Program);
+            ASSERT_TRUE(static_cast<bool>(Report))
+                << llvm::toString(Report.takeError());
+            const bool OriginsComplete =
+                !UnknownLast && Alternatives <= kCallXContextValueAlternatives;
+            const bool Complete =
+                OriginsComplete && InputBinding != Binding::Unknown &&
+                (InputBinding != Binding::Finite ||
+                 Alternatives < kCallXContextValueAlternatives);
+            for (size_t I = kCallXContextSpecializationsPerEntry; I < Count;
+                 ++I) {
+              EXPECT_TRUE(std::any_of(
+                  Report->SummaryEdges.begin(), Report->SummaryEdges.end(),
+                  [&](const auto &E) {
+                    return E.CallerSlot == Calls[I] && E.GeneralizedInputs &&
+                           E.InputGeneralization ==
+                               CallXInputGeneralization::SpecializationLimit;
+                  }));
+              bool Saw = false;
+              for (const auto &Site : Report->Contexts)
+                if (!Site.EntryPrefixOnly &&
+                    Site.CallXSlot == CallXs[InsideCall ? 0 : I] &&
+                    (!InsideCall ||
+                     (Site.CallerSlot == Calls[I] &&
+                      Site.InputGeneralization ==
+                          CallXInputGeneralization::SpecializationLimit))) {
+                  EXPECT_EQ(Site.Result,
+                            Complete ? CallXContextResult::ProvenTargetSet
+                                     : CallXContextResult::UnknownTarget);
+                  std::set<uint64_t> Actual, Expected;
+                  for (const auto &Value :
+                       Site.TargetValueAlternatives.values()) {
+                    EXPECT_EQ(Value.ValueKind, RegisterValue::Kind::Constant);
+                    Actual.insert(Value.Value);
+                  }
+                  if (Complete)
+                    for (size_t N = 0; N < Alternatives; ++N)
+                      Expected.insert(kBytecodeStart +
+                                      (Targets + (I + N) * 2) * 8);
+                  if (Complete && InputBinding == Binding::Finite)
+                    Expected.insert(kBytecodeStart +
+                                    (Targets + (Count + Alternatives - 1) * 2) *
+                                        8);
+                  EXPECT_EQ(Actual, Expected);
+                  if (InsideCall && OriginsComplete) {
+                    EXPECT_TRUE(Site.InputExpression.has_value());
+                    if (Site.InputExpression) {
+                      const auto &Root =
+                          Report->InputExpressions[*Site.InputExpression];
+                      const auto &Union =
+                          Frames ? Report->InputExpressions[*Root.Input] : Root;
+                      EXPECT_EQ(Union.Kind,
+                                CallXInputExpressionKind::InputAlternatives);
+                      EXPECT_EQ(Union.Alternatives.size(), Alternatives);
+                      EXPECT_EQ(Site.InputExpressionValues.size(),
+                                Complete ? Alternatives + 1 + (Frames ? 1 : 0)
+                                         : 0u);
+                    }
+                  }
+                  Saw = true;
+                }
+              EXPECT_TRUE(Saw);
+            }
+            size_t GenericReturns = 0;
+            for (const auto &Summary : Report->Summaries)
+              if (Summary.GeneralizedInputs &&
+                  (Summary.EntrySlot == Leaf || Summary.EntrySlot == Middle)) {
+                EXPECT_EQ(Summary.ReturnInputAlternatives.size(),
+                          Complete && !InsideCall ? Alternatives : 0u);
+                std::set<unsigned> Registers;
+                for (const auto &Origin : Summary.ReturnInputAlternatives) {
+                  EXPECT_EQ(Origin.Kind,
+                            CallXInputExpressionKind::InputRegister);
+                  EXPECT_EQ(Origin.Offset, 0);
+                  Registers.insert(Origin.Register);
+                }
+                if (Complete && !InsideCall)
+                  for (unsigned R = 1; R <= Alternatives; ++R)
+                    EXPECT_TRUE(Registers.contains(R));
+                ++GenericReturns;
+              }
+            EXPECT_EQ(GenericReturns, 2u);
+            const auto JSON = callXContextReportJSON(*Program, *Report);
+            const auto *Summaries = JSON.getArray("function_summaries");
+            ASSERT_NE(Summaries, nullptr);
+            const auto *Nodes = JSON.getArray("target_input_expressions");
+            ASSERT_NE(Nodes, nullptr);
+            size_t Unions = 0;
+            for (const auto &Node : *Nodes) {
+              const auto *Expression = Node.getAsObject();
+              ASSERT_NE(Expression, nullptr);
+              if (Expression->getString("kind") != "entry_input_alternatives")
+                continue;
+              ++Unions;
+              const auto *Inputs = Expression->getArray("inputs");
+              ASSERT_NE(Inputs, nullptr);
+              EXPECT_GE(Inputs->size(), 2u);
+              EXPECT_LE(Inputs->size(), kCallXContextValueAlternatives);
+              for (const auto &Input : *Inputs) {
+                const auto ID = Input.getAsInteger();
+                ASSERT_TRUE(ID);
+                const auto Parent = Expression->getInteger("expression");
+                ASSERT_TRUE(Parent);
+                ASSERT_GE(*ID, 0);
+                ASSERT_LT(*ID, *Parent);
+                const auto Kind =
+                    (*Nodes)[*ID].getAsObject()->getString("kind");
+                EXPECT_TRUE(Kind == "entry_register" || Kind == "constant");
+              }
+            }
+            if (InsideCall && OriginsComplete)
+              EXPECT_GT(Unions, 0u);
+            for (const auto &Value : *Summaries) {
+              const auto *Summary = Value.getAsObject();
+              ASSERT_NE(Summary, nullptr);
+              const auto *Origins =
+                  Summary->getArray("return_input_alternatives");
+              ASSERT_NE(Origins, nullptr);
+              for (const auto &Origin : *Origins) {
+                const auto *Expression = Origin.getAsObject();
+                ASSERT_NE(Expression, nullptr);
+                const auto Kind = Expression->getString("kind");
+                EXPECT_TRUE(Kind == "constant" || Kind == "entry_register");
+              }
+            }
+            checkSummaryReferences(*Report);
+            for (size_t Selector = 0; Selector < Alternatives; ++Selector) {
+              ExecutionEnvironment Environment;
+              std::vector<uint8_t> Bytes(16);
+              llvm::support::endian::write64le(Bytes.data(), Selector);
+              llvm::support::endian::write64le(
+                  Bytes.data() + 8,
+                  Frames ? initialFramePointer(Program->Low.TheVersion,
+                                               Program->Config) -
+                               8
+                         : kBytecodeStart + Targets * 8);
+              Environment.Memory.push_back(
+                  {kInputStart, Bytes, false, "selector"});
+              auto Raw = executeRaw(*Program, std::move(Environment));
+              ASSERT_TRUE(static_cast<bool>(Raw))
+                  << llvm::toString(Raw.takeError());
+              EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+              EXPECT_EQ(Raw->ReturnValue,
+                        ((UnknownLast && Selector + 1 == Alternatives) ||
+                         (InputBinding == Binding::Unknown && Selector == 0))
+                            ? 77u
+                            : 77u + Count - 1 + Selector);
+            }
+          }
 }
 
 TEST(SBFCallXMemoryPostconditions,

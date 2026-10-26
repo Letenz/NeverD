@@ -71,6 +71,31 @@ llvm::json::Object valueJSON(const RegisterValue &Value) {
   return Result;
 }
 
+llvm::json::Object inputExpressionJSON(const CallXInputExpression &Expression) {
+  switch (Expression.Kind) {
+  case CallXInputExpressionKind::InputRegister:
+    return llvm::json::Object{{"kind", "entry_register"},
+                              {"register", Expression.Register},
+                              {"offset", Expression.Offset}};
+  case CallXInputExpressionKind::Constant:
+    return llvm::json::Object{{"kind", "constant"},
+                              {"value", valueJSON(Expression.Constant)}};
+  case CallXInputExpressionKind::Instruction:
+    return llvm::json::Object{
+        {"kind", "normalized_instruction"},
+        {"input", static_cast<int64_t>(*Expression.Input)},
+        {"instruction_slot", static_cast<int64_t>(Expression.InstructionSlot)}};
+  case CallXInputExpressionKind::InputAlternatives: {
+    llvm::json::Array Inputs;
+    for (size_t ID : Expression.Alternatives)
+      Inputs.push_back(static_cast<int64_t>(ID));
+    return llvm::json::Object{{"kind", "entry_input_alternatives"},
+                              {"inputs", std::move(Inputs)}};
+  }
+  }
+  llvm_unreachable("unknown input expression kind");
+}
+
 llvm::StringRef barrierName(CallXSummaryBarrier Barrier) {
   switch (Barrier) {
   case CallXSummaryBarrier::None:
@@ -347,6 +372,9 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       Expression["register"] = Summary.ReturnInputExpression->first;
       Expression["offset"] = Summary.ReturnInputExpression->second;
     }
+    llvm::json::Array ReturnInputs;
+    for (const auto &Alternative : Summary.ReturnInputAlternatives)
+      ReturnInputs.push_back(inputExpressionJSON(Alternative));
     llvm::json::Array InputExpressions;
     for (const auto &[Slot, ID] : TargetInputExpressions[Summary.ID])
       InputExpressions.push_back(
@@ -376,6 +404,7 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"return_value", valueJSON(Summary.ReturnValue)},
         {"return_value_alternatives", std::move(Returns)},
         {"return_input_expression", std::move(Expression)},
+        {"return_input_alternatives", std::move(ReturnInputs)},
         {"input_scratch_words",
          static_cast<int64_t>(Summary.InputScratchWords)},
         {"output_scratch_words",
@@ -406,30 +435,12 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
   }
   llvm::json::Array Expressions;
   for (size_t ID = 0; ID < Report.InputExpressions.size(); ++ID) {
-    const auto &Expression = Report.InputExpressions[ID];
-    llvm::json::Object Row{{"expression", static_cast<int64_t>(ID)}};
-    switch (Expression.Kind) {
-    case CallXInputExpressionKind::InputRegister:
-      Row["kind"] = "entry_register";
-      Row["register"] = Expression.Register;
-      Row["offset"] = Expression.Offset;
-      break;
-    case CallXInputExpressionKind::Constant:
-      Row["kind"] = "constant";
-      Row["value"] = valueJSON(Expression.Constant);
-      break;
-    case CallXInputExpressionKind::Instruction: {
-      Row["kind"] = "normalized_instruction";
-      Row["input"] = static_cast<int64_t>(*Expression.Input);
-      Row["instruction_slot"] =
-          static_cast<int64_t>(Expression.InstructionSlot);
-      break;
-    }
-    }
+    auto Row = inputExpressionJSON(Report.InputExpressions[ID]);
+    Row["expression"] = static_cast<int64_t>(ID);
     Expressions.push_back(std::move(Row));
   }
   return llvm::json::Object{
-      {"schema", 4},
+      {"schema", 5},
       {"scope", "context_keyed_whole_function_cfg_summaries"},
       {"caller_entry_assumption", "recognized_cfg_and_function_roots"},
       {"unknown_indirect_entries_are_not_closed", true},

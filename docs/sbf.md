@@ -385,6 +385,26 @@ reusing another caller's specialized scratch snapshot. Summary JSON reports
 `output_parameterized_words` and per-edge `applied_stored_values` separately
 from the conservative may-write intervals.
 
+The symbolic origin lane uses the same complete finite domain as concrete
+registers. A register selecting several entry parameters can feed a common
+store or return after the join; nested summaries substitute every origin and
+actual argument alternative. Unknown origins and more than four distinct
+results absorb the fact. Canonical register and store transfers preserve
+pointer tags in both lanes. Memory write addresses still require a singleton
+origin, so a finite pointer list does not imply non-aliasing. Schema 5 adds
+`return_input_alternatives` for complete non-singleton affine parameter or
+constant origins; the singleton `return_input_expression` remains available.
+Retained origin alternatives and published return metadata use the existing
+memory and output-element budgets. A complete affine origin set can also form
+an `entry_input_alternatives` expression whose leaves are entry registers or
+constants, either at CALLX or before an entry-snapshot load. Common full-width
+loads can therefore follow a selected input pointer when every path still
+preserves entry memory. The actual caller binds every leaf and the
+proof records their complete union. Unknown bindings and more than four values
+supply no proof. An unbound affine leaf can be rejected before evaluating a
+transfer. Target-expression evidence retains the generic callee's conservative
+return and memory effects.
+
 Blocks join every remaining CFG predecessor, including the initial loop entry.
 A conditional successor is excluded only when every value alternative agrees
 on the outcome using the VM's normalized comparison semantics. Unknown or mixed
@@ -435,7 +455,7 @@ keeps the current caller's scratch at the return boundary. Its cached snapshot
 does not replace the caller's memory. Conditional reuse applies to caller edges
 between specialized summaries; standalone roots keep their entry assumptions,
 and generic mode retains its distinct nested-call policy. The original cache
-keys and static dependency masks remain intact. Schema 4 additionally records
+keys and static dependency masks remain intact. Schema 5 additionally records
 `conditional_reuse_input_register_mask`,
 `conditional_reuse_reads_input_memory` and
 `equivalent_specialized_summary_reuses`. Reused edges state
@@ -447,8 +467,9 @@ remain unchanged.
 Generic summaries can retain a CALLX carrier as an expression of entry
 parameters and full-width loads from entry memory. Copies, supported normalized
 affine operations and canonical return-input expressions compose those values
-across basic blocks. Expressions meet by exact identity at joins; unsupported
-operations and differing expressions become unknown. A new entry-memory load
+across basic blocks. Loaded expressions meet by exact identity at joins;
+complete affine parameter origins can rebuild an input union before a common
+load or at CALLX. Other differing or unsupported expressions become unknown. A new entry-memory load
 is available only while every reaching path has preserved that memory. Stores
 and potentially writing calls invalidate that guarantee, including a change
 that leaves all register values equal. A value captured before a write remains
@@ -457,7 +478,7 @@ available in a carrier that survives the canonical ABI.
 When an actual caller uses a completed generic summary, its pre-call parameters
 and scratch can instantiate such a target expression after the frame push.
 This preserves the generic return/memory transfer and four-summary limit.
-Schema 4 reports `target_input_expressions`, normalized instruction slots and
+Schema 5 reports `target_input_expressions`, normalized instruction slots and
 each `input_expression_proof` step's input/output alternatives. The evidence
 scope is `instantiated_generic_summary_inputs`; `generalized_unknown_inputs`
 still describes the function-summary mode, while the target proof names its
@@ -475,7 +496,7 @@ callers can still demand return/memory specializations. Remaining roots retain
 ascending entry-slot order: eagerly specializing small unknown-input wrappers
 can consume all four cached variants before their concrete callers are analyzed.
 Completed cache hits remain usable after specialization work is exhausted.
-Schema 4 records input projection, bounded alternatives, return expressions, memory footprints,
+Schema 5 records input projection, bounded alternatives, return expressions, memory footprints,
 summary dependencies, barriers, cache reclamation and instruction work. Prior
 independent entry-prefix proofs keep a distinct `evidence_scope`.
 

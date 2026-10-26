@@ -29,6 +29,10 @@ RegisterState symbolicInputs();
 RegisterValue substituteOrigin(const RegisterValue &Origin,
                                const RegisterState &Entry,
                                const SBFProgram &Program);
+ProvenValueSet
+substituteOrigins(const ProvenValueSet &Origins,
+                  const std::array<ProvenValueSet, kRegisterCount> &Entry,
+                  const SBFProgram &Program);
 
 struct MemoryWrite {
   RegisterValue Address;
@@ -65,7 +69,8 @@ public:
   void meet(const MemoryPostconditions &Other);
   void invalidate(const MemoryEffects &Effects, const RegisterState &Entry,
                   const SBFProgram &Program);
-  void include(const MemoryPostconditions &Callee, const RegisterState &Entry,
+  void include(const MemoryPostconditions &Callee,
+               const std::array<ProvenValueSet, kRegisterCount> &Entry,
                const SBFProgram &Program);
   size_t apply(ScratchState &Scratch,
                const std::array<ProvenValueSet, kRegisterCount> &Entry,
