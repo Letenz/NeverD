@@ -1051,6 +1051,13 @@ returns EDEADLK, and detached or already claimed targets return EINVAL.
 If no thread is runnable, an admitted sleep can advance virtual time to its
 deadline. With no such deadline, outstanding join, once, mutex or semaphore
 waits produce an explicit unsupported stop.
+Returning from a child start routine uses the same completion path as
+`pthread_exit`, including its pointer result, JNI cleanup and join/detach
+retirement. It does not require the initial SP: no guest caller resumes on
+that terminal stack. With scheduling enabled, the selected entry still
+requires its prepared return SP; native callbacks always require their saved
+caller SP. This terminal behavior does not relax ordinary guest-call ABI
+requirements or reconstruct Bionic's private startup frame.
 `pthread_exit` returns its pointer to a joiner; raw `SYS_exit` terminates only
 the current thread and leaves its pthread result zero. When the last thread
 exits without an entry return, its low eight status bits become the workload

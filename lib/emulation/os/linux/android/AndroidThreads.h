@@ -45,8 +45,6 @@ public:
     return enabled() ? &current().Kernel : nullptr;
   }
   std::vector<PendingCallback> &callbacks() { return current().Callbacks; }
-  void setReturnSP(uint64_t SP) { current().ReturnSP = SP; }
-  uint64_t returnSP() const { return current().ReturnSP; }
   BionicResult invoke(const NativeCallEvent &Call);
   bool onceActive(uint64_t Control) const;
   BionicResult waitOnce(uint64_t Control);
@@ -112,7 +110,7 @@ private:
     std::vector<SignalReturn> SignalReturns;
     std::optional<Wait> Waiting;
     std::optional<size_t> Joiner;
-    uint64_t MappingBase = 0, MappingSize = 0, ReturnSP = 0;
+    uint64_t MappingBase = 0, MappingSize = 0;
   };
   ExecutionBackend &CPU;
   const IntegerABI &Calls;

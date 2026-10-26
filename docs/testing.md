@@ -11993,6 +11993,11 @@ ordinary/APS2/RELR fixtures. It checks scalar/vector/flags/FP state, separate
 TLS/errno/dlerror/stack, common imported/raw/variadic identity, recursive mutex
 owners, nested once/finalize continuations, join/detach lifetime, thread versus
 process exit, instruction/report limits, guard faults and rejected state.
+Independent assembly start routines retain a stack frame on terminal return
+and explicit `pthread_exit`; joinable and detached completion must preserve
+their pointer result and retire storage. Selected-entry and callback returns
+with an unrestored stack must still fail. These terminal cases also compare
+complete Unicorn and available ARM64 HVF reports.
 Repeated software reports must match exactly. Available ARM64 HVF execution
 is compared separately with Unicorn; unavailable transport is an explicit
 skip. C API/CLI and Python checks preserve thread attribution and dynamically
