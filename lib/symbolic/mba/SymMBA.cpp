@@ -476,6 +476,10 @@ bool maskColumnsAreIndependent(const SymContext &Ctx, SymRef E, uint32_t Width,
 /// position-wise bitwise operators before any column is measured.
 SymRef solveMasked(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                    WorkBudget &Budget, SolveReport &Rep) {
+  // Every path from a collected mask to the root must remain bitwise.
+  // An arithmetic root cannot meet that condition, regardless of its masks.
+  if (!isBitwise(Ctx.op(E)))
+    return E;
   const uint32_t Width = Ctx.width(E);
   llvm::SmallVector<llvm::APInt, 8> Masks;
   collectBitwiseMasks(Ctx, E, Width, Masks);

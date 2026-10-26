@@ -34,6 +34,7 @@
 #define NEVERD_SYMBOLIC_SYMEXPR_H
 
 #include "neverd/Common.h"
+#include "neverd/symbolic/Limits.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -43,6 +44,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
 
+#include <array>
 #include <compare>
 #include <cstdint>
 #include <map>
@@ -509,9 +511,21 @@ private:
   uint32_t LowWordProjectionInsertions = 0;
 
   /// Hash of a node's identity to the first node carrying that hash. Full
-  /// identity checks follow the context-owned collision links below. The split
-  /// halves keep every 64-bit hash outside DenseMap's reserved key pairs.
-  llvm::DenseMap<std::pair<uint64_t, uint32_t>, SymRef> InternTable;
+  /// identity checks follow the context-owned collision links below. Both
+  /// halves fit in 32 bits, keeping the key and head in three words.
+  using InternKey = std::pair<uint32_t, uint32_t>;
+  struct InternKeyInfo : llvm::DenseMapInfo<InternKey> {
+    static unsigned getHashValue(const InternKey &Key) {
+      // The pair stores one complete hash, not two independent identities.
+      // Mix it once for bucket selection while retaining the compact key.
+      return llvm::DenseMapInfo<uint64_t>::getHashValue(
+          (uint64_t(Key.first) << 32) | Key.second);
+    }
+  };
+  llvm::DenseMap<InternKey, SymRef, InternKeyInfo> InternTable;
+  /// The two reserved key pairs have ordinary context-owned collision heads,
+  /// so every complete 64-bit hash remains representable.
+  std::array<SymRef, 2> ReservedInternHeads;
   /// One next link per node avoids a separately managed vector in each bucket.
   /// Invalid refs terminate a chain; copying a context retains all links.
   std::vector<SymRef> InternNext;
@@ -637,11 +651,13 @@ private:
 
   const SymContext &Ctx;
   SymRef Root;
-  std::vector<Step> Steps;
+  llvm::SmallVector<Step, limits::symbolic::kSymEvalPlanInlineSteps> Steps;
   /// Concatenated operand slot lists, indexed by Step::FirstArg.
-  std::vector<uint32_t> ArgSlots;
-  std::vector<uint32_t> Vars;
-  std::vector<uint64_t> ScratchU64;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineOperands>
+      ArgSlots;
+  llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineSteps> Vars;
+  llvm::SmallVector<uint64_t, limits::symbolic::kSymEvalPlanInlineSteps>
+      ScratchU64;
   std::vector<llvm::APInt> ScratchAP;
   uint32_t RootSlot = 0;
   bool FitsU64 = true;

@@ -13,6 +13,7 @@
 
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedTypePass.h"
 
 #include <functional>
 #include <set>
@@ -216,6 +217,10 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
   };
   for (auto &Blk : Med.Blocks) {
     for (auto &Op : Blk.Ops) {
+      if (visitOriginalMemoryPointerInputs(Op, [&](const MedVar &Address) {
+            recordAddressRegs(Address, PtrRegs);
+          }))
+        continue;
       if (Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL) {
         if (Op.NumInputs >= 1 && Op.Inputs[0].Kind == MedVar::Reg)
           PtrRegs.insert(Op.Inputs[0].RegOff);
@@ -271,6 +276,8 @@ std::set<int> detectPtrParamIds(const MedFunc &Med) {
   };
   for (const MedBlock &Blk : Med.Blocks) {
     for (const MedOp &Op : Blk.Ops) {
+      if (visitOriginalMemoryPointerInputs(Op, recordAddressParams))
+        continue;
       const MedVar *MemoryAddress = nullptr;
       if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
            Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||

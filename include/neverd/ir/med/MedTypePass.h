@@ -15,9 +15,18 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 #include <map>
 
 namespace neverd {
+
+/// Visit pointer-capable inputs of validated original memory instructions.
+/// This is a type heuristic, not permission to replace address semantics.
+/// Returns true for a recognized intrinsic, including a malformed one whose
+/// operands must not contribute pointer evidence through another fallback.
+bool visitOriginalMemoryPointerInputs(
+    const MedOp &Op, llvm::function_ref<void(const MedVar &)> Record);
 
 /// \p CalleeFloatReturns maps a call target to the bytes of the scalar float
 /// it returns through the FP return register, for a call whose output that

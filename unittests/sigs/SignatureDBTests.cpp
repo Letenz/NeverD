@@ -16,7 +16,6 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 
@@ -230,7 +229,7 @@ TEST_F(SignatureDirectoryTest, AutomaticSelectionSkipsFilesBeforeOpeningThem) {
   Image.Format = neverd::BinaryFormat::COFF;
   Image.Arch = neverd::Arch::X64;
   Image.Bits = neverd::Bitness::Bits64;
-  Image.DynInfo.PESubsystem = llvm::COFF::IMAGE_SUBSYSTEM_NATIVE;
+  Image.DynInfo.PESubsystem = 1; // PE native subsystem.
   Image.Imports.push_back({"ntoskrnl.exe", "ExAllocatePool2"});
   SignatureDB Database;
   auto Error = Database.loadForImage(Image, Directory);

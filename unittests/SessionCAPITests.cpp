@@ -9136,7 +9136,10 @@ TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
   SessionTestAccess::resetFunctions(State);
   SessionTestAccess::selectFunction(State, Entry);
   const auto Own = takeString(neverd_decompile(Session, Entry));
-  EXPECT_NE(Own.find("strlen_"), std::string::npos) << Own;
+  // The image's definition has its own C identifier, retaining the raw
+  // symbol as a link label without adopting the library's prototype.
+  EXPECT_NE(Own.find("strlen_4000B8("), std::string::npos) << Own;
+  EXPECT_NE(Own.find("strlen_4000B8("), Own.rfind("strlen_4000B8(")) << Own;
   EXPECT_NE(Own.find("__asm__(\"strlen\")"), std::string::npos) << Own;
   EXPECT_EQ(Own.find("#include <string.h>"), std::string::npos) << Own;
   // Any other change to the symbols goes with retiring the pipeline, which
@@ -9145,7 +9148,10 @@ TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
     if (Sym.Name == "strlen")
       Sym.Name = "strcpy";
   SessionTestAccess::clearPipeline(State);
-  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Fresh({"strcpy"}));
+  const auto Renamed = takeString(neverd_decompile(Session, Entry));
+  EXPECT_EQ(Renamed, Fresh({"strcpy"}));
+  EXPECT_NE(Renamed.find("__asm__(\"strcpy\")"), std::string::npos) << Renamed;
+  EXPECT_EQ(Renamed.find("__asm__(\"strlen\")"), std::string::npos) << Renamed;
 }
 
 TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {

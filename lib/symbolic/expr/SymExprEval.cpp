@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/symbolic/Limits.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -58,21 +59,28 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
     : Ctx(Ctx), Root(Root) {
   // Iterative post-order so a deeply nested expression cannot overflow the
   // stack; obfuscators emit exactly that shape on purpose.
-  llvm::DenseMap<uint32_t, uint32_t> Slot;
-  llvm::DenseSet<uint32_t> Visited;
+  // Zero marks a scheduled node; completed entries contain slot + 1. One
+  // table therefore tracks visitation and resolves operand slots without
+  // allocating a second set for the same reachable nodes.
+  llvm::SmallDenseMap<uint32_t, uint32_t,
+                      limits::symbolic::kSymExprTraversalInlineBuckets>
+      Slot;
   llvm::SmallVector<std::pair<SymRef, bool>, 64> Work{{Root, false}};
   llvm::SmallVector<SymRef, 64> PostOrder;
+  size_t OperandCount = 0;
 
   while (!Work.empty()) {
     auto [Cur, Expanded] = Work.pop_back_val();
     if (Expanded) {
-      if (Slot.count(Cur.index()))
+      auto Position = Slot.find(Cur.index());
+      if (Position->second)
         continue;
-      Slot.try_emplace(Cur.index(), static_cast<uint32_t>(PostOrder.size()));
+      Position->second = static_cast<uint32_t>(PostOrder.size()) + 1;
       PostOrder.push_back(Cur);
+      OperandCount += Ctx.numOperands(Cur);
       continue;
     }
-    if (!Visited.insert(Cur.index()).second)
+    if (!Slot.try_emplace(Cur.index(), 0).second)
       continue;
     Work.emplace_back(Cur, true);
     for (SymRef C : Ctx.operands(Cur))
@@ -82,6 +90,7 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
   // Lower to flat steps.  Operand slots are resolved here, once, so the
   // evaluation loops never touch the hash map or the DAG.
   Steps.reserve(PostOrder.size());
+  ArgSlots.reserve(OperandCount);
   for (SymRef R : PostOrder) {
     const SymNode &N = Ctx.node(R);
     if (N.Width > 64)
@@ -97,19 +106,19 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
     S.FirstArg = static_cast<uint32_t>(ArgSlots.size());
     S.NumArgs = N.NumOperands;
     for (SymRef C : Ctx.operands(R))
-      ArgSlots.push_back(Slot.find(C.index())->second);
+      ArgSlots.push_back(Slot.find(C.index())->second - 1);
     Steps.push_back(S);
   }
 
-  RootSlot = Slot.find(Root.index())->second;
+  RootSlot = Slot.find(Root.index())->second - 1;
 
   // The lowering already visits every reachable variable. Retain the public
   // sorted, unique order without a second DAG walk and its temporary set.
   std::sort(Vars.begin(), Vars.end());
   Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
 
-  ScratchU64.resize(Steps.size());
-  ScratchAP.resize(Steps.size());
+  if (FitsU64)
+    ScratchU64.resize(Steps.size());
 }
 
 uint64_t SymEvalPlan::evalU64(llvm::ArrayRef<uint64_t> VarVals) {
@@ -136,31 +145,37 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
 
     switch (St.Op) {
     case SymOp::Const:
-      Res = St.Aux;
-      break;
+      // The constant builder already truncated this native-width literal.
+      S[I] = St.Aux;
+      continue;
     case SymOp::Var:
       Res = Lookup(static_cast<uint32_t>(St.Aux));
       break;
     case SymOp::Add:
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      // Canonical associative nodes have at least two operands. Evaluate
+      // that common pair directly, then fold any remaining operands.
+      Res = S[A[0]] + S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res += S[A[K]];
       break;
     case SymOp::Mul:
-      Res = 1;
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] * S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res *= S[A[K]];
       break;
     case SymOp::And:
-      Res = ~uint64_t(0);
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] & S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res &= S[A[K]];
       break;
     case SymOp::Or:
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] | S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res |= S[A[K]];
       break;
     case SymOp::Xor:
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
+      Res = S[A[0]] ^ S[A[1]];
+      for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res ^= S[A[K]];
       break;
     case SymOp::Not:
@@ -242,6 +257,10 @@ llvm::APInt SymEvalPlan::eval(llvm::ArrayRef<llvm::APInt> VarVals) {
 
 llvm::APInt SymEvalPlan::evalWith(
     llvm::function_ref<const llvm::APInt *(uint32_t)> Lookup) {
+  // Native-width measurements never use APInt scratch. Allocate it only
+  // when this entry point is called, retaining it for subsequent evaluations.
+  if (ScratchAP.empty())
+    ScratchAP.resize(Steps.size());
   for (size_t I = 0; I < Steps.size(); ++I) {
     const Step &St = Steps[I];
     const uint32_t *A = ArgSlots.data() + St.FirstArg;

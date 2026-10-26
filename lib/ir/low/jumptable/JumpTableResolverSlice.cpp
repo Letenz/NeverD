@@ -5946,6 +5946,17 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       Constant = Right;
       Compared = Left;
     }
+    // Integer predicates compare at the common input width, as in
+    // symbolizeJumpTableIntegerOperation. Extend only the scalar immediate;
+    // a narrow register predicate still cannot constrain a wider index.
+    if (Compared && Constant && Constant->Size < Compared->Size &&
+        Constant->Provenance == ConstantAddressProvenance::Scalar) {
+      Constant =
+          resolverExtend(Constant, Compared->Size, /*Signed=*/false,
+                         consumeEvidence, &QueryResolverAnalysisIncomplete);
+      if (!Constant)
+        return resolverInvalid();
+    }
     if (Compared && Compared->K == ResolverValueExpr::Kind::Transform &&
         Compared->HasOpcode &&
         (Compared->Opcode == NdOp::INT_AND ||
@@ -5965,7 +5976,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         Compared->Inputs[1]->Constant == 0)
       Compared = Compared->Inputs[0];
     // At the same width, (x - c) == 0 is exactly x == c, including
-    // modular wraparound. This is the ZF half of an x64 inclusive guard;
+    // modular wraparound. This is the ZF half of an inclusive guard;
     // unlike an ordering comparison, it needs no no-wrap assumption.
     if (JoinedGuard && Compared && Constant &&
         (Predicate->Opcode == NdOp::INT_EQUAL ||
@@ -5977,10 +5988,16 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         Compared->HasOpcode && Compared->Opcode == NdOp::INT_SUB &&
         Compared->Inputs.size() == 2 && Compared->Inputs[0] &&
         Compared->Inputs[1] && Compared->Inputs[0]->Size == Compared->Size &&
-        Compared->Inputs[1]->Size == Compared->Size &&
+        Compared->Inputs[1]->Size <= Compared->Size &&
         Compared->Inputs[1]->K == ResolverValueExpr::Kind::Constant &&
         Compared->Inputs[1]->Provenance == ConstantAddressProvenance::Scalar) {
       Constant = Compared->Inputs[1];
+      if (Constant->Size < Compared->Size)
+        Constant =
+            resolverExtend(Constant, Compared->Size, /*Signed=*/false,
+                           consumeEvidence, &QueryResolverAnalysisIncomplete);
+      if (!Constant)
+        return resolverInvalid();
       Compared = Compared->Inputs[0];
     }
     if (!Compared || !Constant ||
