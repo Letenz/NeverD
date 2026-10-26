@@ -80,6 +80,8 @@ struct PatternModule {
   /// caller must unanimously name this target at a reference site. A short
   /// caller additionally needs an independent ordinary callee; descendants
   /// never confirm their ancestors or supply that independent evidence.
+  /// Complete literal bodies may also participate in a checked two-body x64
+  /// code-address fingerprint; neither body alone supplies its identity.
   bool RequireCaller : 1 = false;
   /// `!vtable`: source-owned primary COFF x64 table metadata, never a
   /// function-byte claim. PublicNames names the table; References names its
@@ -166,6 +168,8 @@ struct StoredModule {
   /// caller must unanimously name this target at a reference site. A short
   /// caller additionally needs an independent ordinary callee; descendants
   /// never confirm their ancestors or supply that independent evidence.
+  /// Complete literal bodies may also participate in a checked two-body x64
+  /// code-address fingerprint; neither body alone supplies its identity.
   bool RequireCaller : 1 = false;
   /// `!vtable`: source-owned primary COFF x64 table metadata, never a
   /// function-byte claim. PublicNames names the table; References names its

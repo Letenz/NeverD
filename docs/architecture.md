@@ -2344,7 +2344,14 @@ callee must meet the ordinary fixed-byte floor. Short required roots need a
 complete source refinement; pruned clauses cannot supply omitted calls. The
 callee evidence is built lazily once and excludes addresses settled by earlier
 incoming rounds. Short bodies without that independent proof and unrooted
-cycles cannot extend inference. Both forms
+cycles cannot extend inference. A separate linked-x64-PE rule may identify a
+finite code-address pair: a complete short `!refs` parent, matching unanimous
+unpruned `!caller` source, and a fully literal short leaf at its one canonical
+LEA target. Only the exact rel32 field is wildcarded; the disjoint complete
+bodies together meet the ordinary fixed-byte floor. Both entries must already
+exist. Competing pairs, outgoing leaf dependencies, overlapping code owners and
+conflicts with frozen names refuse this joint fingerprint. Pair results cannot
+bootstrap other pairs or supply independent ordinary anchors. Both forms
 remain candidate evidence under the same identity boundary. The shared name
 index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
 claims are not opted into incoming inference merely by loading them. Source

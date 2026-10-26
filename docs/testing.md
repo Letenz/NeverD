@@ -6763,6 +6763,13 @@ ordinary callee plus a rooted incoming body or a confirmed required root,
 reversed entries and records, changed-buffer reuse, missing/weak/partial or
 ambiguous callees, incomplete source variants and absent roots. A nominal body
 settled by an earlier incoming round cannot masquerade as an independent anchor.
+`SignatureDBCodePairs.*` checks complete x64 code-address fingerprints across
+two short bodies: reversed input order, live-byte changes, missing required or
+unpruned source records, insufficient combined bytes, source/leaf alternatives,
+outgoing dependencies, conflicting joint identities and frozen names. Requested
+entry scope, relocatable/non-PE refusal, nested data owners, continuation entries
+and overlapping bodies remain independent gates. Existing caller-chain cycle and
+weak-parent tests must continue to pass.
 `SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
 adds 4096 short records while retaining exactly one scheduled ordinary byte
 check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
