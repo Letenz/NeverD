@@ -681,8 +681,8 @@ Knowledge Exchange assets, and it registers only the `neverd://` scheme.
 
 There is one comment command: **Enter comment...**. Both `;` and `/`
 open the same editor and edit the same saved comment; `:` has no binding.
-Menus show both keys together in the shortcut column, as do shortcut help
-and the command palette.
+Menus show only the primary key `;` to keep the shortcut column compact.
+Tooltips, shortcut help and the command palette list both bindings.
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →

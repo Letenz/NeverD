@@ -2910,10 +2910,11 @@ and shortcut tooltips through action changes, translation and disabled actions.
 shortcut dispatch to the same comment action, checks that `:` is unbound and
 the duplicate menu entry is gone, and preserves punctuation in single-line
 and multiline text fields. The shortcut collision check includes aliases.
-`NeverDGuiAppearance::menuShowsAlternativeShortcuts` checks the actual menu
-style option and reserved width for both comment keys, in light and dark
-themes. `NEVERD_APPEARANCE_CAPTURES` saves the rendered menu. The shortcut
-browser and command-palette checks keep the key hints out of command names.
+`NeverDGuiAppearance::menuShowsOnlyThePrimaryShortcut` checks that menus
+show only the primary comment key while both bindings stay registered and
+available in tooltips, in light and dark themes. `NEVERD_APPEARANCE_CAPTURES`
+saves the rendered menu. The shortcut browser and command-palette checks
+keep the key hints out of command names.
 Cocoa key dispatch skips if macOS refuses to activate the background test
 window; report that missing native coverage separately from offscreen checks.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
