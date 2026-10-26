@@ -122,6 +122,9 @@ the declared function entry must reach that complete LEA without overlapping
 instruction paths. Genuine prefixes, unsupported control, unreachable targets
 and exhausted budgets stay unknown. The prefix budget is owned by
 `MaxReferenceBoundaryBytes`; unrelated fields keep their existing fast path.
+Only the most recent decoded prefix is cached per thread, with exact byte
+comparison under that same budget. Reused image buffers cannot retain stale
+positive or negative results.
 The supplement builder requires exact raw source ownership and keeps distinct
 same-byte names separate; they are queries, not claims of byte uniqueness.
 When incoming context is loaded, the name index also reuses complete existing

@@ -6418,6 +6418,7 @@ or absent metadata, evidence withdrawal, and the separate identity gate.
 x64 LEA, genuine prefixes, embedded instruction bytes, unreachable targets,
 overlapping paths, truncation, the exact decode budget and unsupported LOOP
 control. Producer and incoming-request cases exercise the same boundary owner.
+Reused-buffer cases verify positive and negative cache invalidation after edits.
 The metadata-refinement Python cases require every raw source to own a new
 caller code field, retain alternatives and reject missing or data-kind fields.
 The COFF cases also check primary x64 vftable references: exact RTTI types,

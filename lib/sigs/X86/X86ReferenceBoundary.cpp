@@ -29,6 +29,8 @@ namespace {
 struct BoundaryDecoder {
   csh Handle = 0;
   cs_insn *Insn = nullptr;
+  std::vector<uint8_t> Prefix;
+  bool Result = false;
 
   BoundaryDecoder() {
     if (cs_open(CS_ARCH_X86, CS_MODE_64, &Handle) == CS_ERR_OK &&
@@ -44,16 +46,9 @@ struct BoundaryDecoder {
   }
 };
 
-} // namespace
-
-bool hasDecodedX64AddressBoundary(llvm::ArrayRef<uint8_t> Code, size_t Start) {
-  // The field reader has already checked the complete canonical instruction.
+bool decodeAddressBoundary(BoundaryDecoder &Decoder,
+                           llvm::ArrayRef<uint8_t> Code, size_t Start) {
   const size_t End = Start + x86::kAddressInstructionSize;
-  if (End > MaxReferenceBoundaryBytes)
-    return false;
-  thread_local BoundaryDecoder Decoder;
-  if (!Decoder.Insn)
-    return false;
 
   // An owner is its instruction's offset plus one; zero is unvisited. Walking
   // all reachable paths in this prefix detects entries into another decoded
@@ -113,6 +108,29 @@ bool hasDecodedX64AddressBoundary(llvm::ArrayRef<uint8_t> Code, size_t Start) {
     }
   }
   return Reached;
+}
+
+} // namespace
+
+bool hasDecodedX64AddressBoundary(llvm::ArrayRef<uint8_t> Code, size_t Start) {
+  // The field reader has already checked the complete canonical instruction.
+  if (Start > Code.size() || Code.size() - Start < x86::kAddressInstructionSize)
+    return false;
+  const size_t End = Start + x86::kAddressInstructionSize;
+  if (End > MaxReferenceBoundaryBytes)
+    return false;
+  thread_local BoundaryDecoder Decoder;
+  if (!Decoder.Insn)
+    return false;
+  const auto Prefix = Code.take_front(End);
+  // One bounded prefix per thread avoids repeated decoding across reference
+  // rounds. Compare every byte, never image addresses or a probabilistic hash;
+  // edits, reused buffers and different images cannot inherit a stale proof.
+  if (llvm::ArrayRef<uint8_t>(Decoder.Prefix) == Prefix)
+    return Decoder.Result;
+  Decoder.Result = decodeAddressBoundary(Decoder, Prefix, Start);
+  Decoder.Prefix.assign(Prefix.begin(), Prefix.end());
+  return Decoder.Result;
 }
 
 } // namespace neverd::sigs

@@ -91,6 +91,21 @@ TEST(X86ReferenceBoundary, DecodingHasABoundedPrefixAndNoLoopGuess) {
   EXPECT_FALSE(isX64AddressReferenceField(Indirect, 12));
 }
 
+TEST(X86ReferenceBoundary, ReusedBuffersCannotInheritAStaleBoundary) {
+  std::vector<uint8_t> Code = {0x74, 0x05, 0xb8, 0, 0, 0, 0xf0,
+                               0x4c, 0x8d, 0x0d, 0, 0, 0, 0};
+  for (bool Overlap : {false, false, true, true, false}) {
+    Code[1] = Overlap ? 0x04 : 0x05;
+    EXPECT_EQ(isX64AddressReferenceField(Code, 10), !Overlap);
+    // Equal bytes at a different allocation have the same boundary; there is
+    // no image-address identity in this instruction-only check.
+    auto Copy = Code;
+    EXPECT_EQ(isX64AddressReferenceField(Copy, 10), !Overlap);
+  }
+  Code.resize(10);
+  EXPECT_FALSE(isX64AddressReferenceField(Code, 10));
+}
+
 TEST(X86ReferenceBoundary, IncomingRequestsUseTheSameDecodedAddressBoundary) {
   BinaryImage Img;
   Img.Arch = Arch::X64;
