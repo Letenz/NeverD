@@ -319,6 +319,14 @@ aarch64AddressMemoryInstruction(uint64_t Word) {
   return AArch64AddressMemoryInstruction{static_cast<uint32_t>(Word)};
 }
 
+/// Includes unallocated size/opcode combinations, which must not fall back to
+/// a mnemonic-based legacy handler with guessed access semantics.
+inline bool isAArch64OrderedUnscaledMemoryEncoding(uint32_t Word) {
+  const uint32_t Class = Word & kAddressMemoryOrderedClassMask;
+  return Class == kAddressMemoryOrderedGPRClass ||
+         Class == kAddressMemoryOrderedVectorClass;
+}
+
 inline bool aarch64AddressMemoryShapeIsValid(
     Intrinsic Id, unsigned NumInputs, unsigned OutputBytes, unsigned BaseBytes,
     unsigned IndexBytes, unsigned WordBytes, std::optional<uint64_t> Word,
