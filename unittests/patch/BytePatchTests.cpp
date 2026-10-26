@@ -25,6 +25,7 @@
 #include "llvm/Support/FileSystem.h"
 
 #include <fstream>
+#include <iterator>
 
 using namespace neverd;
 using namespace neverd::patch;
@@ -218,12 +219,37 @@ TEST_F(BytePatch, ExportIsExclusiveAndReplaysImmutableInput) {
   auto Expected = Original;
   Expected[0] = 0xeb;
   EXPECT_EQ(Bytes, Expected);
+  Stream.close();
   auto E = exportPatches(Img, *Input, Overlay, Output);
   EXPECT_TRUE(bool(E));
   llvm::consumeError(std::move(E));
+  std::ifstream Unchanged(Output, std::ios::binary);
+  EXPECT_EQ(
+      std::vector<uint8_t>((std::istreambuf_iterator<char>(Unchanged)), {}),
+      Expected);
   std::ifstream Source(Path, std::ios::binary);
   EXPECT_EQ(std::vector<uint8_t>((std::istreambuf_iterator<char>(Source)), {}),
             Original);
+  // Successful and refused exports both consume their temporary files.
+  EXPECT_EQ(std::distance(std::filesystem::directory_iterator(Directory),
+                          std::filesystem::directory_iterator()),
+            2);
+}
+TEST_F(BytePatch, ExportCannotReplaceItsInputOrAnExistingDirectory) {
+  ASSERT_FALSE(
+      Overlay.apply(Img, *Input, 0x1000, {0xeb}, PatchKind::BranchAlways));
+  for (const auto &Output : {Path, Directory}) {
+    auto Error = exportPatches(Img, *Input, Overlay, Output);
+    ASSERT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
+    std::ifstream Source(Path, std::ios::binary);
+    EXPECT_EQ(
+        std::vector<uint8_t>((std::istreambuf_iterator<char>(Source)), {}),
+        Original);
+  }
+  EXPECT_EQ(std::distance(std::filesystem::directory_iterator(Directory),
+                          std::filesystem::directory_iterator()),
+            1);
 }
 TEST_F(BytePatch, BranchActionsPreserveTargets) {
   auto P = planPatch(Img, *Input, Overlay, action(PatchKind::BranchAlways));
