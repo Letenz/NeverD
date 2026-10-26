@@ -39,6 +39,9 @@ relevant symbols with `rg -n`, then read the surrounding section.
   [implementation principles](docs/development-principles.md) for detailed rules.
 - Preserve unrelated changes and diagnostic artifacts. Avoid unrelated
   formatting and submodule revision changes.
+- Make changes to LLVM itself in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project).
+  Commit, push and merge them there before updating NeverD's LLVM submodule.
+  Do not add LLVM patch files or build-directory source overlays to NeverD.
 
 ## Build, verify, finish
 

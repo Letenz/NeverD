@@ -13095,7 +13095,7 @@ The native profile also requires the LLVM-C wide-integer constant/store checks a
 
 The native Linux x64 job also requires three C++ exception replacement checks: Clang IR, Clang native objects and GCC native objects. Their XML and process exit are audited separately, and any failure or skip fails qualification; NeverC is not used for these C++ inputs.
 
-The native qualification job builds the pinned LLVM fork from source, including the scoped x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
+The native qualification job builds the recorded LLVM fork from source, including its x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -14168,4 +14168,4 @@ output owner must preserve both exclusive creation and default replacement,
 including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
 
-`LLVMAddressModelOverlayTests` checks independent AArch64 specifier, i386 GOT and Mach-O GOTPCREL corrections. It covers both known AArch64 guard spellings and all twelve partial-correction combinations, preserves the LLVM input and cached overlay, isolates inherited Git settings, and rejects an unrecognized architecture guard. These configuration checks do not replace native relocation execution tests.
+`BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.
