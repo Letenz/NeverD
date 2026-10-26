@@ -1,0 +1,41 @@
+--- a/llvm/lib/MC/AddressModelBackend.cpp
++++ b/llvm/lib/MC/AddressModelBackend.cpp
+@@ -273,4 +273,14 @@
+   const bool IsX86GOTPCRel = isX86GOTPCRelSpecifier(
+       Asm->getContext().getAsmInfo(), TT, Target.getSpecifier());
++  const bool IsI386ELF = TT.getArch() == Triple::x86 && TT.isOSBinFormatELF();
++  const StringRef SpecifierName =
++      Asm->getContext().getAsmInfo().getSpecifierNameOrEmpty(Target.getSpecifier());
++  const bool IsI386GOTPC = IsI386ELF && Target.getAddSym() &&
++      Target.getAddSym()->getName() == "_GLOBAL_OFFSET_TABLE_" &&
++      (Fixup.getKind() == FK_Data_4 ||
++       Wrapped->getFixupKindInfo(Fixup.getKind()).Name ==
++           StringRef("reloc_global_offset_table"));
++  const bool IsI386GOTOffset = IsI386ELF &&
++      (SpecifierName == "GOTOFF" || SpecifierName == "GOT");
+   const std::optional<uint32_t> ArmNoneSpecifier =
+       Asm->getContext().getAsmInfo().getSpecifierForName("none");
+@@ -390,4 +400,16 @@
+                            Fixup.getKind() == FK_Data_4 && Prel31Specifier &&
+                            Target.getSpecifier() == *Prel31Specifier;
++  // i386 PIC materializes a GOT anchor with GOTPC, then uses GOT/GOTOFF
++  // offsets. These are base-relative expressions even when the MCFixup itself
++  // has no PC-relative flag. Resolving only the symbol VA double-counts the
++  // anchor and produces an address that changes incorrectly under ASLR.
++  if (IsI386GOTOffset) {
++    auto Base = resolveSymVA(resolveSymVA,
++        Asm->getContext().getOrCreateSymbol("_GLOBAL_OFFSET_TABLE_"), 0, false);
++    auto GOTVA = Base ? encode64(*Base) : std::nullopt;
++    if (!GOTVA)
++      return std::nullopt;
++    Value -= *GOTVA;
++  }
+   if (IsArmPrel31) {
+     const uint64_t SecVA = getSectionImageVA(*F.getParent());
+@@ -406,5 +428,5 @@
+     }
+     Value = Delta & 0x7fffffffu;
+-  } else if (Fixup.isPCRel() || IsX86GOTPCRel) {
++  } else if (Fixup.isPCRel() || IsX86GOTPCRel || IsI386GOTPC) {
+     uint64_t SecVA = getSectionImageVA(*F.getParent());
+     uint64_t FixupPC = SecVA + Asm->getFragmentOffset(F) + Fixup.getOffset();

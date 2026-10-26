@@ -1479,15 +1479,16 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       // indirect call its stack arguments.
       const bool SetupConvention =
           Convention && Convention->ArgumentsFromCallSetup;
-      // A direct call's final recovered list also owns Win64 stack slots.
-      // Appending this block's adjacent locals can revive parameters removed
-      // by the shared callee bound, or turn a required unknown into a stale
-      // value from the emitter's independent setup scan.
+      // A loader-bound import retains its fixed contract through a captured
+      // runtime pointer. Direct Win64 calls also retain their final stack list;
+      // an independent setup scan must not append adjacent frame locals.
+      const bool KnownImport =
+          Image && !importCalleeName(*Image, CI->TargetAddr).empty();
       const bool CompleteSetup =
-          !CI->IsIndirect &&
+          (!CI->IsIndirect || KnownImport) &&
           (SetupConvention || (Convention && Convention->StackArgumentSummary));
       size_t Recovered = CI->Args.size();
-      if (SetupConvention && CI->IsIndirect) {
+      if (SetupConvention && CI->IsIndirect && !KnownImport) {
         // The scan gives such a call its stack arguments, though not the
         // incoming ones a tail jump passes on untouched, which recovery
         // promotes to stack parameters.

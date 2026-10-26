@@ -95,6 +95,9 @@ class BytePatchIntegrationTests(unittest.TestCase):
         self.assertEqual(json.loads(call()), [])
         call("--address", hex(self.entry), "--kind", "constant",
              "--value", "42", "--apply")
+        rows = json.loads(call())
+        saved = next(self.root.rglob("patches.json")).read_bytes()
+        self.assertEqual(saved, (json.dumps(rows, indent=2, sort_keys=True) + "\n").encode())
         output = self.root / "cli.elf"
         call("--export", "-o", str(output))
         self.assertEqual(output.read_bytes()[120:125], bytes.fromhex("b82a000000"))
@@ -141,6 +144,12 @@ class BytePatchIntegrationTests(unittest.TestCase):
                          [{"address": hex(self.entry + 1), "size": 1}])
         self.assertEqual(session.byte_patch_ranges, context["revert_ranges"])
         session.save_byte_patches()
+        rows_text = host.owned_string("neverd_byte_patches_json", pointer)
+        self.assertEqual(rows_text, json.dumps(session.byte_patches,
+                         sort_keys=True, separators=(",", ":")))
+        self.assertEqual(next(self.root.rglob("patches.json")).read_bytes(),
+                         (json.dumps(session.byte_patches, indent=2,
+                                     sort_keys=True) + "\n").encode())
         output = self.root / "python.elf"
         session.export_byte_patches(output)
         self.assertEqual(output.read_bytes()[120:125], bytes.fromhex("b82a000000"))
@@ -176,6 +185,35 @@ class BytePatchIntegrationTests(unittest.TestCase):
         session.save_byte_patches()
         self.assertEqual(session.byte_patches, [])
         self.assertEqual(session.byte_patch_ranges, [])
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX file-size fault injection")
+    def test_cli_failed_write_preserves_saved_patch(self) -> None:
+        import resource
+        import signal
+
+        cli = os.environ.get("NEVERD_TEST_CLI")
+        if not cli:
+            self.skipTest("NEVERD_TEST_CLI is not configured")
+        command = [cli, "patch-bytes", str(self.binary), "--address",
+                   hex(self.entry), "--kind", "constant", "--apply", "--value"]
+        subprocess.run(command + ["42"], capture_output=True, check=True, timeout=60)
+        sidecar = next(self.root.rglob("patches.json"))
+        saved = sidecar.read_bytes()
+
+        def refuse_regular_file_writes():
+            _, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (1, hard))
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+
+        failed = subprocess.run(command + ["43"], capture_output=True, timeout=60,
+                                preexec_fn=refuse_regular_file_writes)
+        self.assertGreater(failed.returncode, 0, failed.stderr)
+        self.assertIn(b"cannot write byte patches", failed.stderr)
+        self.assertEqual(sidecar.read_bytes(), saved)
+        self.assertEqual(list(sidecar.parent.glob("patches.json.tmp-*")), [])
+        subprocess.run(command + ["43"], capture_output=True, check=True, timeout=60)
+        self.assertEqual(json.loads(sidecar.read_bytes())[0]["current"], "2b")
+        self.assertEqual(self.binary.read_bytes(), self.original)
 
 
 if __name__ == "__main__":

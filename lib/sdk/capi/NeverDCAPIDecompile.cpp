@@ -1919,7 +1919,7 @@ const char *neverd_lift_module(neverd_session_t Sess, const char *InputPath,
   auto *S = static_cast<Session *>(Sess);
   PipelineRunner R;
   std::string Err;
-  if (!R.load(InputPath, Err, S)) {
+  if (!R.loadAnalysis(InputPath, Err, S)) {
     if (S)
       S->setError(Err);
     return nullptr;
@@ -1955,7 +1955,7 @@ const char *neverd_lift_dump(neverd_session_t Sess, const char *InputPath,
   auto *S = static_cast<Session *>(Sess);
   PipelineRunner R;
   std::string Err;
-  if (!R.load(InputPath, Err, S)) {
+  if (!R.loadAnalysis(InputPath, Err, S)) {
     if (S)
       S->setError(Err);
     return nullptr;
@@ -2069,7 +2069,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   auto *S = static_cast<Session *>(Sess);
   PipelineRunner R;
   std::string Err;
-  if (!R.load(InputPath, Err, S)) {
+  if (!R.loadAnalysis(InputPath, Err, S)) {
     if (S)
       S->setError(Err);
     return nullptr;

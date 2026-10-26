@@ -1413,6 +1413,11 @@ rejection, pointer faults, unchanged errno and dynamic provider closure.
 against unchanged guarded memory. These cases do not call host libc as an oracle.
 Complement spans separately cover empty reject sets, first-member page tails,
 nonzero prefixes and both bounded scans; all shared accept-span cases still run.
+`AndroidSearch.*MemberSearch*` covers `strpbrk` through static and dynamic
+providers, first matches, unsigned byte sets, empty/no-match inputs, read-only
+page tails, NUL termination, overlapping strings and closed-provider refusal.
+The shared span budget cases also check pointer-result searches; whole SDK/CLI
+reports are compared by `ProcessPublic.AndroidMemberSearchReportsMatchSDKAndCLI`.
 
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers
@@ -6178,6 +6183,14 @@ adds 4096 short records while retaining exactly one scheduled ordinary byte
 check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
 cache and generator tests preserve the caller constraint. The SDK profile
 fixture loads `.npat` explicitly and through automatic selection.
+
+`SignatureVTableContext.*` covers complete primary tables, weak alternatives,
+source conflicts, sibling contradictions, requested entries, immutable ownership,
+malformed RTTI and empty frozen call cycles. `VTableEvidence.*` retains supported
+weak search policies and incomplete source counterclaims. Parser/cache cases
+reject malformed table records and preserve the kind through reversed cache
+pieces. `scripts.tests.test_vtable_context` checks unpruned evidence, missing
+inputs, exact deduplication and isolation from function folding/refinement.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -14104,3 +14117,42 @@ SDK/CLI report pairs with independently expected guarded bytes, across ordinary
 and RELR callers, four service routes, permission changes, holes and a closed
 dynamic provider. Named input RAM and unmap/replacement regressions verify that
 VMA names and address reuse cannot manufacture anonymous allocation provenance.
+
+`NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
+partial writes, auxiliary outputs, exhaustion, unchanged original operands,
+mutable import captures and Win64 scalar results versus ELF aggregate transport.
+`NeverDWorkerCachedCallABI` generates PE fixtures with direct and cached
+seven-argument imports and zero/one-argument private callees, checking both C
+routes independently of function preparation order.
+
+Run `NeverDHighControlFlowTests` and `NeverDWindowsEHSourceTests` after changing
+frame forwarding or source expression cleanup. The frame fixtures execute C
+before/after optimization at O0/O2, including slot reuse and calls mutating
+saved cells. They retain stores around structured/unstructured EH, atomic and
+trapping operations, uncertain aliases, alternate entries and incomplete paths.
+The zero-test fixtures cover all byte pairs and integer-width boundaries with
+preserved call counts and undefined-behavior traps.
+
+`NeverDHighPointerTypeInferenceTests` covers x86/x64/ARM/AArch64 frame aliases,
+slot reuse, joins, loops, escaped locals, clobbers, integer views and late source
+binding. `NeverDCDisplayFrameRecordTests` executes both C writers at O0/O2 with
+alignment/undefined-behavior checks. Run `NeverDHighCStoreForwardingTests` and
+`NeverDHighControlFlowTests` for captured pointer and callback display changes.
+`NeverDWorkerParameterTypePropagation` edits a generated PE parameter between
+record types and checks aliases, arrays, undo/redo, reopening and unchanged LowIR.
+
+`NeverDWorkerAnalysisSections` exercises the C ABI and IPC with public ELF/PE
+x64/AArch64 fixtures: atomic mutations, high addresses, original-image references,
+materialized listing rows, LowIR/MedIR/HighC/CFG, save/load and analysis replicas.
+`NeverDAnalysisSectionsCLI` checks persisted CLI/worker interop and writer leases.
+`NeverDGuiAnalysisSections` drives the production dialog, native views and .nddb
+save/reopen/removal; `NeverDGuiQueries` checks edit fences and cache retirement.
+See [analysis-section commands](analysis-sections.md#verification).
+
+For patched-binary publication run `NeverDBytePatchTests`,
+`TranslationCLIContract.*` and `NeverDWorkerNativePatch`. The shared temporary
+output owner must preserve both exclusive creation and default replacement,
+including failed closes, locked outputs, unchanged input bytes and cleanup.
+See [Windows patch export](windows-patch-export.md) for the public reproducer.
+
+`LLVMAddressModelOverlayTests` checks independent AArch64 specifier, i386 GOT and Mach-O GOTPCREL corrections. It covers both known AArch64 guard spellings and all twelve partial-correction combinations, preserves the LLVM input and cached overlay, isolates inherited Git settings, and rejects an unrecognized architecture guard. These configuration checks do not replace native relocation execution tests.
