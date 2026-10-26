@@ -2135,6 +2135,10 @@ Only that independently settled ordinary function can bind the relation, after
 all matching source refinements agree. The existing single data pass checks consumers
 without changing anchors or restarting inference. The parser/cache preserve a
 separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+Anchor-name lookup compares lengths before text, avoiding hashes of unrelated
+template spellings. Frozen reference checks visit only their new outgoing
+sites, skip entry work when no code target is referenced, and borrow sorted
+entry views. All competing claims at referenced addresses still participate.
 Native `!loadcfg` metadata pairs a source configuration field's external pointer
 variable with its default function. The COFF loader owns the role/field mapping;
 `SignatureRuntimePointerContext` queries only its recorded slots after the data
