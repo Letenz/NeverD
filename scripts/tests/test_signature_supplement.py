@@ -26,6 +26,51 @@ class SupplementTests(unittest.TestCase):
         return supplement.select({"runtime": builder.fold(candidates.splitlines())},
                                  paths, self.existing, **options)["runtime"]
 
+    def test_padding_after_a_shorter_routine_is_not_identity_evidence(self):
+        candidate = "488B05........C3CCCCCCCCCCCCCCCC 00 0000 0010 !refs :0000 padded &0003 heap"
+        rival = "488B05........C3 00 0000 0008 !evidence :0000 short &0003 heap"
+        raw = candidate.replace("!refs", "!evidence")
+        self.assertFalse(self.select(candidate, [("runtime", raw + "\n" + rival)]))
+
+    def test_complete_data_clause_is_not_covered_by_an_incoming_only_record(self):
+        line = "488D05........C3 00 0000 0008 !refs :0000 getter &0003 global"
+        old = line.replace("!refs", "!caller")
+        self.assertEqual([row.text for row in self.select(line, [("runtime", line)], old)],
+                         [line])
+        self.assertFalse(self.select(line, [("runtime", line)], line))
+        self.assertFalse(self.select(line, [("runtime", line)], line.replace(" !refs", "")))
+
+    def test_data_reference_kind_survives_folding_and_single_site_clauses(self):
+        a = "488D05........488B05........C3 00 0000 000F !refs :0000 a &0003 global &000A value"
+        line = builder.parse_line(a)
+        self.assertEqual(line.data_sites, {3, 10})
+        for variant in supplement.reference_variants(line):
+            self.assertEqual(variant.data_sites, {offset for offset, _ in variant.refs})
+            self.assertNotIn("^", variant.text)
+        merged = builder.common_refs([line, builder.parse_line(a.replace("global", "alternate"))])
+        self.assertEqual(builder.ref_table(merged.refs)[3], {"global", "alternate"})
+        self.assertEqual(merged.data_sites, {3, 10})
+
+    def test_missing_or_different_reference_kinds_never_prove_a_collision(self):
+        a = "488D05........C3 00 0000 0008 !refs :0000 a &0003 global"
+        b = a.replace(":0000 a", ":0000 b").replace("&0003 global", "^0003 function")
+        self.assertFalse(builder.distinguished([builder.parse_line(a), builder.parse_line(b)]))
+        self.assertEqual(self.select(a, [("runtime", a + "\n" + b)]), [])
+        old = builder.parse_line(a.replace("&0003", "^0003"))
+        self.assertFalse(supplement.context_covers(old, builder.parse_line(a)))
+        mixed = builder.common_refs([old, builder.parse_line(a)])
+        self.assertFalse(mixed.refs)
+        self.assertFalse(mixed.data_sites)
+        with self.assertRaises(builder.BuildError):
+            builder.parse_line(a + " ^0003 function")
+
+    def test_data_context_still_checks_every_raw_counterclaim(self):
+        a = "488D05........C3 00 0000 0008 !refs :0000 a &0003 global"
+        b = a.replace(":0000 a", ":0000 b").replace("global", "other")
+        self.assertEqual(len(self.select(a, [("runtime", a + "\n" + b)])), 1)
+        unknown = a.replace(":0000 a", ":0000 unknown").replace(" &0003 global", "")
+        self.assertFalse(self.select(a, [("runtime", a + "\n" + b + "\n" + unknown)]))
+
     def test_caller_records_keep_distinct_names_without_byte_uniqueness(self):
         a = "33C0C3 00 0000 0003 !caller :0000 a\n"
         b = a.replace(":0000 a", ":0000 b")

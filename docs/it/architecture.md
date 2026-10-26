@@ -1,8 +1,16 @@
 **Lingue**: [English](../architecture.md) | [简体中文](../zh-CN/architecture.md) | [繁體中文](../zh-TW/architecture.md) | [日本語](../ja/architecture.md) | [한국어](../ko/architecture.md) | [Français](../fr/architecture.md) | [Deutsch](../de/architecture.md) | [Español](../es/architecture.md) | [Italiano](architecture.md) | [Русский](../ru/architecture.md) | [العربية](../ar/architecture.md)
 
+Quando il tipo di chiamata LLVM differisce dalla dichiarazione, LLVM C valuta la conversione tramite un letterale composto scalare. Conserva l’ABI del sito, compresa la duplicazione floating point delle chiamate variadiche Windows x64, senza cambiare la dichiarazione o aggiungere accessi volatile.
+
 [← Indice della documentazione](README.md)
 
 # Architettura di NeverD
+
+## Recupero dei valori di stack in ingresso
+
+`PipelineIncomingStack` ricava dichiarazioni sorgente intere limitate per funzioni foglia complete x64/ARM64 PE/ELF. La prova condivisa dello stack determina gli offset; ogni chiamante deve scrivere tutti i byte richiesti, altrimenti la dichiarazione viene ritirata. HighC e LLVMC collegano la stessa dichiarazione prima di SSA e riconvertono solo le funzioni interessate. I chiamanti selezionati riusano il lettore e la cache delle funzioni omesse e mantengono dichiarazioni a parametri fissi. Non si deducono stati VM generali, tipi floating-point o ABI esterne e non cambiano i contratti di lifting macchina, patch o analisi. `SourceFrameAnalysis` deve provare il ripristino di SP e dei registri di frame e collegamento salvati secondo il formato. I byte dei registri salvati non diventano parametri sorgente.
+
+Le destinazioni costanti delle chiamate tramite registro usano la query scalare LowIR limitata e condivisa. La prova dello stack mantiene la chiamata indiretta originale; solo il MedIR sorgente diventa una chiamata nominata dopo l’accordo tra destinazione, dichiarazione e byte in uscita. Caricamenti, valori tra blocchi, effetti delle chiamate e registri incompleti non determinano una destinazione.
 
 Per i PE x64 collegati, il rilevamento raccoglie gli indirizzi di codice delle LEA canoniche relative a RIP durante la scansione delle chiamate esistente. Ogni destinazione richiede ancora un ingresso indipendente e una prova limitata di uscita richiamabile; etichette interne, continuazioni e corpi non supportati restano esclusi. Rilevamento e firme condividono il riconoscimento della codifica. I riferimenti rel32 condizionali COFF richiedono inoltre simboli di funzione espliciti e rilocazioni senza addendo. Offline, `--single-reference-context` verifica ogni condizione con un solo sito rispetto a tutte le dichiarazioni originali sovrapposte, mantenendo tutte le alternative del sito.
 
@@ -1995,3 +2003,5 @@ Prima delle chiamate originali, `SourceFrameAnalysis` può osservare byte privat
 `lib/patch` gestisce la verifica dei byte, la codifica LLVM MC, la copia immutabile dell’ingresso, le modifiche normalizzate e l’esportazione esclusiva. L’SDK verifica i bersagli tramite il C esatto, le occorrenze LowIR canoniche e gli operandi decodificati; un’ancora di navigazione non basta. Il worker integra il file facoltativo `patches.json` in annulla e ripeti, invalidando poi l’analisi. Le firme leggono i byte originali; le funzioni modificate perdono gli effetti di libreria dedotti dall’identità. GUI, CLI e Python usano le stesse API. La sostituzione completa usa ancora `neverd_patch_source`, dopo l’esportazione e la riapertura delle modifiche ai byte.
 
 Le anteprime conservano le opzioni di caricamento, le regole di analisi, i metadati utente e una copia indipendente delle prove delle firme della sessione. Il limite di visualizzazione non limita mai la verifica dell’intero intervallo; le anteprime troncate lo segnalano esplicitamente. La rimozione di un predicato Thumb deve coprire l’intero blocco IT.
+
+I tipi di chiamata Windows ARM64 con parametri scalari e puntatori fissi riutilizzano `placeAAPCS64` tramite `SourceCallABI`: banchi interi e in virgola mobile indipendenti e slot di stack da otto byte quando i registri sono esauriti. Le chiamate variadiche restano rifiutate, poiché anche i parametri floating con nome usano portatori interi. Non si aggiungono ARM64EC, aggregati o esecuzione nativa dei driver.

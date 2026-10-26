@@ -338,6 +338,10 @@ def main() -> None:
         plistlib.dump(plist, stream)
     for host in ENGINE_HOSTS:
         run("install_name_tool", "-add_rpath", "@executable_path/../Frameworks", macos / host)
+    # Preserve dependency discovery before macdeployqt rewrites framework
+    # extensions' absolute library paths. It can rewrite Python's _sqlite3
+    # reference without copying the keg-only SQLite library it names.
+    repair_dependencies(bundle, args.qt_dir, origins)
     # Qt 6.8 does not support -no-codesign. Any deployment-time signatures
     # are regenerated after dependency repairs by the signing steps below.
     run(args.qt_dir / "bin/macdeployqt", bundle,

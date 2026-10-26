@@ -20,6 +20,8 @@
 #include "neverd/ir/med/X86/X86RegistrationFrame.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
@@ -199,7 +201,143 @@ public:
     return resolve(Value, 0);
   }
 
+  std::optional<EntryStackOffsetRange> range(const MedVar &Value) {
+    Steps = 0;
+    return resolveRange(Value, 0);
+  }
+
 private:
+  /// Scalar bounds retain machine-width wrapping. Unknown scalar values have
+  /// their full bit range; only a narrower extension or mask can bound them.
+  llvm::ConstantRange scalarRange(const MedVar &Value, unsigned Depth) {
+    const unsigned Bits = Value.Size * 8;
+    llvm::ConstantRange Full(Bits, true);
+    if (++Steps > kMaxProofSteps ||
+        Depth > limits::ir::kMedStackAlignmentResolveDepthLimit)
+      return Full;
+    if (Value.isConst())
+      return llvm::ConstantRange(llvm::APInt(Bits, Value.ConstVal));
+    const auto Found = Definitions.find(key(Value));
+    if (Found == Definitions.end() || Found->second.Ambiguous ||
+        !RangeActive.insert(key(Value)).second)
+      return Full;
+    const auto Clear = llvm::scope_exit([&] { RangeActive.erase(key(Value)); });
+    const auto &Definition = Found->second;
+    if (Definition.Join) {
+      const PhiNode &Phi = *Definition.Join;
+      if (!sameOccurrence(Phi.Output, Value) || Phi.Args.empty())
+        return Full;
+      llvm::ConstantRange Result(Bits, false);
+      for (const auto &[Pred, Arg] : Phi.Args) {
+        if (Arg.Size != Value.Size)
+          return Full;
+        Result = Result.unionWith(scalarRange(Arg, Depth + 1));
+      }
+      return Result;
+    }
+    const MedOp *Op = Definition.Op;
+    if (!Op || !sameOccurrence(Op->Output, Value) || Op->Dead ||
+        Op->MemoryOrdering != NdMemoryOrdering::None ||
+        Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        !Op->IntrinsicOutputs.empty())
+      return Full;
+    if (Op->NumInputs == 1 && Op->Inputs[0].Size &&
+        Op->Inputs[0].Size <= Value.Size) {
+      if (Op->Opcode == NdOp::COPY && Op->Inputs[0].Size == Value.Size)
+        return scalarRange(Op->Inputs[0], Depth + 1);
+      if (Op->Opcode == NdOp::INT_ZEXT)
+        return scalarRange(Op->Inputs[0], Depth + 1).zeroExtend(Bits);
+    }
+    if (Op->NumInputs == 2 && Op->Inputs[0].Size == Value.Size &&
+        Op->Inputs[1].Size == Value.Size) {
+      const auto Left = scalarRange(Op->Inputs[0], Depth + 1);
+      const auto Right = scalarRange(Op->Inputs[1], Depth + 1);
+      switch (Op->Opcode) {
+      case NdOp::INT_ADD:
+        return Left.add(Right);
+      case NdOp::INT_SUB:
+        return Left.sub(Right);
+      case NdOp::INT_MULT:
+        return Left.multiply(Right);
+      case NdOp::INT_AND:
+        return Left.binaryAnd(Right);
+      case NdOp::INT_LEFT:
+        // LLVM's range operation models oversized shifts as poison, while
+        // machine-value proofs cannot derive a bound from that assumption.
+        return Right.getUnsignedMax().ult(Bits) ? Left.shl(Right) : Full;
+      default:
+        break;
+      }
+    }
+    return Full;
+  }
+
+  std::optional<EntryStackOffsetRange> resolveRange(const MedVar &Value,
+                                                    unsigned Depth) {
+    if (++Steps > kMaxProofSteps ||
+        Depth > limits::ir::kMedStackAlignmentResolveDepthLimit ||
+        Value.Size != TRI.PointerSize ||
+        (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp))
+      return std::nullopt;
+    if (const auto Exact = resolve(Value, Depth))
+      return EntryStackOffsetRange{*Exact, *Exact};
+    const auto Found = Definitions.find(key(Value));
+    if (Found == Definitions.end() || Found->second.Ambiguous ||
+        !RangeActive.insert(key(Value)).second)
+      return std::nullopt;
+    const auto Clear = llvm::scope_exit([&] { RangeActive.erase(key(Value)); });
+    const auto &Definition = Found->second;
+    if (Definition.Join) {
+      bool HasCycle = false;
+      const auto Boundaries = phiComponentBoundaries(Value, Depth, HasCycle);
+      if (!Boundaries)
+        return std::nullopt;
+      std::optional<EntryStackOffsetRange> Result;
+      for (const auto &[Boundary, AtDepth] : *Boundaries) {
+        const auto Incoming = resolveRange(Boundary, AtDepth);
+        if (!Incoming)
+          return std::nullopt;
+        if (!Result)
+          Result = Incoming;
+        else {
+          Result->Min = std::min(Result->Min, Incoming->Min);
+          Result->Max = std::max(Result->Max, Incoming->Max);
+        }
+      }
+      return Result;
+    }
+    const MedOp *Op = Definition.Op;
+    if (!Op || !sameOccurrence(Op->Output, Value) || Op->Dead ||
+        Op->MemoryOrdering != NdMemoryOrdering::None ||
+        Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        !Op->IntrinsicOutputs.empty())
+      return std::nullopt;
+    if (Op->Opcode == NdOp::COPY && Op->NumInputs == 1)
+      return resolveRange(Op->Inputs[0], Depth + 1);
+    if ((Op->Opcode != NdOp::INT_ADD && Op->Opcode != NdOp::INT_SUB) ||
+        Op->NumInputs != 2)
+      return std::nullopt;
+    const bool Subtract = Op->Opcode == NdOp::INT_SUB;
+    const unsigned BaseIndex = !Subtract && Op->Inputs[0].isConst() ? 1 : 0;
+    const auto Base = resolveRange(Op->Inputs[BaseIndex], Depth + 1);
+    const MedVar &Delta = Op->Inputs[1 - BaseIndex];
+    if (!Base || Delta.Size != TRI.PointerSize)
+      return std::nullopt;
+    const auto Displacement = scalarRange(Delta, Depth + 1);
+    if (Steps > kMaxProofSteps || Displacement.getUnsignedMax().ugt(INT64_MAX))
+      return std::nullopt;
+    const int64_t Min = Displacement.getUnsignedMin().getZExtValue();
+    const int64_t Max = Displacement.getUnsignedMax().getZExtValue();
+    const auto Lower = safety::detail::checkedStackOffset(
+        Base->Min, Subtract ? Max : Min, Subtract);
+    const auto Upper = safety::detail::checkedStackOffset(
+        Base->Max, Subtract ? Min : Max, Subtract);
+    if (!Lower || !Upper || !fitsPointerOffset(*Lower) ||
+        !fitsPointerOffset(*Upper))
+      return std::nullopt;
+    return EntryStackOffsetRange{*Lower, *Upper};
+  }
+
   bool authenticatedEntryLiveIn(const MedVar &Value,
                                 ValueDefinition *Definition) {
     // Alignment rewrites can change the entry COPY prefix. Only read-only
@@ -263,6 +401,117 @@ private:
            Offset == static_cast<int64_t>(static_cast<int32_t>(Offset));
   }
 
+  /// A set of mutually dependent PHIs denotes one offset only when every
+  /// value entering the set proves that same offset. Proving one PHI at a
+  /// time cannot establish this invariant for overlapping loop backedges:
+  /// each nested proof can encounter another still-active PHI. Copies carry
+  /// the same value around these cycles; other definitions remain boundaries
+  /// and retain resolve()'s semantics.
+  std::optional<std::vector<std::pair<MedVar, unsigned>>>
+  phiComponentBoundaries(const MedVar &Root, unsigned Depth, bool &HasCycle) {
+    std::set<Key> Visited, Active;
+    std::vector<std::pair<MedVar, unsigned>> Boundaries;
+    std::set<Key> Seeded;
+    std::map<Key, std::set<Key>> Users;
+    const Key RootKey = key(Root);
+    const auto Visit = [&](const auto &Self, const MedVar &Value,
+                           unsigned AtDepth,
+                           std::optional<Key> Parent) -> bool {
+      Deepest = std::max(Deepest, AtDepth);
+      if (++Steps > kMaxProofSteps ||
+          AtDepth > limits::ir::kMedStackAlignmentResolveDepthLimit ||
+          Value.Size != TRI.PointerSize ||
+          (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp))
+        return false;
+      const Key K = key(Value);
+      const auto Found = Definitions.find(K);
+      ValueDefinition *Definition =
+          Found == Definitions.end() ? nullptr : &Found->second;
+      if (Definition && Definition->Ambiguous)
+        return false;
+      const MedOp *Op = Definition ? Definition->Op : nullptr;
+      const bool EntryOrigin = !OnlySeededRoots && Value.Kind == MedVar::Reg &&
+                               Value.RegOff == TRI.StackPointer &&
+                               (authenticatedEntryLiveIn(Value, Definition) ||
+                                (Value.SSAVer == 0 && !Op));
+      const bool Copy =
+          Op && sameOccurrence(Op->Output, Value) && !Op->Dead &&
+          Op->Opcode == NdOp::COPY && Op->NumInputs == 1 &&
+          Op->Inputs[0].Size == Value.Size &&
+          Op->RegistrationRoot == MedOp::RegistrationRootKind::None &&
+          Op->MemoryOrdering == NdMemoryOrdering::None &&
+          Op->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Op->IntrinsicOutputs.empty();
+      if (!Definition || (!Definition->Join && !Copy) || Assumed.count(K) ||
+          Definition->ProvenOffset || EntryOrigin) {
+        Boundaries.emplace_back(Value, AtDepth);
+        if (Parent)
+          Seeded.insert(*Parent);
+        return true;
+      }
+      const PhiNode *Phi = Definition->Join;
+      if ((Phi && (!sameOccurrence(Phi->Output, Value) || Phi->Args.empty() ||
+                   (OnlySeededRoots && Phi->ExceptionalEntry))) ||
+          (Definition->ActiveContext == Assumed.size() + 1 && K != RootKey))
+        return false;
+      if (Parent)
+        Users[K].insert(*Parent);
+      if (Active.count(K)) {
+        HasCycle = true;
+        return true;
+      }
+      if (!Visited.insert(K).second)
+        return true;
+      Active.insert(K);
+      if (Phi) {
+        for (const auto &[Pred, Arg] : Phi->Args) {
+          (void)Pred;
+          if (!Self(Self, Arg, AtDepth + 1, K))
+            return false;
+        }
+      } else {
+        if (!Self(Self, Op->Inputs[0], AtDepth + 1, K))
+          return false;
+      }
+      Active.erase(K);
+      return true;
+    };
+    if (!Visit(Visit, Root, Depth, std::nullopt) || Boundaries.empty())
+      return std::nullopt;
+    // Every PHI in the reachable component must itself reach an outside
+    // origin. A separate unseeded cycle is still unknown even if another
+    // arm of the queried PHI has a valid stack origin.
+    std::vector<Key> Pending(Seeded.begin(), Seeded.end());
+    while (!Pending.empty()) {
+      const auto Current = Pending.back();
+      Pending.pop_back();
+      for (const auto &User : Users[Current]) {
+        if (++Steps > kMaxProofSteps)
+          return std::nullopt;
+        if (Seeded.insert(User).second)
+          Pending.push_back(User);
+      }
+    }
+    if (Seeded.size() != Visited.size())
+      return std::nullopt;
+    return Boundaries;
+  }
+
+  std::optional<int64_t> joinPhiComponent(const MedVar &Root, unsigned Depth) {
+    bool HasCycle = false;
+    const auto Boundaries = phiComponentBoundaries(Root, Depth, HasCycle);
+    if (!Boundaries || !HasCycle)
+      return std::nullopt;
+    std::optional<int64_t> Agreed;
+    for (const auto &[Value, AtDepth] : *Boundaries) {
+      const auto Offset = resolve(Value, AtDepth);
+      if (!Offset || (Agreed && *Agreed != *Offset))
+        return std::nullopt;
+      Agreed = Offset;
+    }
+    return Agreed;
+  }
+
   std::optional<int64_t> resolveJoin(const MedVar &Value,
                                      ValueDefinition &Definition,
                                      unsigned Depth) {
@@ -288,7 +537,13 @@ private:
     const size_t BeforeContext = ContextUses;
     const unsigned OuterDepth = Deepest;
     Deepest = Depth;
-    const auto Result = join(*Definition.Join, Depth);
+    auto Result = join(*Definition.Join, Depth);
+    if (!Result && ContextUses != BeforeContext && !JoiningComponent &&
+        Steps < kMaxProofSteps) {
+      JoiningComponent = true;
+      Result = joinPhiComponent(Value, Depth);
+      JoiningComponent = false;
+    }
     const unsigned InnerDepth = Deepest;
     Deepest = std::max(OuterDepth, InnerDepth);
     // A successful traversal that never reads a loop assumption or an active
@@ -430,10 +685,12 @@ private:
   // completed traversals retain the exact occurrence, work and depth proved.
   llvm::DenseMap<Key, ValueDefinition> Definitions;
   llvm::DenseMap<Key, CompletedProof> Completed;
+  std::set<Key> RangeActive;
   size_t ContextUses = 0;
   unsigned Deepest = 0;
   std::map<Key, int64_t> Assumed;
   bool CycleHit = false;
+  bool JoiningComponent = false;
   static constexpr size_t kMaxProofSteps =
       ::neverd::limits::ir::kMedStackAlignmentMaxProofSteps;
   size_t Steps = 0;
@@ -507,6 +764,20 @@ entryStackOffsets(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
   for (size_t I = 0; I < Values.size(); ++I)
     Offsets[I] = Proof.offset(Values[I]);
   return Offsets;
+}
+
+std::vector<std::optional<EntryStackOffsetRange>>
+entryStackOffsetRanges(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
+                       Arch Architecture, BinaryFormat Format,
+                       StackEntryKind Entry) {
+  std::vector<std::optional<EntryStackOffsetRange>> Ranges(Values.size());
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
+    return Ranges;
+  StackOffsetProof Proof(Func, Architecture, Format, Entry, true);
+  for (size_t I = 0; I < Values.size(); ++I)
+    Ranges[I] = Proof.range(Values[I]);
+  return Ranges;
 }
 
 std::vector<std::optional<int64_t>> entryStackOffsetsFromProvenDefinitions(

@@ -70,6 +70,156 @@ MedFunc frameWithEntrySP(Arch Architecture = Arch::ARM) {
   return Func;
 }
 
+TEST(MedStackAlignment, BoundedDynamicOffsetsAreNotExactOffsets) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      auto Func = frameWithEntrySP(Architecture);
+      const auto Initial = reg(1, Architecture);
+      const auto Allocated = reg(2, Architecture);
+      const auto Amount = temp(10, Architecture);
+      const auto Rounded = temp(11, Architecture);
+      const auto Aligned = temp(12, Architecture);
+      const auto Small = MedVar::makeUnspecified(4, Architecture);
+      auto &Ops = Func.Blocks.front().Ops;
+      Ops.push_back(op(NdOp::INT_SUB, Initial, reg(0, Architecture),
+                       MedVar::makeConst(64, 8)));
+      Ops.push_back(op(NdOp::INT_ZEXT, Amount, Small));
+      Ops.push_back(
+          op(NdOp::INT_ADD, Rounded, Amount, MedVar::makeConst(15, 8)));
+      Ops.push_back(op(NdOp::INT_AND, Aligned, Rounded,
+                       MedVar::makeConst(~uint64_t{15}, 8)));
+      Ops.push_back(op(NdOp::INT_SUB, Allocated, Initial, Aligned));
+      auto Bounds =
+          entryStackOffsetRanges(Func, {Allocated}, Architecture, Format);
+      ASSERT_TRUE(Bounds[0]);
+      EXPECT_LE(Bounds[0]->Min, -64 - int64_t{0x100000000});
+      EXPECT_GE(Bounds[0]->Min, -64 - int64_t{0x10000000E});
+      EXPECT_EQ(Bounds[0]->Max, -64);
+      EXPECT_FALSE(entryStackOffset(Func, Allocated, Architecture, Format));
+      // An unconstrained 64-bit amount can wrap to either side of the frame.
+      Ops[2] = op(NdOp::COPY, Amount, MedVar::makeUnspecified(8, Architecture));
+      EXPECT_FALSE(
+          entryStackOffsetRanges(Func, {Allocated}, Architecture, Format)[0]);
+    }
+}
+
+TEST(MedStackAlignment, ScaledDynamicAllocationsRetainMachineWidthBounds) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    const auto Width = getTargetRegInfo(Architecture).PointerSize;
+    for (uint64_t Factor : {uint64_t{3}, uint64_t{48}}) {
+      auto Func = frameWithEntrySP(Architecture);
+      const auto Amount = temp(10, Architecture);
+      const auto Scaled = temp(11, Architecture);
+      const auto Allocated = reg(1, Architecture);
+      auto &Ops = Func.Blocks.front().Ops;
+      Ops.push_back(
+          op(NdOp::INT_ZEXT, Amount, MedVar::makeUnspecified(1, Architecture)));
+      Ops.push_back(
+          op(NdOp::INT_MULT, Scaled, Amount, MedVar::makeConst(Factor, Width)));
+      Ops.push_back(op(NdOp::INT_SUB, Allocated, reg(0, Architecture), Scaled));
+      const auto Bounds = entryStackOffsetRanges(
+          Func, {Allocated}, Architecture, BinaryFormat::ELF);
+      ASSERT_TRUE(Bounds[0]);
+      // Compare against every possible input byte, independently of the
+      // interval arithmetic used by the proof.
+      for (int64_t Count = 0; Count <= UINT8_MAX; ++Count) {
+        const int64_t Offset = -Count * static_cast<int64_t>(Factor);
+        EXPECT_LE(Bounds[0]->Min, Offset);
+        EXPECT_GE(Bounds[0]->Max, Offset);
+      }
+      EXPECT_LE(Bounds[0]->Max, 0);
+      EXPECT_FALSE(
+          entryStackOffset(Func, Allocated, Architecture, BinaryFormat::ELF));
+      // Multiplication is modular, not an unbounded signed product: an
+      // unconstrained input may wrap to either side of the entry frame.
+      Ops[1] =
+          op(NdOp::COPY, Amount, MedVar::makeUnspecified(Width, Architecture));
+      EXPECT_FALSE(entryStackOffsetRanges(Func, {Allocated}, Architecture,
+                                          BinaryFormat::ELF)[0]);
+    }
+  }
+}
+
+TEST(MedStackAlignment, EveryPhiComponentNeedsItsOwnOutsideOrigin) {
+  for (bool Dynamic : {false, true})
+    for (bool Unseeded : {false, true}) {
+      auto Func = frameWithEntrySP(Arch::X64);
+      const auto Initial = reg(1, Arch::X64);
+      const auto A = reg(2, Arch::X64);
+      const auto B = reg(3, Arch::X64);
+      const auto C = reg(4, Arch::X64);
+      auto &Ops = Func.Blocks.front().Ops;
+      const auto Amount = temp(20, Arch::X64);
+      Ops.push_back(
+          op(NdOp::INT_ZEXT, Amount, MedVar::makeUnspecified(1, Arch::X64)));
+      Ops.push_back(op(NdOp::INT_SUB, Initial, reg(0, Arch::X64),
+                       Dynamic ? Amount : MedVar::makeConst(64, 8)));
+      MedBlock Loop;
+      Loop.Id = 1;
+      Loop.Phis = {{A, {{0, Initial}, {1, B}}},
+                   {B, {{1, C}}},
+                   {C, {{1, Unseeded ? B : A}}}};
+      Func.Blocks.push_back(std::move(Loop));
+      const auto Bounds =
+          entryStackOffsetRanges(Func, {A, B, C}, Arch::X64, BinaryFormat::ELF);
+      for (const auto &Range : Bounds) {
+        EXPECT_EQ(Range.has_value(), !Unseeded);
+        if (Range) {
+          EXPECT_EQ(Range->Min, Dynamic ? -255 : -64);
+          EXPECT_EQ(Range->Max, Dynamic ? 0 : -64);
+        }
+      }
+      if (Unseeded)
+        EXPECT_FALSE(entryStackOffset(Func, A, Arch::X64, BinaryFormat::ELF));
+    }
+}
+
+TEST(MedStackAlignment, CopiesPreserveLoopStackOriginsAndRanges) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM})
+    for (bool Dynamic : {false, true})
+      for (bool Unseeded : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(Dynamic);
+        SCOPED_TRACE(Unseeded);
+        auto Func = frameWithEntrySP(Architecture);
+        const auto Width = getTargetRegInfo(Architecture).PointerSize;
+        const auto Initial = reg(1, Architecture);
+        const auto LoopValue = reg(2, Architecture);
+        const auto Copy = reg(3, Architecture);
+        const auto Exit = reg(4, Architecture);
+        const auto Amount = temp(10, Architecture);
+        auto &Ops = Func.Blocks.front().Ops;
+        Ops.push_back(op(NdOp::INT_ZEXT, Amount,
+                         MedVar::makeUnspecified(1, Architecture)));
+        Ops.push_back(op(NdOp::INT_SUB, Initial, reg(0, Architecture),
+                         Dynamic ? Amount : MedVar::makeConst(64, Width)));
+        MedBlock Loop;
+        Loop.Id = 1;
+        Loop.Phis = {{LoopValue, {{0, Unseeded ? Copy : Initial}, {1, Copy}}},
+                     {Exit, {{0, Initial}, {1, Copy}}}};
+        Loop.Ops.push_back(op(NdOp::COPY, Copy, LoopValue));
+        Func.Blocks.push_back(std::move(Loop));
+        const auto Bounds = entryStackOffsetRanges(
+            Func, {Exit, Copy, LoopValue}, Architecture, BinaryFormat::ELF);
+        for (const auto &Range : Bounds) {
+          EXPECT_EQ(Range.has_value(), !Unseeded);
+          if (Range) {
+            EXPECT_EQ(Range->Min, Dynamic ? -255 : -64);
+            EXPECT_EQ(Range->Max, Dynamic ? 0 : -64);
+          }
+        }
+        EXPECT_EQ(entryStackOffset(Func, Exit, Architecture, BinaryFormat::ELF),
+                  !Dynamic && !Unseeded ? std::optional<int64_t>(-64)
+                                        : std::nullopt);
+        // A changing backedge cannot inherit the invariant of a copy cycle.
+        Func.Blocks.back().Ops.back() =
+            op(NdOp::INT_SUB, Copy, LoopValue, MedVar::makeConst(1, Width));
+        EXPECT_FALSE(entryStackOffsetRanges(Func, {Exit}, Architecture,
+                                            BinaryFormat::ELF)[0]);
+      }
+}
+
 TEST(MedStackAlignment, ProvenDefinitionsComposeOnlyWithinTheirQuery) {
   auto Func = frameWithEntrySP(Arch::X86);
   const auto Loaded = temp(2, Arch::X86);
@@ -850,7 +1000,7 @@ TEST(MedStackAlignment, BatchedQueriesRestoreStateAfterCyclesAndDepthRefusals) {
   }
 }
 
-TEST(MedStackAlignment, LoopInductionRechecksInteriorQueries) {
+TEST(MedStackAlignment, LoopAssumptionsDoNotBecomeIndependentProofs) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
     for (BinaryFormat Format :
@@ -868,12 +1018,15 @@ TEST(MedStackAlignment, LoopInductionRechecksInteriorQueries) {
       Loop.Phis.push_back(std::move(Anchored));
       Loop.Ops.push_back(op(NdOp::COPY, B, A));
       Func.Blocks.push_back(std::move(Loop));
-      // A's entry arm anchors an induction proof. Starting at its backedge
-      // must recheck B under that assumption, independently of query order.
+      // Proving A assumes its entry offset while checking B's backedge.
+      // B succeeds in that context, but a fresh query of B cannot establish
+      // an offset: A's backedge then reaches the still-active B. Reusing
+      // B's conditional success would change the proof's refusal boundary.
       EXPECT_EQ(entryStackOffset(Func, A, Architecture, Format), 0);
-      EXPECT_EQ(entryStackOffset(Func, B, Architecture, Format), 0);
+      EXPECT_EQ(entryStackOffset(Func, B, Architecture, Format), std::nullopt);
       std::vector<MedVar> Values{A, B, A, B};
-      std::vector<std::optional<int64_t>> Expected{0, 0, 0, 0};
+      std::vector<std::optional<int64_t>> Expected{0, std::nullopt, 0,
+                                                   std::nullopt};
       for (bool Reversed : {false, true}) {
         SCOPED_TRACE(Reversed);
         if (Reversed) {
@@ -883,78 +1036,79 @@ TEST(MedStackAlignment, LoopInductionRechecksInteriorQueries) {
         EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
                   Expected);
       }
-      // A conditional backedge value cannot become an independent proof
-      // when the complete induction step fails.
-      Func.Blocks[1].Ops[0] =
-          op(NdOp::INT_ADD, B, A,
-             MedVar::makeConst(1, getTargetRegInfo(Architecture).PointerSize));
-      for (bool Reversed : {false, true}) {
-        if (Reversed)
-          std::reverse(Values.begin(), Values.end());
-        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
-                  std::vector<std::optional<int64_t>>(Values.size()));
-      }
     }
   }
 }
 
-TEST(MedStackAlignment, BalancedPushGroupsKeepEveryLoopStackCoordinate) {
+TEST(MedStackAlignment, InterlockingPhiLoopsShareAllIncomingStackOrigins) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM})
     for (BinaryFormat Format :
          {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
-      for (bool Drifts : {false, true}) {
-        SCOPED_TRACE(testing::Message()
-                     << static_cast<int>(Architecture) << ":"
-                     << static_cast<int>(Format) << ":" << Drifts);
-        const unsigned Width = getTargetRegInfo(Architecture).PointerSize;
-        auto Func = frameWithEntrySP(Architecture);
-        Func.Blocks[0].Ops.push_back(op(NdOp::INT_SUB, reg(1, Architecture),
-                                        reg(0, Architecture),
-                                        MedVar::makeConst(256, Width)));
-        Func.Blocks[0].Succs = {1};
-        MedBlock Loop;
-        Loop.Id = 1;
-        Loop.StartAddr = 0x1010;
-        Loop.Preds = {0, 1};
-        Loop.Succs = {1};
-        MedVar Previous = reg(2, Architecture);
-        std::vector<MedVar> Values{Previous};
-        std::vector<std::optional<int64_t>> Expected{-256};
-        int Version = 3;
-        int64_t Offset = -256;
-        // The linked x64 fixture calls with four integer stack arguments,
-        // one floating argument, then five packed arguments and padding.
-        for (int Delta :
-             {-8, -8, -8, -8, 32, -8, -8, 16, -8, -8, -8, -8, -8, -8, 48}) {
-          const MedVar Next = reg(Version++, Architecture);
-          Loop.Ops.push_back(op(NdOp::INT_ADD, Next, Previous,
-                                MedVar::makeConst(Delta, Width)));
-          Previous = Next;
-          Offset += Delta;
-          Values.push_back(Next);
-          Expected.push_back(Offset);
-        }
-        PhiNode Join;
-        Join.Output = reg(2, Architecture);
-        Join.Args = {{0, reg(1, Architecture)}, {1, Previous}};
-        Loop.Phis.push_back(std::move(Join));
-        if (Drifts) {
-          Loop.Ops.back().Inputs[1] = MedVar::makeConst(49, Width);
-          Expected.assign(Values.size(), std::nullopt);
-        }
-        Func.Blocks.push_back(std::move(Loop));
-        for (bool Reversed : {false, true}) {
-          if (Reversed) {
-            std::reverse(Values.begin(), Values.end());
-            std::reverse(Expected.begin(), Expected.end());
+      for (bool Reversed : {false, true})
+        for (unsigned Case = 0; Case != 5; ++Case) {
+          SCOPED_TRACE(testing::Message() << static_cast<int>(Architecture)
+                                          << ":" << static_cast<int>(Format)
+                                          << ":" << Reversed << ":" << Case);
+          auto Func = frameWithEntrySP(Architecture);
+          const unsigned Width = getTargetRegInfo(Architecture).PointerSize;
+          const auto Entry = reg(0, Architecture);
+          const auto Initial = reg(1, Architecture);
+          const auto Restored = reg(2, Architecture);
+          const auto A = reg(3, Architecture);
+          const auto B = reg(4, Architecture);
+          const auto C = reg(5, Architecture);
+          const auto D = reg(6, Architecture);
+          auto &Ops = Func.Blocks[0].Ops;
+          Ops.push_back(
+              op(NdOp::INT_SUB, Initial, Entry, MedVar::makeConst(64, Width)));
+          Ops.push_back(op(NdOp::INT_SUB, Restored, Entry,
+                           MedVar::makeConst(Case == 1 ? 72 : 64, Width)));
+          if (Case == 2)
+            Ops.back().Inputs[0] = MedVar::makeUnspecified(Width, Architecture);
+          // Model the ordinary loop and the independently restored SEH arm:
+          // A = phi(initial, C), B = phi(A, restored, D), C = phi(B, D),
+          // D = phi(C, restored). Every loop header needs the same invariant.
+          const std::vector<std::pair<MedVar, std::vector<MedVar>>> Joins = {
+              {A, {Case == 3 ? D : Initial, C}},
+              {B, {A, Case == 3 ? C : Restored, D}},
+              {C, {B, D}},
+              {D, {C, Case == 3 ? A : Restored}}};
+          for (const auto &[Output, Inputs] : Joins) {
+            MedBlock Block;
+            Block.Id = Func.Blocks.size();
+            Block.StartAddr = 0x1000 + 16 * Block.Id;
+            PhiNode Phi;
+            Phi.Output = Output;
+            for (size_t I = 0; I < Inputs.size(); ++I)
+              Phi.Args.emplace_back(I, Inputs[I]);
+            if (Case == 4 && Output == D)
+              Phi.Args.back().second.Size /= 2;
+            Block.Phis.push_back(std::move(Phi));
+            Func.Blocks.push_back(std::move(Block));
           }
+          Func.Blocks.back().Ops.push_back(op(NdOp::INT_ADD,
+                                              temp(20, Architecture), C,
+                                              MedVar::makeConst(16, Width)));
+          if (Reversed)
+            std::reverse(Func.Blocks.begin() + 1, Func.Blocks.end());
+          const std::vector<MedVar> Values{
+              A, B, C, D, temp(20, Architecture), Entry, Initial};
+          const std::optional<int64_t> Stack =
+              Case ? std::nullopt : std::optional<int64_t>(-64);
+          const std::vector<std::optional<int64_t>> Expected{
+              Stack,
+              Stack,
+              Stack,
+              Stack,
+              Case ? std::nullopt : std::optional<int64_t>(-48),
+              0,
+              -64};
           EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
                     Expected);
           for (size_t I = 0; I < Values.size(); ++I)
             EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
                       Expected[I]);
         }
-      }
 }
 
 TEST(MedStackAlignment, ReusedJoinKeepsTheDepthOfItsNestedInputs) {
@@ -1154,6 +1308,113 @@ TEST(MedStackAlignment, ZeroMaskedValuesDoNotBecomeFrameAliases) {
       EXPECT_EQ(Ops.back().Inputs[1], Original.Inputs[1]);
     }
   }
+}
+
+TEST(MedStackAlignment, LoopInductionRechecksInteriorQueries) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      MedFunc Func = frameWithEntrySP(Architecture);
+      const MedVar A = temp(2, Architecture);
+      const MedVar B = temp(3, Architecture);
+      MedBlock Loop;
+      Loop.Id = 1;
+      Loop.StartAddr = 0x1010;
+      PhiNode Anchored;
+      Anchored.Output = A;
+      Anchored.Args = {{0, reg(0, Architecture)}, {1, B}};
+      Loop.Phis.push_back(std::move(Anchored));
+      Loop.Ops.push_back(op(NdOp::COPY, B, A));
+      Func.Blocks.push_back(std::move(Loop));
+      // A's entry arm anchors an induction proof. Starting at its backedge
+      // must recheck B under that assumption, independently of query order.
+      EXPECT_EQ(entryStackOffset(Func, A, Architecture, Format), 0);
+      EXPECT_EQ(entryStackOffset(Func, B, Architecture, Format), 0);
+      std::vector<MedVar> Values{A, B, A, B};
+      std::vector<std::optional<int64_t>> Expected{0, 0, 0, 0};
+      for (bool Reversed : {false, true}) {
+        SCOPED_TRACE(Reversed);
+        if (Reversed) {
+          std::reverse(Values.begin(), Values.end());
+          std::reverse(Expected.begin(), Expected.end());
+        }
+        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                  Expected);
+      }
+      // A conditional backedge value cannot become an independent proof
+      // when the complete induction step fails.
+      Func.Blocks[1].Ops[0] =
+          op(NdOp::INT_ADD, B, A,
+             MedVar::makeConst(1, getTargetRegInfo(Architecture).PointerSize));
+      for (bool Reversed : {false, true}) {
+        if (Reversed)
+          std::reverse(Values.begin(), Values.end());
+        EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                  std::vector<std::optional<int64_t>>(Values.size()));
+      }
+    }
+  }
+}
+
+TEST(MedStackAlignment, BalancedPushGroupsKeepEveryLoopStackCoordinate) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (bool Drifts : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << static_cast<int>(Architecture) << ":"
+                     << static_cast<int>(Format) << ":" << Drifts);
+        const unsigned Width = getTargetRegInfo(Architecture).PointerSize;
+        auto Func = frameWithEntrySP(Architecture);
+        Func.Blocks[0].Ops.push_back(op(NdOp::INT_SUB, reg(1, Architecture),
+                                        reg(0, Architecture),
+                                        MedVar::makeConst(256, Width)));
+        Func.Blocks[0].Succs = {1};
+        MedBlock Loop;
+        Loop.Id = 1;
+        Loop.StartAddr = 0x1010;
+        Loop.Preds = {0, 1};
+        Loop.Succs = {1};
+        MedVar Previous = reg(2, Architecture);
+        std::vector<MedVar> Values{Previous};
+        std::vector<std::optional<int64_t>> Expected{-256};
+        int Version = 3;
+        int64_t Offset = -256;
+        // The linked x64 fixture calls with four integer stack arguments,
+        // one floating argument, then five packed arguments and padding.
+        for (int Delta :
+             {-8, -8, -8, -8, 32, -8, -8, 16, -8, -8, -8, -8, -8, -8, 48}) {
+          const MedVar Next = reg(Version++, Architecture);
+          Loop.Ops.push_back(op(NdOp::INT_ADD, Next, Previous,
+                                MedVar::makeConst(Delta, Width)));
+          Previous = Next;
+          Offset += Delta;
+          Values.push_back(Next);
+          Expected.push_back(Offset);
+        }
+        PhiNode Join;
+        Join.Output = reg(2, Architecture);
+        Join.Args = {{0, reg(1, Architecture)}, {1, Previous}};
+        Loop.Phis.push_back(std::move(Join));
+        if (Drifts) {
+          Loop.Ops.back().Inputs[1] = MedVar::makeConst(49, Width);
+          Expected.assign(Values.size(), std::nullopt);
+        }
+        Func.Blocks.push_back(std::move(Loop));
+        for (bool Reversed : {false, true}) {
+          if (Reversed) {
+            std::reverse(Values.begin(), Values.end());
+            std::reverse(Expected.begin(), Expected.end());
+          }
+          EXPECT_EQ(entryStackOffsets(Func, Values, Architecture, Format),
+                    Expected);
+          for (size_t I = 0; I < Values.size(); ++I)
+            EXPECT_EQ(entryStackOffset(Func, Values[I], Architecture, Format),
+                      Expected[I]);
+        }
+      }
 }
 
 } // namespace

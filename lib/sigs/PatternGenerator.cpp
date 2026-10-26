@@ -6,6 +6,7 @@
 
 #include "neverd/sigs/PatternGenerator.h"
 
+#include "X86/X86DataReference.h"
 #include "X86/X86ImportReference.h"
 
 #include "neverd/loader/COFF/RTTI.h"
@@ -1150,7 +1151,19 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
           isX64AddressReferenceField(Sec.Contents.slice(Fn.Offset, Size),
                                      Field) &&
           readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) == 0;
-      if (!At && !AddressReference)
+      const auto DataField =
+          !At && Opts.EmitDataReferences &&
+                  (Opts.RequireReferences || Opts.RequireCaller ||
+                   Opts.CollisionEvidence) &&
+                  Machine == COFF::IMAGE_FILE_MACHINE_AMD64
+              ? x64DataReferenceField(Sec.Contents.slice(Fn.Offset, Size),
+                                      Field)
+              : std::nullopt;
+      const bool DataReference =
+          DataField &&
+          Rel.Type == COFF::IMAGE_REL_AMD64_REL32 + DataField->Bias &&
+          readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) == 0;
+      if (!At && !AddressReference && !DataReference)
         continue;
       Expected<COFFSymbolRef> TargetOrErr = Obj.getSymbol(Rel.Symbol);
       if (!TargetOrErr) {
@@ -1171,13 +1184,36 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
           (!hasCOFFFunctionType(*TargetOrErr) ||
            TargetOrErr->getSectionNumber() < COFF::IMAGE_SYM_UNDEFINED))
         continue;
-      if (AddressReference) {
+      bool IsData = false;
+      if (DataReference && !coff_loader::primaryVTableTypeName(*TargetName) &&
+          !TargetName->starts_with(COFFImportPointerPrefix) &&
+          TargetOrErr->getComplexType() == COFF::IMAGE_SYM_DTYPE_NULL &&
+          TargetOrErr->getStorageClass() == COFF::IMAGE_SYM_CLASS_EXTERNAL &&
+          TargetOrErr->getSectionNumber() >= COFF::IMAGE_SYM_UNDEFINED) {
+        // Defined data must belong to a readable non-code section. Static
+        // spellings have object-local scope and cannot bind across functions.
+        if (TargetOrErr->getSectionNumber() != COFF::IMAGE_SYM_UNDEFINED) {
+          auto TargetSection = Obj.getSection(TargetOrErr->getSectionNumber());
+          if (!TargetSection) {
+            consumeError(TargetSection.takeError());
+            continue;
+          }
+          if (((*TargetSection)->Characteristics & COFF::IMAGE_SCN_MEM_READ) ==
+                  0 ||
+              ((*TargetSection)->Characteristics & COFF::IMAGE_SCN_MEM_EXECUTE))
+            continue;
+        }
+        IsData = true;
+        At = Field;
+      } else if (AddressReference) {
         if (!coff_loader::primaryVTableTypeName(*TargetName) &&
             !(hasCOFFFunctionType(*TargetOrErr) &&
               TargetOrErr->getSectionNumber() >= COFF::IMAGE_SYM_UNDEFINED))
           continue;
         At = Field;
       }
+      if (!At)
+        continue;
       // Only a pointer symbol supplied by a COFF import can name the slot
       // of a memory-indirect call. A global function pointer is not an
       // import merely because its instruction has the same encoding.
@@ -1195,7 +1231,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
           (!Opts.CollisionEvidence &&
            llvm::is_contained(Fn.Names, *TargetName)))
         continue;
-      References.push_back({static_cast<uint32_t>(*At), TargetName->str()});
+      References.push_back(
+          {static_cast<uint32_t>(*At), TargetName->str(), IsData});
       // Where no object defines the symbol, the link resolves it to its
       // alternate name, which the branch then reaches instead.
       if (const auto It = Opts.AlternateNames.find(*TargetName);
@@ -1204,7 +1241,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
           if (isReferenceName(Alternate) &&
               (Opts.CollisionEvidence ||
                !llvm::is_contained(Fn.Names, StringRef(Alternate))))
-            References.push_back({static_cast<uint32_t>(*At), Alternate});
+            References.push_back(
+                {static_cast<uint32_t>(*At), Alternate, IsData});
     }
     if (!Supported) {
       ++Stats.UnsupportedRelocation;
@@ -1335,7 +1373,7 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
     OS << FieldSeparator << PublicNamePrefix << format(OffsetFormat, 0u)
        << FieldSeparator << Name;
   for (const FuncRef &Ref : References)
-    OS << FieldSeparator << ReferencePrefix
+    OS << FieldSeparator << (Ref.IsData ? DataReferencePrefix : ReferencePrefix)
        << format(OffsetFormat, static_cast<unsigned>(Ref.Offset))
        << FieldSeparator << Ref.Name;
 

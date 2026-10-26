@@ -53,7 +53,6 @@
 #include <QToolButton>
 #include <QWheelEvent>
 #include <QWindow>
-#include <algorithm>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <memory>
@@ -289,20 +288,39 @@ private slots:
     }
     // Measure painted columns: Qt adds its icon column after item padding,
     // so checking the style-sheet literal alone misses a double reservation.
-    const auto colorDistance = [](const QColor &left, const QColor &right) {
-      return std::max({qAbs(left.red() - right.red()),
-                       qAbs(left.green() - right.green()),
-                       qAbs(left.blue() - right.blue())});
-    };
-    const auto bounds = [&](QAction *action, const QColor &color, int fromX,
-                            int tolerance = 12) {
+    const auto bounds = [&](QAction *action, const QColor &color, int fromX) {
       const QRect row = menu.actionGeometry(action);
       QRect ink;
       for (int y = qRound(row.top() * dpr);
            y < qRound((row.bottom() + 1) * dpr); ++y)
         for (int x = fromX; x < capture.width(); ++x) {
           const auto pixel = capture.pixelColor(x, y);
-          if (colorDistance(pixel, color) < tolerance)
+          const auto background = Theme::instance().chrome("Menu");
+          const auto distance = [&](const QColor &reference) {
+            return qAbs(pixel.red() - reference.red()) +
+                   qAbs(pixel.green() - reference.green()) +
+                   qAbs(pixel.blue() - reference.blue());
+          };
+          // Antialiased glyphs need not contain the exact text color. Accept
+          // foreground/background blends with at least half ink coverage;
+          // other colors, such as a checked icon's border, are not text.
+          const auto textInk = [&] {
+            const int dr = color.red() - background.red();
+            const int dg = color.green() - background.green();
+            const int db = color.blue() - background.blue();
+            const int pr = pixel.red() - background.red();
+            const int pg = pixel.green() - background.green();
+            const int pb = pixel.blue() - background.blue();
+            const double coverage = double(pr * dr + pg * dg + pb * db) /
+                                    (dr * dr + dg * dg + db * db);
+            return coverage >= 0.5 && coverage <= 1.05 &&
+                   qAbs(pr - coverage * dr) < 12 &&
+                   qAbs(pg - coverage * dg) < 12 &&
+                   qAbs(pb - coverage * db) < 12;
+          };
+          const bool matches =
+              color == QColor(Qt::magenta) ? distance(color) < 12 : textInk();
+          if (matches)
             ink |= QRect(x, y, 1, 1);
         }
       return ink;
@@ -310,21 +328,14 @@ private slots:
     const QRect iconInk = bounds(withIcon, Qt::magenta, 0);
     QVERIFY(!iconInk.isEmpty());
     const auto foreground = Theme::instance().chrome("MenuText");
-    // Thin, vertically hinted glyphs need not contain a fully covered pixel.
-    // Count at least half foreground coverage while excluding the background;
-    // otherwise Linux FreeType can miss the M and measure a later letter.
-    const int textTolerance =
-        1 + colorDistance(foreground, Theme::instance().chrome("Menu")) / 2;
-    const QRect labelInk =
-        bounds(withIcon, foreground, iconInk.right() + 1, textTolerance);
+    const QRect labelInk = bounds(withIcon, foreground, iconInk.right() + 1);
     QVERIFY(!labelInk.isEmpty());
     const qreal gap = (labelInk.left() - iconInk.right() - 1) / dpr;
     qInfo() << "Menu icon-to-label gap" << gap << "DPR" << dpr
             << "icon physical bounds" << iconInk << "label bounds" << labelInk;
     QVERIFY(gap >= 6 && gap <= 10);
     for (auto *action : {plain, checked, checkedIcon, submenu->menuAction()}) {
-      const QRect label =
-          bounds(action, foreground, iconInk.right() + 1, textTolerance);
+      const QRect label = bounds(action, foreground, iconInk.right() + 1);
       QVERIFY(!label.isEmpty());
       QCOMPARE(label.left(), labelInk.left());
     }

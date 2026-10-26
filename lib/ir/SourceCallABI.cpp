@@ -1,3 +1,11 @@
+//===- SourceCallABI.cpp - Checked source call carriers -------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Places source call operands and verifies their original machine carriers.
+
 #include "neverd/ir/SourceCallABI.h"
 
 #include "neverd/ir/Limits.h"
@@ -65,7 +73,6 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
   if ((Architecture != Arch::X64 && Architecture != Arch::AArch64) ||
       (Format != BinaryFormat::COFF && Format != BinaryFormat::ELF &&
        Format != BinaryFormat::MachO) ||
-      (Format == BinaryFormat::COFF && Architecture != Arch::X64) ||
       !Signature.ReturnType ||
       (Signature.ReturnType->Kind != NdTypeKind::Void &&
        !scalar(Signature.ReturnType)) ||
@@ -74,7 +81,11 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
               kSourceCallABINeverdAssignAnalystCallABISignatureParametersSizeLimit)
     return refuse(
         Error, "Call-site types support scalar/pointer x64 and AArch64 C ABIs; "
-               "Windows ARM64 and aggregate results need separate ABI support");
+               "aggregate results need separate ABI support");
+  if (Format == BinaryFormat::COFF && Architecture == Arch::AArch64 &&
+      Hint.AnalystFixedCount >= 0)
+    return refuse(Error, "Windows ARM64 variadic call-site types need separate "
+                         "integer-register argument placement");
   std::vector<TypeRef> Types;
   for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
     const auto &T = Signature.Parameters[I].Type;
@@ -207,14 +218,25 @@ bool neverd::sourceCallStackArgumentsDefined(const LowFunc &Function,
                                              const SourceCallTypeHint &Hint,
                                              Arch Architecture, int64_t Bias,
                                              std::string &Error) {
+  if (Hint.AnalystSite)
+    return sourceCallStackArgumentsDefined(Function, Hint, *Hint.AnalystSite,
+                                           Architecture, Bias, Error);
+  for (const auto &Parameter : Hint.Signature.Parameters)
+    if (Parameter.Location.Kind == SourceABICarrierKind::Stack)
+      return refuse(Error,
+                    "The stack arguments have no original call occurrence");
+  return true;
+}
+
+bool neverd::sourceCallStackArgumentsDefined(
+    const LowFunc &Function, const SourceCallTypeHint &Hint,
+    const SourceCallOccurrenceKey &OriginalSite, Arch Architecture,
+    int64_t Bias, std::string &Error) {
   bool HasStack = false;
   for (const auto &P : Hint.Signature.Parameters)
     HasStack |= P.Location.Kind == SourceABICarrierKind::Stack;
   if (!HasStack)
     return true;
-  if (!Hint.AnalystSite)
-    return refuse(Error,
-                  "The stack arguments have no original call occurrence");
   using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
   auto key = [](const NdVar &V) { return Key{V.Space, V.Offset, V.Size}; };
   const auto SP = NdVar::reg(getTargetRegInfo(Architecture).StackPointer, 8);
@@ -234,7 +256,7 @@ bool neverd::sourceCallStackArgumentsDefined(const LowFunc &Function,
         return refuse(Error,
                       "The outgoing stack argument proof exceeded its budget");
       if (const auto Site = sourceCallOccurrenceKey(Op);
-          Site && *Site == *Hint.AnalystSite) {
+          Site && *Site == OriginalSite) {
         const auto CurrentSP = address(SP);
         if (!CurrentSP)
           return refuse(Error, "The call's stack pointer is not a complete "

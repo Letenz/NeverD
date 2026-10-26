@@ -238,6 +238,54 @@ TEST(HighCSourceCalls, UserAndIndirectCalleesKeepOpaqueUnionTags) {
   }
 }
 
+TEST(HighCSourceCalls, PortableDeclarationsOwnObjectPointerConversions) {
+  class CalleeDebug final : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x2000)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.Name = "read_mask";
+      Function.ReturnType = NdType::makeInt(4);
+      auto Integer = NdType::makeInt(4, false);
+      Integer->SourceName =
+          "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == 4, "
+          "(unsigned long)0, (uint32_t)0))";
+      Function.Params = {{"mask", NdType::makePtr(Integer)}};
+      Function.PrototypeFromHeader = true;
+      Function.PortablePrototypeDeclaration =
+          "int read_mask(__typeof__(__builtin_choose_expr("
+          "sizeof(unsigned long) == 4, (unsigned long)0, (uint32_t)0)) *mask)";
+      return Function;
+    }
+    bool hasInfo() const override { return true; }
+  } Debug;
+  const auto Pointer = NdType::makePtr(NdType::makeInt(4, false));
+  auto Call = HighExpr::makeCall("read_mask", 0x2000, {parameter(0, Pointer)});
+  Call->Type = NdType::makeInt(4);
+  const auto Caller = returning("use_mask", Call, {Pointer});
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Caller}, OS, Options, &Debug));
+  EXPECT_NE(Source.find("read_mask((void*)arg0)"), std::string::npos) << Source;
+  // LLP64 keeps unsigned long and uint32_t distinct even though both have
+  // four bytes. The native LP64 compile also checks the declaration's other
+  // branch, and execution verifies the original address reaches the callee.
+  source_call_execution_test::checkSyntax(
+      Source, {"--target=x86_64-w64-windows-gnu",
+               "-Werror=incompatible-pointer-types"});
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
+int read_mask(uint32_t *mask) { return *mask == 0x1234; }
+int main(void) { uint32_t mask = 0x1234; return use_mask(&mask) != 1; }
+)",
+                  {Optimization, "-Werror=incompatible-pointer-types"});
+}
+
 TEST(HighCSourceCalls, UnnamedFixedParametersShareDeclarationAndBodyNames) {
   const auto Word = NdType::makeInt(8, false);
   for (bool Collision : {false, true}) {

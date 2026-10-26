@@ -12,7 +12,7 @@
 ///   - CRC16 checksum over trailing bytes for verification
 ///   - One or more function name associations with offsets; several names
 ///     at one offset are aliases, the linkage names one routine has
-///   - Optionally, the routines the function branches to directly
+///   - Optionally, relocated code, import, RTTI or external-data references
 ///
 /// The current loader accepts the text representation of these records.  A
 /// PatternModule is one record as a value; a StoredModule is the same record
@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -54,7 +55,12 @@ struct PatternByte {
 
 struct FuncRef {
   uint32_t Offset = 0;
+  bool IsData = false;
   std::string Name;
+
+  FuncRef() = default;
+  FuncRef(uint32_t Offset, std::string Name, bool IsData = false)
+      : Offset(Offset), IsData(IsData), Name(std::move(Name)) {}
 };
 
 struct PatternModule {
@@ -99,16 +105,24 @@ struct PatternModule {
   /// A COFF x64 RIP-relative LEA can reference a primary MSVC vftable by its
   /// exact `??_7...6B@` linkage name. The loader validates RTTI to compare
   /// the mangled type; unsupported or incomplete metadata remains unknown.
+  /// `&offset name` explicitly names external data, never a function. Only
+  /// complete contextual records may contain it. The source instruction and
+  /// independently frozen full-function anchors must agree on its storage.
   std::vector<FuncRef> References;
 
   std::vector<PatternByte> TailBytes;
 };
 
 /// A name a StoredModule gives an offset: one of its public names, or a
-/// routine it references.
+/// routine or external data it references. Public names are never data.
 struct StoredName {
   uint32_t Offset = 0;
+  bool IsData = false;
   std::string_view Name;
+
+  StoredName() = default;
+  StoredName(uint32_t Offset, std::string_view Name, bool IsData = false)
+      : Offset(Offset), IsData(IsData), Name(Name) {}
 };
 
 /// A PatternModule packed for a large signature set.

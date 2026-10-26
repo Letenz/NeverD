@@ -1,8 +1,16 @@
 **Languages**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`NeverDLLVMCValueTests` は独立した Windows x64 ABI 関数への可変引数呼び出しを O0/O2 と両型保持設定でコンパイルして実行します。ネイティブ x64 で va_arg による値を検証し、他のアーキテクチャでは明示的にスキップします。
+
 [← ドキュメント索引](README.md)
 
 # NeverD のテスト
+
+## 入口スタック値のソース復元
+
+`NeverDSourceEntryBindingTests` は x64/ARM64、PE/ELF、HighC/LLVMC の入口スタック引数をコンパイルして実行します。完全なモジュール、呼び出し元だけの選択、明示的な浮動小数点ビット転送、キャッシュ再利用とリセットを検証します。不完全な書き込み、狭い読み取り、フレームアドレスの逸出、未定義入力を拒否する対照を含みます。独立した呼び出し先定義で固定宣言を確認します。ホスト実行はネイティブ Windows ARM64 ドライバーの検証ではありません。 RBP と x29/x30 の復元済みフレームも検証します。保存バイトの上書き、SP だけを戻して RBP を変更した場合、戻り先アドレスの引数化は拒否し、ELF と Windows の保存レジスターの違いも確認します。
+
+既知のレジスタ呼び出しを x64/ARM64 PE/ELF の両 C 経路で、全体と呼び出し元のみの選択について実行します。元の LowIR は間接呼び出しのままです。部分書き込み、不透明な効果、一時値の再利用、メモリスロット、予算超過を拒否するテストも含みます。
 
 `PEFunctionAddresses.*` はスタックフレームのない x64 PE リーフ、所有関係、命令境界、拒否する接頭辞と狭いオペランド、出口、キャンセル、1/2/4/16 ワーカーの一致を検証します。シグネチャテストは全16条件の rel32 の正負変位、明示的な入口範囲、ソース再配置制約を扱います。Python テストは各単一位置条件がすべての元の競合宣言を区別し、代替名と共同で必要な位置を保持して既存宣言を重複させないことを確認します。
 
@@ -2181,3 +2189,7 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`NeverDSourceCallABITests` は Windows ARM64 の混合レジスター、幅、レジスター枯渇、スタック位置と可変引数拒否を確認する。`NeverDWorkerCallSiteTypes` は ARM64 PE の整数、double、ポインター呼び出しを両 C 経路で復元し、独立した C 関数と O0/O2 で実行する。拒否された編集で解析スナップショットが変わらないことも確認する。Windows ARM64 ネイティブ実行の検証ではない。
+
+worker の回帰には、18 個のレジスター／スタック混合引数、浮動小数点の戻り値、半分しか書かれていないスタック引数の拒否も含む。

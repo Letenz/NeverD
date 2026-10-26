@@ -430,3 +430,29 @@ TEST(PatternParserReferences, CallerContextCannotBecomeAnOrdinaryPattern) {
       llvm::consumeError(Bad.takeError());
   }
 }
+
+TEST(PatternParserReferences, DataKindsSurvivePackingAndRejectMixedSites) {
+  const std::string Line =
+      "488D05........E8........C3 00 0000 000D !refs :0000 wrapper "
+      "&0003 global &0003 alias ^0008 callee";
+  auto Mod = PatternParser::parseLine(Line);
+  ASSERT_TRUE(bool(Mod)) << llvm::toString(Mod.takeError());
+  ASSERT_EQ(Mod->References.size(), 3u);
+  EXPECT_TRUE(Mod->References[0].IsData);
+  EXPECT_TRUE(Mod->References[1].IsData);
+  EXPECT_FALSE(Mod->References[2].IsData);
+  auto Packed = PatternParser::parseText(Line);
+  ASSERT_TRUE(bool(Packed)) << llvm::toString(Packed.takeError());
+  for (const char *Bad :
+       {"488D05........C3 00 0000 0008 :0000 a &0003 global",
+        "488D05........C3 00 0000 0008 !refs :0000 a &0003 global ^0003 callee",
+        "488D05........C3 00 0000 0008 !caller :0000 a ^0003 callee &0003 "
+        "global",
+        "488D05........C3 00 0000 0008 !refs :0000 a &0003 &0004 global",
+        "488D05........C3 00 0000 0009 !refs :0000 a &0003 global"}) {
+    auto Result = PatternParser::parseLine(Bad);
+    EXPECT_FALSE(bool(Result)) << Bad;
+    if (!Result)
+      llvm::consumeError(Result.takeError());
+  }
+}

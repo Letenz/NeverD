@@ -16,6 +16,7 @@
 #include "../UnalignedMemory.h"
 #include "../render/X86/X86APXAtomic.h"
 #include "../render/X86/X86AmxState.h"
+#include "../render/X86/X86AtomicExchange.h"
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86FPStateHelpers.h"
@@ -80,6 +81,25 @@
 namespace neverd {
 
 namespace {
+bool needsCallSiteCType(const llvm::CallBase &Call) {
+  const auto *Declared = llvm::dyn_cast<llvm::Function>(
+      Call.getCalledOperand()->stripPointerCasts());
+  return Declared && (Declared->getFunctionType() != Call.getFunctionType() ||
+                      Declared->getCallingConv() != Call.getCallingConv());
+}
+
+std::string retainCallSiteCType(const llvm::CallBase &Call,
+                                llvm::StringRef Type, std::string Cast) {
+  if (!needsCallSiteCType(Call))
+    return Cast;
+  // Clang can lower a directly cast function designator using its original
+  // declaration's non-variadic ABI, dropping Windows x64's floating GPR copy.
+  // A scalar compound literal supplies a value of the call's own pointer
+  // type. It evaluates the target once, preserves the symbol declaration and
+  // needs no volatile barrier; optimized C can still make a direct call.
+  return "((" + Type.str() + "){" + Cast + "})";
+}
+
 /// ` /* brk #0x3E8 */` for a call or fence that carries the instruction it
 /// was lifted from, where its C leaves out that instruction's operand.
 std::string instructionComment(const llvm::Instruction &I) {
@@ -2194,7 +2214,9 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
           std::string Value =
               ParamName != ValNames.end()
                   ? ParamName->second
-                  : integerCallStoredText(SI->getValueOperand());
+                  : integerCallStoredText(SI->getValueOperand(),
+                                          Member->Type && Member->Type->Kind ==
+                                                              NdTypeKind::Int);
           // A constant stored to an enumeration names its enumerator.
           if (const auto *Constant =
                   llvm::dyn_cast<llvm::ConstantInt>(SI->getValueOperand());
@@ -2300,8 +2322,9 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         if (llvm::StringRef(Member->Text).ends_with(".m_pszData") &&
             isResultParamValue(Stored))
           return;
-        std::string StoredText =
-            integerCallStoredText(Stored, /*AsInteger=*/FrameRecord);
+        std::string StoredText = integerCallStoredText(
+            Stored, FrameRecord || (Member->Type &&
+                                    Member->Type->Kind == NdTypeKind::Int));
         if (Size >= 16 && Member->Type &&
             Member->Type->Kind == NdTypeKind::Struct &&
             !Member->Type->SourceName.empty()) {
@@ -3105,8 +3128,11 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
               AllocaImmediates.clear();
               AllocaLastValues.clear();
             }
-            if (ReferencedBlocks.count(&RegionBB))
-              OS << blockLabel(&RegionBB) << ":\n";
+            // This block still owns incoming edges when its final jump is
+            // replaced by the structured region's fallthrough. Later nested
+            // regions can discover a goto that the reference scan predicted
+            // would inline, so retain its position just like a full block.
+            writeBlockLabel(RegionBB);
             for (llvm::Instruction &RegionInst :
                  *const_cast<llvm::BasicBlock *>(&RegionBB)) {
               if (&RegionInst == RegionBB.getTerminator() ||
@@ -4354,6 +4380,11 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return true;
   }
   if (IID == llvm::Intrinsic::localaddress) {
+    if (!SEHParentFrameName.empty()) {
+      emitIndent(Indent);
+      OS << getName(&Call) << " = " << SEHParentFrameName << ";\n";
+      return true;
+    }
     // Keep the target-specific LLVM intrinsic: it can select SP, FP, or a base
     // pointer depending on stack realignment. __builtin_frame_address differs.
     const std::string IntrinsicName = freshVar("llvm_localaddress");
@@ -5316,6 +5347,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     OS << *Atomic;
     return true;
   }
+  if (const auto Plan = x86AtomicExchangeCallPlan(Opts.TheArch, Call)) {
+    emitIndent(Indent);
+    if (ResultLive)
+      OS << Name << " = ";
+    OS << renderX86AtomicExchange(*Plan, ArgStrs.at(0), ArgStrs.at(1)) << ";\n";
+    return true;
+  }
   if (auto BoundedLeaf = renderX86BoundedLeafCall(Opts.TheArch, Call, Name,
                                                   ResultLive, ArgStrs)) {
     emitIndent(Indent);
@@ -5679,7 +5717,9 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     Type = declarationToC(cDisplayType(Hint->Signature.ReturnType),
                           "(" + Convention + "*)(" + Params + ")");
   }
-  return "((" + Type + ")(" + valueStr(Call.getCalledOperand()) + "))";
+  return retainCallSiteCType(Call, Type,
+                             "((" + Type + ")(" +
+                                 valueStr(Call.getCalledOperand()) + "))");
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
@@ -5720,10 +5760,10 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   if (scalarIntegerMinMax(Call) || scalarIntegerSaturation(Call)) {
     // An actual function captures each argument once, including when the
     // intrinsic itself is inlined into another rendered expression.
-    const std::string Expr = functionIdentifier(*Call.getCalledFunction()) +
-                             "(" + callArgStr(Call.getArgOperand(0), Call, 0) +
-                             ", " + callArgStr(Call.getArgOperand(1), Call, 1) +
-                             ")";
+    const std::string Expr =
+        functionIdentifier(*Call.getCalledFunction()) + "(" +
+        integerPointerOperandStr(Call.getArgOperand(0), &Call, 0) + ", " +
+        integerPointerOperandStr(Call.getArgOperand(1), &Call, 1) + ")";
     RenderingCalls.pop_back();
     return Expr;
   }
@@ -5761,7 +5801,9 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   }
 
   std::string CalleeName;
-  if (auto *Callee = Call.getCalledFunction()) {
+  if (needsCallSiteCType(Call)) {
+    CalleeName = preservedIndirectCalleeStr(Call);
+  } else if (auto *Callee = Call.getCalledFunction()) {
     const std::string RawCalleeName = Callee->getName().str();
     const char *CN = llvmIntrinsicToCName(RawCalleeName.c_str());
     if (CN)
@@ -5783,8 +5825,9 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
           Callee = Cast->getOperand(0);
         Target = "(" + valueStr(Callee) + ")";
       }
-      CalleeName = "((" + indirectCalleeType(Call, /*Strict=*/false) + ")" +
-                   Target + ")";
+      const auto Type = indirectCalleeType(Call, /*Strict=*/false);
+      CalleeName =
+          retainCallSiteCType(Call, Type, "((" + Type + ")" + Target + ")");
     }
   }
   if (Call.getCalledFunction() &&
@@ -7071,8 +7114,7 @@ void LLVMCWriter::writeInvertedFalseSkip(const llvm::BasicBlock *From,
     }
     emitIndent(Indent);
     OS << "} else {\n";
-    if (ReferencedBlocks.count(SelDef))
-      OS << blockLabel(SelDef) << ":\n";
+    writeBlockLabel(*SelDef);
     WriteArm(SelDef, Indent + 1);
     emitIndent(Indent);
     OS << "}\n";
@@ -7789,9 +7831,9 @@ std::string LLVMCWriter::windowsEHFilterExpr(const llvm::CatchSwitchInst &CS) {
     std::string Args = "GetExceptionInformation()";
     if (Fn->arg_size() == 2 && Fn->getArg(0)->getType()->isPointerTy() &&
         Fn->getArg(1)->getType()->isPointerTy()) {
-      if (SEHFilterFrameName.empty())
-        SEHFilterFrameName = freshVar("seh_parent_frame");
-      Args += ", " + SEHFilterFrameName;
+      if (SEHParentFrameName.empty())
+        SEHParentFrameName = freshVar("seh_parent_frame");
+      Args += ", " + SEHParentFrameName;
     } else if (Fn->arg_size() != 1 ||
                !Fn->getArg(0)->getType()->isPointerTy()) {
       throw std::runtime_error("unsupported Windows SEH filter source ABI");

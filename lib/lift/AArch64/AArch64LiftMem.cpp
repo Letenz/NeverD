@@ -24,11 +24,14 @@ namespace neverd {
 bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
                             const cs_aarch64 &ARM64) {
   if (Insn->size == kAddressMemoryWordBytes) {
-    // Immediate raw contracts also exist, but automatic adoption still needs
-    // exact image-address occurrences and the original SP environment.
+    // GPR-based single accesses retain their encoded displacement and access
+    // EL. Immediate SP accesses still belong to the frame model until that
+    // model can supply the original architectural SP environment.
     if (const auto Instruction =
             aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes));
-        Instruction && Instruction->hasRegisterIndex()) {
+        Instruction &&
+        (Instruction->hasRegisterIndex() ||
+         (PreserveImmediateMemory && !Instruction->stackBase()))) {
       // Preserve the raw index: the machine instruction owns its scale and
       // AddressAdd's access-EL check. Reading inputs before publishing
       // the result also retains source/destination aliases.

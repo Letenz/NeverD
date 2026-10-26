@@ -489,7 +489,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
             view->showFunction(*function);
       });
     }
-    if (event->type() == QEvent::Hide)
+    // Changing tabs preserves a completed document's exact instruction.
+    // cancel() also clears that selection, so only stop an active request.
+    if (event->type() == QEvent::Hide && code->text()->loading())
       code->text()->cancel();
   }
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);
@@ -678,14 +680,19 @@ MainWindow::Dock *MainWindow::dockNamed(const QString &name) {
     return existing;
   if (name.startsWith(QLatin1String("disassembly-")))
     return disassemblyDock(name);
-  if (name == QLatin1String(PseudocodeDock)) {
-    codeView(CodeView::pseudocodeRepresentation());
-    return docks_.value(name);
-  }
-  if (name == QLatin1String(RepresentationDock)) {
-    codeView(QStringLiteral("med"));
-    return docks_.value(name);
-  }
+  for (const auto &prefix :
+       {QStringLiteral("pseudocode-"), QStringLiteral("ir-")})
+    if (name.startsWith(prefix)) {
+      const auto suffix = name.mid(prefix.size());
+      bool valid = false;
+      const int number = suffix.toInt(&valid);
+      if (suffix != QLatin1String("a") &&
+          (!valid || number < 1 || QString::number(number) != suffix))
+        return nullptr;
+      return codeDock(name, prefix == QLatin1String("pseudocode-")
+                                ? CodeView::pseudocodeRepresentation()
+                                : QStringLiteral("med"));
+    }
   if (name == QLatin1String(ExtensionsDock)) {
     extensions_ = new ExtensionsView(session_);
     extensions_->setLocationProvider([this] { return currentAddress(); });
@@ -949,16 +956,35 @@ MainWindow::Dock *MainWindow::chooserDock(ChooserKind kind) {
   return dock;
 }
 
-CodeView *MainWindow::codeView(const QString &representation) {
+CodeView *MainWindow::codeView(const QString &representation, bool newWindow) {
   const bool c = CodeView::isSource(representation);
-  const QString id = c ? PseudocodeDock : RepresentationDock;
+  QString id = c ? PseudocodeDock : RepresentationDock;
+  if (newWindow) {
+    // Closed windows can be reused; an open window keeps its own function,
+    // even when the new request decompiles that same function again.
+    const QString prefix =
+        c ? QStringLiteral("pseudocode-") : QStringLiteral("ir-");
+    int number = 1;
+    while (auto *dock = docks_.value(id)) {
+      if (!dock->isOpen())
+        break;
+      id = prefix + QString::number(number++);
+    }
+  }
+  return static_cast<CodeView *>(codeDock(id, representation)->widget());
+}
+
+MainWindow::Dock *MainWindow::codeDock(const QString &id,
+                                       const QString &representation) {
   if (auto *dock = docks_.value(id))
-    return static_cast<CodeView *>(dock->widget());
+    return dock;
+  const bool c = CodeView::isSource(representation);
   auto *view = new CodeView(session_, representation);
   actions_.attachViewShortcuts(view);
   auto *dock =
       makeDock(id, nullptr,
                c ? QStringLiteral("pseudocode") : QStringLiteral("ir"), view);
+  codeDocks_.append(dock);
   retitleCodeDocks();
   connect(view, &CodeView::representationChanged, this,
           &MainWindow::retitleCodeDocks);
@@ -999,26 +1025,24 @@ CodeView *MainWindow::codeView(const QString &representation) {
           &MainWindow::updateActions);
   connect(view->text(), &CodeText::statusChanged, this,
           &MainWindow::updateActions);
-  if (c)
+  if (id == QLatin1String(PseudocodeDock))
     pseudocode_ = view;
-  return view;
+  return dock;
 }
 
 void MainWindow::retitleCodeDocks() {
-  // Windows showing the same representation take letters in order, the
-  // pseudocode window first: Pseudocode-A, Pseudocode-B.
-  QSet<QString> taken;
-  for (const char *id : {PseudocodeDock, RepresentationDock}) {
-    auto *dock = docks_.value(QLatin1String(id));
-    auto *code = dock ? qobject_cast<CodeView *>(dock->widget()) : nullptr;
-    if (!code)
-      continue;
+  // Windows showing the same representation take letters in creation order.
+  QHash<QString, int> counts;
+  for (auto *dock : std::as_const(codeDocks_)) {
+    auto *code = static_cast<CodeView *>(dock->widget());
     const QString title = CodeView::titleOf(code->representation());
-    char letter = 'A';
-    while (taken.contains(title + QLatin1Char('-') + QLatin1Char(letter)))
-      ++letter;
-    const QString name = title + QLatin1Char('-') + QLatin1Char(letter);
-    taken.insert(name);
+    const int number = counts[title]++;
+    const QString name = title + QLatin1Char('-') +
+                         (number < 26 ? QString(QChar('A' + number))
+                                      : QString::number(number + 1));
+    dock->setIcon(icon(CodeView::isSource(code->representation())
+                           ? QStringLiteral("pseudocode")
+                           : QStringLiteral("ir")));
     // Pseudocode in the function's own language says which it chose.
     const QString language = code->chosenLanguage();
     dock->setTitle(language.isEmpty() ? name
@@ -1562,7 +1586,7 @@ void MainWindow::showLinkedAddress(Address address, LinkView view) {
   }
   case LinkView::Pseudocode:
     navigate(address);
-    showPseudocode(CodeView::pseudocodeRepresentation(), true);
+    showPseudocode(CodeView::pseudocodeRepresentation(), CodeOpen::Switch);
     return;
   case LinkView::Hexdump:
     navigate(address);
@@ -1782,11 +1806,9 @@ void MainWindow::synchronize(Address address, QObject *source) {
 
 QVector<CodeView *> MainWindow::visibleCodeViews() const {
   QVector<CodeView *> views;
-  for (const char *id : {PseudocodeDock, RepresentationDock})
-    if (auto *dock = docks_.value(QLatin1String(id)))
-      if (auto *view = qobject_cast<CodeView *>(dock->widget());
-          view && view->isVisible())
-        views.append(view);
+  for (auto *dock : codeDocks_)
+    if (auto *view = static_cast<CodeView *>(dock->widget()); view->isVisible())
+      views.append(view);
   return views;
 }
 
@@ -1974,7 +1996,7 @@ void MainWindow::connectActions() {
     } else {
       showPseudocode(tabCodeView_ ? tabCodeView_->representation()
                                   : CodeView::pseudocodeRepresentation(),
-                     true);
+                     CodeOpen::Switch);
     }
   });
   on(ActionId::JumpAnywhere, [this] { jumpAnywhere(); });
@@ -2047,13 +2069,18 @@ void MainWindow::connectActions() {
   actions_.action(ActionId::ViewFocusMode)->setCheckable(true);
   actions_.action(ActionId::ViewFocusMode)->setAutoRepeat(false);
   on(ActionId::ViewFocusMode, [this] { toggleFocusMode(); });
-  on(ActionId::ViewPseudocode,
-     [this] { showPseudocode(CodeView::pseudocodeRepresentation()); });
-  on(ActionId::ViewLLVMC, [this] { showPseudocode(QStringLiteral("llvmc")); });
-  on(ActionId::ViewLowIR, [this] { showPseudocode(QStringLiteral("low")); });
-  on(ActionId::ViewMedIR, [this] { showPseudocode(QStringLiteral("med")); });
-  on(ActionId::ViewHighIR, [this] { showPseudocode(QStringLiteral("high")); });
-  on(ActionId::ViewLLVMIR, [this] { showPseudocode(QStringLiteral("llvm")); });
+  on(ActionId::ViewPseudocode, [this] {
+    showPseudocode(CodeView::pseudocodeRepresentation(), CodeOpen::Generate);
+  });
+  for (const auto &[action, representation] :
+       {std::pair{ActionId::ViewLLVMC, "llvmc"},
+        {ActionId::ViewLowIR, "low"},
+        {ActionId::ViewMedIR, "med"},
+        {ActionId::ViewHighIR, "high"},
+        {ActionId::ViewLLVMIR, "llvm"}})
+    on(action, [this, representation] {
+      showPseudocode(QString::fromLatin1(representation), CodeOpen::Generate);
+    });
   on(ActionId::ViewHex, [this] {
     openDock(docks_.value(HexDock), true);
     hexActive_ = true;
@@ -3310,11 +3337,11 @@ void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
   showModelessDialog(dialog, source, &session_);
 }
 
-void MainWindow::showPseudocode(const QString &representation,
-                                bool selectAssemblyAddress) {
+void MainWindow::showPseudocode(const QString &representation, CodeOpen mode) {
+  auto *origin = mode == CodeOpen::Generate ? focusedCodeView() : nullptr;
   // A jump still loading decides the function, as it does for the graph:
   // decompile once it lands, not the function the cursor is leaving.
-  if (disassembly_ && disassembly_->listing()->jumpPending()) {
+  if (!origin && disassembly_ && disassembly_->listing()->jumpPending()) {
     if (!pseudocodeAfterJump_)
       connect(
           disassembly_->listing(), &ListingView::jumpSettled, this,
@@ -3323,23 +3350,37 @@ void MainWindow::showPseudocode(const QString &representation,
               showPseudocode(pending->first, pending->second);
           },
           Qt::SingleShotConnection);
-    pseudocodeAfterJump_ = std::pair{representation, selectAssemblyAddress};
+    pseudocodeAfterJump_ = std::pair{representation, mode};
     return;
   }
-  const auto function = currentFunction();
+  const auto function = origin ? origin->text()->function() : currentFunction();
   if (!function) {
     output_->append(tr("Place the cursor inside a function to decompile it."),
                     1);
     return;
   }
-  auto *view = selectAssemblyAddress && tabCodeView_ &&
+  const bool selectAssemblyAddress = mode == CodeOpen::Switch;
+  // F5 inside source refreshes that document, including its chosen language.
+  // A different representation opens alongside it; generation from assembly
+  // always gets an independent document. Tab alone reuses the last code pane.
+  const bool refreshOrigin =
+      origin && (origin->representation() == representation ||
+                 (representation == CodeView::pseudocodeRepresentation() &&
+                  CodeView::isSource(origin->representation())));
+  auto *view = refreshOrigin ? origin
+               : selectAssemblyAddress && tabCodeView_ &&
                        tabCodeView_->representation() == representation
                    ? tabCodeView_.data()
-                   : codeView(representation);
-  const bool c = view == pseudocode_;
-  auto *dock = docks_.value(c ? PseudocodeDock : RepresentationDock);
+                   : codeView(representation, mode == CodeOpen::Generate);
+  Dock *dock = nullptr;
+  for (auto *candidate : std::as_const(codeDocks_))
+    if (candidate->widget() == view) {
+      dock = candidate;
+      break;
+    }
   openCodeDock(dock);
-  view->setRepresentation(representation);
+  if (!refreshOrigin)
+    view->setRepresentation(representation);
   // Reusing the loaded function keeps its cursor and folding state. Tab is
   // the only ordinary cursor action that selects an address in the other pane.
   if (!selectAssemblyAddress || view->text()->function() != function ||
@@ -3357,8 +3398,31 @@ void MainWindow::openCodeDock(Dock *dock) {
   for (auto *candidate : std::as_const(docks_))
     if (candidate->widget() == disassembly_)
       assembly = candidate;
+  if (!dock->isOpen()) {
+    // Subsequent documents become tabs, so generating several functions does
+    // not divide the work area into ever narrower columns. Prefer the code
+    // window issuing the command, including a detached window.
+    Dock *anchor = nullptr;
+    auto *origin = focusedCodeView();
+    for (auto *candidate : std::as_const(codeDocks_))
+      if (candidate != dock && candidate->isOpen()) {
+        if (candidate->widget() == origin) {
+          anchor = candidate;
+          break;
+        }
+        if (!anchor && assembly &&
+            candidate->QWidget::window() == assembly->QWidget::window())
+          anchor = candidate;
+      }
+    if (anchor) {
+      anchor->addDockWidgetAsTab(dock);
+      openDock(dock, true);
+      return;
+    }
+  }
   if (assembly && assembly->isOpen() && assembly->QWidget::window() != this &&
-      (!dock->isOpen() || dock->QWidget::window() == this)) {
+      (!dock->isOpen() ||
+       (dock->QWidget::window() == this && !focusedCodeView()))) {
     // Keep analysis in the window the user is working in. Already open panes
     // in a separate floating workspace keep their deliberate placement.
     assembly->dockWidget()->addDockWidgetToContainingWindow(
@@ -4174,12 +4238,15 @@ void MainWindow::showCommandPalette() {
 }
 
 void MainWindow::exportCurrent(bool pseudocode) {
-  const auto function = currentFunction();
+  // The pseudocode keeps the language its window shows.
+  auto *pseudocodeView = pseudocode ? focusedCodeView() : nullptr;
+  const auto function =
+      pseudocodeView ? pseudocodeView->text()->function() : currentFunction();
   if (!function)
     return;
-  // The pseudocode keeps the language its window shows.
-  auto *pseudocodeView =
-      pseudocode ? codeView(CodeView::pseudocodeRepresentation()) : nullptr;
+  if (pseudocode && (!pseudocodeView ||
+                     !CodeView::isSource(pseudocodeView->representation())))
+    pseudocodeView = codeView(CodeView::pseudocodeRepresentation());
   const QString language =
       pseudocodeView ? pseudocodeView->text()->language() : QString();
   const QString suffix =
@@ -4283,7 +4350,7 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
       session_.setComment(*address, argument);
   } else if (command == QLatin1String("decompile")) {
     if (argument.isEmpty()) {
-      showPseudocode(CodeView::pseudocodeRepresentation());
+      showPseudocode(CodeView::pseudocodeRepresentation(), CodeOpen::Generate);
     } else {
       resolveExpression(
           session_, this, argument, currentAddress(),
@@ -4293,7 +4360,8 @@ void MainWindow::runCommand(const QString &command, const QString &argument) {
               return;
             }
             navigate(*value);
-            showPseudocode(CodeView::pseudocodeRepresentation());
+            showPseudocode(CodeView::pseudocodeRepresentation(),
+                           CodeOpen::Generate);
           });
     }
   } else if (command == QLatin1String("find")) {
@@ -5422,14 +5490,13 @@ void MainWindow::resetDesktop() {
 void MainWindow::closeTransientDocks(bool discardContents) {
   if (discardContents)
     leaveFocusMode();
-  for (const char *id : {PseudocodeDock, RepresentationDock})
-    if (auto *dock = docks_.value(id)) {
-      auto *text = static_cast<CodeView *>(dock->widget())->text();
-      if (discardContents || !text->function()) {
-        dock->forceClose();
-        text->clear();
-      }
+  for (auto *dock : std::as_const(codeDocks_)) {
+    auto *text = static_cast<CodeView *>(dock->widget())->text();
+    if (discardContents || !text->function()) {
+      dock->forceClose();
+      text->clear();
     }
+  }
   for (const auto kind :
        {ChooserKind::SearchResults, ChooserKind::CrossReferences})
     if (auto *view = choosers_.value(int(kind))) {

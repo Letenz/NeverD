@@ -1,8 +1,16 @@
 **언어**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`NeverDLLVMCValueTests`는 별도의 Windows x64 ABI 함수에 대한 가변 호출을 O0/O2와 두 형식 보존 설정으로 컴파일하고 실행합니다. 네이티브 x64에서 va_arg 값을 확인하며 다른 아키텍처는 명시적으로 건너뜁니다.
+
 [← 문서 인덱스](README.md)
 
 # NeverD 테스트
+
+## 진입 스택 값의 소스 복원
+
+`NeverDSourceEntryBindingTests`는 x64/ARM64, PE/ELF, HighC/LLVMC의 진입 스택 인수를 컴파일하고 실행합니다. 전체 모듈, 호출자만 선택, 명시적 부동소수점 비트 전달, 캐시 재사용과 초기화를 검증합니다. 부분 쓰기, 좁은 읽기, 프레임 주소 유출 및 정의되지 않은 입력을 거부하는 대조군과 독립 피호출 함수 정의를 통한 고정 선언 검증을 포함합니다. 호스트 실행은 네이티브 Windows ARM64 드라이버 검증이 아닙니다. RBP와 x29/x30 프레임 복원도 검증합니다. 저장 바이트 덮어쓰기, SP만 복원하고 RBP를 변경한 경우, 반환 주소를 매개변수로 사용하는 경우를 거부하며 ELF와 Windows의 보존 레지스터 차이도 확인합니다.
+
+알려진 레지스터 호출은 x64/ARM64 PE/ELF의 두 C 경로에서 전체 모듈과 호출자 선택으로 실행합니다. 원래 LowIR 간접 호출은 유지합니다. 부분 쓰기, 불투명 효과, 임시 값 재사용, 메모리 슬롯, 작업 한도 초과를 거부하는 검사도 포함합니다.
 
 `PEFunctionAddresses.*`는 스택 프레임 없는 x64 PE 리프, 소유 관계와 명령 경계, 거부되는 접두사와 좁은 피연산자, 종료 증명, 취소 및 1/2/4/16 작업자의 결과 일치를 검사합니다. 시그니처 테스트는 16개 조건부 rel32 형식의 양방향 변위, 명시적 진입점 범위와 원본 재배치 제약을 확인합니다. Python 테스트는 각 단일 위치 조건이 모든 원본 충돌 선언을 구별하며 대체 이름과 함께 필요한 위치를 보존하고 기존 선언을 중복하지 않는지 검사합니다.
 
@@ -2171,3 +2179,7 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`NeverDSourceCallABITests`는 Windows ARM64의 혼합 레지스터, 폭, 레지스터 소진, 스택 오프셋과 가변 인자 거부를 검사한다. `NeverDWorkerCallSiteTypes`는 ARM64 PE의 정수·double·포인터 호출을 두 C 경로로 복원하여 별도 C 함수와 O0/O2로 실행하고 거부된 편집 후 분석 스냅샷이 같은지 확인한다. Windows ARM64 네이티브 실행 검증은 아니다.
+
+worker 회귀에는 레지스터와 스택에 나뉜 인자 18개, 부동소수점 반환값, 절반만 기록된 스택 인자의 거부도 포함한다.

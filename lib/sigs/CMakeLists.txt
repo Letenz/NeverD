@@ -6,6 +6,7 @@ add_neverd_component_library(NeverDSigs
   PatternParser.cpp
   SignatureCache.cpp
   SignatureDB.cpp
+  SignatureDataContext.cpp
   SignatureMatcher.cpp
 
   LINK_COMPONENTS

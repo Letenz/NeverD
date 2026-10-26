@@ -528,6 +528,114 @@ void initializeAddress(NdOpEmulator &Emulator, uint64_t Offset, bool Address32,
                            IndexValue);
 }
 
+TEST(X86ImplicitAtomic, MemoryExchangeKeepsOneTransactionAndTheOldValue) {
+  const Flags Initial{true, false, true, false, true, false, true};
+  constexpr uint64_t Old = UINT64_C(0x8877665544332211);
+  constexpr uint64_t Source = UINT64_C(0xa5a55a5af0f00f0f);
+  for (Arch Architecture : {Arch::X64, Arch::X86})
+    for (unsigned Width : {1u, 2u, 4u, 8u}) {
+      if (Architecture == Arch::X86 && Width == 8)
+        continue;
+      for (bool Locked : {false, true})
+        for (bool AliasedAddress : {false, true}) {
+          SCOPED_TRACE(::testing::Message()
+                       << "arch=" << static_cast<unsigned>(Architecture)
+                       << " width=" << Width << " lock=" << Locked
+                       << " alias=" << AliasedAddress);
+          std::vector<uint8_t> Bytes;
+          if (Locked)
+            Bytes.push_back(0xf0);
+          if (Width == 2)
+            Bytes.push_back(0x66);
+          if (Width == 8)
+            Bytes.push_back(0x48);
+          Bytes.push_back(Width == 1 ? 0x86 : 0x87);
+          Bytes.push_back(AliasedAddress ? 0x00 : 0x10);
+          const auto Lifted = liftX64(Bytes, Architecture);
+          const LowOp *Atomic = nullptr;
+          for (const LowOp &Op : Lifted.Ops) {
+            EXPECT_NE(Op.Opcode, NdOp::LOAD);
+            EXPECT_NE(Op.Opcode, NdOp::STORE);
+            if (Op.Opcode == NdOp::ATOMIC_XCHG) {
+              ASSERT_EQ(Atomic, nullptr);
+              Atomic = &Op;
+            }
+          }
+          ASSERT_NE(Atomic, nullptr);
+          EXPECT_EQ(Atomic->MemoryOrdering,
+                    NdMemoryOrdering::SequentiallyConsistent);
+          EXPECT_EQ(Atomic->Output.Size, Width);
+          for (uint64_t Address : {0x5000ull, 0x5001ull}) {
+            BinaryImage Image =
+                makeImage(Address, Width,
+                          SegmentFlags::Readable | SegmentFlags::Writable, Old);
+            Image.Arch = Architecture;
+            Image.Bits =
+                Architecture == Arch::X64 ? Bitness::Bits64 : Bitness::Bits32;
+            NdOpEmulator Emulator(Image);
+            Emulator.setStrictMode(true);
+            Emulator.setLoadCollect(true);
+            Emulator.setRegister(x86reg::RAX, Address);
+            const uint64_t Input =
+                Architecture == Arch::X64 ? Source : uint32_t(Source);
+            Emulator.setRegister(x86reg::RDX, Input);
+            setFlags(Emulator, Initial);
+            ASSERT_EQ(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+            const uint64_t Before = AliasedAddress ? Address : Input;
+            const uint64_t Mask = widthMask(Width);
+            const uint64_t Expected =
+                Width == 4 ? uint32_t(Old) : (Before & ~Mask) | (Old & Mask);
+            EXPECT_EQ(Emulator.getRegister(AliasedAddress ? x86reg::RAX
+                                                          : x86reg::RDX),
+                      Expected);
+            EXPECT_EQ(probeMemory(Emulator, Address, Width), Before & Mask);
+            expectFlags(Emulator, Initial);
+            EXPECT_FALSE(Emulator.skips().any());
+          }
+        }
+    }
+}
+
+TEST(X86ImplicitAtomic, ExchangePreservesSegmentsAndCommitsAfterTheWrite) {
+  for (uint8_t Segment : {uint8_t(0x64), uint8_t(0x65)}) {
+    auto Lifted = liftX64({Segment, 0x48, 0x87, 0x10});
+    unsigned Transactions = 0;
+    for (const auto &Op : Lifted.Ops)
+      if (Op.Opcode == NdOp::ATOMIC_XCHG) {
+        EXPECT_EQ(Op.MemoryAddressSpace, Segment == 0x64
+                                             ? NdMemoryAddressSpace::X86FS
+                                             : NdMemoryAddressSpace::X86GS);
+        ++Transactions;
+      }
+    EXPECT_EQ(Transactions, 1u);
+  }
+  const Flags Initial{true, true, false, true, false, true, true};
+  const auto Lifted = liftX64({0x48, 0x87, 0x00});
+  auto Image = makeImage(0x5000, 8, SegmentFlags::Readable, 19);
+  NdOpEmulator Emulator(Image);
+  Emulator.setStrictMode(true);
+  Emulator.setRegister(x86reg::RAX, 0x5000);
+  setFlags(Emulator, Initial);
+  EXPECT_LT(Emulator.run(Lifted.Ops), Lifted.Ops.size());
+  EXPECT_EQ(Emulator.getRegister(x86reg::RAX), 0x5000u);
+  expectFlags(Emulator, Initial);
+  EXPECT_EQ(probeMemory(Emulator, 0x5000, 8), 19u);
+
+  for (auto [Byte, Register] : {std::pair{uint8_t(0x20), x86reg::RSP},
+                                std::pair{uint8_t(0x28), x86reg::RBP}}) {
+    const auto Swap = liftX64({0x87, Byte});
+    auto Writable = makeImage(
+        0x5000, 4, SegmentFlags::Readable | SegmentFlags::Writable, 37);
+    NdOpEmulator State(Writable);
+    State.setStrictMode(true);
+    State.setRegister(x86reg::RAX, 0x5000);
+    State.setRegister(Register, UINT64_C(0xdeadbeef00000017));
+    ASSERT_EQ(State.run(Swap.Ops), Swap.Ops.size());
+    EXPECT_EQ(State.getRegister(Register), 37u);
+    EXPECT_EQ(probeMemory(State, 0x5000, 4), 23u);
+  }
+}
+
 TEST(X86APXAtomic, LiftUsesMemoryOwningAtomicIntrinsics) {
   constexpr std::array<RaoOperation, 4> RaoOperations = {
       RaoOperation::Add, RaoOperation::And, RaoOperation::Or,

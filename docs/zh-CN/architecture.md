@@ -1,8 +1,16 @@
 **语言**: [English](../architecture.md) | [简体中文](architecture.md) | [繁體中文](../zh-TW/architecture.md) | [日本語](../ja/architecture.md) | [한국어](../ko/architecture.md) | [Français](../fr/architecture.md) | [Deutsch](../de/architecture.md) | [Español](../es/architecture.md) | [Italiano](../it/architecture.md) | [Русский](../ru/architecture.md) | [العربية](../ar/architecture.md)
 
+LLVM 调用类型与具名函数声明不同时，LLVM C 通过标量复合字面量取得转换后的函数指针，确保 C 编译器保留调用点 ABI，包括 Windows x64 可变参数浮点寄存器副本；无需修改原声明或添加 volatile 访问。
+
 [← 文档索引](README.md)
 
 # NeverD 架构
+
+## 入口栈值的源码恢复
+
+`PipelineIncomingStack` 为完整的 x64/ARM64 PE/ELF 叶函数推导有界的整数源码声明。共享入口栈证明确定偏移；调用者必须完整写入参数的所有字节，否则整体撤销推断。HighC 和 LLVMC 在 SSA 之前绑定同一声明，只重新转换受影响的函数。仅选调用者时复用现有被调函数读取器和缓存，并保留固定参数声明。这不推断一般 VM 状态、浮点类型或外部 ABI，也不改变机器提升、补丁和分析的契约。 `SourceFrameAnalysis` 必须依据原始 LowIR 的字节身份，证明 SP、保存的帧指针和链接寄存器均恢复，并遵循当前格式的保留寄存器规则。保存的寄存器值不能成为源码参数。
+
+确定的寄存器调用目标复用共享的有界 LowIR 标量查询。原始间接调用身份仍用于栈证明；只有目标、被调声明和输出栈字节一致后，源码 MedIR 才转成具名调用。加载、跨块值、调用破坏和不完整寄存器字节不能确定目标。
 
 对于已链接的 x64 PE，函数发现会在现有调用扫描中收集规范 RIP 相对 LEA 的代码地址。目标仍须通过独立入口归属检查和有界可调用出口证明；内部标签、续接点及不支持的函数体不会被纳入。发现与特征引用共用地址编码判定。COFF 条件 rel32 引用还要求源对象明确声明函数符号且重定位附加值为零。离线 `--single-reference-context` 对每个完整的单引用位置条件检查所有重叠原始来源声明，并保留该位置的全部备选名称。
 
@@ -1874,3 +1882,5 @@ core 通过完整寄存器和帧内溢出槽保留精确的根与偏移关系，
 `lib/patch` 负责字节准入、LLVM MC 编码、不可变输入快照、规范化覆盖记录及独占导出。SDK 根据实际输出的 C、规范 LowIR 来源和解码操作数证明源码目标；导航锚点本身不能授权修改。worker 将可选的 `patches.json` 纳入普通撤销重做，修改后使分析失效。签名名称读取原字节；被修改函数不再采用由身份推导的库语义。GUI、CLI 和 Python 共用这些 API。整函数替换仍使用 `neverd_patch_source`，已有字节补丁时必须先导出并重新打开。
 
 源码预览保留当前会话的加载设置、分析策略、用户元数据及独立拥有的签名证据快照。指令显示上限不限制完整区间校验，截断预览会明确提示。Thumb 补丁移除谓词时必须覆盖整个 IT 块。
+
+Windows ARM64 固定标量和指针调用点类型由 `SourceCallABI` 复用 `placeAAPCS64`：整数与浮点寄存器分别分配，溢出参数使用八字节栈槽。变参调用连命名浮点参数也使用整数载体，因此仍拒绝这类编辑；不扩展 ARM64EC、聚合参数或原生驱动执行能力。

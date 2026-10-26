@@ -130,11 +130,18 @@ public:
     bool hasCallerModules() const {
       return CallerStorage && !CallerStorage->empty();
     }
+    bool hasDataContext() const { return DataContext; }
+    llvm::ArrayRef<size_t> dataAnchorModules() const {
+      return DataAnchorStorage ? llvm::ArrayRef(*DataAnchorStorage)
+                               : llvm::ArrayRef<size_t>();
+    }
     llvm::ArrayRef<CallerEntry>
     callerModules(llvm::ArrayRef<StoredModule> Modules,
                   std::string_view Name) const;
 
   private:
+    bool DataContext = false;
+    std::shared_ptr<const std::vector<size_t>> DataAnchorStorage;
     std::shared_ptr<const std::vector<CallerEntry>> CallerStorage;
     /// Leaves view one immutable permutation instead of allocating per leaf.
     /// Copies retain its lifetime; rebuilding an index replaces only its own

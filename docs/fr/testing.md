@@ -1,8 +1,16 @@
 **Langues**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`NeverDLLVMCValueTests` compile et exécute un appel variadique converti avec une fonction Windows x64 ABI séparée, à O0/O2 et avec les deux réglages de conservation des types. Le lecteur va_arg vérifie la valeur sur x64 natif ; les autres architectures ignorent explicitement cette exécution.
+
 [← Index de la documentation](README.md)
 
 # Tester NeverD
+
+## Récupération des valeurs de pile à l’entrée
+
+`NeverDSourceEntryBindingTests` compile et exécute la matrice x64/ARM64, PE/ELF, HighC/LLVMC : modules complets, appelants sélectionnés, transport explicite des bits flottants, réutilisation et remise à zéro du cache. Les contrôles négatifs refusent les écritures partielles, lectures étroites, adresses de cadre échappées et entrées indéfinies. Des définitions indépendantes des appelés vérifient les déclarations fixes. Ces exécutions sur l’hôte ne qualifient pas les pilotes Windows ARM64 natifs. La matrice couvre les cadres RBP et x29/x30 équilibrés. Elle refuse les sauvegardes écrasées, RBP modifié malgré SP restauré et l’adresse de retour utilisée comme paramètre, et distingue les registres préservés d’ELF et de Windows.
+
+Les appels par registre connus sont exécutés dans les deux sorties C pour x64/ARM64 PE/ELF, en module complet et avec appelant seul. Le LowIR original reste indirect. Les contrôles refusent les écritures partielles périmées, effets opaques, temporaires réutilisés, cellules mémoire et budgets épuisés.
 
 `PEFunctionAddresses.*` vérifie les feuilles PE x64 sans cadre, la propriété et les limites des instructions, les préfixes et opérandes étroits refusés, les sorties, l’annulation et la parité avec 1/2/4/16 workers. Les tests de signatures couvrent les 16 conditions rel32 dans les deux sens, les entrées explicites et les contraintes de relocation source. Les tests Python préservent les alternatives et les sites conjointement nécessaires, vérifient chaque contre-exemple brut et évitent les doublons.
 
@@ -2296,3 +2304,7 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`NeverDSourceCallABITests` vérifie les banques mixtes, largeurs, dépassements de registres, offsets de pile et refus variadiques Windows ARM64. `NeverDWorkerCallSiteTypes` récupère un appel entier/double/pointeur depuis un PE ARM64 et exécute les deux sorties C avec une fonction C séparée à O0/O2 ; un refus doit préserver l’instantané d’analyse. Ces exécutions hôtes ne valident pas l’exécution native Windows ARM64.
+
+Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile, un retour flottant et le refus d’un argument de pile écrit seulement à moitié.

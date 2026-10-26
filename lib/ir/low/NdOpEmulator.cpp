@@ -841,16 +841,29 @@ bool NdOpEmulator::step(const LowOp &Op) {
   case NdOp::STORE:
     return executeStore(Op);
 
-  case NdOp::ATOMIC_XCHG:
-    // The constant-tracing emulator stores one host word per value and cannot
-    // represent the 128-bit exchanges this opcode exists for.  Stop instead
-    // of carrying stale memory or destination state past an observable RMW.
-    ++Skips.UnsupportedOps;
-    if (Op.Output.isReg() || Op.Output.isTemp()) {
-      Registers.erase(Op.Output.Offset);
-      WideRegisters.erase(Op.Output.Offset);
+  case NdOp::ATOMIC_XCHG: {
+    const LowMemoryOperandView Memory = lowMemoryOperands(Op);
+    if ((Img.Arch != Arch::X86 && Img.Arch != Arch::X64) || !Memory.Complete ||
+        Memory.AccessSize > sizeof(uint64_t)) {
+      ++Skips.UnsupportedOps;
+      if (Op.Output.isReg() || Op.Output.isTemp()) {
+        Registers.erase(Op.Output.Offset);
+        WideRegisters.erase(Op.Output.Offset);
+      }
+      return false;
     }
-    return false;
+    const auto Address = resolveMemoryAddress(Op, readOperand(*Memory.Address));
+    if (!Address || !canWriteMemoryBytes(*Address, Memory.AccessSize))
+      return false;
+    const auto Old = loadMemory(*Address, Memory.AccessSize);
+    if (!Old || !storeMemory(*Address, Memory.AccessSize,
+                             readOperand(*Memory.StoredValue)))
+      return false;
+    // The address and source may share the output register. Commit its old
+    // value only after the complete memory transaction succeeds.
+    writeOutput(Op.Output, *Old);
+    return true;
+  }
 
   case NdOp::ATOMIC_ADD: {
     const LowMemoryOperandView Memory = lowMemoryOperands(Op);

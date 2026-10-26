@@ -52,7 +52,8 @@ must be confirmed before the hit becomes a candidate or supports another
 candidate. Required hits cannot bootstrap each other from raw bytes; a cycle
 without independent evidence stays unresolved. The existing bounded withdrawal
 algorithm removes dependent claims when their evidence changes. Older parsers
-reject this extension, and cache format 3 preserves both context requirements. Published
+reject this extension, and cache format 4 preserves context requirements and
+typed data references. Published
 constraint packs use `.npat`, which older directory readers ignore while
 retaining the ordinary `.pat` packs. New readers apply the same profile and
 toolset selection to both extensions.
@@ -92,7 +93,8 @@ independent identity evidence or automatic names.
 The supplement builder requires exact raw source ownership and keeps distinct
 same-byte names separate; they are queries, not claims of byte uniqueness.
 When incoming context is loaded, the name index also reuses complete existing
-`!refs` records. Ordinary nominal byte claims are not opted into incoming
+function-reference `!refs` records. Data-dependent records wait for the separate
+frozen data pass. Ordinary nominal byte claims are not opted into incoming
 inference merely by being loaded. An incoming request supplies
 the context for that occurrence; its own reference contradictions still reject
 it. No duplicate body is needed just to support both directions of evidence.
@@ -106,6 +108,30 @@ appear in the results. Source references are intersected across raw versions,
 and supplement deduplication respects independently selected library packs.
 An ambiguous ordinary body does not cover an audited incoming-context record:
 the latter supplies the source ownership needed for a name-directed query.
+
+The `&offset name` extension explicitly describes an external-data operand in
+a complete `!refs` or `!caller` record. `neverd-sigmaker --data-references`
+opts into its generation alongside `--contextual`, `--caller-context` or
+`--collision-evidence`. Generation requires canonical x64 COFF RIP-relative
+MOV/LEA or immediate CMP/MOV operands, zero addends, the exact REL32_N bias,
+and external non-function symbols. Object-local/static spellings cannot bind
+across functions. Code, import and primary-vftable references keep their
+existing kinds. A reference site cannot mix data and function kinds.
+
+Only complete ordinary candidates meeting the existing fixed-byte floor can
+anchor data bindings. Every matching complete source refinement must agree;
+missing fields, alternatives, contradicted refinements and conflicting
+names/locations leave the binding unknown. The full memory operand must fit
+one readable nonexecuting mapping and, when present, one corresponding section;
+zero-filled storage is valid. A candidate cannot supply its own only anchor.
+After incoming inference, pending data candidates receive one validation pass
+against frozen bindings and candidates. They cannot confirm each other or
+extend a chain. This remains candidate evidence, never automatic naming or
+source-type identity. The data pass is skipped without pending hits and uses
+the indexed source-anchor names rather than another image scan. Only requested
+addresses and source anchors are grouped; frozen reference validation indexes
+actually referenced targets and compacts only its new suffix. Previously
+validated candidates are neither copied nor reconsidered.
 
 `scripts/signatures/refine_pattern_metadata.py` adds missing import or primary
 vftable references to existing complete bodies. Every existing alias needs raw
@@ -133,6 +159,13 @@ Raw COFF, ELF and Mach-O evidence retains references to the function itself
 and its aliases. A self-address constraint must not disappear from a rival
 body during collision auditing. Runtime patterns still omit those references;
 self references cannot bootstrap a match or certify an identity.
+Typed reference kinds survive folding, aliases, complete single-site clauses
+and raw collision checks. An incoming-only record does not cover a new audited
+required clause, while an existing ordinary claim still does. The offline
+selector also treats a shorter complete RET body as a potential counterclaim
+to the same body followed only by INT3/NOP alignment: padding is not nominal
+identity evidence. It preserves all known counterclaims across independently
+compiled source drivers, including wrappers that compile identically.
 
 `neverd_sig_matches_json` retains `name`, `aliases` and `confirmed` as candidate
 fields. Its `caller_confirmed` field identifies incoming reference support;

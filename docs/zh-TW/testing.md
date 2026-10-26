@@ -1,8 +1,16 @@
 **語言**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`NeverDLLVMCValueTests` 在 O0/O2 及兩種 LLVM 型別保留設定下，與獨立的 Windows x64 ABI 函式編譯執行可變參數呼叫。原生 x64 以 va_arg 驗證浮點值；其他架構明確略過。
+
 [← 文件索引](README.md)
 
 # 測試 NeverD
+
+## 入口堆疊值的原始碼恢復
+
+`NeverDSourceEntryBindingTests` 編譯並執行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口堆疊參數矩陣，涵蓋完整模組、單獨呼叫者、顯式浮點位元傳遞、快取重用與重設。負向測試拒絕不完整寫入、窄讀取、堆疊位址逃逸及未定義輸入；獨立被呼叫函式定義檢查固定參數宣告。主機執行不等於原生 Windows ARM64 驅動程式驗證。 矩陣也涵蓋 RBP、x29/x30 框架的還原；檢查儲存位元組被覆寫、SP 還原但 RBP 改變、把返回位址當參數等反例，以及 ELF 與 Windows 保留暫存器的差異。
+
+已知暫存器呼叫涵蓋 x64/ARM64 PE/ELF、完整模組及僅選呼叫者的兩條 C 路徑，並保留原始間接 LowIR。負例涵蓋部分寫入、不透明副作用、暫存值重用、記憶體呼叫槽和預算耗盡。
 
 `PEFunctionAddresses.*` 檢查 x64 PE 無堆疊框架葉函式、歸屬與指令邊界、拒絕的前綴及窄運算元、可呼叫出口、取消，以及 1/2/4/16 個工作執行緒的結果一致性。特徵測試涵蓋全部 16 種條件 rel32 編碼、正負位移、明確入口範圍和來源重定位限制。Python 補充特徵測試要求每個單位置條件區分全部原始衝突宣告，保留備選名稱與必須聯合使用的位置，並避免重複既有宣告。
 
@@ -2127,3 +2135,7 @@ QT_QPA_PLATFORM=offscreen build-gui/bin/neverd-gui-unit-tests patchShortcutsDoNo
 QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-worker" \
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
+
+`NeverDSourceCallABITests` 檢查 Windows ARM64 的混合暫存器、位寬、暫存器耗盡、堆疊偏移及變參拒絕。`NeverDWorkerCallSiteTypes` 從 ARM64 PE 還原整數、double 與指標呼叫，在 O0/O2 下經兩條 C 路徑與獨立 C 被呼叫函式執行驗證，並檢查拒絕變參編輯後分析快照不變。這不是 Windows ARM64 原生執行驗證。
+
+該 worker 迴歸另涵蓋十八個混合暫存器／堆疊參數、浮點回傳，以及堆疊參數僅寫入一半時的拒絕。

@@ -17,6 +17,7 @@ add_neverd_component_library(NeverDIRLowValidation
   X86/X87PortableContext.cpp
   X86/X87Capabilities.cpp
   X86/X87PortableABI.cpp
+  X86/X86MpxContext.cpp
 
   LINK_COMPONENTS
   Digest

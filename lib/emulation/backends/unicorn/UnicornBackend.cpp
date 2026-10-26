@@ -399,6 +399,8 @@ struct UnicornBackend::Impl {
           registerID);
       if (E) {
         S.InstructionRejected = E.isA<UnsupportedExecutionError>();
+        // Consume the error before invoking an observer that may throw.
+        S.InstructionFailure = llvm::toString(std::move(E));
         if (!S.FirstFault) {
           S.CallbackFailed = !S.InstructionRejected;
           S.retain({S.InstructionRejected
@@ -408,7 +410,6 @@ struct UnicornBackend::Impl {
           if (S.InstructionRejected && S.Hooks.InvalidInstruction)
             S.Hooks.InvalidInstruction();
         }
-        S.InstructionFailure = llvm::toString(std::move(E));
         uc_emu_stop(S.Engine);
       }
     });

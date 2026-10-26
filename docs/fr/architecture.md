@@ -1,8 +1,16 @@
 **Langues**: [English](../architecture.md) | [简体中文](../zh-CN/architecture.md) | [繁體中文](../zh-TW/architecture.md) | [日本語](../ja/architecture.md) | [한국어](../ko/architecture.md) | [Français](architecture.md) | [Deutsch](../de/architecture.md) | [Español](../es/architecture.md) | [Italiano](../it/architecture.md) | [Русский](../ru/architecture.md) | [العربية](../ar/architecture.md)
 
+Si le type de l’appel LLVM diffère de la déclaration nommée, LLVM C évalue la conversion via un littéral composé scalaire. Cela conserve l’ABI du site, notamment la duplication flottante des appels variadiques Windows x64, sans modifier la déclaration ni ajouter d’accès volatile.
+
 [← Index de la documentation](README.md)
 
 # Architecture de NeverD
+
+## Récupération des valeurs de pile à l’entrée
+
+`PipelineIncomingStack` déduit des déclarations source entières bornées pour les feuilles complètes x64/ARM64 PE/ELF. La preuve partagée de pile fixe les décalages ; chaque appelant doit écrire tous les octets requis, sinon la déclaration est retirée. HighC et LLVMC lient la même déclaration avant SSA et ne reconvertissent que les fonctions concernées. Un appelant sélectionné réutilise le lecteur et le cache des appelés omis, tout en conservant la déclaration à paramètres fixes. Cela ne déduit ni état VM général, ni types flottants, ni ABI externe et ne modifie pas les contrats de lifting machine, de patch ou d’analyse. `SourceFrameAnalysis` doit prouver la restauration de SP et des registres de cadre et de liaison sauvegardés selon le format. Les octets des registres sauvegardés ne deviennent pas des paramètres source.
+
+Les cibles constantes des appels par registre utilisent la requête scalaire LowIR bornée partagée. La preuve de pile conserve l’occurrence indirecte originale ; seul le MedIR source devient un appel nommé après accord de la cible, de la déclaration et des octets sortants. Les chargements, valeurs interblocs, effets des appels et registres incomplets ne déterminent aucune cible.
 
 Pour un PE x64 lié, la découverte recueille les adresses de code des LEA RIP-relatifs canoniques pendant le balayage des appels existant. Chaque cible exige une entrée indépendante et une preuve bornée de sortie appelable ; labels internes, continuations et corps non pris en charge restent exclus. La découverte et les signatures partagent le décodeur de cette forme. Les références rel32 conditionnelles COFF exigent aussi un symbole de fonction explicite et une relocation sans addend. Hors ligne, `--single-reference-context` vérifie chaque clause à un seul site contre toutes les déclarations sources brutes qui se recouvrent, en conservant toutes les alternatives du site.
 
@@ -2005,3 +2013,5 @@ Avant les appels d’origine, `SourceFrameAnalysis` peut observer les octets pri
 `lib/patch` gère la validation des octets, le codage LLVM MC, la copie immuable de l’entrée, les modifications normalisées et la publication exclusive. Le SDK vérifie les cibles à partir du C exact, des occurrences LowIR canoniques et des opérandes décodés ; une ancre de navigation ne suffit pas. Le worker intègre le fichier facultatif `patches.json` à l’annulation et au rétablissement, puis invalide l’analyse. Les signatures lisent les octets originaux ; les fonctions modifiées perdent les effets de bibliothèque déduits de leur identité. GUI, CLI et Python utilisent les mêmes API. Le remplacement complet reste assuré par `neverd_patch_source`, après exportation et réouverture des modifications d’octets.
 
 Les aperçus du code conservent les options de chargement, les règles d’analyse, les métadonnées utilisateur et une copie autonome des preuves de signature de la session. La limite d’affichage ne limite jamais la validation de toute la plage ; toute troncature est signalée. Supprimer un prédicat Thumb exige de couvrir tout le bloc IT.
+
+Les types d’appel Windows ARM64 à paramètres scalaires et pointeurs fixes réutilisent `placeAAPCS64` via `SourceCallABI` : banques entière et flottante indépendantes, puis emplacements de pile de huit octets. Les appels variadiques restent refusés, car même leurs paramètres flottants nommés utilisent des supports entiers. Cela ne couvre ni ARM64EC, ni les agrégats, ni l’exécution native de pilotes.
