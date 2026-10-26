@@ -53,3 +53,6 @@ MULTI_OUT(Intrinsic::X86EncluPending, 4);
 MULTI_OUT(Intrinsic::X86GetsecPending, 4);
 MULTI_OUT(Intrinsic::X86EncluBounded, 4);
 MULTI_OUT(Intrinsic::X86GetsecBounded, 4);
+
+#define NEVERD_A64_WRITEBACK_MULTI_OUTPUT(Id, Count) MULTI_OUT(Intrinsic::Id, Count);
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"

@@ -28,7 +28,11 @@ using namespace neverd;
 using namespace neverd::sdk;
 
 void Session::refreshFunctionNames() {
-  auto Names = SigDB.buildNameMap();
+  refreshFunctionNames(SigDB.buildNameMap());
+}
+
+void Session::refreshFunctionNames(
+    std::unordered_map<uint64_t, std::string> Names) {
   // Deriving the names again from what they were derived from gives the
   // names the list holds.
   if (NamesDerivedFrom && NamesDerivedFrom->Revision == FunctionListRevision &&

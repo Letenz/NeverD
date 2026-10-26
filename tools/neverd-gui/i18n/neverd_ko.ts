@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>조건 분기를 무조건 실행</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>분석 섹션 추가...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>새 코드나 데이터를 이 분석에 매핑합니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3230,6 +3238,54 @@ After:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>부호 없는 값(10진수 또는 0x 16진수):</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>분석 섹션 추가</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>바이너리 바이트:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>찾아보기…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>1바이트에서 %1 사이의 파일, 16진수 주소와 섹션 이름을 지정하세요. 함수에는 이름과 실행 권한이 필요합니다.</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>이 바이트를 포함하는 함수 정의</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>함수 이름:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>바이너리 파일을 현재 이미지의 가상 주소에 매핑합니다. 유지하려면 프로젝트를 저장하세요. 입력 바이너리는 변경되지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>권한:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>섹션 이름:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>바이너리 바이트 선택</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>프로젝트가 변경되었습니다. 이 대화 상자를 다시 여세요.</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>가상 주소:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3424,8 +3480,8 @@ After:
         <translation>입력 파일을 다시 불러왔습니다</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>주석과 기록을 저장했습니다</translation>
+        <source>Project changes saved</source>
+        <translation>프로젝트 변경 사항을 저장했습니다</translation>
     </message>
     <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>

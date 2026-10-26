@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>Ejecutar el salto condicional de forma incondicional</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>Añadir sección de análisis...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>Mapear código o datos nuevos en este análisis</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3236,6 +3244,54 @@ Después:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>Valor sin signo (decimal o hexadecimal con 0x):</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>Añadir sección de análisis</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>Bytes binarios:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Examinar…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Elija un archivo de 1 byte a %1, una dirección hexadecimal y un nombre de sección. Una función necesita un nombre y permisos de ejecución.</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>Definir una función que abarque estos bytes</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>Nombre de la función:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>Mapear un archivo binario en una dirección virtual de la imagen actual. Guarde el proyecto para conservarlo. El binario de entrada no se modifica.</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>Permisos:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>Nombre de la sección:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>Seleccionar bytes binarios</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>El proyecto ha cambiado. Vuelva a abrir este cuadro de diálogo.</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>Dirección virtual:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3430,8 +3486,8 @@ Después:
         <translation>Archivo de entrada recargado</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>Comentarios e historial guardados</translation>
+        <source>Project changes saved</source>
+        <translation>Cambios del proyecto guardados</translation>
     </message>
     <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>

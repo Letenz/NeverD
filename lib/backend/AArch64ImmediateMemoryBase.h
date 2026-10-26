@@ -10,10 +10,12 @@
 #ifndef NEVERD_LIB_BACKEND_AARCH64IMMEDIATEMEMORYBASE_H
 #define NEVERD_LIB_BACKEND_AARCH64IMMEDIATEMEMORYBASE_H
 
+#include "neverd/ir/high/AArch64WritebackMemory.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/loader/AArch64MemoryImage.h"
 
@@ -74,12 +76,23 @@ public:
     for (const auto &Parameter : Function.Params)
       Parameters.insert(key(Parameter));
     for (const auto &Block : Function.Blocks) {
-      for (const auto &Op : Block.Ops)
-        if (Op.Output.Id >= 0 && Op.Output.Size) {
-          const auto [It, Inserted] = Definitions.emplace(key(Op.Output), &Op);
+      for (const auto &Op : Block.Ops) {
+        const auto Define = [&](const MedVar &Value) {
+          if (Value.Id < 0 || !Value.Size)
+            return;
+          const auto [It, Inserted] = Definitions.emplace(key(Value), &Op);
           if (!Inserted)
             It->second = nullptr;
-        }
+        };
+        Define(Op.Output);
+        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+            Op.Inputs[0].isConst() &&
+            Op.Inputs[0].ConstVal ==
+                static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback) &&
+            aarch64WritebackMemoryMedShapeIsValid(Op))
+          for (const auto &Output : Op.IntrinsicOutputs)
+            Define(Output);
+      }
       for (const auto &Phi : Block.Phis) {
         const auto [It, Inserted] = Phis.emplace(key(Phi.Output), &Phi);
         if (!Inserted)
@@ -219,6 +232,14 @@ public:
            Statement.Dst->Kind == ExprKind::Phi))
         Definitions[varKey(Statement.Dst->Var)].push_back(
             {&Statement, Statement.Val.get()});
+      const auto DefineOutputs = [&](const ExprPtr &Value) {
+        if (Value && Value->IntrinsicId == Intrinsic::A64_VectorLoadWriteback &&
+            aarch64WritebackMemoryHighShapeIsValid(*Value))
+          for (const auto &Output : Value->IntrinsicOutputs)
+            Definitions[varKey(Output)].push_back({&Statement, Value.get()});
+      };
+      DefineOutputs(Statement.Val);
+      DefineOutputs(Statement.CallExpr);
       forEachExpr(Statement,
                   [&](const ExprPtr &Value) { Work.push_back(Value.get()); });
     });
@@ -277,9 +298,14 @@ public:
           Image, Instruction, Constant->ConstVal, Constant->ConstProvenance,
           Constant->AddressOwnerVA));
     using Step = aarch64_memory_base_detail::Step;
+    using Occurrence = std::pair<const HighExpr *, const HighStmt *>;
     return aarch64_memory_base_detail::runtimeValue(
-        &Base, [](const HighExpr *Value) { return Value; },
-        [&](const HighExpr *Value, std::vector<const HighExpr *> &Work) {
+        Occurrence{&Base, Use}, [](const Occurrence &Value) { return Value; },
+        [&](const Occurrence &Current, std::vector<Occurrence> &Work) {
+          const auto *Value = Current.first;
+          const auto Add = [&](const HighExpr *Child) {
+            Work.emplace_back(Child, Current.second);
+          };
           if (!Value)
             return Step::Unsupported;
           if (Value->Kind == ExprKind::Const)
@@ -299,8 +325,14 @@ public:
           if (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) {
             const auto It = Definitions.find(varKey(Value->Var));
             if (It != Definitions.end())
-              for (const auto &Definition : It->second)
-                Work.push_back(Definition.second);
+              for (const auto &Definition : It->second) {
+                if (Definition.second->IntrinsicId ==
+                        Intrinsic::A64_VectorLoadWriteback &&
+                    (!Current.second ||
+                     !dominates(*Definition.first, *Current.second)))
+                  return Step::Unsupported;
+                Work.emplace_back(Definition.second, Definition.first);
+              }
             const bool Parameter =
                 Value->Var.Kind == MedVar::Param ||
                 (Value->Var.Kind == MedVar::Reg && Value->Var.SSAVer == 0 &&
@@ -322,14 +354,14 @@ public:
             if (Value->Operands.front()->Operands.empty() ||
                 !Value->Operands.front()->Operands.front())
               return Step::Unsupported;
-            Work.push_back(Value->Operands.front()->Operands.front().get());
+            Add(Value->Operands.front()->Operands.front().get());
             return Step::Derived;
           }
           const unsigned First = Value->Op == NdOp::SELECT ? 1 : 0;
           for (unsigned I = First; I < Value->Operands.size(); ++I) {
             if (!Value->Operands[I])
               return Step::Unsupported;
-            Work.push_back(Value->Operands[I].get());
+            Add(Value->Operands[I].get());
           }
           return Value->Kind == ExprKind::Call ? Step::Runtime : Step::Derived;
         });

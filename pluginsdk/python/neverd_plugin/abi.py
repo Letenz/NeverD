@@ -1139,6 +1139,23 @@ _declare(
     ["neverd_session_t", "const char *", "const char *"],
 )
 _declare("neverd_session_is_loaded", "int", ["neverd_session_t"])
+_declare(
+    "neverd_analysis_section_add",
+    "int",
+    ["neverd_session_t", "const char *", "const unsigned char *", "size_t"],
+)
+_declare("neverd_analysis_section_remove", "int", ["neverd_session_t", "const char *"])
+_declare(
+    "neverd_analysis_sections_json",
+    "const char *",
+    ["neverd_session_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_analysis_sections_import_json",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
 _declare("neverd_session_analyze", "int", ["neverd_session_t"])
 _declare(
     "neverd_session_file_path",

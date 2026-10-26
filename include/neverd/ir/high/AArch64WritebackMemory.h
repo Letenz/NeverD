@@ -19,8 +19,10 @@ inline bool aarch64WritebackMemoryHighShapeIsValid(const HighExpr &Expression) {
   if (Expression.Kind != ExprKind::Call ||
       Expression.Operands.size() !=
           aarch64WritebackMemoryOperandCount(Expression.IntrinsicId) ||
-      !Expression.IntrinsicOutputs.empty() || Expression.IsIndirectCall ||
-      Expression.IndirectTarget ||
+      !aarch64WritebackMemoryOutputsAreValid(
+          Expression.IntrinsicId, Expression.IntrinsicOutputs,
+          [](const MedVar &V) { return V.Size; }) ||
+      Expression.IsIndirectCall || Expression.IndirectTarget ||
       Expression.MemoryOrdering != NdMemoryOrdering::None ||
       Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
@@ -28,9 +30,19 @@ inline bool aarch64WritebackMemoryHighShapeIsValid(const HighExpr &Expression) {
     return Type &&
            (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Unknown);
   };
-  const bool Store = Expression.IntrinsicId == Intrinsic::A64_StoreWriteback;
-  if (!Integer(Expression.Type) &&
-      !(Store && Expression.Type && Expression.Type->Kind == NdTypeKind::Ptr))
+  const bool Store = isAArch64WritebackStoreIntrinsic(Expression.IntrinsicId);
+  for (const auto &Output : Expression.IntrinsicOutputs)
+    if ((Output.Kind != MedVar::Reg && Output.Kind != MedVar::Temp) ||
+        (Output.TheArch != Arch::Unknown && Output.TheArch != Arch::AArch64))
+      return false;
+  if (Expression.IntrinsicOutputs.size() > 1 &&
+      Expression.IntrinsicOutputs.front() == Expression.IntrinsicOutputs.back())
+    return false;
+  if (Expression.IntrinsicId == Intrinsic::A64_VectorLoadWriteback
+          ? (!Expression.Type || Expression.Type->Kind != NdTypeKind::Void)
+          : (!Integer(Expression.Type) &&
+             !(Store && Expression.Type &&
+               Expression.Type->Kind == NdTypeKind::Ptr)))
     return false;
   for (const auto &Operand : Expression.Operands)
     if (!Operand || !Operand->Type ||
@@ -40,6 +52,9 @@ inline bool aarch64WritebackMemoryHighShapeIsValid(const HighExpr &Expression) {
   if (!Integer(Word.Type) || Word.Kind != ExprKind::Const)
     return false;
   const auto &Data = Expression.Operands.back();
+  if (Expression.IntrinsicId == Intrinsic::A64_VectorStoreWriteback &&
+      !Integer(Data->Type))
+    return false;
   return aarch64WritebackMemoryShapeIsValid(
       Expression.IntrinsicId, Expression.Operands.size() + 1,
       Expression.Type->Size,

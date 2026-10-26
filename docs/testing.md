@@ -2560,6 +2560,17 @@ restoration. Run these with ARM64 memory/atomic, FP/state, cache and cancellatio
 regressions when changing Unicorn single-step translation reuse. Keep timing
 measurements separate from exact execution-state comparisons.
 
+Run-entry mapping validation also uses these lifecycle tests.
+`ChecksExternalMappingsAtAttachmentAndBeforeExecution` warms execution before
+an external invalid mapping, rejects repeated attempts without CPU effects,
+and recovers after removal. `RebindingUsesSpaceIdentityEvenWithMatchingGenerations`
+checks distinct spaces with equal epochs.
+`ExternalDeviceMappingsRetainEntryAdmissionAfterWarmRuns` covers external
+device mappings after warm user/supervisor entries, rejection before any
+observation or device callback, repeated rejection and recovery after removal.
+Measure throughput separately; no timing threshold substitutes for these
+state and admission checks.
+
 Tests are disabled unless `BUILD_TESTING` is enabled. A Release build is the
 normal choice for the full suite; Debug preserves assertions and stepping but
 is intentionally unoptimized and is not representative for decode benchmarks.
@@ -3416,6 +3427,11 @@ while a persistent hold must preserve the old file and recovery journal with a
 path and Win32 error in the failure. A same-session retry completes only its own
 unchanged journal, preserves newer staged edits and undo/redo, and refuses foreign
 sidecars. Reopening also recovers the pending edit.
+`NeverDWorkerHistory` injects failure before and after each transaction write,
+checks unchanged sidecars and foreign-edit refusal, and retries newer staged
+edits. It compares complete published journals for first and later saves with
+escaped/Unicode annotation text, then verifies retry and reopening. History and
+journal budget cases must refuse before publishing any transaction file.
 `SearchCAPITest.SearchPagesContinuePast4096AndReverseWithoutRepeating` checks
 the real search matcher beyond its page budget, address zero, exact-limit
 completion, reverse cursors, text case folding and invalid options.
@@ -11020,7 +11036,12 @@ unknown absorption, dead-input projection, generic frame writes and writes into
 a caller frame, composed argument-relative writes/returns with aliasing and
 unknown pointers, solver-only cache reclamation after loop widening, distinct
 parameter/register-spill origins whose numeric values are both unknown,
-equivalent generic leaf reuse, demand-driven root specialization, preserving
+constant-return branch pruning with unanimous and conflicting finite values,
+excluding target proofs from impossible caller paths,
+unknown and frame-relative operands, unrelated-input cache churn, equivalent
+generic leaf reuse, pressure-triggered later-root reclamation of unreferenced solver variants and
+their orphan parent dependency chains,
+demand-driven root specialization, preserving
 four concrete caller variants before eagerly specializing unknown wrapper
 roots, and a returning host callback despite a catalog never-return annotation.
 A registered legacy runtime invalidates memory even when its file-local callee
@@ -14380,6 +14401,40 @@ including the original native sample-inventory rejection. A post-index base
 may point one-past its storage; the positive native test retains that result,
 while an image missing an accessed byte must fail before emission.
 
+`AArch64VectorWritebackMemory.*` adds 100 independent LLVM MC 22.1.6
+B/H/S/D/Q single pre/post-index samples. Its ten tests sweep all 10,240
+encoding/imm9 combinations through both lifting routes and compare complete
+V values, returned bases and all buffer bytes through HighC, LLVMC and actual
+LLVM object output. Native C executes at O0/O2. Additional checks cover
+image-owned and runtime bases, legal one-past results, truncated storage,
+ADRP/ADD machine-code lifting, X16/V16 and V31 roles, x1 admission, dead
+results, malformed LowIR/MedIR/HighIR and LLVM calls before body filtering,
+complete tracer commit/refusal, and skipped or copied-before-definition
+auxiliary bases that must fail before source emission.
+
+`NEVERD_ARM64E_VECTOR_WRITEBACK_ARTIFACT_DIR` exports the actual `high.c`,
+`llvm.c`, `llvm.o` and `harness.c`, recording
+`arm64e_vector_writeback_memory_artifact_directory`. The controlled environment's
+separate `vector-writeback`/`el0-vector-writeback` profiles require that complete
+ten-test report and exactly 100 samples per route and CPTA/CPTA0 combination.
+They retain all capability, deadline, control-readback and EL0-origin gates.
+This bounded export does not qualify original-SP stacks, pair accesses,
+overflow/tag environments, native vector ABI, foreign exception identity or
+Apple CPA2 hardware.
+
+The [SIMD qualification record](evidence/arm64e-vector-writeback-memory-2026-10-26.json)
+records 594 passes, 17 explicit skips and ten failures from the completed 621
+selected checks. Restoring the two shared projection/conversion owners to the
+dev base reproduces every retained failure; their full assertion messages agree
+after normalizing only random temporary filenames. The WRMSR style assumptions
+and AArch64 `_BitInt` compiler limit remain recorded as failures. The separate
+41-test SysV group was interrupted after three unchanged 60-second child-compiler
+timeouts; minimal sanitized compiler health checks also timed out on both host
+architectures. That group remains unavailable, with partial logs retained.
+Restoring the feature branch and rebuilding passes all 18 scalar/SIMD writeback
+checks and 13 cached-call checks again. Both model profiles pass all ten routes;
+broad whole-project and native Apple CPTA qualification remain false.
+
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
 mutable import captures and Win64 scalar results versus ELF aggregate transport.
@@ -14400,7 +14455,8 @@ before/after optimization at O0/O2, including slot reuse and calls mutating
 saved cells. They retain stores around structured/unstructured EH, atomic and
 trapping operations, uncertain aliases, alternate entries and incomplete paths.
 The zero-test fixtures cover all byte pairs and integer-width boundaries with
-preserved call counts and undefined-behavior traps.
+preserved call counts and undefined-behavior traps. A Stack-home read between
+two complete stores keeps the first one.
 
 `NeverDHighPointerTypeInferenceTests` covers x86/x64/ARM/AArch64 frame aliases,
 slot reuse, joins, loops, escaped locals, clobbers, integer views and late source

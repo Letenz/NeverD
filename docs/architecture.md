@@ -708,6 +708,23 @@ can feed another retained memory operation without reinterpreting them as image
 VAs. The software tracer commits only complete finite reads/writes for which the
 shared address owner proves control-independent access and writeback bits.
 
+SIMD single pre/post-index B/H/S/D/Q accesses use the same descriptor and
+original-instruction owner. A load defines two typed auxiliary SSA results:
+the complete zero-extended V register and completed X base. A store consumes
+the complete V value and returns the base. Xn/Vn numeric overlap is legal;
+V31 remains a vector register. LowIR binding collection, SSA conversion and
+finite tracing share the original result-transport query, preserving typed
+temporary identity by position and width. A SIMD LowIR adapter additionally
+requires independently stored value/base carriers. LowIR validation and finite tracing reject
+missing, shortened or duplicate bindings before publishing memory effects.
+A source use of an auxiliary base must be dominated by its defining instruction,
+including copies that carry it; skipped definitions cannot grant runtime-base
+admission. HighC and
+LLVMC retain the original instruction even when both load results are unused;
+the vector tuple remains internal and grants no native vector entry/return ABI.
+The x1-only automatic policy, exact image occurrences and complete storage
+proof also apply to these single SIMD accesses.
+
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
@@ -716,12 +733,20 @@ selected regression results (including original-owner failures) and model record
 nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
 automatically lifted whole images.
 
+The SIMD writeback integer bridge independently passed the same unmodified
+model at EL1 and EL0: 100 samples through five output routes and all four
+CPTA/CPTA0 controls, totaling 4,000 generated sample calls. The ten-test input
+report, exact source/object hashes and environment revision are pinned in
+[SIMD evidence](evidence/arm64e-vector-writeback-memory-2026-10-26.json).
+This remains a bounded Normal WB, nonoverflow explicit-IR qualification.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
 rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
-coverage; SIMD pre/post-index, pair and other ordinary-memory families,
+coverage; SIMD single pre/post-index accesses have separate explicit-IR,
+automatic-lifting and image regressions. Pair and other ordinary-memory families,
 original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
@@ -963,6 +988,13 @@ history object published. The existing recovery checks validate every current
 sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
+
+History publication composes the recovery journal from serializer-produced JSON
+and reuses the already encoded target history. It retains the owning before/after
+states until all writes finish, constructing a full in-memory journal only after
+an interrupted write for same-session retry. This avoids a second whole-state
+tree and repeated target-history encoding on successful saves. Read comparisons,
+byte budgets, atomic write order and recovery validation remain authoritative.
 
 Find in view is a GUI text operation. Its modeless dialog captures the originating
 pane before taking keyboard focus; pseudocode/IR supplies its complete source
@@ -8310,6 +8342,14 @@ Both diagnostic options share the stopped-backing reader, bounded errors and
 one per-range output reservation. They do not relax entry mapping requirements;
 ordinary final reads and the failure-only option retain their existing scope.
 
+The shared checked execution owner reuses successful run-entry mapping
+validation only for the same live address space and mapping generation.
+Its architecture and device-admission policy are fixed by the backend's
+execution contract. The startup instruction lease protects both validation
+and reuse; external mapping changes require another check, and a failed
+check never records a successful epoch. Instruction access checks and CPU
+state admission remain independent of this reuse.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage and uses the architecture's shared normalization directly after all
@@ -12503,7 +12543,10 @@ proof follows a bounded single-predecessor chain and checks every intervening
 operation. Joins, exceptional entries and cycles retain the captured callable's
 signature and runtime value without authorizing a new slot read. Barriers,
 partial writes and uncertain aliases stop spill/reload
-proofs; exhausted work publishes no partial observation.
+proofs; exhausted work publishes no partial observation. Pre-SSA queries of one
+growing block share its versioned prefix. Win64's single-register results and
+WDK operand widths belong to its `CallArgumentConvention` entry, not to generic
+lowering or pipeline code.
 
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions

@@ -246,6 +246,9 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     return emitGfniIntrinsic(Op, IC, Builder);
   }
 
+  if (TargetArch == Arch::AArch64 && IC == I::A64_VectorLoadWriteback)
+    return emitAArch64IntrinsicValue(Op, IC, Builder);
+
   if (Op.Output.Size == 0)
     return refuseUnhandled();
 

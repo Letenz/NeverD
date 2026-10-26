@@ -162,6 +162,9 @@ private:
   std::string inputHash() const;
   bool analyzed_ = false;
   bool dirty_ = false;
+  /// An analysis-section edit no save has written yet. Project files synced
+  /// from elsewhere replace the comments, not these edits.
+  bool sectionsDirty_ = false;
   bool readOnly_ = false;
   /// Whether idle time analyzes the open file: function discovery and the
   /// reference index.  A cross-reference request still builds the index.

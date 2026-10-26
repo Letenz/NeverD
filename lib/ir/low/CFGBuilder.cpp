@@ -1906,7 +1906,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         SawDereference = true;
         continue;
       }
-      if (SawDereference && lowImageBaseMemoryWritebackCommit(Op, Dereference))
+      if (SawDereference && lowImageBaseMemoryWritebackCommit(
+                                Op, Dereference, DereferenceRec->second.Ops))
         continue;
       if (lowMemoryOperands(Op).Complete ||
           lowAArch64WritebackMemoryShapeIsValid(Op) ||
@@ -4046,7 +4047,7 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
           LocalAddressValue = Op.Output;
           continue;
         }
-        if (lowImageBaseMemoryWritebackCommit(Op, LocalDereference))
+        if (lowImageBaseMemoryWritebackCommit(Op, LocalDereference, UseRec.Ops))
           continue;
         if (!LocalDereference || Op.Output == LocalAddressValue ||
             overlapsRegister(Op.Output, LocalAddressValue)) {
@@ -4204,7 +4205,7 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
           }
           DereferenceAddress = Op.Output;
         }
-        if (lowImageBaseMemoryWritebackCommit(Op, Dereference))
+        if (lowImageBaseMemoryWritebackCommit(Op, Dereference, UseRec.Ops))
           continue;
         if (overlapsRegister(Op.Output, CurrentValue)) {
           InvalidDereference = true;

@@ -11,7 +11,11 @@
 
 #include "SessionImpl.h"
 
+#include "neverd/ArchSupport.h"
+#include "neverd/loader/DirectBranch.h"
+
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/Twine.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -21,7 +25,10 @@ using namespace neverd::sdk;
 
 namespace {
 
-void require(bool Condition, llvm::StringRef Message) {
+/// Mebibytes of a byte limit, as the diagnostics name the limits.
+constexpr size_t mebibytes(size_t Bytes) { return Bytes >> 20; }
+
+void require(bool Condition, const llvm::Twine &Message) {
   if (!Condition)
     throw std::invalid_argument(Message.str());
 }
@@ -41,7 +48,8 @@ llvm::json::Value parseDocument(llvm::StringRef Text) {
       Quoted = true;
     else if (C == '[' || C == '{')
       require(++Depth <= kMaxAnalysisSectionJsonDepth,
-              "analysis section JSON nesting exceeds 64 levels");
+              "analysis section JSON nesting exceeds " +
+                  llvm::Twine(kMaxAnalysisSectionJsonDepth) + " levels");
     else if ((C == ']' || C == '}') && Depth)
       --Depth;
   }
@@ -53,9 +61,12 @@ llvm::json::Value parseDocument(llvm::StringRef Text) {
 
 uint64_t address(const llvm::json::Object &Object, llvm::StringRef Key) {
   const auto Text = Object.getString(Key);
+  const auto Digits =
+      Text && Text->starts_with("0x") ? Text->drop_front(2) : llvm::StringRef();
   uint64_t Value = 0;
-  require(Text && Text->starts_with("0x") && Text->size() <= 18 &&
-              Text->size() > 2 && !Text->drop_front(2).getAsInteger(16, Value),
+  // Two hexadecimal digits a byte spell every 64-bit address.
+  require(!Digits.empty() && Digits.size() <= 2 * sizeof(Value) &&
+              !Digits.getAsInteger(16, Value),
           "analysis section addresses must be hexadecimal strings");
   return Value;
 }
@@ -108,6 +119,9 @@ struct Update {
     Prepared.Renames = S.Renames;
     Prepared.FunctionEdits = S.FunctionEdits;
     Prepared.resetFunctionsFromImage();
+    // The candidate has no signatures of its own: name the entries as the
+    // session's signatures name them, as rebuilding its list would.
+    Prepared.refreshFunctionNames(S.SigDB.buildNameMap());
     Functions = std::move(Prepared.Functions);
     OriginalNames = std::move(Prepared.OriginalNames);
   }
@@ -115,6 +129,9 @@ struct Update {
   void publish(Session &S) {
     prepareFunctions(S);
     S.clearPipeline();
+    // Immediate search keeps segment positions and what it decoded there, so
+    // an edit of the segments retires it as a function edit does.
+    S.ImmediateIndex = {};
     S.Img.Segments.swap(Segments);
     S.Img.Sections.swap(Sections);
     S.Img.Symbols.swap(Symbols);
@@ -123,17 +140,22 @@ struct Update {
     S.OriginalNames.swap(OriginalNames);
     S.functionListChanged();
     S.DiscoveredFunctions.reset();
+    S.ProgramMainFound.reset();
     S.ImageStrings.reset();
-    S.LastPatch = {};
-    S.RoundTrip = {};
+    // Patches and round trips read the input file, which no section edit
+    // changes: their results, and the object neverd_roundtrip_obj lends,
+    // stay valid.
   }
 };
 
 void requireImage(const Session *S) {
   require(S && S->Loaded, "no binary loaded");
-  require(S->Img.Arch == Arch::X86 || S->Img.Arch == Arch::X64 ||
-              S->Img.Arch == Arch::AArch64,
-          "analysis sections require x86, x64 or AArch64 images");
+  // Added bytes declare no instruction mode, so their architecture must
+  // decode every address in the one mode the image has.
+  require(archLiftSupported(S->Img.Arch) &&
+              archHasSingleInstructionMode(S->Img.Arch),
+          llvm::Twine("analysis sections do not support ") +
+              getArchName(S->Img.Arch) + " images");
 }
 
 std::string sourceHash(Session &S) {
@@ -156,14 +178,18 @@ int neverd_analysis_section_add(neverd_session_t Sess, const char *Description,
                 std::strlen(Description) <= kMaxAnalysisSectionDescriptionBytes,
             "invalid analysis section description");
     require(Data && DataSize && DataSize <= kMaxAnalysisSectionBytes,
-            "analysis sections require 1 byte to 64 MiB of materialized data");
+            "analysis sections require 1 byte to " +
+                llvm::Twine(mebibytes(kMaxAnalysisSectionBytes)) +
+                " MiB of materialized data");
     require(S->AnalysisSections.size() < kMaxAnalysisSections,
             "too many analysis sections");
     size_t TotalBytes = DataSize;
     for (const auto &Record : S->AnalysisSections) {
       const auto Size = size_t(*Record.getAsObject()->getInteger("size"));
       require(Size <= kMaxAnalysisSectionBytes - TotalBytes,
-              "analysis section data exceeds the 64 MiB session limit");
+              "analysis section data exceeds the " +
+                  llvm::Twine(mebibytes(kMaxAnalysisSectionBytes)) +
+                  " MiB session limit");
       TotalBytes += Size;
     }
     const auto Parsed = parseDocument(Description);
@@ -209,7 +235,9 @@ int neverd_analysis_section_add(neverd_session_t Sess, const char *Description,
     for (const auto &Record : S->AnalysisSections) {
       FunctionCount += Record.getAsObject()->getArray("functions")->size();
       require(FunctionCount <= kMaxAnalysisSectionFunctions,
-              "analysis sections exceed the 4096 function session limit");
+              "analysis sections exceed the " +
+                  llvm::Twine(kMaxAnalysisSectionFunctions) +
+                  " function session limit");
     }
     BinaryImage Prepared;
     auto &Segment = Prepared.addSegment(Name, Start, DataSize, Flags);
@@ -221,6 +249,8 @@ int neverd_analysis_section_add(neverd_session_t Sess, const char *Description,
     Decoder Decoder;
     require(!Declarations || Declarations->empty() || Decoder.init(S->Img),
             "cannot initialize the image decoder");
+    // Where an instruction of the architecture can begin.
+    const unsigned Alignment = getBranchScanStride(S->Img.Arch, S->Img.Mode);
     if (Declarations)
       for (const auto &Declaration : *Declarations) {
         const auto *Function = Declaration.getAsObject();
@@ -235,8 +265,9 @@ int neverd_analysis_section_add(neverd_session_t Sess, const char *Description,
                 "functions require an executable analysis section");
         const auto FunctionName = name(*Function, "name");
         const auto Entry = Start + Offset;
-        if (S->Img.Arch == Arch::AArch64)
-          require(Entry % 4 == 0, "unaligned AArch64 function entry");
+        require(Entry % Alignment == 0,
+                "declared function entry is not aligned to the " +
+                    llvm::Twine(Alignment) + "-byte instruction granularity");
         for (const auto &Existing : S->Img.Symbols)
           require(Existing.Name != FunctionName &&
                       (!Existing.IsFunc || Existing.Addr != Entry),
@@ -383,6 +414,10 @@ int neverd_analysis_sections_import_json(neverd_session_t Sess,
             "analysis section state requires a bounded sections array");
     require(Object->getString("sample_sha256") == sourceHash(*S),
             "analysis sections do not match the loaded source SHA-256");
+    // Replacing no sections with none changes nothing: keep the image and the
+    // analysis already done over it.
+    if (Sections->empty() && S->AnalysisSections.empty())
+      return 1;
 
     // Validate through the same add/remove operations on a private image.
     // A bad later section cannot remove or replace any live section/pipeline.
@@ -430,5 +465,42 @@ int neverd_analysis_sections_import_json(neverd_session_t Sess,
   } catch (const std::exception &Error) {
     S->setError(Error.what());
     return 0;
+  }
+}
+
+llvm::Expected<BinaryImage>
+neverd::sdk::withAnalysisSections(const Session &S, BinaryImage Image) {
+  if (S.AnalysisSections.empty())
+    return Image;
+  try {
+    // Add every section again, as an edit adds it, to a private session over
+    // the replacement: the image read now takes each of them, or none.
+    Session Candidate;
+    Candidate.Img = std::move(Image);
+    Candidate.Loaded = true;
+    Candidate.FilePath = S.FilePath;
+    Candidate.Renames = S.Renames;
+    Candidate.FunctionEdits = S.FunctionEdits;
+    Candidate.resetFunctionsFromImage();
+    for (const auto &Value : S.AnalysisSections) {
+      auto Description = *Value.getAsObject();
+      const auto Name = Description.getString("name")->str();
+      const auto Start = address(Description, "address");
+      const auto Size = size_t(*Description.getInteger("size"));
+      // The bytes live only in the image the session holds now.
+      const auto *Data = S.Img.readVA(Start, Size);
+      if (!Data)
+        throw std::invalid_argument("analysis section " + Name +
+                                    " has no bytes to keep");
+      Description.erase("size");
+      const auto JSON = jsonToString(std::move(Description));
+      if (!neverd_analysis_section_add(&Candidate, JSON.c_str(), Data, Size))
+        throw std::invalid_argument("analysis section " + Name +
+                                    " cannot be kept: " + Candidate.LastError);
+    }
+    return std::move(Candidate.Img);
+  } catch (const std::exception &Error) {
+    return llvm::make_error<llvm::StringError>(Error.what(),
+                                               llvm::inconvertibleErrorCode());
   }
 }

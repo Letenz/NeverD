@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>無條件執行條件跳躍</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>新增分析區段...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>將新的程式碼或資料對應到此分析中</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3230,6 +3238,54 @@ After:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>無號值（十進位或 0x 十六進位）：</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>新增分析區段</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>二進位位元組：</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>瀏覽…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>請選擇大小為 1 位元組到 %1 的檔案、十六進位位址和區段名稱。函式需要名稱和可執行權限。</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>定義涵蓋這些位元組的函式</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>函式名稱：</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>將二進位檔案對應到目前映像中的虛擬位址。儲存專案即可保留。輸入的二進位檔案保持不變。</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>權限：</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>區段名稱：</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>選擇二進位位元組</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>專案已變更。請重新開啟此對話方塊。</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>虛擬位址：</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3424,8 +3480,8 @@ After:
         <translation>已重新載入輸入檔案</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>註解與歷程記錄已儲存</translation>
+        <source>Project changes saved</source>
+        <translation>專案變更已儲存</translation>
     </message>
     <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
