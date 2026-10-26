@@ -198,6 +198,28 @@ Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
 the architectural carry calculation. Completeness of this flag audit does not
 certify runtime CPU-feature selection or a complete opaque machine-state bank.
 
+`X86LiftBMILogic` owns ANDN, BLSI/BLSMSK/BLSR and BZHI VEX/APX/NF forms.
+Its raw encoding, operand and implicit-effect admission precedes every load
+and architectural write. Source-dependent carry is captured before aliased
+destinations, BZHI masks only the low eight index bits and bounds every shift,
+and ordinary forms record AF/PF as undefined. VEX BLSR decoder metadata reports
+RESET_ZF; the owner still computes the architectural result-zero ZF.
+`X86UndefinedFlagAudit` shares the effect-shape and later-use checks across
+BMI logic, bit counts, BEXTR and TBM; each family owns its admitted forms and
+the actual set of undefined flags.
+
+`X86LiftBMI2` owns flag-preserving MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX.
+VEX and APX forms share canonical prefix and memory-tail validators; raw bytes,
+implicit EDX/RDX and every public operand must agree before lifting. Both MULX
+halves are computed before either destination changes, with the high half
+winning when destinations alias. Shift counts are masked before LLVM shifts,
+and RORX immediates are scalar values. Their complete undefined-output audit
+has no new arbitrary bits; existing flag producers pass through unchanged.
+PDEP/PEXT retain the shared scalar intrinsic contract and native BMI2 lowering.
+The older BMI/ADX dispatcher now delegates these families and reuses the APX
+validator for ADX, removing its separate address parser. ADX legacy-form
+qualification remains separate.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR
@@ -942,6 +964,8 @@ window used to route branch arrows. Revision and navigation fences still apply.
 ## Interactive patch ownership
 
 `lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
+
+Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
