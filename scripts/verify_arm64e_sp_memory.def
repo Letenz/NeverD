@@ -83,7 +83,8 @@
         "AArch64ImmediateMemory.BothCProjectionsAndLLVMExecuteEveryImmediateFamily",
         "AArch64ImmediateMemory.TracingUsesTheEncodedOffsetAndExactDataSlice",
         "AArch64ImmediateMemory.StackAndImageRequirementsCannotBeHiddenByFiltering",
-        "AArch64ImmediateMemory.AssemblyCannotConsumeAPhantomRegisterIndex"
+        "AArch64ImmediateMemory.AssemblyCannotConsumeAPhantomRegisterIndex",
+        "AArch64ImmediateMemory.ImageContextPreservesEveryRuntimeParameterAccess"
       ],
       "artifact_property": "cpta_memory_artifacts"
     },
