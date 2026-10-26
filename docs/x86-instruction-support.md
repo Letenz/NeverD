@@ -138,8 +138,9 @@ x86/x64 and APX/NDD x64, alongside BMI2 values, BEXTR, bit counts, BMI logic and
 TBM. ADOX uses OF as an **unsigned carry**, and each instruction preserves the
 other chain and all unrelated flags. Their LLVM/HighC/LLVMC arithmetic
 projections passed 864 source profiles and 517,536 value/flag comparisons per
-SDK; original legacy instructions passed 356,864 comparisons on an ADX CPU,
-including ignored 66 on ADOX. APX execution is qualified through the lifted
+SDK; original legacy instructions passed 637,824 comparisons on an ADX CPU,
+including ignored 66 on ADOX, cancelled REX and the last adjacent REX's width.
+APX execution is qualified through the lifted
 semantics, not physical APX hardware. This does not certify a complete opaque
 machine-state bank or close the remaining context/continuation rows above.
 
@@ -2128,3 +2129,30 @@ profiles verify native SelectionDAG output with no inline assembly or external
 intrinsic calls. Default `llc` O0 FastISel may use equivalent ordinary shifts;
 those objects were also executed. NeverC qualification uses x86-64 targets
 with both operand widths; its existing i686 frontend remains unsupported.
+
+## Native ADX carry values
+
+The [LLVM fork](https://github.com/NeverSight/llvm-project/commit/5b7938a7dea34d00a705a44c6dad43321e11f3e9)
+now provides `llvm.x86.adcx.32/.64` and `llvm.x86.adox.32/.64`, with the fixed
+signature `{i8, iN} (i8 carry, iN a, iN b)`. Each nonzero input carry byte
+supplies one; the result contains unsigned carry and the low sum. Native
+lowering seeds CF or OF, executes the selected instruction and captures its
+carry as explicit SSA values. It requires ADX and uses neither inline assembly
+nor external helpers. The 32-bit operand forms support i386 and x86-64; the
+64-bit forms require x86-64. Simultaneous hardware chains without reseeding
+remain a code-generation optimization, not an ambient EFLAGS API.
+
+[NeverC](https://github.com/NeverSight/NeverC/commit/23013843f1f8e524aa5d8f51b6f0076e2723bd4d)
+exposes `_adcx_u32/u64`, `_adox_u32/u64` and their `__builtin_ia32_*` forms.
+The headers accept `(carry, a, b, sum_pointer)` and return the carry byte.
+`_addcarryx_u32/u64` uses the native ADCX API; `_addcarry_u32/u64` retains its
+baseline implementation without an ADX requirement. These native APIs are
+separate from NeverD's baseline arithmetic projections described above.
+
+The fork's native APIs passed 740,352 x86-64 and 65,536 i386 runtime comparisons
+at O0/O2, including every input carry byte and independent CF/OF chains.
+NeverC and standalone fork-LLVM objects passed another 1,187,840 comparisons;
+six ELF/COFF/Mach-O profiles check native instruction selection and no assembly
+or unresolved helper calls. NeverC qualification uses its supported x86-64
+target. Source availability does not update the released LLVM SDK: that release
+and NeverD's production pin remain pending the context/continuation gaps above.
