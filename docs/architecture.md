@@ -5347,13 +5347,23 @@ sequence. HighC and LLVM C request the source projection; machine lift,
 patching and analysis keep the original stack operations.
 
 The entry-stack proof keeps definitions, joins, ambiguity and transient active
-flags in one ordered index. Each visit still consumes its ordinary work and
-depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
-and failed queries are not memoized, and each query clears its active flags.
+contexts in one index. A join's anchored induction assumption lets an interior
+stack definition be checked again on the backedge; every incoming arm must
+still agree. A cycle within the same assumption context remains unresolved.
+Each visit consumes its ordinary work and depth allowance. Completed joins
+that used no assumption may reuse their proof with its original work and depth
+charges. Conditional results and failed queries are not cached, and scoped
+active markers restore the outer query after each recursive check.
 Read-only offset queries lazily reuse the shared entry-register authenticator's
 answer for the canonical defining occurrence. Every use still checks exact
 register metadata; the fact lasts only for that immutable proof. Alignment
 rewrites continue to authenticate against the current entry COPY prefix.
+
+HighIR's call-result set uses the shared variable key for stores and indirect
+calls as well as definition indexing. Logical parameter numbers occupy a
+separate namespace from machine SSA values. A floating stack parameter whose
+number matches an intrinsic temporary therefore retains its source type and
+physical entry offset when stored; the actual call result stays a local value.
 
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C

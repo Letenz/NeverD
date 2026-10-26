@@ -13,6 +13,11 @@ values; malformed return-slot and arbitrary-write controls remain refused.
 
 `NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
 incoming stack binding regressions without the full mobile fixture inventory.
+Its store tests distinguish a logical stack parameter from a call or intrinsic
+result with the same numeric id. `NeverDMedStackAlignmentTests` checks balanced
+push groups from every loop definition in both query orders; drifting loops
+remain unproved. `NeverDMedPrologueSavesTests` verifies that these coordinates
+separate local bytes from CALL return slots without accepting actual overlap.
 The incoming-stack case compiles and executes HighC and LLVMC for x64/ARM64
 PE/ELF inputs at O0/O2, with pipeline optimization enabled and disabled. It
 checks integer and floating bit transport, repeated binding, call indices, and
@@ -7571,9 +7576,9 @@ Reuse charges the original traversal's work and checks its maximum depth;
 shared joins must still refuse at the same limits. The mutation case repeats
 queries in separate batches before and after changing the entry marker or
 address. Mutable alignment rewrites continue to prove against the current IR.
-`LoopAssumptionsDoNotBecomeIndependentProofs` checks a join and backedge copy
-where the copy succeeds only under the join's assumed offset;
-querying it independently must still refuse in either batch order.
+`LoopInductionRechecksInteriorQueries` checks a join and backedge copy from
+either starting definition and in both batch orders. A drifting backedge must
+still refuse: its conditionally evaluated value is never an independent proof.
 `ReusedJoinKeepsTheDepthOfItsNestedInputs` warms a shallow proof, then places
 the same join at the last valid depth and one level beyond it in both orders.
 

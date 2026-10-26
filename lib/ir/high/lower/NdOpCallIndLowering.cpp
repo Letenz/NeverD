@@ -439,7 +439,7 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
                                     NdType::makeInt(CurOp.Output.Size, false));
     }
   }
-  CallOutputs.insert({CurOp.Output.Id, CurOp.Output.SSAVer});
+  CallOutputs.insert(varKey(CurOp.Output));
   if (S.Kind == StmtKind::Call)
     S.CallExpr = Call;
   Func.Body.push_back(std::move(S));
