@@ -145,6 +145,24 @@ std::vector<RoundTripTC> makeCases(bool IsX86, bool Is64) {
       Cases.push_back(TC);
     }
   }
+  // No source argument supplies this register. Its bits cannot affect a
+  // self-comparison, so reconstruction must not introduce a machine-state
+  // guard merely to evaluate a condition whose answer is already fixed.
+  const std::string UnobservedAsm =
+      IsX86  ? std::string(Is64 ? "cmpq %%r11,%%r11" : "cmpl %%esi,%%esi") +
+                   "\\n\\tjne 1f\\n\\tmov $42,%0\\n\\tjmp 2f\\n1: "
+                   "mov $7,%0\\n2:"
+      : Is64 ? "cmp x19,x19\\n\\tb.ne 1f\\n\\tmov %0,#42\\n\\tb 2f\\n1: "
+               "mov %0,#7\\n2:"
+             : "cmp r8,r8\\n\\tbne 1f\\n\\tmov %0,#42\\n\\tb 2f\\n1: "
+               "mov %0,#7\\n2:";
+  RoundTripTC Unobserved;
+  Unobserved.Name = "unobserved_self_cmp_branch";
+  Unobserved.CSrc = "long f(void){long r; __asm__ volatile(\"" + UnobservedAsm +
+                    "\":\"=&r\"(r)::\"cc\"); return r;}\n";
+  Unobserved.Category = "SelfCompareFlags";
+  Unobserved.OptLevel = 2;
+  Cases.push_back(Unobserved);
   return Cases;
 }
 
