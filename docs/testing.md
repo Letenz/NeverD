@@ -106,6 +106,10 @@ parameter, while an earlier definition at entry or before the read kills it.
 Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
+`MedSSACallClobber` in the entry/frame owner checks distinct call occurrences
+at one native address, per-callee GPR preservation, preserving stack probes,
+and chained AArch64/Win64 vector prefixes. It reuses a converter across
+functions and formats so call-local facts cannot leak into later conversions.
 
 `NeverDMedVariadicTests` runs the variadic-prologue proof boundaries directly:
 entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
@@ -6480,6 +6484,11 @@ control. Producer and incoming-request cases exercise the same boundary owner.
 Reused-buffer cases verify positive and negative cache invalidation after edits.
 The metadata-refinement Python cases require every raw source to own a new
 caller code field, retain alternatives and reject missing or data-kind fields.
+`ThrowInfoReference.*` checks complete x64 exception graphs, all dependent
+records, ranges, pointer roles, qualifiers/counts, writable descriptor caches,
+metadata changes between applications and the separate identity gate. Producer
+cases reject function/static/executable source targets and nonzero addends;
+Python refinements retain missing, alternative and cross-kind raw counterclaims.
 The COFF cases also check primary x64 vftable references: exact RTTI types,
 locator and hierarchy consistency, bounded strings, unsupported secondary
 layouts, malformed data, instruction prefixes and negative displacements.

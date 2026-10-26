@@ -9,6 +9,18 @@ from scripts.signatures import refine_pattern_metadata as metadata
 
 
 class MetadataRefinementTests(unittest.TestCase):
+    def test_throw_info_fields_need_metadata_kind_and_every_raw_version(self):
+        old = "90909090488D05........C3 00 0000 000C :0000 thrower\n"
+        raw = old.replace(" :", " !evidence :")
+        first = raw.rstrip() + " ^0007 _TI2?AVWidget@@\n"
+        second = first.replace("Widget", "Other")
+        result = builder.parse_line(self.refine(old, [first, second]))
+        self.assertEqual(result.refs, ((7, "_TI2?AVOther@@"), (7, "_TI2?AVWidget@@")))
+        for unknown in (raw, first.replace("^0007", "&0007")):
+            self.assertEqual(self.refine(old, [first, unknown]), old)
+        for name in ("_TI0?AVWidget@@", "_TI02?AVWidget@@", "_TIVC2?AVWidget@@", "_TI1H"):
+            self.assertFalse(metadata.immutable_reference(name))
+
     def test_caller_code_refinement_retains_all_sources_and_reference_kinds(self):
         old = "90909090488D05........C3 00 0000 000C !caller :0000 parent\n"
         raw = old.replace("!caller", "!evidence")
