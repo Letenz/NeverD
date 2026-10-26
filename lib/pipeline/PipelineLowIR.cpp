@@ -3874,6 +3874,7 @@ ImportPrototypeArguments importPrototypeArguments(
       if (!Routine)
         return;
       Joins = Effects.count(Addr) != 0;
+      PrototypeOwnsArguments = true;
     }
     if (Routine && !Routine->Floats.empty() && !SlotVectors &&
         (!VectorArguments ||
@@ -4397,6 +4398,7 @@ void computeCallRegisterEffects(
           libc::windowsKernelPrototype(Name);
       if (!Proto)
         return;
+      Result.CallPrototypeArguments.insert(Entry);
       static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
                                                x86reg::R8, x86reg::R9};
       GPRReadWidths Widths{};
@@ -4433,6 +4435,11 @@ void computeCallRegisterEffects(
     ImportPrototypeArguments Prototyped = importPrototypeArguments(
         Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary, Dbg,
         /*RegisterArguments=*/true, &PointerCallees, ExportStarts);
+    // An exported body joins its declared reads into the entry summary.
+    // Its recovered body alone cannot later truncate those arguments.
+    for (va_t Addr : Prototyped.PrototypeDeclared)
+      if (!DispatchThunks.count(Addr))
+        Result.CallPrototypeArguments.insert(Addr);
     // The user's declaration of an import decides where no documented
     // contract does.
     for (auto &[Addr, Widths] : Prototyped.Reads)

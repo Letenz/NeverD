@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DataReference.h"
+#include "LocalDataReference.h"
 #include "X86/X86DataReference.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -26,6 +27,7 @@
 #include <map>
 #include <set>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -215,8 +217,8 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
   MatchModules.resize(Frozen);
 
   DataBindings Bindings;
-  std::unordered_map<std::string_view, uint64_t> ByName;
-  using Field = std::pair<uint32_t, std::string_view>;
+  std::unordered_map<std::string_view, uint64_t> ByName[2];
+  using Field = std::tuple<uint32_t, bool, std::string_view>;
   for (const auto &[Address, Sources] : Refined) {
     if (llvm::any_of(Sources, [&](size_t I) {
           return !Surviving.contains({Address, I});
@@ -225,14 +227,15 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
     std::vector<Field> Common;
     bool First = true;
     for (size_t I : Sources) {
-      std::map<uint32_t, std::set<std::string_view>> Sites;
+      std::map<uint32_t, std::set<std::pair<bool, std::string_view>>> Sites;
       for (const StoredName &Ref : Modules[I].references())
         if (Ref.IsData)
-          Sites[Ref.Offset].insert(Ref.Name);
+          Sites[Ref.Offset].emplace(Ref.IsLocalData, Ref.Name);
       std::vector<Field> Current;
       for (const auto &[Offset, Alternatives] : Sites)
         if (Alternatives.size() == 1)
-          Current.emplace_back(Offset, *Alternatives.begin());
+          Current.emplace_back(Offset, Alternatives.begin()->first,
+                               Alternatives.begin()->second);
       if (First) {
         Common = std::move(Current);
         First = false;
@@ -243,7 +246,14 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
         Common = std::move(Intersection);
       }
     }
-    for (const auto &[Offset, Name] : Common) {
+    for (const auto &[Offset, IsLocal, Name] : Common) {
+      if (IsLocal) {
+        const auto Anchor = localDataAnchor(Name);
+        // The source relation belongs to this exact independent operand.
+        // Other uses of the same local object cannot establish the binding.
+        if (Anchor->Name != Names.at(Address) || Anchor->Offset != Offset)
+          continue;
+      }
       // An explicit old code reference at this field cannot become data.
       if (llvm::any_of(Ordinary.at(Address), [&](size_t I) {
             return llvm::any_of(Modules[MatchModules[I]].references(),
@@ -256,21 +266,21 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
           Img, Address, Offset, Modules[Sources.front()].TotalLen);
       if (!Target)
         continue;
-      auto [NameAt, NewName] = ByName.try_emplace(Name, *Target);
+      auto [NameAt, NewName] = ByName[IsLocal].try_emplace(Name, *Target);
       if (!NewName && NameAt->second != *Target)
         NameAt->second = InvalidVA;
-      auto [At, Fresh] =
-          Bindings.try_emplace(*Target, DataBinding{Name, Address});
+      auto [At, Fresh] = Bindings.try_emplace(
+          *Target, DataBinding{Name, Address, false, IsLocal});
       if (!Fresh) {
-        if (At->second.Name != Name)
+        if (At->second.Name != Name || At->second.IsLocalData != IsLocal)
           At->second.Name = {};
         At->second.MultipleParents |= At->second.Parent != Address;
       }
     }
   }
   std::erase_if(Bindings, [&](const auto &Entry) {
-    return Entry.second.Name.empty() ||
-           ByName.at(Entry.second.Name) != Entry.first;
+    return Entry.second.Name.empty() || ByName[Entry.second.IsLocalData].at(
+                                            Entry.second.Name) != Entry.first;
   });
   if (Bindings.empty())
     return;

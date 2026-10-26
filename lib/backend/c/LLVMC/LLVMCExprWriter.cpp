@@ -845,7 +845,15 @@ std::string LLVMCWriter::rawSourceName(const llvm::Value *V) {
 }
 
 std::string LLVMCWriter::constStr(const llvm::Constant *C,
-                                  bool AllowImageAddress) {
+                                  bool AllowImageAddress,
+                                  bool *PointerSpelling) {
+  if (PointerSpelling)
+    *PointerSpelling = false;
+  auto AddressText = [&](std::string Text) {
+    if (PointerSpelling)
+      *PointerSpelling = true;
+    return Text;
+  };
   if (const auto *Vector =
           llvm::dyn_cast<llvm::FixedVectorType>(C->getType())) {
     if (!isCVectorType(C->getType()))
@@ -905,7 +913,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C,
       return *Text;
     if (auto Lit = stringLiteralAt(Img, Dbg, CI->getZExtValue(),
                                    /*AllowEmpty=*/true))
-      return *Lit;
+      return AddressText(*Lit);
     return integerConstantText(CI->getValue());
   }
 
@@ -932,7 +940,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C,
   }
 
   if (llvm::isa<llvm::ConstantPointerNull>(C))
-    return "((void*)0)";
+    return AddressText("((void*)0)");
 
   if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(C)) {
     // IRBuilder can retain scalar constant expressions containing vector
@@ -943,13 +951,13 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C,
       if (const auto *Folded =
               llvm::ConstantFoldConstant(CE, CurMod->getDataLayout());
           Folded != CE)
-        return constStr(Folded, AllowImageAddress);
+        return constStr(Folded, AllowImageAddress, PointerSpelling);
     }
     if (CE->getOpcode() == llvm::Instruction::GetElementPtr) {
       std::string Image = imageDataCName(CE);
       if (!Image.empty())
-        return "&" + Image;
-      return gepExpr(*llvm::cast<llvm::GEPOperator>(CE));
+        return AddressText("&" + Image);
+      return AddressText(gepExpr(*llvm::cast<llvm::GEPOperator>(CE)));
     }
     if (CE->getOpcode() == llvm::Instruction::PtrToInt) {
       auto *Src = CE->getOperand(0);
@@ -960,10 +968,12 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C,
           CI && CI->getBitWidth() <= 64)
         if (auto Lit = stringLiteralAt(Img, Dbg, CI->getZExtValue(),
                                        /*AllowEmpty=*/true))
-          return *Lit;
+          return AddressText(*Lit);
     }
     if (CE->getOpcode() == llvm::Instruction::BitCast ||
         CE->getOpcode() == llvm::Instruction::IntToPtr) {
+      if (PointerSpelling)
+        *PointerSpelling = CE->getType()->isPointerTy();
       return "(" + typeToCLLVM(CE->getType()) + ")" +
              valueStr(CE->getOperand(0));
     }
@@ -992,6 +1002,8 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C,
   }
 
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
+    if (PointerSpelling)
+      *PointerSpelling = true;
     if (const auto *Fn = llvm::dyn_cast<llvm::Function>(GV)) {
       auto Name = functionIdentifier(*Fn);
       // Headers may overload an imported C symbol. An address expression
@@ -3459,8 +3471,7 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     }
   }
   if (auto *C = llvm::dyn_cast<llvm::Constant>(V))
-    return llvm::isa<llvm::GlobalVariable>(C) ? AddressText(constStr(C))
-                                              : constStr(C);
+    return constStr(C, /*AllowImageAddress=*/true, PointerSpelling);
   if (const llvm::AllocaInst *Slot = llvm::dyn_cast<llvm::AllocaInst>(V))
     return AddressText("&" + getName(Slot));
   return getName(V);

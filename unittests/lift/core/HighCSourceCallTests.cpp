@@ -4280,8 +4280,7 @@ TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)((uintptr_t)value);"),
-            std::string::npos)
+  EXPECT_NE(Source.find("return (int64_t)(uintptr_t)t17;"), std::string::npos)
       << Source;
   compileAndRun(Source + R"(
 int main(void) {

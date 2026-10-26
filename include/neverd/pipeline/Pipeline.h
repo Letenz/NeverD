@@ -379,9 +379,11 @@ struct PipelineResult {
   /// i386 callees, independently of the imports the current selection calls.
   std::shared_ptr<const std::map<va_t, int>> OmittedCalleeStackArgs;
   std::shared_ptr<const std::set<va_t>> OmittedCalleeStackSlots;
-  /// The imports, by their stubs and slots, whose integer argument summary
-  /// a user declaration or header record layout gives. Their machine
-  /// positions override the arity tables, which count source parameters.
+  /// Routines whose argument summary includes a declaration: imports by
+  /// their stubs and slots, documented WDK entries, and typed exports.
+  /// Machine positions override arity tables that count source parameters.
+  /// A recovered body alone cannot truncate this declared summary; exported
+  /// bodies can still contribute additional reads to their entry summary.
   std::set<va_t> CallPrototypeArguments;
   /// Explicit user declarations among CallPrototypeArguments. Source-call
   /// binding uses this identity to override automatic Darwin SDK contracts;

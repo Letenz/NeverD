@@ -285,6 +285,12 @@ HighIR consumes a direct call's recovered argument list as a whole, including
 empty lists and unavailable interior slots. Its local setup scan cannot append
 adjacent frame variables or replace those unknown operands with stale stores.
 Module call recovery finalizes this boundary for both C routes.
+For fragmented Windows SEH ranges, LLVM C follows the begin/end markers along
+the CFG and retains each block's complete ordered unwind chain. Independent
+handlers and a handler nested within a finally keep their own clauses. Normal
+edges assign PHIs before leaving the generated compounds; a block's finally
+executes the recovered cleanup only on unwind. Closed lexical ranges retain
+their compact rendering.
 HighIR adds this recovery for positional register/stack conventions. Independent
 register banks retain their source variadic and floating-return preparation.
 
@@ -2133,6 +2139,14 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+`SignatureDataContext` also owns frozen source-local data relations. The producer
+proves that two canonical zero-addend operands refer to one static address within
+the same COFF object. Their shared key names the exact operand of a uniquely
+defined external function; no local variable spelling escapes its object. Only
+that independently settled ordinary function can bind the relation, after all
+matching source refinements agree. The existing single data pass checks consumers
+without changing anchors or restarting inference. The parser/cache preserve a
+separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 Native `!loadcfg` metadata pairs a source configuration field's external pointer
 variable with its default function. The COFF loader owns the role/field mapping;
 `SignatureRuntimePointerContext` queries only its recorded slots after the data
@@ -2383,7 +2397,12 @@ exports, whose name binds a prototype, is called with at least what the
 prototype declares, as its export fixes the convention for the callers within
 the image too: the declared parameters join what its body reads in its own
 summary, so that a system call stub's callers pass the stack arguments its
-dispatcher reads, and a body that reads past them keeps those. Where every
+dispatcher reads, and a body that reads past them keeps those.
+`CallPrototypeArguments` carries that declaration provenance through final
+call recovery for both selected and omitted callees. A narrower recovered
+gate body cannot truncate arguments already established by its entry summary;
+documented WDK entries use the same boundary.
+Where every
 argument is on the stack (i386), each argument takes the slots it fills, a
 record's by value too (a `LONGLONG`, a `double` and a `POINT` take two), and
 a fastcall or thiscall prototype, which passes leading arguments in
@@ -4723,6 +4742,10 @@ declarations before SSA and reconvert only affected definitions and callers.
 Every caller in a request must supply all outgoing bytes through the shared
 `SourceCallABI` write proof; otherwise the declaration is withdrawn as a unit.
 Ordinary signature bounds cannot truncate an already bound source call.
+HighIR also keeps every validated explicit source ABI operand unchanged:
+ordinary register and outgoing-stack scans cannot replace its values or append
+arguments, even when its stack-only declaration uses fewer parameters than the
+platform's positional calling convention.
 LLVM source exports retain the fixed declaration of such a call even when the
 selected output omits its callee, instead of falling back to unknown extern
 varargs. Explicit native stack-word source calls use the same declaration path.
@@ -8434,6 +8457,17 @@ return null only after exhausting the requested count; scan-budget exhaustion
 remains a failure. The checked entry admits the whole count against the object
 extent before pointer or deadline checks. Zero-count searches need no pointer
 access, and a first match does not require the unread suffix to be mapped.
+`memmem` reuses `strstr`'s linear prefix-table search with explicit 64-bit
+lengths and ordinary embedded NUL bytes. An empty needle returns the haystack;
+a shorter haystack returns null, both without reading either input. Otherwise
+the needle and prefix table must fit the model budget, and the haystack is
+read only through the first match or the declared count. Budget exhaustion
+is a failure rather than a guessed no-match. Both searches preserve errno
+and guest bytes and retain the common dynamic-provider lifetime boundary.
+`strcasestr` uses this same prefix table and scan with C-locale ASCII case
+folding. It retains NUL termination, first-match and empty-needle semantics;
+bytes above ASCII remain unchanged. Guest locale changes are not modeled,
+and host locale settings do not affect the search.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
@@ -11388,6 +11422,29 @@ without asserting a native frame-preservation contract across its CRT calls.
 Source frame checks also follow resolved switches only when every published
 target agrees with the CFG; absent, duplicate and unsafe dispatch records
 refuse. The saved-memory interpreter retains its independent stricter domain.
+
+A source-only SEH handler may also receive several protected or ordinary SP
+positions when a certified frame register survives and every handler path
+restores SP before explicitly reading it. That result retains an unresolved
+entry; it grants neither a native frame nor a single offset. The physical CALL
+return-slot reader separately unions every current protected SP and ordinary
+PHI input through query-local definition ranges. Missing sources, exceptional
+cycles without a seed and unbounded offsets retain refusal. The range proof
+can establish that a CALL write is disjoint, but cannot initialize storage or
+replace the exceptional-entry value. Ordinary exact-offset queries reject PHIs
+with an unproved exceptional input. Entry-register declarations survive
+MedIR dead-code cleanup when a renamed copy's incoming value still has readers.
+This preserves the existing callee-save proof for both C routes after copy
+propagation removes uses of the copy's renamed result.
+
+Changing stack PHIs can also receive a range from a companion unsigned loop
+counter. The current header must guard every iteration, its counter must not
+wrap, and every backedge must cross both the counter update and stack update
+exactly once. Single-entry CFG evidence excludes bypasses and independent or
+exceptional entries. Machine-width copies and zero-extension slices preserve
+the counter bits; signed guards and unbounded recurrences supply no bound.
+The range includes the final header visit and remains separate from exact
+offsets and executable stack values.
 
 `low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)

@@ -10,6 +10,7 @@ add_neverd_unittest(NeverDSignatureTests
   SignatureCacheTests.cpp
   SignatureDBTests.cpp
   SignatureDataContextTests.cpp
+  LocalDataEvidenceTests.cpp
   SignatureVTableContextTests.cpp
   SignatureRuntimePointerContextTests.cpp
   SignatureMatcherTests.cpp
