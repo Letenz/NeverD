@@ -72,7 +72,7 @@ def fully_bound(line: builder.PatternLine) -> bool:
     shape = builder.Shape.of(line.key)
     if not line.require_caller or shape.crc_len or not shape.fully_verified() or \
             len(shape.lead + shape.tail) != shape.total * 2 or \
-            any(offset not in line.data_sites for offset, _ in line.refs):
+            line.local_sites or any(offset not in line.data_sites for offset, _ in line.refs):
         return False
     fields = {i for offset in line.data_sites for i in range(offset, offset + 4)}
     return all((shape.lead + shape.tail)[i * 2:i * 2 + 2] != ".." or i in fields

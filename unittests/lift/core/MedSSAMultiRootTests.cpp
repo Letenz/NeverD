@@ -22,6 +22,7 @@
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallReturnReads.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -1748,6 +1749,85 @@ TEST(MedSEHEstablisherFrame, RejectsADynamicSPWriteInAProtectedBlock) {
                                                              Img.Entry + 0x1a};
   EXPECT_THROW(LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
                LowToMedConversionError);
+  LowToMedConverter Source;
+  Source.setSEHSourceProjectionEnabled(true);
+  EXPECT_THROW(Source.convert(Low, Arch::X64, BinaryFormat::COFF),
+               LowToMedConversionError);
+}
+
+TEST(MedSEHEstablisherFrame,
+     SourceHandlerCallRetainsEveryProtectedStackPosition) {
+  for (bool SharedHandler : {false, true})
+    for (bool ObservesReturnSlot : {false, true}) {
+      SCOPED_TRACE(SharedHandler);
+      SCOPED_TRACE(ObservesReturnSlot);
+      auto Image = makeDynamicFramePointerSEHImage();
+      auto &Bytes = Image.Segments.front().Data;
+      // Allocate a second area inside the guard, so faults before and after
+      // the allocation enter the same handler with different physical SPs.
+      const uint8_t Allocate[] = {0x48, 0x83, 0xec, 0x20, 0x90};
+      std::copy(std::begin(Allocate), std::end(Allocate), Bytes.begin() + 0x0a);
+      // The handler uses RBP, calls a helper, then restores SP in the join.
+      const uint8_t Handler[] = {0x8b, 0x45, 0xfc, 0xe8, 0xd8,
+                                 0x0f, 0,    0,    0xeb, 6};
+      std::copy(std::begin(Handler), std::end(Handler), Bytes.begin() + 0x20);
+      Image.ExceptionMetadata.Functions.front()
+          .SEH->Scopes.front()
+          .GuardedRange = {Image.Entry + 0x0a, Image.Entry + 0x1a};
+      if (SharedHandler) {
+        // This scope starts after the allocation. Ordinary execution also
+        // branches into its handler; it must not become an exact SP seed.
+        Image.ExceptionMetadata.Functions.front()
+            .SEH->Scopes.front()
+            .GuardedRange = {Image.Entry + 0x16, Image.Entry + 0x1a};
+        Bytes[0x1c] = 3; // jmp handler instead of jmp join.
+      }
+      if (ObservesReturnSlot)
+        // Read a possible CALL return slot on an exceptional entry.
+        Bytes[0x32] = SharedHandler ? 0x98 : 0xb8;
+      Image.ExceptionMetadata.rebuildIndex();
+      const auto Low = decodeFixedSEHFrame(Image);
+      LowToMedConverter Machine;
+      Machine.setBinaryImage(&Image);
+      EXPECT_THROW(Machine.convert(Low, Arch::X64, BinaryFormat::COFF),
+                   LowToMedConversionError);
+      LowToMedConverter Source;
+      Source.setBinaryImage(&Image);
+      Source.setSEHSourceProjectionEnabled(true);
+      MedFunc Med;
+      ASSERT_NO_THROW(Med = Source.convert(Low, Arch::X64, BinaryFormat::COFF));
+      ASSERT_TRUE(verifyMedFunc(Med, "varying-protected-sp"));
+      EXPECT_TRUE(Med.HasUnresolvedSEHFrame);
+      markSourceStackAccesses(Med, Arch::X64, BinaryFormat::COFF);
+      const auto Save =
+          llvm::find_if(Med.Blocks.front().Ops, [&](const auto &Op) {
+            return Op.Opcode == NdOp::STORE && Op.Addr == Image.Entry;
+          });
+      ASSERT_NE(Save, Med.Blocks.front().Ops.end());
+      EXPECT_TRUE(Save->PrologueSave);
+      std::string Error;
+      EXPECT_EQ(
+          validateSourceCallReturnReads(
+              Med, Image, Error, limits::ir::kSourceCallReturnReadWork, &Low),
+          !ObservesReturnSlot)
+          << Error;
+      if (ObservesReturnSlot)
+        EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos);
+      else {
+        // Losing the fresh unwind/frame proof must not authorize the same
+        // source reads from an unknown physical stack.
+        EXPECT_FALSE(validateSourceCallReturnReads(Med, Image, Error));
+        auto Stale = Med;
+        for (auto &Block : Stale.Blocks)
+          if (!Block.ExceptionalPreds.empty()) {
+            auto Edge = Block.ExceptionalPreds.front();
+            Edge.BlockId = static_cast<int>(Stale.Blocks.size());
+            Block.ExceptionalPreds.push_back(Edge);
+          }
+        EXPECT_FALSE(validateSourceCallReturnReads(
+            Stale, Image, Error, limits::ir::kSourceCallReturnReadWork, &Low));
+      }
+    }
 }
 
 // The fixed frame whose handler starts with fninit. The CFG builder carries

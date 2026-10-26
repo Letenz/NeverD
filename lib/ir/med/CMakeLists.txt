@@ -35,6 +35,7 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationPhysicalFrame.cpp
   X86/RegistrationReachability.cpp
   X86/SEHFrame.cpp
+  X86/SEHCallStackRanges.cpp
   X86/SEHSourceRoots.cpp
   abi/MedABIPass.cpp
   abi/X86/MedABIPassI386.cpp
@@ -89,6 +90,7 @@ add_neverd_component_library(NeverDIRMed
   pass/MedSSA.cpp
   pass/MedSourceParameterUses.cpp
   pass/MedStackAlignment.cpp
+  pass/MedStackRecurrence.cpp
   pass/MedTypePass.cpp
   pass/MedVerifier.cpp
 

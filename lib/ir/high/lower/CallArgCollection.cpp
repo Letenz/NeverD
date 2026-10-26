@@ -578,7 +578,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     // A register scan can see the whole register or unrelated setup past
     // that declared list; neither may replace these bound operands.
     // A zero-argument binding is also complete, without a heuristic scan.
-    if (Hinted.empty() ||
+    if (Hinted.empty() || Signature.HasExplicitABI ||
         Call.SourceCallHint->CallKind == SourceCallTypeHint::Kind::Analyst)
       return Hinted;
   }

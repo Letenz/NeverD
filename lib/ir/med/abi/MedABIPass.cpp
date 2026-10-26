@@ -412,6 +412,15 @@ extern const AbiCallPolicy I386AbiCallPolicy;
 std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
                                                         Arch Architecture,
                                                         size_t &Remaining) {
+  std::map<int, MedVar> Entries;
+  return sourceCallStackPointers(Func, Architecture, Remaining, Entries);
+}
+
+std::map<const MedOp *, MedVar>
+sourceCallStackPointers(const MedFunc &Func, Arch Architecture,
+                        size_t &Remaining,
+                        std::map<int, MedVar> &BlockEntries) {
+  BlockEntries.clear();
   std::map<const MedOp *, MedVar> Result;
   const auto &TRI = getTargetRegInfo(Architecture);
   if (Func.SkippedSSA || Func.Blocks.empty())
@@ -552,9 +561,11 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
     if (!Charge(InheritedCalls[B].size()))
       return {};
     if (Entries[B].State == Basis::Exact &&
-        Entries[B].Value.Size == TRI.PointerSize)
+        Entries[B].Value.Size == TRI.PointerSize) {
+      BlockEntries.emplace(Func.Blocks[B].Id, Entries[B].Value);
       for (const MedOp *Call : InheritedCalls[B])
         Result.emplace(Call, Entries[B].Value);
+    }
   }
   return Result;
 }
@@ -901,6 +912,33 @@ void recoverCallAbi(
   bool DefinedValuesBuilt = false;
   // What earlier calls left in each register, once a call asks.
   std::optional<ValuesLeftByCalls> LeftByCalls;
+  auto callLeftovers = [&]() -> const ValuesLeftByCalls & {
+    if (!LeftByCalls) {
+      // Scalar return recovery visits calls in block-vector order. Exclude
+      // all possible FP result fields before classifying joins, including
+      // producers in blocks whose call outputs have not been rebound yet.
+      std::map<uint32_t, uint16_t> FloatingResults;
+      if (CalleeFPReturnSize)
+        for (const auto &Block : Func.Blocks)
+          for (const auto &Call : Block.Ops)
+            if (Call.Opcode == NdOp::CALL && Call.CallSiteId &&
+                Call.NumInputs && Call.Inputs[0].isConst())
+              if (const auto Found =
+                      CalleeFPReturnSize->find(Call.Inputs[0].ConstVal);
+                  Found != CalleeFPReturnSize->end() && Found->second)
+                FloatingResults.emplace(Call.CallSiteId, Found->second);
+      std::vector<MedVar> PossibleResults;
+      for (const auto &Clobber : Func.CallClobbers)
+        if (const auto Found = FloatingResults.find(Clobber.CallSiteId);
+            Found != FloatingResults.end() &&
+            Clobber.Value.Kind == MedVar::Reg &&
+            Clobber.Value.RegOff == TRI.FPReturnReg &&
+            Clobber.Value.Size >= Found->second)
+          PossibleResults.push_back(Clobber.Value);
+      LeftByCalls.emplace(Func, PossibleResults);
+    }
+    return *LeftByCalls;
+  };
   auto isDefinedValue = [&](const MedVar &V) {
     if (!DefinedValuesBuilt) {
       for (const auto &B : Func.Blocks) {
@@ -1832,9 +1870,7 @@ void recoverCallAbi(
           // where the callee is known to read it, and an import reached
           // through its slot takes only proven incoming values.
           if (!AllowLiveIn || IsIndirectImport || VariableCallee) {
-            if (!LeftByCalls)
-              LeftByCalls.emplace(Func);
-            if (LeftByCalls->contains(*V))
+            if (callLeftovers().contains(*V))
               break;
           }
           if ((IsIndirectImport || VariableCallee) &&
@@ -2221,27 +2257,30 @@ void recoverCallAbi(
             IntStackByOff.find(StackOff) == IntStackByOff.end())
           IntStackByOff[StackOff] = Prev.Inputs[1];
 
-        if (SlotIdx >= 0 && SlotIdx < MaxArgs && !FoundMask[SlotIdx]) {
+        if (SlotIdx >= 0 && SlotIdx < MaxArgs) {
           const MedVar &SV = Prev.Inputs[1];
           int Lanes = SlotSize > 0 && SV.Size > SlotSize
                           ? (SV.Size + SlotSize - 1) / SlotSize
                           : 1;
           // A single wide store covering several outgoing 4-byte slots is split
-          // into one argument per slot — but only for a direct callee that
-          // actually takes a scalar argument at every covered slot, so a
-          // genuine wide (vector) argument is still passed whole.  The slot
-          // an x87 `fstp tbyte` ends in takes its last two bytes, and padding
-          // passed as zero.
-          bool SplitWide = Lanes > 1 && !CI.IsIndirect && CalleeArgs >= 0 &&
-                           SlotIdx + Lanes <= CalleeArgs;
-          if (SplitWide)
-            for (int L = 0; L < Lanes; ++L)
-              if (SlotIdx + L >= MaxArgs || FoundMask[SlotIdx + L]) {
-                SplitWide = false;
-                break;
-              }
+          // into one argument per slot when the callee takes a scalar at
+          // every covered slot. An import's fixed integer contract applies
+          // through its IAT as well as through a direct call. Unknown and
+          // floating indirect signatures still keep a wide value whole. The
+          // slot an x87 `fstp tbyte` ends in takes its last two bytes, and
+          // padding passed as zero.
+          const bool ScalarSlots =
+              !CI.IsIndirect || (IsIndirectImport && UseExternalArity &&
+                                 ExternalArity->FpArgs == 0);
+          const bool SplitWide = Lanes > 1 && ScalarSlots && CalleeArgs >= 0 &&
+                                 SlotIdx + Lanes <= CalleeArgs &&
+                                 SlotIdx + Lanes <= MaxArgs;
           if (SplitWide) {
             for (int L = 0; L < Lanes; ++L) {
+              // The reverse scan already owns any later overwrite of this
+              // lane; that does not hide the other lanes of the wide store.
+              if (FoundMask[SlotIdx + L])
+                continue;
               const int Bytes = std::min<int>(SlotSize, SV.Size - L * SlotSize);
               MedVar Lane;
               Lane.Kind = MedVar::Temp;
@@ -2272,7 +2311,7 @@ void recoverCallAbi(
               FoundMask[SlotIdx + L] = true;
               FromStackScan[SlotIdx + L] = true;
             }
-          } else {
+          } else if (!FoundMask[SlotIdx]) {
             Found[SlotIdx] = SV;
             FoundMask[SlotIdx] = true;
             FromStackScan[SlotIdx] = true;
@@ -2775,6 +2814,14 @@ void recoverCallAbi(
           if (!V)
             for (const auto &Phi : Blk.Phis)
               if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == Reg) {
+                // A join of caller-saved clobbers supplies no argument setup.
+                // Integer recovery already excludes these same leftovers.
+                // A known FP contract still observes the unavailable value;
+                // mixed joins and partially preserved lanes remain inputs.
+                if (!KnownFPCallee) {
+                  if (callLeftovers().contains(Phi.Output))
+                    break;
+                }
                 V = Phi.Output;
                 break;
               }
@@ -3081,9 +3128,7 @@ void recoverCallAbi(
         for (size_t I = 0; I < IntPart.size(); ++I) {
           if (IntPartSlots[I] < Known)
             continue;
-          if (!LeftByCalls)
-            LeftByCalls.emplace(Func);
-          if (!LeftByCalls->contains(IntPart[I]))
+          if (!callLeftovers().contains(IntPart[I]))
             continue;
           // An indirect call has no callee to say its stack slots are
           // arguments, nor has a variadic one for those past its named

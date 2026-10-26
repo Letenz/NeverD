@@ -56,11 +56,14 @@ struct PatternByte {
 struct FuncRef {
   uint32_t Offset = 0;
   bool IsData = false;
+  bool IsLocalData = false;
   std::string Name;
 
   FuncRef() = default;
-  FuncRef(uint32_t Offset, std::string Name, bool IsData = false)
-      : Offset(Offset), IsData(IsData), Name(std::move(Name)) {}
+  FuncRef(uint32_t Offset, std::string Name, bool IsData = false,
+          bool IsLocalData = false)
+      : Offset(Offset), IsData(IsData), IsLocalData(IsLocalData),
+        Name(std::move(Name)) {}
 };
 
 struct PatternModule {
@@ -125,11 +128,13 @@ struct PatternModule {
 struct StoredName {
   uint32_t Offset = 0;
   bool IsData = false;
+  bool IsLocalData = false;
   std::string_view Name;
 
   StoredName() = default;
-  StoredName(uint32_t Offset, std::string_view Name, bool IsData = false)
-      : Offset(Offset), IsData(IsData), Name(Name) {}
+  StoredName(uint32_t Offset, std::string_view Name, bool IsData = false,
+             bool IsLocalData = false)
+      : Offset(Offset), IsData(IsData), IsLocalData(IsLocalData), Name(Name) {}
 };
 
 /// A PatternModule packed for a large signature set.

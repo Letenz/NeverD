@@ -32,6 +32,13 @@ partial outgoing writes, narrow reads, frame-address returns, preserved-register
 changes, external loads and values initialized by the callee itself. A selected
 call optimized away is checked by compiling and executing its resulting source,
 rather than requiring an intermediate call record to survive optimization.
+`IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
+routes with an incoming last-stack-word declaration and unrelated register and
+stack setup. `HighCPointerAddresses.Win64TwelveArgumentCallKeepsEveryStackArgument`
+separately retains and executes a positional call whose callee reads all twelve
+arguments. Both cases execute O0/O2 output: the stack-only case uses an
+independent source callee, and the positional case checks the complete emitted
+caller and callee against an independent sum oracle.
 The same target runs the shared `SourceFrameAnalysis` suite. Balanced RBP and
 x29/x30 frames, including local stack allocation and `leave`, execute through
 explicit, automatic and selected-caller paths;
@@ -94,11 +101,34 @@ checking every byte-sized count against an independent multiplication oracle
 and refusing unconstrained machine-width products. Copy edges in stack PHI
 cycles preserve exact or bounded outside origins on all four architectures;
 unseeded cycles and changing backedges remain unknown.
+`MedSEHEstablisherFrame.SourceHandlerCallRetainsEveryProtectedStackPosition`
+checks protected allocations and shared ordinary/exceptional handler entries.
+A handler CALL may precede an RBP-based SP restoration only when all possible
+return-slot writes are disjoint from observed bytes. Overlapping reads, missing
+fresh LowIR and explicit handler SP reads retain refusal; native reconstruction
+remains unavailable. The same fixture checks that copy propagation and DCE
+retain the ordinary entry register marker needed to omit an unobserved RBP
+save from both source projections. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
+checks that a range seed cannot become an exact executable value or survive
+query removal, detached definitions or conflicting bounds.
+`MedStackAlignment.AGuardedCounterBoundsRepeatedStackAllocations` checks x86,
+x64, ARM and AArch64 against independently enumerated finite stack updates.
+Both branch polarities and low-byte/extension copies retain the range;
+wrapping counters, bypassed or repeated updates, additional entries, signed
+guards and overflowing displacements reject it. Exact-offset queries remain
+unknown for a changing recurrence.
 `NeverDMedPrologueSavesTests` checks that only
 disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
 and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,
 loop backedges and exceptional prefixes retain their negative controls. Run both
 C route contract suites after changing this proof.
+
+`COFFExceptionIR.LLVMCMixedHandlersKeepUnwindOnlyCleanup` covers independent
+SEH handlers together with an inner handler whose failed filter unwinds through
+a finally. Both O0/O2 Windows object builds retain the nested clauses; host
+execution checks the normal paths and cleanup count. Run the complete
+`COFFExceptionIR.LLVMC*` group to retain compact closed ranges and shared-handler
+loops. Host normal-path checks do not qualify native Windows exception dispatch.
 
 # Testing NeverD
 
@@ -1067,6 +1097,14 @@ controls, positional floating inputs and overlapping integer/vector reads.
 Independent providers compile and execute both C routes at O0/O2 with UBSan.
 Run the SysV, AAPCS64, i386 and FP-parameter suites alongside this shared ABI
 change; it does not recover unknown state that a callee actually observes.
+`FloatingCallLeftovers.*` in the same target checks speculative FP recovery
+against the shared call-leftover proof. Direct and indirect calls on x64 and
+AArch64 across COFF/ELF/Mach-O drop wholly clobbered joins, while mixed values,
+partial preservation, possible results and exceptional inputs remain visible.
+Known FP consumers retain unavailable operands. Floating result producers
+remain inputs even when their blocks follow the consumer in storage order.
+Independent providers execute both C routes on both branch paths at O0/O2
+with UBSan; native Windows and Apple ARM64 execution are separate coverage.
 `Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
 checks the same contract for explicit local declarations.
 `LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
@@ -4326,6 +4364,13 @@ the parameters its prototype declares and its code never reads, and that
 `neverd_decompile_all` takes the prototypes; the kernel inputs check
 `ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
 `ExRaiseStatus` the kernel exports without its PDB.
+`HighCPointerAddresses.DocumentedKernelArgumentsSurviveAnOpaqueGate` checks
+both source routes and the shared MedIR call operands for an exported service
+whose prototype declares inputs absent from the gate's own body.
+`Win64CallContract.CallersPassWhatAnExportedRoutinesPrototypeDeclares` also
+retains body reads beyond the declared prefix. The ntos `ZwSetSystemTime`
+caller at `0x140a3aad4` is an integration witness: its two zero arguments must
+survive omitted-callee recovery and its HighC must compile at O0 and O2.
 `IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
 exports and `_Noreturn` prototypes in the no-return index.
 `HighCReturnJoin.BareReturnBesideATailCallReturnsTheParameter` decompiles
@@ -6258,6 +6303,15 @@ pairs. `scripts.tests.test_runtime_pointer_context` covers unpruned counterclaim
 missing explicit function definitions and reference-only refinement without
 body duplication. Canonical indirect data operands share generator/runtime tests
 with ordinary data references; import references retain their separate kind.
+
+`LocalDataEvidence.*` checks same-object operand relations, renamed static
+symbols, distinct external anchors, missing/duplicate definitions, relocation
+addends and overlaps, storage bounds and incorrect symbol kinds. The local cases
+in `SignatureDataContext.*` reject wrong anchor names/offsets, external/local
+kind substitution, missing source variants and unrooted requests. Parser/cache
+tests preserve the separate kind and validate canonical keys even when cache
+pieces run in reverse. Python supplement/refinement tests retain every raw
+counterclaim and refuse to put local relations in ordinary byte records.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -9031,6 +9085,12 @@ form's target, state and size, and that a direct jump is never a long branch.
 `LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
 in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
 the segment rule without section headers.
+`LLVMCValues.FoldedImageStringAddressesKeepIntegerCarriers` checks empty and
+nonempty image strings reached through folded constant pointer/integer casts.
+Integer calls and returns retain explicit pointer conversions with preserved
+LLVM function types enabled and disabled; pointer calls and ordinary integer
+constants keep their own types. The x64/ARM64 source cases execute at O0/O2 with
+undefined-behavior traps.
 
 `LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
 `ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
@@ -11744,6 +11804,21 @@ The direct memory cases distinguish a complete no-match from an exhausted
 memory/deadline budget, including fortify-before-access ordering. The public
 `AndroidMemorySearchReportsMatchSDKAndCLI` test compares complete reports on
 success, zero-count invalid pointers, pointer faults and fortify refusal.
+`BinarySubstring*` covers `memmem` with embedded NUL and high bytes, repeated
+prefixes, first matches, exact and 64-bit counts, empty needles, shorter
+haystacks, overlapping read-only inputs, page tails, errno and dynamic
+provider lifetime. The direct model cases distinguish a complete no-match
+from exhausted scan or prefix-table budgets and check deadline refusal with
+unchanged backing. `AndroidBinarySubstringReportsMatchSDKAndCLI` compares
+complete public reports for direct and dynamic calls, including pointer
+faults and no-read results. Existing `Substring*` cases retain `strstr`'s
+NUL-terminated behavior in the shared search owner.
+`CaseInsensitiveSubstring*` checks `strcasestr` with mixed ASCII case,
+repeated prefixes, unchanged high bytes, first matches, empty needles,
+read-only page tails and provider lifetime. The shared model tests exercise
+its scan, prefix-table and deadline limits, and
+`AndroidCaseInsensitiveSubstringReportsMatchSDKAndCLI` compares complete
+public reports for matches, no-match, no-read and invalid-pointer cases.
 
 `AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
 APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and
@@ -14318,3 +14393,13 @@ including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
 
 `BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.
+
+`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` checks both C
+routes with optimization enabled and disabled. An independent 32-bit provider
+observes both words of a wide outgoing store and later overwrites of either
+word at O0/O2 with undefined-behavior traps. The fixed import ABI, rather than
+the store's vector transport, determines its scalar argument positions.
+`MedCachedCallTarget.CapturedScalarImportsKeepTheirDeclaredPointerType`
+checks x64 and ARM64 Windows pointer declarations and executes their scalar
+source projection on the host, including replacement of the import slot after
+the pointer was captured. These host checks do not execute ARM64 machine code.
