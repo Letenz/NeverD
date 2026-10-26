@@ -42,6 +42,201 @@ Segment executableSegment(va_t Address, llvm::ArrayRef<uint8_t> Bytes) {
   return Seg;
 }
 
+BinaryImage x64UnwindTailAdapter(bool Large, va_t Target) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Entry = 0x1040;
+  std::vector<uint8_t> Code(256, 0xcc);
+  std::vector<uint8_t> Body =
+      Large ? std::vector<uint8_t>{0x48, 0x81, 0xec, 0x28, 0x01, 0, 0}
+            : std::vector<uint8_t>{0x48, 0x83, 0xec, 0x28};
+  const size_t Prologue = Body.size();
+  Body.push_back(0xe8);
+  Body.resize(Body.size() + 4);
+  writeLE<int32_t>(Body.data() + Prologue + 1,
+                   0x10c0 - (Img.Entry + Body.size()));
+  if (Large)
+    Body.insert(Body.end(), {0x4d, 0x8b, 0xc8}); // mov r9,r8
+  else
+    Body.insert(Body.end(), {0x8b, 0xc8}); // mov ecx,eax
+  const size_t Restore = Body.size();
+  const std::vector<uint8_t> Frame(Body.begin(), Body.begin() + Prologue);
+  Body.insert(Body.end(), Frame.begin(), Frame.end());
+  Body[Restore + 2] = 0xc4; // add rsp, same allocation
+  Body.push_back(0xe9);
+  Body.resize(Body.size() + 4);
+  writeLE<int32_t>(Body.data() + Body.size() - 4,
+                   Target - (Img.Entry + Body.size()));
+  const uint8_t Leaf[] = {0x81, 0xe1, 0, 3, 0, 0, 0x8b, 0xc1, 0xc3};
+  std::copy(std::begin(Leaf), std::end(Leaf), Code.begin() + Target - 0x1000);
+  std::copy(Body.begin(), Body.end(), Code.begin() + 0x40);
+  Code[0xc0] = 0xc3;
+  Img.Segments.push_back(executableSegment(0x1000, Code));
+  Img.Symbols.push_back(Symbol::makeFunc(0x10c0, 1));
+  ExceptionFunction F;
+  F.CodeRange = {Img.Entry, Img.Entry + Body.size()};
+  F.Encoding = ExceptionEncoding::X64UnwindV1;
+  F.UnwindVersion = 1;
+  F.PrologueSize = Prologue;
+  UnwindOperation Allocation;
+  Allocation.Kind = Large ? UnwindOperationKind::AllocateLarge
+                          : UnwindOperationKind::AllocateSmall;
+  Allocation.CodeOffset = Prologue;
+  Allocation.StackOffset = Large ? 0x128 : 0x28;
+  F.UnwindOperations.push_back(Allocation);
+  Img.KnownCodeRanges.emplace_back(F.CodeRange.Begin, F.CodeRange.End);
+  Img.ExceptionMetadata.PrimaryFunctionEntries.push_back(Img.Entry);
+  Img.ExceptionMetadata.Functions.push_back(F);
+  return Img;
+}
+
+TEST(FunctionDiscoveryAlignment,
+     RestoredUnwindAdaptersDiscoverLeafTailEntries) {
+  const auto PreviousWorkers = workerThreadOverride().load();
+  auto RestoreWorkers =
+      llvm::scope_exit([&] { setWorkerThreadCount(PreviousWorkers); });
+  for (unsigned Workers : {1u, 4u})
+    for (bool Large : {false, true})
+      for (va_t Target : {0x1020, 0x1080}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Workers << ':' << Large << ':' << Target);
+        setWorkerThreadCount(Workers);
+        auto Img = x64UnwindTailAdapter(Large, Target);
+        if (Large) {
+          auto &F = Img.ExceptionMetadata.Functions.front();
+          F.Encoding = ExceptionEncoding::X64UnwindV2;
+          F.UnwindVersion = 2;
+        }
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Img));
+        const auto Found = FuncDetector().detect(Img, Dec);
+        EXPECT_TRUE(llvm::any_of(
+            Found, [=](const auto &F) { return F.first == Target; }));
+        EXPECT_TRUE(Img.VerifiedFunctionEntries.count(Target));
+        // Entry publication must remain stable on the next discovery pass.
+        EXPECT_EQ(FuncDetector().detect(Img, Dec), Found);
+      }
+}
+
+TEST(FunctionDiscoveryAlignment, UnprovedUnwindTailAdaptersStayUnsplit) {
+  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Img = x64UnwindTailAdapter(false, 0x1080);
+    auto &F = Img.ExceptionMetadata.Functions.front();
+    auto &Code = Img.Segments.front().Data;
+    const size_t Last = F.CodeRange.End - 0x1000 - 5;
+    switch (Mutation) {
+    case 0:
+      F.Encoding = ExceptionEncoding::Unknown;
+      break;
+    case 1:
+      F.ParseStatus = ExceptionParseStatus::Malformed;
+      break;
+    case 2:
+      F.ParseStatus = ExceptionParseStatus::Partial;
+      break;
+    case 3:
+      F.Kind = RuntimeFunctionKind::Fragment;
+      break;
+    case 4:
+      F.UnwindFlags = 4;
+      break;
+    case 5:
+      F.FrameRegister = 5;
+      break;
+    case 6:
+      F.UnwindOperations.front().StackOffset = 32;
+      break;
+    case 7:
+      F.UnwindOperations.front().CodeOffset = 3;
+      break;
+    case 8:
+      F.UnwindOperations.push_back(F.UnwindOperations.front());
+      break;
+    case 9:
+      Code[0x4e] = 0x20;
+      break; // restore a different stack size
+    case 10:
+      Code[0x4a] = 0xe0;
+      break; // mov esp,eax
+    case 11:
+      Code[0x4a] = 0xd8;
+      break; // mov ebx,eax
+    case 12:
+      Code[0x49] = 0x74;
+      Code[0x4a] = 0;
+      break; // conditional branch
+    case 13:
+      Code[0x49] = 0x89;
+      Code[0x4a] = 1;
+      break; // mov [rcx],eax
+    case 14:
+      Img.Symbols.front().Name = "abort";
+      break;
+    case 15:
+      writeLE<int32_t>(Code.data() + Last + 1, 0x1049 - (0x1000 + Last + 5));
+      break;
+    case 16:
+      Img.KnownCodeRanges.push_back({0x1070, 0x1090});
+      break;
+    case 17:
+      Img.ContinuationCodeStarts.insert(0x1080);
+      break;
+    case 18:
+      Code[0x80] = 0xeb;
+      Code[0x81] = 0xfe;
+      break; // no callable exit
+    case 19:
+      F.FragmentRanges.push_back({0x1080, 0x1089});
+      break;
+    case 20:
+      Code[0x43] = Code[0x4e] = 8;
+      F.UnwindOperations.front().StackOffset = 8;
+      break;
+    case 21:
+      Img.ExceptionMetadata.Functions.clear();
+      break;
+    }
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Img));
+    const auto Found = FuncDetector().detect(Img, Dec);
+    EXPECT_FALSE(llvm::any_of(
+        Found, [](const auto &Entry) { return Entry.first == 0x1080; }));
+    EXPECT_FALSE(Img.VerifiedFunctionEntries.count(0x1080));
+  }
+}
+
+TEST(FunctionDiscoveryAlignment, UnwindTailRequiresAnExecutableCompleteBody) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Img = x64UnwindTailAdapter(false, 0x1080);
+    Section Code;
+    Code.VA = 0x1000;
+    Code.Size = 0x100;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Section Data;
+    Data.VA = Mutation == 0 ? 0x1049 : 0x1080;
+    Data.Size = Mutation == 0 ? 2 : 9;
+    Data.Flags = SegmentFlags::Readable;
+    if (Mutation < 2) {
+      Img.Sections.push_back(Data);
+      Img.Sections.push_back(Code);
+    } else if (Mutation == 2)
+      Img.Segments.front().Data.resize(0x50); // truncated terminal displacement
+    else if (Mutation == 3)
+      Img.ExceptionMetadata.Functions.front().CodeRange.End -= 1;
+    else
+      Img.IsRelocatable = true;
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Img));
+    const auto Found = FuncDetector().detect(Img, Dec);
+    EXPECT_FALSE(llvm::any_of(
+        Found, [](const auto &Entry) { return Entry.first == 0x1080; }));
+  }
+}
+
 // A long `.text` is swept for call targets in pieces on the worker threads
 // and the pieces joined as one sweep would have gone.  Random bytes decode to
 // every length of instruction and to bytes that do not decode at all, so the
