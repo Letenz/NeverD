@@ -172,3 +172,37 @@ remained unchanged throughout this qualification. The Release/LLVM/Capstone
 profile and disabled optional backends remain as described above. Subsequent
 localization, right-to-left navigation and upstream integration have separate
 qualification records.
+
+The localized integration `5aaa254c7524c21c98ef9a4f27060cda505cc4f9`
+selected 6,764 CTests: 6,684 passed, 79 skipped and one failed. The failure
+was the complete workbench group: its private runtime path exceeded the Unix
+socket limit, reference fixtures tried to focus hidden code tabs, and hiding a
+completed code document discarded its exact secondary instruction selection.
+The latter was a product defect; cancellation now preserves that selection
+until the document is replaced. Original failures remain in separate receipts.
+The 126 disjoint AMX cases, both synthetic scale workloads, 89 historical
+reopens and 111 Python checks passed. The localized lineage suite passed all
+23 cases in each private Wayland scale; the offscreen gesture remained skipped.
+
+Repair `9987eccaa4692d98826e730d4ac41a163176c070` passed all 16 selected
+worker/desktop CTests, including the complete workbench group. Its 14-case
+focused workbench run passed offscreen and in private Wayland sessions at
+100% and 150%. The compositor explicitly supplies native focus; Qt's ordinary
+activation request alone cannot provide that contract on Wayland. All 23
+lineage cases passed at each native scale; offscreen passed 22 and skipped the
+native gesture. Eleven locales also exercise invalid-file messages and retention
+of the previous selection and collection. CLI and shared-core bytes remained
+identical to the preceding integration. This is a composite repair qualification,
+not a clean rerun of all 6,764 CTests. Later row-visibility checks have their own
+qualification below.
+
+Integration `a005079b26e26f2ac467a3ebc1af41054c7a6182` includes upstream
+`0e24efef94a1e8c51188d3c7233066545733c070`. All 418 selected CTests passed
+without skips, covering the new BEXTR owner, shared prefix/undefined-effect
+boundaries, source pipelines and DIFF owners, including the compiler comparison
+fixture. The 89 historical reopens and 111 Python checks passed again. Desktop
+binaries remained identical to the qualified repair. The public-interface ledger
+now accounts for the lineage C, Python, CLI and JSON surfaces; its 116 script
+tests and source validation passed. The unchanged Release profile still disables
+Z3, emulation and embedded Python. Merged Android changes therefore have no
+runtime qualification in this profile.
