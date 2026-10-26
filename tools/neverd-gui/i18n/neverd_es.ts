@@ -9549,8 +9549,10 @@ Dirección de comparación: %2 → %3</translation>
 <context>
     <name>neverd::gui::LineageSession</name>
     <message>
-        <source> Your previous graph is still available.</source>
-        <translation> Su grafo anterior sigue disponible.</translation>
+        <source>
+Your previous graph is still available.</source>
+        <translation>
+Su grafo anterior sigue disponible.</translation>
     </message>
     <message>
         <source>Loading stopped. You can retry.</source>
@@ -9579,6 +9581,10 @@ Dirección de comparación: %2 → %3</translation>
     <message>
         <source>Version graph worker: %1</source>
         <translation>Proceso del grafo de versiones: %1</translation>
+    </message>
+    <message>
+        <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
+        <translation>El archivo del grafo de versiones no contiene JSON UTF-8 válido. Revise el archivo e inténtelo de nuevo.</translation>
     </message>
 </context>
 </TS>

@@ -9585,8 +9585,10 @@ Comparison direction: %2 → %3</source>
 <context>
     <name>neverd::gui::LineageSession</name>
     <message>
-        <source> Your previous graph is still available.</source>
-        <translation> Предыдущий граф по-прежнему доступен.</translation>
+        <source>
+Your previous graph is still available.</source>
+        <translation>
+Предыдущий граф по-прежнему доступен.</translation>
     </message>
     <message>
         <source>Loading stopped. You can retry.</source>
@@ -9615,6 +9617,10 @@ Comparison direction: %2 → %3</source>
     <message>
         <source>Version graph worker: %1</source>
         <translation>Рабочий процесс графа версий: %1</translation>
+    </message>
+    <message>
+        <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
+        <translation>Файл графа версий не содержит корректный JSON в кодировке UTF-8. Проверьте файл и повторите попытку.</translation>
     </message>
 </context>
 </TS>

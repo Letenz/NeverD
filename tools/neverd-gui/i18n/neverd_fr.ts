@@ -9549,8 +9549,10 @@ Sens de comparaison : %2 → %3</translation>
 <context>
     <name>neverd::gui::LineageSession</name>
     <message>
-        <source> Your previous graph is still available.</source>
-        <translation> Votre graphe précédent reste disponible.</translation>
+        <source>
+Your previous graph is still available.</source>
+        <translation>
+Votre graphe précédent reste disponible.</translation>
     </message>
     <message>
         <source>Loading stopped. You can retry.</source>
@@ -9579,6 +9581,10 @@ Sens de comparaison : %2 → %3</translation>
     <message>
         <source>Version graph worker: %1</source>
         <translation>Processus de graphe de versions : %1</translation>
+    </message>
+    <message>
+        <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
+        <translation>Le fichier du graphe de versions n’est pas un JSON UTF-8 valide. Vérifiez le fichier et réessayez.</translation>
     </message>
 </context>
 </TS>

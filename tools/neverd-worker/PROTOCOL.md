@@ -1288,7 +1288,9 @@ load/query/save operations with cooperative cancellation and retained old data.
   collection. `append: true` retains a loaded collection and excludes `path`.
   Optional `versions` replaces metadata; `version_updates` merges per-snapshot
   edits while preserving other labels (duplicates still fail shared validation).
-  `options` contains shared admission settings.
+  `options` contains shared admission settings. Invalid JSON in a reopened file
+  retains error code `invalid_json`; the error response's `payload` identifies
+  `source: "lineage_file"` and `path`. File-read failures remain `load_failed`.
 - `lineage_query`: `query` is the [shared page request](../../docs/binary-diff-lineage.md#queries-and-limits).
   An absent revision is filled; explicit stale revisions remain errors.
 - `lineage_save`: `path` publishes a whole collection locally.

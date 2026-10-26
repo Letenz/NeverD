@@ -92,8 +92,19 @@ def run(args, root):
         assert target.read_bytes() == b"original target"
         assert not list(root.glob("protected.ndlineage.tmp-*"))
         malformed = root / "malformed.ndlineage"
-        malformed.write_text("{bad")
-        for payload in ({"path": str(malformed)}, {"reports": [str(reports[0])], "options": {"max_nodes": 1}},
+        for data in (b"{bad", b'{"reports":["\xff"]}'):
+            malformed.write_bytes(data)
+            rejected = reply(client, "lineage_load", {"path": str(malformed)})
+            assert rejected["error"]["code"] == "invalid_json", rejected
+            assert "Version graph file" in rejected["error"]["message"], rejected
+            assert "frame" not in rejected["error"]["message"], rejected
+            assert rejected["payload"]["source"] == "lineage_file", rejected
+            assert rejected["payload"]["path"] == str(malformed), rejected
+            assert ok(client, "lineage_summary")["revision"] == revision
+        unreadable = reply(client, "lineage_load", {"path": str(root / "missing.ndlineage")})
+        assert unreadable["error"]["code"] == "load_failed", unreadable
+        assert ok(client, "lineage_summary")["revision"] == revision
+        for payload in ({"reports": [str(reports[0])], "options": {"max_nodes": 1}},
                         {"path": str(saved), "unknown": True}):
             assert reply(client, "lineage_load", payload)["status"] != "ok"
             assert ok(client, "lineage_summary")["revision"] == revision

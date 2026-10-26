@@ -231,6 +231,24 @@ private slots:
     QCOMPARE(Next->arrowType(),
              Locale == "ar" ? Qt::RightArrow : Qt::LeftArrow);
     QCOMPARE(Session.revision(), Revision);
+    const auto Malformed = Directory.filePath("localized-invalid.ndlineage");
+    QVERIFY(write(Malformed, "{broken"));
+    Session.load({{"path", Malformed}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Errors.size() == 1, Timeout);
+    QCOMPARE(Session.revision(), Revision);
+    QCOMPARE(Functions->selected()["version"].toString(), Target);
+    QCOMPARE(Session.message(),
+             Translated("neverd::gui::LineageSession",
+                        "The version graph file is not valid UTF-8 JSON. "
+                        "Check the file and try again.") +
+                 Translated("neverd::gui::LineageSession",
+                            "\nYour previous graph is still available."));
+    View.setLayoutDirection(Locale == "ar" ? Qt::RightToLeft : Qt::LeftToRight);
+    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Output.isEmpty()) {
+      QTest::qWait(60);
+      QVERIFY(View.grab().save(Output + "/locale-error-" + Locale + ".png"));
+    }
   }
 
   void navigationPersistenceAndRender() {

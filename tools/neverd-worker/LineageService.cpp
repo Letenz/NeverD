@@ -25,6 +25,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <utility>
 
 namespace neverd::worker {
 namespace {
@@ -277,9 +278,20 @@ Json LineageService::execute(const std::string &Operation, const Json &Payload,
         Aggregate = Text.size();
         Document = parseJson(Text, limits::kMaxSavedComparisonBytes);
       } else if (P.contains("path")) {
-        Document = parseJson(
-            read(stringField(P, "path"), Aggregate, Notify, Cancelled),
-            limits::kMaxSavedComparisonBytes);
+        const auto Name = stringField(P, "path");
+        const auto Text = read(Name, Aggregate, Notify, Cancelled);
+        try {
+          Document = parseJson(Text, limits::kMaxSavedComparisonBytes);
+        } catch (const Error &E) {
+          if (E.code != "invalid_json")
+            throw;
+          auto Detail = E.detail;
+          Detail["source"] = "lineage_file";
+          Detail["path"] = Name;
+          throw Error(E.code,
+                      "Version graph file is not valid UTF-8 JSON: " + Name,
+                      std::move(Detail));
+        }
       }
       check(Cancelled);
       if (!Document.is_object() || !Document.contains("reports") ||

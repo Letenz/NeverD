@@ -105,11 +105,17 @@ void LineageSession::load(const QJsonObject &Payload) {
               const QJsonObject &Value) {
             if (Value["status"] != QJsonValue("ok")) {
               const auto Error = Value["error"].toObject();
-              Message = Error["code"] == QJsonValue("cancelled")
-                            ? tr("Loading stopped. You can retry.")
-                            : Error["message"].toString();
+              if (Error["code"] == QJsonValue("cancelled"))
+                Message = tr("Loading stopped. You can retry.");
+              else if (Error["code"] == QJsonValue("invalid_json") &&
+                       Value["payload"].toObject()["source"] ==
+                           QJsonValue("lineage_file"))
+                Message = tr("The version graph file is not valid UTF-8 JSON. "
+                             "Check the file and try again.");
+              else
+                Message = Error["message"].toString();
               if (!Summary.isEmpty())
-                Message += tr(" Your previous graph is still available.");
+                Message += tr("\nYour previous graph is still available.");
               emit failed(Message);
               return;
             }
