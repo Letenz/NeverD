@@ -124,7 +124,7 @@ SIDEEFFECT(Intrinsic::Scasw);
 SIDEEFFECT(Intrinsic::Scasd);
 SIDEEFFECT(Intrinsic::Scasq);
 SIDEEFFECT(Intrinsic::MaskedStoreB);
-// MPX / TSX (deprecated no-ops) + SHA
+// Legacy MPX / HLE / generic SHA identities retain effects, never implicit NOPs.
 SIDEEFFECT(Intrinsic::BndMk);
 SIDEEFFECT(Intrinsic::BndMov);
 SIDEEFFECT(Intrinsic::BndCl);

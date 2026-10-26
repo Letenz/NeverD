@@ -487,6 +487,50 @@ TEST(LocalTypesDebugContext, GivesTheDebugInformationsRecordsTheirMembers) {
   EXPECT_EQ(Own->FieldDisplayOffsets, std::vector<uint16_t>{0});
 }
 
+TEST(LocalTypesDebugContext, MatchingNamesStillCompleteTheMemberTypes) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>();
+  ASSERT_TRUE(types::parseCTypes(R"(
+    struct STATUS_LIKE { LONG Status; ULONGLONG Information; };
+    union ASSOCIATED_LIKE { void *Buffer; ULONGLONG Bits; };
+    struct IRP_LIKE {
+      union ASSOCIATED_LIKE Associated;
+      struct STATUS_LIKE Status;
+      struct STATUS_LIKE *User;
+    };
+  )",
+                                 *Library)
+                  .ok());
+  NamesOnlyDebugContext Names;
+  auto Context = std::make_unique<sdk::LocalTypesDebugContext>(Names, Library);
+  const TypeRef Record = NdType::makeNamedRecord("IRP_LIKE", 32);
+  Record->FieldDisplayNames = {"Associated", "Status", "User"};
+  Record->FieldDisplayOffsets = {0, 8, 24};
+  // A bounded traversal may already have reached these names while leaving
+  // the member types absent or shallow. Equal names are not complete types.
+  const std::vector<TypeRef> Original = {
+      nullptr, NdType::makeNamedRecord("STATUS_LIKE", 16),
+      NdType::makePtr(NdType::makeVoid())};
+  Record->FieldDisplayTypes = Original;
+  Context->completeType(Record);
+  EXPECT_EQ(
+      Record->displayFieldPathAt(0, 8, true, true, NdAccessClass::Integer),
+      "Associated.Bits");
+  EXPECT_EQ(Record->displayFieldPathAt(8, 4), "Status.Status");
+  const auto Member = Record->displayFieldTypeAt(24, 8);
+  ASSERT_TRUE(Member);
+  ASSERT_EQ(Member->Kind, NdTypeKind::Ptr);
+  ASSERT_TRUE(Member->Pointee);
+  EXPECT_EQ(Member->Pointee->SourceName, "STATUS_LIKE");
+  const auto Completed = Record->FieldDisplayTypes;
+  Context->completeType(Record);
+  EXPECT_EQ(Record->FieldDisplayTypes, Completed);
+  // Completion belongs to this context; a later context gets the original
+  // debug graph, just as it does when the library changes member names.
+  Context.reset();
+  EXPECT_EQ(Record->FieldDisplayTypes, Original);
+}
+
 TEST(LocalTypesDebugContext, FlexibleArrayMembersHoldTheirElements) {
   using namespace neverd;
   auto Library = std::make_shared<types::TypeLibrary>();

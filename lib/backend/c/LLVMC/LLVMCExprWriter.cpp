@@ -3607,11 +3607,14 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   }
 }
 
-std::string LLVMCWriter::integerPointerOperandStr(const llvm::Value *Operand) {
+std::string LLVMCWriter::integerPointerOperandStr(const llvm::Value *Operand,
+                                                  const llvm::CallBase *Call,
+                                                  unsigned ArgIdx) {
   if (!Operand)
     return {};
   bool PointerSpelling = false;
-  std::string Text = valueStr(Operand, &PointerSpelling);
+  std::string Text = Call ? callArgStr(Operand, *Call, ArgIdx, &PointerSpelling)
+                          : valueStr(Operand, &PointerSpelling);
   if (!Operand->getType()->isIntegerTy() || !PointerSpelling)
     return Text;
   // The pointer-offset printer may return `&frame` for an integer IR value.
@@ -4283,7 +4286,7 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
       TypedPointer = true;
     }
   }
-  std::string Val = valueStr(AI.getValOperand());
+  std::string Val = integerPointerOperandStr(AI.getValOperand());
   if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(
           peelIntegerView(AI.getValOperand()))) {
     const unsigned W =

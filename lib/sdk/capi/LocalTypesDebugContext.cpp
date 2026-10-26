@@ -529,8 +529,12 @@ bool LocalTypesDebugContext::takeLibraryNames(const TypeRef &Type) const {
   }
   CompletedRecords.insert(Type.get());
   Read.insert(Local->Name);
+  // A bounded conversion can retain every name and offset while leaving
+  // member types incomplete. The matching library must complete those too;
+  // otherwise a scalar access may name an entire union or structure in C.
   if (Names == Type->FieldDisplayNames &&
       Offsets == Type->FieldDisplayOffsets &&
+      Members == Type->FieldDisplayTypes &&
       Alignment == Type->FieldDisplayAlignment)
     return true;
   Completed.push_back({Type, std::move(Type->FieldDisplayNames),
