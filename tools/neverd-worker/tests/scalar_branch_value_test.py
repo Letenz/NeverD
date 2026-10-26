@@ -37,6 +37,7 @@ CASES = (
     ("not", ".byte 0xb9\n.long ~(.Ldone-.Lorigin)\nnot ecx", 20),
     ("neg", ".byte 0xb9\n.long -(.Ldone-.Lorigin)\nneg ecx", 20),
     ("sext", ".byte 0xb9\n.long .Ldone-.Lbase\nmovsxd rcx,ecx", 21),
+    ("self-sub", "sub ecx,ecx\n.byte 0x81,0xc1\n.long .Ldone-.Lorigin", 21),
 )
 
 

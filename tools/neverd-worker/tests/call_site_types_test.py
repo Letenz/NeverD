@@ -216,12 +216,18 @@ struct QA_CONTEXT *sub_40008D(struct QA_CONTEXT *context) { return context; }
 extern int32_t start(uintptr_t context);
 int main(void) { struct QA_CONTEXT context = { 1, 7, 9 }; return start((uintptr_t)&context) != 16; }
 """)
-        for count in (0, 1, 2):
+        for count in (0, 1, 2, 3):
             floating = root / ("floating-%d.elf" % count)
             code = bytes.fromhex("48b8000000000000f83f 66480f6ec0 bf07000000")
             # The third caller computes the exact AL count as 3 - 2. A COPY-only
             # proof loses that value even though the shared scalar owner knows it.
-            code += bytes.fromhex("b803000000 83e802") if count == 2 else b"\xb8" + struct.pack("<I", count)
+            if count == 3:
+                # Incoming R11 is unknown, but EAX-EAX followed by INC is one.
+                code += bytes.fromhex("4c89d8 29c0 ffc0")
+            elif count == 2:
+                code += bytes.fromhex("b803000000 83e802")
+            else:
+                code += b"\xb8" + struct.pack("<I", count)
             code += b"\xe8" + struct.pack("<i", 64 - len(code) - 5) + b"\xc3"
             floating.write_bytes(elf(code.ljust(64, b"\x90") + bytes.fromhex("89f8c3")))
             with Client(executable) as client:
@@ -237,7 +243,8 @@ int main(void) { struct QA_CONTEXT context = { 1, 7, 9 }; return start((uintptr_
                     result = source(client, route)
                     assert result["call_type_results"][0]["applied"], result
                     if compiler:
-                        execute_source(root, result["text"], "floating-" + route, compiler, """
+                        for optimization in ("O0", "O2"):
+                            execute_source(root, result["text"], "floating-%d-%s-%s" % (count, route, optimization), compiler, """
 #include <stdint.h>
 #include <stdarg.h>
 extern uint64_t start(void);
@@ -246,7 +253,7 @@ uint64_t sub_4000B8(uint32_t first, ...) {
   va_list ap; va_start(ap, first); errors += va_arg(ap, double) != 1.5; va_end(ap); return first;
 }
 int main(void) { return start() != 7 || errors; }
-""")
+""", optimization=optimization)
         arm64 = root / "arm64-fixed.exe"
         arm64.write_bytes(arm64_fixed_fixture())
         with Client(executable) as client:

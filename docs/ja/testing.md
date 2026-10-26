@@ -2193,3 +2193,5 @@ worker の回帰には、18 個のレジスター／スタック混合引数、�
 `SourceCallABI` と `CallRegisterConstant` は失効した一時値、不透明な効果、バイト範囲、呼び出し位置の曖昧さ、厳密な予算境界を検査する。worker は減算で可変引数のベクトル個数を求める呼び出し元を両 C 経路で実行する。
 
 `LLVMAddressModelOverlayTests` は AArch64 修飾子、i386 GOT、Mach-O GOTPCREL の修正を個別に検査します。既知の二種類の AArch64 ガードと十二通りの部分修正を網羅し、LLVM 入力とキャッシュ済みコピーを保持し、継承した Git 設定を隔離して未知のアーキテクチャガードを拒否します。構成検査はネイティブ再配置の実行テストを代替しません。
+
+`LowScalarConstant.SelfDifference*` は未知入力の復元を1〜8バイトの具体的なビットパターン実行と比較し、異なる値、メモリオペランド、不正な形を拒否します。`ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` は ELF、COFF、Mach-O の x86、x64、AArch64 を対象とします。worker は復元した分岐と自己減算による System V ベクトル数を HighC と LLVMC の O0/O2 で実行します。

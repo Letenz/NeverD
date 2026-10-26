@@ -2219,3 +2219,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 يتحقق `SourceCallABI` و`CallRegisterConstant` من القيم المؤقتة المنتهية والتأثيرات غير الشفافة ونطاقات البايت وغموض الاستدعاءات وحدود الميزانية الدقيقة. ينفذ worker أيضًا مساري C لمستدعٍ يحسب عدّاد المتجهات للمعاملات المتغيرة بالطرح.
 
 يتحقق `LLVMAddressModelOverlayTests` بصورة مستقلة من تصحيحات محددات AArch64 وGOT في i386 وGOTPCREL في Mach-O. ويغطي صيغتي شرط AArch64 المعروفتين وجميع التركيبات الاثنتي عشرة للتصحيحات الجزئية، ويحافظ على مصدر LLVM والنسخة المخزنة مؤقتاً، ويعزل إعدادات Git الموروثة ويرفض شروط المعمارية غير المعروفة. لا تحل اختبارات التهيئة هذه محل اختبارات تنفيذ إعادة التموضع الأصلية.
+
+تقارن اختبارات `LowScalarConstant.SelfDifference*` استعادة المدخل المجهول بالتنفيذ الفعلي لأنماط البايت بعروض من بايت إلى ثمانية، وترفض القيم المختلفة والذاكرة والأشكال غير الصحيحة. يغطي `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` معماريات x86 وx64 وAArch64 مع ELF وCOFF وMach-O. تنفذ اختبارات worker الفرع المستعاد وعدّاد متجهات System V الناتج عن الطرح الذاتي عبر HighC وLLVMC عند O0/O2.

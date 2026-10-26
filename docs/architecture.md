@@ -12356,3 +12356,5 @@ and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
 Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
 for the same input. File rewriting retains the original file-backed load.
 See [analysis sections](analysis-sections.md).
+
+`LowScalarConstant` also recognizes fixed-width integer self-subtraction of the same register or instruction-local temporary. Branch recovery and call-site ABI checks share this constant-time identity, so an unknown incoming value can still establish a zero result. Different occurrences, memory operands and malformed widths remain unproved.

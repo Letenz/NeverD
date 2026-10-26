@@ -107,7 +107,8 @@ std::optional<uint64_t> lowScalarConstantResult(
               Op.Opcode == NdOp::BOOL_XOR) &&
              Op.Inputs[0].Size == Op.Output.Size &&
              Op.Inputs[1].Size == Op.Output.Size) {
-    if (Op.Opcode == NdOp::INT_XOR && Op.Inputs[0] == Op.Inputs[1] &&
+    if ((Op.Opcode == NdOp::INT_XOR || Op.Opcode == NdOp::INT_SUB) &&
+        Op.Inputs[0] == Op.Inputs[1] &&
         (Op.Inputs[0].isReg() || Op.Inputs[0].isTemp()))
       Result = 0;
     else {

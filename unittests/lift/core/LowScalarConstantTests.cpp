@@ -118,6 +118,60 @@ TEST(LowScalarConstant, InvalidUnaryOperationsNeverCreateFacts) {
     EXPECT_FALSE(lowScalarConstantResult(unary(Opcode, 4, 1, 8), constant));
 }
 
+TEST(LowScalarConstant, SelfDifferenceDoesNotNeedAnIncomingConstant) {
+  for (uint16_t Width = 1; Width <= sizeof(uint64_t); ++Width)
+    for (bool Temporary : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Temporary);
+      auto Op = binary(NdOp::INT_SUB, Width, 0, 0);
+      Op.Inputs[0] = Op.Inputs[1] =
+          Temporary ? NdVar::tmp(8, Width) : NdVar::reg(8, Width);
+      EXPECT_EQ(lowScalarConstantResult(Op, constant), 0u);
+      for (uint64_t Byte = 0; Byte != 256; ++Byte) {
+        NdOpEmulator Emulator(BinaryImage{});
+        auto Seed = unary(NdOp::COPY, Width,
+                          Byte * UINT64_C(0x0101010101010101), Width);
+        Seed.Output = Op.Inputs[0];
+        ASSERT_TRUE(Emulator.step(Seed));
+        ASSERT_TRUE(Emulator.step(Op));
+        EXPECT_EQ(Emulator.getRegister(0), 0u);
+      }
+    }
+}
+
+TEST(LowScalarConstant, SelfDifferenceRequiresTheSameScalarOccurrence) {
+  for (bool Temporary : {false, true})
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << Temporary << ':' << Mutation);
+      auto Op = binary(NdOp::INT_SUB, 4, 0, 0);
+      Op.Inputs[0] = Op.Inputs[1] =
+          Temporary ? NdVar::tmp(8, 4) : NdVar::reg(8, 4);
+      switch (Mutation) {
+      case 0:
+        ++Op.Inputs[1].Offset;
+        break;
+      case 1:
+        Op.Inputs[1] = Temporary ? NdVar::reg(8, 4) : NdVar::tmp(8, 4);
+        break;
+      case 2:
+        Op.Inputs[1].Size = 2;
+        break;
+      case 3:
+        Op.Output.Size = 8;
+        break;
+      case 4:
+        Op.Output.Size = Op.Inputs[0].Size = Op.Inputs[1].Size = 16;
+        break;
+      case 5:
+        Op.NumInputs = 1;
+        break;
+      case 6:
+        Op.Inputs[0] = Op.Inputs[1] = NdVar::ram(8, 4);
+        break;
+      }
+      EXPECT_FALSE(lowScalarConstantResult(Op, constant));
+    }
+}
+
 TEST(LowScalarConstant, MultiplicationMatchesConcreteFixedWidthExecution) {
   for (uint16_t Width : {1, 2, 4, 8})
     for (uint64_t Left : {uint64_t{0}, uint64_t{1}, uint64_t{4},
