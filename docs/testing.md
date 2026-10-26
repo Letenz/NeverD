@@ -2662,6 +2662,12 @@ after revert. `ByteOverlayIdentityIgnoresEditKindsAndGrouping` checks identical
 bytes authored through different commands and adjacent row partitions. Python
 lineage integration verifies distinct snapshots for the data-only patch and one
 snapshot again after revert; the underlying input file remains unchanged.
+`AnalysisSectionsBindDataOutsideTheFunctionInventory` applies the same binding
+contract to materialized data sections, including stale-report refusal and
+distinct offline snapshots, with successful binding after section-state replay.
+`AnalysisSectionIdentityIgnoresInsertionOrder` and
+`AnalysisSectionDeclarationsHaveCanonicalIdentity` check section/declaration
+ordering, changed owned bytes and declarations outside a filtered inventory.
 
 `scripts/benchmark_binary_lineage.py` retains native synthetic ELF inputs and
 their exact reports for repeatable scale checks. Each snapshot has the same

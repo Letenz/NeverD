@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cassert>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -482,6 +483,39 @@ std::string byteOverlayIdentity(const patch::PatchOverlay &Overlay) {
   return llvm::toHex(Hash.final(), true);
 }
 
+std::string analysisSectionIdentity(const Session &S) {
+  // Section admission owns the byte/record bounds and guarantees the named
+  // materialized section. Retain every addition, including data outside the
+  // selected function inventory. Creation order is not part of that state.
+  std::map<llvm::StringRef, const llvm::json::Object *> Records;
+  for (const auto &Value : S.AnalysisSections) {
+    const auto &Record = *Value.getAsObject();
+    Records.emplace(*Record.getString("name"), &Record);
+  }
+  llvm::SHA256 Hash;
+  Hash.update("neverd.bindiff.analysis-sections-v1");
+  hashWord(Hash, Records.size());
+  for (const auto &[Name, Record] : Records) {
+    auto Canonical = *Record;
+    auto &Functions = *Canonical.getArray("functions");
+    std::sort(Functions.begin(), Functions.end(),
+              [](const auto &A, const auto &B) {
+                // The owner canonicalizes offsets and refuses overlapping
+                // declarations.
+                return *A.getAsObject()->getString("offset") <
+                       *B.getAsObject()->getString("offset");
+              });
+    const auto Metadata = jsonToString(std::move(Canonical));
+    hashWord(Hash, Metadata.size());
+    Hash.update(Metadata);
+    const auto *Section = S.Img.getSectionByName(Name);
+    assert(Section && "owned analysis section must remain materialized");
+    hashWord(Hash, Section->Data.size());
+    Hash.update(Section->Data);
+  }
+  return llvm::toHex(Hash.final(), true);
+}
+
 std::string revision(const Program &P) {
   llvm::SHA256 Hash;
   const auto Word = [&](uint64_t V) { hashWord(Hash, V); };
@@ -609,6 +643,8 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   if (!S.BytePatches.empty())
     Identity.Analysis +=
         ":byte-overlay-v1:" + byteOverlayIdentity(S.BytePatches);
+  if (!S.AnalysisSections.empty())
+    Identity.Analysis += ":analysis-sections-v1:" + analysisSectionIdentity(S);
   Identity.ImageBase = S.Img.Base;
   Identity.EntryPoint = S.Img.Entry;
   Identity.DiscoveryComplete = S.DiscoveredFunctions.has_value() &&
