@@ -3385,6 +3385,15 @@ private slots:
     QTest::addColumn<bool>("floating");
     QTest::newRow("docked") << false;
     QTest::newRow("floating") << true;
+    // Each data row constructs fresh native owners. Repeated ownership
+    // transitions must preserve the browser and its keyboard focus.
+    for (unsigned Repeat = 2; Repeat <= 5; ++Repeat) {
+      QTest::newRow(qPrintable(QStringLiteral("docked-repeat-%1").arg(Repeat)))
+          << false;
+      QTest::newRow(
+          qPrintable(QStringLiteral("floating-repeat-%1").arg(Repeat)))
+          << true;
+    }
   }
 
   void localReferencesAllowWorkbenchInteraction() {
