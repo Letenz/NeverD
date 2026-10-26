@@ -33,6 +33,10 @@ symbols or instruction semantics.
 Low-to-Med, Med verification and source output use that contract.
 `X86DescriptorStateNative.h` owns register widths, native API names, memory
 footprints and the assembly fallback. LLVM, HighC and LLVM-to-C share it.
+`X86MemoryAddressAsm.h` selects safe data-address carriers for explicit scalar
+memory fallbacks: AX for address32/64 and DI for i386 address16. Descriptor,
+query and atomic plans share this choice, avoiding compiler-owned realignment
+and PIC registers while retaining the original width and segment controls.
 The four appended legacy table IDs preserve i386's operand-size override
 without changing existing serialized identities. Native memory accesses stay
 inside the instruction. Explicit native addresses retain width/prefix controls;
@@ -612,7 +616,22 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-Image configuration automatically selects these single-access immediate
+The same original-word owner covers all 13 GPR FEAT_LRCPC2 and ten B/H/S/D/Q
+FEAT_LRCPC3 ordered unscaled LDAPUR/STLUR forms. The original opcode retains
+RCpc acquire or release ordering as well as access-EL checked address addition;
+an ordinary acquire load is not an equivalent replacement. Opaque side effects
+and memory clobbers remain through LLVM and both C routes, including discarded
+reads. Unallocated neighboring size/opcode combinations fail at the lifter
+boundary even when supplied operand details claim a valid mnemonic. Automatic
+GPR-base lifting retains these ordered words for ordinary AArch64, classic
+arm64e and arm64e.x1 images. Existing immediate intrinsic identities and the
+SP/source-environment boundary remain unchanged.
+The finite tracer requires naturally aligned ordered accesses when the original
+alignment controls are unavailable. An unaligned request refuses before any
+result or memory write; address-span evidence alone grants no alignment proof.
+Execution still requires the corresponding host CPU feature; emitting the word
+does not establish that feature or qualify concurrent-memory behavior.
+Image configuration selects the nonordered single-access immediate
 operations for arm64e.x1 GPR bases through both decoder routes, including
 unprivileged variants. Architecture-only decoding preserves them conservatively;
 image-configured ordinary AArch64 and classic arm64e retain their existing
@@ -2260,9 +2279,15 @@ the same COFF object. Their shared key names the exact operand of a uniquely
 defined typed function, external or static; no local variable spelling escapes
 its object. Static function names remain query keys rather than byte identities.
 Only that independently settled ordinary function can bind the relation, after
-all matching source refinements agree. The existing single data pass checks consumers
-without changing anchors or restarting inference. The parser/cache preserve a
-separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+all matching source refinements agree. The single data pass checks consumers
+without changing anchors. Complete, strong, settled data consumers can then
+request existing name-indexed caller bodies. This bounded continuation freezes
+both data bindings and the post-data candidate prefix; descendants cannot
+create bindings or alter the proof of their parents. A source/name-index gate
+avoids constructing another settlement map when no new parent has a query.
+Otherwise, the continuation settles only visited addresses from a sorted
+frozen-row index, retaining all competing claims at those addresses.
+The parser/cache preserve a separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 An explicit source-layout mode also proves signed coordinate differences within
 one non-COMDAT data section. Only a canonical zero-addend static operand can
 establish the frozen base; defined consumer data and signed addends must fit

@@ -561,6 +561,8 @@ IMMEDIATE_MEMORY_TEXT(kImmediateRelocatedArtifactProperty,
                       "cpta_relocated_memory_artifacts")
 IMMEDIATE_MEMORY_TEXT(kImmediateNativeCase,
                       "{{ immediate_case_{0}, {1}, {2}, {3}, {4}, {5} },\n")
+IMMEDIATE_MEMORY_TEXT(kImmediateAlignedBasePositionExpression,
+                      "{0} + ((unsigned)(-item->offset) & (item->width - 1))")
 IMMEDIATE_MEMORY_TEXT(
     kImmediateNativeHarness,
     "struct immediate_case {{ uint64_t (*call)(uint64_t, uint64_t, uint64_t, "
@@ -577,7 +579,7 @@ IMMEDIATE_MEMORY_TEXT(
     "    const struct immediate_case *item = &immediate_cases[c];\n"
     "    for (unsigned i = 0; i != sizeof(memory); ++i)\n"
     "      memory[i] = (unsigned char)(i * 13 + (i >> 8) * 7 + 129);\n"
-    "    const unsigned position = (unsigned)(256 + item->offset);\n"
+    "    const unsigned position = (unsigned)({2} + item->offset);\n"
     "    uint64_t expected_low = 0, expected_high = 0;\n"
     "    for (unsigned i = 0; i != item->width; ++i) {{\n"
     "      if (i < 8) expected_low |= (uint64_t)memory[position+i] << (i*8);\n"
@@ -589,7 +591,7 @@ IMMEDIATE_MEMORY_TEXT(
     "    if (!item->vector && item->result == 4) expected_low &= 0xffffffffU;\n"
     "    const uint64_t expected = item->result ? expected_low : 0;\n"
     "    uint64_t upper = ~0ULL;\n"
-    "    const uint64_t result = item->call((uint64_t)(uintptr_t)&memory[256], "
+    "    const uint64_t result = item->call((uint64_t)(uintptr_t)&memory[{2}], "
     "low, high, &upper);\n"
     "    if (result != expected || upper != (item->vector && item->result ? "
     "expected_high : 0)) return 1;\n"

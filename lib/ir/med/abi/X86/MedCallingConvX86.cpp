@@ -108,15 +108,18 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   // Cutting a re-entry of any already-seen def bounds the walk to the (small)
   // number of distinct SSA vars, so the depth cap only guards genuinely long
   // acyclic chains.
-  llvm::SmallDenseSet<std::tuple<int, int, int, uint64_t>, 8> VisitedDef;
+  using TraceKey = std::tuple<int, int, int, uint64_t>;
+  auto traceKeyOf = [](const MedVar &V) {
+    return TraceKey{static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff};
+  };
+  llvm::SmallDenseSet<TraceKey, 8> VisitedDef;
   auto traceOff = [&](auto &&Self, const MedVar &V,
                       int Depth) -> std::optional<int64_t> {
     if (Depth == 0) {
       VisitedPhi.clear();
       VisitedDef.clear();
     }
-    if (!VisitedDef.insert({static_cast<int>(V.Kind), V.Id, V.SSAVer, V.RegOff})
-             .second)
+    if (!VisitedDef.insert(traceKeyOf(V)).second)
       return std::nullopt;
     // The esp chain to a stack access can be long: each i386 stack adjustment
     // is a 32<->64 round-trip (~3 links) and a call that pushes many arguments
@@ -194,6 +197,21 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
     }
   };
 
+  // Escape checks repeatedly query the same roots without changing definitions.
+  // Reuse only complete queries: recursive results depend on their depth and
+  // visited PHI/definition sets. Enable this after finding stack parameters and
+  // discard it before rewriting operations.
+  using OffsetCache = llvm::DenseMap<TraceKey, std::optional<int64_t>>;
+  std::optional<OffsetCache> ReadOnlyOffsets;
+  auto traceRoot = [&](const MedVar &V) -> std::optional<int64_t> {
+    if (!ReadOnlyOffsets)
+      return traceOff(traceOff, V, 0);
+    auto [It, Inserted] = ReadOnlyOffsets->try_emplace(traceKeyOf(V));
+    if (Inserted)
+      It->second = traceOff(traceOff, V, 0);
+    return It->second;
+  };
+
   // Byte offset of an incoming stack argument loaded through \p AddrVar (the
   // address relative to the entry esp must land at +4 or above, since +0 is the
   // return address); std::nullopt otherwise.
@@ -204,7 +222,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   auto stackArgOffset = [&](const MedVar &AddrVar) -> std::optional<int64_t> {
     if (AddrVar.Kind != MedVar::Temp)
       return std::nullopt;
-    auto Off = traceOff(traceOff, AddrVar, 0);
+    auto Off = traceRoot(AddrVar);
     if (!Off || *Off < 4 || *Off > 0x400 || (*Off % 4) != 0)
       return std::nullopt;
     // A detected variadic callee recovers only its named prefix here.  Values
@@ -226,7 +244,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       [&](const MedVar &AddrVar) -> std::optional<int64_t> {
     if (AddrVar.Kind != MedVar::Temp)
       return std::nullopt;
-    auto Off = traceOff(traceOff, AddrVar, 0);
+    auto Off = traceRoot(AddrVar);
     if (!Off || *Off < 4 || *Off > 0x400)
       return std::nullopt;
     if (isVariadicOverflowOffset(*Off))
@@ -307,6 +325,7 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
   // original incoming value would drop the update; the home slot already holds
   // the argument under cdecl and is writable.  Read-only, non-escaping slots
   // keep the COPY rewrite.
+  ReadOnlyOffsets.emplace();
   std::set<int64_t> MutableArgOffsets;
   for (const auto &Blk : Func.Blocks)
     for (const auto &Op : Blk.Ops) {
@@ -320,21 +339,19 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       // arithmetic now carries explicit 32-bit ZEXT views, and treating their
       // input as an escape turns ordinary read-only arguments into mutable
       // homes.
-      const bool HasTraceableForwardedAddress =
-          Op.Output.Kind == MedVar::Temp &&
-          stackArgOffset(Op.Output).has_value();
-      if (HasTraceableForwardedAddress)
-        switch (Op.Opcode) {
-        case NdOp::COPY:
-        case NdOp::INT_ADD:
-        case NdOp::INT_SUB:
-        case NdOp::SUBBYTES:
-        case NdOp::INT_ZEXT:
-        case NdOp::INT_SEXT:
+      switch (Op.Opcode) {
+      case NdOp::COPY:
+      case NdOp::INT_ADD:
+      case NdOp::INT_SUB:
+      case NdOp::SUBBYTES:
+      case NdOp::INT_ZEXT:
+      case NdOp::INT_SEXT:
+        if (Op.Output.Kind == MedVar::Temp && stackArgOffset(Op.Output))
           continue;
-        default:
-          break;
-        }
+        break;
+      default:
+        break;
+      }
       // The home address used as anything but a load/store address (a call
       // argument, a stored value, ...) escapes and may be written through.
       for (uint8_t K = 0; K < Op.NumInputs; ++K) {
@@ -359,6 +376,8 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
     if (Idx <= BaseIdx + MaxIdx)
       Func.MutableStackParamHomes.push_back({Idx, Off});
   }
+
+  ReadOnlyOffsets.reset();
 
   // A load of more than two slots composes in temporaries numbered above
   // every value.

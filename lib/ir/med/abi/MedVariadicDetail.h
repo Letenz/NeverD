@@ -86,13 +86,12 @@ struct VariadicValueIndex {
   }
 };
 
-// Byte offset of \p V relative to the entry stack pointer. Every SSA/PHI
+class VariadicScan;
 
 /// Byte offset of \p Root relative to the entry stack pointer.  Every
 /// SSA/PHI definition must be unique and every PHI arm must prove the same
-/// offset.
-std::optional<int64_t> entrySpDelta(const VariadicValueIndex &Index,
-                                    uint64_t SpOff, const MedVar &Root,
+/// offset. Definitions are indexed only when the query follows a definition.
+std::optional<int64_t> entrySpDelta(VariadicScan &S, const MedVar &Root,
                                     int Depth);
 
 /// Whether \p V is the x86-64 SysV va_start word ((fp_offset << 32) |
@@ -102,8 +101,6 @@ bool isX64VaStartWord(uint64_t V);
 /// Distinct live-in (SSA version 0) parameter registers from \p Regs that the
 /// function spills to the stack: the variadic prologue's register save area.
 int countParamRegSpills(const MedFunc &Func, llvm::ArrayRef<uint64_t> Regs);
-
-class VariadicScan;
 
 /// The integer argument register a register save area starts at: the
 /// prologue spills each argument register from the first unnamed one through

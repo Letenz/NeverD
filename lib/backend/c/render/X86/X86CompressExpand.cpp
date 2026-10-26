@@ -66,7 +66,7 @@ std::string expression(const X86CompactPlan &P,
                          "|" + Intel + "}\" : ";
   if (P.Expand)
     Fallback += "\"+v\"(" + V + ")";
-  Fallback += " : \"b\"(" + Address + "), \"Yk\"((uint" +
+  Fallback += " : \"a\"(" + Address + "), \"Yk\"((uint" +
               std::to_string(P.maskBits()) + "_t)(" + Args[1] + "))";
   if (!P.Expand)
     Fallback += ", \"v\"(" + V + ")";
@@ -154,7 +154,8 @@ std::optional<X86CompactPlan> x86CompactCallPlan(Arch A,
       throw std::invalid_argument(X86CompactMalformed);
     P = x86CompactPlan(Expand, Bytes, Kind, Zero, Prefix);
     if (!P || Asm->getAsmString() != P->assembly() ||
-        Asm->getConstraintString() != P->constraints() ||
+        (Asm->getConstraintString() != P->constraints() &&
+         Asm->getConstraintString() != P->constraints(true)) ||
         !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
         Asm->getDialect() != llvm::InlineAsm::AD_ATT || Call.arg_size() != 3 ||
         Call.getFunctionType() != Asm->getFunctionType())

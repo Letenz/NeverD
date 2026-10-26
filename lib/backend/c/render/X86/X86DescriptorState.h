@@ -71,8 +71,11 @@ renderX86DescriptorStateExpression(const X86DescriptorStateNative &P,
   if (P.ResultBytes)
     Asm += std::string(P.Verify ? "\"=q\"" : "\"=r\"") + "(" + Temporary + ")";
   Asm += " : ";
-  if (P.OperandBytes)
-    Asm += std::string(P.Address ? "\"b\"" : "\"r\"") + "(" + Input + ")";
+  if (P.OperandBytes) {
+    const auto *Constraint =
+        P.Address ? x86MemoryAddressAsm(P.Address->Bits).GNUConstraint : "r";
+    Asm += std::string("\"") + Constraint + "\"(" + Input + ")";
+  }
   Asm += P.Verify ? " : \"cc\", \"memory\")" : " : \"memory\")";
   if (P.ResultBytes)
     Asm = "({ " + Type(P.ResultBytes) + " " + Temporary + "; " + Asm + "; " +

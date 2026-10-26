@@ -81,8 +81,12 @@ struct X86CompactPlan {
            (Expand ? Segment + "($1), $0 {$2}" + (Zero ? " {z}" : "")
                    : "$2, " + Segment + "($0) {$1}");
   }
-  std::string constraints() const {
-    return Expand ? "=v,{bx},^Yk,0,~{memory}" : "{bx},^Yk,v,~{memory}";
+  // AX cannot be a reserved frame, realignment or PIC base. Keep the old BX
+  // spelling readable for owned IR emitted before this carrier correction.
+  std::string constraints(bool LegacyBX = false) const {
+    const std::string Base = LegacyBX ? "{bx}" : "{ax}";
+    return Expand ? "=v," + Base + ",^Yk,0,~{memory}"
+                  : Base + ",^Yk,v,~{memory}";
   }
 };
 inline std::optional<X86CompactPlan> x86CompactPlan(bool Expand, unsigned Bytes,

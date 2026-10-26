@@ -63,8 +63,10 @@ struct X86FourSourcePlan {
            (Prefix ? std::string("%") + segment() + ":" : "") +
            "($1), $3, $0 {$7}" + (Control.Zero ? " {z}" : "");
   }
-  std::string constraints() const {
-    std::string R = "=v,{bx},0";
+  // AX cannot be a reserved frame, realignment or PIC base. Keep the old BX
+  // spelling readable for owned IR emitted before this carrier correction.
+  std::string constraints(bool LegacyBX = false) const {
+    std::string R = LegacyBX ? "=v,{bx},0" : "=v,{ax},0";
     for (unsigned I = 0; I < X86FourSourceCount; ++I)
       R += ",{" + sourceRegister(I) + "}";
     return R + ",^Yk,~{memory}";
