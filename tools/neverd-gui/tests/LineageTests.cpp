@@ -393,7 +393,16 @@ private slots:
           QJsonObject{{"id", Initial[I].toObject()["id"]},
                       {"label", QString("Snapshot %1: ").arg(I) + Padding},
                       {"branch", ""}});
-    Session.load({{"append", true}, {"version_updates", Updates}});
+    const auto Saved = Directory.filePath("large-page.ndlineage");
+    QSignalSpy SavedEvents(&Session, &LineageSession::saved);
+    Session.save(Saved);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && SavedEvents.size() == 1,
+                             Timeout);
+    auto Collection = QJsonDocument::fromJson(read(Saved)).object();
+    Collection["versions"] = Updates;
+    QVERIFY(
+        write(Saved, QJsonDocument(Collection).toJson(QJsonDocument::Compact)));
+    Session.load({{"path", Saved}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     QCOMPARE(Errors.size(), 0);
     QCOMPARE(Session.summary()["versions"].toInt(), 200);
