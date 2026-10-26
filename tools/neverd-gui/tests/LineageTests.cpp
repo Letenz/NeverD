@@ -24,6 +24,7 @@
 #include <QFontInfo>
 #include <QGraphicsItem>
 #include <QGraphicsTextItem>
+#include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
