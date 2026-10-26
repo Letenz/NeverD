@@ -155,14 +155,18 @@ public:
   /// BNDMOV addresses are offsets in the original operand's segment; table
   /// operations take the already segmented pointer address, never dereference
   /// that pointer, and send only the resulting BDE/BTE addresses to memory.
+  /// DefaultStack retains the original SP/BP base independently of segment
+  /// overrides: long mode ignores CS/DS/ES/SS prefixes for fault provenance.
   X86MpxResult load(X86MpxMode Mode, unsigned Destination,
                     std::optional<uint64_t> Address,
                     X86MpxMemoryProvider &Memory,
-                    X86SegmentRegister Segment = X86SegmentRegister::DS);
+                    X86SegmentRegister Segment = X86SegmentRegister::DS,
+                    bool DefaultStack = false);
   X86MpxResult store(X86MpxMode Mode, unsigned Source,
                      std::optional<uint64_t> Address, bool Locked,
                      X86MpxMemoryProvider &Memory,
-                     X86SegmentRegister Segment = X86SegmentRegister::DS);
+                     X86SegmentRegister Segment = X86SegmentRegister::DS,
+                     bool DefaultStack = false);
   X86MpxResult loadTable(X86MpxMode Mode, unsigned Destination,
                          std::optional<uint64_t> LinearPointerAddress,
                          std::optional<uint64_t> PointerValue,

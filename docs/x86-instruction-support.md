@@ -420,6 +420,13 @@ single-instruction execution, not MPX hardware or end-to-end lifting
 qualification. Original-transfer completion, state transport throughout the
 IR pipeline and transactional state integration remain open.
 
+BNDMOV requests retain the original SP/BP default-stack property independently
+of the selected segment. R12/R13 are data-default bases. In long mode,
+CS/DS/ES/SS overrides alone cannot reconstruct the noncanonical-address fault
+class; FS/GS remain separate overrides. A 42-case original-MOV probe on an
+Intel host checked these base/prefix distinctions. That probe validates the
+ordinary addressing rule, not enabled MPX hardware execution.
+
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and
 testing the remaining instruction forms. The bounded system contract added

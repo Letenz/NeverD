@@ -11,6 +11,7 @@
 
 #include "neverd/lift/X86/X86MpxEncoding.h"
 #include "neverd/lift/X86/X86Regs.h"
+#include "neverd/support/X86/X86Addressing.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -46,13 +47,8 @@ X86SegmentRegister segment(const x86_op_mem &Memory) {
   default:
     break;
   }
-  if (Memory.base != X86_REG_INVALID && Memory.base != X86_REG_RIP) {
-    const auto Base =
-        (mapCapstoneReg(Memory.base).Offset / x86reg::GeneralRegStride) & 7;
-    if (Base == 4 || Base == 5)
-      return X86SegmentRegister::SS;
-  }
-  return X86SegmentRegister::DS;
+  return isStackDefaultBase(Memory.base) ? X86SegmentRegister::SS
+                                         : X86SegmentRegister::DS;
 }
 
 X86MpxResult execute(const X86MpxEncoding &E, X86MpxMode Mode, va_t Address,
@@ -75,9 +71,11 @@ X86MpxResult execute(const X86MpxEncoding &E, X86MpxMode Mode, va_t Address,
   if (E.Id == X86_INS_BNDMOV) {
     const auto Offset = effectiveAddress(Inputs, Operand.mem, NextIP);
     const auto Segment = segment(Operand.mem);
+    const bool DefaultStack = isStackDefaultBase(Operand.mem.base);
     return Store ? Context.store(Mode, Bound, Offset, X.prefix[0] == 0xf0,
-                                 Memory, Segment)
-                 : Context.load(Mode, Bound, Offset, Memory, Segment);
+                                 Memory, Segment, DefaultStack)
+                 : Context.load(Mode, Bound, Offset, Memory, Segment,
+                                DefaultStack);
   }
   if (E.Id == X86_INS_BNDMK)
     return Context.make(Mode, Bound, general(Inputs, Operand.mem.base, NextIP),

@@ -11,6 +11,7 @@
 
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
 #include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/support/X86/X86Addressing.h"
 
 #include <cstdint>
 #include <optional>
@@ -238,8 +239,7 @@ bool liftAMX(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     Space = S.memoryAddressSpace(Memory);
     if (Memory.mem.segment == X86_REG_SS ||
         (Memory.mem.segment == X86_REG_INVALID &&
-         (Memory.mem.base == X86_REG_RSP || Memory.mem.base == X86_REG_RBP ||
-          Memory.mem.base == X86_REG_ESP || Memory.mem.base == X86_REG_EBP)))
+         isStackDefaultBase(Memory.mem.base)))
       Descriptor |= X86AmxStackSegment;
     Base = S.computeEA(RowBase);
   }

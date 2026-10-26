@@ -41,6 +41,11 @@ struct X86MpxMemoryAccess {
   /// BNDMOV retains the selected segment, including default SS. Table requests
   /// use the already translated address and the table access's DS contract.
   X86SegmentRegister Segment = X86SegmentRegister::DS;
+  /// The original BNDMOV base is SP/BP (not R12/R13). Long mode ignores
+  /// CS/DS/ES/SS overrides for fault classification, so Segment alone cannot
+  /// distinguish a stack-default #SS from a data-default #GP. FS/GS still
+  /// override that default. Table accesses are not stack references.
+  bool DefaultStack = false;
 
   unsigned wordBytes() const { return Mode == X86MpxMode::Bits64 ? 8 : 4; }
   unsigned wordCount() const {
@@ -54,6 +59,14 @@ struct X86MpxMemoryAccess {
   bool writesMemory() const {
     return Operation == X86MpxMemoryOperation::StoreBounds ||
            Operation == X86MpxMemoryOperation::StoreTable;
+  }
+  /// Whether a segment/canonicality failure uses stack-reference provenance.
+  /// Page permissions and other fault causes remain the provider's decisions.
+  bool usesStackSegment() const {
+    if (Mode == X86MpxMode::Bits32)
+      return Segment == X86SegmentRegister::SS;
+    return DefaultStack && Segment != X86SegmentRegister::FS &&
+           Segment != X86SegmentRegister::GS;
   }
 };
 

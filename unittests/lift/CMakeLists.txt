@@ -715,6 +715,7 @@ add_neverd_unittest(NeverDX86MpxContextTests
 add_neverd_unittest(NeverDX86MpxEncodingTests
   x86/X86MpxEncodingTests.cpp
   x86/X86MpxExecutionTests.cpp
+  x86/X86MpxAddressFaultTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86LegacyAdmissionTests

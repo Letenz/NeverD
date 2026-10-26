@@ -47,7 +47,8 @@ X86MpxAddress table(X86MpxContext &Context, X86MpxMode Mode,
 X86MpxResult X86MpxContext::load(X86MpxMode Mode, unsigned Destination,
                                  std::optional<uint64_t> Address,
                                  X86MpxMemoryProvider &Memory,
-                                 X86SegmentRegister Segment) {
+                                 X86SegmentRegister Segment,
+                                 bool DefaultStack) {
   if (!x86SegmentRegisterName(unsigned(Segment)))
     return X86MpxResult::InvalidInput;
   const auto Ready = operationStatus(Mode, Destination);
@@ -60,7 +61,8 @@ X86MpxResult X86MpxContext::load(X86MpxMode Mode, unsigned Destination,
                                      operandAddress(Mode, *Address),
                                      false,
                                      {},
-                                     Segment});
+                                     Segment,
+                                     DefaultStack});
   if (Loaded.Outcome == X86MpxMemoryOutcome::Completed)
     writeBounds(Mode, Destination, Loaded.Words[0], Loaded.Words[1]);
   return result(Loaded.Outcome);
@@ -69,7 +71,8 @@ X86MpxResult X86MpxContext::load(X86MpxMode Mode, unsigned Destination,
 X86MpxResult X86MpxContext::store(X86MpxMode Mode, unsigned Source,
                                   std::optional<uint64_t> Address, bool Locked,
                                   X86MpxMemoryProvider &Memory,
-                                  X86SegmentRegister Segment) {
+                                  X86SegmentRegister Segment,
+                                  bool DefaultStack) {
   if (!x86SegmentRegisterName(unsigned(Segment)))
     return X86MpxResult::InvalidInput;
   const auto Stored = storeValue(Mode, Source);
@@ -83,7 +86,8 @@ X86MpxResult X86MpxContext::store(X86MpxMode Mode, unsigned Source,
                              operandAddress(Mode, *Address),
                              Locked,
                              {Stored.Lower, Stored.Upper, 0},
-                             Segment})
+                             Segment,
+                             DefaultStack})
                     .Outcome);
 }
 

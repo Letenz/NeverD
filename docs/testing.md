@@ -865,8 +865,12 @@ still refuse strict lifting without publishing LowIR.
 The same target's `X86MpxExecution` cases execute original instruction bytes
 against explicit context and memory. They cover all bounds registers and GPR
 banks, both BNDMOV opcode directions, default SS and explicit segment choices,
-ignored long-mode 67H, RIP instruction extent, absent MIB base/index and
-ignored scale. Unknown input, enablement and transaction cases check refusal
+ignored long-mode 67H, RIP instruction extent, absent MIB base/index and ignored
+scale. R12/R13 retain their data default; SP/BP retain their fault provenance
+under otherwise ignored long-mode segment overrides. On Linux x86-64,
+`X86MpxAddressFault` compares those requests with 42 original-MOV fault probes
+using a child process and alternate signal stack. Other hosts explicitly skip
+that native oracle. Unknown input, enablement and transaction cases check refusal
 before memory effects. Fault cases distinguish invalid BDE from partial BTE
 load. A byte-RAM sequence checks BNDMK, spill/reload, table store/load, pointer
 mismatch initialization and boundary faults together. These provider tests

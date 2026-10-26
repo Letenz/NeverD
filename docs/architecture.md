@@ -68,8 +68,12 @@ implementation-dependent partial BNDLDX reads. Memory providers still own
 access validity, segment/canonical checks, ordering and partial stores.
 `ir/X86/X86MpxMemory.h` defines their whole-access completion contract. BNDMOV
 loads publish only after both fields complete; its memory stores retain LOCK
-and the selected segment, including default SS. Table operations sequence a
-BDE read before the three-field BTE access without probing the MIB pointer.
+and the selected segment. The original SP/BP base's default-stack property is
+retained separately: long-mode CS/DS/ES/SS overrides do not choose its fault
+class, and R12/R13 are data-default bases. `support/X86/X86Addressing.h` owns
+that base classification for MPX, AMX and native memory admission. Table
+operations sequence a BDE read before the three-field BTE access without
+probing the MIB pointer.
 An invalid BDE updates BNDSTATUS without changing the bank. A BTE read fault
 forgets only its destination, and store faults retain the provider's partial
 writes. Unavailable memory semantics are distinct from an architectural fault;

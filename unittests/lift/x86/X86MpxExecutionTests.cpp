@@ -213,10 +213,13 @@ TEST(X86MpxExecution,
           EXPECT_EQ(Request.Operation,
                     Form == 0 ? Operation::LoadBounds : Operation::StoreBounds);
           EXPECT_EQ(Request.Address, 0x1234567800004010 & mask(A));
-          EXPECT_EQ(Request.Segment, S ? Segment(S - 1)
-                                     : (Base & 7) == 4 || (Base & 7) == 5
-                                         ? Segment::SS
-                                         : Segment::DS);
+          EXPECT_EQ(Request.Segment, S                        ? Segment(S - 1)
+                                     : Base == 4 || Base == 5 ? Segment::SS
+                                                              : Segment::DS);
+          EXPECT_EQ(Request.DefaultStack, Base == 4 || Base == 5);
+          EXPECT_EQ(Request.usesStackSegment(),
+                    A == Arch::X64 ? (Base == 4 || Base == 5) && S < 5
+                                   : Request.Segment == Segment::SS);
           EXPECT_EQ(Request.Locked, Form == 2);
           EXPECT_EQ(Request.wordCount(), 2u);
           EXPECT_EQ(Request.wordBytes(), A == Arch::X64 ? 8u : 4u);
@@ -276,6 +279,7 @@ TEST(X86MpxExecution, TableTranslationIgnoresScaleAndAbsentBaseDisplacement) {
             EXPECT_EQ(M.Requests[1].Address, Table);
             for (const auto &Request : M.Requests) {
               EXPECT_EQ(Request.Segment, Segment::DS);
+              EXPECT_FALSE(Request.DefaultStack);
               EXPECT_FALSE(Request.Locked);
             }
             if (Store)
@@ -322,10 +326,9 @@ TEST(X86MpxExecution,
         continue;
       for (unsigned S = 0; S != Prefixes.size(); ++S)
         for (bool Store : {false, true}) {
-          const auto Selected = S ? Segment(S - 1)
-                                : (Base & 7) == 4 || (Base & 7) == 5
-                                    ? Segment::SS
-                                    : Segment::DS;
+          const auto Selected = S                        ? Segment(S - 1)
+                                : Base == 4 || Base == 5 ? Segment::SS
+                                                         : Segment::DS;
           const bool NeedsBase = A == Arch::X86 || Selected == Segment::FS ||
                                  Selected == Segment::GS;
           auto C = context();
