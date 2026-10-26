@@ -16,6 +16,7 @@
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../AArch64ImmediateMemoryBase.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
@@ -41,6 +42,7 @@
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/intrinsics/X86/X86FourSource.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/loader/AArch64MemoryImage.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
@@ -3334,7 +3336,35 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       GuardedAlignments[*VA] = std::max<uint16_t>(GuardedAlignments[*VA],
                                                   static_cast<uint16_t>(Bytes));
   };
+  std::optional<AArch64ImmediateHighBases> ImageMemoryBases;
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (Opts.TheArch == Arch::AArch64 &&
+        isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+        aarch64AddressMemoryHighShapeIsValid(E)) {
+      const auto Instruction = *aarch64AddressMemoryInstruction(
+          E.Operands[kAddressMemoryWordOperand]->ConstVal);
+      const auto &Base = *E.Operands[kAddressMemoryBaseOperand];
+      const auto *Constant =
+          Instruction.hasRegisterIndex()
+              ? nullptr
+              : ImageMemoryBases->imageConstant(Base, ReadingStmt);
+      if (Constant) {
+        const auto Span = aarch64ImmediateMemoryImageSpan(
+            *Opts.Image, Instruction, Constant->ConstVal,
+            Constant->ConstProvenance, Constant->AddressOwnerVA);
+        if (Span) {
+          const auto Object = indexedObjectAt(Span->Begin);
+          if (!Object || Span->Begin < Object->first ||
+              Span->Begin - Object->first > Object->second ||
+              Span->Bytes > Object->second - (Span->Begin - Object->first))
+            throw std::invalid_argument(
+                kAddressMemoryImmediateImageUnsupported);
+          NoteAccessAddress(&Base);
+          NoteWhole(Span->Begin, nullptr, !Instruction.isLoad());
+          ImageObjects[Object->first].AddressTaken = true;
+        }
+      }
+    }
     if (OriginalMemoryBases.count({Reading, &E})) {
       for (size_t I = 0; I < E.Operands.size(); ++I)
         if (I != kAddressMemoryBaseOperand && E.Operands[I])
@@ -3548,6 +3578,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                                  ? DeclaredReturn->Kind == NdTypeKind::Void
                                  : analyzeVoidReturn(Func);
     Reading = &Func;
+    if (Opts.TheArch == Arch::AArch64)
+      ImageMemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &S) {
       ReadingStmt = &S;
       if (BareReturns && S.Kind == StmtKind::Return && S.RetVal &&
@@ -4718,6 +4750,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   const bool Portable =
       PortableInterface && Funcs.size() == 1 && &Funcs.front() == PortableBody;
   std::set<const HighExpr *> Seen;
+  std::optional<AArch64ImmediateHighBases> MemoryBases;
+  const HighStmt *RequirementStatement = nullptr;
   std::function<void(const ExprPtr &)> CheckRequirement;
   CheckRequirement = [&](const ExprPtr &Expr) {
     if (!Expr || !Seen.insert(Expr.get()).second)
@@ -4729,6 +4763,10 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       const auto Instruction = *aarch64AddressMemoryInstruction(
           Expr->Operands[kAddressMemoryWordOperand]->ConstVal);
       const auto &Base = Expr->Operands[kAddressMemoryBaseOperand];
+      if (Opts.Image && !Instruction.hasRegisterIndex() &&
+          !MemoryBases->supports(*Opts.Image, Instruction, *Base,
+                                 RequirementStatement))
+        throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
       if (const char *Reason = Instruction.sourceBaseFailure(
               Opts.Image != nullptr,
               Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
@@ -4754,12 +4792,18 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
           "raw environment requirement has no C runtime contract");
     Expr->forEachChildExpr(CheckRequirement);
   };
-  for (const auto &Func : Funcs)
+  for (const auto &Func : Funcs) {
+    Seen.clear();
+    if (Opts.Image && Opts.TheArch == Arch::AArch64)
+      MemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+      RequirementStatement = &Stmt;
+      Seen.clear();
       forEachExpr(Stmt, CheckRequirement);
       for (const auto &Clause : Stmt.EHClauses)
         CheckRequirement(Clause.FilterValue);
     });
+  }
   for (const auto &Func : Funcs)
     if (Func.SourceTypeHint &&
         (hasIndirectSourceParameters(*Func.SourceTypeHint) ||

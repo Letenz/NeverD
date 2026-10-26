@@ -475,14 +475,41 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-An explicit runtime GPR parameter remains in runtime coordinates even when the
-module also has an image: LLVM bypasses image resolution for that base, and
-both source boundaries share the same admission owner. Other image-context
-immediate bases fail explicitly until exact page/relocation occurrences,
-accessed-byte ownership and raw-base rebasing agree; source body filtering
-cannot bypass that requirement. Automatic lifting still selects only
-register-offset operations. This is not automatic immediate CPA2 lifting
-coverage or support for image-derived immediate addresses.
+Image configuration automatically selects these single-access immediate
+operations for arm64e/arm64e.x1 GPR bases through both decoder routes, including
+unprivileged variants. Architecture-only decoding preserves them conservatively;
+image-configured ordinary AArch64 retains its existing memory/frame model.
+Reusing a decoder for a different image refreshes this selection even when its
+architecture and instruction mode are unchanged. Literal
+SP immediates retain the existing frame path; that path does not qualify the
+original SP environment under CPA2. An opaque access through a proven entry-SP
+alias also fails image-backed lowering until its stack/call ABI is qualified;
+a nominal footprint cannot justify forwarding or omitting stack arguments.
+Runtime GPR values remain in runtime
+coordinates even when the module has an image. An exact address occurrence may
+instead rebase the raw base only after `AArch64MemoryImage` proves the complete
+base-to-access byte span in one initialized image owner. Negative displacements
+and the maximum unsigned Q span use 64-bit extents. LLVM requires one complete
+storage run; HighC declares the complete containing object. Neither substitutes
+an effective address for the raw base or changes the encoded displacement.
+Numeric equality cannot authenticate a scalar, fragment or code occurrence.
+Source admission also follows SSA/source definitions before body filtering:
+a runtime GPR may flow through scalar arithmetic, but a mixed image/runtime
+selection or unresolved image arithmetic needs an all-arms span proof and fails
+explicitly. A runtime arm cannot authorize another arm's image coordinates.
+HighC uses the shared source-flow graph to authenticate a copied image address
+at its exact use; a later assignment or an address-taken local supplies no
+constant-value certificate. Storage collection reuses that same proof, so a
+retained source variable cannot shrink the mirrored byte span.
+
+The exact ADRP owner recognizes a retained immediate dereference of its live
+page base. An ADRP/ADD chain can also use a retained immediate access as its
+occurrence-bound dereference witness. Reauthentication checks the original
+instruction word, base lane and complete image span; the certificate names the
+ADD's original base, independently of the memory instruction's displacement.
+This specialized provenance witness gives generic memory/alias analyses no
+ordinary-memory or no-fault authority. Constants without a valid image span
+still fail before source body filtering.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. The common machine table also owns literal
 SP forms. With no image, an explicit raw-SP parameter can select the physical SP

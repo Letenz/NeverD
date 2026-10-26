@@ -495,6 +495,7 @@ IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateUnsignedShift, 10)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateSignedShift, 12)
 IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateSignedFieldMask, 0x1ffU)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateBasePosition, 256)
+IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateRuntimeDelta, 1)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateMemoryBytes, 66064)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateSpanBytes, 65536)
 IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateMaximumQLoad, 0x3dfffc20U)
@@ -517,6 +518,45 @@ IMMEDIATE_MEMORY_TEXT(
     kImmediateNativeVectorLoadWrapper,
     "static uint64_t immediate_case_{0}(uint64_t base, uint64_t low, uint64_t "
     "high, uint64_t *upper) {{ *upper = {1}(base, 1); return {1}(base, 0); }\n")
+IMMEDIATE_MEMORY_VALUE(va_t, kImmediateRelocatedDataBase, 0x1000000)
+IMMEDIATE_MEMORY_VALUE(va_t, kImmediateDecodedDataPage, 0x9000)
+IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateDecodedADRP, 0x90000041U)
+IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateDecodedADD, 0x91004021U)
+IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateDecodedLoad, 0xf9400420U)
+IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateDecodedRuntimeLoad, 0xf9400400U)
+IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateStackAliasMove, 0x910003e8U)
+IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateStackAliasRead, 0xf9400500U)
+IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateDecodedAddOffset, 16)
+IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateDecodedLoadOffset, 8)
+IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateDecodedStorageBytes, 64)
+IMMEDIATE_MEMORY_TEXT(kImmediateDecodedHarness,
+                      "\nint main(void) {{ return {0}() != {1}ULL; }\n")
+IMMEDIATE_MEMORY_TEXT(kImmediateDecodedDeclaration, "uint64_t {0}(void);\n")
+IMMEDIATE_MEMORY_TEXT(
+    kImmediateDecodedRuntimeHarness,
+    "\nint main(void) {{ uint64_t data[2] = {{0, {1}ULL}; "
+    "__auto_type base = _Generic(&{0}, uint64_t (*)(void *): (void *)data, "
+    "default: (uint64_t)(uintptr_t)data); return {0}(base) != {1}ULL; }\n")
+IMMEDIATE_MEMORY_TEXT(kImmediateImageBaseName, "immediate_image_base")
+IMMEDIATE_MEMORY_TEXT(kImmediateImageBaseDeclaration,
+                      "uint64_t immediate_image_base(void);\n")
+IMMEDIATE_MEMORY_TEXT(kImmediateCasePrefix, "immediate_case_")
+IMMEDIATE_MEMORY_TEXT(kImmediateInnerPrefix, "immediate_inner_")
+IMMEDIATE_MEMORY_TEXT(
+    kImmediateRelocatedWrapper,
+    "static uint64_t immediate_case_{0}(uint64_t base, uint64_t low, uint64_t "
+    "high, uint64_t *upper) {{\n"
+    "  unsigned char *source = (unsigned char *)(uintptr_t)(base - {1});\n"
+    "  unsigned char *mirror = (unsigned char *)(uintptr_t)"
+    "immediate_image_base();\n"
+    "  for (unsigned i = 0; i != {2}; ++i) mirror[i] = source[i];\n"
+    "  const uint64_t result = immediate_inner_{0}(base, low, high, upper);\n"
+    "  for (unsigned i = 0; i != {2}; ++i) source[i] = mirror[i];\n"
+    "  return result;\n}\n")
+IMMEDIATE_MEMORY_TEXT(kImmediateRelocatedArtifactPrefix,
+                      "immediate-relocated-memory")
+IMMEDIATE_MEMORY_TEXT(kImmediateRelocatedArtifactProperty,
+                      "cpta_relocated_memory_artifacts")
 IMMEDIATE_MEMORY_TEXT(kImmediateNativeCase,
                       "{{ immediate_case_{0}, {1}, {2}, {3}, {4}, {5} },\n")
 IMMEDIATE_MEMORY_TEXT(

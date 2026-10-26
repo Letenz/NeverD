@@ -30,7 +30,9 @@
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/lift/AArch64/AArch64Lifter.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/loader/AArch64MemoryImage.h"
 #include "neverd/loader/BinaryImageModel.h"
 #include "neverd/loader/MachO/MachOLoader.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -446,11 +448,11 @@ TEST(AArch64AddressMemory, RawWordsPreserveIndexScaleAndAliases) {
   for (bool Fast : {false, true})
     for (bool Strict : {false, true}) {
       const auto Ops = liftMemory(kImmediate, Fast, Strict);
-      EXPECT_TRUE(std::none_of(Ops.begin(), Ops.end(),
-                               lowAArch64AddressMemoryShapeIsValid));
-      EXPECT_TRUE(std::any_of(Ops.begin(), Ops.end(), [](const auto &Op) {
-        return Op.Opcode == NdOp::LOAD;
-      }));
+      const auto Memory = originalMemoryOperation(Ops);
+      EXPECT_EQ(Memory.Inputs[kAddressMemoryWordOperand + 1].Offset,
+                kImmediate);
+      EXPECT_TRUE(Memory.Inputs[kAddressMemoryIndexOperand + 1].isConst());
+      EXPECT_EQ(Memory.Inputs[kAddressMemoryIndexOperand + 1].Offset, 0);
     }
 }
 
@@ -2524,6 +2526,35 @@ TEST(AArch64ImmediateMemory,
 #define IMMEDIATE_MEMORY_ID(Id, Expected)                                      \
   EXPECT_EQ(static_cast<uint16_t>(Intrinsic::Id), Expected);
 #include "AArch64ImmediateMemoryFixtures.def"
+  for (bool Fast : {false, true}) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::AArch64));
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::MachO;
+    for (uint32_t Subtype : {uint32_t(llvm::MachO::CPU_SUBTYPE_ARM64_ALL),
+                             macho_loader::arm64e::kCPUSubtype,
+                             macho_loader::arm64e::kCPUSubtypeX1,
+                             uint32_t(llvm::MachO::CPU_SUBTYPE_ARM64_ALL),
+                             macho_loader::arm64e::kCPUSubtypeX1}) {
+      Image.MachOCPUSubtype = Subtype;
+      ASSERT_TRUE(Dec.selectMode(Image, kEntry));
+      std::array<uint8_t, kWordBytes> Bytes;
+      writeLE<uint32_t>(Bytes.data(), ImmediateMemoryCases[0].Word);
+      DecodedInsn Instruction;
+      ASSERT_EQ(
+          Fast ? Dec.decodeOneForLift(Bytes.data(), Bytes.size(), kEntry,
+                                      Instruction)
+               : Dec.decodeOne(Bytes.data(), Bytes.size(), kEntry, Instruction),
+          kWordBytes);
+      std::vector<LowOp> Operations;
+      Dec.liftToLow(Instruction, Operations);
+      EXPECT_EQ(std::any_of(Operations.begin(), Operations.end(),
+                            lowAArch64AddressMemoryShapeIsValid),
+                Image.isArm64e());
+    }
+  }
   for (size_t I = 0; I != std::size(ImmediateMemoryCases); ++I) {
     const auto &Case = ImmediateMemoryCases[I];
     SCOPED_TRACE(Case.Word);
@@ -2543,6 +2574,22 @@ TEST(AArch64ImmediateMemory,
               kStorageBase + static_cast<uint64_t>(Case.Offset));
     EXPECT_FALSE(Instruction->controlIndependentAddress(kStorageBase, 1));
     EXPECT_FALSE(Instruction->controlIndependentAddressRange(kStorageBase, 1));
+    for (bool Fast : {false, true})
+      for (bool Strict : {false, true}) {
+        const auto Operations = liftMemory(Case.Word, Fast, Strict);
+        const auto Memory = originalMemoryOperation(Operations);
+        ASSERT_TRUE(lowAArch64AddressMemoryShapeIsValid(Memory));
+        EXPECT_EQ(Memory.Inputs[kAddressMemoryWordOperand + 1].Offset,
+                  Case.Word);
+        EXPECT_EQ(Memory.Inputs[kAddressMemoryBaseOperand + 1].Offset,
+                  a64reg::X0 + Instruction->base() * kScalarBytes);
+        EXPECT_TRUE(Memory.Inputs[kAddressMemoryIndexOperand + 1].isConst());
+        EXPECT_EQ(Memory.Inputs[kAddressMemoryIndexOperand + 1].Offset, 0);
+        EXPECT_EQ(Memory.Inputs[kAddressMemoryIndexOperand + 1].Size,
+                  kScalarBytes);
+        EXPECT_FALSE(lowIntrinsicHasOnlyValueEffects(Memory));
+        EXPECT_FALSE(lowIntrinsicMemoryOperands(Memory).Complete);
+      }
     auto Function = immediateMemoryFunction(Case, I);
     auto &Operations = Function.Blocks.front().Ops;
     const auto At = std::find_if(Operations.begin(), Operations.end(),
@@ -2579,6 +2626,16 @@ TEST(AArch64ImmediateMemory,
   EXPECT_FALSE(Maximum->controlIndependentSpan(kStorageBase, 1));
   EXPECT_FALSE(Negative->controlIndependentSpan(0, 0));
   EXPECT_FALSE(Maximum->controlIndependentSpan(kVectorRangeRegionEnd - 1, 0));
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::MachO;
+  Segment Data;
+  Data.VA = kStorageBase;
+  Data.Size = Data.FileSz = kImmediateMemoryBytes;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  Image.Segments.push_back(std::move(Data));
   for (const auto &Case : ImmediateMemoryCases) {
     const auto Instruction = *aarch64AddressMemoryInstruction(Case.Word);
     const auto Range = Instruction.controlIndependentSpan(kStorageBase, 0);
@@ -2588,6 +2645,27 @@ TEST(AArch64ImmediateMemory,
     EXPECT_LE(Range->Begin, kStorageBase);
     EXPECT_GE(Range->Begin + Range->Bytes, Start + Case.Access);
     EXPECT_GE(Range->Begin + Range->Bytes, kStorageBase);
+    const auto Base = kStorageBase + kImmediateBasePosition;
+    EXPECT_TRUE(aarch64ImmediateMemoryImageSpan(
+        Image, Instruction, Base, ConstantAddressProvenance::DataAddress,
+        kStorageBase));
+    for (auto Role :
+         {ConstantAddressProvenance::Scalar, ConstantAddressProvenance::Unknown,
+          ConstantAddressProvenance::AddressFragment,
+          ConstantAddressProvenance::CodeAddress})
+      EXPECT_FALSE(aarch64ImmediateMemoryImageSpan(Image, Instruction, Base,
+                                                   Role, kStorageBase));
+    EXPECT_FALSE(aarch64ImmediateMemoryImageSpan(
+        Image, Instruction, Base, ConstantAddressProvenance::DataAddress,
+        Base));
+    auto Truncated = Image;
+    const auto Span = Instruction.controlIndependentSpan(Base, 0);
+    ASSERT_TRUE(Span);
+    Truncated.Segments.front().Data.resize(Span->Begin - kStorageBase +
+                                           Span->Bytes - 1);
+    EXPECT_FALSE(aarch64ImmediateMemoryImageSpan(
+        Truncated, Instruction, Base, ConstantAddressProvenance::DataAddress,
+        kStorageBase));
   }
 }
 
@@ -2601,6 +2679,9 @@ TEST(AArch64ImmediateMemory,
   cs_insn *Decoded = cs_malloc(Handle);
   ASSERT_NE(Decoded, nullptr);
   llvm::scope_exit Free([&] { cs_free(Decoded, 1); });
+  AArch64Lifter Lifter(Arch::AArch64);
+  Decoder FastDecoder;
+  ASSERT_TRUE(FastDecoder.init(Arch::AArch64));
   unsigned Count = 0;
   for (const auto &Case : ImmediateMemoryCases) {
     if (Case.Offset)
@@ -2635,9 +2716,28 @@ TEST(AArch64ImmediateMemory,
         EXPECT_EQ(Memory.mem.disp, Offset);
         EXPECT_EQ(static_cast<uint64_t>(Memory.mem.disp),
                   Instruction->addressOffset(0));
-        if (!Scratch)
+        if (!Scratch) {
           Identity = Decoded->id;
-        else {
+          std::vector<LowOp> FullOps;
+          Lifter.lift(Decoded, FullOps);
+          const auto Full = originalMemoryOperation(FullOps);
+          EXPECT_TRUE(lowAArch64AddressMemoryShapeIsValid(Full));
+          EXPECT_EQ(Full.Inputs[kAddressMemoryWordOperand + 1].Offset, Word);
+          DecodedInsn Fast;
+          ASSERT_EQ(FastDecoder.decodeOneForLift(Bytes.data(), Bytes.size(),
+                                                 kEntry, Fast),
+                    kWordBytes);
+          std::vector<LowOp> FastOps;
+          FastDecoder.liftToLow(Fast, FastOps);
+          ASSERT_EQ(FastOps.size(), FullOps.size());
+          for (size_t Op = 0; Op != FullOps.size(); ++Op) {
+            EXPECT_EQ(FullOps[Op].Opcode, FastOps[Op].Opcode);
+            EXPECT_EQ(FullOps[Op].Output, FastOps[Op].Output);
+            ASSERT_EQ(FullOps[Op].NumInputs, FastOps[Op].NumInputs);
+            for (unsigned Input = 0; Input != FullOps[Op].NumInputs; ++Input)
+              EXPECT_EQ(FullOps[Op].Inputs[Input], FastOps[Op].Inputs[Input]);
+          }
+        } else {
           EXPECT_EQ(Decoded->id, Identity);
           EXPECT_EQ(Memory.mem.base, AARCH64_REG_X16);
         }
@@ -2649,9 +2749,104 @@ TEST(AArch64ImmediateMemory,
 }
 
 namespace {
+void executeDecodedImmediateImageBases() {
+  for (uint32_t Subtype :
+       {macho_loader::arm64e::kCPUSubtype, macho_loader::arm64e::kCPUSubtypeX1})
+    for (bool Runtime : {false, true})
+      for (bool Add : {false, true})
+        for (bool Writable : {false, true}) {
+          if (Runtime && (Add || Writable))
+            continue;
+          BinaryImage Image;
+          Image.Arch = Arch::AArch64;
+          Image.Bits = Bitness::Bits64;
+          Image.Format = BinaryFormat::MachO;
+          Image.MachOCPUSubtype = Subtype;
+          Image.Base = Image.Entry = kEntry;
+          std::vector<uint32_t> Words;
+          if (!Runtime) {
+            Words.push_back(kImmediateDecodedADRP);
+            if (Add)
+              Words.push_back(kImmediateDecodedADD);
+          }
+          const auto LoadWord =
+              Runtime ? kImmediateDecodedRuntimeLoad : kImmediateDecodedLoad;
+          Words.push_back(LoadWord);
+          Words.push_back(kReturn);
+          Segment Text;
+          Text.VA = kEntry;
+          Text.Size = Text.FileSz = Words.size() * kWordBytes;
+          Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+          Text.Data.resize(Text.Size);
+          for (size_t I = 0; I != Words.size(); ++I)
+            writeLE<uint32_t>(Text.Data.data() + I * kWordBytes, Words[I]);
+          Image.Segments.push_back(std::move(Text));
+          Segment Data;
+          Data.VA = kImmediateDecodedDataPage;
+          Data.Size = Data.FileSz = kImmediateDecodedStorageBytes;
+          Data.Flags = SegmentFlags::Readable;
+          if (Writable)
+            Data.Flags = Data.Flags | SegmentFlags::Writable;
+          Data.Data.resize(Data.Size);
+          writeLE<uint64_t>(Data.Data.data() + kImmediateDecodedLoadOffset +
+                                (Add ? kImmediateDecodedAddOffset : 0),
+                            kVectorLoadedLow);
+          Image.Segments.push_back(std::move(Data));
+          Decoder Dec;
+          ASSERT_TRUE(Dec.init(Image));
+          const auto Low = CFGBuilder().build(Image, Dec, kEntry, kName);
+          LowToMedConverter Converter;
+          Converter.setBinaryImage(&Image);
+          const auto Function =
+              Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+          ASSERT_TRUE(verifyMedFunc(Function, kName));
+          ASSERT_EQ(Function.Params.size(), Runtime ? 1U : 0U);
+          unsigned Reads = 0;
+          for (const auto &Block : Function.Blocks)
+            for (const auto &Op : Block.Ops)
+              if (aarch64AddressMemoryMedShapeIsValid(Op)) {
+                ++Reads;
+                EXPECT_EQ(Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal,
+                          LoadWord);
+              }
+          ASSERT_EQ(Reads, 1U);
+          llvm::LLVMContext Context;
+          std::unique_ptr<llvm::Module> Module;
+          ASSERT_NO_THROW(Module =
+                              MedLLVMEmitter().emit({Function}, Context, kName,
+                                                    Arch::AArch64, {}, &Image))
+              << Subtype << Runtime << Add << Writable;
+          ASSERT_TRUE(Module);
+          if (Runtime)
+            EXPECT_TRUE(Module->global_empty());
+          optimizeMemory(*Module);
+          ASSERT_FALSE(llvm::verifyModule(*Module));
+          const auto Harness =
+              llvm::formatv(Runtime ? kImmediateDecodedRuntimeHarness
+                                    : kImmediateDecodedHarness,
+                            kName, kVectorLoadedLow)
+                  .str();
+          for (bool LLVMRoute : {false, true}) {
+            const auto Source =
+                memorySource(Function, *Module, LLVMRoute, &Image);
+#if defined(__APPLE__) && defined(__aarch64__)
+            compileMemoryC(Source + Harness, true);
+#else
+            compileMemoryC(Source, false);
+#endif
+          }
+          // Analysis/source projections do not authorize rebuilding an arm64e
+          // image without its authenticated ABI and pointer fixups.
+          EXPECT_FALSE(Codegen()
+                           .compile(*Module, Arch::AArch64, BinaryFormat::MachO)
+                           .Success);
+        }
+}
+
 void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
                                     bool Stack, bool Immediate,
-                                    const BinaryImage *Image = nullptr) {
+                                    const BinaryImage *Image = nullptr,
+                                    bool Relocate = false) {
   llvm::SmallString<kVectorPathStorage> ArtifactDirectory;
   if (const auto *Root =
           std::getenv(Stack || !Immediate ? kStackArtifactEnvironment
@@ -2661,18 +2856,20 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
     llvm::SmallString<kVectorPathStorage> Prefix(Root);
     llvm::sys::path::append(
         Prefix,
-        Image ? kImmediateImageArtifactPrefix
+        Relocate ? kImmediateRelocatedArtifactPrefix
+        : Image  ? kImmediateImageArtifactPrefix
         : Stack
             ? (Immediate ? kStackArtifactPrefix : kStackRegisterArtifactPrefix)
             : (Immediate ? kImmediateArtifactPrefix : kRegisterArtifactPrefix));
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory(Prefix, ArtifactDirectory));
     ::testing::Test::RecordProperty(
-        Image   ? kImmediateImageArtifactProperty
-        : Stack ? (Immediate ? kStackArtifactProperty
-                             : kStackRegisterArtifactProperty)
-                : (Immediate ? kImmediateArtifactProperty
-                             : kRegisterArtifactProperty),
+        Relocate ? kImmediateRelocatedArtifactProperty
+        : Image  ? kImmediateImageArtifactProperty
+        : Stack  ? (Immediate ? kStackArtifactProperty
+                              : kStackRegisterArtifactProperty)
+                 : (Immediate ? kImmediateArtifactProperty
+                              : kRegisterArtifactProperty),
         ArtifactDirectory.str().str());
   }
   auto SaveArtifact = [&](llvm::StringRef Name, llvm::StringRef Bytes) {
@@ -2693,6 +2890,49 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
   for (size_t I = 0; I != Cases.size(); ++I) {
     const auto &Case = Cases[I];
     auto Function = immediateMemoryFunction(Case, I);
+    if (Relocate) {
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto Memory = std::find_if(Ops.begin(), Ops.end(),
+                                       aarch64AddressMemoryMedShapeIsValid);
+      ASSERT_NE(Memory, Ops.end());
+      const auto Address = MedVar::makeConst(
+          Image->Segments.front().VA + kImmediateBasePosition, kScalarBytes,
+          ConstantAddressProvenance::DataAddress, Image->Segments.front().VA);
+      Memory->Inputs[kAddressMemoryBaseOperand + 1] = Address;
+      if (I % 2) {
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output.Kind = MedVar::Temp;
+        Copy.Output.Id = 0;
+        Copy.Output.TheArch = Arch::AArch64;
+        Copy.Output.Size = kScalarBytes;
+        for (const auto &Op : Ops)
+          Copy.Output.Id = std::max(Copy.Output.Id, Op.Output.Id + 1);
+        Copy.addInput(Address);
+        Memory->Inputs[kAddressMemoryBaseOperand + 1] = Copy.Output;
+        Ops.insert(Memory, Copy);
+      }
+    }
+    const bool RuntimeMath = Image && !Relocate && I % 2;
+    if (RuntimeMath) {
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto Memory = std::find_if(Ops.begin(), Ops.end(),
+                                       aarch64AddressMemoryMedShapeIsValid);
+      ASSERT_NE(Memory, Ops.end());
+      MedOp Sum;
+      Sum.Opcode = NdOp::INT_ADD;
+      Sum.Output.Kind = MedVar::Temp;
+      Sum.Output.Id = 0;
+      Sum.Output.TheArch = Arch::AArch64;
+      Sum.Output.Size = kScalarBytes;
+      for (const auto &Op : Ops)
+        Sum.Output.Id = std::max(Sum.Output.Id, Op.Output.Id + 1);
+      Sum.addInput(Function.Params[0]);
+      Sum.addInput(MedVar::makeConst(kImmediateRuntimeDelta, kScalarBytes,
+                                     ConstantAddressProvenance::Scalar));
+      Memory->Inputs[kAddressMemoryBaseOperand + 1] = Sum.Output;
+      Ops.insert(Memory, Sum);
+    }
     ASSERT_TRUE(verifyMedFunc(Function, Function.Name.c_str()));
     const auto Call =
         llvm::formatv(Case.Result   ? kImmediateNativeLoadCall
@@ -2707,7 +2947,8 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
             : llvm::formatv(kImmediateNativeWrapper, I, Call).str();
     Entries +=
         llvm::formatv(kImmediateNativeCase, I, Case.Access, Case.Result,
-                      unsigned(Case.Signed), unsigned(Case.Vector), Case.Offset)
+                      unsigned(Case.Signed), unsigned(Case.Vector),
+                      Case.Offset + (RuntimeMath ? kImmediateRuntimeDelta : 0))
             .str();
     const auto Parameters =
         Case.Result   ? std::string{}
@@ -2719,15 +2960,55 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
         llvm::formatv(kImmediateNativeDecl, Function.Name, Parameters).str();
     Functions.push_back(std::move(Function));
   }
+  if (Relocate) {
+    const auto Name = kImmediateCasePrefix;
+    size_t At = 0;
+    while ((At = Wrappers.find(Name, At)) != std::string::npos) {
+      Wrappers.replace(At, std::char_traits<char>::length(Name),
+                       kImmediateInnerPrefix);
+      At += std::char_traits<char>::length(kImmediateInnerPrefix);
+    }
+    for (size_t I = 0; I != Cases.size(); ++I)
+      Wrappers += llvm::formatv(kImmediateRelocatedWrapper, I,
+                                kImmediateBasePosition, kImmediateMemoryBytes)
+                      .str();
+    MedFunc Base;
+    Base.Name = kImmediateImageBaseName;
+    Base.Entry = kEntry + Cases.size() * kVectorFunctionStride;
+    Base.ReturnType = NdType::makeInt(kScalarBytes, false);
+    Base.ReturnValueEvidence = MedReturnValueEvidence::ReturnsInteger;
+    Base.Blocks.emplace_back();
+    Base.Blocks.front().Id = 0;
+    Base.Blocks.front().StartAddr = Base.Entry;
+    MedOp Address;
+    Address.Opcode = NdOp::COPY;
+    Address.Output.Kind = MedVar::Reg;
+    Address.Output.TheArch = Arch::AArch64;
+    Address.Output.RegOff = a64reg::X0;
+    Address.Output.Id = 0;
+    Address.Output.SSAVer = 1;
+    Address.Output.Size = kScalarBytes;
+    Address.addInput(MedVar::makeConst(Image->Segments.front().VA, kScalarBytes,
+                                       ConstantAddressProvenance::DataAddress,
+                                       Image->Segments.front().VA));
+    Base.Blocks.front().Ops.push_back(Address);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(Address.Output);
+    Base.Blocks.front().Ops.push_back(Return);
+    Functions.push_back(std::move(Base));
+    Declarations += kImmediateImageBaseDeclaration;
+  }
   llvm::LLVMContext Context;
   auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64,
                                       {}, Image);
   ASSERT_TRUE(Module);
   if (Image)
-    EXPECT_TRUE(Module->global_empty());
+    EXPECT_EQ(Module->global_empty(), !Relocate);
   optimizeMemory(*Module);
   ASSERT_FALSE(llvm::verifyModule(*Module));
   const auto Harness =
+      (Relocate ? std::string(kImmediateImageBaseDeclaration) : std::string{}) +
       llvm::formatv(kImmediateNativeHarness, Wrappers, Entries).str();
   SaveArtifact(kImmediateHarnessArtifact, Declarations + Harness);
   for (bool LLVMRoute : {false, true}) {
@@ -2803,11 +3084,14 @@ TEST(AArch64ImmediateMemory, ImageContextPreservesEveryRuntimeParameterAccess) {
   Image.Format = BinaryFormat::MachO;
   Segment Data;
   Data.Name = kStorageTableName;
-  Data.VA = kStorageBase;
+  Data.VA = kImmediateRelocatedDataBase;
   Data.Size = Data.FileSz = kImmediateMemoryBytes;
   Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
   Data.Data.resize(Data.Size);
   Image.Segments.push_back(std::move(Data));
+  executeImmediateMemoryFamilies(ImmediateMemoryCases, false, true, &Image,
+                                 true);
+  executeDecodedImmediateImageBases();
   // Zero is the required dummy index, and the original word is metadata.
   // Neither becomes an image pointer merely by matching a mapped address.
   const auto &Case = ImmediateMemoryCases[0];
@@ -2919,6 +3203,147 @@ TEST(AArch64ImmediateMemory, TracingUsesTheEncodedOffsetAndExactDataSlice) {
 
 TEST(AArch64ImmediateMemory,
      StackAndImageRequirementsCannotBeHiddenByFiltering) {
+  {
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::MachO;
+    Image.MachOCPUSubtype = macho_loader::arm64e::kCPUSubtypeX1;
+    Segment Text;
+    const uint32_t Words[] = {kImmediateStackAliasMove,
+                              kImmediateStackAliasRead, kReturn};
+    Text.VA = kEntry;
+    Text.Size = Text.FileSz = std::size(Words) * kWordBytes;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size);
+    for (size_t I = 0; I != std::size(Words); ++I)
+      writeLE<uint32_t>(Text.Data.data() + I * kWordBytes, Words[I]);
+    Image.Segments.push_back(std::move(Text));
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    const auto Low = CFGBuilder().build(Image, Dec, kEntry, kName);
+    EXPECT_NO_THROW(
+        LowToMedConverter().convert(Low, Arch::AArch64, BinaryFormat::MachO));
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Image);
+    EXPECT_THROW(Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO),
+                 LowToMedConversionError);
+  }
+  for (bool Before : {false, true}) {
+    BinaryImage Image;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::MachO;
+    Segment Data;
+    Data.VA = kStorageBase;
+    Data.Size = Data.FileSz = kImmediateMemoryBytes;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.Data.resize(Data.Size);
+    Image.Segments.push_back(std::move(Data));
+    auto Function = immediateMemoryFunction(ImmediateMemoryCases[0], 0);
+    MedVar Temporary;
+    Temporary.Kind = MedVar::Temp;
+    Temporary.TheArch = Arch::AArch64;
+    Temporary.Size = kScalarBytes;
+    Temporary.Id = 0;
+    for (const auto &Op : Function.Blocks.front().Ops)
+      Temporary.Id = std::max(Temporary.Id, Op.Output.Id + 1);
+    auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+    std::function<void(const ExprPtr &)> Replace;
+    Replace = [&](const ExprPtr &Expression) {
+      if (!Expression)
+        return;
+      if (isAArch64AddressMemoryIntrinsic(Expression->IntrinsicId))
+        Expression->Operands[kAddressMemoryBaseOperand] =
+            HighExpr::makeVar(Temporary, NdType::makeInt(kScalarBytes, false));
+      Expression->forEachChildExpr(Replace);
+    };
+    walkStmts(High.Body, [&](const HighStmt &Statement) {
+      forEachExpr(Statement, Replace);
+    });
+    HighStmt Definition;
+    Definition.Kind = StmtKind::Assign;
+    Definition.Dst =
+        HighExpr::makeVar(Temporary, NdType::makeInt(kScalarBytes, false));
+    Definition.Val = HighExpr::makeConst(
+        kStorageBase + kImmediateBasePosition, kScalarBytes,
+        ConstantAddressProvenance::DataAddress, kStorageBase);
+    if (Before)
+      High.Body.insert(High.Body.begin(), Definition);
+    else
+      High.Body.push_back(Definition);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.Image = &Image;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    if (Before)
+      EXPECT_NO_THROW(EXPECT_TRUE(HighCEmitter().emit({High}, Out, Options)));
+    else {
+      EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                   std::invalid_argument);
+      EXPECT_TRUE(Source.empty());
+    }
+  }
+  for (bool Select : {false, true})
+    for (bool Hidden : {false, true}) {
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::MachO;
+      Segment Data;
+      Data.VA = kStorageBase;
+      Data.Size = Data.FileSz = kImmediateMemoryBytes;
+      Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Data.Data.resize(Data.Size);
+      Image.Segments.push_back(std::move(Data));
+      auto Function = immediateMemoryFunction(ImmediateMemoryCases[0], 0);
+      Function.Params[1].Size = 1;
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto Memory = std::find_if(Ops.begin(), Ops.end(),
+                                       aarch64AddressMemoryMedShapeIsValid);
+      ASSERT_NE(Memory, Ops.end());
+      MedOp Base;
+      Base.Opcode = Select ? NdOp::SELECT : NdOp::INT_ADD;
+      Base.Output.Kind = MedVar::Temp;
+      Base.Output.Id = 0;
+      Base.Output.TheArch = Arch::AArch64;
+      Base.Output.Size = kScalarBytes;
+      for (const auto &Op : Ops)
+        if (Op.Output.Kind == MedVar::Temp)
+          Base.Output.Id = std::max(Base.Output.Id, Op.Output.Id + 1);
+      if (Select)
+        Base.addInput(Function.Params[1]);
+      Base.addInput(MedVar::makeConst(
+          kStorageBase + kImmediateBasePosition, kScalarBytes,
+          ConstantAddressProvenance::DataAddress, kStorageBase));
+      Base.addInput(Function.Params[0]);
+      Memory->Inputs[kAddressMemoryBaseOperand + 1] = Base.Output;
+      Ops.insert(Memory, Base);
+      ASSERT_TRUE(verifyMedFunc(Function, kName));
+      const std::vector<char> Mask{0};
+      llvm::LLVMContext Context;
+      EXPECT_THROW(MedLLVMEmitter().emit(
+                       {Function}, Context, kName, Arch::AArch64, {}, &Image,
+                       BinaryFormat::MachO, false, Hidden ? &Mask : nullptr),
+                   std::runtime_error);
+      auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+      if (Hidden) {
+        HighStmt Branch;
+        Branch.Kind = StmtKind::If;
+        Branch.Cond = HighExpr::makeConst(0, 1);
+        Branch.Body = std::move(High.Body);
+        High.Body = {std::move(Branch)};
+      }
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      Options.Image = &Image;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                   std::invalid_argument);
+      EXPECT_TRUE(Source.empty());
+    }
   const uint32_t StackMask = kAddressMemoryRegisterMask
                              << kAddressMemoryBaseShift;
   BinaryImage Image;
@@ -2948,6 +3373,11 @@ TEST(AArch64ImmediateMemory,
             if (aarch64AddressMemoryMedShapeIsValid(Op)) {
               auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
               Base.Kind = Kind;
+              if (Kind != MedVar::Const) {
+                Base.Id = 0;
+                for (const auto &Definition : Rejected.Blocks.front().Ops)
+                  Base.Id = std::max(Base.Id, Definition.Output.Id + 1);
+              }
               Base.ConstVal = kStorageBase;
               RejectedBase = Base;
             }

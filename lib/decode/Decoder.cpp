@@ -150,7 +150,11 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
   return true;
 }
 
-void Decoder::configureFor(const BinaryImage &Img) { configureX86For(Img); }
+void Decoder::configureFor(const BinaryImage &Img) {
+  configureX86For(Img);
+  if (AArch64)
+    AArch64->setPreserveImmediateMemory(Img.isArm64e());
+}
 
 bool Decoder::init(const BinaryImage &Img) {
   if (Img.Mode != InstructionMode::MixedARMThumb) {
@@ -170,14 +174,19 @@ bool Decoder::selectMode(const BinaryImage &Img, va_t Addr,
   if (Img.Arch == Arch::ARM &&
       !decoder_detail::isARMInstructionAligned(Addr, *Mode))
     return false;
-  if (Handle && TargetArch == Img.Arch && CurrentMode == *Mode)
+  if (Handle && TargetArch == Img.Arch && CurrentMode == *Mode) {
+    if (AArch64)
+      configureFor(Img);
     return true;
+  }
   const bool WasDetail = Detail;
   const bool WasText = Text;
   if (!init(Img.Arch, *Mode))
     return false;
   setDetail(WasDetail);
   setText(WasText);
+  if (AArch64)
+    configureFor(Img);
   return true;
 }
 
