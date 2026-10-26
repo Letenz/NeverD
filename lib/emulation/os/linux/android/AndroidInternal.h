@@ -359,6 +359,8 @@ private:
   BionicResult compareMemory(const NativeCallEvent &Call);
   BionicResult descriptorSet(const NativeCallEvent &Call);
   BionicResult stringLength(const NativeCallEvent &Call);
+  llvm::Expected<uint64_t> stringLengthValue(uint64_t Address, uint64_t Size,
+                                             llvm::StringRef Name);
   BionicResult decimalInteger(const NativeCallEvent &Call);
   llvm::Expected<std::optional<uint64_t>>
   decimalValue(bool Narrow,
@@ -403,6 +405,7 @@ private:
   BionicResult findSubstring(const NativeCallEvent &Call);
   BionicResult spanString(const NativeCallEvent &Call);
   BionicResult copyBoundedString(const NativeCallEvent &Call);
+  BionicResult appendCheckedString(const NativeCallEvent &Call);
   BionicResult findCharacter(const NativeCallEvent &Call);
   class ArgumentReader;
   class StringFormatter;

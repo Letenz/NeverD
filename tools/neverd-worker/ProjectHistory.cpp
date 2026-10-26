@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <utility>
+#include <vector>
 
 namespace neverd::worker {
 namespace fs = std::filesystem;
@@ -40,11 +42,33 @@ Json rowsFromFile(std::string_view table, Json rows) {
   return rows;
 }
 /// \p rows as \p table's file holds them.
-Json rowsToFile(std::string_view table, Json rows) {
-  if (ordered(table))
-    for (auto &row : rows)
-      row.erase("addr");
-  return rows;
+std::string sidecarContents(std::string_view table, const Json &rows) {
+  if (!ordered(table))
+    return sidecarText(rows);
+  auto fileRows = rows;
+  for (auto &row : fileRows)
+    row.erase("addr");
+  return sidecarText(fileRows);
+}
+using SidecarWrites = std::vector<std::pair<fs::path, std::string>>;
+// Encode once before publishing the journal. Validate every table's write
+// budget, including unchanged ones, so recovery can still materialize it.
+SidecarWrites prepareSidecars(const fs::path &binary, const Json &state,
+                              const Json *before = nullptr) {
+  SidecarWrites writes;
+#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
+  {                                                                            \
+    auto text = sidecarContents(Table, state.at(Table));                       \
+    if (text.size() >                                                          \
+        ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes)            \
+      throw Error("history_budget_exceeded",                                   \
+                  "A user state file exceeds 16 MiB");                         \
+    if (!before || state.at(Table) != before->at(Table))                       \
+      writes.emplace_back(sidecar(binary, project_files::File::Id),            \
+                          std::move(text));                                    \
+  }
+#include "UserStateTables.def"
+  return writes;
 }
 Json read(const fs::path &path,
           std::size_t limit =
@@ -301,10 +325,12 @@ Json ProjectHistory::normalizedState(Json state) {
     }
     // By address, as the CLI orders the tables it writes: one order for
     // both writers keeps a project's files from changing with the tool.
-    std::sort(items.begin(), items.end(), [](const Json &a, const Json &b) {
-      return parseAddress(a.at("addr").get<std::string>()) <
-             parseAddress(b.at("addr").get<std::string>());
-    });
+    const auto byAddress = [](const Json &a, const Json &b) {
+      return parseAddress(a.at("addr").get_ref<const std::string &>()) <
+             parseAddress(b.at("addr").get_ref<const std::string &>());
+    };
+    if (!std::is_sorted(items.begin(), items.end(), byAddress))
+      std::sort(items.begin(), items.end(), byAddress);
     for (std::size_t i = 1; i < items.size(); ++i)
       if (items[i - 1].at("addr") == items[i].at("addr"))
         throw Error("history_invalid",
@@ -388,22 +414,6 @@ Json ProjectHistory::readState(const fs::path &binary) {
     state[Table] = rowsFromFile(Table, std::move(rows));
 #include "UserStateTables.def"
   return normalizedState(std::move(state));
-}
-
-void ProjectHistory::writeSidecars(const Json &state) const {
-#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
-  writer_(sidecar(binary_, project_files::File::Id),                           \
-          sidecarText(rowsToFile(Table, state.at(Table))));
-#include "UserStateTables.def"
-}
-
-void ProjectHistory::checkSidecarBudgets(const Json &state) {
-#define NEVERD_USER_STATE_TABLE(Table, Kind, Id, Optional)                     \
-  if (sidecarText(rowsToFile(Table, state.at(Table))).size() >                 \
-      ::neverd::limits::worker::kProjectHistoryMaxStateFileBytes)              \
-    throw Error("history_budget_exceeded", "A user state file exceeds 16 "     \
-                                           "MiB");
-#include "UserStateTables.def"
 }
 
 void ProjectHistory::verifyLoadedState(const Json &state) {
@@ -549,40 +559,44 @@ void ProjectHistory::persist(const Json &state) {
   if (diskState() != committedState_ || read(historyPath_) != previousDocument_)
     throw Error("foreign_edits", "Sidecars or history changed outside this "
                                  "worker; reload and inspect before editing");
-  const auto after = normalizedState(state);
-  const auto nextDocument = document(after);
-  if (compactText(nextDocument).size() >
+  auto after = normalizedState(state);
+  auto nextDocument = document(after);
+  const auto historyText = compactText(nextDocument);
+  if (historyText.size() >
       ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes)
     throw Error("history_budget_exceeded",
                 "Persisted user history exceeds 8 MiB");
-  const Json journal{{"schema_version", 1},
-                     {"source_sha256", hash_},
-                     {"before", committedState_},
-                     {"after", after},
-                     {"before_history", previousDocument_},
-                     {"after_history", nextDocument}};
-  if (compactText(journal).size() >
+  Json journal{{"schema_version", 1},
+               {"source_sha256", hash_},
+               {"before", committedState_},
+               {"before_history", previousDocument_}};
+  journal["after"] = std::move(after);
+  journal["after_history"] = std::move(nextDocument);
+  const auto journalText = compactText(journal);
+  if (journalText.size() >
       ::neverd::limits::worker::kProjectHistoryMaxJournalBytes)
     throw Error("history_budget_exceeded", "Recovery journal exceeds 24 MiB");
-  checkSidecarBudgets(after);
+  const auto writes =
+      prepareSidecars(binary_, journal.at("after"), &committedState_);
   if (const auto error = project_files::prepare(binary_))
     throw Error("save_failed",
                 "Cannot create the project folder: " + error.message());
-  writer_(journalPath_, compactText(journal));
+  writer_(journalPath_, journalText);
   // From this point any failure leaves a recoverable write-ahead journal.
   try {
-    writeSidecars(after);
-    writer_(historyPath_, compactText(nextDocument));
+    for (const auto &[path, text] : writes)
+      writer_(path, text);
+    writer_(historyPath_, historyText);
     std::error_code ec;
     if (!fs::remove(journalPath_, ec) || ec)
       throw Error("recovery_required", "User edits were saved but journal "
                                        "cleanup failed; retry Save to recover");
   } catch (...) {
-    interruptedWrite_ = journal;
+    interruptedWrite_ = std::move(journal);
     throw;
   }
-  committedState_ = after;
-  previousDocument_ = nextDocument;
+  committedState_ = std::move(journal.at("after"));
+  previousDocument_ = std::move(journal.at("after_history"));
   if (committed_)
     committed_();
 }
@@ -628,8 +642,9 @@ void ProjectHistory::recover() {
     (void)sizeField(history, "cursor", 0, commands.size());
     for (const auto &command : commands)
       validateCommand(command);
-    checkSidecarBudgets(after);
-    writeSidecars(after);
+    const auto writes = prepareSidecars(binary_, after);
+    for (const auto &[path, text] : writes)
+      writer_(path, text);
     writer_(historyPath_, compactText(history));
     std::error_code ec;
     if (!fs::remove(journalPath_, ec) || ec)

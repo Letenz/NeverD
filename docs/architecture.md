@@ -141,6 +141,14 @@ validators retain VEX/XOP addressing rules; TBM owns its opcode/group, width and
 operand roles. Its arithmetic LowIR is shared by LLVM and both C routes.
 Undefined-output coverage is separate from an opaque machine-state bank audit.
 
+`X86LiftBEXTR` owns bit-field extraction across XOP immediate-control, VEX
+register-control and APX forms. It authenticates the encoding and decoded
+operands before reading the source, clamps shift operands before emitting
+LowIR, and records SF/AF/PF as undefined while defining CF/OF/ZF. APX NF
+preserves all flags. The shared prefix and APX validators retain address
+ownership. Decoder flag metadata is checked separately from architectural
+effects: legacy BEXTR metadata currently over-reports control-flag resets.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR
@@ -4544,6 +4552,33 @@ subsequent writes and floating-point bit patterns; both emitters consume that
 same initialization. This transports an already supplied declaration and does
 not infer an original prototype or authorize a machine-code rewrite.
 
+`PipelineIncomingStack` also derives internal integer source declarations for
+bounded, complete x64/ARM64 PE/ELF leaves that read whole incoming stack words.
+The shared entry-stack proof owns offsets, and a separate value walk rejects
+external memory, frame escape and undefined inputs. Private frame/link spills
+may survive in the leaf: `SourceFrameAnalysis` checks the original LowIR byte
+identities, complete SP restoration and the current format's preserved bank.
+Saved registers cannot become declared scalar inputs or return values. Incoming
+x64 slots start above the pushed return address; ARM64 slots start at entry SP.
+ARM64 return control in LR is proved independently of the result in X0. Both source routes bind these
+declarations before SSA and reconvert only affected definitions and callers.
+Every caller in a request must supply all outgoing bytes through the shared
+`SourceCallABI` write proof; otherwise the declaration is withdrawn as a unit.
+Ordinary signature bounds cannot truncate an already bound source call.
+LLVM source exports retain the fixed declaration of such a call even when the
+selected output omits its callee, instead of falling back to unknown extern
+varargs. Explicit native stack-word source calls use the same declaration path.
+
+Exact register-call targets use the shared bounded LowIR scalar query. The original indirect occurrence remains the stack-proof key; only the source-bound MedIR call becomes a named call after its target, callee declaration and outgoing bytes agree. Loads, cross-block values, call clobbers and incomplete register bytes cannot supply a target.
+
+Selected callers use the existing omitted-callee reader and its image- and
+summary-sensitive memo. A bounded instruction preflight only avoids unnecessary
+CFG builds; the ordinary complete CFG and MedIR still establish the declaration.
+The memo accounts for cached stack locations, and follows its existing reset
+contract when image bytes or analysis policy change. Work limits belong to
+`pipeline/Limits.h`. These projections do not infer arbitrary framed/VM state
+inputs, floating types, or an external calling convention.
+
 The `neverd-bytecode` tool and C/Python plugins accept externally specified
 instruction languages through the shared recovery pipeline. C/Python callers
 can supply a static profile or a synchronous per-instruction decoder callback.
@@ -7624,10 +7659,15 @@ MedIR owns bounded invariant-constant propagation across same-width SSA copies a
 
 The constant worklist indexes complete nonconstant SSA identities. Node
 addresses become stable only after all definitions have been collected;
-ordered visitation and the existing work charges remain unchanged. HighIR's
-call-clobber index is local to each converter invocation and retains the first
-record for each full SSA identity, including its variable kind. Reusing a
-converter rebuilds that index before following any preserved-prefix chain.
+the value solver retains its ordered visitation and work charges. Width-view
+origins then propagate through the same use graph, charging each reached node
+and outgoing use edge once instead of rescanning all inputs to convergence.
+Both analyses finish within the shared budget before any operand changes.
+
+HighIR's call-clobber index is local to each converter invocation and retains
+the first record for each full SSA identity, including its variable kind.
+Reusing a converter rebuilds that index before following any preserved-prefix
+chain.
 
 | User route | Representation path | Exit |
 |------------|---------------------|------|
@@ -8224,6 +8264,20 @@ termination and atomic refusal. `__strlcpy_chk` checks the supplied capacity
 against the destination object size before either pointer is accessed, then
 reuses the same copy and full-source-length result. A zero capacity still scans
 the source; a short source does not relax the fortify capacity check.
+`strcpy` and `__strcpy_chk` share this staging and access owner, copy through
+NUL without padding and return the destination. API 28 ARM64 uses the C
+`__strcpy_chk` implementation: it scans the source before comparing its
+NUL-inclusive length to the destination object size. Scan faults and budgets
+precede that fortify check; the destination and overlap checks follow it.
+Undefined overlap and unsupported abort paths refuse without partial writes.
+`__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
+`__strlen_chk` for the existing destination, then stage only the appended
+bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
+Otherwise source reads and destination write checks precede each fortify
+capacity check; exhausting the terminator slot fails before another source
+read or the bounded-count exit. Only the appended tail requires write
+permission. Refusals preserve guest bytes, including on source, permission,
+overlap, memory-limit and deadline failures.
 `__read_chk` owns only the Bionic extent checks;
 descriptor state and suspended reads stay in the shared Linux read owner.
 Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
@@ -11971,6 +12025,8 @@ ordinary pipeline afterwards. Worker `code.json` transactions own persistence,
 history and replicas. HighC and LLVM C consume the same selected occurrence and
 actual carriers. LLVM C retains ordinary target declarations and uses a typed
 call instruction/pointer cast for the selected occurrence only.
+
+When the LLVM call type differs from the named function declaration, LLVM C evaluates its cast through a scalar compound literal. This preserves the call-site ABI during C compilation, including Windows x64 variadic floating-register duplication, without changing the declaration or adding volatile accesses.
 
 Analyst declarations do not establish library effects, no-return control flow,
 native patch/lift contracts or safety receipts. Native LLVM call normalization

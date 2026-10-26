@@ -78,6 +78,10 @@ inline constexpr uint32_t kPipelineFormattedCallsMaxUnits = 65536;
 // lib/pipeline/PipelineHighIR.cpp
 inline constexpr size_t kPipelineHighIRSourceWorkBudget = 250000;
 
+// lib/pipeline/PipelineIncomingStack.cpp
+inline constexpr size_t kIncomingStackLeafOperations = 256;
+inline constexpr size_t kIncomingStackLeafCallees = 32;
+
 // lib/pipeline/PipelineLibraryRecognition.cpp
 inline constexpr size_t kPipelineLibraryRecognitionConflictWork = 250000;
 inline constexpr size_t

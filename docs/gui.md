@@ -208,14 +208,22 @@ shows the whole function and the visible area.
 
 Opening a file or database starts with disassembly and keeps pseudocode and
 IR windows closed, including when a saved desktop had them open. Generate the
-desired representation to reopen its window. **F5** or **Tab** opens
-Pseudocode on the right of disassembly. The cursors follow each other, as
+desired representation to reopen its window. From disassembly, **F5** opens
+an independent pseudocode window for the current function; **Tab** reuses
+the last code window, creating one when needed. The first code window opens
+on the right of disassembly, and additional windows become tabs that can be
+split or floated independently. Repeated F5 from disassembly can open the
+same function in multiple windows. Inside a source window, F5 refreshes that
+window and preserves its chosen language. **Generate MedIR** and the other
+representation commands follow the same rule: refresh a focused window of
+that representation, otherwise open a new one for the originating view's
+function. The cursors follow each other, as
 Hex-Rays' synchronized views do: a click or arrow key on a code row mapped to
 an instruction moves the disassembly cursor there, keeping the focus in the
 code and adding no jump to the history, and a move in the disassembly takes a
 code window showing the same function to the instruction's rows and marks
 them. A code window showing another function stays on it rather than
-decompiling on every step; F5 or Tab opens the new one. The code window's
+decompiling on every step; F5 opens another window and Tab reuses one. The code window's
 context menu turns **Synchronize with disassembly** off to browse apart, and
 the choice is kept; beside it, **Jump to disassembly** shows Tab's key, as
 **Jump to pseudocode** does in the disassembly's menu. Following a cursor costs
@@ -653,7 +661,8 @@ Knowledge Exchange assets, and it registers only the `neverd://` scheme.
 | Esc / Ctrl+Enter | Previous / next position (mouse Back/Forward work too) |
 | Enter / Alt+Enter | Follow the operand / follow it in a new view |
 | Space | Toggle graph and text view |
-| F5 / Tab | Pseudocode in the function's own language / switch between disassembly and pseudocode |
+| F5 | Open an independent pseudocode window from disassembly; refresh the focused source window |
+| Tab | Switch between disassembly and the last code window, reusing it |
 | X / Ctrl+X / Ctrl+J | References to the operand / to the item / from the item |
 | N | Rename the name under the cursor, or the address: a function at its entry, data, a label in code |
 | P | Create a function at the address (**Edit → Functions** also deletes the current one) |

@@ -94,7 +94,12 @@ NEVERD_ANDROID_DIAGNOSTIC(InactiveProviderPrefix,
 NEVERD_ANDROID_DIAGNOSTIC(GuestCalledPrefix, "guest called ")
 NEVERD_ANDROID_DIAGNOSTIC(MemcpyOverlap, "overlapping memcpy operands")
 NEVERD_ANDROID_DIAGNOSTIC(StringCopyOverlap, "overlapping strncpy operands")
-NEVERD_ANDROID_DIAGNOSTIC(SizedStringCopyOverlap, "overlapping strlcpy operands")
+NEVERD_ANDROID_DIAGNOSTIC(TerminatedStringCopyOverlap,
+                          "overlapping strcpy operands")
+NEVERD_ANDROID_DIAGNOSTIC(SizedStringCopyOverlap,
+                          "overlapping strlcpy operands")
+NEVERD_ANDROID_DIAGNOSTIC(StringAppendOverlap,
+                          "overlapping string concatenation operands")
 NEVERD_ANDROID_DIAGNOSTIC(StringAddressOverflow, "string address overflows")
 NEVERD_ANDROID_DIAGNOSTIC(StringScanLimit, "string scan exceeds memory limit")
 NEVERD_ANDROID_DIAGNOSTIC(

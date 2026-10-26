@@ -55,6 +55,7 @@ NEVERD_PATTERN_FIELD(Length)
 NEVERD_PATTERN_STRING(UnstatedByte, "..")
 NEVERD_PATTERN_STRING(PublicNamePrefix, ":")
 NEVERD_PATTERN_STRING(ReferencePrefix, "^")
+NEVERD_PATTERN_STRING(DataReferencePrefix, "&")
 // Optional NeverD constraint immediately after the four opening fields.
 // Such a line must cover the whole routine and have at least one reference.
 NEVERD_PATTERN_STRING(RequiredReferences, "!refs")

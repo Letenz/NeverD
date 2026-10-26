@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineIncomingStack.h"
 #include "PipelineLowIRDetail.h"
 #include "PipelineMedAudit.h"
 #include "PipelineRegisterCalls.h"
@@ -19,6 +20,9 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/Limits.h"
+#include "neverd/ir/SourceCallABI.h"
+#include "neverd/ir/low/LowScalarConstant.h"
+#include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallReturnReads.h"
@@ -33,6 +37,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -122,6 +127,9 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   for (const auto &[Entry, Hint] : SourceHints)
     SourceEntryHints.emplace(Entry, *Hint);
   auto SourceCalleeHints = SourceEntryHints;
+  auto SourceSites = Opts.usesSourceDeclarations()
+                         ? Opts.SourceCallSiteHints
+                         : decltype(Opts.SourceCallSiteHints){};
   const auto SEHRuntimeMemory =
       collectLowSEHRuntimeMemory(Img, Result.LowFuncs);
   std::map<va_t, const LowFunc *> SourceCalleeFunctions;
@@ -180,8 +188,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     OwnRuntimeRoutines = runtimeRoutineCallsOf(Img, Img.Arch);
   }
 
-  parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
-    LowToMedConverter Local;
+  auto Configure = [&](LowToMedConverter &Local) {
     Local.setBinaryImage(&Img);
     Local.setRuntimeRoutineCalls(RuntimeRoutines);
     Local.setSourceCallHintsEnabled(Opts.usesSourceDeclarations());
@@ -212,77 +219,198 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setCallVariadicFrom(&Result.CallVariadicFrom);
     Local.setFormattedCalls(&Result.FormattedCalls);
     Local.setStackProbeSlots(&StackProbeSlots);
-    for (size_t I; (I = Claim()) < N;) {
-      try {
-        const auto Sites =
-            Opts.SourceCallSiteHints.find(Result.LowFuncs[I].Entry);
-        Local.setSourceCallSiteHints(Opts.usesSourceDeclarations() &&
-                                             Sites !=
-                                                 Opts.SourceCallSiteHints.end()
-                                         ? &Sites->second
-                                         : nullptr);
-        const auto Frame =
-            Opts.SourceStackFrames.find(Result.LowFuncs[I].Entry);
-        std::optional<LowFunc> Projected;
-        if (!Opts.usesMachineMedIR() && Frame != Opts.SourceStackFrames.end()) {
-          std::string Error;
-          Projected = projectSourceStackFrame(Result.LowFuncs[I], Img.Arch,
-                                              Frame->second, Error);
-          if (!Projected)
-            throw std::runtime_error(Error);
-        }
-        Result.MedFuncs[I] =
-            Local.convert(Projected ? *Projected : Result.LowFuncs[I], Img.Arch,
-                          Img.abiFormat());
-        Result.MedFuncs[I].AnalystStackFrame = Projected.has_value();
-        auto &MF = Result.MedFuncs[I];
-        auto &LF = Result.LowFuncs[I];
-        trimFuncStorage(MF);
-        prepareMedStackAccesses(MF, Projected ? *Projected : LF, Img,
-                                medStackProjection(Opts));
-        if (medStackProjection(Opts) == MedStackProjection::Source)
-          expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
-        MF.OriginalSize = LF.OriginalSize;
-        MF.DebugName = LF.DebugName;
-        MF.SourceFile = LF.SourceFile;
-        MF.SourceLine = LF.SourceLine;
-        auto Hint = SourceHints.find(MF.Entry);
-        if (Hint != SourceHints.end())
-          MF.SourceTypeHint = *Hint->second;
-        size_t MedOps = 0;
-        for (const auto &Block : MF.Blocks)
-          MedOps += Block.Ops.size();
-        if (MF.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
-            MedOps <= static_cast<size_t>(limits::kMaxSSANodes))
-          inferMedTypes(MF, Img.Arch);
-      } catch (const LowToMedConversionError &Error) {
-        ConversionErrors[I] = Error.what();
-      } catch (...) {
-        syncWarning() << "pipeline: low->med threw on "
-                      << Result.LowFuncs[I].Name << "\n";
-        const LowFunc &LF = Result.LowFuncs[I];
-        MedFunc Fallback;
-        Fallback.Name = LF.Name;
-        Fallback.Entry = LF.Entry;
-        Fallback.OriginalSize = LF.OriginalSize;
-        Fallback.DebugName = LF.DebugName;
-        Fallback.SourceFile = LF.SourceFile;
-        Fallback.SourceLine = LF.SourceLine;
-        Fallback.ExceptionMetadata = LF.ExceptionMetadata;
-        Fallback.JumpTables = LF.JumpTables;
-        for (const auto &LB : LF.Blocks) {
-          MedBlock MB;
-          MB.Id = LB.Id;
-          MB.StartAddr = LB.StartAddr;
-          MB.EndAddr = LB.EndAddr;
-          MB.Succs = LB.Succs;
-          MB.Preds = LB.Preds;
-          Fallback.Blocks.push_back(std::move(MB));
-        }
-        Result.MedFuncs[I] = std::move(Fallback);
+  };
+  auto ConvertOne = [&](LowToMedConverter &Local, size_t I) {
+    try {
+      const auto Sites = SourceSites.find(Result.LowFuncs[I].Entry);
+      Local.setSourceCallSiteHints(Opts.usesSourceDeclarations() &&
+                                           Sites != SourceSites.end()
+                                       ? &Sites->second
+                                       : nullptr);
+      const auto Frame = Opts.SourceStackFrames.find(Result.LowFuncs[I].Entry);
+      std::optional<LowFunc> Projected;
+      if (!Opts.usesMachineMedIR() && Frame != Opts.SourceStackFrames.end()) {
+        std::string Error;
+        Projected = projectSourceStackFrame(Result.LowFuncs[I], Img.Arch,
+                                            Frame->second, Error);
+        if (!Projected)
+          throw std::runtime_error(Error);
       }
+      Result.MedFuncs[I] =
+          Local.convert(Projected ? *Projected : Result.LowFuncs[I], Img.Arch,
+                        Img.abiFormat());
+      Result.MedFuncs[I].AnalystStackFrame = Projected.has_value();
+      auto &MF = Result.MedFuncs[I];
+      auto &LF = Result.LowFuncs[I];
+      trimFuncStorage(MF);
+      prepareMedStackAccesses(MF, Projected ? *Projected : LF, Img,
+                              medStackProjection(Opts));
+      if (medStackProjection(Opts) == MedStackProjection::Source)
+        expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
+      MF.OriginalSize = LF.OriginalSize;
+      MF.DebugName = LF.DebugName;
+      MF.SourceFile = LF.SourceFile;
+      MF.SourceLine = LF.SourceLine;
+      auto Hint = SourceHints.find(MF.Entry);
+      if (Hint != SourceHints.end())
+        MF.SourceTypeHint = *Hint->second;
+      size_t MedOps = 0;
+      for (const auto &Block : MF.Blocks)
+        MedOps += Block.Ops.size();
+      if (MF.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
+          MedOps <= static_cast<size_t>(limits::kMaxSSANodes))
+        inferMedTypes(MF, Img.Arch);
+    } catch (const LowToMedConversionError &Error) {
+      ConversionErrors[I] = Error.what();
+    } catch (...) {
+      syncWarning() << "pipeline: low->med threw on " << Result.LowFuncs[I].Name
+                    << "\n";
+      const LowFunc &LF = Result.LowFuncs[I];
+      MedFunc Fallback;
+      Fallback.Name = LF.Name;
+      Fallback.Entry = LF.Entry;
+      Fallback.OriginalSize = LF.OriginalSize;
+      Fallback.DebugName = LF.DebugName;
+      Fallback.SourceFile = LF.SourceFile;
+      Fallback.SourceLine = LF.SourceLine;
+      Fallback.ExceptionMetadata = LF.ExceptionMetadata;
+      Fallback.JumpTables = LF.JumpTables;
+      for (const auto &LB : LF.Blocks) {
+        MedBlock MB;
+        MB.Id = LB.Id;
+        MB.StartAddr = LB.StartAddr;
+        MB.EndAddr = LB.EndAddr;
+        MB.Succs = LB.Succs;
+        MB.Preds = LB.Preds;
+        Fallback.Blocks.push_back(std::move(MB));
+      }
+      Result.MedFuncs[I] = std::move(Fallback);
     }
+  };
+  parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
+    LowToMedConverter Local;
+    Configure(Local);
+    for (size_t I; (I = Claim()) < N;)
+      ConvertOne(Local, I);
   });
+
+  // Discover bounded incoming-stack leaves from this conversion, then only
+  // reconvert their definitions and exact callers. Call operands must
+  // be present before SSA; adding a C parameter after lowering loses the
+  // caller's store and cannot restore the physical CALL return-address bias.
+  if (Opts.usesSourceDeclarations() && supportsIncomingStackSources(Img) &&
+      std::none_of(ConversionErrors.begin(), ConversionErrors.end(),
+                   [](const auto &Error) { return Error.has_value(); })) {
+    std::set<va_t> ExplicitCallTargets;
+    for (const auto &[Caller, Sites] : SourceSites)
+      for (const auto &[Site, Hint] : Sites)
+        ExplicitCallTargets.insert(Hint.TargetAddress);
+    std::set<va_t> Inferred;
+    std::set<size_t> Affected;
+    std::map<va_t, size_t> LocalDefinitions;
+    for (size_t I = 0; I < Total; ++I) {
+      const auto &Low = Result.LowFuncs[I];
+      if (SourceCalleeHints.count(Low.Entry) ||
+          ExplicitCallTargets.count(Low.Entry) ||
+          Result.CallUserPrototypes.count(Low.Entry) ||
+          Result.MedFuncs[I].AnalystStackFrame)
+        continue;
+      auto Hint = inferIncomingStackLeaf(Img, Low, Result.MedFuncs[I]);
+      if (!Hint)
+        continue;
+      // A candidate must also pass the shared source-carrier binder before
+      // any caller starts depending on its physical locations.
+      MedFunc Bound = Result.MedFuncs[I];
+      Bound.SourceTypeHint = *Hint;
+      inferMedTypes(Bound, Img.Arch);
+      if (!Bound.SourceParametersBound || !Bound.SourceTypeHint)
+        continue;
+      SourceEntryHints.emplace(Low.Entry, *Hint);
+      SourceCalleeHints.emplace(Low.Entry, std::move(*Hint));
+      SourceHints.emplace(Low.Entry, &SourceEntryHints.at(Low.Entry));
+      Inferred.insert(Low.Entry);
+      LocalDefinitions.emplace(Low.Entry, I);
+      Affected.insert(I);
+    }
+    // A register operand can have one exact local value without being a
+    // static machine operand. Keep its original occurrence as the binding key;
+    // numeric agreement alone never supplies a callee signature.
+    std::vector<std::map<SourceCallOccurrenceKey, va_t>> CallTargets(Total);
+    for (size_t I = 0; I < Total; ++I) {
+      const auto &Low = Result.LowFuncs[I];
+      CallTargets[I] = constantRegisterCallTargets(Low);
+      for (const auto &Block : Low.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (const auto Site = sourceCallOccurrenceKey(Op);
+              Site && Site->Opcode == NdOp::CALL && Site->StaticTarget)
+            CallTargets[I].emplace(*Site, *Site->StaticTarget);
+    }
+    std::set<va_t> OmittedTargets;
+    for (const auto &Calls : CallTargets)
+      for (const auto &[Site, Target] : Calls)
+        if (!SourceCalleeFunctions.count(Target) &&
+            !SourceCalleeHints.count(Target) &&
+            !ExplicitCallTargets.count(Target) &&
+            !Result.CallUserPrototypes.count(Target))
+          OmittedTargets.insert(Target);
+    for (auto &[Entry, Hint] :
+         readIncomingStackCallees(Img, Result, OmittedTargets)) {
+      SourceCalleeHints.emplace(Entry, std::move(Hint));
+      Inferred.insert(Entry);
+    }
+    // An automatically declared input must be supplied by every caller in
+    // this request. A partial/unwritten outgoing word is not a scalar value.
+    // Withdraw the candidate as a unit rather than publish incompatible
+    // definition and call signatures in a whole-module source projection.
+    std::set<va_t> Unavailable;
+    for (size_t I = 0; I < Total; ++I)
+      for (const auto &[Site, Target] : CallTargets[I]) {
+        if (!Inferred.count(Target))
+          continue;
+        SourceCallTypeHint Hint;
+        Hint.Signature = SourceCalleeHints.at(Target);
+        const auto Bias =
+            sourceCallReturnAddressBias(&Img, Img.Arch, Site.Instruction);
+        std::string Diagnostic;
+        if (!Bias ||
+            !sourceCallStackArgumentsDefined(Result.LowFuncs[I], Hint, Site,
+                                             Img.Arch, *Bias, Diagnostic))
+          Unavailable.insert(Target);
+      }
+    for (va_t Entry : Unavailable) {
+      Inferred.erase(Entry);
+      SourceCalleeHints.erase(Entry);
+      SourceHints.erase(Entry);
+      SourceEntryHints.erase(Entry);
+      if (auto Local = LocalDefinitions.find(Entry);
+          Local != LocalDefinitions.end())
+        Affected.erase(Local->second);
+    }
+    for (size_t I = 0; I < Total && !Inferred.empty(); ++I)
+      for (const auto &[Site, Target] : CallTargets[I]) {
+        if (!Inferred.count(Target))
+          continue;
+        SourceCallTypeHint Hint;
+        Hint.CallKind = SourceCallTypeHint::Kind::Native;
+        Hint.TargetAddress = Target;
+        Hint.TargetName = Img.getFunctionNameAt(Target);
+        Hint.Signature = SourceCalleeHints.at(Target);
+        if (SourceSites[Result.LowFuncs[I].Entry]
+                .try_emplace(Site, std::move(Hint))
+                .second)
+          Affected.insert(I);
+      }
+    const std::vector<size_t> Indices(Affected.begin(), Affected.end());
+    std::vector<uint64_t> ReconvertWeights;
+    for (size_t I : Indices)
+      ReconvertWeights.push_back(Weight[I]);
+    parallelForEachWeighted(ReconvertWeights, [&](auto Claim, size_t N) {
+      LowToMedConverter Local;
+      Configure(Local);
+      for (size_t J; (J = Claim()) < N;)
+        ConvertOne(Local, Indices[J]);
+    });
+  }
 
   for (size_t I = 0; I < Total; ++I) {
     if (!ConversionErrors[I])

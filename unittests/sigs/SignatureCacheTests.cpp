@@ -137,6 +137,7 @@ void expectSameModules(llvm::ArrayRef<StoredModule> Expected,
     for (size_t N = 0; N < E.PublicNameCount + E.ReferenceCount; ++N) {
       EXPECT_EQ(E.Names[N].Offset, A.Names[N].Offset) << "module " << I;
       EXPECT_EQ(E.Names[N].Name, A.Names[N].Name) << "module " << I;
+      EXPECT_EQ(E.Names[N].IsData, A.Names[N].IsData) << "module " << I;
     }
   }
 }
@@ -162,6 +163,31 @@ TEST_F(SignatureCacheTest, AnEntryMapsTheModulesItsSourceParsesTo) {
   expectSameModules(Expected.Modules, Moved.Modules);
 }
 
+TEST_F(SignatureCacheTest, MalformedDataKindsCannotBypassTheTextContract) {
+  write(Source, "488D05........C3 00 0000 0008 !caller :0000 anchor "
+                "^0003 first ^0003 second\n");
+  const auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    Parsed ParsedSource = parse();
+    auto &Mod = ParsedSource.Modules.front();
+    // Construct invalid writer input to check the mapped-reader boundary.
+    auto *Names = const_cast<StoredName *>(Mod.Names);
+    if (Case == 0)
+      Names[0].IsData = true;
+    else {
+      Names[1].IsData = true;
+      if (Case == 2) {
+        Names[2].IsData = true;
+        Mod.RequireCaller = false;
+      }
+    }
+    const auto Cache = cache();
+    Cache.store(Source, *Identity, ParsedSource.Modules);
+    EXPECT_FALSE(Cache.load(Source, *Identity)) << Case;
+  }
+}
+
 TEST_F(SignatureCacheTest, AChangedSourceIsAMiss) {
   const SignatureCache Cache = cache();
   const std::optional<SignatureCache::SourceIdentity> Before =
@@ -182,6 +208,26 @@ TEST_F(SignatureCacheTest, AChangedSourceIsAMiss) {
   // Nor is an entry kept for a source that changed after it was parsed.
   Cache.store(Source, *Before, parse().Modules);
   EXPECT_FALSE(Cache.load(Source, *After));
+}
+
+TEST_F(SignatureCacheTest, DataReferenceKindsSurviveReversedCachePieces) {
+  write(Source,
+        "488D05........E8........C3 00 0000 000D !caller :0000 anchor "
+        "&0003 global ^0008 callee\n"
+        "488D05........C3 00 0000 0008 !refs :0000 getter &0003 global\n");
+  const Parsed Expected = parse();
+  const auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  const auto Cache = cache();
+  Cache.store(Source, *Identity, Expected.Modules);
+  auto Pending = Cache.open(Source, *Identity);
+  ASSERT_TRUE(Pending);
+  for (size_t I = Pending->pieces(); I != 0; --I)
+    ASSERT_TRUE(Pending->run(I - 1));
+  auto Entry = std::move(*Pending).take();
+  expectSameModules(Expected.Modules, Entry.Modules);
+  ASSERT_TRUE(Entry.Modules[0].references()[0].IsData);
+  ASSERT_FALSE(Entry.Modules[0].references()[1].IsData);
 }
 
 TEST_F(SignatureCacheTest, ADamagedEntryIsAMiss) {
