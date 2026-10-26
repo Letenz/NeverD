@@ -63,7 +63,7 @@ Int3 = 1000, // int3  -> @llvm.debugtrap
     // Intel TSX (transactional memory).
     Xbegin, Xend, Xabort, Xtest, Xacquire, Xrelease,
 
-    // Intel MPX (deprecated bounds).
+    // Legacy MPX identities; require the owned bounds-state contract.
     BndMk, BndMov, BndCl, BndCu, BndCn, BndLdx, BndStx,
 
     // FXSAVE / state save.

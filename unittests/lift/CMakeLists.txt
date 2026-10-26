@@ -691,6 +691,10 @@ add_neverd_unittest(NeverDX86BEXTRTests
   x86/X86BEXTRTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
+add_neverd_unittest(NeverDX86MpxContextTests
+  x86/X86MpxContextTests.cpp
+  LINK_COMPONENTS IRLowValidation)
+
 add_neverd_unittest(NeverDX86LegacyAdmissionTests
   x86/X86LegacyAdmissionTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
