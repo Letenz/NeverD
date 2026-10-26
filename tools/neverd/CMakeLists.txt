@@ -57,6 +57,7 @@ add_neverd_tool(neverd
   ExportTable.cpp
   cmd/NeverDCmdInfo.cpp
   cmd/NeverDCmdTables.cpp
+  cmd/NeverDCmdAnalysisSections.cpp
   cmd/NeverDCmdTypes.cpp
   cmd/NeverDCmdTypeFit.cpp
   cmd/NeverDCmdStrings.cpp
@@ -166,4 +167,18 @@ endif()
 
 if(COMMAND neverd_sign_hypervisor)
   neverd_sign_hypervisor(neverd)
+endif()
+
+if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    set(_neverd_sections_worker)
+    if(TARGET neverd-worker OR NEVERD_BUILD_WORKER OR NEVERD_BUILD_GUI)
+      set(_neverd_sections_worker "$<TARGET_FILE:neverd-worker>")
+    endif()
+    add_test(NAME NeverDAnalysisSectionsCLI
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_sections_test.py"
+              "$<TARGET_FILE:neverd>" ${_neverd_sections_worker})
+    set_tests_properties(NeverDAnalysisSectionsCLI PROPERTIES TIMEOUT 90 LABELS "CLI;AnalysisSections")
+  endif()
 endif()

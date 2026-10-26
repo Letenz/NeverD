@@ -391,3 +391,15 @@ if(BUILD_TESTING)
     endif()
   endforeach()
 endif()
+
+if(BUILD_TESTING AND NEVERD_WORKER_REAL_ENGINE_TESTS)
+  qt_add_executable(neverd-gui-analysis-section-tests tests/AnalysisSectionTests.cpp)
+  target_link_libraries(neverd-gui-analysis-section-tests PRIVATE neverd_gui_app Qt6::Test)
+  target_compile_definitions(neverd-gui-analysis-section-tests PRIVATE
+    TEST_REAL_WORKER="$<TARGET_FILE:neverd-worker>")
+  set_target_properties(neverd-gui-analysis-section-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_dependencies(neverd-gui-analysis-section-tests neverd-worker)
+  add_test(NAME NeverDGuiAnalysisSections COMMAND neverd-gui-analysis-section-tests
+    -o "${CMAKE_CURRENT_BINARY_DIR}/analysis-section-tests.txt,txt")
+  set_tests_properties(NeverDGuiAnalysisSections PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+endif()

@@ -540,6 +540,7 @@ void SignatureDB::apply(const BinaryImage &Img,
   }
   checkReferences(Img, FuncEntries, std::move(Hits));
   applyCallerContext(Img, FuncEntries);
+  applyVTableContext(Img, FuncEntries);
   applyDataContext(Img, FuncEntries, DataHits);
   admitStatedNames(Img);
 }
@@ -1401,9 +1402,11 @@ void SignatureDB::applyCallerContextRound(
 void SignatureDB::checkReferences(const BinaryImage &Img,
                                   llvm::ArrayRef<uint64_t> Entries,
                                   std::vector<SignatureMatcher::Hit> Hits,
-                                  size_t FrozenMatches, size_t FirstChecked,
+                                  std::optional<size_t> FrozenMatches,
+                                  size_t FirstChecked,
                                   const DataBindings *Data) {
-  const size_t First = std::max(FrozenMatches, FirstChecked);
+  const size_t Frozen = FrozenMatches.value_or(0);
+  const size_t First = std::max(Frozen, FirstChecked);
   bool AnyReferences = false;
   for (size_t I = First; I < MatchModules.size(); ++I)
     AnyReferences |= MatchModules[I] != NoModule &&
@@ -1616,11 +1619,11 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   llvm::DenseSet<Entry> DisprovedPatterns;
   std::vector<Entry> Calling, At;
   for (size_t I = 0; I < Matches.size(); ++I) {
-    if (I >= FrozenMatches && I < First)
+    if (I >= Frozen && I < First)
       continue;
     if (!Unconfirmable.empty() && Unconfirmable[I])
       continue;
-    if (FrozenMatches == 0)
+    if (!FrozenMatches)
       At.emplace_back(Matches[I].Address, I);
     for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
       Calling.emplace_back(Sites[S].Target, I);
@@ -1638,11 +1641,11 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       ++End;
     return llvm::make_range(Begin, End);
   };
-  if (FrozenMatches != 0) {
+  if (FrozenMatches.has_value()) {
     // Frozen validation only reads settlement at actually referenced targets.
     // Newly appended matches cannot be evidence, and unrelated original
     // matches need no grouping or sorting in every incoming/data pass.
-    for (size_t I = 0; I < FrozenMatches; ++I) {
+    for (size_t I = 0; I < Frozen; ++I) {
       const uint64_t Address = Matches[I].Address;
       if (!Range(Calling, Address).empty() ||
           (Img.Arch == Arch::ARM &&
@@ -1676,7 +1679,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     // Required hits support callers only after settlement. Do not sort or
     // search them again as raw evidence that PatternAt cannot use.
     if (!Modules[Hit.Module].RequireReferences &&
-        !Modules[Hit.Module].RequireCaller)
+        !Modules[Hit.Module].RequireCaller && !Modules[Hit.Module].IsVTable)
       PatternsAt.emplace_back(Hit.Address, Hit.Module);
   llvm::sort(PatternsAt);
   auto PatternAt = [&](std::string_view Name, uint64_t Address) {
@@ -1708,8 +1711,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   auto SettleAt = [&](uint64_t Address) {
     llvm::SmallVector<const SigMatch *, 4> Proposals;
     for (const Entry &Match : Range(At, Address))
-      if (!Dropped[Match.second] &&
-          (FrozenMatches == 0 || Match.second < FrozenMatches))
+      if (!Dropped[Match.second] && (!FrozenMatches || Match.second < Frozen))
         Proposals.push_back(&Matches[Match.second]);
     return settle(Proposals);
   };
@@ -1864,7 +1866,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       Touched.push_back(Matches[I].Address);
     }
 
-    if (FrozenMatches != 0) {
+    if (FrozenMatches.has_value()) {
       Work.clear();
       break;
     }
@@ -1936,7 +1938,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         Dropped[I] = true;
   }
 
-  if (FrozenMatches != 0) {
+  if (FrozenMatches.has_value()) {
     // Only the newly checked suffix can change. Keep the frozen prefix and
     // earlier validated incoming rows in place instead of moving the whole
     // image's matches into fresh allocations.

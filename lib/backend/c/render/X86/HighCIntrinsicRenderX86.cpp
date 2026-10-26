@@ -1429,6 +1429,7 @@ bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   case Intrinsic::SegmentLimit:
   case Intrinsic::Hlt:
   case Intrinsic::Int3:
+  case Intrinsic::IntN:
   case Intrinsic::Ud2:
   case Intrinsic::Vmcall:
   case Intrinsic::Swapgs:

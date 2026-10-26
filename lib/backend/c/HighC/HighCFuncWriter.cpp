@@ -24,6 +24,8 @@
 #include "neverd/backend/c/render/AArch64/AArch64SVEVectorState.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighPointerTypeInference.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCFloatingArguments.h"
@@ -328,9 +330,11 @@ TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
 
 void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
   for (HighFunc &Func : Funcs) {
-    if (TypeRef Declared = declaredFunctionReturnType(Func))
-      Func.ReturnType = std::move(Declared);
-    if (!Func.ReturnType || Func.ReturnType->Kind != NdTypeKind::Void)
+    const TypeRef Declared = declaredFunctionReturnType(Func);
+    if (Declared)
+      Func.ReturnType = Declared;
+    if (Declared ? Declared->Kind != NdTypeKind::Void
+                 : !analyzeVoidReturn(Func))
       continue;
 
     // A discarded result is not a discarded evaluation. Materialize effects
@@ -349,6 +353,14 @@ void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
           Self(Self, Clause);
         if (Stmt.Kind == StmtKind::Return && Stmt.RetVal &&
             Stmt.CxxContinuationReturnTargets.empty()) {
+          // An inferred void tail still carries the machine result width of
+          // its callee. Keep that declaration evidence with the returned call;
+          // the statement writer already emits its effects and a bare return.
+          // A declared void ABI has no such result carrier to preserve.
+          if (!Declared && returnedCall(*Stmt.RetVal)) {
+            Projected.push_back(std::move(Stmt));
+            continue;
+          }
           if (highCExpressionHasEffect(*Stmt.RetVal)) {
             HighStmt Evaluate;
             Evaluate.Kind = StmtKind::ExprStmt;
@@ -364,6 +376,10 @@ void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
       Body = std::move(Projected);
     };
     Prepare(Prepare, Func.Body);
+    // Removing the return observation can make only some definitions of a
+    // reused local dead. Reuse the source graph's per-definition proof before
+    // unknown-value transport gives those dead PHI inputs availability flags.
+    eliminateHighDeadPhiCopies(Func);
   }
 }
 
@@ -637,6 +653,20 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
   };
 
   std::map<std::string, TypeRef> UsedVars;
+  std::vector<TypeRef> ParameterTypes;
+  for (size_t I = 0; I < Func.Params.size(); ++I)
+    ParameterTypes.push_back(emittedParamType(Func, I));
+  const auto PointerFacts =
+      inferHighPointerTypes(Func, Opts.TheArch, ParameterTypes);
+  std::map<std::string, TypeRef> TransportedPointers;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind != StmtKind::Assign || !S.Dst ||
+        (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
+      return;
+    const auto Found = PointerFacts.find(highSourceLocalIdentity(S.Dst->Var));
+    if (Found != PointerFacts.end())
+      TransportedPointers[varName(S.Dst->Var)] = Found->second;
+  });
   std::map<std::string, std::string> ExplicitDeclarations;
   const auto VectorNames =
       aarch64SVEVectorLocalNames(Func, Opts.TheArch, VarFn);
@@ -882,6 +912,9 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
   }
 
   for (auto &[Name, Ty] : UsedVars) {
+    if (const auto Found = TransportedPointers.find(Name);
+        Found != TransportedPointers.end())
+      Ty = Found->second;
     if (auto It = CallResultTypes.find(Name);
         It != CallResultTypes.end() && It->second)
       Ty = It->second;
@@ -1657,8 +1690,10 @@ void HighCWriter::applyDebugCallSlotTypes(const HighFunc &Func) {
       // those it holds complete (prepareRecordDefinitions), its own or a
       // system header's: the callee's record names no member of another.
       if (Next && Next->Kind == NdTypeKind::Struct && !Next->IsEnum &&
-          !Next->SourceName.empty() && !definesRecord(Next))
+          !Next->SourceName.empty() && !definesRecord(Next)) {
+        wantRecord(Next);
         continue;
+      }
       if (Next && (!It->second.CallType ||
                    Next->FieldDisplayNames.size() >=
                        It->second.CallType->FieldDisplayNames.size()))
@@ -2765,14 +2800,63 @@ void HighCWriter::collectTypedPointerArgDests(const HighFunc &Func) {
   PointerArgDestTypes.clear();
   std::map<std::string, TypeRef> UsedAsPtr;
   std::set<std::string> Conflict;
+  std::vector<const HighExpr *> Calls;
+  HighExprSet Seen;
   walkStmts(Func.Body, [&](const HighStmt &S) {
-    const HighExpr *Call = nullptr;
-    if (S.Kind == StmtKind::Call && S.CallExpr)
-      Call = S.CallExpr.get();
-    else if (S.Val && S.Val->Kind == ExprKind::Call)
-      Call = S.Val.get();
-    if (!Call)
-      return;
+    forEachRhsExpr(S, [&](const ExprPtr &Root) {
+      std::vector<ExprPtr> Pending{Root};
+      while (!Pending.empty()) {
+        const auto E = Pending.back();
+        Pending.pop_back();
+        if (!E || !Seen.insert(E.get()).second)
+          continue;
+        if (E->Kind == ExprKind::Call)
+          Calls.push_back(E.get());
+        E->forEachChildExpr(
+            [&](const ExprPtr &Child) { Pending.push_back(Child); });
+      }
+    });
+  });
+  for (const HighExpr *Call : Calls) {
+    if (const auto Function = indirectCallFunctionType(*Call)) {
+      const HighExpr *Target = Call->IndirectTarget.get();
+      const auto Bytes = getTargetRegInfo(Opts.TheArch).PointerSize;
+      for (unsigned Depth = 0;
+           Target && Depth < limits::kMaxIntegerViewUnwrapDepth; ++Depth) {
+        if ((Target->Kind != ExprKind::Cast &&
+             Target->Kind != ExprKind::BitCast) ||
+            !Target->Type || Target->Type->Size != Bytes ||
+            Target->Type->Kind != NdTypeKind::Int ||
+            (Target->Kind == ExprKind::Cast &&
+             (!Target->CastTo || Target->CastTo->Kind != NdTypeKind::Int ||
+              Target->CastTo->Size != Bytes ||
+              Target->CastTo->IsSigned != Target->Type->IsSigned)) ||
+            Target->Operands.size() != 1 || !Target->Operands[0] ||
+            !Target->Operands[0]->Type ||
+            Target->Operands[0]->Type->Size != Bytes ||
+            Target->Operands[0]->Type->Kind != NdTypeKind::Int ||
+            Target->MemoryOrdering != NdMemoryOrdering::None ||
+            Target->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+            Target->IntrinsicId != Intrinsic::None ||
+            !Target->IntrinsicOutputs.empty() || Target->IndirectTarget)
+          break;
+        Target = Target->Operands[0].get();
+      }
+      if (Target && Target->Kind == ExprKind::Var && Target->Operands.empty() &&
+          Target->Type &&
+          Target->Type->Size == getTargetRegInfo(Opts.TheArch).PointerSize &&
+          Target->Var.Size == Target->Type->Size) {
+        const auto Name = varName(Target->Var);
+        const auto Pointer = NdType::makePtr(Function);
+        if (!Name.empty() && !isReservedParamDisplayName(Name)) {
+          const auto It = UsedAsPtr.find(Name);
+          if (It != UsedAsPtr.end() && typeToC(It->second) != typeToC(Pointer))
+            Conflict.insert(Name);
+          else
+            UsedAsPtr[Name] = Pointer;
+        }
+      }
+    }
     const size_t Limit = debugCallArgLimit(*Call);
     for (size_t I = 0; I < Call->Operands.size() && I < Limit; ++I) {
       const HighExpr *Op = unwrapIntegerView(Call->Operands[I].get());
@@ -2789,12 +2873,15 @@ void HighCWriter::collectTypedPointerArgDests(const HighFunc &Func) {
       auto It = UsedAsPtr.find(Name);
       if (It != UsedAsPtr.end() &&
           (!It->second || !It->second->Pointee || !Expected->Pointee ||
-           It->second->Pointee->SourceName != Expected->Pointee->SourceName))
+           It->second->Pointee->SourceName != Expected->Pointee->SourceName ||
+           ((It->second->Pointee->Kind == NdTypeKind::Func ||
+             Expected->Pointee->Kind == NdTypeKind::Func) &&
+            typeToC(It->second) != typeToC(Expected))))
         Conflict.insert(Name);
       else
         UsedAsPtr[Name] = Expected;
     }
-  });
+  }
   for (const auto &[Name, Ty] : UsedAsPtr) {
     if (!Conflict.count(Name))
       PointerArgDestTypes[Name] = Ty;

@@ -11,6 +11,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/object/PEChecksum.h"
 #include "neverd/patch/PatchIO.h"
+#include "neverd/support/AtomicOutput.h"
 #include "neverd/support/FilePath.h"
 
 #include "llvm/Object/COFF.h"
@@ -162,20 +163,9 @@ llvm::Error patch::exportPatches(const BinaryImage &Img, const InputFile &Input,
     llvm::consumeError(Temporary->discard());
     return llvm::errorCodeToError(EC);
   }
-  std::error_code StatusError;
-  std::filesystem::permissions(std::filesystem::u8path(Temporary->TmpName),
-                               Input.permissions(), StatusError);
-  if (StatusError) {
-    llvm::consumeError(Temporary->discard());
-    return llvm::errorCodeToError(StatusError);
-  }
-  // A hard link is an exclusive publication on both POSIX and Windows; it
-  // fails when Output already exists, including a symlink to the input.
-  auto EC = llvm::sys::fs::create_hard_link(Temporary->TmpName, Name);
-  auto Cleanup = Temporary->discard();
-  if (EC) {
-    llvm::consumeError(std::move(Cleanup));
-    return llvm::errorCodeToError(EC);
-  }
-  return Cleanup;
+  // Retire delete-on-close before publication on Windows. CreateNew keeps
+  // existing destinations, including a symlink to the input, unchanged.
+  return support::atomic_output::closeAndCommitTemporaryOutput(
+      *Temporary, Name, support::atomic_output::OutputMode::CreateNew,
+      Input.permissions());
 }

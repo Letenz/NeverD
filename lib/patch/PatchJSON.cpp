@@ -13,6 +13,8 @@
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <string>
+
 using namespace neverd::patch;
 namespace patchLimits = neverd::limits::patch;
 
@@ -37,18 +39,21 @@ neverd::patch::parseHex(llvm::StringRef Text, uint64_t Limit) {
   return Bytes;
 }
 
-llvm::json::Array neverd::patch::patchRowsJSON(const PatchOverlay &Overlay) {
-  llvm::json::Array Rows;
-  for (const auto &[Offset, Row] : Overlay.rows())
-    Rows.push_back(
-        llvm::json::Object{{"file_off", "0x" + llvm::utohexstr(Offset, true)},
-                           {"addr", "0x" + llvm::utohexstr(Offset, true)},
-                           {"va", "0x" + llvm::utohexstr(Row.Address, true)},
-                           {"size", Row.size()},
-                           {"original", llvm::toHex(Row.Original, true)},
-                           {"current", llvm::toHex(Row.Current, true)},
-                           {"kind", patchKindName(Row.Kind)}});
-  return Rows;
+void neverd::patch::writePatchRows(llvm::json::OStream &Output,
+                                   const PatchOverlay &Overlay) {
+  Output.array([&] {
+    for (const auto &[Offset, Row] : Overlay.rows())
+      Output.object([&] {
+        const std::string FileOffset = "0x" + llvm::utohexstr(Offset, true);
+        Output.attribute("addr", llvm::StringRef(FileOffset));
+        Output.attribute("current", llvm::toHex(Row.Current, true));
+        Output.attribute("file_off", llvm::StringRef(FileOffset));
+        Output.attribute("kind", patchKindName(Row.Kind));
+        Output.attribute("original", llvm::toHex(Row.Original, true));
+        Output.attribute("size", Row.size());
+        Output.attribute("va", "0x" + llvm::utohexstr(Row.Address, true));
+      });
+  });
 }
 
 llvm::Expected<std::vector<PatchRow>>

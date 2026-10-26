@@ -5,6 +5,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIWeb.cpp
     capi/NeverDCAPIBytecode.cpp
     capi/NeverDCAPI.cpp
+    capi/NeverDCAPISections.cpp
     capi/NeverDCAPIBytePatch.cpp
     capi/NeverDCAPIBytePatchSource.cpp
     capi/NeverDCAPICPU.cpp

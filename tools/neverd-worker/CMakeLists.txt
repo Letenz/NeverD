@@ -242,10 +242,22 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pdb_load_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerPDBLoad PROPERTIES TIMEOUT 90)
+      add_test(NAME NeverDWorkerAnalysisSections
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/analysis_sections_test.py"
+                "$<TARGET_FILE:neverd-worker>" "$<TARGET_FILE:neverd_shared>")
+      set_tests_properties(NeverDWorkerAnalysisSections PROPERTIES TIMEOUT 90)
       add_test(NAME NeverDWorkerLocalTypes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_types_test.py"
                 "$<TARGET_FILE:neverd-worker>")
       set_tests_properties(NeverDWorkerLocalTypes PROPERTIES TIMEOUT 90)
+      add_test(NAME NeverDWorkerCachedCallABI
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cached_call_abi_test.py"
+                "$<TARGET_FILE:neverd-worker>" --cc "${_neverd_worker_source_cc}")
+      set_tests_properties(NeverDWorkerCachedCallABI PROPERTIES TIMEOUT 90)
+      add_test(NAME NeverDWorkerParameterTypePropagation
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/parameter_type_propagation_test.py"
+                "$<TARGET_FILE:neverd-worker>")
+      set_tests_properties(NeverDWorkerParameterTypePropagation PROPERTIES TIMEOUT 90)
       add_test(NAME NeverDWorkerSourceVariableTypes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_variable_types_test.py"
                 "$<TARGET_FILE:neverd-worker>" --cc "${_neverd_worker_source_cc}")

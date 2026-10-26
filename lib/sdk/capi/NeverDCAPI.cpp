@@ -317,6 +317,20 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   return true;
 }
 
+bool PipelineRunner::loadAnalysis(const char *InputPath, std::string &Err,
+                                  const Session *Policy) {
+  if (!load(InputPath, Err, Policy))
+    return false;
+  if (Policy && Policy->Loaded && !Policy->AnalysisSections.empty()) {
+    std::error_code EC;
+    if (std::filesystem::equivalent(std::filesystem::u8path(InputPath),
+                                    Policy->FilePath, EC) &&
+        !EC)
+      Img = Policy->Img;
+  }
+  return true;
+}
+
 bool PipelineRunner::run(PipelineOptions Opts, std::string &Err,
                          DebugContext *Debug) {
   Pipeline ThePipeline;
@@ -449,6 +463,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
       SavedPatches ? SavedPatches->BytePatchesSavedDigest : std::nullopt;
   S.PatchInput = SavedPatches ? std::move(SavedPatches->PatchInput)
                               : std::optional<patch::InputFile>();
+  S.AnalysisSections = {};
   S.ExceptionHandlersSettled = false;
   S.FilePath = std::move(Path);
   S.SanitizeSourcePath = std::move(SanitizeSourcePath);
