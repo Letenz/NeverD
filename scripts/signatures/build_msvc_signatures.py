@@ -70,6 +70,8 @@ Usage:
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 import argparse
 import bisect
 import fnmatch
@@ -269,15 +271,20 @@ class PatternLine:
     require_caller: bool = False
     data_sites: frozenset[int] = frozenset()
     is_vtable: bool = False
+    load_config_fields: tuple[tuple[int, str, str], ...] = ()
+
+    @property
+    def is_load_config(self) -> bool:
+        return bool(self.load_config_fields)
 
     def with_refs(self, refs: tuple[tuple[int, str], ...],
                   require: bool | None = None,
                   data_sites: frozenset[int] | None = None) -> "PatternLine":
         """This line stating only `refs`."""
 
-        if self.is_vtable:
+        if self.is_vtable or self.is_load_config:
             if refs != self.refs or require not in (None, False) or data_sites:
-                raise BuildError("table slots cannot be refined as function references")
+                raise BuildError("metadata fields cannot be refined as function references")
             return self
         tokens = self.key.split()
         head, tail = tokens[:4], tokens[4:]
@@ -327,7 +334,7 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     name any of them gives it.
     """
 
-    if any(line.is_vtable for line in lines):
+    if any(line.is_vtable or line.is_load_config for line in lines):
         raise BuildError("table declarations cannot be folded into function aliases")
     names = tuple(sorted({name for line in lines for name in line.names}, key=alias_order))
     merged = common_refs(lines)
@@ -504,7 +511,9 @@ def parse_line(text: str) -> PatternLine | None:
     required = tokens[index] == "!refs"
     caller = tokens[index] == "!caller"
     vtable = tokens[index] == "!vtable"
-    if required or caller or vtable:
+    load_config = tokens[index] == "!loadcfg"
+    config_pairs = defaultdict(dict)
+    if required or caller or vtable or load_config:
         index += 1
     while index < len(tokens):
         token = tokens[index]
@@ -514,8 +523,12 @@ def parse_line(text: str) -> PatternLine | None:
             continue
         if token.startswith(("^", "&")) and index + 1 < len(tokens):
             offset, is_data = int(token[1:], 16), token.startswith("&")
-            if offset in kinds and kinds[offset] != is_data:
+            if offset in kinds and kinds[offset] != is_data and not load_config:
                 raise BuildError("reference site mixes function and data kinds")
+            if load_config:
+                if is_data in config_pairs[offset]:
+                    raise BuildError("duplicate load-configuration field kind")
+                config_pairs[offset][is_data] = tokens[index + 1]
             kinds[offset] = is_data
             refs.append((offset, tokens[index + 1]))
             index += 2
@@ -538,8 +551,19 @@ def parse_line(text: str) -> PatternLine | None:
                 len(shape.lead + shape.tail) != 2 * shape.total or len(rest) > 5 or set(shape.lead + shape.tail) != {"."} or \
                 any(kinds.values()) or set(kinds) != set(range(0, shape.total, 8)):
             raise BuildError("invalid complete primary x64 table declaration")
+    if load_config:
+        shape = Shape.of(" ".join(rest))
+        if names != [":0000 _load_config_used"] or not config_pairs or \
+                shape.crc_len or int(shape.crc, 16) or len(rest) > 5 or \
+                len(shape.lead + shape.tail) != 2 * shape.total or \
+                set(shape.lead + shape.tail) != {"."} or \
+                any(offset < 0 or offset % 8 or offset + 8 > shape.total or
+                    set(pair) != {False, True} for offset, pair in config_pairs.items()):
+            raise BuildError("invalid load-configuration pointer/default pairs")
     return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller,
-                       frozenset(offset for offset, is_data in kinds.items() if is_data), vtable)
+                       frozenset(offset for offset, is_data in kinds.items() if is_data), vtable,
+                       tuple(sorted((offset, pair[True], pair[False])
+                                    for offset, pair in config_pairs.items())))
 
 
 @dataclass
@@ -588,8 +612,8 @@ def fold(lines: list[str]) -> FoldResult:
         parsed = parse_line(raw)
         if parsed is None:
             continue
-        if parsed.is_vtable:
-            raise BuildError("table declarations require supplement_vtable_context.py")
+        if parsed.is_vtable or parsed.is_load_config:
+            raise BuildError("metadata declarations require their dedicated selector")
         if parsed.require_caller:
             callers[parsed.text] = parsed
             continue

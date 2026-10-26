@@ -82,6 +82,9 @@ struct PatternModule {
   /// function-byte claim. PublicNames names the table; References names its
   /// absolute code-pointer slots. Every pointer is a complete wildcard.
   bool IsVTable : 1 = false;
+  /// `!loadcfg`: source configuration fields pairing external pointer storage
+  /// (&) with its default function (^). Metadata, never a byte-index claim.
+  bool IsLoadConfig : 1 = false;
 
   uint32_t TotalLen = 0;
 
@@ -163,6 +166,9 @@ struct StoredModule {
   /// function-byte claim. PublicNames names the table; References names its
   /// absolute code-pointer slots. Every pointer is a complete wildcard.
   bool IsVTable : 1 = false;
+  /// `!loadcfg`: source configuration fields pairing external pointer storage
+  /// (&) with its default function (^). Metadata, never a byte-index claim.
+  bool IsLoadConfig : 1 = false;
 
   bool isStated(size_t Byte) const {
     return (Stated[Byte / CHAR_BIT] >> (Byte % CHAR_BIT)) & 1;
@@ -218,10 +224,11 @@ struct SigMatch {
   /// see SignatureDB::apply. This can settle a candidate disputed by other
   /// patterns, but does not prove its original name or nominal source types.
   bool Confirmed = false;
-  /// A frozen, complete caller unanimously references this exact name at
-  /// this address. Its outgoing constraints have no known contradiction.
-  /// Multiple such incoming names are candidate aliases at the same target;
-  /// they cannot prove source identity or confirm an ancestor's references.
+  /// A frozen caller or independently validated source metadata requests this
+  /// exact name at this address. Its outgoing constraints have no known
+  /// contradiction. Multiple such incoming names are candidate aliases at the
+  /// same target; they cannot prove source identity or confirm an ancestor's
+  /// references.
   bool CallerConfirmed = false;
 };
 
