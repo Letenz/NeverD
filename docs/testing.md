@@ -3998,13 +3998,14 @@ The engine's C is Clang's dialect (`__builtin_bit_cast`, calls through casts
 to a call site's own ABI, which GCC folds into the declared one), so a host
 without Clang skips it after the analysis checks, naming the routes it did not
 execute.
-`NeverDSourceCallABITests` checks Windows ARM64 fixed mixed register banks,
-scalar widths, register exhaustion, stack offsets and the distinct variadic
-refusal. `NeverDWorkerCallSiteTypes` uses an ARM64 PE caller with integer,
-double and pointer operands, plus eighteen mixed register/stack operands and
-a floating return. Both C routes execute against a separate C callee at O0/O2;
-refused variadic or partially written stack edits preserve the analysis snapshot.
-These host C executions do not establish native Windows ARM64 execution.
+`NeverDSourceCallABITests` checks Windows ARM64 fixed mixed register banks and
+variadic integer carriers, scalar widths, register exhaustion and stack offsets.
+`NeverDWorkerCallSiteTypes` covers integer/double/pointer fixed calls, eighteen
+mixed register/stack operands, and a variadic call with a named float, register
+and stack doubles, integers and a floating return. Both C routes execute against
+separate C callees at O0/O2. Unpromoted variadic arguments and partially written
+stack values refuse the edit without changing the analysis snapshot. These host
+C executions do not establish native Windows ARM64 execution.
 `NeverDWorkerHeaderRecords` builds a program with the host compiler that reads
 `<netdb.h>`'s `struct addrinfo` and `struct servent` through a pointer
 `getaddrinfo` stores in a local and through `getservbyname`'s result, and
@@ -14378,6 +14379,12 @@ and RELR callers, four service routes, permission changes, holes and a closed
 dynamic provider. Named input RAM and unmap/replacement regressions verify that
 VMA names and address reuse cannot manufacture anonymous allocation provenance.
 
+`SourceCallABI` tests reject expired temporary facts and opaque-effect reuse
+in both vector counts and outgoing stack writes. `CallRegisterConstant` checks
+physical byte lanes, exact occurrence identity, ambiguity and exact/exhausted
+work boundaries. `NeverDWorkerCallSiteTypes` also executes both C routes when
+the original x64 caller computes its variadic vector count by subtraction.
+
 `AArch64WritebackMemory.*` in `NeverDArm64eAnalysisTests` covers GPR single
 pre/post-index operations with 130 independent LLVM MC 22.1.6 samples: 13
 load/store classes, both modes and five signed imm9 boundary values. Its
@@ -14490,7 +14497,15 @@ output owner must preserve both exclusive creation and default replacement,
 including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
 
+`LowScalarConstant.SelfDifference*` compares unknown-input recovery with concrete byte-pattern execution at every width from one to eight bytes and rejects unequal occurrences, memory operands and malformed shapes. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` covers x86, x64 and AArch64 under ELF, COFF and Mach-O. Worker regressions execute the recovered branch and the self-subtracted System V vector count through HighC and LLVMC at O0/O2.
+
+`X86CarryArithmeticFlags.SelfSubtract*` and `APXSelfSubtract*` check result bits, arithmetic flags and preserved register state. Worker scalar-branch cases compare native execution with HighC/LLVMC at O0/O2, including branches on self-subtraction and self-comparison flags.
+
 `BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` covers direct register captures and private spills. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` executes HighC and LLVMC with two distinct scalar arguments at O0/O2 on Linux x86, for memory and register call targets. The Python ABI inventory and GUI source-catalog check include the analysis-section interfaces and messages.
+
+`NeverDSelfCompareFlagTests` executes original and reconstructed x86, x64, ARM32 and AArch64 functions. Run its default lifted-code route and each of `NEVERD_SEMANTIC_HIGHC=1` and `NEVERD_SEMANTIC_LLVMC=1` separately. The matrix covers self-CMP/SUB flags, branches and conditional values, with logical and shifted-operand controls; it also runs the existing signed-overflow regressions.
 
 `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` checks both C
 routes with optimization enabled and disabled. An independent 32-bit provider
@@ -14501,3 +14516,7 @@ the store's vector transport, determines its scalar argument positions.
 checks x64 and ARM64 Windows pointer declarations and executes their scalar
 source projection on the host, including replacement of the import slot after
 the pointer was captured. These host checks do not execute ARM64 machine code.
+
+The self-comparison matrix also executes no-argument equality and subtraction-overflow cases. These require no incoming register value and must not acquire an unknown-state trap in either C route.
+
+The HFA import-slot tests compile strict C prototypes and execute complete arguments and results for header and local declarations. Both C routes cover float and double records, chained calls, and AArch64 execution.

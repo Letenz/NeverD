@@ -13,6 +13,8 @@
 #include "llvm/ADT/APInt.h"
 
 #include <algorithm>
+#include <map>
+#include <set>
 #include <utility>
 
 namespace neverd {
@@ -105,7 +107,8 @@ std::optional<uint64_t> lowScalarConstantResult(
               Op.Opcode == NdOp::BOOL_XOR) &&
              Op.Inputs[0].Size == Op.Output.Size &&
              Op.Inputs[1].Size == Op.Output.Size) {
-    if (Op.Opcode == NdOp::INT_XOR && Op.Inputs[0] == Op.Inputs[1] &&
+    if ((Op.Opcode == NdOp::INT_XOR || Op.Opcode == NdOp::INT_SUB) &&
+        Op.Inputs[0] == Op.Inputs[1] &&
         (Op.Inputs[0].isReg() || Op.Inputs[0].isTemp()))
       Result = 0;
     else {
@@ -143,20 +146,94 @@ std::optional<uint64_t> lowScalarConstantResult(
                 : std::nullopt;
 }
 
-std::map<SourceCallOccurrenceKey, va_t>
-constantRegisterCallTargets(const LowFunc &Function) {
-  std::map<SourceCallOccurrenceKey, va_t> Targets;
+namespace {
+using ValueLookup = llvm::function_ref<std::optional<uint64_t>(const NdVar &)>;
+
+// Pack storage into words without promoting the proof to word granularity.
+// A byte mask retains partial-register writes, including unaligned ranges.
+// Replacing an aligned constant updates one existing node instead of freeing
+// and allocating eight byte nodes on every machine operation.
+class RegisterConstants {
+  static constexpr unsigned WordBytes = sizeof(uint64_t);
+  struct Word {
+    uint64_t Bits = 0;
+    uint8_t Known = 0;
+  };
+  std::map<uint64_t, Word> Words;
+
+  static uint64_t base(uint64_t Offset) {
+    return Offset & ~(uint64_t{WordBytes} - 1);
+  }
+  static uint64_t bitsMask(unsigned Size) {
+    return UINT64_MAX >> ((WordBytes - Size) * 8);
+  }
+  static uint8_t byteMask(unsigned Begin, unsigned Size) {
+    return static_cast<uint8_t>(((1U << Size) - 1) << Begin);
+  }
+
+public:
+  void clear() { Words.clear(); }
+
+  std::optional<uint64_t> read(uint64_t Offset, unsigned Size) const {
+    uint64_t Bits = 0;
+    for (unsigned I = 0; I < Size;) {
+      const auto Address = Offset + I;
+      const auto Begin = static_cast<unsigned>(Address - base(Address));
+      const unsigned Count = std::min(Size - I, WordBytes - Begin);
+      const auto Found = Words.find(base(Address));
+      const auto Mask = byteMask(Begin, Count);
+      if (Found == Words.end() || (Found->second.Known & Mask) != Mask)
+        return {};
+      Bits |= ((Found->second.Bits >> (Begin * 8)) & bitsMask(Count))
+              << (I * 8);
+      I += Count;
+    }
+    return Bits;
+  }
+
+  void write(uint64_t Offset, unsigned Size, uint64_t Bits) {
+    for (unsigned I = 0; I < Size;) {
+      const auto Address = Offset + I;
+      const auto Begin = static_cast<unsigned>(Address - base(Address));
+      const unsigned Count = std::min(Size - I, WordBytes - Begin);
+      auto &Value = Words[base(Address)];
+      const uint64_t Mask = bitsMask(Count) << (Begin * 8);
+      Value.Bits =
+          (Value.Bits & ~Mask) | ((Bits >> (I * 8)) << (Begin * 8) & Mask);
+      Value.Known |= byteMask(Begin, Count);
+      I += Count;
+    }
+  }
+
+  void forget(uint64_t Offset, unsigned Size) {
+    const uint64_t End = Offset + Size;
+    // Visit only materialized words, even for a very wide unknown output.
+    for (auto It = Words.lower_bound(base(Offset));
+         It != Words.end() && It->first < End;) {
+      const auto Begin =
+          static_cast<unsigned>(Offset > It->first ? Offset - It->first : 0);
+      const auto Count = static_cast<unsigned>(
+          std::min<uint64_t>(WordBytes, End - It->first) - Begin);
+      It->second.Known &= ~byteMask(Begin, Count);
+      if (!It->second.Known)
+        It = Words.erase(It);
+      else
+        ++It;
+    }
+  }
+};
+
+bool visitScalarCallValues(
+    const LowFunc &Function, llvm::function_ref<bool(const LowOp &)> Select,
+    llvm::function_ref<void(const LowOp &, ValueLookup)> Observe) {
   size_t Work = 0;
   for (const auto &Block : Function.Blocks) {
     if (Block.Ops.size() > limits::ir::kConstantRegisterCallOperations - Work)
-      return {};
+      return false;
     Work += Block.Ops.size();
-    if (std::none_of(Block.Ops.begin(), Block.Ops.end(), [](const LowOp &Op) {
-          return Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs == 1 &&
-                 !Op.Inputs[0].isConst();
-        }))
+    if (std::none_of(Block.Ops.begin(), Block.Ops.end(), Select))
       continue;
-    std::map<uint64_t, uint8_t> Registers;
+    RegisterConstants Registers;
     std::map<uint64_t, std::pair<uint16_t, uint64_t>> Temps;
     va_t Instruction = InvalidVA;
     auto ValueOf = [&](const NdVar &Value) -> std::optional<uint64_t> {
@@ -172,24 +249,15 @@ constantRegisterCallTargets(const LowFunc &Function) {
       }
       if (!Value.isReg() || Value.Offset > UINT64_MAX - Value.Size)
         return {};
-      uint64_t Bits = 0;
-      for (unsigned I = 0; I < Value.Size; ++I) {
-        const auto It = Registers.find(Value.Offset + I);
-        if (It == Registers.end())
-          return {};
-        Bits |= uint64_t{It->second} << (I * 8);
-      }
-      return Bits;
+      return Registers.read(Value.Offset, Value.Size);
     };
     for (const auto &Op : Block.Ops) {
       if (Op.Addr != Instruction) {
         Temps.clear();
         Instruction = Op.Addr;
       }
-      if (const auto Site = sourceCallOccurrenceKey(Op);
-          Site && Site->Opcode == NdOp::INDIR_CALL && !Site->StaticTarget)
-        if (const auto Target = ValueOf(Op.Inputs[0]))
-          Targets.emplace(*Site, *Target);
+      if (Select(Op))
+        Observe(Op, ValueOf);
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
           Op.Opcode == NdOp::INTRINSIC) {
         Registers.clear();
@@ -212,16 +280,64 @@ constantRegisterCallTargets(const LowFunc &Function) {
       } else if (Output.Offset <= UINT64_MAX - Output.Size) {
         // Erase overlapping byte facts even for a wide unknown result. Never
         // interpret an architectural subregister write as a whole GPR write.
-        Registers.erase(Registers.lower_bound(Output.Offset),
-                        Registers.lower_bound(Output.Offset + Output.Size));
         if (Result)
-          for (unsigned I = 0; I < Output.Size; ++I)
-            Registers.emplace(Output.Offset + I, uint8_t(*Result >> (I * 8)));
+          Registers.write(Output.Offset, Output.Size, *Result);
+        else
+          Registers.forget(Output.Offset, Output.Size);
       } else
         Registers.clear();
     }
   }
+  return true;
+}
+} // namespace
+
+std::map<SourceCallOccurrenceKey, va_t>
+constantRegisterCallTargets(const LowFunc &Function) {
+  std::map<SourceCallOccurrenceKey, va_t> Targets;
+  std::set<SourceCallOccurrenceKey> Seen;
+  const bool Complete = visitScalarCallValues(
+      Function,
+      [](const LowOp &Op) {
+        return Op.Opcode == NdOp::INDIR_CALL && Op.NumInputs == 1 &&
+               !Op.Inputs[0].isConst();
+      },
+      [&](const LowOp &Op, ValueLookup ValueOf) {
+        if (const auto Site = sourceCallOccurrenceKey(Op)) {
+          if (!Seen.insert(*Site).second)
+            Targets.erase(*Site);
+          else if (const auto Target = ValueOf(Op.Inputs[0]))
+            Targets.emplace(*Site, *Target);
+        }
+      });
+  if (!Complete)
+    return {};
   return Targets;
+}
+
+LowCallRegisterConstant
+constantRegisterValueAtCall(const LowFunc &Function,
+                            const SourceCallOccurrenceKey &Site,
+                            const NdVar &Register) {
+  LowCallRegisterConstant Result;
+  if (!Register.isReg() || !Register.Size || Register.Size > 8)
+    return Result;
+  const bool Complete = visitScalarCallValues(
+      Function,
+      [&](const LowOp &Op) { return sourceCallOccurrenceKey(Op) == Site; },
+      [&](const LowOp &, ValueLookup ValueOf) {
+        if (Result.OccurrenceFound)
+          Result.Value.reset();
+        else {
+          Result.OccurrenceFound = true;
+          Result.Value = ValueOf(Register);
+        }
+      });
+  if (!Complete) {
+    Result = {};
+    Result.BudgetExceeded = true;
+  }
+  return Result;
 }
 
 } // namespace neverd

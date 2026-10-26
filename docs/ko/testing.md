@@ -2176,8 +2176,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests`는 Windows ARM64의 혼합 레지스터, 폭, 레지스터 소진, 스택 오프셋과 가변 인자 거부를 검사한다. `NeverDWorkerCallSiteTypes`는 ARM64 PE의 정수·double·포인터 호출을 두 C 경로로 복원하여 별도 C 함수와 O0/O2로 실행하고 거부된 편집 후 분석 스냅샷이 같은지 확인한다. Windows ARM64 네이티브 실행 검증은 아니다.
+`NeverDSourceCallABITests`는 Windows ARM64 고정·가변 인자의 전달 위치, 폭, 레지스터 소진과 스택 오프셋을 검사한다. `NeverDWorkerCallSiteTypes`는 이름 있는 float, 레지스터·스택 double, 정수와 부동소수점 반환을 두 C 경로에서 독립된 C 함수와 O0/O2로 실행한다. 승격되지 않은 가변 인자와 불완전한 스택 쓰기는 거부하고 분석 스냅샷을 유지한다. Windows ARM64 네이티브 실행 검증은 아니다.
 
 worker 회귀에는 레지스터와 스택에 나뉜 인자 18개, 부동소수점 반환값, 절반만 기록된 스택 인자의 거부도 포함한다.
 
+`SourceCallABI`와 `CallRegisterConstant`는 만료된 임시 값, 불투명 효과, 바이트 범위, 호출 위치 모호성과 정확한 예산 경계를 검사한다. worker는 뺄셈으로 가변 인자 벡터 개수를 계산하는 호출자를 두 C 경로에서 실행한다.
+
+`LowScalarConstant.SelfDifference*`는 알 수 없는 입력의 복구를 1~8바이트의 구체적인 바이트 패턴 실행과 비교하고 서로 다른 값, 메모리 피연산자 및 잘못된 형태를 거부합니다. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary`는 ELF, COFF, Mach-O의 x86, x64, AArch64를 다룹니다. worker는 복구한 분기와 자기 뺄셈으로 얻은 System V 벡터 수를 HighC와 LLVMC의 O0/O2에서 실행합니다.
+
+`X86CarryArithmeticFlags.SelfSubtract*`와 `APXSelfSubtract*`는 결과 비트, 산술 플래그와 보존된 레지스터 상태를 확인합니다. worker 스칼라 분기 테스트는 자기 뺄셈 및 비교 플래그 분기를 포함하여 네이티브 실행과 O0/O2 HighC/LLVMC를 비교합니다.
+
 NeverSight LLVM fork의 `BinaryRewriteRelocationTest`는 x64 PLT, i386 GOT, Mach-O GOTPCREL 및 AArch64 PAGE/PAGEOFF의 최종 바이트를 확인합니다. NeverD 통합 빌드는 기록된 fork를 직접 컴파일합니다. 이 MC 검사는 네이티브 예외 실행을 검증하지 않습니다.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges`는 레지스터 캡처와 비공개 스택 저장을 확인합니다. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers`는 Linux x86에서 서로 다른 두 스칼라 인수로 메모리 및 레지스터 대상의 HighC/LLVMC를 O0/O2로 실행합니다. Python ABI 목록과 GUI 소스 문자열 검사는 분석 섹션 인터페이스와 메시지를 포함합니다.
+
+`NeverDSelfCompareFlagTests`는 x86, x64, ARM32, AArch64의 원본 함수와 재구성한 함수를 실행하여 비교합니다. 기본 기계어 경로, `NEVERD_SEMANTIC_HIGHC=1`, `NEVERD_SEMANTIC_LLVMC=1`을 각각 실행합니다. 자기 CMP/SUB의 플래그, 분기, 조건 값을 논리 테스트 및 시프트된 피연산자 대조군과 검증하고 기존 부호 있는 오버플로 회귀도 실행합니다.
+
+자기 비교 행렬은 인수가 없는 동등 비교 및 뺄셈 오버플로 사례도 실행합니다. 입력 레지스터 값이 필요하지 않으므로 두 C 경로 모두 알 수 없는 상태의 트랩을 추가하면 안 됩니다.
+
+HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고 헤더 및 로컬 선언의 완전한 인수와 반환값을 실행 검증합니다. 두 C 경로 모두 float 및 double 구조체, 연속 호출, AArch64 실행을 다룹니다.
