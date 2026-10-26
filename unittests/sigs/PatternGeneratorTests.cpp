@@ -75,15 +75,19 @@ public:
 
   void setRelocationTarget(StringRef Name) { TargetName = Name.str(); }
   void setDataTarget() { TargetIsFunction = false; }
+  void setTargetStorage(uint8_t Class, int16_t Section = 0) {
+    TargetClass = Class;
+    TargetSection = Section;
+  }
 
   std::vector<uint8_t> build() const {
     std::vector<Symbol> All = Symbols;
     All.push_back(
-        {TargetName, 0, 0,
+        {TargetName, 0, TargetSection,
          uint16_t(TargetIsFunction ? COFF::IMAGE_SYM_DTYPE_FUNCTION
                                          << COFF::SCT_COMPLEX_TYPE_SHIFT
                                    : 0),
-         COFF::IMAGE_SYM_CLASS_EXTERNAL});
+         TargetClass});
     // Two slots for the section symbol and its auxiliary record.
     const uint32_t TargetIndex = 2 + static_cast<uint32_t>(Symbols.size());
 
@@ -201,6 +205,8 @@ private:
   std::string Directives;
   std::string TargetName = "target";
   bool TargetIsFunction = true;
+  uint8_t TargetClass = COFF::IMAGE_SYM_CLASS_EXTERNAL;
+  int16_t TargetSection = 0;
 };
 
 /// A relocatable ELF object with one code section, assembled in memory.
@@ -1615,4 +1621,88 @@ TEST(PatternGeneratorCOFF,
   EXPECT_TRUE(Child->RequireCaller);
   ASSERT_EQ(Child->References.size(), 1u);
   EXPECT_EQ(Child->References.front().Name, "zero");
+}
+
+TEST(PatternGeneratorCOFF,
+     ExternalDataRequiresTypedCanonicalZeroAddendRelocations) {
+  struct Form {
+    std::vector<uint8_t> Bytes;
+    unsigned Field;
+    uint16_t Relocation;
+  };
+  const Form Forms[] = {
+      {{0x48, 0x8b, 0x05, 0, 0, 0, 0}, 3, COFF::IMAGE_REL_AMD64_REL32},
+      {{0x48, 0x8d, 0x0d, 0, 0, 0, 0}, 3, COFF::IMAGE_REL_AMD64_REL32},
+      {{0x8b, 0x05, 0, 0, 0, 0}, 2, COFF::IMAGE_REL_AMD64_REL32},
+      {{0x83, 0x3d, 0, 0, 0, 0, 0}, 2, COFF::IMAGE_REL_AMD64_REL32_1},
+      {{0xc7, 0x05, 0, 0, 0, 0, 1, 0, 0, 0}, 2, COFF::IMAGE_REL_AMD64_REL32_4},
+  };
+  for (const auto &Form : Forms) {
+    for (unsigned Case = 0; Case < 9; ++Case) {
+      std::vector<uint8_t> Code(16, 0x90);
+      Code.insert(Code.end(), Form.Bytes.begin(), Form.Bytes.end());
+      Code.push_back(0xc3);
+      if (Case == 1)
+        Code[16 + Form.Field] = 1;
+      if (Case == 2)
+        Code[15] = 0x67;
+      COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+      Builder.addFunction("root", 0);
+      Builder.setRelocationTarget("external_global");
+      if (Case != 3)
+        Builder.setDataTarget();
+      if (Case == 4)
+        Builder.setTargetStorage(COFF::IMAGE_SYM_CLASS_STATIC);
+      if (Case == 5)
+        Builder.setTargetStorage(COFF::IMAGE_SYM_CLASS_EXTERNAL,
+                                 COFF::IMAGE_SYM_ABSOLUTE);
+      if (Case == 6)
+        Builder.setTargetStorage(COFF::IMAGE_SYM_CLASS_EXTERNAL,
+                                 1); // Executable definition.
+      Builder.addRelocation(16 + Form.Field, Case == 7
+                                                 ? COFF::IMAGE_REL_AMD64_REL32_2
+                                                 : Form.Relocation);
+      PatternGeneratorOptions Opts;
+      Opts.EmitReferences = true;
+      Opts.EmitDataReferences = true;
+      Opts.RequireCaller = Case != 8;
+      Opts.TailLen = 0xffff;
+      const Generated Out = generate(Builder.build(), Opts);
+      ASSERT_EQ(Out.Lines.size(), 1u);
+      auto Mod = PatternParser::parseLine(Out.Lines[0]);
+      ASSERT_TRUE(bool(Mod)) << llvm::toString(Mod.takeError());
+      const auto Count = llvm::count_if(
+          Mod->References, [](const FuncRef &Ref) { return Ref.IsData; });
+      EXPECT_EQ(Count, Case == 0 ? 1 : 0) << "case " << Case;
+      if (Case == 0) {
+        EXPECT_EQ(Mod->References.front().Offset, 16 + Form.Field);
+        EXPECT_EQ(Mod->References.front().Name, "external_global");
+      }
+    }
+  }
+}
+
+TEST(PatternGeneratorCOFF, ExternalDataKeepsAlternativesAndEvidenceKinds) {
+  std::vector<uint8_t> Code = {0x48, 0x8d, 0x05, 0, 0, 0, 0, 0xc3};
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
+  Builder.addFunction("getter", 0);
+  Builder.setDataTarget();
+  Builder.addRelocation(3, COFF::IMAGE_REL_AMD64_REL32);
+  PatternGeneratorOptions Opts;
+  Opts.EmitReferences = Opts.EmitDataReferences = Opts.RequireReferences = true;
+  Opts.AlternateNames["target"] = {"alternate"};
+  auto Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines[0]);
+  ASSERT_TRUE(bool(Mod));
+  ASSERT_EQ(Mod->References.size(), 2u);
+  EXPECT_TRUE(Mod->References[0].IsData);
+  EXPECT_TRUE(Mod->References[1].IsData);
+  EXPECT_TRUE(Mod->RequireReferences);
+  Opts.RequireReferences = false;
+  Opts.CollisionEvidence = true;
+  Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  EXPECT_TRUE(StringRef(Out.Lines[0]).contains("!evidence"));
+  EXPECT_TRUE(StringRef(Out.Lines[0]).contains("&0003 target"));
 }

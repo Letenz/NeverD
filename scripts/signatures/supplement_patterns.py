@@ -72,11 +72,8 @@ def reference_variants(line: builder.PatternLine) -> list[builder.PatternLine]:
             not builder.Shape.of(line.key).fully_verified():
         return [line]
     variants = [line]
-    tokens = line.key.split()
     for offset, names in sites.items():
-        references = [f"^{offset:04X} {name}" for name in sorted(names)]
-        text = " ".join([*tokens[:4], "!refs", *line.names, *references, *tokens[4:]])
-        variants.append(builder.parse_line(text))
+        variants.append(line.with_refs(tuple((offset, name) for name in sorted(names))))
     return variants
 
 
@@ -89,7 +86,8 @@ def context_covers(older: builder.PatternLine, newer: builder.PatternLine) -> bo
     old_sites = builder.ref_table(older.refs)
     new_sites = builder.ref_table(newer.refs)
     return bool(old_sites) and all(
-        offset in new_sites and new_sites[offset] <= names
+        offset in new_sites and new_sites[offset] <= names and
+        (offset in older.data_sites) == (offset in newer.data_sites)
         for offset, names in old_sites.items())
 
 
@@ -146,7 +144,9 @@ def select(candidates: dict[str, builder.FoldResult],
             return None
         shape = builder.Shape.of(line.key)
         return line if line.key in keys or any(
-            other != shape and other.covered_by(shape) for other in nearby) else None
+            other != shape and (other.covered_by(shape) or
+                                other.padding_collision_with(shape))
+            for other in nearby) else None
 
     grouped: dict[str, dict[str, None]] = defaultdict(dict)
     source_claims = defaultdict(set)
@@ -222,13 +222,14 @@ def select(candidates: dict[str, builder.FoldResult],
             if set(line.names) & owned[line.key]:
                 previous = [old for old in old_by_key[name, line.key]
                             if set(old.names) & set(line.names)]
-                if not single_reference_context or not previous or any(
+                if not previous or any(
                         context_covers(old, line) for old in previous):
                     continue
             shape = builder.Shape.of(line.key)
             safe = True
             for key, counterclaims in by_key.items():
-                if key != line.key and not shape.covered_by(shapes[key]):
+                if key != line.key and not (shape.covered_by(shapes[key]) or
+                                           shape.padding_collision_with(shapes[key])):
                     continue
                 if any(builder.another_routine(line.names, other.names)
                        and not builder.distinguished([line, other])
@@ -253,8 +254,9 @@ def select(candidates: dict[str, builder.FoldResult],
             line = builder.common_refs([line, *variants])
             previous = [other for other in old_by_key[name, line.key]
                         if set(line.names) & set(other.names)]
-            old_fields = {offset for other in previous for offset, _ in other.refs}
-            adds_reference = any(len(names) == 1 and offset not in old_fields
+            old_fields = {(offset, offset in other.data_sites)
+                          for other in previous for offset, _ in other.refs}
+            adds_reference = any(len(names) == 1 and (offset, offset in line.data_sites) not in old_fields
                                  for offset, names in builder.ref_table(line.refs).items())
             # An ordinary byte claim does not cover an incoming query when
             # raw sources give the same body another nominal identity. Keep
