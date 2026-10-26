@@ -6627,6 +6627,13 @@ argument cases cover assignment, expression, call and return statements, keep
 the original stores and invalidate memory facts after each call. Nested calls
 and indirect targets retain their reads. Same-width signed/unsigned views
 execute at O0/O2 with UBSan against an independent byte-copy reference.
+`UnchangedCallsKeepTheirInstructionNavigation` checks direct and indirect calls,
+with and without a result assignment, across all four architectures and repeated
+forwarding. `ELFWithoutSections.*` checks valid dynamic tables and unreadable or
+unterminated string tables, including retained relocation symbol values and
+mapped bytes. `COFFFH4Encoding.StopsAtEveryUnreadableFieldWithoutLosingItsError`
+injects failures at every read in ordinary and separated IP maps; the first
+failure must be returned without another read or an unchecked LLVM error.
 `NeverDSessionCAPITests` checks these forwarded x64/ARM64 import arguments and
 the V7/V8 recovery optimization paths. On macOS this SDK consumer resolves
 LLVM from the shared engine alone, preserving pass-analysis key identity.
