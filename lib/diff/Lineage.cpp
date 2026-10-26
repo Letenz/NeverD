@@ -713,6 +713,10 @@ editLineageReleases(const Lineage &Value, const llvm::json::Object &Edit,
         require(Changed.insert(ID).second,
                 "release edit repeats or both removes and upserts an ID");
       }
+    // The serialized collection contains every retained report and metadata
+    // byte. Refuse an insufficient budget before copying those bytes, while
+    // leaving the exact serialization charge below unchanged.
+    allowance(Work, Value.sourceBytes(), Settings.MaxWork);
     Control.report("lineage:release_edit");
     const auto Saved = writeLineage(Value, Control);
     B.charge(Saved.size());

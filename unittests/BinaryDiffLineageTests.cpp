@@ -1159,6 +1159,23 @@ TEST(BinaryDiffLineage, ReleaseEditsHonorBudgetsAndCancellation) {
   std::string Error;
   const auto R = editLineageReleases(*L, Edit, {}, Error);
   ASSERT_TRUE(R) << Error;
+  LineageSettings Exact;
+  Exact.MaxWork = R->work();
+  const auto AtBudget = editLineageReleases(*L, Edit, Exact, Error);
+  ASSERT_TRUE(AtBudget) << Error;
+  EXPECT_EQ(AtBudget->work(), R->work());
+  EXPECT_EQ(AtBudget->revision(), R->revision());
+  LineageSettings TooSmall;
+  TooSmall.MaxWork = L->sourceBytes() - 1;
+  bool Preparing = false;
+  ComparisonControl Admission;
+  Admission.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
+    Preparing |= Phase == "lineage:release_edit";
+  };
+  expectStop(ComparisonState::ResourceLimited, [&] {
+    (void)editLineageReleases(*L, Edit, TooSmall, Error, Admission);
+  });
+  EXPECT_FALSE(Preparing);
   for (unsigned Kind = 0; Kind < 4; ++Kind) {
     LineageSettings S;
     if (Kind == 0)
