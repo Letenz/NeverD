@@ -15,6 +15,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 
 namespace neverd {
 
@@ -24,7 +25,9 @@ namespace neverd {
 
 inline bool aarch64PointerCRequiresDiscard(Intrinsic Id) {
   return isAArch64PAuthIntrinsic(Id) || aarch64CPAOperation(Id).has_value() ||
-         isAArch64PAuthLoadIntrinsic(Id) || isAArch64AddressMemoryIntrinsic(Id);
+         isAArch64PAuthLoadIntrinsic(Id) ||
+         isAArch64AddressMemoryIntrinsic(Id) ||
+         isAArch64WritebackMemoryIntrinsic(Id);
 }
 
 } // namespace neverd

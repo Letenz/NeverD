@@ -220,6 +220,33 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
                                     uint16_t(Instruction.accessBytes()),
                                     !Instruction.isLoad(), Instruction.Word});
         }
+        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+            Op.Inputs[0].isConst() &&
+            isAArch64WritebackMemoryIntrinsic(
+                static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
+          if (Architecture != Arch::AArch64 ||
+              !lowAArch64WritebackMemoryShapeIsValid(Op)) {
+            Out.Error = kWritebackMalformed;
+            return S;
+          }
+          const auto Instruction = *aarch64WritebackMemoryInstruction(
+              Op.Inputs[kWritebackWordOperand + 1].Offset);
+          const auto Base =
+              offset(S, Op.Inputs[kWritebackBaseOperand + 1], Width);
+          int64_t At, End;
+          if (Record && Base &&
+              !llvm::AddOverflow(
+                  *Base,
+                  Instruction.preIndex()
+                      ? static_cast<int64_t>(Instruction.displacement())
+                      : 0,
+                  At) &&
+              !llvm::AddOverflow(At, int64_t(Instruction.accessBytes()), End) &&
+              bounded(At) && bounded(End))
+            Out.Accesses.push_back({PC, Op.Seq, At,
+                                    uint16_t(Instruction.accessBytes()),
+                                    !Instruction.isLoad(), Instruction.Word});
+        }
         transfer(S, Op, Width);
         // Calls may overwrite every alias except SP. This is intentionally
         // narrower than the native ABI preservation proof.

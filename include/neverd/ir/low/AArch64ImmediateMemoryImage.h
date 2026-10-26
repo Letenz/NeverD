@@ -34,21 +34,49 @@ lowImageBaseMemoryWitness(const BinaryImage &Image, const LowOp &Op,
   const auto Memory = lowMemoryOperands(Op);
   if (Memory.Complete)
     return {Memory.Address, Memory.AccessSize, true};
-  if (!lowAArch64AddressMemoryShapeIsValid(Op))
-    return {};
-  const auto Instruction = *aarch64AddressMemoryInstruction(
-      Op.Inputs[kAddressMemoryWordOperand + 1].Offset);
-  const auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
-  const auto *Bytes = Image.readVA(Op.Addr, kAddressMemoryWordBytes);
-  if (!Base.isReg() || Base.Size != kAddressMemoryPointerBytes ||
-      Base.Offset !=
-          a64reg::X0 + Instruction.base() * kAddressMemoryPointerBytes ||
-      !Bytes || readLE<uint32_t>(Bytes) != Instruction.Word ||
-      !aarch64ImmediateMemoryImageSpan(Image, Instruction, OriginalBase,
-                                       ConstantAddressProvenance::DataAddress,
-                                       Owner))
-    return {};
-  return {&Base, static_cast<uint16_t>(Instruction.accessBytes()), true};
+  const auto Witness = [&](const auto &Instruction,
+                           const NdVar &Base) -> LowImageBaseMemoryWitness {
+    const auto *Bytes = Image.readVA(Op.Addr, kAddressMemoryWordBytes);
+    if (!Base.isReg() || Base.Size != kAddressMemoryPointerBytes ||
+        Base.Offset !=
+            a64reg::X0 + Instruction.base() * kAddressMemoryPointerBytes ||
+        !Bytes || readLE<uint32_t>(Bytes) != Instruction.Word ||
+        !aarch64ImmediateMemoryImageSpan(Image, Instruction, OriginalBase,
+                                         ConstantAddressProvenance::DataAddress,
+                                         Owner))
+      return {};
+    return {&Base, static_cast<uint16_t>(Instruction.accessBytes()), true};
+  };
+  if (lowAArch64AddressMemoryShapeIsValid(Op))
+    return Witness(*aarch64AddressMemoryInstruction(
+                       Op.Inputs[kAddressMemoryWordOperand + 1].Offset),
+                   Op.Inputs[kAddressMemoryBaseOperand + 1]);
+  if (lowAArch64WritebackMemoryShapeIsValid(Op))
+    return Witness(*aarch64WritebackMemoryInstruction(
+                       Op.Inputs[kWritebackWordOperand + 1].Offset),
+                   Op.Inputs[kWritebackBaseOperand + 1]);
+  return {};
+}
+
+/// A writeback after the exact dereference does not invalidate its incoming
+/// base witness. Admit only the lifter's completed-base extraction, never an
+/// arbitrary clobber or a second address computation.
+inline bool lowImageBaseMemoryWritebackCommit(const LowOp &Op,
+                                              const LowOp *Memory) {
+  if (!Memory || !lowAArch64WritebackMemoryShapeIsValid(*Memory) ||
+      Op.Addr != Memory->Addr ||
+      Op.Output != Memory->Inputs[kWritebackBaseOperand + 1] ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const bool Load = static_cast<Intrinsic>(Memory->Inputs[0].Offset) ==
+                    Intrinsic::A64_LoadWriteback;
+  if (!Load)
+    return Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+           Op.Inputs[0] == Memory->Output;
+  return Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+         Op.Inputs[0] == Memory->Output && Op.Inputs[1].isConst() &&
+         Op.Inputs[1].Offset == kAddressMemoryPointerBytes;
 }
 
 } // namespace neverd
