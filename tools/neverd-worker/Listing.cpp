@@ -970,9 +970,11 @@ struct Listing::Impl {
             size > std::numeric_limits<std::uint64_t>::max() - start)
           continue;
         const auto fileSize = jsonCount(row.value("file_sz", Json()));
+        const auto initializedSize =
+            jsonCount(row.value("materialized_sz", Json(fileSize)));
         Range range{start,
                     start + size,
-                    start + std::min(size, fileSize),
+                    start + std::min(size, initializedSize),
                     std::max<std::uint64_t>(
                         1, jsonCount(row.value("alignment", Json()))),
                     row.value("name", std::string()),

@@ -51,6 +51,7 @@
 #include "mcp/McpConnectionManager.h"
 #include "web/PackageReviewDialog.h"
 
+#include "neverd/sdk/Limits.h"
 #include "neverd/support/NumericInput.h"
 
 #include <QAbstractTableModel>
@@ -1873,6 +1874,7 @@ void MainWindow::connectActions() {
       QApplication::clipboard()->setText(hexAddress(*address));
   });
   on(ActionId::EditRename, [this] { rename(); });
+  on(ActionId::EditAddAnalysisSection, [this] { addAnalysisSection(); });
   on(ActionId::EditRepeatableComment, [this] { comment(); });
   on(ActionId::EditBookmark, [this] {
     const auto address = currentAddress();
@@ -2238,10 +2240,125 @@ void MainWindow::connectActions() {
   });
 }
 
+void MainWindow::addAnalysisSection() {
+  const auto epoch = session_.epoch();
+  auto *dialog = new QDialog(this);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setWindowModality(Qt::WindowModal);
+  dialog->setWindowTitle(tr("Add analysis section"));
+  dialog->setObjectName(QStringLiteral("addAnalysisSection"));
+  auto *layout = new QVBoxLayout(dialog);
+  auto *explanation = new QLabel(
+      tr("Map a binary file at a virtual address in the current image. "
+         "Save the project to keep it. The input binary stays unchanged."),
+      dialog);
+  explanation->setWordWrap(true);
+  layout->addWidget(explanation);
+  auto *form = new QFormLayout;
+  auto *path = new QLineEdit(dialog);
+  path->setObjectName(QStringLiteral("sectionFile"));
+  auto *fileRow = new QHBoxLayout;
+  fileRow->addWidget(path);
+  auto *browse = new QPushButton(tr("Browse…"), dialog);
+  fileRow->addWidget(browse);
+  form->addRow(tr("Binary bytes:"), fileRow);
+  auto *name = new QLineEdit(QStringLiteral(".recovered"), dialog);
+  name->setObjectName(QStringLiteral("sectionName"));
+  form->addRow(tr("Section name:"), name);
+  auto *address = new QLineEdit(dialog);
+  address->setObjectName(QStringLiteral("sectionAddress"));
+  address->setPlaceholderText(QStringLiteral("0x…"));
+  form->addRow(tr("Virtual address:"), address);
+  auto *permissions = new QComboBox(dialog);
+  permissions->addItems({QStringLiteral("r"), QStringLiteral("rw"),
+                         QStringLiteral("rx"), QStringLiteral("rwx")});
+  permissions->setCurrentText(QStringLiteral("rx"));
+  form->addRow(tr("Permissions:"), permissions);
+  auto *define =
+      new QCheckBox(tr("Define a function covering these bytes"), dialog);
+  define->setChecked(true);
+  form->addRow(define);
+  auto *function = new QLineEdit(QStringLiteral("recovered_function"), dialog);
+  function->setObjectName(QStringLiteral("sectionFunction"));
+  form->addRow(tr("Function name:"), function);
+  layout->addLayout(form);
+  auto *error = new QLabel(dialog);
+  error->setObjectName(QStringLiteral("sectionError"));
+  error->setWordWrap(true);
+  layout->addWidget(error);
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+  layout->addWidget(buttons);
+  connect(browse, &QPushButton::clicked, dialog, [dialog, path] {
+    const auto file =
+        QFileDialog::getOpenFileName(dialog, tr("Select binary bytes"));
+    if (!file.isEmpty())
+      path->setText(file);
+  });
+  connect(define, &QCheckBox::toggled, function, &QLineEdit::setEnabled);
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+  connect(
+      buttons, &QDialogButtonBox::accepted, dialog,
+      [this, dialog, epoch, path, name, address, permissions, define, function,
+       error, buttons] {
+        if (session_.epoch() != epoch || !session_.loaded()) {
+          error->setText(tr("The project changed. Open this dialog again."));
+          return;
+        }
+        const QFileInfo file(path->text());
+        const QString addressText = address->text().trimmed();
+        bool validAddress = false;
+        const auto va = addressText.mid(2).toULongLong(&validAddress, 16);
+        if (!file.isFile() || file.size() <= 0 ||
+            file.size() > ::neverd::sdk::kMaxAnalysisSectionBytes ||
+            !addressText.startsWith(QLatin1String("0x")) || !validAddress ||
+            va == 0 || name->text().trimmed().isEmpty() ||
+            (define->isChecked() &&
+             (function->text().trimmed().isEmpty() ||
+              !permissions->currentText().contains(QLatin1Char('x'))))) {
+          error->setText(
+              tr("Choose a file of 1 byte to 64 MiB, a hexadecimal address "
+                 "and a section name. A function needs a name and executable "
+                 "permissions."));
+          return;
+        }
+        QJsonObject payload{
+            {"schema", "neverd.analysis-section.v1"},
+            {"name", name->text().trimmed()},
+            {"address", QStringLiteral("0x") + QString::number(va, 16)},
+            {"permissions", permissions->currentText()},
+            {"path", file.absoluteFilePath()}};
+        if (define->isChecked())
+          payload.insert("functions", QJsonArray{QJsonObject{
+                                          {"name", function->text().trimmed()},
+                                          {"offset", "0x0"},
+                                          {"size", file.size()}}});
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+        QPointer<QDialog> guard(dialog);
+        session_.addAnalysisSection(
+            payload,
+            [this, guard, va](const QJsonObject &) {
+              if (guard)
+                guard->accept();
+              navigate(va);
+            },
+            [guard, error, buttons](const QString &, const QString &text) {
+              if (guard) {
+                error->setText(text);
+                buttons->button(QDialogButtonBox::Ok)->setEnabled(true);
+              }
+            });
+      });
+  dialog->resize(560, dialog->sizeHint().height());
+  dialog->show();
+}
+
 void MainWindow::updateActions() {
   const bool loaded = session_.loaded();
   const bool location = loaded && currentAddress().has_value();
   for (auto *action : actions_.allActions()) {
+    if (action->property("externalCommand").toBool())
+      continue;
     const QString name = action->objectName();
     const bool always = name.startsWith(QStringLiteral("Options")) ||
                         name.startsWith(QStringLiteral("Windows")) ||
@@ -2314,6 +2431,10 @@ void MainWindow::updateActions() {
       ->setEnabled(loaded && session_.hasBytePatches());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
+  actions_.action(ActionId::EditAddAnalysisSection)
+      ->setEnabled(
+          loaded && !session_.readOnly() &&
+          session_.metadata().value("analysis_sections_supported").toBool());
   // A function starts where none starts yet; the one the cursor is in can
   // stop being one.
   const bool functionEdits =

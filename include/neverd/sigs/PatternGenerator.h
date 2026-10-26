@@ -29,6 +29,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -271,6 +272,20 @@ machOBranchReferenceOffset(uint32_t CPUType, uint32_t Type,
 void collectAlternateNames(
     const llvm::object::ObjectFile &Obj,
     std::map<std::string, std::vector<std::string>, std::less<>> &Names);
+
+/// Complete and incomplete primary x64 COFF table declarations. Incomplete
+/// declarations remain in offline evidence and veto publication of that type.
+struct VTableEvidenceStats {
+  unsigned Complete = 0;
+  unsigned Incomplete = 0;
+};
+
+/// Write JSONL source declarations, including unsupported layouts and weak
+/// bindings. This is offline evidence, never directly loadable signatures.
+/// Malformed symbol/section reads fail instead of hiding a counterclaim.
+llvm::Expected<VTableEvidenceStats>
+generateVTableEvidence(const llvm::object::ObjectFile &Obj,
+                       llvm::raw_ostream &OS);
 
 /// Writes one .pat line per function \p Obj defines.
 ///
