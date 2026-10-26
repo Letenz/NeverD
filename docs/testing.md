@@ -3597,8 +3597,12 @@ check; `NeverDLiftTests` also includes the same cases.
 
 `MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
 DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on
-x86, x64, ARM32 and AArch64. The module jump-table and Windows continuation
-tests cover arbitration after body rebuilds; unchanged bodies may reuse the
+x86, x64, ARM32 and AArch64. Build and run `NeverDMedDceTests` for the focused
+register-DCE suite. It also checks shared predecessor cycles in both query
+orders, distinct call positions, separate stack-pointer and x87 return reads,
+query-local visitation with duplicate block IDs, and the full signed block-ID
+range. The module jump-table and Windows continuation tests cover arbitration
+after body rebuilds; unchanged bodies may reuse the
 same run-local decision, including its budget refusal.
 
 `SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
