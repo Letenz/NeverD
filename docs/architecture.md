@@ -707,6 +707,13 @@ selected regression results (including original-owner failures) and model record
 nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
 automatically lifted whole images.
 
+The SIMD writeback integer bridge independently passed the same unmodified
+model at EL1 and EL0: 100 samples through five output routes and all four
+CPTA/CPTA0 controls, totaling 4,000 generated sample calls. The ten-test input
+report, exact source/object hashes and environment revision are pinned in
+[SIMD evidence](evidence/arm64e-vector-writeback-memory-2026-10-26.json).
+This remains a bounded Normal WB, nonoverflow explicit-IR qualification.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image

@@ -14352,6 +14352,19 @@ This bounded export does not qualify original-SP stacks, pair accesses,
 overflow/tag environments, native vector ABI, foreign exception identity or
 Apple CPA2 hardware.
 
+The [SIMD qualification record](evidence/arm64e-vector-writeback-memory-2026-10-26.json)
+records 594 passes, 17 explicit skips and ten failures from the completed 621
+selected checks. Restoring the two shared projection/conversion owners to the
+dev base reproduces every retained failure; their full assertion messages agree
+after normalizing only random temporary filenames. The WRMSR style assumptions
+and AArch64 `_BitInt` compiler limit remain recorded as failures. The separate
+41-test SysV group was interrupted after three unchanged 60-second child-compiler
+timeouts; minimal sanitized compiler health checks also timed out on both host
+architectures. That group remains unavailable, with partial logs retained.
+Restoring the feature branch and rebuilding passes all 18 scalar/SIMD writeback
+checks and 13 cached-call checks again. Both model profiles pass all ten routes;
+broad whole-project and native Apple CPTA qualification remain false.
+
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
 mutable import captures and Win64 scalar results versus ELF aggregate transport.
