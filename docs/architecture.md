@@ -2320,7 +2320,14 @@ settlement by a complete, strong and unambiguous ordinary caller. Incoming
 requests never change their anchors' outgoing evidence. Complete, strong
 incoming bodies can extend a bounded rooted chain, with every generation
 validated against the same original outgoing result. Only new frontiers are
-visited; short bodies and unrooted cycles cannot extend them. Both forms
+visited. A short incoming body or confirmed required-reference root may query
+a child only when a unanimous direct reference also binds a nonoverlapping,
+complete ordinary callee from the frozen result. Every surviving claim at that
+callee must meet the ordinary fixed-byte floor. Short required roots need a
+complete source refinement; pruned clauses cannot supply omitted calls. The
+callee evidence is built lazily once and excludes addresses settled by earlier
+incoming rounds. Short bodies without that independent proof and unrooted
+cycles cannot extend inference. Both forms
 remain candidate evidence under the same identity boundary. The shared name
 index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
 claims are not opted into incoming inference merely by loading them. Source
