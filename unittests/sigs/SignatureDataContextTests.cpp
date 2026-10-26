@@ -141,6 +141,24 @@ TEST(SignatureDataContext, LocalRelationsRetainAllVariantAndParentConstraints) {
   EXPECT_TRUE(DB.buildCandidateNameMap().empty());
 }
 
+TEST(SignatureDataContext, LocalConsumerAlternativesNeedAnExactBoundOperand) {
+  for (bool Reverse : {false, true}) {
+    const std::string Exact = "%0003 00000013:anchor";
+    const std::string Other = "%0003 00000014:anchor";
+    SignatureDB DB;
+    add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +
+                getter("getter",
+                       Reverse ? Other + " " + Exact : Exact + " " + Other));
+    DB.apply(image(), {0x1000, 0x1100});
+    EXPECT_EQ(DB.buildCandidateNameMap().at(0x1100), "getter");
+    EXPECT_TRUE(DB.buildNameMap().empty());
+    auto Changed = image();
+    displacement(Changed, 0x1103, 0x1107, 0x2030);
+    DB.apply(Changed, {0x1000, 0x1100});
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+  }
+}
+
 TEST(SignatureDataContext, TwoLocationsForOneLocalAnchorRemainAmbiguous) {
   SignatureDB DB;
   add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +

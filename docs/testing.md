@@ -3617,8 +3617,12 @@ check; `NeverDLiftTests` also includes the same cases.
 
 `MedDCE.KeepsLivePhiCyclesAndDropsDeadCyclesInEitherBlockOrder` checks register
 DCE liveness through cyclic PHIs, dead-cycle removal and sparse identifiers on
-x86, x64, ARM32 and AArch64. The module jump-table and Windows continuation
-tests cover arbitration after body rebuilds; unchanged bodies may reuse the
+x86, x64, ARM32 and AArch64. Build and run `NeverDMedDceTests` for the focused
+register-DCE suite. It also checks shared predecessor cycles in both query
+orders, distinct call positions, separate stack-pointer and x87 return reads,
+query-local visitation with duplicate block IDs, and the full signed block-ID
+range. The module jump-table and Windows continuation tests cover arbitration
+after body rebuilds; unchanged bodies may reuse the
 same run-local decision, including its budget refusal.
 
 `SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
@@ -6357,11 +6361,13 @@ body duplication. Canonical indirect data operands share generator/runtime tests
 with ordinary data references; import references retain their separate kind.
 
 `LocalDataEvidence.*` checks same-object operand relations, renamed static
-symbols, distinct external anchors, missing/duplicate definitions, relocation
-addends and overlaps, storage bounds and incorrect symbol kinds. The local cases
-in `SignatureDataContext.*` reject wrong anchor names/offsets, external/local
-kind substitution, missing source variants and unrooted requests. Parser/cache
-tests preserve the separate kind and validate canonical keys even when cache
+symbols, distinct external anchors, unique static function anchors,
+missing/duplicate definitions, relocation addends and overlaps, storage bounds
+and incorrect symbol kinds. The local cases in `SignatureDataContext.*` reject
+wrong anchor names/offsets, external/local
+kind substitution, missing source variants and unrooted requests. Consumer
+alternatives require one exact bound operand; they cannot become anchor evidence.
+Parser/cache tests preserve the separate kind and validate canonical keys even when cache
 pieces run in reverse. Python supplement/refinement tests retain every raw
 counterclaim and refuse to put local relations in ordinary byte records.
 
