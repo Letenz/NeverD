@@ -954,25 +954,70 @@ TEST(I386CallContract, StoresThroughACopyOfESPAreArgumentsByOffset) {
 }
 
 TEST(I386CallContract, AStoreWiderThanASlotFillsEachSlotItCovers) {
-  // clang -O0 copies an eight-byte structure argument into the outgoing area
-  // with one `movsd [esp], xmm0`: its two halves are the first two arguments.
-  std::vector<uint8_t> Code = {
-      0x55,                         // push ebp
-      0x89, 0xE5,                   // mov ebp, esp
-      0x83, 0xEC, 0x18,             // sub esp, 0x18
-      0xF2, 0x0F, 0x10, 0x45, 0x08, // movsd xmm0, [ebp+8]
-      0x89, 0xE0,                   // mov eax, esp
-      0xF2, 0x0F, 0x11, 0x00,       // movsd [eax], xmm0
-  };
-  for (uint8_t B : callThroughSlot(slot(0)))
-    Code.push_back(B);
-  for (uint8_t B : {0x83, 0xC4, 0x18, // add esp, 0x18
-                    0x5D,             // pop ebp
-                    0xC3})            // ret
-    Code.push_back(B);
-  const std::string Call = callIn(makeImage(Code, {"calloc"}), "calloc");
-  EXPECT_EQ(Call.find("unknown"), std::string::npos) << Call;
-  EXPECT_NE(Call.find(">> 32"), std::string::npos) << Call;
+  for (bool RegisterTarget : {false, true}) {
+    // One movsd writes both scalar argument slots. The import contract owns
+    // their layout for a memory call and for a captured register target.
+    std::vector<uint8_t> Code = {
+        0x55,                         // push ebp
+        0x89, 0xE5,                   // mov ebp, esp
+        0x83, 0xEC, 0x18,             // sub esp, 0x18
+        0xF2, 0x0F, 0x10, 0x45, 0x08, // movsd xmm0, [ebp+8]
+        0x89, 0xE0,                   // mov eax, esp
+        0xF2, 0x0F, 0x11, 0x00,       // movsd [eax], xmm0
+    };
+    auto Call = callThroughSlot(slot(0));
+    if (RegisterTarget) {
+      Call.erase(Call.begin(), Call.begin() + 2);
+      Call.insert(Call.begin(), 0xa1);       // mov eax, [Iat]
+      Call.insert(Call.end(), {0xff, 0xd0}); // call eax
+    }
+    Code.insert(Code.end(), Call.begin(), Call.end());
+    Code.insert(Code.end(), {0x83, 0xC4, 0x18, 0x5D, 0xC3});
+    const auto Image = makeImage(Code, {"calloc"});
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(testing::Message() << RegisterTarget << ':' << LLVM);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Text};
+      Options.LiftMode = LLVM;
+      Options.SourceProjection = LLVM;
+      const auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_EQ(Result.MedFuncs.size(), 1u);
+      ASSERT_EQ(Result.MedFuncs.front().CallInfos.size(), 1u);
+      EXPECT_EQ(Result.MedFuncs.front().CallInfos.front().Args.size(), 2u);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      if (LLVM) {
+        ASSERT_TRUE(Result.LlvmModule);
+        ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+      } else {
+        ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+      }
+      EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+#if defined(__linux__) && (defined(__i386__) || defined(__x86_64__))
+      const std::string Oracle = R"(
+void *calloc(size_t count, size_t bytes) {
+  if (count != 17 || bytes != 23) __builtin_trap();
+  return (void *)(uintptr_t)0x1234;
+}
+int main(void) { return wrap(17, 23) != 0x1234; }
+)";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle, {"-m32", Level, "-fno-builtin-calloc",
+                              "-fsanitize=undefined", "-fsanitize-trap=all"});
+#else
+      RecordProperty("native_i386_execution", "requires Linux x86");
+#endif
+    }
+  }
 }
 
 /// The HighC signature of the function at Text of \p Img, decompiled alone.

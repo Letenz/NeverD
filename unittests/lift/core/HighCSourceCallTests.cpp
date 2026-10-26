@@ -4257,7 +4257,7 @@ int main(void) {
 )");
 }
 
-TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
+TEST(HighCSourceCalls, PointerTempsPreserveTheirBitsOnIntegerReturn) {
   const auto I64 = NdType::makeInt(8);
   const auto BytePointer = NdType::makePtr(NdType::makeInt(1, false));
   MedVar Bits;
@@ -4280,8 +4280,8 @@ TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)((uintptr_t)value);"),
-            std::string::npos)
+  EXPECT_NE(Source.find("uint8_t* t17;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return (int64_t)(uintptr_t)t17;"), std::string::npos)
       << Source;
   compileAndRun(Source + R"(
 int main(void) {

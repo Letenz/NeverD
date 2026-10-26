@@ -292,19 +292,33 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
 
   if (tryResolveConstTarget(CurOp, FuncNames, Image, Result))
     return Result;
-  if (tryResolveLoadTarget(CurOp, CurBlock, FuncNames, Image, Result))
-    return Result;
+  bool ReadReachesCall = false;
+  const auto PreserveCapturedTarget = [&] {
+    // Slot identity supplies a signature, not permission to repeat a read.
+    if (!ReadReachesCall) {
+      Result.IsIndirect = true;
+      Result.Name = "indirect";
+    }
+  };
   if (CurOp.NumInputs && !CurOp.Inputs[0].isConst())
     for (size_t I = 0; I < CurBlock.Ops.size(); ++I)
       if (&CurBlock.Ops[I] == &CurOp) {
+        CallTargetUse = {&CurBlock, I};
+        ReadReachesCall = memoryReadReachesCallTarget(CurOp.Inputs[0]);
+        CallTargetUse = {};
+        if (ReadReachesCall &&
+            tryResolveLoadTarget(CurOp, CurBlock, FuncNames, Image, Result))
+          return Result;
         if (const auto Cached =
                 resolveMedCallTarget(CurBlock, I, CurOp.Inputs[0])) {
           if (Cached->ThroughSlot &&
               tryResolveLoadedSlot(Cached->Address, FuncNames, Image, Result)) {
-            // The slot identifies the captured callable's signature. It does
-            // not authorize reading the slot again after a possible update.
-            Result.IsIndirect = true;
-            Result.Name = "indirect";
+            CallTargetUse = {&CurBlock, I};
+            ReadReachesCall = Cached->LoadIndex &&
+                              memoryReadReachesCallTarget(
+                                  CurBlock.Ops[*Cached->LoadIndex].Output);
+            CallTargetUse = {};
+            PreserveCapturedTarget();
             return Result;
           }
           if (!Cached->ThroughSlot &&
@@ -334,8 +348,10 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
         Def->MemoryOrdering == NdMemoryOrdering::None &&
         Def->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         tryResolveLoadedSlot(Def->Operands[0]->ConstVal, FuncNames, Image,
-                             Result))
+                             Result)) {
+      PreserveCapturedTarget();
       return Result;
+    }
   }
   if (tryResolveRegTarget(TargetExpr, TargetArch, Result))
     return Result;

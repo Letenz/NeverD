@@ -4519,6 +4519,10 @@ TEST(Win64CallContract, HeaderOnlyFloatingImportRetainsItsTypedABI) {
               " y) {\n"
               "  if (x != 1.25 || y != -2.5) __builtin_trap();\n"
               "  return 7.75;\n}\n";
+          // A writable IAT remains a callable pointer in the generated source.
+          // Supply the loader's initial binding as well as the routine itself.
+          Oracle += Type + " (*__imp_fixture_fp)(" + Type + ", " + Type +
+                    ") = fixture_fp;\n";
           if (LLVM) {
             // The machine LLVM entry retains complete vector register carriers.
             // Its external import must still consume/produce scalar FP values.

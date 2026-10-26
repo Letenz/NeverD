@@ -2227,13 +2227,13 @@ void recoverCallAbi(
                           ? (SV.Size + SlotSize - 1) / SlotSize
                           : 1;
           // A single wide store covering several outgoing 4-byte slots is split
-          // into one argument per slot — but only for a direct callee that
-          // actually takes a scalar argument at every covered slot, so a
+          // into one argument per slot — but only for a direct callee or
+          // loader-bound import that takes a scalar at every covered slot, so a
           // genuine wide (vector) argument is still passed whole.  The slot
           // an x87 `fstp tbyte` ends in takes its last two bytes, and padding
           // passed as zero.
-          bool SplitWide = Lanes > 1 && !CI.IsIndirect && CalleeArgs >= 0 &&
-                           SlotIdx + Lanes <= CalleeArgs;
+          bool SplitWide = Lanes > 1 && (!CI.IsIndirect || IsIndirectImport) &&
+                           CalleeArgs >= 0 && SlotIdx + Lanes <= CalleeArgs;
           if (SplitWide)
             for (int L = 0; L < Lanes; ++L)
               if (SlotIdx + L >= MaxArgs || FoundMask[SlotIdx + L]) {

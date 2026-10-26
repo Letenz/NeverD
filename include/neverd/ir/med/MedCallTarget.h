@@ -14,6 +14,7 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include <cstddef>
 #include <map>
 #include <optional>
 
@@ -22,6 +23,9 @@ namespace neverd {
 struct MedCallTarget {
   va_t Address;
   bool ThroughSlot;
+  /// Original slot LOAD in the queried block, before any private spill/reload.
+  /// Its identity alone does not prove that repeating the read is safe.
+  std::optional<size_t> LoadIndex = std::nullopt;
 };
 
 /// Query SSA values before \p Before. Calls, uncertain aliases, partial writes
