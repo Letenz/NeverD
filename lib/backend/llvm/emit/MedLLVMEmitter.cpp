@@ -838,6 +838,19 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                         MedVar::Param))
               throw std::runtime_error(Reason);
           }
+          if (isAArch64WritebackMemoryIntrinsic(Id)) {
+            if (TheArch != Arch::AArch64 ||
+                !aarch64WritebackMemoryMedShapeIsValid(Op))
+              throw std::runtime_error(kWritebackMalformed);
+            const auto Instruction = *aarch64WritebackMemoryInstruction(
+                Op.Inputs[kWritebackWordOperand + 1].ConstVal);
+            if (Instruction.stackBase())
+              throw std::runtime_error(kWritebackSPUnsupported);
+            if (Img_ &&
+                !MemoryBases->supports(*Img_, Instruction,
+                                       Op.Inputs[kWritebackBaseOperand + 1]))
+              throw std::runtime_error(kAddressMemoryImmediateImageUnsupported);
+          }
           if (isAArch64PAuthLoadIntrinsic(Id)) {
             if (TheArch != Arch::AArch64 ||
                 !aarch64PAuthLoadMedShapeIsValid(Op))

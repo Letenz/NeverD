@@ -15,6 +15,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64SVECPAC.h"
+#include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
 #include "neverd/backend/c/render/ARM/ArmCoprocessorAcle.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
@@ -840,6 +841,23 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
                                Value)
                      .str()
                : Value;
+  }
+  if (isAArch64WritebackMemoryIntrinsic(Id)) {
+    const unsigned Count = aarch64WritebackMemoryOperandCount(Id);
+    const bool Store = Id == Intrinsic::A64_StoreWriteback;
+    const auto Word = Ops.size() == Count
+                          ? constantOperand(Ops[kWritebackWordOperand])
+                          : std::nullopt;
+    if (Ops.size() != Count || OperandBytes.size() != Count ||
+        !aarch64WritebackMemoryShapeIsValid(
+            Id, Count + 1, ResultBytes, OperandBytes[kWritebackBaseOperand],
+            OperandBytes[kWritebackWordOperand], Word,
+            Store ? OperandBytes[kWritebackDataOperand] : 0,
+            Store ? constantOperand(Ops[kWritebackDataOperand]) : std::nullopt))
+      throw std::invalid_argument(kWritebackMalformed);
+    return aarch64WritebackMemoryC(
+        *aarch64WritebackMemoryInstruction(*Word), Ops[kWritebackBaseOperand],
+        Store ? Ops[kWritebackDataOperand] : llvm::StringRef{});
   }
   if (isAArch64PAuthLoadIntrinsic(Id)) {
     const auto Word = Ops.size() == kPAuthLoadOperandCount
