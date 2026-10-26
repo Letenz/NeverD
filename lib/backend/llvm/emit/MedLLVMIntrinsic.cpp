@@ -19,6 +19,7 @@
 #include "neverd/ir/X86/X86FPState.h"
 #include "neverd/ir/X86/X87BCD.h"
 #include "neverd/ir/X86/X87Constant.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86Sgx.h"
@@ -246,7 +247,7 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     return emitGfniIntrinsic(Op, IC, Builder);
   }
 
-  if (TargetArch == Arch::AArch64 && IC == I::A64_VectorLoadWriteback)
+  if (TargetArch == Arch::AArch64 && isAArch64WritebackAuxiliaryLoad(IC))
     return emitAArch64IntrinsicValue(Op, IC, Builder);
 
   if (Op.Output.Size == 0)

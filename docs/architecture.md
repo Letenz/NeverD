@@ -707,6 +707,20 @@ the vector tuple remains internal and grants no native vector entry/return ABI.
 The x1-only automatic policy, exact image occurrences and complete storage
 proof also apply to these single SIMD accesses.
 
+GPR W/X pairs, signed LDPSW and SIMD S/D/Q pairs share the original-word
+contract for offset, pre-index, post-index and non-temporal accesses. Pair loads
+publish three auxiliary values: both complete X/V values and the completed
+base; stores consume both complete values and return the base. A non-writeback
+load may overwrite its incoming GPR base, so only writeback forms commit the
+base result to the architectural register. Duplicate load destinations and
+constrained-unpredictable GPR writeback overlaps are refused. Both projections
+and LLVM retain one native pair instruction, including its access descriptor,
+second-address increment and writeback ordering. Finite tracing requires both
+transfers to fit the same declared memory model before committing results.
+Nominal frame observations cover the entire pair without granting an original
+SP execution environment. Auxiliary carrier completeness, source dominance and
+image occurrence validation reuse the same owners as SIMD single writeback.
+
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
@@ -728,7 +742,8 @@ identity. Automatic x1 GPR single-immediate lifting and initialized-image
 rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
 coverage; SIMD single pre/post-index accesses have separate explicit-IR,
-automatic-lifting and image regressions. Pair and other ordinary-memory families,
+automatic-lifting and image regressions. Pair accesses have separate explicit-IR,
+automatic-lifting, nominal-frame and image regressions. Other ordinary-memory families,
 original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
