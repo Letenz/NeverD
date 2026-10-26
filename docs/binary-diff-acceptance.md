@@ -16,7 +16,7 @@ were understood.
 | A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
 | B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
-| D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, and a reproducible synthetic scale harness | Exact-source integration qualification of the release increment, package-wide graphs, automated patch/backport/revert evidence and large real-corpus quality/latency; annotation application remains #99 |
+| D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, focused integration coverage, and a reproducible synthetic scale harness | Broader integration failure follow-up, package-wide graphs, automated patch/backport/revert evidence and large real-corpus quality/latency; annotation application remains #99 |
 | E: software/game packages | Native loaders, module resources and a separate qualified offline web-package behavior comparison exist | One package manifest workflow routing native/managed/metadata/script/config/resource changes, repacking distinctions, qualified Unity/Unreal/Godot adapters and unknown/encrypted coverage |
 | F: competitive qualification | Owned native/compiler regressions, pinned local diagnostic runs, a [reusable fixture generator and mapping evaluator](binary-diff-benchmarks.md) for NeverD, BinDiff, Diaphora and Ghidra exports, and automated fresh IDA/BinExport/BinDiff execution | Automated Ghidra/Diaphora invocation/export, licensed real-world ground truth, qualified common-input and end-to-end tracks, held-out corpora, per-category quality/resource metrics, frozen numeric gates and statistical evidence |
 
@@ -222,7 +222,7 @@ to integration `a005079b26e26f2ac467a3ebc1af41054c7a6182`.
 
 Naming-provenance and declared-release integration at
 `bc4931f92d9ed6fcd1847668fe5baa5d37ec3f28` selected 14,163 CTests:
-13,971 passed, 21 failed and 171 skipped. All 326 selected DIFF cases passed
+13,971 passed, 21 failed and 171 skipped. All 326 selected core/CLI DIFF cases passed
 without skips, including the shared reader and release contracts. The overall
 integration remains failed; those broader failures are retained separately from
 successful DIFF qualification. Fifteen failing CLI cases also fail with the
@@ -249,8 +249,11 @@ require their own receipts; none converts this failed aggregate into a clean run
 
 Name-presentation integration at
 `b6612fe61e1d4299d450c8540034141180a253ce` selected 15,367 CTests:
-15,079 passed, 31 failed and 257 skipped. All 333 selected DIFF-related tests
-passed without skips. Its separate capability-manifest check failed on duplicate
+15,079 passed, 31 failed and 257 skipped. All 330 selected DIFF-owned tests
+passed without skips: 326 core/CLI checks and four worker/GUI checks. An earlier
+name-based count of 333 included three other-component entries mentioning
+"Lineage"; the owning-target count supersedes that classification. Its separate
+capability-manifest check failed on duplicate
 byte-overlay claims and exclusions; the aggregate remains failed. The frozen
 source and dependency hashes were checked after all independent checks finished.
 The same 116 Python checks, real legacy worker/library compatibility, 89
@@ -258,3 +261,29 @@ byte-exact historical reopens and 38 intentional old-profile live-binding
 refusals passed. At both native Wayland scales, lineage passed 27 cases, saved
 comparison passed three, the selected workbench workflows passed 19, and layout
 passed eight, all without skips. Later fixes require their own qualification.
+
+The normal push delivered `5c21d2664f393788f752357ae79a9235fe70b231` to
+`dev`. Frozen-source follow-up at `fd59ee8336e6b8e353f787b7413a71803524d67c`
+selected 1,478 CTests: 1,464 passed, one failed and 13 skipped. All 330
+DIFF-owned checks passed without skips. The remaining selected failure is
+`SBFSourceDifferential.GeneratedRustMatchesTheRawOracle`, whose generated Rust
+still triggers unused-assignment diagnostics. This is a composite follow-up,
+not a clean rerun of all 15,367 earlier checks. The delivered commit also
+contains later upstream source-dialect changes; those changes do not acquire
+the frozen-source runtime qualification.
+
+The follow-up passed 120 native-backed Python checks, real legacy worker/library
+compatibility, 89 byte-exact historical reopens and 38 intentional older-profile
+binding refusals. Both native Wayland scales again passed 27 lineage, three
+saved-comparison, 19 selected workbench and eight layout cases. The optional
+10,000-function GUI probe passed separately, including three fresh validation
+requests for its selected two-instruction function; it does not prove equivalence
+of all 10,000 functions or establish latency under concurrent test load.
+
+The pair-memory formatting and malformed-contract fixture repairs passed 11
+focused checks at `997dfd44b1a9a249833c391b422e6db608fe5a18`. The ordered-memory
+fixture repair `ccca9397ba` passed all 14 cases in an isolated test executable
+against the frozen `fd59ee8336` archives and CLI. These Linux x64 checks preserve
+original instruction encodings and compile the AArch64 projections; they are
+not native ARM64 execution qualification. None of these partial repair receipts
+waives the unresolved failures outside the selected follow-up.
