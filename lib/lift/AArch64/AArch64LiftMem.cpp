@@ -27,6 +27,9 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
                             const cs_aarch64 &ARM64) {
   if (Insn->size == kAddressMemoryWordBytes) {
     const uint32_t Word = readLE<uint32_t>(Insn->bytes);
+    if (isAArch64OrderedUnscaledMemoryEncoding(Word) &&
+        !aarch64AddressMemoryInstruction(Word))
+      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
     if (PreserveImmediateMemory && aarch64WritebackMemoryOperation(Word)) {
       const auto Instruction = aarch64WritebackMemoryInstruction(Word);
       if (!Instruction)
