@@ -169,7 +169,7 @@ TEST_F(SignatureCacheTest, AnEntryMapsTheModulesItsSourceParsesTo) {
 
 TEST_F(SignatureCacheTest, LocalDataKindsAndAnchorSyntaxSurviveReversePieces) {
   write(Source, "488D05........C3 00 0000 0008 !refs :0000 getter "
-                "%0003 00000013:anchor\n");
+                "%0003 00000013:anchor %0003 00000013-00000008:anchor\n");
   const auto Identity = SignatureCache::identify(Source);
   ASSERT_TRUE(Identity);
   const auto Cache = cache();
@@ -182,7 +182,7 @@ TEST_F(SignatureCacheTest, LocalDataKindsAndAnchorSyntaxSurviveReversePieces) {
   const auto Entry = std::move(*Pending).take();
   expectSameModules(Expected.Modules, Entry.Modules);
   EXPECT_TRUE(Entry.Modules.front().references().front().IsLocalData);
-  for (unsigned Case = 0; Case < 4; ++Case) {
+  for (unsigned Case = 0; Case < 5; ++Case) {
     auto Broken = parse();
     auto &Mod = Broken.Modules.front();
     auto *Names = const_cast<StoredName *>(Mod.Names);
@@ -192,6 +192,8 @@ TEST_F(SignatureCacheTest, LocalDataKindsAndAnchorSyntaxSurviveReversePieces) {
       Names[1].Name = "13:anchor";
     else if (Case == 2)
       Names[0].IsLocalData = true;
+    else if (Case == 4)
+      Names[1].Name = "00000013+00000000:anchor";
     else
       Mod.RequireReferences = false;
     Cache.store(Source, *Identity, Broken.Modules);

@@ -37,6 +37,11 @@ struct LocalObject {
   uint32_t DataValue = 0;
   uint32_t AnchorAddend = 0;
   uint32_t GetterAddend = 0;
+  bool SeparateTarget = false;
+  bool AuxiliaryTarget = false;
+  uint32_t GetterValue = 8;
+  uint8_t GetterClass = COFF::IMAGE_SYM_CLASS_STATIC;
+  int16_t GetterSection = 2;
   uint16_t Relocation = COFF::IMAGE_REL_AMD64_REL32;
   uint32_t DataFlags = COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA |
                        COFF::IMAGE_SCN_MEM_READ | COFF::IMAGE_SCN_MEM_WRITE;
@@ -58,7 +63,7 @@ struct LocalObject {
     Put(2, 2);
     Put(0, 4);
     Put(SymbolOffset, 4);
-    Put(DuplicateAnchor ? 4 : 3, 4);
+    Put(3 + DuplicateAnchor + SeparateTarget + AuxiliaryTarget, 4);
     Put(0, 4);
     auto Section = [&](StringRef Name, unsigned Size, unsigned Raw,
                        unsigned Relocs, unsigned Count, uint32_t Flags) {
@@ -85,7 +90,10 @@ struct LocalObject {
     }
     for (unsigned Offset : {19u, 27u}) {
       Put(Offset, 4);
-      Put(2, 4);
+      Put(Offset == 27 && AuxiliaryTarget  ? 2
+          : Offset == 27 && SeparateTarget ? 3 + AuxiliaryTarget
+                                           : 2 + AuxiliaryTarget,
+          4);
       Put(Relocation, 2);
     }
     if (Overlap || PrecedingOverlap) {
@@ -97,7 +105,7 @@ struct LocalObject {
     }
     std::string Strings;
     auto Symbol = [&](StringRef Name, unsigned Value, int16_t Section,
-                      bool Function, uint8_t Class) {
+                      bool Function, uint8_t Class, unsigned Aux = 0) {
       if (Name.size() > 8) {
         Put(0, 4);
         Put(4 + Strings.size(), 4);
@@ -114,11 +122,16 @@ struct LocalObject {
               : 0,
           2);
       Put(Class, 1);
-      Put(0, 1);
+      Put(Aux, 1);
     };
     Symbol(Anchor, 0, 1, FunctionAnchor, AnchorClass);
-    Symbol("getter", 24, 1, true, COFF::IMAGE_SYM_CLASS_EXTERNAL);
+    Symbol("getter", 24, 1, true, COFF::IMAGE_SYM_CLASS_EXTERNAL,
+           AuxiliaryTarget);
+    if (AuxiliaryTarget)
+      Symbol("not_data", 8, 2, false, COFF::IMAGE_SYM_CLASS_STATIC);
     Symbol(Static, DataValue, DataSection, FunctionTarget, DataClass);
+    if (SeparateTarget)
+      Symbol("target", GetterValue, GetterSection, false, GetterClass);
     if (DuplicateAnchor)
       Symbol(Anchor, 24, 1, true, AnchorClass);
     Put(4 + Strings.size(), 4);
@@ -128,7 +141,8 @@ struct LocalObject {
 };
 
 std::vector<PatternModule> generateLocal(const LocalObject &Input,
-                                         bool Enable = true) {
+                                         bool Enable = true,
+                                         bool Layout = false) {
   const std::string Bytes = Input.build();
   auto Object =
       object::ObjectFile::createObjectFile(MemoryBufferRef(Bytes, "local.obj"));
@@ -141,6 +155,7 @@ std::vector<PatternModule> generateLocal(const LocalObject &Input,
       true;
   if (Enable)
     Options.LocalDataAnchors = {Input.Anchor};
+  Options.EmitLocalDataLayout = Layout;
   std::string Text;
   raw_string_ostream Output(Text);
   generatePatterns(**Object, Options, Output);
@@ -261,4 +276,95 @@ TEST(LocalDataEvidence, StaticFunctionAnchorsStillRequireUniqueDefinitions) {
     EXPECT_TRUE(
         std::none_of(Module.References.begin(), Module.References.end(),
                      [](const FuncRef &Ref) { return Ref.IsLocalData; }));
+}
+
+TEST(LocalDataEvidence, LayoutUsesDefinedSectionCoordinatesAndSignedAddends) {
+  for (unsigned Case = 0; Case < 5; ++Case) {
+    LocalObject Source;
+    Source.SeparateTarget = true;
+    if (Case == 1 || Case == 2) {
+      Source.DataValue = 8;
+      Source.GetterValue = 0;
+    }
+    if (Case == 2)
+      Source.GetterClass = COFF::IMAGE_SYM_CLASS_EXTERNAL;
+    if (Case == 3) {
+      Source.DataValue = 8;
+      Source.GetterValue = 8;
+      Source.GetterAddend = uint32_t(-8);
+    }
+    if (Case == 4) {
+      Source.GetterValue = 0;
+      Source.GetterAddend = 8;
+    }
+    const auto Modules = generateLocal(Source, true, true);
+    ASSERT_EQ(Modules.size(), 2u);
+    ASSERT_EQ(Modules[0].References.size(), 1u);
+    EXPECT_EQ(Modules[0].References[0].Name, "00000013:anchor");
+    ASSERT_EQ(Modules[1].References.size(), 1u) << Case;
+    EXPECT_TRUE(Modules[1].References[0].IsLocalData);
+    EXPECT_EQ(Modules[1].References[0].Name, Case == 0 || Case == 4
+                                                 ? "00000013+00000008:anchor"
+                                                 : "00000013-00000008:anchor");
+    const auto Default = generateLocal(Source);
+    ASSERT_EQ(Default.size(), 2u);
+    EXPECT_TRUE(
+        std::none_of(Default[1].References.begin(), Default[1].References.end(),
+                     [](const FuncRef &Ref) { return Ref.IsLocalData; }));
+  }
+}
+
+TEST(LocalDataEvidence, LayoutRefusesSplitUnknownAndOutOfBoundsCoordinates) {
+  for (unsigned Case = 0; Case < 13; ++Case) {
+    LocalObject Source;
+    Source.SeparateTarget = true;
+    switch (Case) {
+    case 0:
+      Source.DataFlags |= COFF::IMAGE_SCN_LNK_COMDAT;
+      break;
+    case 1:
+      Source.DataFlags &= ~COFF::IMAGE_SCN_MEM_READ;
+      break;
+    case 2:
+      Source.DataFlags |= COFF::IMAGE_SCN_MEM_EXECUTE;
+      break;
+    case 3:
+      Source.GetterSection = COFF::IMAGE_SYM_UNDEFINED;
+      break;
+    case 4:
+      Source.GetterClass = COFF::IMAGE_SYM_CLASS_WEAK_EXTERNAL;
+      break;
+    case 5:
+      Source.GetterSection = 1;
+      break;
+    case 6:
+      Source.AnchorAddend = 1;
+      break;
+    case 7:
+      Source.GetterValue = 12;
+      break;
+    case 8:
+      Source.GetterAddend = 1;
+      break;
+    case 9:
+      Source.GetterAddend = uint32_t(-9);
+      break;
+    case 10:
+      Source.DuplicateAnchor = true;
+      break;
+    case 11:
+      Source.PrecedingOverlap = true;
+      break;
+    case 12:
+      Source.SeparateTarget = false;
+      Source.AuxiliaryTarget = true;
+      break;
+    }
+    const auto Modules = generateLocal(Source, true, true);
+    ASSERT_EQ(Modules.size(), 2u) << Case;
+    EXPECT_TRUE(
+        std::none_of(Modules[1].References.begin(), Modules[1].References.end(),
+                     [](const FuncRef &Ref) { return Ref.IsLocalData; }))
+        << Case;
+  }
 }

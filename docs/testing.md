@@ -6370,6 +6370,13 @@ alternatives require one exact bound operand; they cannot become anchor evidence
 Parser/cache tests preserve the separate kind and validate canonical keys even when cache
 pieces run in reverse. Python supplement/refinement tests retain every raw
 counterclaim and refuse to put local relations in ordinary byte records.
+The layout cases additionally check signed source coordinates, defined external
+consumers, explicit opt-in, COMDAT/split-section refusals, auxiliary symbol
+indices, relocation bounds and runtime arithmetic. Reversed inputs and
+alternative clauses use the same frozen base; missing/conflicting roots,
+cross-region targets and attempts to form a second anchor remain rejected.
+Parser/cache and Python cases reject noncanonical deltas, including signed
+zero, while preserving missing and cross-kind collision counterclaims.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
