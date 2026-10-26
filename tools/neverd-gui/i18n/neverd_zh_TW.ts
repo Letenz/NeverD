@@ -156,10 +156,6 @@
         <translation>為目前位址新增註解</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>輸入可重複註解(&amp;P)...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>標記位置(&amp;K)...</translation>
     </message>

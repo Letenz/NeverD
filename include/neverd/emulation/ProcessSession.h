@@ -131,6 +131,7 @@ struct ProcessResult {
   std::vector<NativeTraceThread> TraceThreads;
   std::vector<NativeExecutionObservation> ExecutionObservations;
   std::optional<NativeCPUState> CPUState;
+  std::optional<std::vector<NativeThreadCPUState>> ThreadCPUStates;
   bool ExecutionObservationsEnabled = false;
   bool ExecutionObservationsTruncated = false;
   /// Guest signal termination, distinct from a normal exit status. No host

@@ -220,6 +220,129 @@ TEST_P(AndroidStringCopy, SizedCopyClosedProviderRemainsUnsupported) {
   EXPECT_FALSE(R.NativeCalls.back().Result);
   EXPECT_FALSE(R.ReturnValue);
 }
+TEST_P(AndroidStringCopy, CheckedSizedCopyLengthTerminationAndErrno) {
+  Options.Android->Libraries["libcopy-sized-checked.so"] = {"__strlcpy_chk"};
+  for (uint64_t Count : {uint64_t(0), uint64_t(1), uint64_t(3), uint64_t(4),
+                         uint64_t(7), uint64_t(0x100000001), UINT64_MAX}) {
+    for (uint64_t Route : {0u, 1u}) {
+      SCOPED_TRACE(testing::Message() << Count << ":" << Route);
+      auto &Bytes = Options.Android->Memory[0].Bytes;
+      Bytes.assign(8192, 0xa5);
+      const std::array<uint8_t, 4> Text = {0x80, 0xff, 'x', 0};
+      std::copy(Text.begin(), Text.end(), Bytes.begin() + 4096);
+      auto Expected = Bytes;
+      if (Count) {
+        const size_t Copied = std::min<uint64_t>(3, Count - 1);
+        std::copy_n(Text.begin(), Copied, Expected.begin() + 16);
+        Expected[16 + Copied] = 0;
+      }
+      llvm::support::endian::write64le(Expected.data() + 2048, 733);
+      auto R = run("copy_sized_checked",
+                   {Buffer + 16, Source, Count, Count, Route, Buffer + 2048});
+      returned(R, 3);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      unsigned Calls = 0;
+      uint64_t Target = 0;
+      for (const auto &Call : R.NativeCalls) {
+        if (Call.Name == "dlsym") {
+          EXPECT_EQ(Call.Symbol, "__strlcpy_chk");
+          ASSERT_TRUE(Call.Result);
+          Target = *Call.Result;
+        }
+        if (Call.Name != "__strlcpy_chk")
+          continue;
+        EXPECT_EQ(Call.Arguments[2], Count);
+        EXPECT_EQ(Call.Arguments[3], Count);
+        EXPECT_EQ(Call.Result, 3);
+        EXPECT_EQ(Call.Library, Route ? "libcopy-sized-checked.so" : "");
+        if (Route)
+          EXPECT_EQ(Call.PC, Target);
+        ++Calls;
+      }
+      EXPECT_EQ(Calls, 1u);
+    }
+  }
+}
+TEST_P(AndroidStringCopy, CheckedSizedCopyBoundsPrecedeAccessAndTruncation) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  Bytes[4096] = 0;
+  Options.Android->Libraries["libcopy-sized-checked.so"] = {"__strlcpy_chk"};
+  for (uint64_t Route : {0u, 1u}) {
+    for (uint64_t Count : {uint64_t(1), uint64_t(0x100000001), UINT64_MAX})
+      rejected(run("copy_sized_checked", {UINT64_MAX, UINT64_MAX, Count,
+                                          Count - 1, Route, Buffer + 2048}),
+               "__strlcpy_chk", "FORTIFY destination extent exceeded");
+    // Even an empty source cannot reduce the declared capacity check.
+    rejected(
+        run("copy_sized_checked", {Buffer, Source, 7, 1, Route, Buffer + 2048}),
+        "__strlcpy_chk", "FORTIFY destination extent exceeded");
+  }
+  auto Expected = Bytes;
+  Expected[0] = 0;
+  llvm::support::endian::write64le(Expected.data() + 2048, 733);
+  auto R = run("copy_sized_checked",
+               {Buffer, Source, 7, UINT64_MAX, 0, Buffer + 2048});
+  returned(R, 0);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+}
+TEST_P(AndroidStringCopy, CheckedSizedCopyPageEndsAndZeroCapacity) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  Bytes[8189] = 'u';
+  Bytes[8190] = 'v';
+  Bytes[8191] = 0;
+  for (uint64_t Count : {0u, 1u, 2u, 3u, 9u}) {
+    auto Expected = Bytes;
+    if (Count) {
+      const size_t Copied = std::min<uint64_t>(2, Count - 1);
+      std::copy_n(Bytes.begin() + 8189, Copied, Expected.begin() + 16);
+      Expected[16 + Copied] = 0;
+    }
+    auto R =
+        run("copy_sized_checked_readonly",
+            {Source, Count ? Buffer + 16 : UINT64_MAX, End - 3, Count, Count});
+    returned(R, 2);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  }
+  Bytes[128] = 'x';
+  Bytes[129] = 0;
+  auto Expected = Bytes;
+  Expected[8190] = 'x';
+  Expected[8191] = 0;
+  llvm::support::endian::write64le(Expected.data() + 2048, 733);
+  auto R = run("copy_sized_checked", {End - 2, Buffer + 128, UINT64_MAX,
+                                      UINT64_MAX, 0, Buffer + 2048});
+  returned(R, 1);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  rejected(
+      run("copy_sized_checked_readonly", {Source, End - 2, Buffer + 128, 2, 2}),
+      "__strlcpy_chk", "invalid guest pointer");
+  rejected(
+      run("copy_sized_checked", {Buffer, UINT64_MAX, 0, 0, 0, Buffer + 2048}),
+      "__strlcpy_chk", "invalid guest pointer");
+  Bytes[8191] = 'w';
+  for (uint64_t Count : {0u, 1u, 2u})
+    rejected(run("copy_sized_checked_readonly",
+                 {Source, Buffer, End - 2, Count, Count}),
+             "__strlcpy_chk", "invalid guest pointer");
+}
+TEST_P(AndroidStringCopy, CheckedSizedCopyClosedProviderPrecedesFortify) {
+  Options.Android->Libraries["libcopy-sized-checked.so"] = {"__strlcpy_chk"};
+  Options.Android->Memory[0].Bytes.assign(8192, 0);
+  auto R = run("copy_sized_checked",
+               {UINT64_MAX, UINT64_MAX, 1, 0, 2, Buffer + 2048});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "__strlcpy_chk");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+  EXPECT_FALSE(R.ReturnValue);
+}
 TEST_P(AndroidStringCopy, ExactBytesPaddingTruncationReturnAndErrno) {
   for (uint64_t Count : {0u, 1u, 3u, 4u, 7u, 1024u}) {
     SCOPED_TRACE(Count);
@@ -572,89 +695,108 @@ INSTANTIATE_TEST_SUITE_P(
                                      ExecutionBackendKind::WHP)));
 
 TEST(AndroidStringCopyMemory, SizedCopyRefusalsPreserveCompleteBacking) {
-  ExecutionConfiguration Configuration;
-  Configuration.Backend = ExecutionBackendKind::Unicorn;
-  Configuration.Architecture = GuestArchitecture::AArch64;
-  Configuration.Contract = ExecutionContract::CheckedUserAArch64;
-  auto Probe = probeExecutionBackend(Configuration);
-  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
-  if (Probe->Availability != BackendAvailability::Available)
-    GTEST_SKIP() << Probe->Reason;
-  auto Backend = createExecutionBackend(Configuration, 4 * 1024 * 1024);
-  ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
-  auto &CPU = *Backend->CPU;
-  auto &Space = *CPU.addressSpace();
-  llvm::cantFail(Space.map(Buffer, 8192, Read | Write | UserAccessible));
-  std::vector<uint8_t> Before(8192, 'x');
-  Before[128] = 'a';
-  Before[129] = 'b';
-  Before[130] = 'c';
-  Before[131] = 0;
-  llvm::cantFail(CPU.write(Buffer, Before));
-  ProcessOptions Options;
-  Options.Android.emplace();
-  Options.MemoryLimit = 16;
-  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
-  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
-                       GuestArchitecture::AArch64,
-                       ExecutionBackendKind::Unicorn,
-                       {}};
-  linux_model::LinuxServices Kernel(CPU, Layout, End, Options, Result);
-  const android_model::LinkedImage Linked{};
-  struct Case {
-    uint64_t Destination, Input, Capacity;
-  };
-  for (auto C : {Case{Buffer, Buffer + 256, 0},
-                 {Buffer, Buffer + 256, 1},
-                 {Buffer, End - 1, 1},
-                 {End - 1, Buffer + 128, 3},
-                 {UINT64_MAX, Buffer + 128, 1},
-                 {Buffer + 130, Buffer + 128, 1},
-                 {Buffer, UINT64_MAX, 0}}) {
-    auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+  for (const char *Name : {"strlcpy", "__strlcpy_chk"}) {
+    SCOPED_TRACE(Name);
+    ExecutionConfiguration Configuration;
+    Configuration.Backend = ExecutionBackendKind::Unicorn;
+    Configuration.Architecture = GuestArchitecture::AArch64;
+    Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+    auto Probe = probeExecutionBackend(Configuration);
+    ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+    if (Probe->Availability != BackendAvailability::Available)
+      GTEST_SKIP() << Probe->Reason;
+    auto Backend = createExecutionBackend(Configuration, 4 * 1024 * 1024);
+    ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+    auto &CPU = *Backend->CPU;
+    auto &Space = *CPU.addressSpace();
+    llvm::cantFail(Space.map(Buffer, 8192, Read | Write | UserAccessible));
+    std::vector<uint8_t> Before(8192, 'x');
+    Before[128] = 'a';
+    Before[129] = 'b';
+    Before[130] = 'c';
+    Before[131] = 0;
+    llvm::cantFail(CPU.write(Buffer, Before));
+    ProcessOptions Options;
+    Options.Android.emplace();
+    Options.MemoryLimit = 16;
+    const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
+    ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                         GuestArchitecture::AArch64,
+                         ExecutionBackendKind::Unicorn,
+                         {}};
+    linux_model::LinuxServices Kernel(CPU, Layout, End, Options, Result);
+    const android_model::LinkedImage Linked{};
+    struct Case {
+      uint64_t Destination, Input, Capacity;
+    };
+    for (auto C : {Case{Buffer, Buffer + 256, 0},
+                   {Buffer, Buffer + 256, 1},
+                   {Buffer, End - 1, 1},
+                   {End - 1, Buffer + 128, 3},
+                   {UINT64_MAX, Buffer + 128, 1},
+                   {Buffer + 130, Buffer + 128, 1},
+                   {Buffer, UINT64_MAX, 0}}) {
+      auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+      android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                  Linked);
+      NativeCallEvent Call{};
+      Call.Name = Name;
+      Call.Arguments = {C.Destination, C.Input, C.Capacity, UINT64_MAX};
+      auto Value = Model.invoke(Call);
+      ASSERT_FALSE(bool(Value));
+      llvm::consumeError(Value.takeError());
+      std::vector<uint8_t> After(8192);
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Before);
+    }
+    llvm::cantFail(Space.protect(Source, 4096, Read | UserAccessible));
+    {
+      auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+      android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                  Linked);
+      NativeCallEvent Call{};
+      Call.Name = Name;
+      Call.Arguments = {Source - 1, Buffer + 128, 3, UINT64_MAX};
+      auto Value = Model.invoke(Call);
+      ASSERT_FALSE(bool(Value));
+      EXPECT_NE(llvm::toString(Value.takeError()).find("invalid guest pointer"),
+                std::string::npos);
+      std::vector<uint8_t> After(8192);
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Before);
+    }
+    auto Budget = llvm::cantFail(ExecutionBudget::create(
+        {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
     android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
                                 Linked);
     NativeCallEvent Call{};
-    Call.Name = "strlcpy";
-    Call.Arguments = {C.Destination, C.Input, C.Capacity};
+    Call.Name = Name;
+    Call.Arguments = {Buffer, Buffer + 128, 4, UINT64_MAX};
     auto Value = Model.invoke(Call);
     ASSERT_FALSE(bool(Value));
-    llvm::consumeError(Value.takeError());
-    std::vector<uint8_t> After(8192);
-    llvm::cantFail(Space.snapshotBacking(Buffer, After));
-    EXPECT_EQ(After, Before);
-  }
-  llvm::cantFail(Space.protect(Source, 4096, Read | UserAccessible));
-  {
-    auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
-    android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
-                                Linked);
-    NativeCallEvent Call{};
-    Call.Name = "strlcpy";
-    Call.Arguments = {Source - 1, Buffer + 128, 3};
-    auto Value = Model.invoke(Call);
-    ASSERT_FALSE(bool(Value));
-    EXPECT_NE(llvm::toString(Value.takeError()).find("invalid guest pointer"),
+    EXPECT_NE(llvm::toString(Value.takeError()).find("timed out"),
               std::string::npos);
+    EXPECT_TRUE(Model.timedOut());
     std::vector<uint8_t> After(8192);
     llvm::cantFail(Space.snapshotBacking(Buffer, After));
     EXPECT_EQ(After, Before);
+    if (llvm::StringRef(Name) == "__strlcpy_chk") {
+      // The object-size check precedes source access, even after expiry.
+      auto Expired = llvm::cantFail(ExecutionBudget::create(
+          {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
+      android_model::Bionic Checked(CPU, Kernel, Layout, Options, Result,
+                                    *Expired, Linked);
+      Call.Arguments = {Buffer, UINT64_MAX, 1, 0};
+      auto Rejected = Checked.invoke(Call);
+      ASSERT_FALSE(bool(Rejected));
+      EXPECT_NE(
+          llvm::toString(Rejected.takeError()).find("FORTIFY destination"),
+          std::string::npos);
+      EXPECT_FALSE(Checked.timedOut());
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Before);
+    }
   }
-  auto Budget = llvm::cantFail(ExecutionBudget::create(
-      {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
-  android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
-                              Linked);
-  NativeCallEvent Call{};
-  Call.Name = "strlcpy";
-  Call.Arguments = {Buffer, Buffer + 128, 4};
-  auto Value = Model.invoke(Call);
-  ASSERT_FALSE(bool(Value));
-  EXPECT_NE(llvm::toString(Value.takeError()).find("timed out"),
-            std::string::npos);
-  EXPECT_TRUE(Model.timedOut());
-  std::vector<uint8_t> After(8192);
-  llvm::cantFail(Space.snapshotBacking(Buffer, After));
-  EXPECT_EQ(After, Before);
 }
 TEST(AndroidStringCopyMemory, RefusalsAreAtomicAndBudgetIsNotTruncated) {
   ExecutionConfiguration Configuration;

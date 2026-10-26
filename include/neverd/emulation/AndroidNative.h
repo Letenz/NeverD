@@ -34,15 +34,16 @@ struct NativeMemoryRegion {
 struct NativeMemoryRead {
   uint64_t Address = 0, Size = 0;
   /// Require a readable mapping before guest execution. False permits memory
-  /// allocated during the call; the complete range must be readable at the
-  /// final resumable stop. Neither setting creates or preserves mappings.
+  /// allocated during the call. Ordinary final reads require the complete
+  /// range to remain readable; diagnostic RAM snapshots report failures per
+  /// range instead. Neither setting creates or preserves mappings.
   bool RequireMappedAtEntry = true;
 };
 struct NativeMemorySnapshot {
   uint64_t Address;
   std::vector<uint8_t> Bytes;
-  /// Nonempty only when an opted-in failure snapshot could not read RAM.
-  /// Bytes is then empty; the process's original failure remains unchanged.
+  /// Nonempty only when an opted-in diagnostic snapshot could not read RAM.
+  /// Bytes is then empty; the process's original stop remains unchanged.
   std::string Diagnostic;
 };
 
@@ -84,13 +85,20 @@ struct NativeExecutionObservation {
   std::array<uint64_t, 31> Registers{};
   std::vector<NativeMemorySnapshot> Memory;
 };
-/// Registers of the current CPU at the final stop, including terminal faults.
-/// Suspended threads, memory, and backend-private state are not captured.
+/// Complete modeled registers observed from a CPU or saved thread context.
+/// Memory and backend-private state are not captured.
 /// A failed read leaves Registers absent and records its separate diagnostic.
 struct NativeCPUState {
   uint64_t ThreadID = 0;
   std::optional<std::vector<RegisterSnapshot>> Registers;
   std::string Diagnostic;
+};
+/// A thread that has not completed at the final stop. Current reads the CPU;
+/// other entries observe the scheduler's saved context without restoring it.
+/// Completed/retired threads have no retained final context and are omitted.
+struct NativeThreadCPUState {
+  NativeCPUState State;
+  bool Current = false;
 };
 
 /// One visible logd v4 entry. Payload is opaque; no host log is consulted.
@@ -149,10 +157,17 @@ struct AndroidNativeOptions {
   /// Read the final current-thread architectural registers without executing
   /// or switching contexts. Failure never replaces the original stop reason.
   bool ObserveCPUState = false;
+  /// Observe all unfinished threads, including waiting saved contexts. Each
+  /// capture failure has its own diagnostic and preserves the workload stop.
+  bool ObserveThreadCPUStates = false;
   /// Also snapshot ReadMemory from stopped RAM backing after CPU/runtime
   /// failures. Ignores guest read permissions, never reads devices or resumes
   /// execution, and records per-region errors without replacing the stop.
   bool ObserveMemoryOnFailure = false;
+  /// Snapshot ReadMemory from stopped RAM backing at every final stop. Each
+  /// unreadable range retains its diagnostic without replacing the original
+  /// stop or preventing later captures. Entry mapping requirements still apply.
+  bool ObserveMemoryAtStop = false;
   /// Concrete analysis choice for bytes returned by malloc and the new tail
   /// of realloc. Zero preserves the default. This is not a claim about an
   /// Android allocator or proof that reading uninitialized bytes is valid.

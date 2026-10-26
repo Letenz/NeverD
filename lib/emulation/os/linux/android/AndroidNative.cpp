@@ -59,11 +59,17 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return Budget.takeError();
   std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
+  const uint64_t CPUStateBytes =
+      sizeof(uint64_t) +
+      architectureRegisters(GuestArchitecture::AArch64).size() *
+          sizeof(RegisterValue);
   if (Native.ObserveCPUState) {
-    const uint64_t Bytes =
-        sizeof(uint64_t) +
-        architectureRegisters(GuestArchitecture::AArch64).size() *
-            sizeof(RegisterValue);
+    if (CPUStateBytes > Options.OutputLimit - ReportSize)
+      return failure(diagnostic::SnapshotLimits);
+    ReportSize += CPUStateBytes;
+  }
+  if (Native.ObserveThreadCPUStates) {
+    const uint64_t Bytes = Native.ThreadLimit * (CPUStateBytes + sizeof(bool));
     if (Bytes > Options.OutputLimit - ReportSize)
       return failure(diagnostic::SnapshotLimits);
     ReportSize += Bytes;
@@ -75,7 +81,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     ReportSize += ThreadBytes;
   }
   for (const auto &Read : Native.ReadMemory) {
-    if (Native.ObserveMemoryOnFailure) {
+    if (Native.ObserveMemoryOnFailure || Native.ObserveMemoryAtStop) {
       constexpr uint64_t DiagnosticBytes =
           ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
       if (DiagnosticBytes > Options.OutputLimit - ReportSize)
@@ -643,10 +649,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   LibC.reportJNIState();
   // Guest/model reads can be prohibited after a terminal fault. Explicit
   // forensic snapshots use the existing stopped-RAM owner, without executing
-  // device callbacks, changing permissions or replacing the original failure.
+  // device callbacks, changing permissions or replacing the original stop.
   const bool Failed = Result.Stop == ProcessStopReason::CPUFailure ||
                       Result.Stop == ProcessStopReason::RuntimeFailure;
-  if (Failed && Native.ObserveMemoryOnFailure) {
+  if (Native.ObserveMemoryAtStop || (Failed && Native.ObserveMemoryOnFailure)) {
     constexpr size_t DiagnosticBytes =
         ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
     const llvm::StringRef Suffix(diagnostic::SnapshotDiagnosticTruncated);
@@ -695,6 +701,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     else
       State.Diagnostic = llvm::toString(Registers.takeError());
   }
+  if (Native.ObserveThreadCPUStates)
+    Result.ThreadCPUStates = Threads.observeCPUStates();
   return Result;
 }
 } // namespace neverd::emulation::android_model

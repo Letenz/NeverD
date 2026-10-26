@@ -6,6 +6,7 @@
 /// \file
 /// Compare complete workloads with and without read-only execution watches.
 #include "gtest/gtest.h"
+#include "os/linux/android/AndroidThreads.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/Limits.h"
@@ -79,6 +80,7 @@ protected:
   void sameWorkload(const ProcessResult &Before, ProcessResult After) {
     After.ExecutionObservationsEnabled = false;
     After.CPUState.reset();
+    After.ThreadCPUStates.reset();
     EXPECT_EQ(processResultJSON(Before), processResultJSON(After));
   }
 };
@@ -104,17 +106,126 @@ TEST_P(AndroidObservation, TerminalRegistersPreserveOriginalStopsAndEffects) {
     Options.Limits.Instructions = C.Instructions;
     Options.Limits.Events = C.Events;
     Options.Android->ObserveCPUState = false;
+    Options.Android->ObserveThreadCPUStates = false;
     const auto Before = run();
     ASSERT_EQ(Before.Stop, C.Stop) << Before.Diagnostic;
     EXPECT_FALSE(Before.CPUState);
     Options.Android->ObserveCPUState = true;
+    Options.Android->ObserveThreadCPUStates = true;
     const auto After = run();
     sameWorkload(Before, After);
     ASSERT_TRUE(After.CPUState);
     EXPECT_EQ(After.CPUState->ThreadID, 1000u);
     ASSERT_TRUE(After.CPUState->Registers) << After.CPUState->Diagnostic;
     EXPECT_EQ(After.CPUState->Registers->size(), 71u);
+    ASSERT_TRUE(After.ThreadCPUStates);
+    if (C.Stop == ProcessStopReason::Returned) {
+      EXPECT_TRUE(After.ThreadCPUStates->empty());
+    } else {
+      ASSERT_EQ(After.ThreadCPUStates->size(), 1u);
+      const auto &Thread = After.ThreadCPUStates->front();
+      EXPECT_TRUE(Thread.Current);
+      EXPECT_EQ(Thread.State.ThreadID, After.CPUState->ThreadID);
+      EXPECT_EQ(Thread.State.Registers, After.CPUState->Registers);
+      EXPECT_EQ(Thread.State.Diagnostic, "");
+    }
   }
+}
+TEST_P(AndroidObservation,
+       SavedThreadRegistersPreserveWaitingOwnersAndOriginalExecution) {
+  auto &A = *Options.Android;
+  A.EntrySymbol = "observation_threads";
+  A.Arguments = {Code, Buffer};
+  A.ThreadLimit = 3;
+  // mov x19,x0; ldr q31,[x0]; b .
+  A.Memory[1].Bytes = {0xf3, 0x03, 0x00, 0xaa, 0x1f, 0x00,
+                       0xc0, 0x3d, 0x00, 0x00, 0x00, 0x14};
+  Options.Limits.Instructions = 10000;
+  for (uint64_t Quantum : {1, 7, 1000}) {
+    SCOPED_TRACE(Quantum);
+    Options.InstructionQuantum = Quantum;
+    A.ObserveCPUState = A.ObserveThreadCPUStates = false;
+    const auto Before = run();
+    ASSERT_EQ(Before.Stop, ProcessStopReason::InstructionLimit);
+    A.ObserveCPUState = A.ObserveThreadCPUStates = true;
+    const auto After = run();
+    sameWorkload(Before, After);
+    ASSERT_TRUE(After.CPUState);
+    ASSERT_TRUE(After.ThreadCPUStates);
+    ASSERT_EQ(After.ThreadCPUStates->size(), 3u);
+    unsigned Current = 0;
+    for (const auto &Snapshot : *After.ThreadCPUStates) {
+      const auto &State = Snapshot.State;
+      ASSERT_TRUE(State.Registers) << State.Diagnostic;
+      ASSERT_EQ(State.Registers->size(), 71u);
+      const auto Thread =
+          std::find_if(After.NativeThreads.begin(), After.NativeThreads.end(),
+                       [&](const auto &T) { return T.ID == State.ThreadID; });
+      ASSERT_NE(Thread, After.NativeThreads.end());
+      EXPECT_FALSE(Thread->Finished);
+      if (Snapshot.Current) {
+        ++Current;
+        EXPECT_EQ(State.ThreadID, After.CPUState->ThreadID);
+        EXPECT_EQ(State.Registers, After.CPUState->Registers);
+      }
+      std::map<CPURegister, RegisterValue> Registers;
+      for (const auto &R : *State.Registers)
+        Registers.emplace(R.Register, R.Value);
+      EXPECT_EQ(Registers.at(CPURegister::AArch64TPIDR_EL0)[0], Thread->TLS);
+      EXPECT_GE(Registers.at(CPURegister::AArch64SP)[0], Thread->StackBase);
+      EXPECT_LE(Registers.at(CPURegister::AArch64SP)[0],
+                Thread->StackBase + Thread->StackSize);
+      if (State.ThreadID == 1000) {
+        EXPECT_TRUE(Thread->Waiting);
+        EXPECT_FALSE(Snapshot.Current);
+        continue;
+      }
+      const auto Offset = (State.ThreadID - 1001) * 32;
+      EXPECT_EQ(Registers.at(CPURegister::AArch64X19)[0], Buffer + Offset);
+      EXPECT_EQ(Registers.at(CPURegister::AArch64PC)[0], Code + 8);
+      EXPECT_EQ(Registers.at(CPURegister::AArch64V31),
+                (RegisterValue{llvm::support::endian::read64le(
+                                   A.Memory[0].Bytes.data() + Offset),
+                               llvm::support::endian::read64le(
+                                   A.Memory[0].Bytes.data() + Offset + 8)}));
+    }
+    EXPECT_EQ(Current, 1u);
+  }
+  // Returning workers are joined and retired; their old contexts are omitted.
+  A.Memory[1].Bytes = {0xc0, 0x03, 0x5f, 0xd6};
+  const auto Finished = run();
+  ASSERT_EQ(Finished.Stop, ProcessStopReason::Returned);
+  ASSERT_TRUE(Finished.ThreadCPUStates);
+  EXPECT_TRUE(Finished.ThreadCPUStates->empty());
+  ASSERT_EQ(Finished.NativeThreads.size(), 3u);
+  for (const auto &Thread : Finished.NativeThreads)
+    EXPECT_TRUE(Thread.Finished);
+}
+TEST_P(AndroidObservation, ThreadRegisterBudgetReservesEveryAllowedOwner) {
+  auto &A = *Options.Android;
+  A.TraceLimit = 0;
+  A.ReadMemory.clear();
+  A.ThreadLimit = 3;
+  A.ObserveCPUState = A.ObserveThreadCPUStates = true;
+  const uint64_t RegisterBytes =
+      sizeof(uint64_t) +
+      architectureRegisters(GuestArchitecture::AArch64).size() *
+          sizeof(RegisterValue);
+  Options.OutputLimit =
+      RegisterBytes +
+      A.ThreadLimit * (RegisterBytes + sizeof(bool) +
+                       android_model::thread_model::ReportBytes) -
+      1;
+  auto Rejected =
+      emulateProcess(Path, ProcessProfile::AndroidNativeAArch64, Options);
+  ASSERT_FALSE(bool(Rejected));
+  llvm::consumeError(Rejected.takeError());
+  ++Options.OutputLimit;
+  const auto Result = run();
+  EXPECT_EQ(Result.Stop, ProcessStopReason::Returned);
+  ASSERT_TRUE(Result.CPUState);
+  ASSERT_TRUE(Result.ThreadCPUStates);
+  EXPECT_TRUE(Result.ThreadCPUStates->empty());
 }
 TEST_P(AndroidObservation, FailureMemoryPreservesOriginalStopsAndRegisters) {
   auto &A = *Options.Android;

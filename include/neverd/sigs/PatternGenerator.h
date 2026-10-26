@@ -59,7 +59,9 @@ struct PatternGeneratorOptions {
   /// State the routines each COFF or ELF function branches to directly as
   /// `^offset name` references (see PatternModule::References). Off by
   /// default: a loader older than the references rejects a line with one.
-  /// COFF x86/x64 also states canonical indirect import-pointer references.
+  /// COFF x86/x64 also states canonical indirect import-pointer references
+  /// and unprefixed conditional rel32 references to explicit function symbols
+  /// with zero relocation addends. Unsupported forms remain unstated.
   bool EmitReferences = false;
   /// Emit referenced functions with the NeverD `!refs` constraint and full
   /// byte coverage, including functions below the ordinary fixed-byte floor.
@@ -71,6 +73,8 @@ struct PatternGeneratorOptions {
   /// Unlike ordinary patterns, this includes functions below the size floor.
   bool RequireCaller = false;
   /// Emit complete collision evidence without the size/fixed-byte floors.
+  /// Includes self references and their aliases: omitting them can hide a
+  /// source constraint from an overlapping raw counterclaim.
   /// Every line is marked !evidence and rejected by the matching parser.
   /// It is input to offline supplement validation, never a signature pack.
   bool CollisionEvidence = false;
