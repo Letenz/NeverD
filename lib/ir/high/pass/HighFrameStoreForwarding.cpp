@@ -18,6 +18,8 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <algorithm>
 #include <map>
 #include <optional>
@@ -219,13 +221,15 @@ const HighExpr *statementCall(const HighStmt &Stmt) {
 // Prove the effect boundary once, with an acyclic, bounded graph walk. An
 // outermost call consumes its arguments before invalidating memory facts;
 // nested effects, atomic operations and address escapes remain unsupported.
-bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
+// \p Body is a statement list of \p Func, which owns the frame they access.
+bool isStraightLinePrivateFrameFunction(llvm::ArrayRef<HighStmt> Body,
+                                        const HighFunc &Func, Arch Architecture,
                                         size_t &Budget) {
   if (Func.FrameSize <= 0 || Func.StructuredExceptionRegions ||
       Func.UnstructuredExceptionRegions)
     return false;
   HighExprSet Seen, Active;
-  for (const HighStmt &Stmt : Func.Body) {
+  for (const HighStmt &Stmt : Body) {
     if (!Budget || !Stmt.Body.empty() || !Stmt.ElseBody.empty() ||
         !Stmt.Cases.empty() || !Stmt.DefaultBody.empty() ||
         !Stmt.EHClauseBodies.empty() || !Stmt.EHClauses.empty() ||
@@ -296,6 +300,12 @@ bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
       return false;
   }
   return true;
+}
+
+bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
+                                        size_t &Budget) {
+  return isStraightLinePrivateFrameFunction(Func.Body, Func, Architecture,
+                                            Budget);
 }
 
 std::optional<int64_t> privateFrameOffset(const ExprPtr &Address,
@@ -455,6 +465,24 @@ bool recordFrameStore(const ExprPtr &Address, const ExprPtr &Value,
   return false;
 }
 
+// A Stack variable names a frame home, so reading it observes the frame
+// bytes a pending store may still provide.
+bool readsStackHome(const ExprPtr &Root) {
+  std::vector<const HighExpr *> Pending{Root.get()};
+  HighExprSet Seen;
+  while (!Pending.empty()) {
+    const HighExpr *E = Pending.back();
+    Pending.pop_back();
+    if (!E || !Seen.insert(E).second)
+      continue;
+    if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Stack)
+      return true;
+    E->forEachChildExpr(
+        [&](const ExprPtr &Child) { Pending.push_back(Child.get()); });
+  }
+  return false;
+}
+
 void invalidateWrittenVariable(std::map<int64_t, StoredFrameValue> &Stores,
                                const MedVar &Variable) {
   const auto Key = highSourceLocalIdentity(Variable);
@@ -467,13 +495,16 @@ void invalidateWrittenVariable(std::map<int64_t, StoredFrameValue> &Stores,
 }
 } // namespace
 
+// \p Validated says the caller has just proven \p Func straight-line.
 static void forwardLinearPrivateFrameLoads(HighFunc &Func, Arch Architecture,
-                                           size_t &Budget) {
+                                           size_t &Budget,
+                                           bool Validated = false) {
   if (Architecture == Arch::Unknown)
     return;
   const uint16_t PointerBytes = getTargetRegInfo(Architecture).PointerSize;
   if ((PointerBytes != 4 && PointerBytes != 8) ||
-      !isStraightLinePrivateFrameFunction(Func, Architecture, Budget))
+      (!Validated &&
+       !isStraightLinePrivateFrameFunction(Func, Architecture, Budget)))
     return;
   std::map<LocalIdentity, unsigned> DefinitionCounts;
   for (const HighStmt &Stmt : Func.Body)
@@ -518,7 +549,8 @@ static void forwardLinearPrivateFrameLoads(HighFunc &Func, Arch Architecture,
     // unobserved write dead, even if another region lets an object escape.
     // Never carry this proof across a call, join or unknown memory read.
     forEachRhsExpr(Stmt, [&](const ExprPtr &Root) {
-      if (!PendingStores.empty() && !discardableIntegerValue(Root, Budget))
+      if (!PendingStores.empty() &&
+          (!discardableIntegerValue(Root, Budget) || readsStackHome(Root)))
         PendingStores.clear();
     });
     if (Stmt.Kind == StmtKind::Store) {
@@ -1018,9 +1050,9 @@ public:
       : Function(F), Architecture(A), Budget(B) {}
 
   void run() {
-    const auto Graph = buildHighSourceFlowGraph(Function);
-    if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
-        Graph.Nodes.empty())
+    // Nothing commits without budget or a frame address; learn both before
+    // building the flow graph, which none of the checks below needs.
+    if (!Budget)
       return;
     State Entry;
     HighExprSet Seen;
@@ -1070,6 +1102,10 @@ public:
       });
     });
     if (!Complete || !EntryStack)
+      return;
+    const auto Graph = buildHighSourceFlowGraph(Function);
+    if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
+        Graph.Nodes.empty())
       return;
     std::vector<bool> Reachable(Graph.Nodes.size());
     std::vector<size_t> Degree(Graph.Nodes.size()), Work{Graph.Entry};
@@ -1227,6 +1263,14 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
     DominatingAliases.emplace(highSourceLocalIdentity(S.Dst->Var), S.Val);
     Prefix.push_back(S);
   }
+  // Every region below starts with this prefix: prove it once.
+  bool PrefixValid = Prefix.empty();
+  if (!PrefixValid) {
+    size_t Budget = Remaining;
+    PrefixValid = isStraightLinePrivateFrameFunction(Prefix, Context,
+                                                     Architecture, Budget);
+    Remaining = Budget;
+  }
   const auto Forward = [&](auto &&Self, std::vector<HighStmt> &Body,
                            unsigned Depth) -> void {
     if (Depth > ::neverd::limits::ir::kMaxPrivateFrameLeafDepth)
@@ -1281,13 +1325,21 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
       }
       // If a call input contains an effect, still optimize the preceding
       // region, but never speculate about argument evaluation order.
+      // Each statement of the region already passed this proof alone, and the
+      // prefix passed it above: only the exposed call inputs remain.
       size_t Budget = Remaining;
-      if (!isStraightLinePrivateFrameFunction(Region, Architecture, Budget)) {
+      const bool Valid =
+          (AtEntry || PrefixValid) &&
+          isStraightLinePrivateFrameFunction(
+              llvm::ArrayRef<HighStmt>(Region.Body).drop_front(Count), Region,
+              Architecture, Budget);
+      if (!Valid) {
         Region.Body.resize(Count);
         Inputs.clear();
       }
       Remaining = Budget;
-      forwardLinearPrivateFrameLoads(Region, Architecture, Remaining);
+      // A region the proof above accepted is not proven again.
+      forwardLinearPrivateFrameLoads(Region, Architecture, Remaining, Valid);
       for (size_t I = PrefixCount; I < Count; ++I)
         Body[First + I - PrefixCount] = std::move(Region.Body[I]);
       if (Root && !Inputs.empty()) {
@@ -1313,12 +1365,12 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
         First = I;
       }
       // Reuse the original shape/effect validator on this individual
-      // statement. A failed proof is a boundary, never permission to forward.
-      HighFunc One = Context;
-      One.Body = {S};
+      // statement, in place: a compound statement fails without its children
+      // being copied. A failed proof is a boundary, never permission to
+      // forward.
       size_t Budget = Remaining;
-      const bool Plain =
-          isStraightLinePrivateFrameFunction(One, Architecture, Budget);
+      const bool Plain = isStraightLinePrivateFrameFunction(
+          llvm::ArrayRef<HighStmt>(S), Context, Architecture, Budget);
       Remaining = Budget;
       if (Plain && S.Kind == StmtKind::Return) {
         Flush(I + 1);

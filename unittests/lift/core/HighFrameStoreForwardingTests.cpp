@@ -1447,6 +1447,25 @@ TEST(HighFrameStoreForwarding, OverwriteProofStopsAtObservableBoundaries) {
   }
 }
 
+TEST(HighFrameStoreForwarding, StackHomeReadObservesAnOverwrittenStore) {
+  for (Arch Architecture : Architectures) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    auto F = roundTrip(Architecture, NdType::makeInt(4, false));
+    // The Stack home names the bytes both stores write, as in
+    // InvalidatesWritesThroughStackVariables. Reading it observes the first.
+    auto Home = temporary(10, F.ReturnType, Architecture);
+    Home->Var.Kind = MedVar::Stack;
+    Home->Var.StackOff = -16;
+    auto Read = temporary(11, F.ReturnType, Architecture);
+    F.Body = {store(frameSlot(Architecture), HighExpr::makeConst(3, 4)),
+              assign(Read, Home),
+              store(frameSlot(Architecture), HighExpr::makeConst(5, 4)),
+              returning(Read)};
+    forwardPrivateFrameLoads(F, Architecture);
+    EXPECT_EQ(F.Body[0].Kind, StmtKind::Store);
+  }
+}
+
 TEST(HighFrameStoreForwarding, UnreachableOverwriteCannotDeleteAReachingStore) {
   const auto A = Arch::X64;
   auto F = roundTrip(A, NdType::makeInt(8, false));

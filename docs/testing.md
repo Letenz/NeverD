@@ -14428,7 +14428,8 @@ before/after optimization at O0/O2, including slot reuse and calls mutating
 saved cells. They retain stores around structured/unstructured EH, atomic and
 trapping operations, uncertain aliases, alternate entries and incomplete paths.
 The zero-test fixtures cover all byte pairs and integer-width boundaries with
-preserved call counts and undefined-behavior traps.
+preserved call counts and undefined-behavior traps. A Stack-home read between
+two complete stores keeps the first one.
 
 `NeverDHighPointerTypeInferenceTests` covers x86/x64/ARM/AArch64 frame aliases,
 slot reuse, joins, loops, escaped locals, clobbers, integer views and late source
