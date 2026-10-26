@@ -59,6 +59,12 @@ tests the emitted source control flow, not native Windows unwinding.
 their source diagnostics and still fail native emission. The SDK LLVM suite
 checks recovery after emission exceptions and preservation of that source-only
 limitation through module preparation.
+`MedSSAMultiRoot.LoopLiveInsRespectDefinitionsAndUseOrder` checks x64 and
+AArch64 under ELF, COFF and Mach-O: a loop's first read keeps an incoming
+parameter, while an earlier definition at entry or before the read kills it.
+Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
+`NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
+and partial-register cases exercise the same block-local use/kill facts.
 
 # Testing NeverD
 
@@ -2164,6 +2170,12 @@ benefit from a scheduler that improves parallel batches. Alternate backend
 order and retain paired measurements and CPU time alongside output hashes.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
+
+The [LowIR to MedIR component benchmark](../tools/neverd-bench/med-bench.md)
+reuses decoded functions and measures standalone conversion, including SSA.
+It verifies every result and checks canonical dump hashes outside the measured
+interval. Its single-thread timings exclude pipeline-owned interprocedural
+summaries and do not establish end-to-end CLI or GUI latency.
 
 `NeverDDigestTests` owns the former Lift `InputDigest.*` vector checks and adds
 multi-block vectors, every byte alignment and padding boundary, read-only input

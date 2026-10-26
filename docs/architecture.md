@@ -160,6 +160,11 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+`MedSSA` seeds entry liveness with upward-exposed uses, then propagates each
+newly live block/variable pair through real predecessor edges until a definition
+blocks it. The synthetic dominance root carries no variable values. Block-local
+use/kill construction owns register aliases and call clobbers for this analysis.
+
 `CallRegisterUnread` proves absent GPR input observations independently of
 argument inference. Opaque calls read every candidate family, and a nested
 call's may-write mask never kills a later input observation. Partial writes,
