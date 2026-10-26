@@ -128,16 +128,13 @@ void SignatureDB::applyVTableContext(const BinaryImage &Img,
   std::map<uint64_t, llvm::SmallVector<const SigMatch *, 4>> Existing;
   // Relocation-backed pointer slots are already indexed by the loader. This
   // reads their RTTI only; it does not scan data sections or function bytes.
-  for (uint64_t Address : Img.CodePtrRelocSlots) {
-    if (Address < VTablePointerBytes ||
-        !Img.DataPtrRelocSlots.count(Address - VTablePointerBytes))
-      continue;
+  auto Collect = [&](uint64_t Address) {
     const auto Type = coff_loader::readPrimaryVTableTypeName(Img, Address);
     if (!Type)
-      continue;
+      return;
     const auto Found = Sources.find(*Type);
     if (Found == Sources.end())
-      continue;
+      return;
     std::vector<Field> Agreed;
     bool First = true;
     bool Conflict = false;
@@ -159,11 +156,25 @@ void SignatureDB::applyVTableContext(const BinaryImage &Img,
       }
     }
     if (First || Conflict)
-      continue;
+      return;
     for (const auto &[Offset, Name] : Agreed)
       Existing.try_emplace(
           readLE<uint64_t>(Img.readVA(Address + Offset, VTablePointerBytes)));
     Tables.push_back({Address, std::move(Agreed)});
+  };
+  // Large C++ images have many more virtual methods than table headers.
+  // Intersect the smaller loader index with the other one without copying
+  // either set or scanning the image's data bytes.
+  if (Img.CodePtrRelocSlots.size() <= Img.DataPtrRelocSlots.size()) {
+    for (uint64_t Address : Img.CodePtrRelocSlots)
+      if (Address >= VTablePointerBytes &&
+          Img.DataPtrRelocSlots.count(Address - VTablePointerBytes))
+        Collect(Address);
+  } else {
+    for (uint64_t Header : Img.DataPtrRelocSlots)
+      if (Header <= InvalidVA - VTablePointerBytes &&
+          Img.CodePtrRelocSlots.count(Header + VTablePointerBytes))
+        Collect(Header + VTablePointerBytes);
   }
   if (Tables.empty())
     return;

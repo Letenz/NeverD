@@ -279,3 +279,18 @@ TEST(SignatureVTableContext, SectionOwnershipCannotBeOverlappingOrWritable) {
     EXPECT_EQ(DB.buildCandidateNameMap().contains(0x1000), Case == 0) << Case;
   }
 }
+
+TEST(SignatureVTableContext, EitherRelocationIndexProducesTheSameCandidates) {
+  for (bool MoreData : {false, true}) {
+    auto Img = tableImage();
+    if (MoreData)
+      for (uint64_t Address : {uint64_t(0x5300), uint64_t(0x5308), InvalidVA})
+        Img.DataPtrRelocSlots.insert(Address);
+    SignatureDB DB;
+    add(DB, Table + body("destroy") + body("action", "56"));
+    DB.apply(Img, {0x1000, 0x1100});
+    ASSERT_EQ(DB.buildCandidateNameMap().size(), 2u);
+    EXPECT_EQ(DB.buildCandidateNameMap().at(0x1000), "destroy");
+    EXPECT_EQ(DB.buildCandidateNameMap().at(0x1100), "action");
+  }
+}
