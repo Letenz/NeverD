@@ -187,6 +187,9 @@ add_neverd_unittest(NeverDNativeConstantStoresTests
 add_neverd_unittest(NeverDMedEntryFrameTests
   core/MedSSAMultiRootTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
+add_neverd_unittest(NeverDMedVariadicTests
+  core/MedVariadicTests.cpp
+  LINK_COMPONENTS IRMed)
 add_neverd_unittest(NeverDExecutableCodeOwnerTests
   core/ExecutableCodeOwnerIndexTests.cpp
   LINK_COMPONENTS Pipeline)
