@@ -1152,11 +1152,12 @@ void SignatureDB::applyCallerContext(
     Requested = SortedEntries;
   }
   const size_t FrozenMatches = Matches.size();
+  std::optional<std::unordered_map<uint64_t, uint32_t>> FrozenBodies;
   for (size_t Round = 0; Round < MaxIncomingRounds; ++Round) {
     const size_t Before = Matches.size();
     applyCallerContextRound(Img, Requested, Names, FrozenCandidates,
                             FrozenMatches, FirstParent, Data, Revisit,
-                            DeferredCallers);
+                            DeferredCallers, FrozenBodies);
     Revisit = {};
     if (Matches.size() == Before)
       break;
@@ -1180,10 +1181,11 @@ void SignatureDB::applyCallerContext(
 void SignatureDB::applyCallerContextRound(
     const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
     std::unordered_map<uint64_t, std::string> &Names,
-    llvm::ArrayRef<std::pair<uint64_t, size_t>> FrozenCandidates,
+    std::vector<std::pair<uint64_t, size_t>> &FrozenCandidates,
     size_t FrozenMatches, size_t FirstParent, const DataBindings *Data,
     llvm::ArrayRef<uint64_t> Revisit,
-    std::vector<DeferredCaller> *DeferredCallers) {
+    std::vector<DeferredCaller> *DeferredCallers,
+    std::optional<std::unordered_map<uint64_t, uint32_t>> &FrozenBodies) {
   const auto &Idx = index();
   auto FindName = [&](uint64_t Address) {
     auto Found = Names.find(Address);
@@ -1226,33 +1228,45 @@ void SignatureDB::applyCallerContextRound(
   }
   for (size_t I = FirstParent; I < OriginalMatches; ++I)
     AddParent(I);
+  // Short bodies need a separately established ordinary callee as well as
+  // their existing incoming or required-reference evidence. A short required
+  // root additionally needs an unpruned source refinement, not a pruned clause.
+  std::unordered_map<uint64_t, bool> ShortParents;
   for (auto It = At.begin(); It != At.end();) {
     bool Anchored = true;
+    bool Short = false, NeedsSource = false;
     for (size_t &I : It->second) {
       if (MatchModules[I] == NoModule) {
         Anchored = false;
         break;
       }
       const bool Incoming = I >= FrozenMatches && Matches[I].CallerConfirmed;
-      const bool Contextual = Data && I < FrozenMatches && Matches[I].Confirmed;
+      const bool Confirmed = I < FrozenMatches && Matches[I].Confirmed;
       I = MatchModules[I];
       const StoredModule &Mod = Modules[I];
+      const bool Weak = SignatureMatcher::fixedByteCount(Mod) <
+                        SignatureMatcher::MinStatedBytes;
+      const bool Contextual = Confirmed && (Data || Weak);
       if (((Mod.RequireReferences || Mod.RequireCaller) && !Incoming &&
            !(Contextual && Mod.RequireReferences)) ||
           !SignatureMatcher::isFullyVerified(Mod) ||
-          SignatureMatcher::fixedByteCount(Mod) <
-              SignatureMatcher::MinStatedBytes ||
+          (Weak && !Incoming && !(Contextual && Mod.RequireReferences)) ||
           llvm::any_of(Mod.publicNames(), [&](const StoredName &Public) {
             return Public.Name == Names.at(It->first) && Public.Offset != 0;
           })) {
         Anchored = false;
         break;
       }
+      Short |= Weak;
+      NeedsSource |= Weak && !Incoming;
     }
-    if (Anchored)
+    if (Anchored) {
+      if (Short)
+        ShortParents.emplace(It->first, NeedsSource);
       ++It;
-    else
+    } else {
       It = At.erase(It);
+    }
   }
 
   // Old packs can omit newly supported address references. A source record
@@ -1265,8 +1279,9 @@ void SignatureDB::applyCallerContextRound(
     for (const auto &Candidate : Idx.callerModules(Modules, Name)) {
       const StoredModule &Mod = Modules[Candidate.Module];
       if (!Mod.RequireCaller ||
-          SignatureMatcher::fixedByteCount(Mod) <
-              SignatureMatcher::MinStatedBytes ||
+          (!ShortParents.contains(Address) &&
+           SignatureMatcher::fixedByteCount(Mod) <
+               SignatureMatcher::MinStatedBytes) ||
           llvm::any_of(Proposals, [&](size_t I) {
             return Modules[I].TotalLen != Mod.TotalLen;
           }))
@@ -1344,6 +1359,99 @@ void SignatureDB::applyCallerContextRound(
     if (Extra != Refined.end())
       for (size_t I : Proposals)
         Constrain(References, ReferencesOf(Modules[I]), /*AllowMissing=*/true);
+    if (const auto Short = ShortParents.find(Address);
+        Short != ShortParents.end()) {
+      if (References.empty() || (Short->second && Extra == Refined.end()))
+        continue;
+      if (llvm::none_of(References, [&](const Reference &Ref) {
+            return !Idx.callerModules(Modules, Ref.second).empty();
+          }))
+        continue;
+      // The address index is shared with frozen settlement. Build it only
+      // when a short caller needs independent evidence; inspect body strength
+      // only at the actual target, rather than for every frozen candidate.
+      if (!FrozenBodies) {
+        FrozenBodies.emplace();
+        if (FrozenCandidates.empty()) {
+          FrozenCandidates.reserve(FrozenMatches);
+          for (size_t I = 0; I < FrozenMatches; ++I)
+            FrozenCandidates.emplace_back(Matches[I].Address, I);
+          llvm::sort(FrozenCandidates);
+        }
+      }
+      uint32_t ParentLength = 0;
+      for (size_t I : Proposals)
+        ParentLength = std::max(ParentLength, Modules[I].TotalLen);
+      bool Bound = false;
+      for (size_t R = 0; R < References.size();) {
+        size_t End = R + 1;
+        while (End < References.size() &&
+               References[End].first == References[R].first)
+          ++End;
+        const auto [Offset, Expected] = References[R];
+        const bool Single = End == R + 1;
+        R = End;
+        if (!Single)
+          continue;
+        const uint64_t Start = Img.Arch == Arch::ARM
+                                   ? Address & ~uint64_t(ThumbStateBit)
+                                   : Address;
+        const auto Target = branchTarget(Img, Start, Offset);
+        if (!Target || !Img.isCodeAddress(Target->Target))
+          continue;
+        const auto Name = FindName(Target->Target);
+        if (Name == Names.end() || Name->second != Expected)
+          continue;
+        auto [Body, Fresh] = FrozenBodies->try_emplace(Target->Target, 0);
+        if (Fresh) {
+          const auto Begin = llvm::lower_bound(
+              FrozenCandidates, Target->Target,
+              [](const auto &Row, uint64_t VA) { return Row.first < VA; });
+          llvm::SmallVector<const SigMatch *, 4> Claims;
+          auto End = Begin;
+          while (End != FrozenCandidates.end() && End->first == Target->Target)
+            Claims.push_back(&Matches[(End++)->second]);
+          const auto FrozenName = settle(Claims);
+          // New incoming names cannot disambiguate their old nominal rows
+          // and then reuse those rows as supposedly independent evidence.
+          if (!FrozenName || FrozenName->Name != Expected)
+            continue;
+          for (auto Row = Begin; Row != End; ++Row) {
+            const size_t I = Row->second;
+            const SigMatch &Match = Matches[I];
+            if (Match.Name != Expected &&
+                !llvm::is_contained(Match.Aliases, Expected))
+              continue;
+            if (MatchModules[I] == NoModule) {
+              Body->second = 0;
+              break;
+            }
+            const StoredModule &Mod = Modules[MatchModules[I]];
+            if (Mod.RequireCaller || Mod.RequireReferences ||
+                Match.CallerConfirmed ||
+                !SignatureMatcher::isFullyVerified(Mod) ||
+                SignatureMatcher::fixedByteCount(Mod) <
+                    SignatureMatcher::MinStatedBytes ||
+                llvm::any_of(Mod.publicNames(), [&](const StoredName &N) {
+                  return N.Name == Expected && N.Offset != 0;
+                })) {
+              Body->second = 0;
+              break;
+            }
+            Body->second = std::max(Body->second, Mod.TotalLen);
+          }
+        }
+        if (!Body->second)
+          continue;
+        if (Target->Target >= Address ? Target->Target - Address < ParentLength
+                                      : Address - Target->Target < Body->second)
+          continue;
+        Bound = true;
+        break;
+      }
+      if (!Bound)
+        continue;
+    }
     for (size_t R = 0; R < References.size();) {
       const uint32_t Offset = References[R].first;
       size_t End = R + 1;
