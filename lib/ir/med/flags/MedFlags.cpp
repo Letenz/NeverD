@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace neverd {
@@ -194,10 +195,42 @@ MedOp buildCmpOp(CondCode CC, const MedVar &A, const MedVar &B,
                  const MedVar &OutputVar, va_t Addr) {
   MedOp Op;
   Op.Addr = Addr;
+  Op.Output = OutputVar;
+  Op.Output.Kind = MedVar::Temp;
+  Op.Output.Size = 1;
   // Every VS fold here requires a genuine INT_SUB source. Its V flag is the
   // signed overflow of A-B (INT_SBOR), not the overflow of A+B (INT_SOVF).
   // ADD-derived VS conditions stay in the original flag chain.
   Op.Opcode = CC == CondCode::VS ? NdOp::INT_SBOR : condToOpcode(CC);
+  // These comparisons cannot observe the bits of an identical SSA value.
+  // Materialize their boolean here, before source emission would turn an
+  // otherwise unused incoming register into an unknown-state guard. Distinct
+  // reads and unspecified values are not interchangeable SSA observations.
+  if ((A.Kind == MedVar::Reg || A.Kind == MedVar::Temp ||
+       A.Kind == MedVar::Param || A.Kind == MedVar::Const) &&
+      A.Size && A.Size == B.Size && A == B) {
+    std::optional<bool> Known;
+    switch (Op.Opcode) {
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESSEQUAL:
+      Known = true;
+      break;
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_SBOR:
+      Known = false;
+      break;
+    default:
+      break;
+    }
+    if (Known) {
+      Op.Opcode = NdOp::COPY;
+      Op.addInput(MedVar::makeConst(*Known, 1));
+      return Op;
+    }
+  }
   if (condSwapsOperands(CC)) {
     Op.addInput(B);
     Op.addInput(A);
@@ -205,9 +238,6 @@ MedOp buildCmpOp(CondCode CC, const MedVar &A, const MedVar &B,
     Op.addInput(A);
     Op.addInput(B);
   }
-  Op.Output = OutputVar;
-  Op.Output.Kind = MedVar::Temp;
-  Op.Output.Size = 1;
   return Op;
 }
 

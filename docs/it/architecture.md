@@ -2015,3 +2015,5 @@ Il lifter x86 tratta SUB/CMP interi con registri identici come `0 - 0` prima di 
 `MedCallTarget` conserva l’indice della lettura originale dell’importazione attraverso i salvataggi privati. HighIR riusa la prova di lettura della memoria prima di usare direttamente il nome dell’importazione; se lo slot cambia, mantiene il puntatore acquisito. `MedABIPass` divide le scritture ampie degli argomenti secondo l’ABI dimostrata dell’importazione anche nelle chiamate indirette.
 
 La semplificazione condivisa dei flag MedIR conserva entrambi gli operandi della sottrazione, anche per `A-A`. Un confronto con sé stesso non deve diventare un confronto con zero; i test logici mantengono la propria regola dipendente dall’ingresso.
+
+Le condizioni intere che confrontano lo stesso valore SSA con sé stesso diventano costanti booleane prima dell’emissione del sorgente, incluso l’overflow della sottrazione. Gli operandi non specificati restano espliciti.

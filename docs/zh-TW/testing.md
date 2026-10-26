@@ -2147,3 +2147,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` 涵蓋暫存器直接保存和私有堆疊保存。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` 在 Linux x86 上以兩個不同的純量參數執行 HighC 和 LLVMC 的 O0/O2 結果，涵蓋記憶體和暫存器呼叫目標。Python ABI 清單與 GUI 來源字串檢查包含分析區段介面及提示。
 
 `NeverDSelfCompareFlagTests` 執行並比對 x86、x64、ARM32 和 AArch64 的原始及重建函式。分別執行預設機器碼路線、`NEVERD_SEMANTIC_HIGHC=1` 和 `NEVERD_SEMANTIC_LLVMC=1`。矩陣涵蓋自身 CMP/SUB 的旗標、分支與條件值，以邏輯測試及移位運算元為對照，並執行既有的有號溢位迴歸。
+
+自身比較矩陣也執行無參數的相等及減法溢位案例。這些案例不需要任何傳入暫存器值，兩條 C 路線都不能額外產生未知狀態陷阱。

@@ -2201,3 +2201,5 @@ NeverSight LLVM fork の `BinaryRewriteRelocationTest` は x64 PLT、i386 GOT、
 `MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` は直接レジスター保持と私有スタック退避を検査します。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` は Linux x86 で異なる二つのスカラー引数を使い、メモリー・レジスター両ターゲットの HighC/LLVMC を O0/O2 で実行します。Python ABI 一覧と GUI 文字列検査には解析セクションのインターフェイスと表示文言を含みます。
 
 `NeverDSelfCompareFlagTests` は x86、x64、ARM32、AArch64 の元の関数と再構築した関数を実行して比較します。既定の機械語経路、`NEVERD_SEMANTIC_HIGHC=1`、`NEVERD_SEMANTIC_LLVMC=1` を個別に実行します。自己 CMP/SUB のフラグ、分岐、条件値を、論理テストとシフトしたオペランドを対照に検証し、既存の符号付きオーバーフロー回帰も実行します。
+
+自己比較の行列には、引数なしの等値条件と減算オーバーフロー条件の実行も含まれます。入力レジスタ値を必要としないため、どちらの C 経路でも未知状態のトラップを追加してはいけません。

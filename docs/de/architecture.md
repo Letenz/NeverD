@@ -2019,3 +2019,5 @@ Der x86-Lifter behandelt ganzzahlige SUB/CMP mit identischen Registern vor dem S
 `MedCallTarget` erhält den ursprünglichen Import-Leseindex über private Stack-Sicherungen hinweg. HighIR verwendet den vorhandenen Nachweis für Speicherlesezugriffe vor dem direkten Importnamen; ein geänderter Slot behält den erfassten Funktionszeiger. `MedABIPass` teilt breite Argumentschreibzugriffe gemäß der nachgewiesenen Import-ABI auch bei indirekten Aufrufen.
 
 Die gemeinsame MedIR-Flag-Vereinfachung erhält beide Subtraktionsoperanden, auch bei `A-A`. Ein Selbstvergleich darf nicht zu einem Vergleich mit null werden; logische Selbsttests behalten ihre eigene eingabeabhängige Regel.
+
+Ganzzahlbedingungen, die denselben SSA-Wert mit sich selbst vergleichen, werden vor der Quellausgabe zu booleschen Konstanten. Dies umfasst Subtraktionsüberlauf; unspezifizierte Operanden bleiben explizit.

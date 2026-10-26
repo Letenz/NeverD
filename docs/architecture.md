@@ -12501,3 +12501,5 @@ The x86 lifter treats integer SUB/CMP with identical register operands as `0 - 0
 `MedCallTarget` retains the original import-load index through private spills. HighIR reuses the source memory-read proof before naming the import directly; a changed slot keeps the captured callable. `MedABIPass` splits wide outgoing stores according to a proven import ABI even when the machine call is indirect.
 
 Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A self-comparison must not become a comparison with zero; logical self-tests retain their separate input-dependent rule.
+
+Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.

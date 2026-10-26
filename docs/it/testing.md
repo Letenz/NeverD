@@ -2297,3 +2297,5 @@ La regressione worker copre anche diciotto parametri misti registro/stack, un ri
 `MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` verifica acquisizioni in registri e salvataggi privati. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` esegue HighC e LLVMC in O0/O2 su Linux x86 con due argomenti scalari distinti, per destinazioni in memoria e registri. L’inventario ABI Python e la verifica dei cataloghi GUI includono interfacce e messaggi delle sezioni di analisi.
 
 `NeverDSelfCompareFlagTests` esegue funzioni originali e ricostruite per x86, x64, ARM32 e AArch64. Eseguire separatamente il percorso macchina predefinito, `NEVERD_SEMANTIC_HIGHC=1` e `NEVERD_SEMANTIC_LLVMC=1`. La matrice copre i flag CMP/SUB con operandi uguali, i salti e i valori condizionali, con test logici e operandi traslati come controlli, oltre alle regressioni esistenti sull’overflow con segno.
+
+La matrice esegue anche casi senza argomenti per uguaglianza e overflow della sottrazione. Non richiedono valori di registro in ingresso e nessuno dei due percorsi C deve introdurre una trappola per stato sconosciuto.

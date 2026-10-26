@@ -2302,3 +2302,5 @@ La regresión del worker también cubre dieciocho parámetros mixtos de registro
 `MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` cubre capturas en registros y guardados privados. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` ejecuta HighC y LLVMC con dos argumentos escalares distintos en O0/O2 sobre Linux x86, con destinos en memoria y registros. El inventario ABI de Python y la comprobación de catálogos GUI incluyen las interfaces y mensajes de las secciones de análisis.
 
 `NeverDSelfCompareFlagTests` ejecuta funciones originales y reconstruidas para x86, x64, ARM32 y AArch64. Ejecutar por separado la ruta de código máquina predeterminada, `NEVERD_SEMANTIC_HIGHC=1` y `NEVERD_SEMANTIC_LLVMC=1`. La matriz cubre indicadores CMP/SUB con operandos iguales, saltos y valores condicionales, con pruebas lógicas y operandos desplazados como controles, además de las regresiones existentes de desbordamiento con signo.
+
+La matriz también ejecuta casos sin argumentos de igualdad y desbordamiento de resta. No necesitan valores de registros entrantes y ninguna de las dos rutas C debe añadir una trampa de estado desconocido.
