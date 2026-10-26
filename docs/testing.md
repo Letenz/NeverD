@@ -3763,6 +3763,14 @@ C23 enumeration's type and `va_arg` without showing C, and
 `GoViewComputesWhatCComputes` runs a pointer to a copy (`&(int64_t){v}`) in Go.
 `SourceAggregate.SourceNamesAreSpelledAsC` checks the C spelling of C++ record
 names and of records that share a C library function's name;
+Native x64 instruction oracles in `HighCPointerAddresses` and
+`CallExitRegisters.PureRegisterLeafKeepsDynamicExtraResults` require an x64
+host. The typed x87 oracles also require an 80-bit `long double`; glibc
+declaration probes require glibc headers. Other hosts record explicit skips.
+Portable call fixtures retain their native execution: C symbol providers use
+the host compiler's symbol prefix, while foreign raw callback labels are bound
+explicitly for both direct calls and address comparisons.
+
 `HighCPointerAddresses.RecordsNamedLikeFunctionsAreSpelledByTheirTags`,
 `CallResultsTakeNoFileScopeName`, `IntegerOperatorsTakePointerLocalsAsIntegers`
 and `IntegersTakeForwardedPointerMembersAsIntegers` check that HighC writes such
