@@ -1519,7 +1519,8 @@ bool forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture,
                        }))
           return;
         // Expressions can be shared by source-map observations or other
-        // statements. Rebuild the call instead of mutating its shared node.
+        // statements. Rebuild only changed calls instead of mutating their
+        // shared node; unchanged calls retain their observed identity.
         auto Rebuilt = std::make_shared<HighExpr>(**Root);
         size_t I = Count;
         for (auto &Operand : Rebuilt->Operands)

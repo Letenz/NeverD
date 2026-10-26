@@ -17,6 +17,7 @@
 #include "neverd/backend/llvm/X86/X86APXAtomic.h"
 #include "neverd/backend/llvm/X86/X86DescriptorStateNative.h"
 #include "neverd/backend/llvm/X86/X86SystemStateAsm.h"
+#include "neverd/decode/Decoder.h"
 
 #include "capstone/capstone.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -29,6 +30,8 @@
 #include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -38,16 +41,129 @@
 using namespace neverd;
 
 namespace {
-enum class MemoryFamily { Compact, FourSource, Descriptor, Query, Atomic };
+enum class MemoryFamily {
+  Compact,
+  FourSource,
+  Descriptor,
+  Query,
+  Atomic,
+  CompactStack,
+  FourSourceStack
+};
 
-TEST(X86NativeMemoryCarrier, RealignedDynamicFramesRetainDataAddresses) {
+TEST(X86NativeMemoryCarrier,
+     VectorOperandsRetainStackProvenanceAcrossDecodeRoutes) {
+  std::vector<std::vector<uint8_t>> Families;
+  for (unsigned Kind = 0; Kind != 6; ++Kind)
+    for (bool Expand : {false, true}) {
+      const uint8_t Opcode = Kind < 2   ? (Expand ? 0x62 : 0x63)
+                             : Kind < 4 ? (Expand ? 0x89 : 0x8b)
+                                        : (Expand ? 0x88 : 0x8a);
+      Families.push_back(
+          {0x62, 0xf2, uint8_t(Kind & 1 ? 0xfd : 0x7d), 0x0a, Opcode, 0x08});
+    }
+  constexpr std::array<uint8_t, 6> FourOpcodes = {0x9a, 0xaa, 0x9b,
+                                                  0xab, 0x52, 0x53};
+  for (unsigned Kind = 0; Kind != FourOpcodes.size(); ++Kind)
+    Families.push_back({0x62, 0xf2, 0x5f,
+                        uint8_t(Kind == 2 || Kind == 3 ? 0x0a : 0x4a),
+                        FourOpcodes[Kind], 0x08});
+  for (Arch A : {Arch::X64, Arch::X86})
+    for (unsigned Base : {0u, 4u, 5u, 12u, 13u})
+      for (bool Narrow : {false, true}) {
+        if (A == Arch::X86 && (Base >= 8 || Narrow))
+          continue;
+        for (unsigned Prefix : {0u, 0x26u, 0x2eu, 0x36u, 0x3eu, 0x64u, 0x65u})
+          for (unsigned Route = 0; Route != 3; ++Route)
+            for (bool Strict : {false, true})
+              for (const auto &Family : Families) {
+                SCOPED_TRACE(::testing::Message()
+                             << unsigned(A) << '/' << Base << '/' << Narrow
+                             << '/' << Prefix << '/' << Route << '/' << Strict
+                             << '/' << unsigned(Family[4]));
+                auto Bytes = Family;
+                if (Base >= 8)
+                  Bytes[1] &= ~0x20;
+                Bytes.back() |= Base & 7;
+                if ((Base & 7) == 4)
+                  Bytes.push_back(0x24);
+                if ((Base & 7) == 5) {
+                  Bytes.back() |= 0x40;
+                  Bytes.push_back(0);
+                }
+                if (Narrow)
+                  Bytes.insert(Bytes.begin(), 0x67);
+                if (Prefix)
+                  Bytes.insert(Bytes.begin(), uint8_t(Prefix));
+                Decoder D;
+                ASSERT_TRUE(D.init(A));
+                D.setStrict(Strict);
+                DecodedInsn I{};
+                const auto Size =
+                    Route == 0
+                        ? D.decodeOne(Bytes.data(), Bytes.size(), 0x1000, I)
+                    : Route == 1 ? D.decodeOneLight(Bytes.data(), Bytes.size(),
+                                                    0x1000, I)
+                                 : D.decodeOneForLift(Bytes.data(),
+                                                      Bytes.size(), 0x1000, I);
+                ASSERT_EQ(Size, Bytes.size());
+                const bool SegmentBase = Prefix == 0x64 || Prefix == 0x65;
+                const bool StackBase = Base == 4 || Base == 5;
+                const bool Valid = A == Arch::X64 || SegmentBase ||
+                                   Prefix == 0x3e || (!Prefix && !StackBase);
+                std::vector<LowOp> Ops;
+                if (!Valid) {
+                  EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+                  EXPECT_TRUE(Ops.empty());
+                  continue;
+                }
+                ASSERT_NO_THROW(D.liftToLow(I, Ops));
+                const auto Found =
+                    std::find_if(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+                      if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs)
+                        return false;
+                      const auto Id = Intrinsic(Op.Inputs[0].Offset);
+                      return isX86CompactMemory(Id) ||
+                             Id == Intrinsic::X86FourSourceMemory;
+                    });
+                ASSERT_NE(Found, Ops.end());
+                const auto Id = Intrinsic(Found->Inputs[0].Offset);
+                bool Stack;
+                if (isX86CompactMemory(Id)) {
+                  const auto C = x86CompactControl(Id, Found->Inputs[4].Offset);
+                  ASSERT_TRUE(C);
+                  Stack = C->StackReference;
+                } else {
+                  const auto C = x86FourSourceControl(Found->Inputs[5].Offset);
+                  ASSERT_TRUE(C);
+                  Stack = C->StackReference;
+                }
+                EXPECT_EQ(Stack, A == Arch::X64 && !Narrow && StackBase &&
+                                     !SegmentBase);
+                EXPECT_EQ(Found->MemoryAddressSpace,
+                          Prefix == 0x64   ? NdMemoryAddressSpace::X86FS
+                          : Prefix == 0x65 ? NdMemoryAddressSpace::X86GS
+                                           : NdMemoryAddressSpace::Default);
+              }
+      }
+}
+
+TEST(X86NativeMemoryCarrier, RealignedDynamicFramesRetainAddressProvenance) {
   for (Arch A : {Arch::X64, Arch::X86})
     for (const auto Family :
          {MemoryFamily::Compact, MemoryFamily::FourSource,
-          MemoryFamily::Descriptor, MemoryFamily::Query, MemoryFamily::Atomic})
+          MemoryFamily::Descriptor, MemoryFamily::Query, MemoryFamily::Atomic,
+          MemoryFamily::CompactStack, MemoryFamily::FourSourceStack})
       for (bool Narrow : {false, true}) {
-        const bool FourSource = Family == MemoryFamily::FourSource;
-        if (Narrow && (FourSource || Family == MemoryFamily::Compact))
+        const bool FourSource = Family == MemoryFamily::FourSource ||
+                                Family == MemoryFamily::FourSourceStack;
+        const bool Compact = Family == MemoryFamily::Compact ||
+                             Family == MemoryFamily::CompactStack;
+        const bool Stack = Family == MemoryFamily::CompactStack ||
+                           Family == MemoryFamily::FourSourceStack;
+        if (Stack && A != Arch::X64)
+          continue;
+        if (Narrow && (FourSource || Compact))
           continue;
         const unsigned WordBits = A == Arch::X64 ? 64 : 32;
         const unsigned AddressBits = Narrow ? WordBits / 2 : WordBits;
@@ -83,15 +199,17 @@ TEST(X86NativeMemoryCarrier, RealignedDynamicFramesRetainDataAddresses) {
           llvm::Type *Return = B.getVoidTy();
           std::string Assembly, Constraints, Mnemonic;
           if (FourSource) {
-            const auto P = *x86FourSourcePlan(4, 0, 0);
+            const auto P =
+                *x86FourSourcePlan(4, 0, Stack ? X86NativeStackReference : 0);
             Assembly = P.assembly();
             Constraints = P.constraints();
             Mnemonic = P.Control.mnemonic();
             Args.insert(Args.end(), 5, Zero);
             Args.push_back(B.getInt16(1));
             Return = V;
-          } else if (Family == MemoryFamily::Compact) {
-            const auto P = *x86CompactPlan(false, 16, 2, 0, 0);
+          } else if (Compact) {
+            const auto P = *x86CompactPlan(false, 16, 2, 0,
+                                           Stack ? X86NativeStackReference : 0);
             Assembly = P.assembly();
             Constraints = P.constraints();
             Mnemonic = P.mnemonic();
@@ -173,15 +291,21 @@ TEST(X86NativeMemoryCarrier, RealignedDynamicFramesRetainDataAddresses) {
                 if (X86.operands[J].type == X86_OP_MEM) {
                   ++MemoryOperands;
                   const auto Base = X86.operands[J].mem.base;
-                  // The operand must not use the live realignment base or a
-                  // stack-default base. Its exact scratch register is
-                  // immaterial.
+                  // A stack reference borrows the unchanged RBP plus an
+                  // offset. Data references exclude stack-default bases;
+                  // neither kind replaces the live realignment base.
                   EXPECT_NE(Base, A == Arch::X64 ? X86_REG_RBX : X86_REG_ESI);
-                  EXPECT_NE(Base, A == Arch::X64 ? X86_REG_RBP : X86_REG_EBP);
-                  EXPECT_NE(Base, A == Arch::X64 ? X86_REG_RSP : X86_REG_ESP);
-                  EXPECT_NE(Base, X86_REG_SI);
-                  EXPECT_NE(Base, X86_REG_BP);
-                  EXPECT_EQ(X86.operands[J].mem.index, X86_REG_INVALID);
+                  if (Stack) {
+                    EXPECT_EQ(Base, X86_REG_RBP);
+                    EXPECT_EQ(X86.operands[J].mem.index, X86_REG_RDX);
+                    EXPECT_EQ(X86.operands[J].mem.scale, 1);
+                  } else {
+                    EXPECT_NE(Base, A == Arch::X64 ? X86_REG_RBP : X86_REG_EBP);
+                    EXPECT_NE(Base, A == Arch::X64 ? X86_REG_RSP : X86_REG_ESP);
+                    EXPECT_NE(Base, X86_REG_SI);
+                    EXPECT_NE(Base, X86_REG_BP);
+                    EXPECT_EQ(X86.operands[J].mem.index, X86_REG_INVALID);
+                  }
                   EXPECT_EQ(X86.operands[J].mem.disp, 0);
                 }
               EXPECT_EQ(MemoryOperands, 1u);

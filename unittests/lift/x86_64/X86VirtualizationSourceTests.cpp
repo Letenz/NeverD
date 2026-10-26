@@ -46,6 +46,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/ModRef.h"
 #include "llvm/Support/Path.h"
@@ -90,13 +91,29 @@ BinaryImage image(Arch A, BinaryFormat Format, std::vector<uint8_t> Bytes) {
 
 bool anchored(const CSourceMap &Map, va_t Address, llvm::StringRef Source,
               llvm::StringRef Mnemonic) {
-  return std::any_of(
-      Map.Anchors.begin(), Map.Anchors.end(), [&](const auto &A) {
+  const bool Found =
+      std::any_of(Map.Anchors.begin(), Map.Anchors.end(), [&](const auto &A) {
         return A.Function == Entry && A.Span.End <= Source.size() &&
                Source.slice(A.Span.Begin, A.Span.End).contains(Mnemonic) &&
                std::any_of(A.Occurrences.begin(), A.Occurrences.end(),
                            [&](const auto &O) { return O.Address == Address; });
       });
+  if (!Found) {
+    llvm::errs() << "Missing source anchor for " << Mnemonic << " at "
+                 << llvm::format_hex(Address, 0) << "\n";
+    for (const auto &A : Map.Anchors) {
+      llvm::errs() << "anchor " << A.Span.Begin << ':' << A.Span.End;
+      for (const auto &O : A.Occurrences)
+        llvm::errs() << ' ' << llvm::format_hex(O.Address, 0);
+      llvm::errs() << '\n';
+    }
+    if (Map.HighSources)
+      for (const auto &S : *Map.HighSources)
+        if (S.Occurrence.Address == Address)
+          llvm::errs() << "origin kind=" << unsigned(S.Kind)
+                       << " expired=" << S.Expression.expired() << '\n';
+  }
+  return Found;
 }
 
 void sourceRoutes(BinaryImage &Image, bool NoOpt, va_t Address,

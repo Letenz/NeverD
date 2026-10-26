@@ -31,6 +31,7 @@
 #include "neverd/ir/intrinsics/X86/X86Interrupts.h"
 #include "neverd/support/ISAEncoding.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/SHA256.h"
@@ -874,7 +875,8 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
   LastScalarOperandOccurrence.reset();
   auto *Detail = Insn ? Insn->detail : nullptr;
   if (!Detail)
-    return;
+    throw UnliftedInstruction(Insn ? Insn->address : InvalidVA,
+                              "missing x86 instruction detail", nullptr);
 
   if (hasHardwareLockElisionPrefix(Insn, TargetArch == Arch::X64))
     throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
@@ -902,6 +904,9 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
 
   auto &X86 = Detail->x86;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
+  // Each decoded instruction is one publication transaction. A refused
+  // handler may already have computed an address or emitted a partial result.
+  llvm::scope_exit Rollback([&] { Ops.resize(S.OpsStart); });
   LowInstructionUndefinedEffects EffectsDraft;
   S.UndefinedEffects = UndefinedEffects ? &EffectsDraft : nullptr;
   S.LoadMemoryCallTarget = LoadMemoryCallTarget;
@@ -1087,13 +1092,14 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
                  liftSIMD(S, Insn, X86) || liftSIMDAVX(S, Insn, X86) ||
                  liftSIMDLegacy(S, Insn, X86);
 
-  if (!Handled) {
-    if (Strict)
-      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
-    S.emit(NdOp::NOP, {}, {});
-    LLVM_DEBUG(llvm::dbgs()
-               << "Unlifted instruction: " << Insn->mnemonic << " "
-               << Insn->op_str << " @ 0x" << llvm::utohexstr(S.Addr) << "\n");
+  if (!Handled || Ops.size() == S.OpsStart) {
+    if (UndefinedEffects) {
+      UndefinedEffects->Coverage = LowUndefinedCoverage::Unsupported;
+      UndefinedEffects->Diagnostic =
+          Handled ? "instruction produced no semantic operations"
+                  : "instruction has no semantic lifter";
+    }
+    throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
   }
 
   // A decoder can know a register that the architectural state model has not
@@ -1112,16 +1118,11 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
       HasUnmappedRegister = IsUnmappedRegister(Ops[I].Inputs[Input]);
   }
   if (HasUnmappedRegister) {
-    Ops.resize(S.OpsStart);
-    if (Strict)
-      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
-    S.emit(NdOp::NOP, {}, {});
     if (UndefinedEffects) {
       UndefinedEffects->Coverage = LowUndefinedCoverage::Unsupported;
-      UndefinedEffects->OpCount = Ops.size() - S.OpsStart;
       UndefinedEffects->Diagnostic = "instruction uses an unmapped register";
     }
-    return;
+    throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
   }
 
   if (ExactGOTPC) {
@@ -1335,11 +1336,7 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
                   EffectsDraft)
         : Logic ? HasLogicEffect
                 : EffectsDraft.Effects.empty();
-    if (!Handled) {
-      EffectsDraft.Coverage = LowUndefinedCoverage::Unsupported;
-      EffectsDraft.Effects.clear();
-      EffectsDraft.Diagnostic = "instruction has no semantic lifter";
-    } else if (!Strict) {
+    if (!Strict) {
       EffectsDraft.Diagnostic =
           "undefined-output coverage requires strict lifting";
     } else if (EffectsDraft.OpCount == 0 ||
@@ -1366,6 +1363,7 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
   }
   if (PreservedState)
     *PreservedState = std::move(PreservedDraft);
+  Rollback.release();
 }
 
 // ===----------------------------------------------------------------------===//

@@ -25,9 +25,10 @@ llvm::Value *MedLLVMEmitter::emitX86FourSource(const MedOp &Op,
     throw std::invalid_argument(X86FourSourceMalformed);
   const auto C = *x86FourSourceControl(*S.Control);
   const unsigned Prefix =
-      S.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-      : S.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                            : 0;
+      (S.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
+       : S.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
+                                                             : 0) |
+      (C.StackReference ? X86NativeStackReference : 0);
   const auto P =
       *x86FourSourcePlan(static_cast<unsigned>(C.Kind), C.Zero, Prefix);
   auto *F = B.GetInsertBlock()->getParent();
@@ -63,7 +64,8 @@ llvm::Value *MedLLVMEmitter::emitX86FourSource(const MedOp &Op,
   }
   Args.push_back(B.CreateZExtOrTrunc(getVar(Op.Inputs[4], B), B.getInt16Ty()));
   llvm::Value *Result;
-  if (const auto ID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName())) {
+  if (const auto ID = llvm::Intrinsic::lookupIntrinsicID(P.llvmName());
+      ID && (!P.stackReference() || x86NativeStackMemoryIsAvailable())) {
     Args.push_back(B.getInt32(C.Zero));
     Args.push_back(B.getInt32(Prefix));
     Result =

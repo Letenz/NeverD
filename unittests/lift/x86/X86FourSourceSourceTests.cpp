@@ -29,17 +29,19 @@
 #include <stdexcept>
 using namespace neverd;
 namespace {
-std::vector<X86FourSourcePlan> plans() {
+std::vector<X86FourSourcePlan> plans(Arch A = Arch::X64) {
   std::vector<X86FourSourcePlan> R;
   for (unsigned Kind = 0; Kind < 6; ++Kind)
-    for (unsigned Prefix : {0u, 0x64u, 0x65u})
-      for (unsigned Zero : {0u, 1u})
-        R.push_back(*x86FourSourcePlan(Kind, Zero, Prefix));
+    for (unsigned Prefix : {0u, 0x64u, 0x65u, X86NativeStackReference})
+      if (A != Arch::X86 || !x86NativeMemoryIsStack(Prefix))
+        for (unsigned Zero : {0u, 1u})
+          R.push_back(*x86FourSourcePlan(Kind, Zero, Prefix));
   return R;
 }
 unsigned control(const X86FourSourcePlan &P) {
   return static_cast<unsigned>(P.Control.Kind) |
-         (P.Control.Zero ? X86FourSourceZero : 0);
+         (P.Control.Zero ? X86FourSourceZero : 0) |
+         (P.stackReference() ? X86FourSourceStackReference : 0);
 }
 NdMemoryAddressSpace space(const X86FourSourcePlan &P) {
   return P.Prefix == 0x64   ? NdMemoryAddressSpace::X86FS
@@ -114,6 +116,29 @@ llvm::CallInst *call(llvm::IRBuilder<> &B, llvm::Module &M,
   auto *T = llvm::FunctionType::get(Args[1]->getType(), Types, false);
   return B.CreateCall(
       llvm::InlineAsm::get(T, P.assembly(), P.constraints(), true), Args);
+}
+
+TEST(X86FourSourceSource, StackControlsRequire64BitDefaultMemory) {
+  for (unsigned Control : {0x164u, 0x165u, 0x200u})
+    EXPECT_FALSE(x86FourSourcePlan(0, 0, Control));
+  for (const auto &P : plans()) {
+    if (!P.stackReference())
+      continue;
+    auto F = med(P);
+    auto E = high(P);
+    EXPECT_THROW(x86FourSourceHighPlan(Arch::X86, *E), std::invalid_argument);
+    llvm::LLVMContext C;
+    EXPECT_THROW(MedLLVMEmitter().emit({F}, C, "wrong-mode", Arch::X86),
+                 std::invalid_argument);
+    for (auto Space :
+         {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS}) {
+      F.Blocks[0].Ops[0].MemoryAddressSpace = Space;
+      E->MemoryAddressSpace = Space;
+      EXPECT_THROW(x86FourSourceHighPlan(Arch::X64, *E), std::invalid_argument);
+      EXPECT_THROW(MedLLVMEmitter().emit({F}, C, "wrong-segment", Arch::X64),
+                   std::invalid_argument);
+    }
+  }
 }
 
 TEST(X86FourSourceSource, MedAndSourceShareCheckedControls) {
@@ -330,7 +355,7 @@ TEST(X86FourSourceSource, ExportsEverySourceAndMaskedEffect) {
     std::string High =
         "#include <stdint.h>\n" + std::string(X86FourSourceCompilerDispatch);
     unsigned Index = 0;
-    for (const auto &P : plans()) {
+    for (const auto &P : plans(A)) {
       const auto Bytes = P.Control.bytes();
       const auto Name = "four_" + std::to_string(Index++);
       llvm::IRBuilder<> B(C);
@@ -352,7 +377,9 @@ TEST(X86FourSourceSource, ExportsEverySourceAndMaskedEffect) {
             V, B.CreateGEP(B.getInt8Ty(), F->getArg(2), B.getInt32(I * Bytes)),
             llvm::Align(1)));
       Args.push_back(F->getArg(1));
-      const bool Native = llvm::Intrinsic::lookupIntrinsicID(P.llvmName());
+      const bool Native =
+          llvm::Intrinsic::lookupIntrinsicID(P.llvmName()) &&
+          (!P.stackReference() || x86NativeStackMemoryIsAvailable());
       B.CreateAlignedStore(call(B, M, P, Args, Native), F->getArg(3),
                            llvm::Align(1));
       Args.back() = B.getInt16(0);
@@ -421,6 +448,10 @@ TEST(X86FourSourceSource, PipelineKeepsAllFourInputsAndTheReturnedValue) {
     // Address, mask, accumulator plus four sources, and output are independent
     // SysV arguments. Every source has a different observable input slice.
     std::vector<uint8_t> Bytes = {0x48, 0x89, 0xf8, 0xc5, 0xf8, 0x92, 0xd6};
+    if (P.stackReference()) {
+      // Preserve RBP and retain the known RAX return of the ordinary fixture.
+      Bytes.insert(Bytes.begin(), {0x55, 0x48, 0x89, 0xfd});
+    }
     const auto Load = P.Control.scalar()
                           ? std::vector<uint8_t>{0xc5, 0xfa, 0x6f}
                           : std::vector<uint8_t>{0x62, 0xf1, 0xfe, 0x48, 0x6f};
@@ -431,18 +462,23 @@ TEST(X86FourSourceSource, PipelineKeepsAllFourInputsAndTheReturnedValue) {
       if (I)
         Bytes.push_back(P.Control.scalar() ? I * 16 : I);
     }
-    if (P.Prefix)
-      Bytes.push_back(P.Prefix);
+    if (P.hasSegmentPrefix())
+      Bytes.push_back(x86NativeMemoryPrefix(P.Prefix));
     constexpr uint8_t Opcodes[] = {0x9a, 0xaa, 0x9b, 0xab, 0x52, 0x53};
-    Bytes.insert(Bytes.end(),
-                 {0x62, 0xf2, 0x5f,
-                  uint8_t(0x0a | (P.Control.scalar() ? 0 : 0x40) |
-                          (P.Control.Zero ? 0x80 : 0)),
-                  Opcodes[static_cast<unsigned>(P.Control.Kind)], 0x08});
+    Bytes.insert(Bytes.end(), {0x62, 0xf2, 0x5f,
+                               uint8_t(0x0a | (P.Control.scalar() ? 0 : 0x40) |
+                                       (P.Control.Zero ? 0x80 : 0)),
+                               Opcodes[static_cast<unsigned>(P.Control.Kind)],
+                               uint8_t(P.stackReference() ? 0x4d : 0x08)});
+    if (P.stackReference())
+      Bytes.push_back(0); // RBP + disp8(0).
     auto Store = Load;
     Store.back() = 0x7f;
     Bytes.insert(Bytes.end(), Store.begin(), Store.end());
-    Bytes.insert(Bytes.end(), {0x09, 0xc3});
+    Bytes.push_back(0x09);
+    if (P.stackReference())
+      Bytes.push_back(0x5d); // pop rbp.
+    Bytes.push_back(0xc3);
     BinaryImage Image;
     Image.Arch = Arch::X64;
     Image.Bits = Bitness::Bits64;
@@ -497,6 +533,6 @@ TEST(X86FourSourceSource, PipelineKeepsAllFourInputsAndTheReturnedValue) {
     }
     ++Index;
   }
-  EXPECT_EQ(Index, 36u);
+  EXPECT_EQ(Index, 48u);
 }
 } // namespace

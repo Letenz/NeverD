@@ -1870,6 +1870,214 @@ TEST(SignatureDBCallerContext, WeakIncomingBodiesCannotExtendTheFrontier) {
   EXPECT_EQ(Names.count(0x1200), 0u);
 }
 
+namespace {
+struct AnchoredShortCaller {
+  neverd::BinaryImage Image = incomingCallerImage();
+  const std::string Body = "53E8........E8........5BC3 00 0000 000D";
+  const std::string Source =
+      Body + " !caller :0000 middle ^0002 anchor ^0007 callee\n";
+  const std::string Anchor =
+      "101112131415161718191A1B1C1D1EC3 00 0000 0010 :0000 anchor\n";
+  std::vector<uint64_t> Entries = {0x1000, 0x1100, 0x1200, 0x1300};
+
+  AnchoredShortCaller() {
+    auto &Code = Image.Segments.front();
+    Code.Size = Code.FileSz = 0x400;
+    Code.Data.resize(0x400, 0xcc);
+    const uint8_t Middle[] = {0x53, 0xe8, 0xfa, 1, 0,    0,   0xe8,
+                              0xf5, 0,    0,    0, 0x5b, 0xc3};
+    std::copy(std::begin(Middle), std::end(Middle), Code.Data.begin() + 0x100);
+    const uint8_t Leaf[] = {0xaa, 0xbb, 0xcc, 0xdd, 0xc3};
+    std::copy(std::begin(Leaf), std::end(Leaf), Code.Data.begin() + 0x200);
+    for (unsigned I = 0; I < 15; ++I)
+      Code.Data[0x300 + I] = 0x10 + I;
+    Code.Data[0x30f] = 0xc3;
+  }
+};
+} // namespace
+
+TEST(SignatureDBCallerContext, IndependentOrdinaryCalleeSupportsShortCaller) {
+  for (bool RequiredRoot : {false, true}) {
+    for (bool Reverse : {false, true}) {
+      AnchoredShortCaller F;
+      std::string Patterns = F.Anchor + F.Source + IncomingLeaf;
+      Patterns += RequiredRoot ? F.Body + " !refs :0000 middle ^0002 anchor\n"
+                               : incomingCallerLine("root", " ^0005 middle");
+      if (Reverse) {
+        std::reverse(F.Entries.begin(), F.Entries.end());
+        llvm::SmallVector<llvm::StringRef, 8> Lines;
+        llvm::StringRef(Patterns).split(Lines, '\n', -1, false);
+        std::string Reversed;
+        for (llvm::StringRef Line : llvm::reverse(Lines))
+          Reversed += Line.str() + "\n";
+        Patterns = std::move(Reversed);
+      }
+      SignatureDB DB;
+      ASSERT_FALSE(DB.loadPatternText(Patterns, "short-anchor"));
+      DB.apply(F.Image, F.Entries);
+      auto Names = DB.buildCandidateNameMap();
+      ASSERT_EQ(Names.count(0x1200), 1u);
+      EXPECT_EQ(Names.at(0x1200), "callee");
+      EXPECT_TRUE(DB.buildNameMap().empty());
+      // Reusing the same buffer cannot retain the independent proof.
+      F.Image.Segments.front().Data[0x300] ^= 1;
+      DB.apply(F.Image, F.Entries);
+      EXPECT_EQ(DB.buildCandidateNameMap().count(0x1200), 0u);
+    }
+  }
+}
+
+TEST(SignatureDBCallerContext, ShortCallerNeedsCompleteIndependentEvidence) {
+  for (unsigned Case = 0; Case < 11; ++Case) {
+    SCOPED_TRACE(Case);
+    AnchoredShortCaller F;
+    std::string Anchor = F.Anchor, Source = F.Source;
+    std::string Root = incomingCallerLine("root", " ^0005 middle");
+    switch (Case) {
+    case 0:
+      Anchor.clear();
+      break;
+    case 1:
+      Anchor += "101112131415161718191A1B1C1D1EC3 00 0000 0010 :0000 rival\n";
+      break;
+    case 2:
+      Anchor.replace(Anchor.find("0010"), 4, "0011");
+      break;
+    case 3:
+      Anchor = "1011121314 00 0000 0005 :0000 anchor\n";
+      break;
+    case 4:
+      Anchor.insert(Anchor.find(" :"), " !caller");
+      break;
+    case 5:
+      Source += F.Body + " !caller :0000 middle ^0007 callee\n";
+      break;
+    case 6:
+      Source += F.Body + " !caller :0000 middle ^0002 other ^0007 callee\n";
+      break;
+    case 7:
+      // A pruned required clause cannot invent the remaining outgoing sites.
+      Root = F.Body + " !refs :0000 middle ^0002 anchor ^0007 callee\n" +
+             F.Body + " !refs :0000 middle ^0002 anchor\n";
+      Source.clear();
+      break;
+    case 8:
+      Root.clear(); // An otherwise unrooted short body cannot start a chain.
+      break;
+    case 9:
+      Source = F.Body +
+               " !caller :0000 middle ^0002 anchor ^0002 other ^0007 callee\n";
+      break;
+    case 10:
+      F.Entries.pop_back(); // The proposed callee is not a requested function.
+      break;
+    }
+    SignatureDB DB;
+    ASSERT_FALSE(DB.loadPatternText(Root + Source + Anchor + IncomingLeaf,
+                                    "short-anchor-negative"));
+    DB.apply(F.Image, F.Entries);
+    EXPECT_EQ(DB.buildCandidateNameMap().count(0x1200), 0u);
+  }
+}
+
+TEST(SignatureDBCallerContext, IndependentCalleeMustBeSeparateExecutableCode) {
+  for (bool Overlap : {false, true}) {
+    AnchoredShortCaller F;
+    std::string Anchor = F.Anchor;
+    auto &Code = F.Image.Segments.front();
+    if (Overlap) {
+      for (unsigned I = 0; I < 16; ++I)
+        Code.Data[0xf0 + I] = 0x10 + I;
+      neverd::writeLE<uint32_t>(Code.Data.data() + 0x102,
+                                uint32_t(0x10f0 - 0x1106));
+      Anchor = "101112131415161718191A1B1C1D1E1F53E8........E8........5BC3 "
+               "00 0000 001D :0000 anchor\n";
+      F.Entries.push_back(0x10f0);
+    } else {
+      neverd::Segment Data;
+      Data.VA = 0x1300;
+      Data.Size = Data.FileSz = 16;
+      Data.Flags = neverd::SegmentFlags::Readable;
+      Data.Data.assign(Code.Data.begin() + 0x300, Code.Data.begin() + 0x310);
+      Code.Size = Code.FileSz = 0x300;
+      Code.Data.resize(0x300);
+      F.Image.Segments.push_back(std::move(Data));
+    }
+    SignatureDB DB;
+    ASSERT_FALSE(
+        DB.loadPatternText(incomingCallerLine("root", " ^0005 middle") +
+                               F.Source + Anchor + IncomingLeaf,
+                           "separate-code"));
+    DB.apply(F.Image, F.Entries);
+    const auto Names = DB.buildCandidateNameMap();
+    ASSERT_EQ(Names.count(0x1100), 1u);
+    EXPECT_EQ(Names.count(0x1200), 0u);
+  }
+}
+
+TEST(SignatureDBCallerContext, IndependentShortCallerUsesAArch64BranchFields) {
+  AnchoredShortCaller F;
+  F.Image.Arch = neverd::Arch::AArch64;
+  auto &Code = F.Image.Segments.front().Data;
+  auto Put = [&](size_t Offset, uint32_t Word) {
+    neverd::writeLE<uint32_t>(Code.data() + Offset, Word);
+  };
+  Put(0, 0x94000040); // BL middle.
+  for (size_t I = 4; I < 20; I += 4)
+    Put(I, 0xd503201f);
+  Put(20, 0xd65f03c0);
+  Put(0x100, 0x94000080); // BL anchor.
+  Put(0x104, 0x9400003f); // BL callee.
+  Put(0x108, 0xd65f03c0);
+  Put(0x200, 0x52800540); // MOV W0, #42.
+  Put(0x204, 0xd65f03c0);
+  for (size_t I = 0x300; I < 0x30c; I += 4)
+    Put(I, 0xd503201f);
+  Put(0x30c, 0xd65f03c0);
+  SignatureDB DB;
+  ASSERT_FALSE(DB.loadPatternText(
+      "........1F2003D51F2003D51F2003D51F2003D5C0035FD6 00 0000 0018 "
+      ":0000 root ^0000 middle\n"
+      "................C0035FD6 00 0000 000C !caller :0000 middle "
+      "^0000 anchor ^0004 callee\n"
+      "1F2003D51F2003D51F2003D5C0035FD6 00 0000 0010 :0000 anchor\n"
+      "40058052C0035FD6 00 0000 0008 !caller :0000 callee\n",
+      "aarch64-short"));
+  DB.apply(F.Image, F.Entries);
+  const auto Names = DB.buildCandidateNameMap();
+  ASSERT_EQ(Names.count(0x1200), 1u);
+  EXPECT_EQ(Names.at(0x1200), "callee");
+  EXPECT_TRUE(DB.buildNameMap().empty());
+  Put(0x100, 0xd503201f); // An absent branch cannot retain the proof.
+  DB.apply(F.Image, F.Entries);
+  EXPECT_EQ(DB.buildCandidateNameMap().count(0x1200), 0u);
+}
+
+TEST(SignatureDBCallerContext, NewlySettledNominalBodyCannotAnchorShortCaller) {
+  AnchoredShortCaller F;
+  auto &Code = F.Image.Segments.front().Data;
+  neverd::writeLE<uint32_t>(Code.data() + 5, uint32_t(0x1300 - 0x1009));
+  Code[0x300] = 0x90;
+  Code[0x301] = 0xe8;
+  neverd::writeLE<uint32_t>(Code.data() + 0x302, uint32_t(0x1100 - 0x1306));
+  std::fill(Code.begin() + 0x306, Code.begin() + 0x315, 0x90);
+  Code[0x315] = 0xc3;
+  const std::string Body =
+      "90E8........909090909090909090909090909090C3 00 0000 0016";
+  SignatureDB DB;
+  ASSERT_FALSE(DB.loadPatternText(
+      incomingCallerLine("root", " ^0005 anchor") + F.Source + IncomingLeaf +
+          Body + " :0000 anchor\n" + Body + " :0000 rival\n" + Body +
+          " !caller :0000 anchor ^0002 middle\n",
+      "late-name"));
+  DB.apply(F.Image, F.Entries);
+  const auto Names = DB.buildCandidateNameMap();
+  ASSERT_EQ(Names.count(0x1100), 1u);
+  EXPECT_EQ(Names.at(0x1100), "middle");
+  EXPECT_EQ(Names.at(0x1300), "anchor");
+  EXPECT_EQ(Names.count(0x1200), 0u);
+}
+
 TEST(SignatureDBCallerContext,
      IncomingDepthBudgetRetainsOnlySupportedPrefixes) {
 #define NEVERD_SIGS_REFERENCE_LIMIT(Name, Value)                               \
