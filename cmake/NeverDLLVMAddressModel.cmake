@@ -4,16 +4,24 @@ function(neverd_scope_llvm_address_model)
     find_package(Git REQUIRED)
     get_target_property(_mc_source_dir LLVMMC SOURCE_DIR)
     set(_backend "${_mc_source_dir}/AddressModelBackend.cpp")
-    set(_patch "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/patches/llvm-aarch64-specifier-scope.patch")
+    set(_patch_root "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/patches")
+    set(_scope_patches
+        "${_patch_root}/llvm-aarch64-specifier-scope.patch"
+        "${_patch_root}/llvm-aarch64-upstream-specifier-scope.patch")
+    set(_i386_patches "${_patch_root}/llvm-i386-got-base.patch")
+    set(_macho_patches "${_patch_root}/llvm-macho-gotpcrel-data.patch")
     set(_overlay_root "${CMAKE_BINARY_DIR}/neverd-llvm-address-model")
     set(_overlay "${_overlay_root}/llvm/lib/MC/AddressModelBackend.cpp")
     set(_stamp "${_overlay_root}/inputs.sha256")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${_backend}" "${_patch}")
+        "${_backend}" ${_scope_patches} ${_i386_patches} ${_macho_patches})
     file(SHA256 "${_backend}" _backend_sha)
-    file(SHA256 "${_patch}" _patch_sha)
     file(SHA256 "${CMAKE_CURRENT_FUNCTION_LIST_FILE}" _helper_sha)
-    set(_inputs "${_backend_sha}\n${_patch_sha}\n${_helper_sha}\n")
+    set(_inputs "${_backend_sha}\n${_helper_sha}\n")
+    foreach(_patch IN LISTS _scope_patches _i386_patches _macho_patches)
+        file(SHA256 "${_patch}" _patch_sha)
+        string(APPEND _inputs "${_patch_sha}\n")
+    endforeach()
     set(_previous "")
     if(EXISTS "${_stamp}")
         file(READ "${_stamp}" _previous)
@@ -30,33 +38,49 @@ function(neverd_scope_llvm_address_model)
             --unset=GIT_INDEX_FILE --unset=GIT_PREFIX
             "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
             "${GIT_EXECUTABLE}")
-        execute_process(
-            COMMAND ${_isolated_git} apply --no-index --check "${_patch}"
-            WORKING_DIRECTORY "${_overlay_root}"
-            RESULT_VARIABLE _check ERROR_VARIABLE _detail)
-        if(_check EQUAL 0)
-            execute_process(
-                COMMAND ${_isolated_git} apply --no-index "${_patch}"
-                WORKING_DIRECTORY "${_overlay_root}"
-                RESULT_VARIABLE _apply ERROR_VARIABLE _detail)
-            if(NOT _apply EQUAL 0)
-                message(FATAL_ERROR "Cannot scope LLVM MC specifiers: ${_detail}")
-            endif()
-            file(SHA256 "${_overlay}" _corrected_sha)
-            if(_corrected_sha STREQUAL _backend_sha)
-                message(FATAL_ERROR "LLVM MC correction was skipped by Git")
-            endif()
-        else()
-            execute_process(
-                COMMAND ${_isolated_git} apply --no-index --reverse --check "${_patch}"
-                WORKING_DIRECTORY "${_overlay_root}"
-                RESULT_VARIABLE _fixed ERROR_VARIABLE _fixed_detail)
-            if(NOT _fixed EQUAL 0)
+        # The fork can already contain only some corrections. Check each
+        # semantic correction independently; the two scope patches recognize
+        # the original overlay spelling and the fork's equivalent guard.
+        foreach(_group IN ITEMS _scope_patches _i386_patches _macho_patches)
+            set(_matched FALSE)
+            set(_details "")
+            foreach(_patch IN LISTS ${_group})
+                execute_process(
+                    COMMAND ${_isolated_git} apply --no-index --check "${_patch}"
+                    WORKING_DIRECTORY "${_overlay_root}"
+                    RESULT_VARIABLE _check ERROR_VARIABLE _detail)
+                if(_check EQUAL 0)
+                    file(SHA256 "${_overlay}" _before_sha)
+                    execute_process(
+                        COMMAND ${_isolated_git} apply --no-index "${_patch}"
+                        WORKING_DIRECTORY "${_overlay_root}"
+                        RESULT_VARIABLE _apply ERROR_VARIABLE _detail)
+                    if(NOT _apply EQUAL 0)
+                        message(FATAL_ERROR "Cannot scope LLVM MC correction: ${_detail}")
+                    endif()
+                    file(SHA256 "${_overlay}" _corrected_sha)
+                    if(_corrected_sha STREQUAL _before_sha)
+                        message(FATAL_ERROR "LLVM MC correction was skipped by Git")
+                    endif()
+                    set(_matched TRUE)
+                    break()
+                endif()
+                execute_process(
+                    COMMAND ${_isolated_git} apply --no-index --reverse --check "${_patch}"
+                    WORKING_DIRECTORY "${_overlay_root}"
+                    RESULT_VARIABLE _fixed ERROR_VARIABLE _fixed_detail)
+                if(_fixed EQUAL 0)
+                    set(_matched TRUE)
+                    break()
+                endif()
+                string(APPEND _details "${_detail}${_fixed_detail}")
+            endforeach()
+            if(NOT _matched)
                 message(FATAL_ERROR
                     "LLVM AddressModelBackend does not match the scoped correction "
-                    "or an already corrected source. ${_detail}${_fixed_detail}")
+                    "or an already corrected source (${_group}). ${_details}")
             endif()
-        endif()
+        endforeach()
         file(WRITE "${_stamp}" "${_inputs}")
     endif()
 

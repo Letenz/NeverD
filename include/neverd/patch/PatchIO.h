@@ -19,7 +19,10 @@ namespace neverd::patch {
 
 llvm::Expected<std::vector<uint8_t>> parseHex(llvm::StringRef Text,
                                               uint64_t Limit);
-llvm::json::Array patchRowsJSON(const PatchOverlay &Overlay);
+/// Emit canonical rows in file-offset order with lexicographically ordered
+/// keys. The caller chooses compact protocol or indented sidecar formatting;
+/// neither needs an intermediate JSON object tree.
+void writePatchRows(llvm::json::OStream &Output, const PatchOverlay &Overlay);
 llvm::Expected<std::vector<PatchRow>> parsePatchRows(llvm::StringRef Text);
 
 /// Replays the overlay onto the original input; never replaces an existing

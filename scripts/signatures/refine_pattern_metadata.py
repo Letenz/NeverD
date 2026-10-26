@@ -72,7 +72,7 @@ def refine(existing: list[Path], evidence: list[Path],
             state = None
             selected = line is not None and (names is None or any(
                 name.partition(" ")[2] in names for name in line.names))
-            if selected and not line.require_caller:
+            if selected and not line.require_caller and not line.is_vtable:
                 shape = builder.Shape.of(line.key)
                 if shape.fully_verified():
                     state = Evidence(line)
