@@ -1023,12 +1023,37 @@ sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
 
-History publication composes the recovery journal from serializer-produced JSON
-and reuses the already encoded target history. It retains the owning before/after
-states until all writes finish, constructing a full in-memory journal only after
-an interrupted write for same-session retry. This avoids a second whole-state
-tree and repeated target-history encoding on successful saves. Read comparisons,
-byte budgets, atomic write order and recovery validation remain authoritative.
+History checkpoints share an immutable, validated committed snapshot; staged
+commands and the undo cursor remain independent. Every consistency check still
+reads the actual bounded sidecar files. Exact byte equality can reuse the
+snapshot's validation; changed bytes take the same parser and normalizer,
+including equivalent formatting, merge-conflict and foreign-edit checks. A row
+can reuse admission only when both its values and JSON types match the validated
+row. Non-finite numbers, binary values and invalid UTF-8 are refused before
+publication so the snapshot and its serialized representation cannot diverge.
+
+History publication encodes the target state once and composes the history and
+recovery journal from serializer-produced JSON and retained committed text.
+Loading a snapshot retains validated history-file bytes and defers journal
+encoding until a save needs it. Before embedding a loaded document, publication
+parses and serializes it, so a top-level BOM cannot enter nested JSON. Merely
+opening history does not pay these serialization costs.
+It retains owning before/after snapshots until all writes finish, constructing a
+full in-memory journal only after an interrupted write for same-session retry.
+This avoids a second whole-state tree and repeated state encoding on successful
+saves. Byte budgets, atomic write order and full recovery validation remain
+authoritative. Undo/redo replaces rows in sorted position; patch commands merge
+the SDK's complete, file-offset-ordered inventory with the committed rows.
+A committed patch command proves that reloading must invalidate analysis, so
+it does not produce two more complete inventories just to detect that change.
+Ordinary reloads still compare before and after.
+
+Shared transport JSON has separate entry points for bounded external frames
+and SDK-owned documents. Backend parsing preserves native JSON number types,
+rounding and last-duplicate-key behavior, with an owning SIMD conversion when
+possible and native fallback otherwise. External frames and sidecars retain
+their duplicate-key, nesting and byte admission. Neither path retains borrowed
+parser strings; temporary large parser storage is released before fallback.
 
 Find in view is a GUI text operation. Its modeless dialog captures the originating
 pane before taking keyboard focus; pseudocode/IR supplies its complete source

@@ -55,6 +55,7 @@ neverd_byte_patch_apply(neverd_session_t Sess,
                         const neverd_byte_patch_options_v1 *Options);
 NEVERD_API int neverd_byte_patch_revert(neverd_session_t Sess,
                                         neverd_va_t Address, uint64_t Size);
+/// Complete overlay rows, ordered by their file offset (the "addr" key).
 NEVERD_API const char *neverd_byte_patches_json(neverd_session_t Sess);
 /// Canonical changed ranges as [{address,size}], without encoding byte data.
 NEVERD_API const char *neverd_byte_patch_ranges_json(neverd_session_t Sess);
