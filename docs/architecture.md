@@ -571,9 +571,12 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Automatic immediate, pre/post-index, pair and other ordinary-memory
-lifting remains unqualified for CPA2, as does controlled native execution with CPTA
-enabled. Native half and whole-vector C entry/return ABI and DWARF vector
+identity. Automatic x1 GPR single-immediate lifting and initialized-image
+rebasing have the bounded qualification above. Pre/post-index, pair and other
+ordinary-memory families, original-SP stack/call projection and Apple native
+execution with CPTA enabled remain unqualified. Controlled Arm model execution
+qualifies the declared explicit-IR exports separately from an automatically
+lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
 profile, and does not qualify native Apple SVE or LLVMC scalable carriers.
@@ -759,10 +762,10 @@ not make a packed projection a runnable standalone dylib.
 For a selected dyld cache image, debug discovery does not inspect the container
 or automatically attach its adjacent companions. Explicit DWARF and MAP paths
 retain the existing selected-image architecture and identity checks.
-Exception-level
-authentication, implicit-entry PACM state and CPA2 memory address arithmetic
-remain unsupported; recognizing x1's header does not claim those instruction
-semantics.
+A packed cache remains an analysis input. Recognizing x1's header grants no
+runtime environment: whole-image execution still needs complete exception-level
+authentication, implicit-entry PACM and CPA2/stack contracts. The supported
+explicit-IR operations above do not certify that complete image ABI.
 
 ## GUI project and search ownership
 

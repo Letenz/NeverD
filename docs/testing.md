@@ -525,6 +525,17 @@ qualify original-SP lifting or native half/whole-vector ABI. A decoded SP-to-GPR
 alias stays analyzable without an image and must fail arm64e image-backed
 lowering instead of losing its stack ABI. Synthetic raw-SP
 and invalid constant image requirements fail before body filtering.
+The [2026-10-26 qualification record](evidence/arm64e-immediate-memory-2026-10-26.json)
+binds the tested source, complete reports and actual C/object export hashes.
+The unmodified official Arm AEM FVP 11.32.19 passes all 20 routes: EL1/EL0,
+runtime/image-rebased bases and five output routes, with 177 samples under all
+four effective controls. Each route requires 79 or 83 checks within the original
+45-second process limit. These are explicit-IR, nonoverflow model results;
+automatic decoding is separately tested locally. Apple CPA2 hardware and a
+complete automatically rebuilt arm64e image remain unqualified. The wider
+local run records 650 passes, three unavailable native PAuth cases and the
+retained generic AArch64 ELF variadic Q-save failure; it is not all green.
+
 Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
 both generated C files, the independent native harness and LLVM ELF/Mach-O objects
 in a fresh directory recorded in the test's properties. These artifacts allow
