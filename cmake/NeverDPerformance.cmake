@@ -8,7 +8,7 @@ endif()
 
 option(NEVERD_ENABLE_HIGHWAY "Use Highway for bounded byte and integer searches" ON)
 option(NEVERD_ENABLE_SIMDUTF "Use simdutf for valid UTF-8 fast paths" ON)
-option(NEVERD_ENABLE_SIMDJSON "Use simdjson for transport parsing" ON)
+option(NEVERD_ENABLE_SIMDJSON "Use simdjson for transport and patch parsing" ON)
 option(NEVERD_ENABLE_TBB "Use oneTBB pipeline scheduling" ON)
 
 function(neverd_add_task_scheduler)

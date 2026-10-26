@@ -1,0 +1,72 @@
+//===- AArch64WritebackMemory.def - Original writeback memory --*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// GPR single pre/post-index instructions. One native operation owns the
+/// access and AddressAdd, including their order and completed base result.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_A64_WRITEBACK_OPERATION
+#define NEVERD_A64_WRITEBACK_OPERATION(Id, Name)
+#endif
+#ifndef NEVERD_A64_WRITEBACK_ENCODING
+#define NEVERD_A64_WRITEBACK_ENCODING(Word, Load, Access, Result)
+#endif
+#ifndef NEVERD_A64_WRITEBACK_VALUE
+#define NEVERD_A64_WRITEBACK_VALUE(Type, Name, Value)
+#endif
+#ifndef NEVERD_A64_WRITEBACK_TEXT
+#define NEVERD_A64_WRITEBACK_TEXT(Name, Text)
+#endif
+
+NEVERD_A64_WRITEBACK_OPERATION(A64_LoadWriteback, "load_writeback")
+NEVERD_A64_WRITEBACK_OPERATION(A64_StoreWriteback, "store_writeback")
+NEVERD_A64_WRITEBACK_ENCODING(0x38000400U, false, 1, 0)
+NEVERD_A64_WRITEBACK_ENCODING(0x38400400U, true, 1, 4)
+NEVERD_A64_WRITEBACK_ENCODING(0x38800400U, true, 1, 8)
+NEVERD_A64_WRITEBACK_ENCODING(0x38c00400U, true, 1, 4)
+NEVERD_A64_WRITEBACK_ENCODING(0x78000400U, false, 2, 0)
+NEVERD_A64_WRITEBACK_ENCODING(0x78400400U, true, 2, 4)
+NEVERD_A64_WRITEBACK_ENCODING(0x78800400U, true, 2, 8)
+NEVERD_A64_WRITEBACK_ENCODING(0x78c00400U, true, 2, 4)
+NEVERD_A64_WRITEBACK_ENCODING(0xb8000400U, false, 4, 0)
+NEVERD_A64_WRITEBACK_ENCODING(0xb8400400U, true, 4, 4)
+NEVERD_A64_WRITEBACK_ENCODING(0xb8800400U, true, 4, 8)
+NEVERD_A64_WRITEBACK_ENCODING(0xf8000400U, false, 8, 0)
+NEVERD_A64_WRITEBACK_ENCODING(0xf8400400U, true, 8, 8)
+
+NEVERD_A64_WRITEBACK_VALUE(uint32_t, kWritebackOpcodeMask, 0xffe00400U)
+NEVERD_A64_WRITEBACK_VALUE(uint32_t, kWritebackPreIndexBit, 0x800U)
+NEVERD_A64_WRITEBACK_VALUE(uint32_t, kWritebackModeMask, 0xc00U)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackBaseOperand, 0)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackWordOperand, 1)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackDataOperand, 2)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackLoadOperands, 2)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackStoreOperands, 3)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackPairBytes, 16)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackPairBits, 128)
+NEVERD_A64_WRITEBACK_VALUE(uint8_t, kWritebackByteSignBit, 0x80U)
+NEVERD_A64_WRITEBACK_VALUE(uint8_t, kWritebackByteMask, 0xffU)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackValueIndex, 0)
+NEVERD_A64_WRITEBACK_VALUE(unsigned, kWritebackBaseIndex, 1)
+NEVERD_A64_WRITEBACK_TEXT(kWritebackLoadAsm,
+                          "// neverd.writeback.load\n\t.inst ${3:c}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackStoreAsm,
+                          "// neverd.writeback.store\n\t.inst ${3:c}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackLoadConstraints,
+                          "=&{x17},={x16},1,i,~{memory}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackStoreConstraints,
+                          "={x16},0,{x17},i,~{memory}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackResult, "memory.writeback")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackMalformed,
+                          "malformed AArch64 writeback memory operation")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackSPUnsupported,
+                          "writeback SP memory requires the original SP "
+                          "alignment and memory-tagging environment")
+
+#undef NEVERD_A64_WRITEBACK_TEXT
+#undef NEVERD_A64_WRITEBACK_VALUE
+#undef NEVERD_A64_WRITEBACK_ENCODING
+#undef NEVERD_A64_WRITEBACK_OPERATION

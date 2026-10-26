@@ -193,6 +193,74 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
     return Builder.CreateZExtOrTrunc(Result, sizeToType(Op.Output.Size));
   }
 
+  if (isAArch64WritebackMemoryIntrinsic(IC)) {
+    if (!aarch64WritebackMemoryMedShapeIsValid(Op))
+      llvm::report_fatal_error(kWritebackMalformed);
+    const auto Instruction = *aarch64WritebackMemoryInstruction(
+        Op.Inputs[kWritebackWordOperand + 1].ConstVal);
+    if (Instruction.stackBase())
+      llvm::report_fatal_error(kWritebackSPUnsupported);
+    const auto &BaseInput = Op.Inputs[kWritebackBaseOperand + 1];
+    llvm::Value *Base = nullptr;
+    if (Img) {
+      uint64_t OriginalBase = 0;
+      uint64_t Owner = InvalidVA;
+      if (resolveMaterializableDataAddress(BaseInput, OriginalBase, &Owner)) {
+        if (!aarch64ImmediateMemoryImageSpan(
+                *Img, Instruction, OriginalBase,
+                ConstantAddressProvenance::DataAddress, Owner))
+          llvm::report_fatal_error(kAddressMemoryImmediateImageUnsupported);
+        if (Owner == InvalidVA)
+          Owner = Img->layoutAddressOwner(OriginalBase);
+        Base = tryResolveOwnedGlobalData(OriginalBase, Owner,
+                                         kAddressMemoryPointerBytes, true);
+        if (!Base)
+          llvm::report_fatal_error(kAddressMemoryImmediateImageUnsupported);
+      } else {
+        rejectEscapingAddressFragment(BaseInput,
+                                      kAddressMemoryImmediateImageUnsupported);
+      }
+    }
+    if (!Base)
+      Base = getVar(BaseInput, Builder);
+    if (Base->getType()->isPointerTy())
+      Base = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
+    if (!Base->getType()->isIntegerTy(kAddressMemoryPointerBits))
+      llvm::report_fatal_error(kWritebackMalformed);
+    if (!Instruction.isLoad()) {
+      auto *Data = getVar(Op.Inputs[kWritebackDataOperand + 1], Builder);
+      if (Data->getType()->isPointerTy())
+        Data = Builder.CreatePtrToInt(Data, Builder.getInt64Ty());
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(Builder.getInt64Ty(),
+                                  {Builder.getInt64Ty(), Builder.getInt64Ty(),
+                                   Builder.getInt32Ty()},
+                                  false),
+          kWritebackStoreAsm, kWritebackStoreConstraints, true);
+      return Builder.CreateCall(
+          Asm, {Base, Data, Builder.getInt32(Instruction.scratchWord())},
+          kWritebackResult);
+    }
+    auto *ResultType = llvm::StructType::get(
+        *Ctx, {Builder.getInt64Ty(), Builder.getInt64Ty()});
+    auto *Asm = llvm::InlineAsm::get(
+        llvm::FunctionType::get(
+            ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
+        kWritebackLoadAsm, kWritebackLoadConstraints, true);
+    auto *Result = Builder.CreateCall(
+        Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
+        kWritebackResult);
+    auto *PairType = Builder.getIntNTy(kWritebackPairBits);
+    return Builder.CreateOr(
+        Builder.CreateZExt(
+            Builder.CreateExtractValue(Result, {kWritebackValueIndex}),
+            PairType),
+        Builder.CreateShl(Builder.CreateZExt(Builder.CreateExtractValue(
+                                                 Result, {kWritebackBaseIndex}),
+                                             PairType),
+                          kAddressMemoryPointerBits));
+  }
+
   if (isAArch64PAuthLoadIntrinsic(IC)) {
     if (!aarch64PAuthLoadMedShapeIsValid(Op))
       llvm::report_fatal_error(kPAuthLoadMalformed);

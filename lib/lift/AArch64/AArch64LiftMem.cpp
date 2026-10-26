@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/AArch64/AArch64Lifter.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -24,6 +25,49 @@ namespace neverd {
 bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
                             const cs_aarch64 &ARM64) {
   if (Insn->size == kAddressMemoryWordBytes) {
+    const uint32_t Word = readLE<uint32_t>(Insn->bytes);
+    if (PreserveImmediateMemory && aarch64WritebackMemoryOperation(Word)) {
+      const auto Instruction = aarch64WritebackMemoryInstruction(Word);
+      if (!Instruction)
+        return false;
+      if (!Instruction->stackBase()) {
+        const NdVar Base = NdVar::reg(
+            a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
+            kAddressMemoryPointerBytes);
+        const NdVar OriginalWord = NdVar::scalar(Word, kAddressMemoryWordBytes);
+        if (!Instruction->isLoad()) {
+          const NdVar Data =
+              Instruction->destination() == kAddressMemoryRegisterMask
+                  ? NdVar::scalar(0, kAddressMemoryPointerBytes)
+                  : NdVar::reg(a64reg::X0 + Instruction->destination() *
+                                                kAddressMemoryPointerBytes,
+                               kAddressMemoryPointerBytes);
+          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+          S.emitIntrinsic(Instruction->id(), Updated,
+                          {Base, OriginalWord, Data});
+          S.emit(NdOp::COPY, Base, {Updated});
+          return true;
+        }
+        const NdVar Pair = S.makeTemp(kWritebackPairBytes);
+        S.emitIntrinsic(Instruction->id(), Pair, {Base, OriginalWord});
+        if (Instruction->destination() != kAddressMemoryRegisterMask) {
+          const NdVar Destination =
+              NdVar::reg(a64reg::X0 + Instruction->destination() *
+                                          kAddressMemoryPointerBytes,
+                         Instruction->operation().ResultBytes);
+          S.emit(NdOp::SUBBYTES, Destination,
+                 {Pair, NdVar::scalar(0, kAddressMemoryWordBytes)});
+          if (Destination.Size < kAddressMemoryPointerBytes)
+            S.emit(NdOp::INT_ZEXT,
+                   NdVar::reg(Destination.Offset, kAddressMemoryPointerBytes),
+                   {Destination});
+        }
+        S.emit(NdOp::SUBBYTES, Base,
+               {Pair, NdVar::scalar(kAddressMemoryPointerBytes,
+                                    kAddressMemoryWordBytes)});
+        return true;
+      }
+    }
     // GPR-based single accesses retain their encoded displacement and access
     // EL. Immediate SP accesses still belong to the frame model until that
     // model can supply the original architectural SP environment.

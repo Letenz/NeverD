@@ -109,6 +109,11 @@ actual event modifiers before adding platform-specific key swaps.
   restore its full geometry. Test both normal and maximized main windows,
   including visibility before first show and move/resize/state events while
   loading a project; a final screenshot alone misses intermediate jumps.
+- When an external link brings back a minimized workbench, clear only
+  `Qt::WindowMinimized` from its window state before raising it. `showNormal()`
+  also discards maximized/full-screen state, unexpectedly resizing the window.
+  Keep this policy shared across macOS, Windows and Linux; verify ordinary
+  and maximized windows both with and without minimization.
 - Queue the application quit after the workbench accepts a close event.
   A synchronous `shutdownAccepted` → `QCoreApplication::quit` connection can
   reenter Cocoa's termination callback and crash Qt's thread-local cleanup.
