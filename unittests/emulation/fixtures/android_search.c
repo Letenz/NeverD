@@ -181,6 +181,32 @@ u64 substring_dynamic(const char *text, const char *needle, u64 closed) {
   return (u64)find(text, needle);
 }
 
+extern char *strcasestr(const char *, const char *);
+__asm__(".type strcasestr, %function");
+u64 case_substring(const char *text, const char *needle, u64 route,
+                   u64 *error) {
+  char *(*find)(const char *, const char *) = strcasestr;
+  if (route) {
+    void *library = dlopen("libsearch.so", 2);
+    if (!library)
+      return 97;
+    find = dlsym(library, "strcasestr");
+    if (!find)
+      return 96;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  char *result = find(text, needle);
+  *error = (u64)*__errno();
+  return (u64)result;
+}
+u64 case_substring_readonly(void *page, const char *text, const char *needle) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return (u64)strcasestr(text, needle);
+}
+
 extern u64 strspn(const char *, const char *);
 extern char *strpbrk(const char *, const char *);
 __asm__(".type strpbrk, %function");

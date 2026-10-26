@@ -588,6 +588,109 @@ TEST_P(AndroidSearch, SubstringDynamicProviderRetainsLifetime) {
   EXPECT_FALSE(Closed.NativeCalls.back().Result);
 }
 
+TEST_P(AndroidSearch, CaseInsensitiveSubstringUsesCLocaleBytesAndFirstMatch) {
+  struct Case {
+    const char *Text, *Needle;
+    int Offset;
+  };
+  const Case Cases[] = {{"", "", 0},
+                        {"a", "", 0},
+                        {"", "A", -1},
+                        {"BanAna", "ANA", 1},
+                        {"AaAAaB", "aaAB", 2},
+                        {"ababABaC", "ABac", 4},
+                        {"Abc", "ABCD", -1},
+                        {"abc", "Z", -1},
+                        {"\x80"
+                         "A\xff"
+                         "a",
+                         "a\xff", 1},
+                        {"\xc0"
+                         "A",
+                         "\xe0"
+                         "a",
+                         -1}};
+  Options.Android->Libraries["libsearch.so"] = {"strcasestr"};
+  Options.Android->ReadMemory = {{Buffer, 4096}};
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  for (const auto &C : Cases) {
+    for (uint64_t Route : {0u, 1u}) {
+      SCOPED_TRACE(testing::Message() << C.Offset << ":" << Route);
+      Bytes.assign(4096, 0xa5);
+      auto Put = [&](unsigned At, const char *Text) {
+        llvm::StringRef S(Text);
+        std::copy(S.begin(), S.end(), Bytes.begin() + At);
+        Bytes[At + S.size()] = 0;
+      };
+      Put(0, C.Text);
+      Put(64, C.Needle);
+      auto Expected = Bytes;
+      llvm::support::endian::write64le(Expected.data() + 128, 733);
+      const uint64_t Address = C.Offset < 0 ? 0 : Buffer + C.Offset;
+      auto R =
+          run("case_substring", {Buffer, Buffer + 64, Route, Buffer + 128});
+      returned(R, Address);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      uint64_t Target = 0;
+      unsigned Matches = 0;
+      for (const auto &Call : R.NativeCalls) {
+        if (Call.Name == "dlsym") {
+          EXPECT_EQ(Call.Symbol, "strcasestr");
+          ASSERT_TRUE(Call.Result);
+          Target = *Call.Result;
+        }
+        if (Call.Name != "strcasestr")
+          continue;
+        EXPECT_EQ(Call.Result, Address);
+        EXPECT_EQ(Call.Library, Route ? "libsearch.so" : "");
+        if (Route)
+          EXPECT_EQ(Call.PC, Target);
+        ++Matches;
+      }
+      EXPECT_EQ(Matches, 1u);
+    }
+  }
+}
+
+TEST_P(AndroidSearch, CaseInsensitiveSubstringStopsAtNulAndReadOnlyPageTail) {
+  Options.Android->ReadMemory = {{Buffer, 4096}};
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(4096, 0xa5);
+  Bytes[0] = 'x';
+  Bytes[1] = 'Y';
+  Bytes[2] = 0;
+  Bytes[4094] = 'X';
+  Bytes[4095] = 'y';
+  auto R = run("case_substring_readonly", {Buffer, PageEnd - 2, Buffer});
+  returned(R, PageEnd - 2);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+  // Read-only overlap is permitted, and the first NUL ends the haystack.
+  returned(run("case_substring_readonly", {Buffer, Buffer, Buffer}), Buffer);
+  Bytes[4095] = 0;
+  returned(run("case_substring_readonly", {Buffer, PageEnd - 2, Buffer}), 0);
+  returned(run("case_substring_readonly", {Buffer, UINT64_MAX, PageEnd - 1}),
+           UINT64_MAX);
+  Bytes[4095] = 'z';
+  rejected(run("case_substring_readonly", {Buffer, PageEnd - 2, Buffer}),
+           "strcasestr", "invalid guest pointer");
+  rejected(run("case_substring_readonly", {Buffer, Buffer, PageEnd - 1}),
+           "strcasestr", "invalid guest pointer");
+}
+
+TEST_P(AndroidSearch,
+       CaseInsensitiveSubstringClosedProviderPrecedesEmptyNeedle) {
+  Options.Android->Libraries["libsearch.so"] = {"strcasestr"};
+  auto R = run("case_substring", {UINT64_MAX, Buffer, 2, Buffer + 128});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "strcasestr");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+  EXPECT_FALSE(R.ReturnValue);
+}
+
 TEST_P(AndroidSearch, MemberSearchReturnsFirstByteAndPreservesErrnoAndInputs) {
   struct Case {
     const char *Text, *Accept;
@@ -1109,43 +1212,46 @@ TEST(AndroidSearchMemory, ObjectBoundsBudgetsAndFailuresPreserveGuestBytes) {
   }
   // The model budget bounds both scans and the prefix table. Failures are
   // terminal, never a guessed no-match, and do not modify either string.
-  for (unsigned Limit : {8u, 16u, 64u}) {
-    Options.MemoryLimit = Limit;
-    auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+  for (const char *Name : {"strstr", "strcasestr"}) {
+    SCOPED_TRACE(Name);
+    for (unsigned Limit : {8u, 16u, 64u}) {
+      Options.MemoryLimit = Limit;
+      auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+      android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                  Linked);
+      NativeCallEvent Call{};
+      Call.Name = Name;
+      Call.Arguments = {Buffer, Buffer};
+      auto Value = Model.invoke(Call);
+      if (Limit < 64) {
+        EXPECT_FALSE(bool(Value));
+        llvm::consumeError(Value.takeError());
+      } else {
+        ASSERT_TRUE(bool(Value));
+        ASSERT_TRUE(*Value);
+        EXPECT_EQ(std::get<uint64_t>(**Value), Buffer);
+      }
+      std::array<uint8_t, 16> After{};
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Before);
+    }
+    auto Budget = llvm::cantFail(ExecutionBudget::create(
+        {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
     android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
                                 Linked);
     NativeCallEvent Call{};
-    Call.Name = "strstr";
-    Call.Arguments = {Buffer, Buffer};
+    Call.Name = Name;
+    Call.Arguments = {Buffer, Buffer, 0};
     auto Value = Model.invoke(Call);
-    if (Limit < 64) {
-      EXPECT_FALSE(bool(Value));
-      llvm::consumeError(Value.takeError());
-    } else {
-      ASSERT_TRUE(bool(Value));
-      ASSERT_TRUE(*Value);
-      EXPECT_EQ(std::get<uint64_t>(**Value), Buffer);
-    }
+    ASSERT_FALSE(bool(Value));
+    EXPECT_NE(
+        llvm::toString(Value.takeError()).find("native call model timed out"),
+        std::string::npos);
+    EXPECT_TRUE(Model.timedOut());
     std::array<uint8_t, 16> After{};
-    llvm::cantFail(Space.snapshotBacking(Buffer, After));
+    ASSERT_EQ(llvm::toString(Space.snapshotBacking(Buffer, After)), "");
     EXPECT_EQ(After, Before);
   }
-  auto Budget = llvm::cantFail(ExecutionBudget::create(
-      {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
-  android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
-                              Linked);
-  NativeCallEvent Call{};
-  Call.Name = "strstr";
-  Call.Arguments = {Buffer, Buffer, 0};
-  auto Value = Model.invoke(Call);
-  ASSERT_FALSE(bool(Value));
-  EXPECT_NE(
-      llvm::toString(Value.takeError()).find("native call model timed out"),
-      std::string::npos);
-  EXPECT_TRUE(Model.timedOut());
-  std::array<uint8_t, 16> After{};
-  ASSERT_EQ(llvm::toString(Space.snapshotBacking(Buffer, After)), "");
-  EXPECT_EQ(After, Before);
 }
 TEST(AndroidSearchMemory, SpanScanLimitsAndTimeoutDoNotPublishAResultOrWrites) {
   ExecutionConfiguration Configuration;

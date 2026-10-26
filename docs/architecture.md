@@ -8443,6 +8443,10 @@ the needle and prefix table must fit the model budget, and the haystack is
 read only through the first match or the declared count. Budget exhaustion
 is a failure rather than a guessed no-match. Both searches preserve errno
 and guest bytes and retain the common dynamic-provider lifetime boundary.
+`strcasestr` uses this same prefix table and scan with C-locale ASCII case
+folding. It retains NUL termination, first-match and empty-needle semantics;
+bytes above ASCII remain unchanged. Guest locale changes are not modeled,
+and host locale settings do not affect the search.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.

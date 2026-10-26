@@ -200,6 +200,15 @@ llvm::Expected<std::optional<uint64_t>> Bionic::decimalValue(
 BionicResult Bionic::findSubstring(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   const bool Bounded = Call.Name == symbol::Memmem;
+  const bool IgnoreCase = Call.Name == symbol::Strcasestr;
+  auto Fold = [IgnoreCase](uint8_t C) -> uint8_t {
+    // The guest starts in the C locale; locale changes are not admitted.
+    // Keep non-ASCII bytes unchanged, independent of the host locale.
+    return IgnoreCase && C >= 'A' && C <= 'Z' ? C + ('a' - 'A') : C;
+  };
+  auto Equal = [&](uint8_t Left, uint8_t Right) {
+    return Fold(Left) == Fold(Right);
+  };
   std::string Needle;
   if (!Bounded) {
     auto Text = string(A[1]);
@@ -231,9 +240,9 @@ BionicResult Bionic::findSubstring(const NativeCallEvent &Call) {
       Expired = true;
       return failure(diagnostic::CallTimeout);
     }
-    while (J && Needle[I] != Needle[J])
+    while (J && !Equal(Needle[I], Needle[J]))
       J = Prefix[J - 1];
-    if (Needle[I] == Needle[J])
+    if (Equal(Needle[I], Needle[J]))
       ++J;
     Prefix[I] = J;
   }
@@ -247,9 +256,9 @@ BionicResult Bionic::findSubstring(const NativeCallEvent &Call) {
       return C.takeError();
     if (!Bounded && !*C)
       return value(0);
-    while (J && *C != static_cast<uint8_t>(Needle[J]))
+    while (J && !Equal(*C, Needle[J]))
       J = Prefix[J - 1];
-    if (*C == static_cast<uint8_t>(Needle[J]))
+    if (Equal(*C, Needle[J]))
       ++J;
     if (J == Needle.size())
       return value(A[0] + I - (J - 1));

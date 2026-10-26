@@ -11779,6 +11779,12 @@ unchanged backing. `AndroidBinarySubstringReportsMatchSDKAndCLI` compares
 complete public reports for direct and dynamic calls, including pointer
 faults and no-read results. Existing `Substring*` cases retain `strstr`'s
 NUL-terminated behavior in the shared search owner.
+`CaseInsensitiveSubstring*` checks `strcasestr` with mixed ASCII case,
+repeated prefixes, unchanged high bytes, first matches, empty needles,
+read-only page tails and provider lifetime. The shared model tests exercise
+its scan, prefix-table and deadline limits, and
+`AndroidCaseInsensitiveSubstringReportsMatchSDKAndCLI` compares complete
+public reports for matches, no-match, no-read and invalid-pointer cases.
 
 `AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
 APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and
