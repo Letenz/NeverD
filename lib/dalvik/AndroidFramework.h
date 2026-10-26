@@ -41,6 +41,7 @@ public:
   definingLoader(std::string_view type, const Program &program) const;
 
 private:
+  ExecutionResult readClock(LibraryOperation operation);
   ExecutionResult nextMessage(Heap &heap, const Program &program,
                               uint64_t receiver, const AdmitInstruction &admit);
   ExecutionResult post(Heap &heap, const Program &program, uint64_t receiver,

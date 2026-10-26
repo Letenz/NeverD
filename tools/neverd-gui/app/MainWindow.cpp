@@ -345,6 +345,13 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event) {
+#ifdef Q_OS_MACOS
+  // Cocoa reports Dock reopen even when the application is already active.
+  // AppKit does not restore our frameless greeting as a native main window.
+  if (object == qApp && event->type() == QEvent::ApplicationActivate &&
+      quickStart_ && quickStart_->isMinimized())
+    showQuickStart();
+#endif
   if (event->type() == QEvent::Close && focusSidebar_ &&
       object == focusSidebar_->window()) {
     // Closing the temporary workspace exits focus mode instead of closing
@@ -506,6 +513,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
 
 MainWindow::~MainWindow() {
   qApp->removeEventFilter(this);
+  // The startup greeting has no widget parent: it is the application's only
+  // visible window until a start is chosen.
+  delete quickStart_.data();
   // View teardown releases queries and moves the focus; keep the resulting
   // notifications away from this window.
   disconnect(&session_, nullptr, this, nullptr);
@@ -5680,32 +5690,48 @@ void MainWindow::scheduleQuickStart() {
 
 void MainWindow::showQuickStart() {
   startupQuickStartPending_ = false;
+  if (quickStart_) {
+    quickStart_->setWindowState(quickStart_->windowState() &
+                                ~Qt::WindowMinimized);
+    quickStart_->raise();
+    quickStart_->activateWindow();
+    return;
+  }
   // Before the workbench shows, the quick start greets alone, as IDA's
   // does: a window of its own until the user chooses how to start, when the
   // workbench takes its place.  Closing it then quits.
   const bool greeting = !isVisible();
-  QuickStartDialog dialog(
+  auto *dialog = new QuickStartDialog(
       [this](QWidget *parent) { return askForFile(parent); },
       greeting ? nullptr : this);
   // Qt would quit when the greeting closes as the last window, even once
   // the user chose how to start; closing it quits below instead.
-  dialog.setAttribute(Qt::WA_QuitOnClose, false);
-  quickStart_ = &dialog;
-  dialog.exec();
-  const auto start = dialog.start();
-  if (start == QuickStartDialog::Start::None) {
-    if (greeting)
-      QCoreApplication::quit();
-    return;
-  }
-  // A chosen file shows the workbench as it starts to load, after the
-  // questions asked before the load greet alone too.
-  if (start == QuickStartDialog::Start::New)
-    chooseLoader(dialog.file());
-  else if (start == QuickStartDialog::Start::Previous)
-    openFile(dialog.file());
-  else
-    showWorkbench();
+  dialog->setAttribute(Qt::WA_QuitOnClose, false);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  quickStart_ = dialog;
+  connect(dialog, &QDialog::finished, this, [this, dialog, greeting] {
+    quickStart_ = nullptr;
+    const auto start = dialog->start();
+    const auto file = dialog->file();
+    if (start == QuickStartDialog::Start::None) {
+      if (greeting)
+        // Closing can originate inside Cocoa's termination callback.
+        QMetaObject::invokeMethod(qApp, &QCoreApplication::quit,
+                                  Qt::QueuedConnection);
+      return;
+    }
+    // A chosen file shows the workbench as it starts to load, after the
+    // questions asked before the load greet alone too.
+    if (start == QuickStartDialog::Start::New)
+      chooseLoader(file);
+    else if (start == QuickStartDialog::Start::Previous)
+      openFile(file);
+    else
+      showWorkbench();
+  });
+  // Quick Start is a restorable application window. An application-modal
+  // Cocoa session keeps blocking Dock reopen and Quit after minimization.
+  dialog->show();
 }
 
 void MainWindow::showWorkbench() {

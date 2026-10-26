@@ -137,6 +137,16 @@ private slots:
     QCOMPARE(
         dialog->palette().color(QPalette::Window),
         Theme::instance().chrome(kind == "quick-start" ? "Base" : "Window"));
+    if (kind == "quick-start") {
+      auto *minimize = bar->findChild<QAbstractButton *>("minimizeButton");
+      QVERIFY(minimize && minimize->isVisible());
+      const QSize normal = dialog->size();
+      QTest::mouseClick(minimize, Qt::LeftButton);
+      QTRY_VERIFY(dialog->isMinimized());
+      dialog->showNormal();
+      QTRY_VERIFY(!dialog->isMinimized());
+      QCOMPARE(dialog->size(), normal);
+    }
     if (auto *fonts = qobject_cast<QFontDialog *>(dialog.get()))
       QCOMPARE(fonts->currentFont().family(),
                Theme::defaultCodeFont().family());

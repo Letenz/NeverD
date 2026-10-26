@@ -32,6 +32,7 @@
 #include "LocalTypesView.h"
 #include "MainWindow.h"
 #include "MapPromptDialog.h"
+#include "NativeWindowStates.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "PatchEditor.h"
@@ -94,6 +95,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -139,6 +141,14 @@ constexpr int NarrowViewWidth = 160;
 
 /// Long enough for the offer of a missing PDB to follow an open.
 constexpr int OfferWaitMs = 500;
+
+QuickStartDialog *visibleQuickStart() {
+  for (auto *window : QApplication::topLevelWidgets())
+    if (auto *dialog = qobject_cast<QuickStartDialog *>(window);
+        dialog && dialog->isVisible())
+      return dialog;
+  return nullptr;
+}
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -688,6 +698,28 @@ private slots:
       QVERIFY(!code->isVisible());
       QVERIFY(output->findChild<QPlainTextEdit *>()->toPlainText().contains(
           "help"));
+      if (button && !floating) {
+        auto *bar =
+            bench.window->findChild<TitleBar *>(Qt::FindDirectChildrenOnly);
+        QVERIFY(bar);
+        auto *close = bar->findChild<QAbstractButton *>("closeButton");
+        QVERIFY(close && close->isVisible());
+        const auto background = [&] {
+          const QImage painted = bar->grab().toImage();
+          return painted.pixelColor(close->mapTo(bar, QPoint(1, 1)) *
+                                    painted.devicePixelRatio());
+        };
+        QTest::mouseMove(
+            bench.window->windowHandle(),
+            close->mapTo(bench.window.get(), close->rect().center()));
+        QTRY_VERIFY(close->underMouse());
+        QCOMPARE(background(),
+                 theme.chrome(QStringLiteral("WindowCloseHover")));
+        QTest::mouseMove(bench.window->windowHandle(),
+                         bench.window->rect().center());
+        QTRY_VERIFY(!close->underMouse() && !close->isDown());
+        QCOMPARE(background(), theme.chrome(QStringLiteral("TitleBar")));
+      }
     }
   }
 
@@ -7992,6 +8024,153 @@ private slots:
     QCOMPARE(visibleMoves, 0);
   }
 
+  void quickStartMinimizesAndReopens_data() {
+    QTest::addColumn<bool>("greeting");
+    QTest::newRow("startup") << true;
+    QTest::newRow("workbench") << false;
+  }
+
+  void quickStartMinimizesAndReopens() {
+    QFETCH(bool, greeting);
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), !greeting);
+    bench.window->showQuickStart();
+    auto *dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(QTest::qWaitForWindowExposed(dialog));
+    const auto size = dialog->size();
+    auto *minimize = dialog->findChild<QAbstractButton *>("minimizeButton");
+    QVERIFY(minimize && minimize->isVisible());
+    QTest::mouseClick(minimize, Qt::LeftButton);
+    QTRY_VERIFY(dialog->isMinimized());
+    // File > Quick start must restore the existing window on every desktop.
+    bench.window->showQuickStart();
+    QTRY_VERIFY(!dialog->isMinimized());
+    QCOMPARE(visibleQuickStart(), dialog);
+    QCOMPARE(dialog->size(), size);
+    QCOMPARE(bench.window->isVisible(), !greeting);
+  }
+
+  void quickStartReusesItsWindowAndClosesWithTheWorkbench() {
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bench.window->showQuickStart();
+    QPointer<QuickStartDialog> dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(!bench.window->isVisible());
+    QVERIFY(!dialog->parentWidget());
+    bench.window->showQuickStart();
+    QCOMPARE(visibleQuickStart(), dialog.data());
+    auto *go = buttonNamed(dialog, QStringLiteral("&Go"));
+    QVERIFY(go);
+    go->click();
+    QTRY_VERIFY(bench.window->isVisible());
+    QTRY_VERIFY(!dialog);
+    bench.window->showQuickStart();
+    dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    QVERIFY(!QApplication::activeModalWidget());
+    QCOMPARE(dialog->parentWidget(), bench.window.get());
+    bench.window.reset();
+    QVERIFY(!dialog);
+
+    Workbench startup(QString::fromLocal8Bit(TEST_WORKER), false);
+    startup.window->showQuickStart();
+    dialog = visibleQuickStart();
+    QVERIFY(dialog);
+    startup.window.reset();
+    QVERIFY(!dialog);
+  }
+
+  void quickStartQuitsWhileMinimized() {
+#ifdef Q_OS_MACOS
+    if (QGuiApplication::platformName() != QLatin1String("cocoa"))
+      QSKIP("Requires Cocoa application termination");
+    // Run a real application event loop in a child so AppKit termination cannot
+    // stop the surrounding test runner or leave its workers behind.
+    if (!qEnvironmentVariableIsSet("NEVERD_TEST_MINIMIZED_QUIT")) {
+      QProcess child;
+      auto environment = QProcessEnvironment::systemEnvironment();
+      environment.insert(QStringLiteral("NEVERD_TEST_MINIMIZED_QUIT"),
+                         QStringLiteral("1"));
+      child.setProcessEnvironment(environment);
+      child.setProcessChannelMode(QProcess::MergedChannels);
+      child.start(QCoreApplication::applicationFilePath(),
+                  {QStringLiteral("quickStartQuitsWhileMinimized")});
+      QVERIFY(child.waitForFinished(NativeOpenTimeoutMs));
+      const auto output = child.readAll();
+      QVERIFY2(child.exitStatus() == QProcess::NormalExit &&
+                   child.exitCode() == 0,
+               output.constData());
+      return;
+    }
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool minimized = false, timedOut = false;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    connect(&deadline, &QTimer::timeout, this, [&] {
+      timedOut = true;
+      QCoreApplication::exit(1);
+    });
+    deadline.start(OpenTimeoutMs);
+    QTimer::singleShot(0, this, [&] {
+      auto *dialog = visibleQuickStart();
+      QVERIFY(dialog);
+      auto close = qScopeGuard([&] { dialog->close(); });
+      auto *button = dialog->findChild<QAbstractButton *>("minimizeButton");
+      QVERIFY(button && button->isVisible());
+      QTest::mouseClick(button, Qt::LeftButton);
+      QTRY_VERIFY(test::nativeWindowIsMinimized(*dialog));
+      minimized = true;
+      close.dismiss();
+      test::quitNativeApplication();
+    });
+    bench.window->showQuickStart();
+    const auto result = qApp->exec();
+    QVERIFY(!timedOut);
+    QVERIFY(minimized);
+    QCOMPARE(result, 0);
+#else
+    QSKIP("Requires Cocoa application termination");
+#endif
+  }
+
+  void quickStartRestoresFromTheDock_data() {
+    QTest::addColumn<bool>("greeting");
+    QTest::newRow("startup") << true;
+    QTest::newRow("workbench") << false;
+  }
+
+  void quickStartRestoresFromTheDock() {
+#ifdef Q_OS_MACOS
+    if (QGuiApplication::platformName() != QLatin1String("cocoa"))
+      QSKIP("Requires native Cocoa window minimization and application reopen");
+    QFETCH(bool, greeting);
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), !greeting);
+    bool exercised = false;
+    QTimer::singleShot(0, this, [&] {
+      auto *dialog = visibleQuickStart();
+      QVERIFY(dialog);
+      const auto close = qScopeGuard([&] { dialog->close(); });
+      auto *minimize = dialog->findChild<QAbstractButton *>("minimizeButton");
+      QVERIFY(minimize && minimize->isVisible());
+      const auto size = dialog->size();
+      QTest::mouseClick(minimize, Qt::LeftButton);
+      QTRY_VERIFY(test::nativeWindowIsMinimized(*dialog));
+      QVERIFY(test::reopenNativeApplication());
+      QTRY_VERIFY_WITH_TIMEOUT(!test::nativeWindowIsMinimized(*dialog), 3000);
+      QTRY_VERIFY(dialog->isVisible() && !dialog->isMinimized());
+      QCOMPARE(dialog->size(), size);
+      QVERIFY(!test::hasNativeApplicationModalWindow());
+      exercised = true;
+    });
+    bench.window->showQuickStart();
+    QTRY_VERIFY(exercised);
+#else
+    QSKIP("Requires native Cocoa window minimization and application reopen");
+#endif
+  }
+
   void startupQuickStartDoesNotWaitForExposureOrWorker_data() {
     QTest::addColumn<bool>("go");
     QTest::newRow("close") << false;
@@ -8009,8 +8188,7 @@ private slots:
     bool clickedGo = false;
     QTimer close;
     connect(&close, &QTimer::timeout, this, [&] {
-      auto *dialog =
-          qobject_cast<QuickStartDialog *>(QApplication::activeModalWidget());
+      auto *dialog = visibleQuickStart();
       if (!dialog)
         return;
       ++shown;
@@ -8058,8 +8236,7 @@ private slots:
     int shown = 0;
     QTimer dismiss;
     connect(&dismiss, &QTimer::timeout, this, [&] {
-      if (auto *dialog = qobject_cast<QuickStartDialog *>(
-              QApplication::activeModalWidget())) {
+      if (auto *dialog = visibleQuickStart()) {
         ++shown;
         dialog->reject();
       }
@@ -8078,14 +8255,13 @@ private slots:
     QCOMPARE(bench.session.filePath(), path);
     // Explicitly opening Quick Start from the menu still works in a project.
     QTimer::singleShot(0, bench.window.get(), [&] {
-      if (auto *dialog = qobject_cast<QuickStartDialog *>(
-              QApplication::activeModalWidget())) {
+      if (auto *dialog = visibleQuickStart()) {
         ++shown;
         dialog->reject();
       }
     });
     bench.window->showQuickStart();
-    QCOMPARE(shown, 1);
+    QTRY_COMPARE(shown, 1);
     QVERIFY(bench.session.loaded());
   }
 
@@ -8143,8 +8319,7 @@ private slots:
     bool answered = false, alone = false, dropped = false;
     QTimer answer;
     connect(&answer, &QTimer::timeout, this, [&] {
-      auto *dialog =
-          qobject_cast<QuickStartDialog *>(QApplication::activeModalWidget());
+      auto *dialog = visibleQuickStart();
       if (!dialog || answered)
         return;
       answered = true;
@@ -9036,8 +9211,8 @@ private slots:
     QTimer drag;
     bool accepted = false;
     connect(&drag, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+      auto *dialog = visibleQuickStart();
+      if (!dialog)
         return;
       drag.stop();
       accepted = dropFile(dialog, path);
@@ -9046,7 +9221,7 @@ private slots:
     });
     drag.start(10);
     bench.window->showQuickStart();
-    QVERIFY(accepted);
+    QTRY_VERIFY(accepted);
     QTRY_COMPARE_WITH_TIMEOUT(bench.session.filePath(), path, OpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!QApplication::activeModalWidget());
@@ -9061,8 +9236,8 @@ private slots:
     QTimer drag;
     bool shown = false, hidden = false, folderShown = true;
     connect(&drag, &QTimer::timeout, this, [&] {
-      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
-      if (!dialog || dialog->objectName() != QLatin1String("quickStartDialog"))
+      auto *dialog = visibleQuickStart();
+      if (!dialog)
         return;
       drag.stop();
       auto *target =
@@ -9085,7 +9260,7 @@ private slots:
     });
     drag.start(10);
     bench.window->showQuickStart();
-    QVERIFY(shown);
+    QTRY_VERIFY(shown);
     QVERIFY(hidden);
     QVERIFY(!folderShown);
   }

@@ -810,6 +810,24 @@ class NeverDBytePatchOptionsV1(ctypes.Structure):
     ]
 
 
+class NeverDBytePatchRowV1(ctypes.Structure):
+    _fields_ = [
+        ("file_offset", ctypes.c_uint64),
+        ("address", VirtualAddress),
+        ("size", ctypes.c_size_t),
+        ("original", ctypes.POINTER(ctypes.c_uint8)),
+        ("current", ctypes.POINTER(ctypes.c_uint8)),
+        ("kind", ctypes.c_char_p),
+    ]
+
+
+class NeverDBytePatchSnapshotV1(ctypes.Structure):
+    _fields_ = [
+        ("row_count", ctypes.c_size_t),
+        ("rows", ctypes.POINTER(NeverDBytePatchRowV1)),
+    ]
+
+
 class NeverDAssembleOptionsV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t), ("pc", ctypes.c_uint64),
@@ -880,6 +898,7 @@ class Ownership(Enum):
     VALUE = "value"
     BORROWED_STRING = "borrowed_string"
     OWNED_STRING = "owned_string"
+    OWNED_OBJECT = "owned_object"
     BORROWED_BUFFER = "borrowed_buffer"
 
 
@@ -980,6 +999,7 @@ _C_TYPES: dict[str, object] = {
     "const neverd_sanitize_options_v1 *": ctypes.POINTER(NeverDSanitizeOptionsV1),
     "neverd_sanitize_result_v1 *": ctypes.POINTER(NeverDSanitizeResultV1),
     "const neverd_byte_patch_options_v1 *": ctypes.POINTER(NeverDBytePatchOptionsV1),
+    "const neverd_byte_patch_snapshot_v1 *": ctypes.POINTER(NeverDBytePatchSnapshotV1),
     "const neverd_assemble_options_v1 *": ctypes.POINTER(NeverDAssembleOptionsV1),
     "const neverd_source_patch_options_v1 *": ctypes.POINTER(
         NeverDSourcePatchOptionsV1
@@ -1779,6 +1799,10 @@ for _patch_function in ("neverd_byte_patches_save", "neverd_byte_patches_load"):
 _declare("neverd_byte_patch_revert", "int", ["neverd_session_t", "neverd_va_t", "uint64_t"])
 _declare("neverd_byte_patches_export", "int", ["neverd_session_t", "const char *", "int"])
 _declare("neverd_byte_patches_json", "const char *", ["neverd_session_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_byte_patches_snapshot_v1", "const neverd_byte_patch_snapshot_v1 *",
+         ["neverd_session_t"], ownership=Ownership.OWNED_OBJECT)
+_declare("neverd_byte_patch_snapshot_free_v1", "void",
+         ["const neverd_byte_patch_snapshot_v1 *"])
 _declare("neverd_byte_patch_ranges_json", "const char *", ["neverd_session_t"], ownership=Ownership.OWNED_STRING)
 _declare("neverd_byte_patch_context_json", "const char *", ["neverd_session_t", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
 _declare("neverd_byte_patch_source_target_json", "const char *", ["neverd_session_t", "neverd_va_t", "const char *", "size_t", "int64_t"], ownership=Ownership.OWNED_STRING)

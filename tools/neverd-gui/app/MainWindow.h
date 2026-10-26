@@ -79,7 +79,8 @@ public:
   /// Show the workbench, laying out its desktop first if nothing did yet.
   void showWorkbench();
   /// Before the workbench shows, the quick start greets alone and the
-  /// workbench follows the user's choice; closing it quits.
+  /// workbench follows the user's choice; closing it quits. Returns immediately
+  /// so minimizing never leaves an application-modal session running.
   void showQuickStart();
   /// Greet an empty startup on the next event-loop turn, unless opening a
   /// file takes precedence. No window-exposure or engine-ready event is needed.

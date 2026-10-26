@@ -51,10 +51,12 @@ struct ExecutionResult {
 // The owner supplies one workload-wide instruction/deadline budget.
 using AdmitInstruction = std::function<ExecutionStop()>;
 // Workload services retain their existing OS owner. The callback returns a
-// nonnegative Java long in milliseconds or an explicit resource/service stop.
+// nonnegative Java long in the field's units or an explicit resource/service
+// stop. Elapsed realtime retains its independent boot-time epoch.
 // It must remain valid for the Runtime's lifetime; no host clock is inferred.
 struct RuntimeServices {
   std::function<ExecutionResult()> uptime_milliseconds;
+  std::function<ExecutionResult()> elapsed_realtime_nanoseconds;
 };
 class Program {
 public:
@@ -109,6 +111,8 @@ private:
   void addAndroidFramework();
   ClassMap classes;
   std::set<const Class *> supplied_classes;
+  // Type metadata does not authorize active use of an unmodeled initializer.
+  std::set<const Class *> unmodeled_initializers;
   std::map<FieldRef, PlatformValue> platform_values;
   std::set<const Field *> android_framework_fields;
 };

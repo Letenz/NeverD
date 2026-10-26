@@ -10,6 +10,10 @@ extern int pthread_create(U64 *, const void *, void *(*)(void *), void *);
 extern int pthread_join(U64, void **);
 extern int __system_property_get(const char *, char *);
 extern int usleep(unsigned);
+struct ClockTime {
+  long seconds, nanoseconds;
+};
+extern int clock_gettime(int, struct ClockTime *);
 #define C(E, R, S, ...) (((R (*)(Handle, ...))(*E)[S])(E, ##__VA_ARGS__))
 #define CHECK(X)                                                               \
   do {                                                                         \
@@ -24,6 +28,63 @@ static Handle attach(void) {
       C(vm, int, 4, &env, (void *)0))
     return 0;
   return env;
+}
+static U64 clock_long_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  U64 result = C(e, U64, 133, type, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+U64 jni_system_clock(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/SystemClock");
+  CHECK(type);
+  const char *names[] = {"uptimeMillis", "elapsedRealtime",
+                         "elapsedRealtimeNanos", "currentThreadTimeMillis"};
+  if (mode >= 1 && mode <= 4) {
+    Ref method = C(e, Ref, 113, type, names[mode - 1], "()J");
+    U64 value = C(e, U64, 132, type, method);
+    CHECK(!C(vm, int, 5));
+    return value;
+  }
+  Ref methods[3];
+  for (unsigned i = 0; i != 3; ++i) {
+    methods[i] = C(e, Ref, 113, type, names[i], "()J");
+    CHECK(methods[i]);
+  }
+  for (unsigned round = 0; round != 2; ++round) {
+    U64 values[3], before[3], after[3];
+    for (unsigned i = 0; i != 3; ++i) {
+      struct ClockTime time;
+      CHECK(!clock_gettime(i ? 7 : 1, &time));
+      before[i] = (U64)time.seconds * 1000000000 + time.nanoseconds;
+      values[i] = i == 0   ? C(e, U64, 132, type, methods[i])
+                  : i == 1 ? clock_long_v(e, type, methods[i])
+                           : C(e, U64, 134, type, methods[i], (void *)0);
+      CHECK(!clock_gettime(i ? 7 : 1, &time));
+      after[i] = (U64)time.seconds * 1000000000 + time.nanoseconds;
+      U64 divisor = i == 2 ? 1 : 1000000;
+      CHECK(before[i] / divisor <= values[i] &&
+            values[i] <= after[i] / divisor);
+    }
+    if (mode == 0) {
+      U64 advance = round * 2500000ULL;
+      CHECK(values[0] == (10123456789ULL + advance) / 1000000);
+      CHECK(values[1] == (50987654321ULL + advance) / 1000000);
+      CHECK(values[2] == 50987654321ULL + advance);
+      CHECK(after[0] == 10123456789ULL + advance);
+      CHECK(after[2] == 50987654321ULL + advance);
+    } else {
+      CHECK(before[0] < after[0] && before[2] < values[2] &&
+            values[2] < after[2]);
+    }
+    if (!round)
+      CHECK(!usleep(2500));
+  }
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
 }
 static Ref locale_saved, locale_type, locale_get_default;
 static Ref posted_handler, post_method;
@@ -1482,6 +1543,33 @@ int jni_dex_class_pair(const char *first, const char *last) {
   Ref b = C(e, Ref, 6, last);
   CHECK(a && b && !C(e, int, 24, a, b));
   CHECK(!C(e, int, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
+int jni_service_manager_metadata(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  CHECK(type);
+  if (mode == 1)
+    return !C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  if (mode == 2)
+    return !C(e, Ref, 144, type, "sCache", "Ljava/util/HashMap;");
+  if (mode == 3)
+    return !C(e, Ref, 33, type, "toString", "()Ljava/lang/String;");
+  if (mode == 4)
+    return !C(e, Ref, 27, type);
+  Ref again = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref object = C(e, Ref, 6, "java/lang/Object");
+  Ref parent = C(e, Ref, 10, type);
+  CHECK(C(e, int, 24, type, again));
+  CHECK(C(e, int, 24, parent, object));
+  CHECK(C(e, U8, 11, type, object));
+  CHECK(!C(e, U8, 11, object, type));
+  Ref array = C(e, Ref, 6, "[Landroid/os/ServiceManager;");
+  CHECK(array && !C(e, int, 24, array, type));
+  CHECK(!C(e, U8, 228));
   CHECK(!C(vm, int, 5));
   return 0;
 }

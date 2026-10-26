@@ -316,6 +316,9 @@ if(BUILD_TESTING)
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
     qt_add_executable(neverd-gui-tests tests/WorkbenchTests.cpp)
+    if(APPLE)
+      target_sources(neverd-gui-tests PRIVATE tests/platform/NativeWindowStateMac.mm)
+    endif()
     target_link_libraries(neverd-gui-tests PRIVATE neverd_gui_app Qt6::Test)
     target_compile_definitions(neverd-gui-tests PRIVATE
       TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>"
