@@ -124,6 +124,10 @@ parameter, while an earlier definition at entry or before the read kills it.
 Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
+`MedSSACallClobber` in the entry/frame owner checks distinct call occurrences
+at one native address, per-callee GPR preservation, preserving stack probes,
+and chained AArch64/Win64 vector prefixes. It reuses a converter across
+functions and formats so call-local facts cannot leak into later conversions.
 
 `NeverDMedVariadicTests` runs the variadic-prologue proof boundaries directly:
 entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
@@ -1423,6 +1427,18 @@ missing clock IDs, zero, the exact signed-nanosecond maximum and one-nanosecond
 overflow, plus refusal of unmodeled members. Run full Dalvik, Android JNI,
 callback/thread and Linux clock tests after changing these shared services;
 these checks do not execute a device JVM or infer suspended-device time.
+`AndroidHashMapTest.*` checks independent state, UTF-16 value keys, equal-hash
+Strings, null keys/values, reference cycles, replacement/removal/clear, DEX
+construction/interface dispatch and library reads of the same objects. It also
+checks explicit refusals and unchanged contents on work/heap exhaustion.
+`AndroidPropertyTest.*` checks API 28 integer conversion, ART key encoding,
+null-key exceptions, shared DEX/library callbacks and terminal service/resource
+stops. `AndroidJNI.HashMap*` and `AndroidJNI.SystemProperty*` run independent
+AArch64 JNI callers using ordinary, va_list and jvalue-array forms, retain map
+references across detach, compare native properties and reject mutated/unmapped
+property records. Run full Dalvik, Android JNI/thread/callback and Android
+property suites after changing these owners. Tests remain offline and do not
+claim full HashMap/ART, property callback or ServiceManager initialization.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -6659,6 +6675,11 @@ control. Producer and incoming-request cases exercise the same boundary owner.
 Reused-buffer cases verify positive and negative cache invalidation after edits.
 The metadata-refinement Python cases require every raw source to own a new
 caller code field, retain alternatives and reject missing or data-kind fields.
+`ThrowInfoReference.*` checks complete x64 exception graphs, all dependent
+records, ranges, pointer roles, qualifiers/counts, writable descriptor caches,
+metadata changes between applications and the separate identity gate. Producer
+cases reject function/static/executable source targets and nonzero addends;
+Python refinements retain missing, alternative and cross-kind raw counterclaims.
 The COFF cases also check primary x64 vftable references: exact RTTI types,
 locator and hierarchy consistency, bounded strings, unsupported secondary
 layouts, malformed data, instruction prefixes and negative displacements.
@@ -6705,6 +6726,12 @@ and incorrect symbol kinds. The local cases in `SignatureDataContext.*` reject
 wrong anchor names/offsets, external/local
 kind substitution, missing source variants and unrooted requests. Consumer
 alternatives require one exact bound operand; they cannot become anchor evidence.
+Deferred caller cases additionally cover identical narrow/wide getter bodies,
+caller-only data packs, reversed input order and changed buffers on reapplication.
+Missing sources/bodies, unknown rival operands, ambiguous or weak parents,
+conflicting bindings and unreadable data cannot resolve the ambiguity. The
+external-data metadata tests preserve raw omissions, reference kinds, alternatives
+and existing fields without changing ordinary byte claims.
 Parser/cache tests preserve the separate kind and validate canonical keys even when cache
 pieces run in reverse. Python supplement/refinement tests retain every raw
 counterclaim and refuse to put local relations in ordinary byte records.

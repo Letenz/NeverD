@@ -63,6 +63,64 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, HashMapRetainsStringNullAndReferenceValuesAcrossDetach) {
+  auto result = run("jni_hash_map");
+  EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, HashMapRefusesCustomKeysRawObjectsAndUnmodeledEquality) {
+  for (uint64_t mode : {1u, 2u, 3u}) {
+    Options.Android->Arguments = {mode};
+    auto result = run("jni_hash_map");
+    EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
+        << result.Diagnostic;
+    EXPECT_NE(result.Diagnostic.find(mode == 1   ? "String and null keys"
+                                     : mode == 2 ? "no constructed state"
+                                                 : "equality, hashing"),
+              std::string::npos);
+  }
+}
+TEST_P(AndroidJNI, SystemPropertyIntegersShareNativeRecordsAndArtKeyEncoding) {
+  Options.Android->Properties = {{"test.valid", "28"},
+                                 {"test.hex", "0x1c"},
+                                 {"test.min", "-2147483648"},
+                                 {"test.max", "2147483647"},
+                                 {"test.octal", "028"},
+                                 {"test.sign", "\t -28"},
+                                 {"test.empty", ""},
+                                 {"test.overflow", "2147483648"},
+                                 {"test.underflow", "-2147483649"},
+                                 {"test.trailing", "28 "},
+                                 {"test.signedhex", "-0x1c"},
+                                 {"test.spacehex", " 0x1c"},
+                                 {"test.hexoverflow", "0x80000000"},
+                                 {"\xc0\x80\xed\xa0\x80"
+                                  "a\xf0\x9f\x98\x80",
+                                  "-7"}};
+  auto result = run("jni_property_int");
+  EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+  EXPECT_EQ(result.ReturnValue, 0u);
+}
+TEST_P(AndroidJNI, SystemPropertyIntegersRejectChangedOrUnmappedNativeRecords) {
+  Options.Android->Properties = {{"test.valid", "28"}};
+  for (uint64_t mode : {1u, 2u}) {
+    Options.Android->Arguments = {mode};
+    auto result = run("jni_property_int");
+    EXPECT_EQ(result.Stop, ProcessStopReason::RuntimeFailure)
+        << result.Diagnostic;
+    if (mode == 1)
+      EXPECT_NE(
+          result.Diagnostic.find("changed the immutable Android property"),
+          std::string::npos);
+  }
+}
+TEST_P(AndroidJNI, SystemPropertyReadProjectionDoesNotInventWrites) {
+  Options.Android->Arguments = {3};
+  auto result = run("jni_property_int");
+  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
+      << result.Diagnostic;
+  EXPECT_NE(result.Diagnostic.find("unmodeled Java method"), std::string::npos);
+}
 TEST_P(AndroidJNI, SystemClockSharesLinuxEpochsIdleAndInstructionTime) {
   Options.LinuxTime.emplace();
   Options.LinuxTime->Clocks = {{1, {10, 123456789}}, {7, {50, 987654321}}};

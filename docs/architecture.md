@@ -2342,6 +2342,13 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+The COFF type reader also validates bounded x64 class/struct ThrowInfo graphs:
+read-only records, every catchable base, descriptor names, pointer roles,
+qualifiers, counts and nonoverlapping ownership must agree. Descriptor cache
+storage may be writable, but does not supply a type by itself. Exact source
+references to these records are metadata checks, never executable targets.
+The signature database caches validated graphs only within one reference pass;
+their agreement remains candidate evidence under the same identity gate.
 `SignatureDataContext` also owns frozen source-local data relations. The producer
 proves that two canonical zero-addend operands refer to one static address within
 the same COFF object. Their shared key names the exact operand of a uniquely
@@ -2356,6 +2363,18 @@ create bindings or alter the proof of their parents. A source/name-index gate
 avoids constructing another settlement map when no new parent has a query.
 Otherwise, the continuation settles only visited addresses from a sorted
 frozen-row index, retaining all competing claims at those addresses.
+The initial caller pass also retains ordinary parents whose complete incoming
+alternatives remain ambiguous and carry explicit data operands. These parents
+are revisited once through that same frozen-row index after bindings exist,
+including when no globally scanned data consumer matched. Recorded operand
+addresses exclude retries when all available bindings concern unrelated data.
+The retry reuses the
+ordinary admission and source-agreement checks; it cannot establish bindings or
+restart the data pass. Missing alternative bodies or unresolved constraints
+remain unknown. The deferred parent list belongs to one application only.
+The anchor-name index contains only complete source bodies meeting the ordinary
+fixed-byte floor. Once an anchor name is queried, every matching source variant,
+including weaker counterclaims, still participates in binding validation.
 The parser/cache preserve a separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 An explicit source-layout mode also proves signed coordinate differences within
 one non-COMDAT data section. Only a canonical zero-addend static operand can
@@ -12323,6 +12342,20 @@ second version cache. Nonempty property strings and interned defaults retain
 their distinct allocation rules. This projection does not execute the enclosing
 framework initializer or infer application state.
 
+`SystemProperties.getInt(String, int)` is a read-only API 28 projection over
+the existing Bionic property record owner. JNI and DEX use the same Runtime
+service; reads validate the guest record before conversion, so changed or
+unmapped property pages cannot fall back to the original input dictionary.
+Missing, empty, invalid and out-of-int32-range values use the caller's default;
+an absent Runtime service remains unsupported. `AndroidProperties.cpp` owns
+the integer parser shared with Build.VERSION. Heap's ART JNI encoder preserves
+NUL and surrogate key units for both JNI string APIs and property lookups.
+This projection does not expose property writes, callback lists, tracking or
+framework initializer bodies. Its contract follows API 28
+[SystemProperties](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/SystemProperties.java),
+the [native getter](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_SystemProperties.cpp)
+and [integer conversion](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
+
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
 Its bounded identities are separate from native reference handles and guest
 addresses. JNI borrows, object arrays and DEX array instructions all refer to the
@@ -12369,6 +12402,21 @@ arrays or capacity, and other overloads remain unsupported.
 The contract follows the public API 28
 [StringBuilder](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/StringBuilder.java)
 and its abstract base; no implementation bodies are incorporated.
+
+The same Library/Heap owners provide HashMap's default constructor, `size`,
+`isEmpty`, `get`, `put`, `containsKey`, `remove` and `clear`, including calls
+through the Map interface. Each constructed object retains independent entries
+with exact UTF-16 String or null keys and arbitrary reference/null values.
+Equal Strings replace a value without replacing its key; HashMap hash collisions
+do not merge different Strings. The bounded projection uses a linear entry
+search, charges traversal/copy work and retained storage before mutation, and
+does not expose bucket layout or iteration order. Raw AllocObject storage,
+subclass behavior and custom key hashCode/equals execution are unsupported;
+Map equality, hashing and rendering do not fall back to Object identity.
+The public contract follows API 28
+[HashMap](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/HashMap.java).
+These prerequisites do not establish ServiceManager's process cache or Binder
+state; its unmodeled-initializer guard remains in force.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.

@@ -25,7 +25,8 @@ else:
 
 def immutable_reference(name: str) -> bool:
     return (name.startswith("__imp_") and len(name) > len("__imp_")) or \
-        re.fullmatch(r"\?\?_7.+@@6B@", name) is not None
+        re.fullmatch(r"\?\?_7.+@@6B@", name) is not None or \
+        re.fullmatch(r"_TIC?V?U?[1-9][0-9]*\?A[VU].+@@", name) is not None
 
 
 @dataclass
@@ -34,8 +35,10 @@ class Evidence:
     names: set[str] = field(default_factory=set)
     refs: dict[int, set[str]] | None = None
     local_data: bool = False
+    external_data: bool = False
     caller_code: bool = False
     local_refs: dict[int, set[str]] | None = None
+    external_refs: dict[int, set[str]] | None = None
 
     def add(self, source: builder.PatternLine) -> None:
         shared = set(self.line.names) & set(source.names)
@@ -62,6 +65,16 @@ class Evidence:
                 self.local_refs = {offset: names | current[offset]
                                    for offset, names in self.local_refs.items()
                                    if offset in current}
+        if self.external_data:
+            current = builder.ref_table(tuple(
+                (offset, name) for offset, name in source.refs
+                if offset in source.data_sites and offset not in source.local_sites))
+            if self.external_refs is None:
+                self.external_refs = current
+            else:
+                self.external_refs = {offset: names | current[offset]
+                                      for offset, names in self.external_refs.items()
+                                      if offset in current}
 
     def refined(self) -> builder.PatternLine:
         if not set(self.line.names) <= self.names or self.refs is None:
@@ -79,17 +92,23 @@ class Evidence:
                  if offset not in existing and
                  (self.line.require_caller or self.line.require_references)
                  for name in names}
-        if not added and not local:
+        external = {(offset, name) for offset, names in (self.external_refs or {}).items()
+                    if offset not in existing and
+                    (self.line.require_caller or self.line.require_references)
+                    for name in names}
+        if not added and not local and not external:
             return self.line
         sites = frozenset(offset for offset, _ in local)
-        return self.line.with_refs(tuple(sorted(set(self.line.refs) | added | local)),
-                                   data_sites=self.line.data_sites | sites,
+        external_sites = frozenset(offset for offset, _ in external)
+        return self.line.with_refs(tuple(sorted(set(self.line.refs) | added | local | external)),
+                                   data_sites=self.line.data_sites | sites | external_sites,
                                    local_sites=self.line.local_sites | sites)
 
 
 def refine(existing: list[Path], evidence: list[Path],
            names: set[str] | None = None, *,
            local_data: bool = False,
+           external_data: bool = False,
            caller_code: bool = False) -> dict[Path, str]:
     records = {}
     by_key = defaultdict(list)
@@ -100,10 +119,11 @@ def refine(existing: list[Path], evidence: list[Path],
             state = None
             selected = line is not None and (names is None or any(
                 name.partition(" ")[2] in names for name in line.names))
-            if selected and (local_data or caller_code or not line.require_caller) and not line.is_vtable and not line.is_load_config:
+            if selected and (local_data or external_data or caller_code or not line.require_caller) and not line.is_vtable and not line.is_load_config:
                 shape = builder.Shape.of(line.key)
                 if shape.fully_verified():
-                    state = Evidence(line, local_data=local_data, caller_code=caller_code)
+                    state = Evidence(line, local_data=local_data,
+                                     external_data=external_data, caller_code=caller_code)
                     by_key[line.key].append(state)
             rows.append((raw, state))
         records[path] = rows
@@ -152,12 +172,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="also add unanimous same-object data relations to contextual records")
     parser.add_argument("--caller-code", action="store_true",
                         help="also add unanimous code references to complete caller records")
+    parser.add_argument("--external-data", action="store_true",
+                        help="also add unanimous external-data operands to contextual records")
     args = parser.parse_args(argv)
     try:
         if len({path.name for path in args.existing}) != len(args.existing):
             raise builder.BuildError("existing files need distinct output basenames")
         changed = refine(args.existing, args.evidence, set(args.name) if args.name else None,
-                         local_data=args.local_data, caller_code=args.caller_code)
+                         local_data=args.local_data, external_data=args.external_data,
+                         caller_code=args.caller_code)
         args.output.mkdir(parents=True, exist_ok=True)
         written = []
         for source, text in changed.items():
@@ -169,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         report = {"existing": describe(args.existing), "evidence": describe(args.evidence),
                   "names": args.name or [],
                   "local_data": args.local_data,
+                  "external_data": args.external_data,
                   "caller_code": args.caller_code,
                   "output": written}
         with (args.output / "metadata.sources.json").open("x", encoding="utf-8") as output:

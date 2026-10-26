@@ -156,6 +156,17 @@ candidates. Neither the parent nor any descendant can create another data
 binding or trigger another data pass. Short data getters cannot extend a chain,
 and all new names remain candidates rather than automatic identities.
 
+An ordinary caller's ambiguous request can also wait for these frozen data
+bindings. Only sites with multiple viable named alternatives and an explicit
+data operand are deferred. The existing caller must still meet the complete-body
+and fixed-byte rules, and all alternative bodies must be available. After the
+single data pass, the matcher revisits only those ordinary parents through the
+frozen address index, and only if an actual data operand acquired a binding.
+A missing binding or surviving ambiguity leaves the request
+unresolved. Neither a deferred child nor a subsequent descendant can establish
+data bindings, change its parent or initiate another retry. This also works when
+the loaded pack has data-bearing `!caller` records without global `!refs` hits.
+
 The `&offset name` extension explicitly describes an external-data operand in
 a complete `!refs` or `!caller` record. `neverd-sigmaker --data-references`
 opts into its generation alongside `--contextual`, `--caller-context` or
@@ -228,11 +239,27 @@ prevents its addition, while alternative names remain alternatives. The tool
 preserves bytes, names and existing fields, writes changed files separately,
 and records input/output hashes. Repeat `--name` to restrict a review to named
 records; evaluate the changed packs through the normal CLI before publication.
+Canonical x64 class/struct ThrowInfo references are also supported. Generation
+requires a zero-addend LEA relocation to an external data symbol; a defined
+source record must occupy read-only, non-executable storage. Matching validates
+the complete bounded image-relative graph and compares its exact type spelling,
+qualifiers and catchable count. Unknown flags, scalar/virtual-base layouts,
+overlapping or truncated records, malformed descriptors and invalid code
+pointers remain unknown. Ordinary descriptor cache storage may be writable;
+its spare word must be empty and every type descriptor must share a checked
+type-info vtable. No exception object size, function ABI or identity is inferred.
+The structural reference is the compiler's
+[MSVC exception metadata emission](https://github.com/NeverSight/llvm-project/blob/06788fb19109851e6a6b9f109a2b8027a606f0c6/clang/lib/CodeGen/MicrosoftCXXABI.cpp)
+and [linker name encoding](https://github.com/NeverSight/llvm-project/blob/06788fb19109851e6a6b9f109a2b8027a606f0c6/clang/lib/AST/MicrosoftMangle.cpp).
 `--caller-code` also permits missing code references in complete `!caller`
 records. The same raw-version intersection and kind checks apply; ordinary
 byte records and required-reference clauses do not gain function fields from
 this option. This can update an existing caller body without another record
 or byte-index entry.
+`--external-data` similarly adds missing external-data operands to complete
+contextual records. Every raw version must own the field with its external-data
+kind; absent, function-kind and source-local fields prevent the refinement.
+Alternative names and existing fields remain unchanged.
 
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,

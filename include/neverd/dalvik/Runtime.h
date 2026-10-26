@@ -50,13 +50,14 @@ struct ExecutionResult {
 // Return Returned to admit an instruction, or the resource stop to propagate.
 // The owner supplies one workload-wide instruction/deadline budget.
 using AdmitInstruction = std::function<ExecutionStop()>;
-// Workload services retain their existing OS owner. The callback returns a
-// nonnegative Java long in the field's units or an explicit resource/service
-// stop. Elapsed realtime retains its independent boot-time epoch.
-// It must remain valid for the Runtime's lifetime; no host clock is inferred.
+// Workload services retain their existing OS owner and return explicit stops.
+// Callbacks remain valid for the Runtime's lifetime; no host state is inferred.
 struct RuntimeServices {
+  // Nonnegative Java longs; elapsed realtime has its own boot-time epoch.
   std::function<ExecutionResult()> uptime_milliseconds;
   std::function<ExecutionResult()> elapsed_realtime_nanoseconds;
+  // ART JNI key bytes and caller default -> Java int bits (zero extended).
+  std::function<ExecutionResult(std::string_view, int32_t)> property_integer;
 };
 class Program {
 public:
