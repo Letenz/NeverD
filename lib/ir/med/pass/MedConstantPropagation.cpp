@@ -1,3 +1,13 @@
+//===- MedConstantPropagation.cpp - Stable MedIR value propagation --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file Propagates invariant SSA constants and their width-view origins.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/ir/med/MedConstantPropagation.h"
 
 #include "neverd/ir/Limits.h"
@@ -273,24 +283,26 @@ bool propagateInvariantConstants(MedFunc &Func) {
   // - a shift or a multiplication: a shifted word reads as an int literal in
   //   C (`(uint32_t)(0 >> 32)`), and a scaled index keeps the selector of the
   //   jump table it addresses.
-  for (bool Grew = true; Grew;) {
-    Grew = false;
-    for (auto *Item : Ordered) {
-      auto &Node = *Item;
-      if (Node.FromView)
-        continue;
-      bool FromView = Node.View != NdOp::COPY;
-      for (const auto &Input : Node.Inputs) {
-        if (!Budget--)
-          return false;
-        if (!Input.isConst())
-          if (auto It = Nodes.find(key(Input));
-              It != Nodes.end() && It->second.FromView)
-            FromView = true;
-      }
-      if (FromView) {
-        Node.FromView = true;
-        Grew = true;
+  // The value solver has drained Work. Reuse its dependency graph to visit
+  // each reachable node and use edge once, including cycles and shared tails.
+  // Rescanning every input would take quadratic work on a reverse-ID chain.
+  for (auto *Node : Ordered) {
+    if (Node->View != NdOp::COPY) {
+      Node->FromView = true;
+      Work.push_back(Node);
+    }
+  }
+  while (!Work.empty()) {
+    if (!Budget--)
+      return false;
+    auto *Node = Work.front();
+    Work.pop_front();
+    for (auto *User : Node->Users) {
+      if (!Budget--)
+        return false;
+      if (!User->FromView) {
+        User->FromView = true;
+        Work.push_back(User);
       }
     }
   }
