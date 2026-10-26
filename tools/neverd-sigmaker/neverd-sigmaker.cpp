@@ -122,6 +122,10 @@ static cl::opt<bool> DataReferences(
     cl::desc("Include typed external-data operands in contextual or collision "
              "evidence output; requires a complete contextual output mode"),
     cl::init(false));
+static cl::list<std::string> LocalDataAnchors(
+    "local-data-anchor",
+    cl::desc("External function anchoring same-object static data operands; "
+             "repeat as needed; requires --data-references"));
 static cl::opt<bool>
     Verify("verify",
            cl::desc("Parse the positional .pat files with the signature "
@@ -237,6 +241,10 @@ int main(int Argc, char *Argv[]) {
   }
   if (Verify)
     return verifyPatterns();
+  if (!LocalDataAnchors.empty() && !DataReferences) {
+    WithColor::error() << "--local-data-anchor requires --data-references\n";
+    return 1;
+  }
   if (DataReferences && !Contextual && !CallerContext && !CollisionEvidence) {
     WithColor::error() << "--data-references requires --contextual, "
                           "--caller-context or --collision-evidence\n";
@@ -275,6 +283,8 @@ int main(int Argc, char *Argv[]) {
   Opts.RequireCaller = CallerContext;
   Opts.CollisionEvidence = CollisionEvidence;
   Opts.EmitDataReferences = DataReferences;
+  Opts.LocalDataAnchors.assign(LocalDataAnchors.begin(),
+                               LocalDataAnchors.end());
 
   auto ForMachine = [&](const ObjectFile &Obj) {
     return !Required || isObjectForMachine(Obj, *Required);

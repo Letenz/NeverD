@@ -912,6 +912,33 @@ void recoverCallAbi(
   bool DefinedValuesBuilt = false;
   // What earlier calls left in each register, once a call asks.
   std::optional<ValuesLeftByCalls> LeftByCalls;
+  auto callLeftovers = [&]() -> const ValuesLeftByCalls & {
+    if (!LeftByCalls) {
+      // Scalar return recovery visits calls in block-vector order. Exclude
+      // all possible FP result fields before classifying joins, including
+      // producers in blocks whose call outputs have not been rebound yet.
+      std::map<uint32_t, uint16_t> FloatingResults;
+      if (CalleeFPReturnSize)
+        for (const auto &Block : Func.Blocks)
+          for (const auto &Call : Block.Ops)
+            if (Call.Opcode == NdOp::CALL && Call.CallSiteId &&
+                Call.NumInputs && Call.Inputs[0].isConst())
+              if (const auto Found =
+                      CalleeFPReturnSize->find(Call.Inputs[0].ConstVal);
+                  Found != CalleeFPReturnSize->end() && Found->second)
+                FloatingResults.emplace(Call.CallSiteId, Found->second);
+      std::vector<MedVar> PossibleResults;
+      for (const auto &Clobber : Func.CallClobbers)
+        if (const auto Found = FloatingResults.find(Clobber.CallSiteId);
+            Found != FloatingResults.end() &&
+            Clobber.Value.Kind == MedVar::Reg &&
+            Clobber.Value.RegOff == TRI.FPReturnReg &&
+            Clobber.Value.Size >= Found->second)
+          PossibleResults.push_back(Clobber.Value);
+      LeftByCalls.emplace(Func, PossibleResults);
+    }
+    return *LeftByCalls;
+  };
   auto isDefinedValue = [&](const MedVar &V) {
     if (!DefinedValuesBuilt) {
       for (const auto &B : Func.Blocks) {
@@ -1843,9 +1870,7 @@ void recoverCallAbi(
           // where the callee is known to read it, and an import reached
           // through its slot takes only proven incoming values.
           if (!AllowLiveIn || IsIndirectImport || VariableCallee) {
-            if (!LeftByCalls)
-              LeftByCalls.emplace(Func);
-            if (LeftByCalls->contains(*V))
+            if (callLeftovers().contains(*V))
               break;
           }
           if ((IsIndirectImport || VariableCallee) &&
@@ -2789,6 +2814,14 @@ void recoverCallAbi(
           if (!V)
             for (const auto &Phi : Blk.Phis)
               if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == Reg) {
+                // A join of caller-saved clobbers supplies no argument setup.
+                // Integer recovery already excludes these same leftovers.
+                // A known FP contract still observes the unavailable value;
+                // mixed joins and partially preserved lanes remain inputs.
+                if (!KnownFPCallee) {
+                  if (callLeftovers().contains(Phi.Output))
+                    break;
+                }
                 V = Phi.Output;
                 break;
               }
@@ -3095,9 +3128,7 @@ void recoverCallAbi(
         for (size_t I = 0; I < IntPart.size(); ++I) {
           if (IntPartSlots[I] < Known)
             continue;
-          if (!LeftByCalls)
-            LeftByCalls.emplace(Func);
-          if (!LeftByCalls->contains(IntPart[I]))
+          if (!callLeftovers().contains(IntPart[I]))
             continue;
           // An indirect call has no callee to say its stack slots are
           // arguments, nor has a variadic one for those past its named

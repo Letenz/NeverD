@@ -10,6 +10,7 @@
 #ifndef NEVERD_IR_LOW_AARCH64IMMEDIATEMEMORYIMAGE_H
 #define NEVERD_IR_LOW_AARCH64IMMEDIATEMEMORYIMAGE_H
 
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/AArch64MemoryImage.h"
@@ -61,14 +62,27 @@ lowImageBaseMemoryWitness(const BinaryImage &Image, const LowOp &Op,
 /// A writeback after the exact dereference does not invalidate its incoming
 /// base witness. Admit only the lifter's completed-base extraction, never an
 /// arbitrary clobber or a second address computation.
-inline bool lowImageBaseMemoryWritebackCommit(const LowOp &Op,
-                                              const LowOp *Memory) {
+inline bool
+lowImageBaseMemoryWritebackCommit(const LowOp &Op, const LowOp *Memory,
+                                  llvm::ArrayRef<LowOp> Instruction = {}) {
   if (!Memory || !lowAArch64WritebackMemoryShapeIsValid(*Memory) ||
       Op.Addr != Memory->Addr ||
       Op.Output != Memory->Inputs[kWritebackBaseOperand + 1] ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
+  if (Memory->Inputs[0].Offset ==
+      static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback)) {
+    const auto It = std::find_if(
+        Instruction.begin(), Instruction.end(),
+        [&](const LowOp &Candidate) { return &Candidate == Memory; });
+    if (It == Instruction.end())
+      return false;
+    const auto Outputs = lowAArch64VectorWritebackOutputs(
+        *Memory, Instruction.drop_front(It - Instruction.begin() + 1));
+    return Outputs && Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+           Op.Inputs[0] == (*Outputs)[kWritebackBaseIndex];
+  }
   const bool Load = static_cast<Intrinsic>(Memory->Inputs[0].Offset) ==
                     Intrinsic::A64_LoadWriteback;
   if (!Load)

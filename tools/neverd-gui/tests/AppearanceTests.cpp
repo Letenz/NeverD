@@ -32,6 +32,7 @@
 #include <QFontDialog>
 #include <QFontInfo>
 #include <QGlyphRun>
+#include <QImage>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QLineEdit>
@@ -39,6 +40,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPixmap>
 #include <QScopeGuard>
 #include <QScreen>
@@ -50,6 +52,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextLayout>
+#include <QTimer>
 #include <QToolButton>
 #include <QWheelEvent>
 #include <QWindow>
@@ -145,6 +148,87 @@ private slots:
     }
     QTest::mouseClick(close, Qt::LeftButton);
     QTRY_VERIFY(!dialog->isVisible());
+  }
+
+  void windowShadowCompositesWithDesktop_data() {
+    QTest::addColumn<QString>("kind");
+    QTest::addColumn<bool>("modal");
+    for (const char *kind :
+         {"dialog", "early-native", "quick-start", "early-native-quick-start"})
+      for (const bool modal : {false, true})
+        QTest::newRow(
+            qPrintable(QString::fromLatin1(kind) + (modal ? "-exec" : "-show")))
+            << QString::fromLatin1(kind) << modal;
+  }
+
+  void windowShadowCompositesWithDesktop() {
+    if (QGuiApplication::platformName() != QLatin1String("windows"))
+      QSKIP("Checks Windows desktop composition, not a widget-only capture");
+    QFETCH(QString, kind);
+    QFETCH(bool, modal);
+    class Backdrop final : public QWidget {
+      void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(64, 192, 128));
+      }
+    } backdrop;
+    backdrop.resize(1000, 720);
+    backdrop.move(backdrop.screen()->availableGeometry().topLeft() +
+                  QPoint(40, 40));
+    backdrop.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&backdrop));
+    std::unique_ptr<QDialog> dialog;
+    if (kind.endsWith(QLatin1String("quick-start")))
+      dialog = std::make_unique<QuickStartDialog>(
+          [](QWidget *) { return QString(); }, modal ? nullptr : &backdrop);
+    else {
+      dialog = std::make_unique<QDialog>(&backdrop);
+      dialog->resize(320, 240);
+    }
+    if (kind.startsWith(QLatin1String("early-native")))
+      dialog->winId();
+    dialog->move(backdrop.mapToGlobal(QPoint(40, 40)));
+    const auto capture = [&] {
+      const QPoint origin = dialog->mapToGlobal(QPoint());
+      return dialog->screen()
+          ->grabWindow(0, origin.x(), origin.y(), dialog->width(),
+                       dialog->height())
+          .toImage();
+    };
+    const auto check = [&] {
+      QVERIFY(QTest::qWaitForWindowExposed(dialog.get()));
+      // A hidden native window can still report its previous screen position.
+      // Check placement only after showing it, before sampling the shadow.
+      QVERIFY(backdrop.rect().contains(
+          backdrop.mapFromGlobal(dialog->mapToGlobal(QPoint()))));
+      const QImage painted = dialog->grab().toImage();
+      QVERIFY(painted.pixelColor(0, 0).alpha() <
+              painted.pixelColor(painted.width() / 2, painted.height() / 2)
+                  .alpha());
+      QImage composite(1, 1, QImage::Format_ARGB32_Premultiplied);
+      composite.fill(QColor(64, 192, 128));
+      {
+        QPainter painter(&composite);
+        painter.drawImage(QPoint(), painted, QRect(0, 0, 1, 1));
+      }
+      QTRY_COMPARE(capture().pixelColor(0, 0), composite.pixelColor(0, 0));
+      const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+      if (!captures.isEmpty()) {
+        QDir().mkpath(captures);
+        QVERIFY(capture().save(captures + '/' + QTest::currentDataTag() +
+                               "-desktop.png"));
+      }
+    };
+    if (modal) {
+      QTimer::singleShot(0, dialog.get(), [&] {
+        const auto close = qScopeGuard([&] { dialog->reject(); });
+        check();
+      });
+      dialog->exec();
+    } else {
+      dialog->show();
+      check();
+    }
   }
 
   void desktopThemeCannotSupplyColorsOrClearIcon() {

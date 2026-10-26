@@ -11,6 +11,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/low/X86/X86CompactShape.h"
@@ -568,6 +569,14 @@ llvm::Error validateLowInstructionBoundaries(
     for (const LowOp &Op : *Ops) {
       if (llvm::Error Error = validateMemoryAddressSpace(Op))
         return Error;
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset ==
+              static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback)) {
+        const auto Following = Ops->drop_front(&Op - Ops->data() + 1);
+        if (!lowAArch64VectorWritebackOutputs(Op, Following))
+          return invalid(kWritebackMalformed);
+      }
     }
 
     if (llvm::Error Error = validateControl(Block, Boundary))

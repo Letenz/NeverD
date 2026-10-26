@@ -1496,6 +1496,16 @@ void Session::loadSignatures(const QString &path, bool tree) {
           });
 }
 
+void Session::declinePdb() {
+  if (!loaded_)
+    return;
+  loadOptions_.pdb = {{"mode", "none"}};
+  metadata_.insert(QStringLiteral("pdb"), loadOptions_.pdb);
+  metadata_.remove(QStringLiteral("pdb_download"));
+  recordDebugChoices(true);
+  emit stateChanged();
+}
+
 void Session::loadPdb(const QJsonObject &selection) {
   if (!loaded_ || !loadsPdbFiles())
     return;

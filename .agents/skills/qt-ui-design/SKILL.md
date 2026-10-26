@@ -5,10 +5,10 @@ description: >-
 license: LicenseRef-Qt-Commercial OR BSD-3-Clause
 metadata:
   author: qt-ai-skills
-  version: "1.2"
+  version: "1.3"
   qt-version: "6.x"
   category: conceptual
-  changelog: "Added NeverD workbench chrome guidance, window-manager checks, and crisp-stroke guidance"
+  changelog: "Added Windows native-handle transparency ordering and desktop shadow verification"
 ---
 # Qt UI Design
 
@@ -22,6 +22,10 @@ the generic sizing defaults below; preserve accessibility requirements and the
 user's current instructions.
 For other products, use the general guidance without importing NeverD's palette
 or screen dimensions.
+
+For Windows custom-frame, dialog, transparency, or shadow work, also read
+[the Windows desktop notes](references/windows.md). They cover existing native
+handles, alpha-format ordering, and checks against the real Windows desktop.
 
 For macOS Qt work, also read [macOS rendering and input](references/macos-qt.md)
 for platform font sizes, menu defaults, precision scrolling, Retina captures

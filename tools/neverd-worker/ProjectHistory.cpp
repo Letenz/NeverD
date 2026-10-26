@@ -566,18 +566,25 @@ void ProjectHistory::persist(const Json &state) {
       ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes)
     throw Error("history_budget_exceeded",
                 "Persisted user history exceeds 8 MiB");
-  Json journal{{"schema_version", 1},
-               {"source_sha256", hash_},
-               {"before", committedState_},
-               {"before_history", previousDocument_}};
-  journal["after"] = std::move(after);
-  journal["after_history"] = std::move(nextDocument);
-  const auto journalText = compactText(journal);
+  Json journal{{"schema_version", 1}, {"source_sha256", hash_}};
+  // Compose only serializer-produced JSON. The history is already encoded;
+  // reuse it without copying whole states into a second tree. Keep the owning
+  // states until publication succeeds, or retain the full journal on failure.
+  auto journalText = compactText(journal);
+  journalText.pop_back();
+  journalText += ",\"before\":";
+  journalText += compactText(committedState_);
+  journalText += ",\"before_history\":";
+  journalText += compactText(previousDocument_);
+  journalText += ",\"after\":";
+  journalText += compactText(after);
+  journalText += ",\"after_history\":";
+  journalText += historyText;
+  journalText += '}';
   if (journalText.size() >
       ::neverd::limits::worker::kProjectHistoryMaxJournalBytes)
     throw Error("history_budget_exceeded", "Recovery journal exceeds 24 MiB");
-  const auto writes =
-      prepareSidecars(binary_, journal.at("after"), &committedState_);
+  const auto writes = prepareSidecars(binary_, after, &committedState_);
   if (const auto error = project_files::prepare(binary_))
     throw Error("save_failed",
                 "Cannot create the project folder: " + error.message());
@@ -592,11 +599,15 @@ void ProjectHistory::persist(const Json &state) {
       throw Error("recovery_required", "User edits were saved but journal "
                                        "cleanup failed; retry Save to recover");
   } catch (...) {
+    journal["before"] = committedState_;
+    journal["before_history"] = previousDocument_;
+    journal["after"] = std::move(after);
+    journal["after_history"] = std::move(nextDocument);
     interruptedWrite_ = std::move(journal);
     throw;
   }
-  committedState_ = std::move(journal.at("after"));
-  previousDocument_ = std::move(journal.at("after_history"));
+  committedState_ = std::move(after);
+  previousDocument_ = std::move(nextDocument);
   if (committed_)
     committed_();
 }

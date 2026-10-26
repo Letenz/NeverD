@@ -9,6 +9,40 @@ from scripts.signatures import supplement_patterns as supplement
 
 
 class SupplementTests(unittest.TestCase):
+    def test_local_relations_keep_scope_kind_and_raw_counterclaims(self):
+        a = "488D05........C3 00 0000 0008 !refs :0000 a %0003 00000013:anchor_a"
+        b = a.replace(":0000 a", ":0000 b").replace("anchor_a", "anchor_b")
+        line = builder.parse_line(a)
+        self.assertEqual(line.local_sites, {3})
+        self.assertEqual(line.data_sites, {3})
+        self.assertEqual(line.with_refs(line.refs).text, a)
+        self.assertEqual(len(self.select(a, [("runtime", a + "\n" + b)])), 1)
+        self.assertEqual(len(self.select(a, [("runtime", (a + "\n" + b).replace(
+            "!refs", "!evidence"))])), 1)
+        external = builder.parse_line(b.replace("%0003", "&0003"))
+        self.assertFalse(builder.distinguished([line, external]))
+        self.assertFalse(supplement.context_covers(external, line))
+        mixed = builder.common_refs([line, builder.parse_line(a.replace("%0003", "&0003"))])
+        self.assertFalse(mixed.refs)
+        unknown = b.replace(" %0003 00000013:anchor_b", "")
+        self.assertFalse(self.select(a, [("runtime", a + "\n" + unknown)]))
+
+    def test_local_relations_reject_noncanonical_and_mixed_kinds(self):
+        head = "488D05........C3 00 0000 0008 !refs :0000 a %0003 "
+        for name in ("13:anchor", "0000001a:anchor", "00000013:"):
+            with self.assertRaises(builder.BuildError):
+                builder.parse_line(head + name)
+        with self.assertRaises(builder.BuildError):
+            builder.parse_line(head + "00000013:anchor &0003 global")
+
+    def test_ordinary_selection_does_not_publish_offline_data_relations(self):
+        ordinary = "90909090909090909090909090909090488D05........C3 00 0000 0018 :0000 anchor"
+        raw = ordinary.replace(" :0000", " !evidence :0000") + " %0013 00000013:anchor"
+        selected = self.select(ordinary, [("runtime", raw)])
+        self.assertEqual([line.text for line in selected], [ordinary])
+        with self.assertRaises(builder.BuildError):
+            builder.parse_line(raw)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

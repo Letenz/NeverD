@@ -757,6 +757,31 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      std::function<std::string(const HighExpr &)> ExprFn,
                      std::function<std::string(const MedVar &)> VarFn,
                      IsAliveFn IsAlive) {
+  if (IID == Intrinsic::A64_VectorLoadWriteback) {
+    if (Operands.size() != kWritebackLoadOperands ||
+        !aarch64WritebackMemoryOutputsAreValid(
+            IID, Outputs, [](const MedVar &V) { return V.Size; }) ||
+        !Operands[kWritebackBaseOperand] || !Operands[kWritebackWordOperand] ||
+        !Operands[kWritebackBaseOperand]->Type ||
+        !Operands[kWritebackWordOperand]->Type ||
+        Operands[kWritebackWordOperand]->Kind != ExprKind::Const ||
+        !aarch64WritebackMemoryShapeIsValid(
+            IID, Operands.size() + 1, 0,
+            Operands[kWritebackBaseOperand]->Type->Size,
+            Operands[kWritebackWordOperand]->Type->Size,
+            Operands[kWritebackWordOperand]->ConstVal))
+      throw std::invalid_argument(kWritebackMalformed);
+    const auto Instruction = *aarch64WritebackMemoryInstruction(
+        Operands[kWritebackWordOperand]->ConstVal);
+    return aarch64VectorWritebackMemoryCStatement(
+        Instruction, ExprFn(*Operands[kWritebackBaseOperand]),
+        !IsAlive || IsAlive(Outputs[kWritebackValueIndex])
+            ? VarFn(Outputs[kWritebackValueIndex])
+            : std::string(),
+        !IsAlive || IsAlive(Outputs[kWritebackBaseIndex])
+            ? VarFn(Outputs[kWritebackBaseIndex])
+            : std::string());
+  }
   using I = Intrinsic;
   switch (IID) {
   case I::A64_MopsSetP:
@@ -844,7 +869,7 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
   }
   if (isAArch64WritebackMemoryIntrinsic(Id)) {
     const unsigned Count = aarch64WritebackMemoryOperandCount(Id);
-    const bool Store = Id == Intrinsic::A64_StoreWriteback;
+    const bool Store = isAArch64WritebackStoreIntrinsic(Id);
     const auto Word = Ops.size() == Count
                           ? constantOperand(Ops[kWritebackWordOperand])
                           : std::nullopt;

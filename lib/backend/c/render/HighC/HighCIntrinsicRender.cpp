@@ -30,6 +30,8 @@ std::string MultiOutputRender::operator()(
     const std::vector<ExprPtr> &Operands,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive) const {
+  if (isAArch64WritebackMemoryIntrinsic(IID) && TheArch != Arch::AArch64)
+    throw std::invalid_argument(kWritebackMalformed);
   if (isAArch64ExceptionReturnIntrinsic(IID))
     throw std::invalid_argument(kAArch64ExceptionReturnUnsupported);
   if (const char *Reason = x86NonlocalControlTransferReason(IID))

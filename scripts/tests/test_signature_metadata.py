@@ -9,7 +9,7 @@ from scripts.signatures import refine_pattern_metadata as metadata
 
 
 class MetadataRefinementTests(unittest.TestCase):
-    def refine(self, old, sources, names=None):
+    def refine(self, old, sources, names=None, **options):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             original = root / "runtime.pat"
@@ -19,9 +19,24 @@ class MetadataRefinementTests(unittest.TestCase):
                 path = root / f"raw{index}.pat"
                 path.write_text(text)
                 evidence.append(path)
-            result = metadata.refine([original], evidence, names)
+            result = metadata.refine([original], evidence, names, **options)
             self.assertEqual(original.read_text(), old)
             return result.get(original, old)
+
+    def test_local_relations_need_unanimous_raw_ownership_and_keep_old_bodies(self):
+        old = "90909090488D05........C3 00 0000 000C !caller :0000 anchor\n"
+        raw = old.replace("!caller", "!evidence")
+        local = raw.rstrip() + " %0007 00000007:anchor\n"
+        self.assertEqual(self.refine(old, [local]), old)
+        changed = self.refine(old, [local], local_data=True)
+        result = builder.parse_line(changed)
+        self.assertEqual(result.local_sites, {7})
+        self.assertEqual(result.key, builder.parse_line(old).key)
+        self.assertEqual(self.refine(old, [local, raw], local_data=True), old)
+        self.assertEqual(self.refine(old, [local, local.replace("00000007:", "00000008:")],
+                                     local_data=True), old)
+        ordinary = old.replace(" !caller", "")
+        self.assertEqual(self.refine(ordinary, [local], local_data=True), ordinary)
 
     def test_same_body_gains_only_missing_immutable_fields(self):
         old = "AABBCCDD....C3 00 0000 0007 :0000 routine ^0003 existing\n"

@@ -128,6 +128,11 @@ judge each change in the real window.
   instead of borrowing the platform's.
 - Use the application's frame, menus, controls and shadow on all desktops;
   native APIs still provide movement, resizing and window-state transitions.
+  On Windows, NeverD draws its own frameless edges and shadow and disables
+  DWM's non-client rendering; verify snapping, resizing, maximize and full
+  screen with the native platform plugin. Read the
+  [Windows desktop notes](windows.md) for transparent native-handle setup and
+  desktop composition checks.
   Cocoa hosts a frameless window, and the platform hook disables its native
   shadow. Each platform's part lives under `app/platform`
   (`WindowFramePlatform.h`). For macOS input and validation details, read
@@ -282,11 +287,11 @@ instead of locking the whole dialog with `setFixedSize`.
 
 - Resize from the window's edges and Qt's resize grip. A frameless Linux
   window resizes from every edge and corner, starting four pixels inside its
-  visible edge, and under Wayland from its shadow band too; on Windows the
-  system frame resizes all but the top edge. Let additional
-  width expose more content and additional height expose more rows. Stable
-  navigation or action panes can retain their width while the content pane
-  expands.
+  visible edge, and under Wayland from its shadow band too. On Windows, check
+  edge and corner gestures on the custom frame under the native desktop. Let
+  additional width expose more content and additional height expose more rows.
+  Stable navigation or action panes can retain their width while the content
+  pane expands.
 - Remember a user's chosen size where useful. Bound restored dimensions to
   the available screen, and save normal geometry when closing a maximized
   window. Avoid persisting a size that makes controls unreachable.
@@ -320,10 +325,11 @@ diff does not establish the appearance of a Qt widget.
    because the user's live layout changes between runs, and wait until slow
    regions such as the navigation band have painted.
 6. Test window-manager behavior, such as edge resizing, maximizing, full
-   screen, and dialog attachment, under a real compositor with the desktop
-   session's `XDG_CURRENT_DESKTOP` and `XDG_SESSION_TYPE`. Xvfb has no window
-   manager, and without those variables Qt picks a different window
-   decoration and the GNOME-specific code stays off.
+   screen, and dialog attachment, under a real compositor. On Linux, keep the
+   desktop session's `XDG_CURRENT_DESKTOP` and `XDG_SESSION_TYPE`: Xvfb has no
+   window manager, and without those variables Qt picks a different window
+   decoration and the GNOME-specific code stays off. On Windows, use the
+   native desktop checks in the [Windows desktop notes](windows.md).
 7. Review without touching the user's desktop in a private headless GNOME
    Shell (`gnome-shell --headless --unsafe-mode --wayland` on its own D-Bus
    session, as `tools/neverd-gui/tests/run_wayland_docking.py` starts it),

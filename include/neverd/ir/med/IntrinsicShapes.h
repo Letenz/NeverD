@@ -142,7 +142,9 @@ inline bool aarch64WritebackMemoryMedShapeIsValid(const MedOp &Op) {
       Op.NumInputs != aarch64WritebackMemoryOperandCount(
                           static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) +
                           1 ||
-      !Op.IntrinsicOutputs.empty() ||
+      !aarch64WritebackMemoryOutputsAreValid(
+          static_cast<Intrinsic>(Op.Inputs[0].ConstVal), Op.IntrinsicOutputs,
+          [](const MedVar &V) { return V.Size; }) ||
       (Op.Output.TheArch != Arch::Unknown &&
        Op.Output.TheArch != Arch::AArch64) ||
       (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
@@ -158,8 +160,15 @@ inline bool aarch64WritebackMemoryMedShapeIsValid(const MedOp &Op) {
         Input.TheArch != Arch::AArch64)
       return false;
   }
-  const bool Store = static_cast<Intrinsic>(Op.Inputs[0].ConstVal) ==
-                     Intrinsic::A64_StoreWriteback;
+  for (const auto &Output : Op.IntrinsicOutputs)
+    if ((Output.Kind != MedVar::Reg && Output.Kind != MedVar::Temp) ||
+        (Output.TheArch != Arch::Unknown && Output.TheArch != Arch::AArch64))
+      return false;
+  if (Op.IntrinsicOutputs.size() > 1 &&
+      Op.IntrinsicOutputs.front() == Op.IntrinsicOutputs.back())
+    return false;
+  const bool Store = isAArch64WritebackStoreIntrinsic(
+      static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
   return aarch64WritebackMemoryShapeIsValid(
       static_cast<Intrinsic>(Op.Inputs[0].ConstVal), Op.NumInputs,
       Op.Output.Size, Op.Inputs[kWritebackBaseOperand + 1].Size,

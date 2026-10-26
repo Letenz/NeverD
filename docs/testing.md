@@ -942,6 +942,23 @@ BMI/BMI2 disabled and executes only the resulting baseline code. It covers
 pipeline optimization on/off and both operand widths; only defined flags are
 compared. Physical APX execution and native memory faults remain separate.
 
+`NeverDX86ADXTests` covers legacy x86/x64 and APX/NDD ADCX/ADOX with independent
+128-bit reference addition, all status-flag seeds, aliases, full register banks,
+interleaved CF/OF chains, memory tails and fault-before-write checks. The legacy
+prefix cases include ignored 66 on ADOX and REX cancellation. Mutated raw bytes,
+operand/implicit detail and reserved APX fields must fail before appending LowIR,
+including permissive mode. Run the bit-count and APX BMI targets alongside it
+because they share prefix and address admission. The
+`ADXConsumesOnlyItsOwnCarryAndPreservesOtherArbitraryFlags` symbolic test checks
+that ADOX consumes a prior arbitrary OF while ADCX preserves it, and neither
+family erases prior arbitrary AF provenance.
+
+`NeverDX86ADXPipeline` runs legacy, APX and NDD projections through LLVM, HighC
+and LLVMC, pipeline optimization on/off and compiler O0/O2. It tests both widths,
+all four input CF/OF combinations and interleaved chains: 864 source profiles
+and 517,536 value/flag comparisons per SDK. It compiles with ADX disabled and
+executes baseline code, so it does not require or claim APX hardware support.
+
 `NeverDX86BMI2Tests` covers MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX in
 32-bit mode and x64 VEX/APX forms. Independent bit loops and 128-bit products
 check aliases, both MULX destinations, every flag, all low-word controls,
@@ -1098,6 +1115,14 @@ controls, positional floating inputs and overlapping integer/vector reads.
 Independent providers compile and execute both C routes at O0/O2 with UBSan.
 Run the SysV, AAPCS64, i386 and FP-parameter suites alongside this shared ABI
 change; it does not recover unknown state that a callee actually observes.
+`FloatingCallLeftovers.*` in the same target checks speculative FP recovery
+against the shared call-leftover proof. Direct and indirect calls on x64 and
+AArch64 across COFF/ELF/Mach-O drop wholly clobbered joins, while mixed values,
+partial preservation, possible results and exceptional inputs remain visible.
+Known FP consumers retain unavailable operands. Floating result producers
+remain inputs even when their blocks follow the consumer in storage order.
+Independent providers execute both C routes on both branch paths at O0/O2
+with UBSan; native Windows and Apple ARM64 execution are separate coverage.
 `Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
 checks the same contract for explicit local declarations.
 `LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
@@ -3300,6 +3325,22 @@ must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
 The shared frame tests separately exercise native edge gestures.
 
+`windowShadowCompositesWithDesktop` checks Windows shadow composition for
+ordinary and Quick Start dialogs, with and without an early native handle,
+through both `show()` and `exec()`. It compares desktop pixels over a known
+background with the widget's alpha-composited shadow; a widget-only capture
+cannot detect an opaque native window. The test requires an accessible Windows
+desktop and skips other platform plugins, including offscreen. Run it directly:
+
+```powershell
+$env:QT_QPA_PLATFORM = 'windows'
+& '<build>/bin/neverd-gui-appearance-tests.exe' windowShadowCompositesWithDesktop
+```
+
+`NEVERD_APPEARANCE_CAPTURES` also saves the composited desktop captures for
+these cases. The frame must set its alpha format before changing native flags
+so Windows selects per-pixel transparency for an already-created handle.
+
 Appearance tests use a custom entry point because `QTEST_MAIN` forces
 `AA_Use96Dpi`, hiding Cocoa's 72-DPI point-size conversion. The tests and their
 captures use the product's native DPI. Font checks compare interface, code and
@@ -3535,6 +3576,11 @@ while a persistent hold must preserve the old file and recovery journal with a
 path and Win32 error in the failure. A same-session retry completes only its own
 unchanged journal, preserves newer staged edits and undo/redo, and refuses foreign
 sidecars. Reopening also recovers the pending edit.
+`NeverDWorkerHistory` injects failure before and after each transaction write,
+checks unchanged sidecars and foreign-edit refusal, and retries newer staged
+edits. It compares complete published journals for first and later saves with
+escaped/Unicode annotation text, then verifies retry and reopening. History and
+journal budget cases must refuse before publishing any transaction file.
 `SearchCAPITest.SearchPagesContinuePast4096AndReverseWithoutRepeating` checks
 the real search matcher beyond its page budget, address zero, exact-limit
 completion, reverse cursors, text case folding and invalid options.
@@ -6454,6 +6500,15 @@ pairs. `scripts.tests.test_runtime_pointer_context` covers unpruned counterclaim
 missing explicit function definitions and reference-only refinement without
 body duplication. Canonical indirect data operands share generator/runtime tests
 with ordinary data references; import references retain their separate kind.
+
+`LocalDataEvidence.*` checks same-object operand relations, renamed static
+symbols, distinct external anchors, missing/duplicate definitions, relocation
+addends and overlaps, storage bounds and incorrect symbol kinds. The local cases
+in `SignatureDataContext.*` reject wrong anchor names/offsets, external/local
+kind substitution, missing source variants and unrooted requests. Parser/cache
+tests preserve the separate kind and validate canonical keys even when cache
+pieces run in reverse. Python supplement/refinement tests retain every raw
+counterclaim and refuse to put local relations in ordinary byte records.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -11137,7 +11192,12 @@ unknown absorption, dead-input projection, generic frame writes and writes into
 a caller frame, composed argument-relative writes/returns with aliasing and
 unknown pointers, solver-only cache reclamation after loop widening, distinct
 parameter/register-spill origins whose numeric values are both unknown,
-equivalent generic leaf reuse, demand-driven root specialization, preserving
+constant-return branch pruning with unanimous and conflicting finite values,
+excluding target proofs from impossible caller paths,
+unknown and frame-relative operands, unrelated-input cache churn, equivalent
+generic leaf reuse, pressure-triggered later-root reclamation of unreferenced solver variants and
+their orphan parent dependency chains,
+demand-driven root specialization, preserving
 four concrete caller variants before eagerly specializing unknown wrapper
 roots, and a returning host callback despite a catalog never-return annotation.
 A registered legacy runtime invalidates memory even when its file-local callee
@@ -11953,6 +12013,21 @@ The direct memory cases distinguish a complete no-match from an exhausted
 memory/deadline budget, including fortify-before-access ordering. The public
 `AndroidMemorySearchReportsMatchSDKAndCLI` test compares complete reports on
 success, zero-count invalid pointers, pointer faults and fortify refusal.
+`BinarySubstring*` covers `memmem` with embedded NUL and high bytes, repeated
+prefixes, first matches, exact and 64-bit counts, empty needles, shorter
+haystacks, overlapping read-only inputs, page tails, errno and dynamic
+provider lifetime. The direct model cases distinguish a complete no-match
+from exhausted scan or prefix-table budgets and check deadline refusal with
+unchanged backing. `AndroidBinarySubstringReportsMatchSDKAndCLI` compares
+complete public reports for direct and dynamic calls, including pointer
+faults and no-read results. Existing `Substring*` cases retain `strstr`'s
+NUL-terminated behavior in the shared search owner.
+`CaseInsensitiveSubstring*` checks `strcasestr` with mixed ASCII case,
+repeated prefixes, unchanged high bytes, first matches, empty needles,
+read-only page tails and provider lifetime. The shared model tests exercise
+its scan, prefix-table and deadline limits, and
+`AndroidCaseInsensitiveSubstringReportsMatchSDKAndCLI` compares complete
+public reports for matches, no-match, no-read and invalid-pointer cases.
 
 `AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
 APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and
@@ -14481,6 +14556,40 @@ evidence records these as failures, not passes. Failed diagnostic attempts remai
 including the original native sample-inventory rejection. A post-index base
 may point one-past its storage; the positive native test retains that result,
 while an image missing an accessed byte must fail before emission.
+
+`AArch64VectorWritebackMemory.*` adds 100 independent LLVM MC 22.1.6
+B/H/S/D/Q single pre/post-index samples. Its ten tests sweep all 10,240
+encoding/imm9 combinations through both lifting routes and compare complete
+V values, returned bases and all buffer bytes through HighC, LLVMC and actual
+LLVM object output. Native C executes at O0/O2. Additional checks cover
+image-owned and runtime bases, legal one-past results, truncated storage,
+ADRP/ADD machine-code lifting, X16/V16 and V31 roles, x1 admission, dead
+results, malformed LowIR/MedIR/HighIR and LLVM calls before body filtering,
+complete tracer commit/refusal, and skipped or copied-before-definition
+auxiliary bases that must fail before source emission.
+
+`NEVERD_ARM64E_VECTOR_WRITEBACK_ARTIFACT_DIR` exports the actual `high.c`,
+`llvm.c`, `llvm.o` and `harness.c`, recording
+`arm64e_vector_writeback_memory_artifact_directory`. The controlled environment's
+separate `vector-writeback`/`el0-vector-writeback` profiles require that complete
+ten-test report and exactly 100 samples per route and CPTA/CPTA0 combination.
+They retain all capability, deadline, control-readback and EL0-origin gates.
+This bounded export does not qualify original-SP stacks, pair accesses,
+overflow/tag environments, native vector ABI, foreign exception identity or
+Apple CPA2 hardware.
+
+The [SIMD qualification record](evidence/arm64e-vector-writeback-memory-2026-10-26.json)
+records 594 passes, 17 explicit skips and ten failures from the completed 621
+selected checks. Restoring the two shared projection/conversion owners to the
+dev base reproduces every retained failure; their full assertion messages agree
+after normalizing only random temporary filenames. The WRMSR style assumptions
+and AArch64 `_BitInt` compiler limit remain recorded as failures. The separate
+41-test SysV group was interrupted after three unchanged 60-second child-compiler
+timeouts; minimal sanitized compiler health checks also timed out on both host
+architectures. That group remains unavailable, with partial logs retained.
+Restoring the feature branch and rebuilding passes all 18 scalar/SIMD writeback
+checks and 13 cached-call checks again. Both model profiles pass all ten routes;
+broad whole-project and native Apple CPTA qualification remain false.
 
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,

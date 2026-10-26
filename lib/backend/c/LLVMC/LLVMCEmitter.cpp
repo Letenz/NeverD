@@ -2668,6 +2668,17 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
 
 static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
+  // The owned memory renderer exposes a private vector/base tuple. Its
+  // complete word, constraints and types are validated at the shared owner;
+  // this does not admit that tuple as an external C function ABI.
+  if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+    if (validateAArch64WritebackMemoryCall(TheArch, *Call))
+      return true;
+  if (const auto *Extract = llvm::dyn_cast<llvm::ExtractValueInst>(&Inst))
+    if (const auto *Call =
+            llvm::dyn_cast<llvm::CallInst>(Extract->getAggregateOperand()))
+      if (validateAArch64WritebackMemoryCall(TheArch, *Call))
+        return true;
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (x86CompactCallPlan(TheArch, *Call) ||
         x86FourSourceCallPlan(TheArch, *Call))
@@ -2864,6 +2875,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
       for (const auto &Instruction : Block)
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
           (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
+          (void)validateAArch64WritebackMemoryCall(Opts.TheArch, *Call);
           (void)x86CompactCallPlan(Opts.TheArch, *Call);
           (void)x86FourSourceCallPlan(Opts.TheArch, *Call);
           (void)x86AtomicExchangeCallPlan(Opts.TheArch, *Call);

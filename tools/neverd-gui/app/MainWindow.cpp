@@ -2611,6 +2611,10 @@ void MainWindow::setAsksForDebugInfo(bool asks) {
 }
 
 void MainWindow::openNow(const QString &path, const LoadOptions &options) {
+  // A cached project restores its debug choices. Missing symbols in an old
+  // project are loaded explicitly through File -> Load file, not offered again.
+  microsoftSymbols_->setOffers(asksForDebugInfo_ &&
+                               !ProjectDatabase::hasState(path));
   // The workbench shows as the file starts to load, after any question
   // asked before the load.
   showWorkbench();

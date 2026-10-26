@@ -276,8 +276,7 @@ bool liftSystem(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
 //===----------------------------------------------------------------------===//
 
 /// BMI1/BMI2/ADX bit-manipulation extensions.
-bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
-                const cs_x86 &X86);
+bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn);
 
 //===----------------------------------------------------------------------===//
 // X86Lifter::liftSIMD handlers
