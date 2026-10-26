@@ -168,6 +168,13 @@ struct CallArgumentConvention {
   /// memory.  A volatile register read after a call is then never a second
   /// word of its result (modelCallStructReturn).
   bool SingleRegisterReturns = false;
+  /// Whether an indirect call to a function of \p Prototype passes and
+  /// returns each value as a call through a pointer to that C type does: the
+  /// declaration names the platform's C convention, and the convention
+  /// carries its result and each parameter as one scalar.  \p Prototype's
+  /// return and parameters are the call's carriers, with no hidden result.
+  /// Null where an indirect call keeps an unprototyped callee.
+  bool (*ScalarPrototypeCall)(const NdType &Prototype) = nullptr;
 };
 
 /// The calling convention MedIR records for code of \p A in a \p F image, or

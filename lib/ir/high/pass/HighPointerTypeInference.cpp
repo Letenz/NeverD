@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Infer types of transported pointer values without assigning one type to a
-/// physical frame slot shared by several value lifetimes.
+/// Infer the record pointer types parameters transport without assigning one
+/// type to a physical frame slot shared by several value lifetimes.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -32,6 +32,14 @@ using Identity = HighSourceLocalIdentity;
 
 bool sameType(const TypeRef &Left, const TypeRef &Right) {
   return Left == Right || (Left && Right && equalSourceTypes(Left, Right));
+}
+
+/// A pointer to a record (a structure or union), the only source type a
+/// parameter gives its copies. Other pointers, and the types of calls,
+/// constants, addresses and casts, keep their machine carriers.
+bool recordPointer(const TypeRef &Type) {
+  return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
+         Type->Pointee->Kind == NdTypeKind::Struct && !Type->Pointee->IsEnum;
 }
 
 struct TypeState {
@@ -182,15 +190,18 @@ class PointerTypes {
       auto It = State.Memory.find(*Offset);
       return It == State.Memory.end() ? nullptr : It->second;
     }
+    // A conversion to another pointer type changes the source type: only
+    // a view of the same bits as the type they hold continues it.
     if ((E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) &&
         E.Operands.size() == 1 && E.Operands[0] && E.Operands[0]->Type &&
         E.Operands[0]->Type->Size == PointerBytes &&
         (E.Type->Kind == NdTypeKind::Int || E.Type->Kind == NdTypeKind::Ptr) &&
         (E.Operands[0]->Type->Kind == NdTypeKind::Int ||
          E.Operands[0]->Type->Kind == NdTypeKind::Ptr)) {
-      if (E.Type->Kind == NdTypeKind::Ptr)
-        return E.Type;
-      return pointer(E.Operands[0], State, Depth + 1);
+      const TypeRef Held = pointer(E.Operands[0], State, Depth + 1);
+      return E.Type->Kind != NdTypeKind::Ptr || sameType(Held, E.Type)
+                 ? Held
+                 : nullptr;
     }
     // Arithmetic on integer pointer bits is byte arithmetic. A nonzero offset
     // cannot retain the same record pointee, nor become scaled C arithmetic.
@@ -198,10 +209,6 @@ class PointerTypes {
         (E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB) && E.Operands[1] &&
         E.Operands[1]->Kind == ExprKind::Const && !E.Operands[1]->ConstVal)
       return pointer(E.Operands[0], State, Depth + 1);
-    if (E.Type->Kind == NdTypeKind::Ptr &&
-        (E.Kind == ExprKind::Call || E.Kind == ExprKind::Addr ||
-         E.Kind == ExprKind::Const))
-      return E.Type;
     return nullptr;
   }
 
@@ -308,6 +315,46 @@ class PointerTypes {
     return State;
   }
 
+  /// The record pointer type a read of an incoming parameter carries, which
+  /// alone seeds the entry state; null for any other expression.
+  TypeRef parameterPointer(const HighExpr &Expression) const {
+    if (Expression.Kind != ExprKind::Var ||
+        Expression.Var.Kind != MedVar::Param || Expression.Var.SSAVer != 0 ||
+        Expression.Var.RenameTag >= 0 || Expression.Var.Size != PointerBytes)
+      return nullptr;
+    // HighIR parameter IDs are logical positions. MedIndex retains the
+    // native carrier's ID only for binding declarations by ABI location.
+    const int Index = Expression.Var.Id;
+    if (Index < 0 || size_t(Index) >= Function.Params.size())
+      return nullptr;
+    const TypeRef Type = ParameterTypes.empty() ? Function.Params[Index].Type
+                                                : ParameterTypes[Index];
+    return recordPointer(Type) && Type->Size == PointerBytes ? Type : nullptr;
+  }
+
+  /// Whether a statement reads such a parameter. The flow graph's nodes
+  /// evaluate only expressions of these statements, so without one the entry
+  /// state is empty. This spends no budget: it only spares the graph.
+  bool readsRecordPointerParameter() const {
+    bool Found = false;
+    HighExprSet Seen;
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      forEachExpr(Statement, [&](const ExprPtr &Root) {
+        std::vector<const HighExpr *> Pending{Root.get()};
+        while (!Found && !Pending.empty()) {
+          const HighExpr *Expression = Pending.back();
+          Pending.pop_back();
+          if (!Expression || !Seen.insert(Expression).second)
+            continue;
+          Found = parameterPointer(*Expression) != nullptr;
+          Expression->forEachChildExpr(
+              [&](const ExprPtr &Child) { Pending.push_back(Child.get()); });
+        }
+      });
+    });
+    return Found;
+  }
+
   template <typename Map, typename Equal>
   bool intersect(Map &Left, const Map &Right, Equal Equals) {
     bool Changed = false;
@@ -332,6 +379,8 @@ public:
         PointerBytes(getTargetRegInfo(Architecture).PointerSize) {}
 
   HighPointerTypeFacts run() {
+    if (!readsRecordPointerParameter())
+      return {};
     const auto Graph = buildHighSourceFlowGraph(Function);
     if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
         Graph.Nodes.empty())
@@ -345,23 +394,10 @@ public:
     }
     TypeState Entry;
     for (const auto &Effect : Effects)
-      for (const auto &Expression : Effect.Expressions) {
-        if (Expression->Kind != ExprKind::Var ||
-            Expression->Var.Kind != MedVar::Param ||
-            Expression->Var.SSAVer != 0 || Expression->Var.RenameTag >= 0 ||
-            !scalar(Expression->Var))
-          continue;
-        // HighIR parameter IDs are logical positions. MedIndex retains the
-        // native carrier's ID only for binding declarations by ABI location.
-        const int Index = Expression->Var.Id;
-        if (Index < 0 || size_t(Index) >= Function.Params.size())
-          continue;
-        const TypeRef Type = ParameterTypes.empty()
-                                 ? Function.Params[Index].Type
-                                 : ParameterTypes[Index];
-        if (Type && Type->Kind == NdTypeKind::Ptr && Type->Size == PointerBytes)
+      for (const auto &Expression : Effect.Expressions)
+        if (const TypeRef Type = parameterPointer(*Expression);
+            Type && scalar(Expression->Var))
           Entry.Pointers[highSourceLocalIdentity(Expression->Var)] = Type;
-      }
     if (Entry.Pointers.empty())
       return {};
     std::vector<std::optional<TypeState>> Inputs(Graph.Nodes.size());
@@ -423,13 +459,11 @@ inferHighPointerTypes(const HighFunc &Function, Arch Architecture,
       (!ParameterTypes.empty() &&
        ParameterTypes.size() != Function.Params.size()))
     return {};
-  bool HasPointer = false;
-  for (size_t I = 0; I < Function.Params.size(); ++I) {
-    const TypeRef Type =
-        ParameterTypes.empty() ? Function.Params[I].Type : ParameterTypes[I];
-    HasPointer |= Type && Type->Kind == NdTypeKind::Ptr;
-  }
-  if (!HasPointer)
+  bool HasRecordPointer = false;
+  for (size_t I = 0; I < Function.Params.size(); ++I)
+    HasRecordPointer |= recordPointer(
+        ParameterTypes.empty() ? Function.Params[I].Type : ParameterTypes[I]);
+  if (!HasRecordPointer)
     return {};
   return PointerTypes(Function, Architecture, ParameterTypes).run();
 }

@@ -353,6 +353,78 @@ TEST(HighPointerTypeInference, TypedMemberRenderingPreservesByteAddressing) {
       {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
 }
 
+TEST(HighPointerTypeInference, DeclarationAndAssignmentsSpellOnePointer) {
+  // A call's pointer parameter, or the assignment's own machine pointer type,
+  // names another pointee than the transported Device. The local's
+  // declaration, its assignments and the call must then agree in C.
+  class Callee : public NullDebugContext {
+  public:
+    TypeRef Other = NdType::makeNamedRecord("Other", 16);
+    Callee() {
+      Other->FieldDisplayNames = {"tag", "payload"};
+      Other->FieldDisplayOffsets = {0, 8};
+      Other->FieldDisplayTypes = {NdType::makeInt(8, false),
+                                  NdType::makeInt(8, false)};
+    }
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x3000)
+        return std::nullopt;
+      FunctionSym F;
+      F.Name = "consume";
+      F.Addr = Address;
+      F.ReturnType = NdType::makeVoid();
+      F.Params = {{"other", NdType::makePtr(Other)}};
+      return F;
+    }
+  } Debug;
+  for (bool MachinePointer : {false, true}) {
+    SCOPED_TRACE(MachinePointer);
+    Fixture F;
+    auto Load = F.load();
+    auto Consume = F.call();
+    if (MachinePointer) {
+      Load.Dst->Type = NdType::makePtr(NdType::makeInt(4));
+    } else {
+      Consume.CallExpr = HighExpr::makeCall("consume", 0x3000, {F.variable(1)});
+      Consume.CallExpr->Type = NdType::makeVoid();
+    }
+    const auto Member = HighExpr::makeBinop(NdOp::INT_ADD, F.variable(1),
+                                            HighExpr::makeConst(8, F.Bytes));
+    F.Function.Body = {
+        F.store(F.slot(), F.parameter()),
+        Load,
+        F.call(),
+        F.store(F.slot(), HighExpr::makeConst(19, F.Bytes)),
+        Consume,
+        F.store(Member, HighExpr::makeConst(42, 8)),
+        F.returning(HighExpr::makeLoad(Member, NdType::makeInt(8, false)))};
+    ASSERT_TRUE(F.run());
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    CEmitterOptions Options;
+    Options.EmitComments = false;
+    Options.RecordDefinitions = [](const std::vector<TypeRef> &) {
+      CRecordDefinitions Definitions;
+      Definitions.Text = "struct Device { uint64_t flags; uint64_t value; };\n"
+                         "struct Other { uint64_t tag; uint64_t payload; };\n";
+      Definitions.Records["Device"] = false;
+      Definitions.Records["Other"] = false;
+      return Definitions;
+    };
+    ASSERT_TRUE(HighCEmitter().emit({F.Function}, OS, Options, &Debug));
+    source_call_execution_test::compileAndRun(
+        Text + "\nint touch(void) { return 0; }\n" +
+            (MachinePointer ? ""
+                            : "void consume(struct Other *other) "
+                              "{ (void)other; }\n") +
+            "int main(void) { struct Device d = {11, 12}; "
+            "return transport(&d) != 42 || d.flags != 11 || "
+            "d.value != 42; }\n",
+        {"-Werror=int-conversion", "-Werror=incompatible-pointer-types"});
+  }
+}
+
 TEST(HighPointerTypeInference, NonmemberOffsetsRemainByteOffsets) {
   Fixture F;
   auto Address = HighExpr::makeBinop(NdOp::INT_ADD, F.variable(1),

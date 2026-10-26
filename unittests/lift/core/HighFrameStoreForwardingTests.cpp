@@ -2278,4 +2278,49 @@ int main(void) {
 )";
   compileAndRun(Source);
 }
+TEST(HighSourceExpressions, UnspellableCallbackPrototypeKeepsUntypedCall) {
+  // declarationToC spells no callback taking a pointer to an enumeration.
+  // The captured import's call keeps its unprototyped callee instead of
+  // failing the whole rendering.
+  class CalleeTypes : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x2000)
+        return std::nullopt;
+      FunctionSym F;
+      F.Name = "signature_only";
+      F.Addr = Address;
+      F.ReturnType = NdType::makeInt(4, true);
+      F.Params = {{"value", NdType::makePtr(NdType::makeNamedRecord(
+                                "STATE", 4, /*Enum=*/true))}};
+      return F;
+    }
+  } Debug;
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  const auto Result = NdType::makeInt(4, true);
+  HighFunc F;
+  F.Name = "captured_callback";
+  F.ReturnType = Result;
+  F.Params = {{"arg0", T}, {"arg1", T}};
+  auto Captured = temporary(20, T, A);
+  auto Call = HighExpr::makeCall("indirect", 0x2000, {parameter(1, T, A)});
+  Call->Type = Result;
+  Call->IsIndirectCall = true;
+  Call->IndirectTarget = integerView(Captured, NdType::makeInt(8, true));
+  F.Body = {assign(Captured, parameter(0, T, A)),
+            assign(parameter(0, T, A), HighExpr::makeConst(0, 8)),
+            returning(Call)};
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = A;
+  Options.Format = BinaryFormat::COFF;
+  bool Emitted = false;
+  ASSERT_NO_THROW(Emitted = HighCEmitter().emit({F}, Out, Options, &Debug));
+  ASSERT_TRUE(Emitted);
+  EXPECT_EQ(Source.find("(*t20)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(int32_t (*)())"), std::string::npos) << Source;
+}
 } // namespace

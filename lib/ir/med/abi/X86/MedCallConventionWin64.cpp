@@ -13,13 +13,16 @@
 // calls it through its import address slot (`call [__imp_free]`) or a thunk
 // that jumps there (`jmp [__imp_free]`); a WDK routine's prototype fixes each
 // of its operands.  A call returns one register value at most: a larger
-// record travels through caller-owned memory.
+// record travels through caller-owned memory.  A call through a pointer to a
+// fixed C prototype of scalars passes and returns them as it declares.
 //
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86/X86Regs.h"
+
+#include "llvm/ADT/STLExtras.h"
 
 #include <vector>
 
@@ -50,6 +53,31 @@ wdkPrototypeIntegerArguments(llvm::StringRef Name) {
   return fixedIntegerCallArguments(Arch::X64, BinaryFormat::COFF,
                                    NdType::makeInt(8, false), Parameters);
 }
+
+/// A declaration of no convention or `__cdecl` returning nothing or one
+/// scalar, and taking scalars only: an integer of up to eight bytes, a float
+/// or double, or a pointer.  Every other declared convention keeps its
+/// unprototyped call.
+bool win64ScalarPrototypeCall(const NdType &Prototype) {
+  const auto Scalar = [](const TypeRef &Type) {
+    if (!Type)
+      return false;
+    if (Type->Kind == NdTypeKind::Ptr)
+      return Type->Size == getTargetRegInfo(Arch::X64).PointerSize;
+    if (Type->Kind == NdTypeKind::Float)
+      return Type->Size == 4 || Type->Size == 8;
+    return Type->Kind == NdTypeKind::Int &&
+           (Type->Size == 1 || Type->Size == 2 || Type->Size == 4 ||
+            Type->Size == 8);
+  };
+  return Prototype.Kind == NdTypeKind::Func && Prototype.RetType &&
+         (Prototype.FunctionConvention ==
+              types::CallingConvention::Unspecified ||
+          Prototype.FunctionConvention == types::CallingConvention::Cdecl) &&
+         (Prototype.RetType->Kind == NdTypeKind::Void ||
+          Scalar(Prototype.RetType)) &&
+         llvm::all_of(Prototype.ParamTypes, Scalar);
+}
 } // namespace
 
 extern const CallArgumentConvention Win64CallArguments;
@@ -68,6 +96,7 @@ const CallArgumentConvention Win64CallArguments = {
     .PrototypeArgCount = wdkPrototypeArgCount,
     .PrototypeIntegerArguments = wdkPrototypeIntegerArguments,
     .SingleRegisterReturns = true,
+    .ScalarPrototypeCall = win64ScalarPrototypeCall,
 };
 
 } // namespace neverd
