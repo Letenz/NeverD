@@ -1,8 +1,16 @@
 **Sprachen**: [English](../testing.md) | [简体中文](../zh-CN/testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`NeverDLLVMCValueTests` kompiliert und führt den umgewandelten Varargs-Aufruf mit einer separaten Windows-x64-ABI-Funktion bei O0/O2 und beiden Typbeibehaltungsoptionen aus. Native x64-Hosts prüfen den Wert mit va_arg; andere Architekturen überspringen diese Ausführung ausdrücklich.
+
 [← Dokumentationsindex](README.md)
 
 # NeverD testen
+
+## Quelltextrekonstruktion von Eingangswerten auf dem Stack
+
+`NeverDSourceEntryBindingTests` kompiliert und führt die Matrix x64/ARM64, PE/ELF, HighC/LLVMC aus: vollständige Module, einzelne Aufrufer, explizite Übertragung von Gleitkommabits sowie Cache-Wiederverwendung und -Zurücksetzung. Negativkontrollen lehnen Teilzugriffe, entweichende Rahmenadressen und undefinierte Eingaben ab. Unabhängige Definitionen der Aufgerufenen prüfen feste Deklarationen. Host-Ausführungen qualifizieren keine nativen Windows-ARM64-Treiber. Die Matrix umfasst ausgeglichene RBP- und x29/x30-Rahmen. Überschriebene Sicherungen, ein verändertes RBP trotz wiederhergestelltem SP und die Rücksprungadresse als Parameter werden abgelehnt; ELF- und Windows-Erhaltungsregeln werden getrennt geprüft.
+
+Bekannte Registeraufrufe werden über beide C-Ausgaben für x64/ARM64 PE/ELF als vollständiges Modul und ausgewählter Aufrufer ausgeführt. Das ursprüngliche LowIR bleibt indirekt. Gegenproben prüfen Teilüberschreibungen, unbekannte Effekte, wiederverwendete temporäre Werte, Speicherzellen und erschöpfte Budgets.
 
 `PEFunctionAddresses.*` prüft x64-PE-Blattfunktionen ohne Stackframe, Eigentümerschaft und Instruktionsgrenzen, abgewiesene Präfixe und schmale Operanden, Ausgänge, Abbruch und gleiche Ergebnisse mit 1/2/4/16 Workern. Signaturtests decken alle 16 rel32-Bedingungen in beiden Richtungen, explizite Einstiegsbereiche und Quellrelokationen ab. Python-Tests bewahren Alternativen und gemeinsam notwendige Stellen, prüfen jeden ursprünglichen Gegenbeleg und vermeiden doppelte Ansprüche.
 

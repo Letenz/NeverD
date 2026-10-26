@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
+#include <vector>
 
 using namespace neverd;
 namespace {
@@ -227,7 +229,7 @@ TEST(MedConstantPropagation,
   EXPECT_EQ(Block.Ops.back().Inputs[0], MedVar::makeConst(13, 8));
 }
 
-TEST(MedConstantPropagation, ReverseWidthChainKeepsAtomicBudgetRefusal) {
+TEST(MedConstantPropagation, ReverseWidthChainsFitTheLinearWorkBudget) {
   for (const int Count : {600, 2000}) {
     SCOPED_TRACE(Count);
     MedFunc Func;
@@ -240,13 +242,98 @@ TEST(MedConstantPropagation, ReverseWidthChainKeepsAtomicBudgetRefusal) {
           {Id == Count ? MedVar::makeConst(7, 1) : variable(Id + 1, 4)}));
     Block.Ops.push_back(operation(NdOp::RETURN, {}, {variable(0, 4)}));
     const auto Original = Block.Ops;
-    const bool Complete = Count == 600;
+    ASSERT_TRUE(propagateInvariantConstants(Func));
+    EXPECT_EQ(Block.Ops.back().Inputs[0], MedVar::makeConst(7, 4));
+    // The return can use the constant, but each copy keeps its width origin.
+    for (size_t I = 0; I + 1 < Block.Ops.size(); ++I)
+      EXPECT_EQ(Block.Ops[I].Inputs[0], Original[I].Inputs[0]);
+  }
+}
+
+TEST(MedConstantPropagation, WidthOriginsSurviveCyclesAndStayLocalToTheirUses) {
+  for (auto View : {NdOp::INT_ZEXT, NdOp::INT_SEXT, NdOp::SUBBYTES})
+    for (bool ReverseBlocks : {false, true})
+      for (bool ReverseArguments : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << unsigned(View) << ':' << ReverseBlocks << ':'
+                     << ReverseArguments);
+        const auto Value = MedVar::makeConst(7, 4);
+        auto Func = loop(Value);
+        auto &Seed = block(Func, 0).Ops.front();
+        Seed =
+            operation(View, variable(1, 4),
+                      {MedVar::makeConst(7, View == NdOp::SUBBYTES ? 8 : 1)});
+        if (View == NdOp::SUBBYTES)
+          Seed.addInput(MedVar::makeConst(0, 1));
+        auto &Exit = block(Func, 3);
+        Exit.Ops = {
+            operation(NdOp::COPY, variable(10, 4), {Value}),
+            operation(NdOp::COPY, variable(11, 4), {variable(2, 4)}),
+            operation(NdOp::CALL, {}, {variable(11, 4), variable(10, 4)}),
+            operation(NdOp::INT_ADD, variable(12, 4), {variable(11, 4), Value}),
+            operation(NdOp::STORE, {}, {variable(99), variable(11, 4)}),
+            operation(NdOp::RETURN, {}, {variable(11, 4)})};
+        auto &Arguments = block(Func, 1).Phis.front().Args;
+        if (ReverseArguments)
+          std::reverse(Arguments.begin(), Arguments.end());
+        if (ReverseBlocks)
+          std::reverse(Func.Blocks.begin(), Func.Blocks.end());
+        ASSERT_TRUE(propagateInvariantConstants(Func));
+        const auto &Ops = block(Func, 3).Ops;
+        EXPECT_EQ(Ops[1].Inputs[0], variable(2, 4));
+        EXPECT_EQ(Ops[2].Inputs[0], variable(11, 4));
+        EXPECT_EQ(Ops[2].Inputs[1], Value);
+        EXPECT_EQ(Ops[3].Inputs[0],
+                  MedVar::makeConst(7, 4, ConstantAddressProvenance::Scalar));
+        EXPECT_EQ(Ops[4].Inputs[0], variable(99));
+        EXPECT_EQ(Ops[4].Inputs[1], Value);
+        EXPECT_EQ(Ops[5].Inputs[0], Value);
+      }
+}
+
+TEST(MedConstantPropagation,
+     WidthOriginWorkExhaustionLeavesEveryOperandIntact) {
+  // All PHIs are complete and agree on the seed. The larger join fits the
+  // definition cap and value solver, but its width-origin use edges exhaust
+  // the remaining shared work budget before any operands may be replaced.
+  for (int Fanout : {8, 512}) {
+    SCOPED_TRACE(Fanout);
+    MedFunc Func;
+    Func.Blocks.resize(Fanout + 2);
+    for (int Id = 0; Id < Fanout + 2; ++Id)
+      Func.Blocks[Id].Id = Id;
+    auto &Entry = Func.Blocks.front();
+    Entry.Ops.push_back(
+        operation(NdOp::INT_ZEXT, variable(0, 4), {MedVar::makeConst(7, 1)}));
+    auto &Join = Func.Blocks.back();
+    for (int Id = 1; Id <= Fanout; ++Id) {
+      Entry.Succs.push_back(Id);
+      Func.Blocks[Id].Preds = {0};
+      Func.Blocks[Id].Succs = {Join.Id};
+      Join.Preds.push_back(Id);
+    }
+    for (int Id = 1; Id <= Fanout; ++Id) {
+      PhiNode Phi;
+      Phi.Output = variable(Id, 4);
+      for (int Pred : Join.Preds)
+        Phi.Args.emplace_back(Pred, variable(0, 4));
+      Join.Phis.push_back(std::move(Phi));
+    }
+    Join.Ops.push_back(operation(NdOp::RETURN, {}, {variable(1, 4)}));
+    const auto Original = Func;
+    const bool Complete = Fanout == 8;
     EXPECT_EQ(propagateInvariantConstants(Func), Complete);
-    EXPECT_EQ(Block.Ops.back().Inputs[0],
-              Complete ? MedVar::makeConst(7, 4) : variable(0, 4));
+    EXPECT_EQ(Join.Ops.back().Inputs[0],
+              Complete ? MedVar::makeConst(7, 4) : variable(1, 4));
     if (!Complete)
-      for (size_t I = 0; I < Block.Ops.size(); ++I)
-        EXPECT_EQ(Block.Ops[I].Inputs[0], Original[I].Inputs[0]);
+      for (size_t B = 0; B < Func.Blocks.size(); ++B) {
+        const auto &Before = Original.Blocks[B];
+        const auto &After = Func.Blocks[B];
+        for (size_t I = 0; I < After.Phis.size(); ++I)
+          EXPECT_EQ(After.Phis[I].Args, Before.Phis[I].Args);
+        for (size_t I = 0; I < After.Ops.size(); ++I)
+          EXPECT_EQ(After.Ops[I].Inputs, Before.Ops[I].Inputs);
+      }
   }
 }
 

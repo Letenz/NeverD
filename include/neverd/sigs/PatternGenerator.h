@@ -63,6 +63,9 @@ struct PatternGeneratorOptions {
   /// and unprefixed conditional rel32 references to explicit function symbols
   /// with zero relocation addends. Unsupported forms remain unstated.
   bool EmitReferences = false;
+  /// Opt in to typed external-data references in complete contextual/evidence
+  /// records. Ordinary FLIRT-compatible output never acquires this extension.
+  bool EmitDataReferences = false;
   /// Emit referenced functions with the NeverD `!refs` constraint and full
   /// byte coverage, including functions below the ordinary fixed-byte floor.
   /// Unreferenced functions retain the ordinary floor and output format.
