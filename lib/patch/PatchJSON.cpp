@@ -11,8 +11,10 @@
 #include "neverd/patch/Limits.h"
 #include "neverd/patch/PatchIO.h"
 
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/raw_ostream.h"
 
 #if NEVERD_USE_SIMDJSON
 #include "simdjson.h"
@@ -47,19 +49,34 @@ neverd::patch::parseHex(llvm::StringRef Text, uint64_t Limit) {
   return Bytes;
 }
 
+// Only formatter-produced hexadecimal text reaches this helper. It is ASCII
+// without quotes or escapes, so generic string validation/escaping is
+// redundant.
+static void writeHexAttribute(llvm::json::OStream &Output, llvm::StringRef Key,
+                              llvm::StringRef Text) {
+  Output.attributeBegin(Key);
+  Output.rawValue(
+      [&](llvm::raw_ostream &Stream) { Stream << '"' << Text << '"'; });
+  Output.attributeEnd();
+}
+
 void neverd::patch::writePatchRows(llvm::json::OStream &Output,
                                    const PatchOverlay &Overlay) {
+  llvm::SmallString<32> Bytes;
   Output.array([&] {
     for (const auto &[Offset, Row] : Overlay.rows())
       Output.object([&] {
         const std::string FileOffset = "0x" + llvm::utohexstr(Offset, true);
-        Output.attribute("addr", llvm::StringRef(FileOffset));
-        Output.attribute("current", llvm::toHex(Row.Current, true));
-        Output.attribute("file_off", llvm::StringRef(FileOffset));
+        writeHexAttribute(Output, "addr", FileOffset);
+        llvm::toHex(Row.Current, true, Bytes);
+        writeHexAttribute(Output, "current", Bytes);
+        writeHexAttribute(Output, "file_off", FileOffset);
         Output.attribute("kind", patchKindName(Row.Kind));
-        Output.attribute("original", llvm::toHex(Row.Original, true));
+        llvm::toHex(Row.Original, true, Bytes);
+        writeHexAttribute(Output, "original", Bytes);
         Output.attribute("size", Row.size());
-        Output.attribute("va", "0x" + llvm::utohexstr(Row.Address, true));
+        writeHexAttribute(Output, "va",
+                          "0x" + llvm::utohexstr(Row.Address, true));
       });
   });
 }
