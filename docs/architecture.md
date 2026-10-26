@@ -12308,3 +12308,10 @@ VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
 this authority. Discard replaces each target page through AddressSpace while
 retaining permissions and VMA policy; old physical aliases and pinned views
 keep their bytes. Device/GPU admission remains in the shared service dispatch.
+
+`MedCallTarget` observes cached callable values through the Med ABI owner's
+exact address, width and overlap proof. The machine call-summary adapter,
+pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
+An observed import identifies the captured callable's signature and never
+authorizes a new target load. Call barriers, partial writes, uncertain aliases
+and exhausted work retain the unresolved call.

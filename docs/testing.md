@@ -14082,3 +14082,10 @@ SDK/CLI report pairs with independently expected guarded bytes, across ordinary
 and RELR callers, four service routes, permission changes, holes and a closed
 dynamic provider. Named input RAM and unmap/replacement regressions verify that
 VMA names and address reuse cannot manufacture anonymous allocation provenance.
+
+`NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
+partial writes, auxiliary outputs, exhaustion, unchanged original operands,
+mutable import captures and Win64 scalar results versus ELF aggregate transport.
+`NeverDWorkerCachedCallABI` generates PE fixtures with direct and cached
+seven-argument imports and zero/one-argument private callees, checking both C
+routes independently of function preparation order.
