@@ -205,7 +205,30 @@ private slots:
       return Row.isValid() && Row.top() >= Viewport.top() &&
              Row.bottom() <= Viewport.bottom();
     };
-    QTRY_VERIFY(SelectedRowVisible(Versions) && SelectedRowVisible(Functions));
+    const auto RowGeometry = [&] {
+      QString Text = QString("window=%1x%2 minimum=%3x%4")
+                         .arg(View.width())
+                         .arg(View.height())
+                         .arg(View.minimumWidth())
+                         .arg(View.minimumHeight());
+      for (const auto *Page : {Versions, Functions}) {
+        const auto *Table = Page->table();
+        Text += QString(" %1: table=%2 min=%3 viewport=%4 header=%5 "
+                        "headerHint=%6 row=%7 visualTop=%8 visualBottom=%9")
+                    .arg(Page->objectName())
+                    .arg(Table->height())
+                    .arg(Table->minimumHeight())
+                    .arg(Table->viewport()->height())
+                    .arg(Table->horizontalHeader()->height())
+                    .arg(Table->horizontalHeader()->sizeHint().height())
+                    .arg(Table->rowHeight(Table->currentIndex().row()))
+                    .arg(Table->visualRect(Table->currentIndex()).top())
+                    .arg(Table->visualRect(Table->currentIndex()).bottom());
+      }
+      return Text;
+    };
+    QTRY_VERIFY2(SelectedRowVisible(Versions) && SelectedRowVisible(Functions),
+                 qPrintable(RowGeometry()));
     QTest::qWait(60);
     if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
         !Output.isEmpty()) {
@@ -252,7 +275,8 @@ private slots:
                  Translated("neverd::gui::LineageSession",
                             "\nYour previous graph is still available."));
     View.setLayoutDirection(Locale == "ar" ? Qt::RightToLeft : Qt::LeftToRight);
-    QTRY_VERIFY(SelectedRowVisible(Versions) && SelectedRowVisible(Functions));
+    QTRY_VERIFY2(SelectedRowVisible(Versions) && SelectedRowVisible(Functions),
+                 qPrintable(RowGeometry()));
     if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
         !Output.isEmpty()) {
       QTest::qWait(60);
