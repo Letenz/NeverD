@@ -132,3 +132,27 @@ are disabled; native Python bindings are qualified separately. Skips include
 optional NeverC, Windows/PDB and exception corpora, platform-specific native
 execution and newer LLVM intrinsics. Subsequent upstream integration and the
 delivered commit require separately identified coverage.
+
+Integration `3dc5881e6dcc1f9607965adf83995db8ae0bc68a` includes upstream
+`62c40a36f5c4dbe5dd7d8e1f50738566728ba58d`. Its complete build initially
+refused a missing libc++ fixture archive; installing the exact upstream signature
+gitlink `39c99bbade0bf21c00cc0d70df7c577d98e34a7c` supplied the retained
+compiler artifacts. The subsequent frozen-source selection passed 6,429 CTests,
+skipped 76 and failed none, out of 6,505 selected. The disjoint 126 AMX cases,
+both three-sample scale workloads, 89 historical reopens, five Python groups,
+150% Qt checks and both ten-case native Wayland runs passed. Seventy-three
+signature-generation/metadata script tests also passed against unchanged script
+contents. This uses the same Release/LLVM/Capstone profile and disabled optional
+backends described above; it does not imply emulation qualification.
+
+Desktop recovery was subsequently qualified at
+`833507adcd4130db7da6b838687be27514048a79`. A saved collection with 200
+snapshots and 48 KiB labels reproduces valid admission followed by oversized
+default pages. User-adjustable page rows recover the complete inventory without
+changing labels, collection identity or budgets. A separate 200-report diagram
+reproduces Fit shrinking below the manual zoom range; Zoom in now recovers a
+readable scale. Both regressions failed on the original desktop code and passed
+after repair. All twelve lineage cases passed in each native Wayland scale;
+offscreen runs passed eleven and explicitly skipped the compositor gesture.
+CLI, worker and shared-library hashes remained identical to the qualified
+integration. Later layout and upstream changes still need their own coverage.
