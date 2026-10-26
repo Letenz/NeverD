@@ -97,9 +97,12 @@ SymRef foldCommonOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
 SymRef foldOffsetProduct(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage) {
   if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
-      Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
-      Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
+      Ctx.numOperands(Root) < limits::kMinResidueProductFactors)
     return Root;
+  if (Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
+    return Ctx.isConst(Ctx.operand(Root, 0))
+               ? foldResidualProductResidues(Ctx, Root, Budget, Storage)
+               : Root;
   const bool OffsetHint = hasOffsetFactors(Ctx, Root);
   bool CommonBase = false;
   if (OffsetHint) {
@@ -252,6 +255,11 @@ SymRef foldProductResidues(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
   const size_t N = Ctx.numOperands(Root);
   if (N > limits::kMaxResidueProductSummands ||
       !llvm::any_of(Ctx.operands(Root), [&](SymRef Term) {
+        if (Ctx.op(Term) != SymOp::Mul ||
+            Ctx.numOperands(Term) < limits::kMinResidueProductFactors)
+          return false;
+        if (Ctx.numOperands(Term) > limits::kMaxResidueProductFactors)
+          return Ctx.isConst(Ctx.operand(Term, 0));
         return hasOffsetFactors(Ctx, Term) ||
                hasProjectedResidueFactors(Ctx, Term);
       }))

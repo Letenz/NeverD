@@ -251,6 +251,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   if (auto E = LibC.initializeDex())
     return std::move(E);
   size_t NextConstructor = 0;
+  uint64_t EntryReturnSP = 0;
   bool MainCall = false;
   auto Prepare = [&]() -> llvm::Error {
     std::vector<uint64_t> Arguments;
@@ -267,7 +268,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
                                     Arguments);
     if (!Frame)
       return Frame.takeError();
-    Threads.setReturnSP(Frame->ReturnStackPointer);
+    EntryReturnSP = Frame->ReturnStackPointer;
     return CPU.writeRegister(CPURegister::AArch64PC, {Result.PC, 0});
   };
   if (auto E = Prepare())
@@ -485,18 +486,20 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
         RuntimeFailure(Value.takeError());
         break;
       }
-      if (Threads.enabled()) {
+      const bool Entry = Threads.isEntry();
+      // A child start routine's return is implicit pthread_exit(value). Its
+      // stack is not a caller frame to resume; FinishThread owns completion.
+      if (Threads.enabled() && Entry) {
         auto SP = CPU.readRegister(Calls->info().StackPointer);
         if (!SP) {
           RuntimeFailure(SP.takeError());
           break;
         }
-        if ((*SP)[0] != Threads.returnSP()) {
+        if ((*SP)[0] != EntryReturnSP) {
           RuntimeFailure(failure(diagnostic::ThreadStack));
           break;
         }
       }
-      const bool Entry = Threads.isEntry();
       if (Entry)
         Result.ReturnValue = (*Value)[0];
       if (!Threads.enabled() || (Entry && !Native.DrainThreads)) {

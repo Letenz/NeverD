@@ -338,13 +338,25 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   };
   switch (InsnId) {
 
-  // --- SYSENTER / SYSEXIT / SYSRET ---
+  // --- SYSENTER / RSM ---
   case X86_INS_SYSENTER:
-  case X86_INS_SYSEXIT:
-  case X86_INS_SYSRET:
   case X86_INS_RSM:
-    // The ordinary syscall/return ABI cannot transport these continuations.
+    // SYSENTER's entry point and stack come from MSRs and RSM restores state
+    // from SMRAM: neither target is a named operand, so there is no faithful
+    // ordinary-C projection.
     return false;
+
+  // --- SYSEXIT / SYSRET (compat-mode syscall returns) ---
+  case X86_INS_SYSEXIT:
+    // SYSEXIT transfers to EDX with stack ECX; terminal, never resumes here.
+    S.emitVoidIntrinsic(Intrinsic::Sysexitq,
+                        {NdVar::reg(x86reg::RDX, 4), NdVar::reg(x86reg::RCX, 4)});
+    break;
+  case X86_INS_SYSRET:
+    // SYSRET transfers to ECX with EFLAGS from R11D; terminal.
+    S.emitVoidIntrinsic(Intrinsic::Sysretq,
+                        {NdVar::reg(x86reg::RCX, 4), NdVar::reg(x86reg::R11, 4)});
+    break;
 
   // --- INT1 (ICEBP) ---
   case X86_INS_INT1:

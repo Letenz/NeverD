@@ -10680,7 +10680,8 @@ TEST_F(JTE_AArch64, GCCCompactSignedEntriesMayPrecedeTheAnchor) {
   neverd::BinaryImage &Image = *ImageOrErr;
   neverd::Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
-  for (const char *Name : {"a64_gcc_compact_byte", "a64_gcc_compact_half"}) {
+  for (const char *Name : {"a64_gcc_compact_byte", "a64_gcc_compact_half",
+                           "a64_gcc_compact_x_index"}) {
     SCOPED_TRACE(Name);
     const neverd::Symbol *Function = Image.findSymbol(Name);
     ASSERT_NE(Function, nullptr);

@@ -583,6 +583,14 @@ MedIR, LLVM and both C routes. W indices consume exactly four bytes. A load
 returns its accessed bytes; explicit IR sign/zero extends through the encoded
 W/X result width before publishing the complete X register. Stores consume
 only their accessed data bytes, with no invented return value.
+MedIR and HighIR share the original-memory pointer-input visitor: a non-SP
+base or an unscaled full-width index can supply parameter type evidence.
+Narrow or scaled indices do not. This type inference preserves the original
+instruction and grants no permission to replace its address calculation.
+Objective-C scalar table binding relocates only a proved immutable base,
+retaining the raw index, encoded extension, access width and memory effects.
+Every occurrence needs a bounded complete access range and the original
+instruction owner's address proof; publication rechecks the current uses.
 Byte and halfword stores slice the encoded W value explicitly; the tracer
 requires those source bytes to be known before publishing the slice. Unknown
 unused upper bytes do not prevent a known narrow store.
@@ -608,7 +616,22 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-Image configuration automatically selects these single-access immediate
+The same original-word owner covers all 13 GPR FEAT_LRCPC2 and ten B/H/S/D/Q
+FEAT_LRCPC3 ordered unscaled LDAPUR/STLUR forms. The original opcode retains
+RCpc acquire or release ordering as well as access-EL checked address addition;
+an ordinary acquire load is not an equivalent replacement. Opaque side effects
+and memory clobbers remain through LLVM and both C routes, including discarded
+reads. Unallocated neighboring size/opcode combinations fail at the lifter
+boundary even when supplied operand details claim a valid mnemonic. Automatic
+GPR-base lifting retains these ordered words for ordinary AArch64, classic
+arm64e and arm64e.x1 images. Existing immediate intrinsic identities and the
+SP/source-environment boundary remain unchanged.
+The finite tracer requires naturally aligned ordered accesses when the original
+alignment controls are unavailable. An unaligned request refuses before any
+result or memory write; address-span evidence alone grants no alignment proof.
+Execution still requires the corresponding host CPU feature; emitting the word
+does not establish that feature or qualify concurrent-memory behavior.
+Image configuration selects the nonordered single-access immediate
 operations for arm64e.x1 GPR bases through both decoder routes, including
 unprivileged variants. Architecture-only decoding preserves them conservatively;
 image-configured ordinary AArch64 and classic arm64e retain their existing
@@ -733,6 +756,27 @@ the vector tuple remains internal and grants no native vector entry/return ABI.
 The x1-only automatic policy, exact image occurrences and complete storage
 proof also apply to these single SIMD accesses.
 
+GPR W/X pairs, signed LDPSW and SIMD S/D/Q pairs share the original-word
+contract for offset, pre-index, post-index and non-temporal accesses. Pair loads
+publish three auxiliary values: both complete X/V values and the completed
+base; stores consume both complete values and return the base. A non-writeback
+load may overwrite its incoming GPR base, so only writeback forms commit the
+base result to the architectural register. Duplicate load destinations and
+constrained-unpredictable GPR writeback overlaps are refused. Both projections
+and LLVM retain one native pair instruction, including its access descriptor,
+second-address increment and writeback ordering. Finite tracing requires both
+transfers to fit the same declared memory model before committing results.
+Nominal frame observations cover the entire pair without granting an original
+SP execution environment. Auxiliary carrier completeness, source dominance and
+image occurrence validation reuse the same owners as SIMD single writeback.
+
+The pair-memory integer bridge passes the same model at EL1 and EL0 through
+five output routes and all four CPTA/CPTA0 settings: 215 samples per route and
+control, totaling 8,600 generated sample calls. Integrated dev outputs match
+the tested model inputs byte for byte. The [pair record](evidence/arm64e-pair-memory-2026-10-26.json)
+retains the source and input provenance, regression results and qualification
+limits.
+
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
@@ -754,8 +798,9 @@ identity. Automatic x1 GPR single-immediate lifting and initialized-image
 rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
 coverage; SIMD single pre/post-index accesses have separate explicit-IR,
-automatic-lifting and image regressions. Pair and other ordinary-memory families,
-original-SP stack/call projection and Apple native
+automatic-lifting and image regressions. Pair accesses have separate explicit-IR,
+automatic-lifting, nominal-frame and image regressions. Other ordinary-memory families, including ordered unscaled accesses and NEON
+structures/lane/post-index forms, original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
 lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
@@ -997,12 +1042,37 @@ sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
 
-History publication composes the recovery journal from serializer-produced JSON
-and reuses the already encoded target history. It retains the owning before/after
-states until all writes finish, constructing a full in-memory journal only after
-an interrupted write for same-session retry. This avoids a second whole-state
-tree and repeated target-history encoding on successful saves. Read comparisons,
-byte budgets, atomic write order and recovery validation remain authoritative.
+History checkpoints share an immutable, validated committed snapshot; staged
+commands and the undo cursor remain independent. Every consistency check still
+reads the actual bounded sidecar files. Exact byte equality can reuse the
+snapshot's validation; changed bytes take the same parser and normalizer,
+including equivalent formatting, merge-conflict and foreign-edit checks. A row
+can reuse admission only when both its values and JSON types match the validated
+row. Non-finite numbers, binary values and invalid UTF-8 are refused before
+publication so the snapshot and its serialized representation cannot diverge.
+
+History publication encodes the target state once and composes the history and
+recovery journal from serializer-produced JSON and retained committed text.
+Loading a snapshot retains validated history-file bytes and defers journal
+encoding until a save needs it. Before embedding a loaded document, publication
+parses and serializes it, so a top-level BOM cannot enter nested JSON. Merely
+opening history does not pay these serialization costs.
+It retains owning before/after snapshots until all writes finish, constructing a
+full in-memory journal only after an interrupted write for same-session retry.
+This avoids a second whole-state tree and repeated state encoding on successful
+saves. Byte budgets, atomic write order and full recovery validation remain
+authoritative. Undo/redo replaces rows in sorted position; patch commands merge
+the SDK's complete, file-offset-ordered inventory with the committed rows.
+A committed patch command proves that reloading must invalidate analysis, so
+it does not produce two more complete inventories just to detect that change.
+Ordinary reloads still compare before and after.
+
+Shared transport JSON has separate entry points for bounded external frames
+and SDK-owned documents. Backend parsing preserves native JSON number types,
+rounding and last-duplicate-key behavior, with an owning SIMD conversion when
+possible and native fallback otherwise. External frames and sidecars retain
+their duplicate-key, nesting and byte admission. Neither path retains borrowed
+parser strings; temporary large parser storage is released before fallback.
 
 Find in view is a GUI text operation. Its modeless dialog captures the originating
 pane before taking keyboard focus; pseudocode/IR supplies its complete source
@@ -2256,9 +2326,22 @@ the same COFF object. Their shared key names the exact operand of a uniquely
 defined typed function, external or static; no local variable spelling escapes
 its object. Static function names remain query keys rather than byte identities.
 Only that independently settled ordinary function can bind the relation, after
-all matching source refinements agree. The existing single data pass checks consumers
-without changing anchors or restarting inference. The parser/cache preserve a
-separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+all matching source refinements agree. The single data pass checks consumers
+without changing anchors. Complete, strong, settled data consumers can then
+request existing name-indexed caller bodies. This bounded continuation freezes
+both data bindings and the post-data candidate prefix; descendants cannot
+create bindings or alter the proof of their parents. A source/name-index gate
+avoids constructing another settlement map when no new parent has a query.
+Otherwise, the continuation settles only visited addresses from a sorted
+frozen-row index, retaining all competing claims at those addresses.
+The parser/cache preserve a separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+An explicit source-layout mode also proves signed coordinate differences within
+one non-COMDAT data section. Only a canonical zero-addend static operand can
+establish the frozen base; defined consumer data and signed addends must fit
+the same complete source section. Runtime checks a consumer's inverse delta
+against that base and the same mapped segment/section. It creates no derived
+bindings and never feeds relative consumers back into anchor settlement.
+Missing source facts and external/local kind conflicts remain unresolved.
 Anchor-name lookup compares lengths before text, avoiding hashes of unrelated
 template spellings. Frozen reference checks visit only their new outgoing
 sites, skip entry work when no code target is referenced, and borrow sorted
@@ -2461,6 +2544,10 @@ unproved intervening calls. The argument area, including slot padding, loses
 its old byte identities at each call. Low-to-Med snapshots the original loaded
 pointer and forwards only proven reloads before binding operands and building
 SSA; it does not replace a cached pointer with another read of the import slot.
+HighIR retains a named import for a constant-address copy followed by the
+original slot load only when its existing call-target memory proof establishes
+that the read still reaches the call. An intervening call or possibly aliasing
+write retains the captured indirect target instead.
 Omitted-callee conversion and its cache include the same signatures,
 independently of the selected functions. Forwarding recovery keeps each scalar
 argument width separate from the result width and admits incoming FP parameters
@@ -2928,6 +3015,10 @@ proof-gated semantic synthesis in both HighC and LLVM-to-C. HighC tries
 synthesis after exact derivation, retaining the derivation if synthesis
 cannot improve it. Width conversions also start inner numeric regions, so
 extensions do not hide narrow arithmetic or change its overflow semantics.
+Empty block anchors left by dead-store removal retain available scalar
+definitions. A referenced jump or exception entry still clears them; child
+scopes, expressions and effects keep their existing boundaries. Serial and
+parallel source simplification share this classification.
 Generated wide constants retain explicit zero extensions when their 64-bit
 payload would otherwise be ambiguous to an enclosing symbolic region.
 LLVM source enables synthesis in the existing semantic fixed point. Both consume
@@ -2941,10 +3032,15 @@ effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
 Expression interning beneath these passes uses a flat hash table, avoiding a
-separate allocation for each distinct node hash. A tagged key admits every
-64-bit hash, including values reserved by the table implementation. Colliding
+separate allocation for each distinct node hash. Reserved key pairs use
+separate context-owned heads, so every 64-bit hash remains representable. Colliding
 hashes still compare the complete operator, width, auxiliary value and operand
 sequence; context copies and moves own their complete tables and node arenas.
+The compact two-word hash key uses one 64-bit bucket mix, without hashing its
+halves independently. Sum construction collects small coefficient maps in
+inline storage and sorts completed entries by base-node index before rebuilding.
+Larger sums retain hashed lookup; cancellation, recollection and canonical node
+order are unchanged.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every
@@ -3228,6 +3324,9 @@ The expression evaluation plan uses a compact handle-to-slot table and gathers
 its sorted, unique variable IDs during lowering. It avoids per-node hash
 allocations and a second reachable-DAG walk without changing evaluation steps,
 operand order, arbitrary-width semantics or the solver's work charges.
+Native evaluation starts associative folds with their two guaranteed operands
+and reuses already truncated literals, avoiding empty reductions and repeated
+constant masking in the sampling loop.
 HighC lowers a zero-extended sub-byte extract as a masked native-word operation
 with the exact extraction offset. The fragment is never materialized as a byte
 for signed extension, which would change its sign bit. Other unsupported
@@ -4850,6 +4949,11 @@ bounded, complete x64/ARM64 PE/ELF leaves that read aligned incoming scalar
 carriers. Their exact 1/2/4/8-byte widths survive the omitted-callee memo,
 entry binding and outgoing-byte proof. Signed and unsigned extensions preserve
 the loaded bits; a narrow input never initializes adjacent stack bytes.
+Prefix loads at the same offset share one scalar carrier only when an original
+reachable load also reads its full declared width. The shared frame proof checks
+that maximum separately for each slot, so repeated narrow loads or a complete
+load from another slot cannot supply the missing bytes. Scalar byte extraction
+preserves its checked bounds during the source role walk.
 The shared entry-stack proof owns offsets, and a separate value walk rejects
 external memory, frame escape and undefined inputs. Private frame/link spills
 may survive in the leaf: `SourceFrameAnalysis` checks the original LowIR byte
@@ -5706,13 +5810,23 @@ sequence. HighC and LLVM C request the source projection; machine lift,
 patching and analysis keep the original stack operations.
 
 The entry-stack proof keeps definitions, joins, ambiguity and transient active
-flags in one ordered index. Each visit still consumes its ordinary work and
-depth allowance. Loop assumptions keep their existing scoped lifetime; offsets
-and failed queries are not memoized, and each query clears its active flags.
+contexts in one index. A join's anchored induction assumption lets an interior
+stack definition be checked again on the backedge; every incoming arm must
+still agree. A cycle within the same assumption context remains unresolved.
+Each visit consumes its ordinary work and depth allowance. Completed joins
+that used no assumption may reuse their proof with its original work and depth
+charges. Conditional results and failed queries are not cached, and scoped
+active markers restore the outer query after each recursive check.
 Read-only offset queries lazily reuse the shared entry-register authenticator's
 answer for the canonical defining occurrence. Every use still checks exact
 register metadata; the fact lasts only for that immutable proof. Alignment
 rewrites continue to authenticate against the current entry COPY prefix.
+
+HighIR's call-result set uses the shared variable key for stores and indirect
+calls as well as definition indexing. Logical parameter numbers occupy a
+separate namespace from machine SSA values. A floating stack parameter whose
+number matches an intrinsic temporary therefore retains its source type and
+physical entry offset when stored; the actual call result stays a local value.
 
 When HighC must keep a frame whole, it declares the frame bytes as
 `stack_storage`, one record laid out exactly like those bytes, as the LLVM C
@@ -6621,6 +6735,14 @@ id, blocks, protocol-only types, ambiguous storage and unknown pointer bases do
 not provide class facts. Source validation repeats the entire path against the
 current image. These facts describe declared types, not object identity or
 permission to remove memory operations.
+
+A native helper's single entry read of a runtime ivar-offset cell may be
+snapshotted before the call without changing its pointer ABI. The shared
+entry-read proof follows a validated original AArch64 read's inputs only when
+all sibling inputs are pure and no competing effect precedes the read.
+Duplicate reads, escapes, unsupported ordering and malformed instructions
+remain unproved. The snapshot reads current runtime metadata; it does not copy
+the offset stored in the analyzed image.
 
 When control flow selects among authenticated Objective-C ivar-offset cells,
 the source binding may move the runtime offset values to the predecessor edges

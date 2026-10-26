@@ -344,6 +344,14 @@ public:
   size_t ObservationBytes = 0;
   std::vector<SourceFrameArgumentStorage> StorageObservations;
 
+  bool hasCompleteIncomingStackReads() const {
+    return std::all_of(
+        ObservedIncomingStackWidths.begin(), ObservedIncomingStackWidths.end(),
+        [&](const auto &Read) {
+          return Read.second == IncomingStackSlots.at(Read.first);
+        });
+  }
+
   bool transfer(const LowBlock &Block, State &Current, bool CheckExits,
                 std::set<uint64_t> *UsedEntryRegisters = nullptr,
                 std::optional<size_t> QueryIndex = std::nullopt) {
@@ -1300,15 +1308,20 @@ public:
             if (Read(*Memory.Address, I).MayBeFrame)
               return false;
         const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
-        // The declared carrier must agree with the original load, including
-        // for native ABI inference that compares independently recovered IRs.
-        // A narrower load cannot authenticate the declaration's extra bytes.
+        // Prefix reads can share a declared carrier with a complete read of
+        // the same slot. Record the largest original access, then require an
+        // exact match after the final reachable-block pass. Narrow reads alone
+        // cannot authenticate extra bytes inferred in another IR.
         const bool IncomingRead =
             Address && Op.Opcode == NdOp::LOAD &&
             IncomingStackSlots.count(*Address) &&
-            Memory.AccessSize == IncomingStackSlots.at(*Address);
+            Memory.AccessSize <= IncomingStackSlots.at(*Address);
         if (IncomingRead && (!SP || *SP > 0))
           return false;
+        if (IncomingRead && CheckExits) {
+          auto &Width = ObservedIncomingStackWidths[*Address];
+          Width = std::max(Width, Memory.AccessSize);
+        }
         if (Address && !IncomingRead) {
           if (!SP || *Address > -int64_t(Memory.AccessSize))
             return false;
@@ -1574,6 +1587,7 @@ private:
   bool TerminalOnly;
   bool TrackStackArguments;
   std::map<int64_t, uint16_t> IncomingStackSlots;
+  std::map<int64_t, uint16_t> ObservedIncomingStackWidths;
   bool RequirePrivateFrame;
   bool ExternalMemoryDisjoint;
   const SourceFunctionTypeHint *EntrySignature;
@@ -1883,7 +1897,7 @@ static bool restoresNativeSourceStateImpl(
       return false;
     HasReachableReturn |= Function.Blocks[I].Ops.back().Opcode == NdOp::RETURN;
   }
-  if (!HasReachableReturn)
+  if (!HasReachableReturn || !Proof.hasCompleteIncomingStackReads())
     return false;
   if (UsedEntryRegisters)
     *UsedEntryRegisters = std::move(Used);

@@ -571,10 +571,10 @@ llvm::Error validateLowInstructionBoundaries(
         return Error;
       if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
           Op.Inputs[0].isConst() &&
-          Op.Inputs[0].Offset ==
-              static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback)) {
+          isAArch64WritebackAuxiliaryLoad(
+              static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
         const auto Following = Ops->drop_front(&Op - Ops->data() + 1);
-        if (!lowAArch64VectorWritebackOutputs(Op, Following))
+        if (!lowAArch64WritebackOutputs(Op, Following))
           return invalid(kWritebackMalformed);
       }
     }

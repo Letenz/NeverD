@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -26,15 +27,71 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
                             const cs_aarch64 &ARM64) {
   if (Insn->size == kAddressMemoryWordBytes) {
     const uint32_t Word = readLE<uint32_t>(Insn->bytes);
+    if (isAArch64OrderedUnscaledMemoryEncoding(Word) &&
+        !aarch64AddressMemoryInstruction(Word))
+      throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
     if (PreserveImmediateMemory && aarch64WritebackMemoryOperation(Word)) {
       const auto Instruction = aarch64WritebackMemoryInstruction(Word);
       if (!Instruction)
-        return false;
+        throw UnliftedInstruction(S.Addr, Insn->mnemonic, Insn->op_str);
       if (!Instruction->stackBase()) {
         const NdVar Base = NdVar::reg(
             a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
             kAddressMemoryPointerBytes);
         const NdVar OriginalWord = NdVar::scalar(Word, kAddressMemoryWordBytes);
+        if (Instruction->isPair()) {
+          const unsigned ValueBytes = Instruction->isVector()
+                                          ? kAddressMemoryVectorBytes
+                                          : kAddressMemoryPointerBytes;
+          const auto Register = [&](unsigned Number) {
+            return Instruction->isVector()
+                       ? NdVar::reg(a64reg::V(Number), ValueBytes)
+                       : (Number == kAddressMemoryRegisterMask
+                              ? NdVar::scalar(0, ValueBytes)
+                              : NdVar::reg(a64reg::X0 + Number * ValueBytes,
+                                           ValueBytes));
+          };
+          const NdVar First = Register(Instruction->destination());
+          const NdVar Second = Register(Instruction->secondDestination());
+          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+          if (!Instruction->isLoad()) {
+            S.emitIntrinsic(Instruction->id(), Updated,
+                            {Base, OriginalWord, First, Second});
+          } else {
+            const NdVar FirstValue = S.makeTemp(ValueBytes);
+            const NdVar SecondValue = S.makeTemp(ValueBytes);
+            S.emitIntrinsic(Instruction->id(), S.makeTemp(0),
+                            {Base, OriginalWord});
+            const auto Commit = [&](NdVar Destination, NdVar Value) {
+              if (Destination.isConst()) {
+                S.emit(NdOp::COPY, S.makeTemp(ValueBytes), {Value});
+                return;
+              }
+              const unsigned NaturalBytes = Instruction->operation().Signed
+                                                ? ValueBytes
+                                                : Instruction->accessBytes();
+              if (NaturalBytes == ValueBytes) {
+                S.emit(NdOp::COPY, Destination, {Value});
+                return;
+              }
+              const NdVar Narrow = NdVar::reg(Destination.Offset, NaturalBytes);
+              S.emit(NdOp::SUBBYTES, Narrow,
+                     {Value, NdVar::scalar(0, kAddressMemoryWordBytes)});
+              S.emit(NdOp::INT_ZEXT, Destination, {Narrow});
+            };
+            Commit(First, FirstValue);
+            Commit(Second, SecondValue);
+          }
+          // Offset/non-temporal loads may overwrite their incoming base.
+          // Their unchanged base result is transported without a register
+          // write.
+          S.emit(NdOp::COPY,
+                 Instruction->hasWriteback()
+                     ? Base
+                     : S.makeTemp(kAddressMemoryPointerBytes),
+                 {Updated});
+          return true;
+        }
         if (Instruction->isVector()) {
           const NdVar Vector = NdVar::reg(a64reg::V(Instruction->destination()),
                                           kAddressMemoryVectorBytes);
@@ -91,14 +148,16 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
         return true;
       }
     }
-    // GPR-based single accesses retain their encoded displacement and access
-    // EL. Immediate SP accesses still belong to the frame model until that
-    // model can supply the original architectural SP environment.
+    // Ordered GPR-based accesses retain RCpc/release ordering for every image
+    // subtype. Immediate SP accesses still belong to the frame model until
+    // that model can supply the original architectural SP environment.
     if (const auto Instruction =
             aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes));
         Instruction &&
         (Instruction->hasRegisterIndex() ||
-         (PreserveImmediateMemory && !Instruction->stackBase()))) {
+         (!Instruction->stackBase() &&
+          (PreserveImmediateMemory ||
+           isAArch64OrderedUnscaledMemoryEncoding(Instruction->Word))))) {
       // Preserve the raw index: the machine instruction owns its scale and
       // AddressAdd's access-EL check. Reading inputs before publishing
       // the result also retains source/destination aliases.

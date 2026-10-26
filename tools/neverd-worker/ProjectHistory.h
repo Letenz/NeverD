@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string_view>
 
 namespace neverd::worker {
@@ -18,7 +19,7 @@ public:
                  std::string engineVersion, bool readOnly, AtomicWriter writer);
   static bool recoveryPending(const std::filesystem::path &binary);
   bool recovered() const { return recovered_; }
-  const Json &committedState() const { return committedState_; }
+  const Json &committedState() const;
   Json listing(std::size_t offset, std::size_t limit) const;
   /// Navigation/logging uses a patch row's virtual address, not its file key.
   static std::uint64_t displayAddress(const Json &command);
@@ -29,7 +30,7 @@ public:
   void stage(Json command);
   Json next(bool redo) const;
   void advance(bool redo);
-  void persist(const Json &state);
+  void persist(Json state);
   /// Called after each persist commits the project's files.
   void onCommit(std::function<void()> hook) { committed_ = std::move(hook); }
   void reset();
@@ -57,13 +58,17 @@ private:
   std::filesystem::file_time_type fileTime_;
   AtomicWriter writer_;
   std::function<void()> committed_;
-  Json commands_ = Json::array(), committedState_, previousDocument_;
+  Json commands_ = Json::array();
+  struct Snapshot;
+  // Copies used for rollback share only immutable, validated committed data.
+  std::shared_ptr<const Snapshot> snapshot_;
   /// A journal this live history published before a failed sidecar write.
   /// Only that exact transaction can be completed by a same-session retry.
   Json interruptedWrite_;
   std::size_t cursor_ = 0;
   Json diskState() const;
-  Json document(const Json &state) const;
+  std::shared_ptr<const Snapshot> readSnapshot(Json *document = nullptr) const;
+  std::string document(std::string_view encodedState) const;
   void recover();
 };
 } // namespace neverd::worker

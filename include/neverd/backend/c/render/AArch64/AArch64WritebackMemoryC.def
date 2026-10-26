@@ -57,4 +57,47 @@ NEVERD_A64_WRITEBACK_C_TEXT(
 NEVERD_A64_WRITEBACK_C_TEXT(kWritebackCValueField, "{0}.field_0")
 NEVERD_A64_WRITEBACK_C_TEXT(kWritebackCBaseField, "{0}.field_1")
 
+NEVERD_A64_WRITEBACK_C_TEXT(kPairCSecond, "__pair_second")
+NEVERD_A64_WRITEBACK_C_TEXT(kPairCFirstInput, "__pair_first_input")
+NEVERD_A64_WRITEBACK_C_TEXT(kPairCSecondInput, "__pair_second_input")
+NEVERD_A64_WRITEBACK_C_TEXT(kPairCField, "{0}.field_{1}")
+NEVERD_A64_WRITEBACK_C_TEXT(
+    kPairLoadCStatement,
+    "{{ const uint64_t {3} = (uint64_t)({4}); "
+    "register uint64_t {0} __asm__(\"x17\"); "
+    "register uint64_t {1} __asm__(\"x15\"); "
+    "register uint64_t {2} __asm__(\"x16\") = {3}; "
+    "__asm__ volatile(\".inst %c3\" : \"=&r\"({0}), \"=&r\"({1}), \"+r\"({2}) "
+    ": \"i\"({5}) : \"memory\"); {6} }\n")
+NEVERD_A64_WRITEBACK_C_TEXT(
+    kPairVectorLoadCStatement,
+    "{{ const uint64_t {3} = (uint64_t)({4}); "
+    "register int64_t __attribute__((vector_size(16))) {0} __asm__(\"v17\"); "
+    "register int64_t __attribute__((vector_size(16))) {1} __asm__(\"v15\"); "
+    "register uint64_t {2} __asm__(\"x16\") = {3}; "
+    "__asm__ volatile(\".inst %c3\" : \"=&w\"({0}), \"=&w\"({1}), \"+r\"({2}) "
+    ": \"i\"({5}) : \"memory\"); {6} }\n")
+NEVERD_A64_WRITEBACK_C_TEXT(
+    kPairStoreCExpression,
+    "({{ const uint64_t {3} = (uint64_t)({6}); "
+    "const uint64_t {4} = (uint64_t)({7}); "
+    "const uint64_t {5} = (uint64_t)({8}); "
+    "register uint64_t {0} __asm__(\"x17\") = {4}; "
+    "register uint64_t {1} __asm__(\"x15\") = {5}; "
+    "register uint64_t {2} __asm__(\"x16\") = {3}; "
+    "__asm__ volatile(\".inst %c3\" : \"+r\"({2}) "
+    ": \"r\"({0}), \"r\"({1}), \"i\"({9}) : \"memory\"); {2}; })")
+NEVERD_A64_WRITEBACK_C_TEXT(
+    kPairVectorStoreCExpression,
+    "({{ const uint64_t {3} = (uint64_t)({6}); "
+    "const unsigned __int128 {4} = (unsigned __int128)({7}); "
+    "const unsigned __int128 {5} = (unsigned __int128)({8}); "
+    "register int64_t __attribute__((vector_size(16))) {0} __asm__(\"v17\") = "
+    "{10}; "
+    "register int64_t __attribute__((vector_size(16))) {1} __asm__(\"v15\") = "
+    "{11}; "
+    "register uint64_t {2} __asm__(\"x16\") = {3}; "
+    "__asm__ volatile(\".inst %c3\" : \"+r\"({2}) "
+    ": \"w\"({0}), \"w\"({1}), \"i\"({9}) : \"memory\"); {2}; })")
+
 #undef NEVERD_A64_WRITEBACK_C_TEXT

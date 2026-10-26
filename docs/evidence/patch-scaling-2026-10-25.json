@@ -1888,6 +1888,7 @@
         "seconds": 0.8863303661346436
       }
     ],
+    "delivery_command_paths": "Repository-relative checkout paths; only the developer checkout prefix was normalized after publication. Original outcomes, timings and artifact hashes are retained.",
     "delivery_checks": [
       {
         "name": "final-delivery-x11",

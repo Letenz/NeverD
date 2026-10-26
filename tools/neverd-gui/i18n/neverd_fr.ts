@@ -148,10 +148,6 @@
         <translation>Renommer l&apos;adresse actuelle</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>Saisir un &amp;commentaire...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>Commenter l&apos;adresse actuelle</translation>
     </message>

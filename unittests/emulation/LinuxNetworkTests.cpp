@@ -115,6 +115,9 @@ TEST_P(LinuxNetwork, FailedAdmissionDoesNotConsumeConnectionOrStream) {
   const uint8_t Wrong[] = {0xff, 2, 3};
   llvm::cantFail(cpu().write(Base + 64, Wrong));
   EXPECT_FALSE(call(ServiceKind::SendTo, FD, Base + 64, 3));
+  EXPECT_EQ(Report.Diagnostic,
+            "outgoing TCP bytes differ from the offline contract at stream "
+            "offset 0 (buffer offset 0): expected 0x01, actual 0xff");
   const uint8_t Right[] = {1, 2, 3};
   llvm::cantFail(cpu().write(Base + 64, Right));
   EXPECT_EQ(call(ServiceKind::Write, FD, Base + 64, 3), 2u);
@@ -128,6 +131,35 @@ TEST_P(LinuxNetwork, FailedAdmissionDoesNotConsumeConnectionOrStream) {
   EXPECT_EQ(Read[0], 7);
   EXPECT_EQ(Read[1], 8);
   EXPECT_EQ(call(ServiceKind::ReceiveFrom, FD, 1, 2), 0u);
+}
+TEST_P(LinuxNetwork, MismatchOffsetsUseSharedCursorWithoutConsumingPrefix) {
+  for (uint64_t Prefix : {1u, 2u}) {
+    const auto FD = open();
+    ASSERT_EQ(call(ServiceKind::Connect, FD, Base, 16), 0u);
+    const auto Alias = call(ServiceKind::Dup, FD).value();
+    const uint8_t Wrong[] = {1, 2, 0xff};
+    llvm::cantFail(cpu().write(Base + 64, Wrong));
+    // The second case also leaves a mismatching byte beyond MaxSend.
+    ASSERT_EQ(call(ServiceKind::Write, FD, Base + 64, Prefix == 2 ? 3 : 1),
+              Prefix);
+    EXPECT_FALSE(
+        call(ServiceKind::SendTo, Alias, Base + 64 + Prefix, 3 - Prefix));
+    EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Report.Diagnostic,
+              Prefix == 1
+                  ? "outgoing TCP bytes differ from the offline contract at "
+                    "stream offset 2 (buffer offset 1): expected 0x03, actual "
+                    "0xff"
+                  : "outgoing TCP bytes differ from the offline contract at "
+                    "stream offset 2 (buffer offset 0): expected 0x03, actual "
+                    "0xff");
+    const uint8_t Right[] = {1, 2, 3};
+    llvm::cantFail(cpu().write(Base + 64, Right));
+    EXPECT_EQ(call(ServiceKind::Write, FD, Base + 64 + Prefix, 3 - Prefix),
+              3 - Prefix);
+    EXPECT_EQ(call(ServiceKind::Close, FD), 0u);
+    EXPECT_EQ(call(ServiceKind::Close, Alias), 0u);
+  }
 }
 TEST_P(LinuxNetwork, SharedCursorsReplacementAndFDReuseKeepOneOwner) {
   const auto FD = open(), Other = open();

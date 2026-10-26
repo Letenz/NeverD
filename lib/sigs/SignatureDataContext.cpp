@@ -34,6 +34,26 @@
 
 namespace neverd::sigs {
 
+std::optional<uint64_t> localDataReferenceBase(const BinaryImage &Img,
+                                               uint64_t Target,
+                                               const LocalDataAnchor &Anchor) {
+  const int64_t Delta = Anchor.Delta;
+  if ((Delta > 0 && Target < uint64_t(Delta)) ||
+      (Delta < 0 && Target > InvalidVA - uint64_t(-Delta)))
+    return std::nullopt;
+  const uint64_t Base = Target - Delta;
+  auto SameRegion = [&](const auto &Regions) {
+    return llvm::any_of(Regions, [&](const auto &Region) {
+      return Base >= Region.VA && Base - Region.VA < Region.Size &&
+             Target >= Region.VA && Target - Region.VA < Region.Size;
+    });
+  };
+  if (!SameRegion(Img.Segments) ||
+      (!Img.Sections.empty() && !SameRegion(Img.Sections)))
+    return std::nullopt;
+  return Base;
+}
+
 std::optional<uint64_t> dataReferenceTarget(const BinaryImage &Img,
                                             uint64_t Start, uint32_t Offset,
                                             uint32_t Length) {
@@ -255,7 +275,8 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
         const auto Anchor = localDataAnchor(Name);
         // The source relation belongs to this exact independent operand.
         // Other uses of the same local object cannot establish the binding.
-        if (Anchor->Name != Names.at(Address) || Anchor->Offset != Offset)
+        if (Anchor->Delta || Anchor->Name != Names.at(Address) ||
+            Anchor->Offset != Offset)
           continue;
       }
       // An explicit old code reference at this field cannot become data.
@@ -290,9 +311,11 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
     return;
   for (const auto &Hit : Pending)
     appendModuleMatches(Hit.Address, Hit.Module);
-  // Exactly one pass. Newly admitted candidates cannot confirm one another,
-  // request more callers or retroactively establish their own data bindings.
+  // Exactly one data pass. Newly admitted candidates cannot confirm one
+  // another or retroactively establish their own data bindings.
   checkReferences(Img, Entries, {}, Frozen, Frozen, &Bindings);
+  if (Matches.size() != Frozen)
+    applyCallerContext(Img, Entries, Frozen, &Bindings);
 }
 
 } // namespace neverd::sigs

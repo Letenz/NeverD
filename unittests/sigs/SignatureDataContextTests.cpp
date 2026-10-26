@@ -9,6 +9,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../../lib/sigs/DataReference.h"
+#include "../../lib/sigs/LocalDataReference.h"
 #include "../../lib/sigs/X86/X86DataReference.h"
 #include "gtest/gtest.h"
 
@@ -78,6 +80,30 @@ void add(SignatureDB &DB, const std::string &Patterns) {
   ASSERT_FALSE(Error) << llvm::toString(std::move(Error));
 }
 
+const std::string ParentBody =
+    "91919191919191919191919191919191488B05........488D0D........C3";
+
+std::string dataParent(bool Refine = false,
+                       std::string Refs = " %0013 00000013:anchor ^001A child",
+                       std::string Bytes = ParentBody) {
+  return Bytes + " 00 0000 001F " + (Refine ? "!caller" : "!refs") +
+         " :0000 parent" + (Refine ? Refs : " %0013 00000013:anchor") + "\n";
+}
+
+BinaryImage callerImage() {
+  auto Img = image();
+  auto &Code = Img.Segments.front().Data;
+  std::fill_n(Code.begin() + 0x80, 16, 0x91);
+  const uint8_t Operands[] = {0x48, 0x8b, 0x05, 0, 0, 0, 0,   0x48,
+                              0x8d, 0x0d, 0,    0, 0, 0, 0xc3};
+  std::copy(std::begin(Operands), std::end(Operands), Code.begin() + 0x90);
+  displacement(Img, 0x1093, 0x1097, 0x2020);
+  displacement(Img, 0x109a, 0x109e, 0x1100);
+  return Img;
+}
+
+const std::string Child = "488D05........C3 00 0000 0008 !caller :0000 child\n";
+
 } // namespace
 
 TEST(SignatureDataContext, CompleteIndependentAnchorSupportsCandidateOnly) {
@@ -106,6 +132,141 @@ TEST(SignatureDataContext, LocalDataUsesTheExactIndependentAnchorOperand) {
   displacement(Changed, 0x1103, 0x1107, 0x2030);
   DB.apply(Changed, {0x1000, 0x1100});
   EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+}
+
+TEST(SignatureDataContext, ConfirmedDataParentsCanRequestExactCallerBodies) {
+  for (bool Reverse : {false, true}) {
+    SignatureDB DB;
+    const auto Anchor = root() + root("anchor", true, " %0013 00000013:anchor");
+    const auto Context = dataParent() + dataParent(true) + Child;
+    add(DB, Reverse ? Context + Anchor : Anchor + Context);
+    DB.apply(callerImage(),
+             Reverse ? std::vector<uint64_t>{0x1100, 0x1080, 0x1000}
+                     : std::vector<uint64_t>{0x1000, 0x1080, 0x1100});
+    const auto Names = DB.buildCandidateNameMap();
+    ASSERT_TRUE(Names.contains(0x1100));
+    EXPECT_EQ(Names.at(0x1100), "child");
+    EXPECT_EQ(Names.at(0x1080), "parent");
+    EXPECT_EQ(Names.at(0x1000), "anchor");
+    EXPECT_TRUE(DB.findMatch(0x1100)->CallerConfirmed);
+    EXPECT_TRUE(DB.findMatch(0x1080)->Confirmed);
+    EXPECT_FALSE(DB.findMatch(0x1080)->CallerConfirmed);
+    EXPECT_FALSE(DB.findMatch(0x1000)->Confirmed);
+    EXPECT_TRUE(DB.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDataContext, CallerRequestsRetainIndependentRootAndSourceChecks) {
+  for (unsigned Case = 0; Case < 8; ++Case) {
+    auto Img = callerImage();
+    std::string Anchor =
+        root() + root("anchor", true, " %0013 00000013:anchor");
+    std::string Parent = dataParent();
+    std::string Source = dataParent(true);
+    std::string Targets = Child;
+    std::vector<uint64_t> Entries{0x1000, 0x1080, 0x1100};
+    switch (Case) {
+    case 0:
+      Anchor = root("anchor", true, " %0013 00000013:anchor");
+      break;
+    case 1: {
+      const auto Weak = std::string(32, '.') + ParentBody.substr(32);
+      Parent = dataParent(false, "", Weak);
+      Source = dataParent(true, " %0013 00000013:anchor ^001A child", Weak);
+      break;
+    }
+    case 2:
+      Source.clear();
+      break;
+    case 3:
+      Source += dataParent(true, " %0013 00000013:anchor");
+      break;
+    case 4:
+      Source = dataParent(true, " %0013 00000013:other ^001A child");
+      break;
+    case 5:
+      Targets += "488D05........C3 00 0000 0008 !caller :0000 rival\n";
+      Source =
+          dataParent(true, " %0013 00000013:anchor ^001A child ^001A rival");
+      break;
+    case 6:
+      displacement(Img, 0x1093, 0x1097, 0x2040);
+      break;
+    case 7:
+      Entries.pop_back();
+      break;
+    }
+    SignatureDB DB;
+    add(DB, Anchor + Parent + Source + Targets);
+    DB.apply(Img, Entries);
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100)) << Case;
+    EXPECT_TRUE(DB.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDataContext, CallerDescendantsCannotCreateAnotherDataBinding) {
+  auto Img = callerImage();
+  auto &Code = Img.Segments.front().Data;
+  std::fill_n(Code.begin() + 0x180, 16, 0x92);
+  const uint8_t Load[] = {0x48, 0x8b, 0x05, 0, 0, 0, 0, 0xc3};
+  std::copy(std::begin(Load), std::end(Load), Code.begin() + 0x190);
+  displacement(Img, 0x1193, 0x1197, 0x2040);
+  displacement(Img, 0x109a, 0x109e, 0x1180);
+  displacement(Img, 0x1103, 0x1107, 0x2040);
+  SignatureDB DB;
+  add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +
+              dataParent() + dataParent(true) +
+              "92929292929292929292929292929292488B05........C3 00 0000 0018 "
+              "!caller :0000 child &0013 second\n" +
+              getter("getter", "&0003 second"));
+  DB.apply(Img, {0x1000, 0x1080, 0x1100, 0x1180});
+  EXPECT_EQ(DB.buildCandidateNameMap().at(0x1180), "child");
+  EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+  EXPECT_TRUE(DB.buildNameMap().empty());
+}
+
+TEST(SignatureDataContext, CallerQueriesSettleAllFrozenClaimsAtTheTarget) {
+  for (bool Ambiguous : {false, true}) {
+    auto Img = callerImage();
+    auto &Code = Img.Segments.front().Data;
+    std::fill_n(Code.begin() + 0x100, 16, 0x92);
+    Code[0x110] = 0xc3;
+    const std::string Body = "92929292929292929292929292929292C3 00 0000 0011";
+    SignatureDB DB;
+    add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +
+                dataParent() + dataParent(true) + Body +
+                " !caller :0000 child\n" + Body + " :0000 other_a\n" +
+                (Ambiguous ? Body + " :0000 other_b\n" : ""));
+    DB.apply(Img, {0x1100, 0x1080, 0x1000});
+    EXPECT_EQ(DB.buildCandidateNameMap().at(0x1100),
+              Ambiguous ? "child" : "other_a");
+    EXPECT_TRUE(DB.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDataContext, DataRootedChainsDoNotRevisitTheirParents) {
+  auto Img = callerImage();
+  auto &Code = Img.Segments.front().Data;
+  std::fill_n(Code.begin() + 0x180, 16, 0x92);
+  const uint8_t Address[] = {0x48, 0x8d, 0x05, 0, 0, 0, 0, 0xc3};
+  std::copy(std::begin(Address), std::end(Address), Code.begin() + 0x190);
+  displacement(Img, 0x1193, 0x1197, 0x1100);
+  displacement(Img, 0x109a, 0x109e, 0x1180);
+  displacement(Img, 0x1103, 0x1107, 0x1080);
+  SignatureDB DB;
+  add(DB,
+      root() + root("anchor", true, " %0013 00000013:anchor") + dataParent() +
+          dataParent(true) +
+          "92929292929292929292929292929292488D05........C3 00 0000 0018 "
+          "!caller :0000 child ^0013 leaf\n"
+          "488D05........C3 00 0000 0008 !caller :0000 leaf ^0003 parent\n");
+  DB.apply(Img, {0x1180, 0x1100, 0x1080, 0x1000});
+  const auto Names = DB.buildCandidateNameMap();
+  EXPECT_EQ(Names.size(), 4u);
+  EXPECT_EQ(Names.at(0x1180), "child");
+  EXPECT_EQ(Names.at(0x1100), "leaf");
+  EXPECT_FALSE(DB.findMatch(0x1080)->CallerConfirmed);
+  EXPECT_TRUE(DB.buildNameMap().empty());
 }
 
 TEST(SignatureDataContext, LocalScopeCannotBeForgedByAnotherNameSiteOrKind) {
@@ -169,6 +330,116 @@ TEST(SignatureDataContext, TwoLocationsForOneLocalAnchorRemainAmbiguous) {
   displacement(Img, 0x1213, 0x1217, 0x2030);
   DB.apply(Img, {0x1000, 0x1100, 0x1200});
   EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+}
+
+TEST(SignatureDataContext, LayoutQueriesFrozenOperandsInEitherDirection) {
+  for (bool Reverse : {false, true}) {
+    for (bool Negative : {false, true}) {
+      auto Img = image();
+      displacement(Img, 0x1103, 0x1107, Negative ? 0x2010 : 0x2030);
+      const std::string Exact =
+          Negative ? "00000013-00000010:anchor" : "00000013+00000010:anchor";
+      const std::string Other = "00000013+00000020:anchor";
+      SignatureDB DB;
+      add(DB,
+          root() + root("anchor", true, " %0013 00000013:anchor") +
+              getter("getter", Reverse ? "%0003 " + Other + " %0003 " + Exact
+                                       : "%0003 " + Exact + " %0003 " + Other));
+      DB.apply(Img, Reverse ? std::vector<uint64_t>{0x1100, 0x1000}
+                            : std::vector<uint64_t>{0x1000, 0x1100});
+      EXPECT_EQ(DB.buildCandidateNameMap().at(0x1100), "getter");
+      EXPECT_TRUE(DB.buildNameMap().empty());
+      displacement(Img, 0x1103, 0x1107, 0x2050);
+      DB.apply(Img, {0x1000, 0x1100});
+      EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+    }
+  }
+}
+
+TEST(SignatureDataContext, LayoutCannotBindFromRelativeOrConflictingRoots) {
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    auto Img = image();
+    displacement(Img, 0x1103, 0x1107, 0x2030);
+    std::string Refinement = root("anchor", true, " %0013 00000013:anchor");
+    if (Case == 0)
+      Refinement = root("anchor", true, " %0013 00000013+00000010:anchor");
+    if (Case == 1)
+      Refinement += root("anchor", true, "");
+    if (Case == 2)
+      Refinement += root("anchor", true, " %0013 00000013:another");
+    if (Case == 3) {
+      std::copy_n(Img.Segments.front().Data.begin(), 24,
+                  Img.Segments.front().Data.begin() + 0x200);
+      displacement(Img, 0x1213, 0x1217, 0x2040);
+    }
+    SignatureDB DB;
+    add(DB, root() + Refinement +
+                getter("getter", "%0003 00000013+00000010:anchor"));
+    DB.apply(Img, {0x1000, 0x1100, 0x1200});
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100)) << Case;
+  }
+}
+
+TEST(SignatureDataContext, LayoutCannotCrossMappedRegionsOrBorrowExtent) {
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    auto Img = image();
+    displacement(Img, 0x1103, 0x1107, 0x2050);
+    if (Case == 0) {
+      Img.Segments.back().Size = 0x40;
+      auto Other = Img.Segments.back();
+      Other.VA += Other.Size;
+      Img.Segments.push_back(Other);
+    } else if (Case == 1) {
+      Section First;
+      First.VA = 0x2000;
+      First.Size = 0x40;
+      First.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      auto Second = First;
+      Second.VA += First.Size;
+      Img.Sections = {First, Second};
+    } else if (Case == 2) {
+      Img.Segments.back().Size = 0x50;
+    } else {
+      auto Other = Img.Segments.back();
+      Other.VA = 0x2050;
+      Other.Size = 1;
+      Img.Segments.push_back(Other);
+    }
+    SignatureDB DB;
+    add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +
+                getter("getter", "%0003 00000013+00000030:anchor"));
+    DB.apply(Img, {0x1000, 0x1100});
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100)) << Case;
+  }
+}
+
+TEST(SignatureDataContext, LayoutArithmeticDoesNotWrapOrCreateAnAnchor) {
+  auto Img = image();
+  const auto Positive = localDataAnchor("00000013+FFFFFFFF:anchor");
+  const auto Negative = localDataAnchor("00000013-FFFFFFFF:anchor");
+  ASSERT_TRUE(Positive);
+  ASSERT_TRUE(Negative);
+  EXPECT_FALSE(localDataReferenceBase(Img, 0x2020, *Positive));
+  EXPECT_FALSE(localDataReferenceBase(Img, InvalidVA - 0x10, *Negative));
+  // A relative reference to a different function's operand cannot turn
+  // a newly proposed body into an independent root for a second relation.
+  auto &Code = Img.Segments.front().Data;
+  std::copy_n(Code.begin(), 24, Code.begin() + 0x80);
+  Code[0x80] = 0x91;
+  displacement(Img, 0x1093, 0x1097, 0x2030);
+  displacement(Img, 0x1103, 0x1107, 0x2040);
+  const auto Derived = "91" + Body.substr(2);
+  SignatureDB DB;
+  auto Consumer =
+      root("derived", true, " %0013 00000013+00000010:anchor", Derived);
+  Consumer.replace(Consumer.find("!caller"), 7, "!refs");
+  add(DB, root() + root("anchor", true, " %0013 00000013:anchor") + Consumer +
+              root("derived", true, " %0013 00000013:derived", Derived) +
+              getter("getter", "%0003 00000013+00000010:derived"));
+  DB.apply(Img, {0x1000, 0x1080, 0x1100});
+  EXPECT_EQ(DB.buildCandidateNameMap().at(0x1080), "derived");
+  EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+  EXPECT_TRUE(DB.buildNameMap().empty());
 }
 
 TEST(SignatureDataContext, WeakPartialAmbiguousAndRequiredRootsDoNotBind) {

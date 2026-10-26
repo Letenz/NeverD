@@ -1449,10 +1449,16 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
     uint64_t Weight;
   };
   auto Classify = [&](const HighStmt &S) {
+    // Removing a dead frame write retains its address as an empty block.
+    // Such an anchor preserves scalar facts unless it is a control-flow
+    // entry. Expressions, child scopes and effects still form boundaries.
+    bool EmptyAnchor = S.Kind == StmtKind::Block;
+    if (EmptyAnchor)
+      forEachExpr(S, [&](const ExprPtr &) { EmptyAnchor = false; });
     const bool Straight =
-        (S.Kind == StmtKind::Assign || S.Kind == StmtKind::ExprStmt ||
-         S.Kind == StmtKind::Return || S.Kind == StmtKind::Nop ||
-         S.Kind == StmtKind::Store) &&
+        (EmptyAnchor || S.Kind == StmtKind::Assign ||
+         S.Kind == StmtKind::ExprStmt || S.Kind == StmtKind::Return ||
+         S.Kind == StmtKind::Nop || S.Kind == StmtKind::Store) &&
         S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
         S.DefaultBody.empty() && S.EHClauses.empty() &&
         S.EHClauseBodies.empty() && !S.IsPhiCopy &&

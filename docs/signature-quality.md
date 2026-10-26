@@ -135,6 +135,18 @@ and supplement deduplication respects independently selected library packs.
 An ambiguous ordinary body does not cover an audited incoming-context record:
 the latter supplies the source ownership needed for a name-directed query.
 
+After the single frozen data pass, a newly confirmed data consumer may start
+a bounded incoming chain only with complete coverage and the ordinary
+fixed-byte floor. Its code references must still agree across every matching
+source variant. A complete `!caller` source refinement remains distinct from
+pruned `!refs` clauses, even when their union happens to list the same fields.
+The continuation reuses the existing name index and round limit; an early
+query check avoids settlement work for data consumers without relevant
+callees. Every round reads the same frozen data bindings and post-data
+candidates. Neither the parent nor any descendant can create another data
+binding or trigger another data pass. Short data getters cannot extend a chain,
+and all new names remain candidates rather than automatic identities.
+
 The `&offset name` extension explicitly describes an external-data operand in
 a complete `!refs` or `!caller` record. `neverd-sigmaker --data-references`
 opts into its generation alongside `--contextual`, `--caller-context` or
@@ -168,8 +180,22 @@ distinct in parsing, caches, raw collision audits and runtime settlement.
 existing complete contextual bodies without duplicating those bodies. Every
 raw variant must state the field, and all alternative anchor operands are
 retained. Alternatives can constrain a consumer but cannot establish an anchor;
-ordinary byte records retain their existing admission rule. The cache wire
-version is 7; older cache entries are rebuilt from source patterns.
+ordinary byte records retain their existing admission rule.
+
+`--local-data-layout` additionally admits a checked signed address delta within
+one non-COMDAT source data section. For example,
+`%000A 00000013-00000070:anchor` describes an address `0x70` bytes before the
+anchor's exact operand. The delta is eight uppercase hexadecimal digits with
+an explicit sign; zero uses the original syntax. Both source addresses and
+complete operands must fit that section. Defined static or external consumer
+symbols and signed relocation addends are supported; undefined, weak,
+auxiliary, executable, split-section and out-of-bounds targets are refused.
+The anchor still requires its canonical zero-addend static-data operand.
+Runtime inverts the delta against frozen exact bindings with checked arithmetic
+and corresponding mapped-region bounds. Relative consumers never become
+bindings. Raw counterclaims with missing or different reference kinds remain
+unresolved. The cache wire version is 8;
+older cache entries are rebuilt from source patterns.
 
 Only complete ordinary candidates meeting the existing fixed-byte floor can
 anchor data bindings. Every matching complete source refinement must agree;

@@ -273,7 +273,7 @@ def multiple_residual_elf(degree, neighbor=False):
 
 
 def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=False,
-                      *, interleaved=False):
+                      *, interleaved=False, complemented=False):
     # Retain the requested low bits, including observable residual cross terms.
     high_bits = high_bits or (3 if product else 2)
     mask = (0xffffffff << (high_bits - int(product))) & 0xffffffff
@@ -284,7 +284,10 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=F
     if interleaved:
         order = order[::2] + order[1::2]
     for i in order:
-        code += bytes.fromhex("89f9 81c1") + struct.pack("<I", 2*i)
+        code += bytes.fromhex("89f9")
+        if complemented:
+            code += bytes.fromhex("83f101")
+        code += bytes.fromhex("81c1") + struct.pack("<I", 2*i)
         code += bytes.fromhex("4189f0 4181c0") + struct.pack("<I", i)
         if product:
             code += bytes.fromhex("4183e0fe 4189d1 4181c1") + struct.pack("<I", 2*i)
@@ -298,9 +301,27 @@ def carry_product_elf(degree, product=True, needed=7, high_bits=None, additive=F
         code += bytes.fromhex("0fafc1")
         # Keep the independent C oracle in natural order even when the
         # original machine instructions construct the factors differently.
-        factors[i] = f"((x+{2*i}U){'+' if additive else '^'}{high})"
+        base = "(x^1U)" if complemented else "x"
+        factors[i] = f"(({base}+{2*i}U){'+' if additive else '^'}{high})"
     code += bytes.fromhex("01f8 01f0 01d0 c3")
     return elf(code), f"x+y+z+{scale}U*" + "*".join(factors)
+
+
+def residue_power_elf(degree, observed):
+    # Original x64 instructions keep z independent of the repeated x group.
+    # The scalar C oracle multiplies every original factor at complete width.
+    split = (observed + 2) // 3
+    scale = 3 << (32 - observed)
+    code = bytearray.fromhex("b8") + struct.pack("<I", scale)
+    code += bytes.fromhex("89f1 c1e1") + bytes([split])
+    factors = []
+    for i in range(degree):
+        offset = i << split
+        code += bytes.fromhex("4189f8 4181c0") + struct.pack("<I", offset)
+        code += bytes.fromhex("4131c8 410fafc0")
+        factors.append(f"((x+{offset}U)^(y<<{split}))")
+    code += bytes.fromhex("0fafc2 01f8 01f0 01d0 c3")
+    return elf(code), f"x+y+z+{scale}U*z*" + "*".join(factors)
 
 
 def elf(code):
@@ -404,6 +425,9 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
             # The original-product execution oracle checks the retained
             # nonzero residual without prescribing a particular spelling.
             pass
+        elif kind.startswith("power-group-"):
+            code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            assert code.count("*") < int(kind.rsplit("-", 1)[1]) // 2, text
         elif kind.startswith("residue-"):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             assert "*" not in code and "<<" not in code, text
@@ -460,7 +484,7 @@ def run_fixture(worker, cli, compiler, kind, image, expected):
                 function_name(enhanced)
                 enhanced_shape(enhanced)
                 if representation == "source":
-                    if kind.startswith(("residue-", "multiple-residual-", "carry-product-", "carry-cofactor-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
+                    if kind.startswith(("residue-", "multiple-residual-", "carry-product-", "carry-cofactor-", "power-group-")) or kind in ("affine-residue-neighbor", "prefix-residue-neighbor", "coarse-residue-neighbor", "distributed-residue-neighbor"):
                         code = re.sub(r"/\*.*?\*/|//[^\n]*", "", ordinary,
                                       flags=re.S)
                         assert "*" in code, ordinary
@@ -544,6 +568,11 @@ if __name__ == "__main__":
             ("carry-product-wide-mask-128", *carry_product_elf(128, False, 8, 3)),
             ("carry-product-interleaved-128", *carry_product_elf(128, False, 8, 2, interleaved=True)),
             ("carry-product-interleaved-mask-128", *carry_product_elf(128, False, 8, 3, interleaved=True)),
+            ("carry-cofactor-zero-witness-96", *carry_product_elf(96, True, 6, 2, complemented=True)),
+            ("carry-cofactor-zero-witness-mask-96", *carry_product_elf(96, True, 6, 3, complemented=True)),
+            ("power-group-16", *residue_power_elf(16, 4)),
+            ("power-group-64", *residue_power_elf(64, 6)),
+            ("power-group-512", *residue_power_elf(512, 8)),
             ("residue-affine-quartic", *affine_residue_elf(4)),
             ("residue-affine-octic", *affine_residue_elf(8)),
             ("affine-residue-neighbor", *affine_residue_elf(8, True)),

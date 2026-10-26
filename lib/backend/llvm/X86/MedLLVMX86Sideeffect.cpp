@@ -125,6 +125,34 @@ bool MedLLVMEmitter::emitX86DebugTrap(const MedOp &Op, Intrinsic IC,
     markInstructionText(*Builder.CreateCall(Fn, {}), Op, IC);
     return true;
   }
+  case I::Retf:
+  case I::Iret:
+  case I::Sysretq:
+  case I::Sysexitq: {
+    // Architectural returns (far, interrupt and syscall returns) are terminal
+    // control transfers, not ABI returns.  Emit a named no-return call whose
+    // arguments are the exact cells the transfer reads (the stack frame for
+    // RETF/IRET; RCX/R11 or RDX/RCX for the syscall returns), so LLVMC prints
+    // the same faithful intrinsic as HighC and nothing resumes after it.  This
+    // records the transfer; it reconstructs no privilege, segment or flag
+    // change and grants no source ABI contract.
+    auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
+    llvm::SmallVector<llvm::Value *, 5> Args;
+    llvm::SmallVector<llvm::Type *, 5> ArgTys;
+    for (uint8_t Index = 1; Index < Op.NumInputs; ++Index) {
+      llvm::Value *Cell = getVar(Op.Inputs[Index], Builder);
+      Args.push_back(Cell);
+      ArgTys.push_back(Cell->getType());
+    }
+    auto *FnTy = llvm::FunctionType::get(VoidTy, ArgTys, false);
+    llvm::FunctionCallee Callee =
+        Mod->getOrInsertFunction(intrinsicCName(IC), FnTy);
+    if (auto *Fn = llvm::dyn_cast<llvm::Function>(Callee.getCallee()))
+      Fn->addFnAttr(llvm::Attribute::NoReturn);
+    llvm::CallInst *Call = Builder.CreateCall(Callee, Args);
+    Call->setDoesNotReturn();
+    return true;
+  }
   default:
     return false;
   }

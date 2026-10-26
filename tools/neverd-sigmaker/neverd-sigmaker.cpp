@@ -124,8 +124,13 @@ static cl::opt<bool> DataReferences(
     cl::init(false));
 static cl::list<std::string> LocalDataAnchors(
     "local-data-anchor",
-    cl::desc("External function anchoring same-object static data operands; "
+    cl::desc("Typed function anchoring same-object static data operands; "
              "repeat as needed; requires --data-references"));
+static cl::opt<bool> LocalDataLayout(
+    "local-data-layout",
+    cl::desc("Include checked address deltas within one non-COMDAT data "
+             "section; requires --local-data-anchor"),
+    cl::init(false));
 static cl::opt<bool>
     Verify("verify",
            cl::desc("Parse the positional .pat files with the signature "
@@ -245,6 +250,10 @@ int main(int Argc, char *Argv[]) {
     WithColor::error() << "--local-data-anchor requires --data-references\n";
     return 1;
   }
+  if (LocalDataLayout && LocalDataAnchors.empty()) {
+    WithColor::error() << "--local-data-layout requires --local-data-anchor\n";
+    return 1;
+  }
   if (DataReferences && !Contextual && !CallerContext && !CollisionEvidence) {
     WithColor::error() << "--data-references requires --contextual, "
                           "--caller-context or --collision-evidence\n";
@@ -285,6 +294,7 @@ int main(int Argc, char *Argv[]) {
   Opts.EmitDataReferences = DataReferences;
   Opts.LocalDataAnchors.assign(LocalDataAnchors.begin(),
                                LocalDataAnchors.end());
+  Opts.EmitLocalDataLayout = LocalDataLayout;
 
   auto ForMachine = [&](const ObjectFile &Obj) {
     return !Required || isObjectForMachine(Obj, *Required);

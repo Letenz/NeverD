@@ -5924,6 +5924,50 @@ TEST(NativeSourceHints, IncomingStackReadsRequireCompleteObservedSlots) {
     }
 }
 
+TEST(NativeSourceHints, IncomingStackPrefixReadsRequireTheirOwnCompleteLoad) {
+  for (uint16_t Width : {1, 2, 4})
+    for (bool PrefixFirst : {false, true})
+      for (bool OtherSlot : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(PrefixFirst);
+        SCOPED_TRACE(OtherSlot);
+        NativeIncomingStackFixture F(16);
+        auto &Ops = F.Low.Blocks[0].Ops;
+        const auto Address = NdVar::tmp(TmpBase + 256, 8);
+        const auto Offset = F.IncomingOffset + (OtherSlot ? 8 : 0);
+        Ops.insert(
+            Ops.begin() + F.LoadIndex + (PrefixFirst ? 0 : 1),
+            {NativeVoidFrameFixture::op(NdOp::INT_ADD, Address,
+                                        {NdVar::reg(a64reg::SP, 8),
+                                         NdVar::cst(F.FrameBytes + Offset, 8)},
+                                        0x100c),
+             NativeVoidFrameFixture::op(NdOp::LOAD,
+                                        NdVar::tmp(TmpBase + 272, Width),
+                                        {Address}, 0x100c)});
+        F.LoadIndex += PrefixFirst ? 2 : 0;
+        F.CallIndex += 2;
+        F.RestoreIndex += 2;
+        auto Signature = F.entrySignature();
+        if (OtherSlot) {
+          auto Parameter = Signature.Parameters.front();
+          Parameter.Location.EntryStackOffset = Offset;
+          Signature.Parameters.push_back(std::move(Parameter));
+        }
+        EXPECT_EQ(restoresNativeSourceState(F.Low, Arch::AArch64, F.calls(),
+                                            nullptr, &Signature),
+                  !OtherSlot);
+        if (!OtherSlot) {
+          std::string Error;
+          EXPECT_TRUE(F.inferVoid(Error)) << Error;
+          // Repeated prefix observations cannot collectively pretend that
+          // this slot's otherwise unobserved upper bytes were read.
+          Ops[F.LoadIndex].Output.Size = Width;
+          EXPECT_FALSE(restoresNativeSourceState(
+              F.Low, Arch::AArch64, F.calls(), nullptr, &Signature));
+        }
+      }
+}
+
 TEST(NativeSourceHints, IncomingStackReadsRejectMissingOrPartialEvidence) {
   for (unsigned Mutation = 0; Mutation != 14; ++Mutation) {
     SCOPED_TRACE(Mutation);
