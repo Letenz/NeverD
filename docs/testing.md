@@ -3132,6 +3132,22 @@ must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
 The shared frame tests separately exercise native edge gestures.
 
+`windowShadowCompositesWithDesktop` checks Windows shadow composition for
+ordinary and Quick Start dialogs, with and without an early native handle,
+through both `show()` and `exec()`. It compares desktop pixels over a known
+background with the widget's alpha-composited shadow; a widget-only capture
+cannot detect an opaque native window. The test requires an accessible Windows
+desktop and skips other platform plugins, including offscreen. Run it directly:
+
+```powershell
+$env:QT_QPA_PLATFORM = 'windows'
+& '<build>/bin/neverd-gui-appearance-tests.exe' windowShadowCompositesWithDesktop
+```
+
+`NEVERD_APPEARANCE_CAPTURES` also saves the composited desktop captures for
+these cases. The frame must set its alpha format before changing native flags
+so Windows selects per-pixel transparency for an already-created handle.
+
 Appearance tests use a custom entry point because `QTEST_MAIN` forces
 `AA_Use96Dpi`, hiding Cocoa's 72-DPI point-size conversion. The tests and their
 captures use the product's native DPI. Font checks compare interface, code and
