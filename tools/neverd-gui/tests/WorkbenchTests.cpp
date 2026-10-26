@@ -3721,9 +3721,6 @@ private slots:
     assembly->navigate(Base + 0x1a0);
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x1a0));
-    auto *originDock = bench.dockFor(origin);
-    auto *otherDock = bench.dockFor(other);
-    QVERIFY(originDock && otherDock);
     originDock->setAsCurrentTab();
     QVERIFY(activateTestWindow(origin->window()));
     auto *code = origin->text();
