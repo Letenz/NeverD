@@ -5824,17 +5824,26 @@ TypeRef HighCWriter::indirectCallFunctionType(const HighExpr &Call) const {
         *Callee, Opts.TheArch, Opts.Format, Opts.libcVariant());
     if (Floating && *Floating == *Call.FloatingCallSignature && Record &&
         Record->Positions == Call.Operands.size()) {
-      const auto SourceType = [&](const TypeRef &Type) {
+      const auto Types =
+          floatingCallTypes(Opts.TheArch, Opts.Format, *Floating);
+      if (!Types)
+        throw std::runtime_error(
+            "A record callback lost its checked source layout");
+      const auto SourceType = [&](const TypeRef &Type, const TypeRef &Layout) {
         if (Type->Kind != NdTypeKind::Struct || Type->IsEnum)
           return cDisplayType(Type);
-        auto Named = std::make_shared<NdType>(*Type);
+        // Header records carry classified scalar leaves, not the natural
+        // field layout a C callback declarator validates. Reuse the checked
+        // descriptor's complete HFA layout and the header's owned spelling.
+        auto Named = std::make_shared<NdType>(*Layout);
         Named->SourceName = c_detail::recordCallType(Type, Opts);
         return Named;
       };
       std::vector<TypeRef> Parameters;
-      for (const auto &[Name, Type] : Callee->Params)
-        Parameters.push_back(SourceType(Type));
-      return NdType::makeFunc(SourceType(Callee->ReturnType),
+      for (size_t I = 0; I < Callee->Params.size(); ++I)
+        Parameters.push_back(
+            SourceType(Callee->Params[I].second, Types->Parameters[I]));
+      return NdType::makeFunc(SourceType(Callee->ReturnType, Types->Result),
                               std::move(Parameters));
     }
   }
