@@ -270,10 +270,10 @@ private:
 /// SP definition chain through constant add/sub decrements and width casts.
 /// nullopt when \p V does not derive from the SP. \p Defs, when given, must
 /// index \p Func.
-std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
-                                     const TargetRegInfo &TRI, const MedVar &V,
-                                     int Depth = 0,
-                                     MedDefSiteIndex *Defs = nullptr);
+std::optional<int64_t>
+stackPtrDelta(const MedFunc &Func, const TargetRegInfo &TRI, const MedVar &V,
+              int Depth = 0, MedDefSiteIndex *Defs = nullptr,
+              BinaryFormat Format = BinaryFormat::Unknown);
 
 /// Whether \p V is, or derives from (through copies, width casts and a constant
 /// add/sub), a frame register -- the stack OR frame pointer.

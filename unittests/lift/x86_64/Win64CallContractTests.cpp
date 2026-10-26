@@ -58,6 +58,95 @@
 namespace {
 using namespace neverd;
 
+TEST(Win64CallContract, LoopStackOriginsRetainEveryOutgoingStackArgument) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Bits = Bitness::Bits64;
+  const auto Register = [](uint64_t Offset, int Version) {
+    MedVar Value;
+    Value.Kind = MedVar::Reg;
+    Value.TheArch = Arch::X64;
+    Value.Id = Offset / 8 + 1;
+    Value.RegOff = Offset;
+    Value.SSAVer = Version;
+    Value.Size = 8;
+    return Value;
+  };
+  const auto Op = [](NdOp Opcode, MedVar Output,
+                     std::initializer_list<MedVar> Inputs) {
+    MedOp Result;
+    Result.Opcode = Opcode;
+    Result.Output = Output;
+    for (const auto &Input : Inputs)
+      Result.addInput(Input);
+    return Result;
+  };
+  const auto SP = [&](int Version) { return Register(x86reg::RSP, Version); };
+  const auto Temp = [](int Id) {
+    MedVar Value;
+    Value.Kind = MedVar::Temp;
+    Value.TheArch = Arch::X64;
+    Value.Id = Id;
+    Value.SSAVer = 1;
+    Value.Size = 8;
+    return Value;
+  };
+  MedFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "loop_stack_arguments";
+  Function.CC = CallingConv::Win64;
+  Function.Blocks.resize(3);
+  for (size_t I = 0; I < Function.Blocks.size(); ++I) {
+    Function.Blocks[I].Id = I;
+    Function.Blocks[I].StartAddr = 0x1000 + 0x100 * I;
+  }
+  auto &Entry = Function.Blocks[0];
+  Entry.Succs = {1};
+  Entry.Ops = {Op(NdOp::COPY, SP(0), {SP(0)}),
+               Op(NdOp::INT_SUB, SP(1), {SP(0), MedVar::makeConst(0x88, 8)})};
+  auto &Loop = Function.Blocks[1];
+  Loop.Preds = {0, 2};
+  Loop.Succs = {2};
+  PhiNode First;
+  First.Output = SP(2);
+  First.Args = {{0, SP(1)}, {2, SP(3)}};
+  Loop.Phis.push_back(First);
+  auto &Backedge = Function.Blocks[2];
+  Backedge.Preds = {1};
+  Backedge.Succs = {1};
+  PhiNode Second;
+  Second.Output = SP(3);
+  Second.Args = {{1, SP(2)}};
+  Backedge.Phis.push_back(Second);
+  for (unsigned I = 0; I < 3; ++I) {
+    Loop.Ops.push_back(Op(NdOp::INT_ADD, Temp(100 + I),
+                          {SP(1), MedVar::makeConst(0x20 + I * 8, 8)}));
+    Loop.Ops.push_back(
+        Op(NdOp::STORE, {}, {Temp(100 + I), MedVar::makeConst(50 + I, 8)}));
+  }
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  const auto Args = TRI.integerParamRegs(BinaryFormat::COFF);
+  for (unsigned I = 0; I < 4; ++I)
+    Loop.Ops.push_back(
+        Op(NdOp::COPY, Register(Args[I], 1), {MedVar::makeConst(10 + I, 8)}));
+  auto Call =
+      Op(NdOp::CALL, Register(x86reg::RAX, 1), {MedVar::makeConst(0x2000, 8)});
+  Call.Addr = 0x1180;
+  Call.CalleeRegisterArgs = 4;
+  Call.CalleeStackArgs = 7;
+  Call.CalleeVectorArgs = 0;
+  Loop.Ops.push_back(Call);
+  recoverCallAbi(Function, Arch::X64, {{0x2000, "consume_seven"}}, &Image);
+  ASSERT_EQ(Function.CallInfos.size(), 1u);
+  const auto &Recovered = Function.CallInfos.front().Args;
+  ASSERT_EQ(Recovered.size(), 7u);
+  for (unsigned I = 0; I < 7; ++I) {
+    ASSERT_TRUE(Recovered[I].isConst()) << I;
+    EXPECT_EQ(Recovered[I].ConstVal, I < 4 ? 10 + I : 50 + I - 4);
+  }
+}
+
 TEST(SummarizedCallArguments, PublishesAnEmptyVectorBankForScalarCallees) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {

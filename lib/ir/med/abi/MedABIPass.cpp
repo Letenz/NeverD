@@ -270,7 +270,8 @@ ReachingStackPtrResult
 findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
                      int BeforeIdx, MedDefSiteIndex *Defs = nullptr,
                      const MedBlockIdIndex *Index = nullptr,
-                     size_t *Remaining = nullptr, bool ComputeDelta = true) {
+                     size_t *Remaining = nullptr, bool ComputeDelta = true,
+                     BinaryFormat Format = BinaryFormat::Unknown) {
   // Walk transparent predecessors once and collect every boundary at which the
   // reaching SP becomes concrete: a local SP definition, an SP PHI, or a
   // function-entry block.  The former recursive walk only marked the current
@@ -316,7 +317,7 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
   auto MergeBoundary = [&](const MedVar &Value) {
     MergeBasis(Value);
     if (ComputeDelta)
-      MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs));
+      MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs, Format));
   };
 
   while (!Worklist.empty()) {
@@ -1596,7 +1597,8 @@ void recoverCallAbi(
         auto &Prev = Blk.Ops[J];
         if (Prev.Output.Kind == MedVar::Reg &&
             Prev.Output.RegOff == TRI.StackPointer) {
-          if (auto D = stackPtrDelta(Func, TRI, Prev.Output, 0, &DefSites)) {
+          if (auto D =
+                  stackPtrDelta(Func, TRI, Prev.Output, 0, &DefSites, Fmt)) {
             CallSpDelta = *D;
             HaveCallSpDelta = true;
           }
@@ -1610,8 +1612,9 @@ void recoverCallAbi(
         }
       }
       if (!HaveCallSpBasis || !HaveCallSpDelta) {
-        ReachingStackPtrResult Reaching = findReachingStackPtr(
-            Func, TRI, Blk.Id, static_cast<int>(OI), &DefSites, &BlockIds);
+        ReachingStackPtrResult Reaching =
+            findReachingStackPtr(Func, TRI, Blk.Id, static_cast<int>(OI),
+                                 &DefSites, &BlockIds, nullptr, true, Fmt);
         if (!HaveCallSpBasis && Reaching.Basis) {
           buildCallSpOffsets(Func, TRI, *Reaching.Basis, 0, CallSpOffsets, 0,
                              &DefSites);
@@ -1628,7 +1631,7 @@ void recoverCallAbi(
       auto CallRelativeStackOffset =
           [&](const MedVar &Address) -> std::optional<int64_t> {
         if (HaveCallSpDelta)
-          if (auto Delta = stackPtrDelta(Func, TRI, Address, 0, &DefSites))
+          if (auto Delta = stackPtrDelta(Func, TRI, Address, 0, &DefSites, Fmt))
             return safety::detail::checkedStackOffset(*Delta, CallSpDelta,
                                                       /*Subtract=*/true);
         return relStackOff(Func, TRI, Address, CallSpOffsets, 0, &DefSites);
@@ -2457,8 +2460,8 @@ void recoverCallAbi(
               if (Candidate.Opcode != NdOp::STORE || Candidate.NumInputs < 2 ||
                   Candidate.MemoryAddressSpace != NdMemoryAddressSpace::Default)
                 continue;
-              auto D =
-                  stackPtrDelta(Func, TRI, Candidate.Inputs[0], 0, &DefSites);
+              auto D = stackPtrDelta(Func, TRI, Candidate.Inputs[0], 0,
+                                     &DefSites, Fmt);
               if (D && *D == *TargetOffset) {
                 MedVar Value = Candidate.Inputs[1];
                 Active.erase(BlockId);
