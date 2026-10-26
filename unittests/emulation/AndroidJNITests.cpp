@@ -1028,6 +1028,46 @@ TEST_P(AndroidJNI, DexClassCapacityIsSeparateAndAggregate) {
   invoke({Small}, "", "Invalid DEX");
 #endif
 }
+TEST_P(AndroidJNI, ServiceManagerMetadataDoesNotInitializeTheClass) {
+  Options.Android->ObserveJavaState = true;
+  auto R = run("jni_service_manager_metadata");
+  ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  ASSERT_TRUE(R.JavaState);
+  EXPECT_FALSE(R.JavaState->terminal);
+  bool Found = false;
+  for (const auto &C : R.JavaState->classes)
+    if (C.descriptor == "Landroid/os/ServiceManager;") {
+      Found = true;
+      EXPECT_NE(C.class_object, 0u);
+      EXPECT_FALSE(C.supplied);
+      EXPECT_EQ(C.initialization,
+                mobile::dalvik::JavaClassState::Initialization::NotStarted);
+    }
+  EXPECT_TRUE(Found);
+}
+TEST_P(AndroidJNI, ServiceManagerActiveUsesKeepUnmodeledInitialization) {
+  Options.Android->ObserveJavaState = true;
+  const char *Calls[] = {"JNIEnv.113", "JNIEnv.144", "JNIEnv.33", "JNIEnv.27"};
+  for (unsigned Mode = 1; Mode != 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    Options.Android->Arguments = {Mode};
+    auto R = run("jni_service_manager_metadata");
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    EXPECT_NE(R.Diagnostic.find("Landroid/os/ServiceManager;: class "
+                                "initialization is not modeled"),
+              std::string::npos);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, Calls[Mode - 1]);
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+    ASSERT_TRUE(R.JavaState);
+    EXPECT_TRUE(R.JavaState->terminal);
+    for (const auto &C : R.JavaState->classes)
+      if (C.descriptor == "Landroid/os/ServiceManager;")
+        EXPECT_EQ(C.initialization,
+                  mobile::dalvik::JavaClassState::Initialization::NotStarted);
+  }
+}
 TEST_P(AndroidJNI, ExplicitClassLookupFailuresPreserveExceptionsAndUnknowns) {
   for (const std::string Type :
        {"java/lang/ClassNotFoundException", "java/lang/NoClassDefFoundError"}) {
@@ -1051,9 +1091,9 @@ TEST_P(AndroidJNI, ExplicitClassLookupFailuresPreserveExceptionsAndUnknowns) {
 }
 TEST_P(AndroidJNI, RejectsContradictoryClassLoaderDeclarations) {
   for (const std::string Name : std::vector<std::string>{
-           "", "java/lang/String", "android/os/Build$VERSION", "bad.name",
-           "[Lfixture/Absent;", "/bad", "bad/", "bad//Name",
-           std::string("bad\0Name", 8)}) {
+           "", "java/lang/String", "android/os/Build$VERSION",
+           "android/os/ServiceManager", "bad.name", "[Lfixture/Absent;", "/bad",
+           "bad/", "bad//Name", std::string("bad\0Name", 8)}) {
     Options.Android->JNIClassLookupFailures = {
         {Name, "java/lang/ClassNotFoundException"}};
     Options.Android->EntrySymbol = "jni_vm_lifecycle";

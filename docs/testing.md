@@ -1374,6 +1374,11 @@ two native threads, global/local reference deletion and detach/reattach against
 the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
 strict JSON input. These tests use synthetic inputs without a phone, host JVM
 or network; they do not establish arbitrary framework lifecycle equivalence.
+`AndroidFrameworkTest.ServiceManager*` and `AndroidJNI.ServiceManager*` distinguish
+known type metadata from unmodeled static initialization. They cover class and
+array identity, hierarchy/final constraints, JNI method/field ID lookup and
+allocation, with no successful initialization or fabricated service state.
+Run the full Dalvik and Android JNI suites when changing this boundary.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction

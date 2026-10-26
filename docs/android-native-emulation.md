@@ -1235,6 +1235,14 @@ registration also does not initialize it. These boundaries follow
 [ART JNI](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/jni_internal.cc)
 and [ClassLinker](https://android.googlesource.com/platform/art/+/android-9.0.0_r1/runtime/class_linker.cc).
 
+The shared Android hierarchy includes the public final `android.os.ServiceManager`
+class with `java.lang.Object` as its superclass. Class identity, assignability
+and reference-array queries do not initialize it. Its static initializer remains
+unmodeled: active uses, including JNI method/field ID lookup and `AllocObject`,
+stop at the shared Dalvik initialization boundary before changing its class
+state. No service registry, cache, Binder identity or method result is inferred.
+This type metadata does not admit other unknown Android classes.
+
 Unknown classes remain explicit stops. A workload may supply
 `android.jni_class_lookup_failures`, mapping exact slash-separated, non-array
 class names to `java/lang/ClassNotFoundException` or

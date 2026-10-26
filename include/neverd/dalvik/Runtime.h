@@ -109,6 +109,8 @@ private:
   void addAndroidFramework();
   ClassMap classes;
   std::set<const Class *> supplied_classes;
+  // Type metadata does not authorize active use of an unmodeled initializer.
+  std::set<const Class *> unmodeled_initializers;
   std::map<FieldRef, PlatformValue> platform_values;
   std::set<const Field *> android_framework_fields;
 };
