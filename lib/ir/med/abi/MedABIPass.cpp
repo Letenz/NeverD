@@ -24,6 +24,7 @@
 #include "neverd/ir/med/MedCallClobber.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
+#include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -1038,9 +1039,13 @@ void recoverCallAbi(
       // canonicalizes an x86 `jmp [rip+slot]` to, or the slot the register
       // it goes through was loaded from, as an AArch64 PLT entry's
       // `ldr x17, [x16, #slot]; br x17` or a -fno-plt call loads it.
-      const std::optional<va_t> CallSlot =
+      std::optional<va_t> CallSlot =
           CI.IsIndirect ? indirectCallSlot(Func, Op, lookupDefinition)
                         : std::nullopt;
+      if (CI.IsIndirect && !CallSlot && Op.NumInputs)
+        if (const auto Cached = resolveMedCallTarget(Blk, OI, Op.Inputs[0]);
+            Cached && Cached->ThroughSlot)
+          CallSlot = Cached->Address;
       // An import's slot names the import, whose ABI applies: a forwarded
       // incoming register need not have a setup write.  Names alone do not
       // prove this identity.
@@ -2916,8 +2921,7 @@ void recoverCallAbi(
         // with no integer register argument); assemble it after the FP
         // arguments. Classify a gap by the call's register/stack boundary,
         // which can precede the end of the register bank on i386.
-        if (K < NumIntRegArgs &&
-            (Gap ? K < StackArgBase : !FromStackScan[K])) {
+        if (K < NumIntRegArgs && (Gap ? K < StackArgBase : !FromStackScan[K])) {
           if (K < IntCap) {
             IntPart.push_back(A);
             IntPartSlots.push_back(K);

@@ -4773,3 +4773,7 @@ add_neverd_unittest(NeverDX86StateAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86StateAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDMedCachedCallTargetTests
+  core/MedCachedCallTargetTests.cpp
+  LINK_COMPONENTS BackendC)

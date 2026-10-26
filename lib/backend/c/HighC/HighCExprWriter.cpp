@@ -4332,6 +4332,10 @@ HighCWriter::typedArgumentText(const HighExpr &E, const TypeRef &Expected,
       const std::string Name = copyForwardName(varName(Inner->Var));
       const HighExpr *From = nullptr;
       std::string Text = printedForwardedVar(Name, 16, &From);
+      if (!From && Text == Name)
+        if (auto Unknown = unknownVarUse(*Inner, Name, varName(Inner->Var));
+            !Unknown.empty())
+          Text = std::move(Unknown);
       // A local its call's result names (CallResultNames: gpgrt_getcwd's
       // `cwd`) is the variable under that name, of the type C declares.
       return AsPointer(From ? *From : *Inner, std::move(Text));
@@ -4344,6 +4348,9 @@ HighCWriter::typedArgumentText(const HighExpr &E, const TypeRef &Expected,
   }
   if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
     const std::string Name = copyForwardName(varName(Inner->Var));
+    if (const auto Unknown = unknownVarUse(*Inner, Name, varName(Inner->Var));
+        !Unknown.empty())
+      return Unknown;
     if (auto Printed = printedForwardedVar(Name, 16); !Printed.empty())
       return Printed;
     if (Expected)
