@@ -657,7 +657,7 @@ shared address owner proves control-independent access and writeback bits.
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
-372 selected regression checks and model records are pinned in
+selected regression results (including original-owner failures) and model records are pinned in
 [evidence](evidence/arm64e-writeback-memory-2026-10-26.json). This is Normal WB,
 nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
 automatically lifted whole images.
