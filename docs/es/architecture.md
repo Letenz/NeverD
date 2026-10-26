@@ -1,8 +1,16 @@
 **Idiomas**: [English](../architecture.md) | [简体中文](../zh-CN/architecture.md) | [繁體中文](../zh-TW/architecture.md) | [日本語](../ja/architecture.md) | [한국어](../ko/architecture.md) | [Français](../fr/architecture.md) | [Deutsch](../de/architecture.md) | [Español](architecture.md) | [Italiano](../it/architecture.md) | [Русский](../ru/architecture.md) | [العربية](../ar/architecture.md)
 
+Cuando el tipo de llamada LLVM difiere de la declaración, LLVM C evalúa la conversión mediante un literal compuesto escalar. Conserva la ABI del sitio, incluida la duplicación flotante de llamadas variádicas Windows x64, sin cambiar la declaración ni añadir accesos volatile.
+
 [← Índice de documentación](README.md)
 
 # Arquitectura de NeverD
+
+## Recuperación de valores de pila de entrada
+
+`PipelineIncomingStack` deduce declaraciones fuente enteras acotadas para funciones hoja completas x64/ARM64 PE/ELF. La prueba compartida de pila determina los desplazamientos; cada llamador debe escribir todos los bytes necesarios o se retira la declaración. HighC y LLVMC enlazan la misma declaración antes de SSA y solo reconvierten las funciones afectadas. Los llamadores seleccionados reutilizan el lector y la caché de funciones omitidas y conservan declaraciones de parámetros fijos. No se deducen estados VM generales, tipos flotantes ni ABI externas, ni se alteran los contratos de lifting de máquina, parches o análisis. `SourceFrameAnalysis` debe demostrar la restauración de SP y de los registros de marco y enlace guardados según el formato. Los bytes de registros guardados no se convierten en parámetros fuente.
+
+Los destinos constantes de llamadas por registro usan la consulta escalar LowIR acotada y compartida. La prueba de pila conserva la llamada indirecta original; solo el MedIR fuente pasa a una llamada con nombre cuando coinciden destino, declaración y bytes de salida. Cargas, valores entre bloques, efectos de llamadas y registros incompletos no determinan un destino.
 
 En un PE x64 enlazado, el descubrimiento recoge las direcciones de código de LEA relativas a RIP canónicas durante el barrido de llamadas existente. Cada destino sigue necesitando una entrada independiente y una prueba acotada de salida invocable; se excluyen etiquetas internas, continuaciones y cuerpos no admitidos. El descubrimiento y las firmas comparten el reconocimiento de esta codificación. Las referencias rel32 condicionales COFF también exigen símbolos de función explícitos y reubicaciones sin sumando. Sin conexión, `--single-reference-context` verifica cada condición de un solo sitio frente a todas las declaraciones originales superpuestas y conserva todas las alternativas del sitio.
 
