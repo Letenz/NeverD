@@ -185,6 +185,10 @@ TEST(SymMBAResiduePowers, NativeWidthsHaveIndependentSolverProofs) {
       size_t Storage = 1 << 24;
       const auto Result =
           detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
+      // A complete period must exercise an actual rewrite in each native
+      // width; unchanged neighbor controls alone would make this proof vacuous.
+      if (Count == 16)
+        ASSERT_NE(Result, F.Input);
       solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
       EXPECT_EQ(Verifier(Ctx, F.Input, Result), SynthVerification::Equivalent);
     }
