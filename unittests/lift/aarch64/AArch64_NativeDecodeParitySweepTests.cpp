@@ -1,5 +1,5 @@
 //===- AArch64_NativeDecodeParitySweepTests.cpp - randomized and real binary
-//parity -===//
+// parity -===//
 //
 // NeverD Decompiler
 //
@@ -7,6 +7,8 @@
 
 #include "AArch64_NativeDecodeParityTestsDetail.h"
 #include "gtest/gtest.h"
+
+#include <stdexcept>
 
 namespace {
 
