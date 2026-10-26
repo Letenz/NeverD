@@ -129,6 +129,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
+| Other BMI/BMI2/ADX form and undefined-output audits | Existing arithmetic lifting and APX tests do not qualify every legacy encoding or its undefined flags. BEXTR and the separate TBM family now have complete form-specific undefined-output audits; the other families still need that qualification. |
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
 instruction and passing LowIR/concrete tests do not establish native LLVM or C
@@ -264,6 +265,13 @@ inline assembly is needed. ELF/COFF/Mach-O O0/O2 compilation, native O2
 selection, the NeverC-to-LLVM bridge and nonconstant BEXTR refusals are covered.
 These C interfaces return values; they do not expose the architectural flags.
 Physical TBM hardware execution and CPU exception delivery remain unqualified.
+
+NeverC's BMI/BMI2 headers also admit function-level target attributes in
+Microsoft mode. The former translation-unit macro checks hid these interfaces
+even inside appropriately attributed functions. Its frontend regression covers
+22 interfaces across ELF/COFF/Mach-O at O0/O2, including BEXTR's three public
+spellings and dynamic controls. Native LLVM intrinsics remain available for
+BEXTR/BZHI/PDEP/PEXT; callers without the required feature still fail clearly.
 
 The broader integration run retains a separate source-frame proof gap:
 `NativePointerRelocationBoundary.MinGWProgramWholeModuleLLVMCCompiles` rejects
