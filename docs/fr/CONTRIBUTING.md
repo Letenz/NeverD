@@ -1,6 +1,6 @@
 **Langues**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
 
 # Contribuer à NeverD
 
@@ -193,6 +193,11 @@ prend uniquement en charge macOS arm64. Les Mac Intel et les builds universels
 doivent employer la compilation LLVM locale par défaut. Les options avancées,
 comme `NEVERD_LLVM_PREBUILT_TAG`, l’URL du miroir, le répertoire de cache et une
 somme explicite, sont documentées dans `cmake/NeverDLLVMPrebuilt.cmake`.
+
+Les corrections LLVM appartiennent au [fork LLVM NeverSight](https://github.com/NeverSight/llvm-project).
+Commitez-les et fusionnez-les dans ce fork, puis mettez à jour la révision du sous-module LLVM de NeverD.
+La compilation intégrée compile directement ces sources ; n’ajoutez ni fichiers de correctifs LLVM ni copies modifiées dans le dossier de compilation de NeverD.
+Les paquets précompilés doivent être reconstruits depuis le fork corrigé pour valider le même comportement.
 
 <!-- i18n-section: workflow -->
 ## Flux des branches et pull requests

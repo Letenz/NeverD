@@ -1,6 +1,6 @@
 **Языки**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
 
 # Участие в разработке NeverD
 
@@ -186,6 +186,11 @@ CMake загружает настроенный в репозитории пак
 сборки должны использовать локальную сборку LLVM по умолчанию. Расширенные
 переопределения, включая `NEVERD_LLVM_PREBUILT_TAG`, URL зеркала, каталог кеша
 и явную контрольную сумму, описаны в `cmake/NeverDLLVMPrebuilt.cmake`.
+
+Исправления LLVM должны находиться в [форке LLVM NeverSight](https://github.com/NeverSight/llvm-project).
+Сначала закоммитьте и объедините их в форке, затем обновите ревизию подмодуля LLVM в NeverD.
+Интегрированная сборка напрямую компилирует эти исходники; не добавляйте в NeverD файлы патчей LLVM или изменённые копии исходников в каталоге сборки.
+Для подтверждения того же поведения готовые пакеты нужно пересобрать из исправленного форка.
 
 <!-- i18n-section: workflow -->
 ## Работа с ветками и pull request

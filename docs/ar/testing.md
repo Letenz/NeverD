@@ -2216,4 +2216,4 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 
 يغطي اختبار worker أيضًا ثمانية عشر معاملًا موزعًا على السجلات والمكدس، وقيمة إرجاع عائمة، ورفض معامل مكدس كُتب نصفه فقط.
 
-يتحقق `LLVMAddressModelOverlayTests` بصورة مستقلة من تصحيحات محددات AArch64 وGOT في i386 وGOTPCREL في Mach-O. ويغطي صيغتي شرط AArch64 المعروفتين وجميع التركيبات الاثنتي عشرة للتصحيحات الجزئية، ويحافظ على مصدر LLVM والنسخة المخزنة مؤقتاً، ويعزل إعدادات Git الموروثة ويرفض شروط المعمارية غير المعروفة. لا تحل اختبارات التهيئة هذه محل اختبارات تنفيذ إعادة التموضع الأصلية.
+يفحص `BinaryRewriteRelocationTest` في فرع LLVM الخاص بـ NeverSight البايتات النهائية لـ x64 PLT وi386 GOT وMach-O GOTPCREL وAArch64 PAGE/PAGEOFF. يترجم بناء NeverD المتكامل الفرع المسجل مباشرة. لا تثبت فحوص MC هذه تنفيذ الاستثناءات الأصلي.
