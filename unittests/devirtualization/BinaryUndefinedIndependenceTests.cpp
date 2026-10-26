@@ -131,6 +131,32 @@ TEST(BinaryUndefinedIndependence,
 }
 
 TEST(BinaryUndefinedIndependence,
+     BMI2ArithmeticTransportsThePriorArbitraryAuxiliaryCarry) {
+  for (bool Apx : {false, true})
+    for (auto Encoding : {std::array<uint8_t, 4>{0xfb, 0xf6, 0xf9, 2},
+                          std::array<uint8_t, 4>{0xf3, 0xf7, 0xc1, 2},
+                          std::array<uint8_t, 4>{0xf1, 0xf7, 0xc1, 2},
+                          std::array<uint8_t, 4>{0xf2, 0xf7, 0xc1, 2},
+                          std::array<uint8_t, 4>{0xfb, 0xf0, 0xc1, 3}}) {
+      BinaryProgram Program;
+      const auto [P1, Opcode, ModRM, Map] = Encoding;
+      const uint8_t P0 = (Apx ? 0xf0 : 0xe0) | Map;
+      // XOR defines the input but leaves AF arbitrary. RORX gets imm8=NOP;
+      // the other forms consume that same byte as a separate NOP instruction.
+      if (Apx)
+        Program.block(0x100, {0x31, 0xc9, 0x62, P0,
+                              static_cast<uint8_t>(P1 | 4), 8, Opcode, ModRM,
+                              0x90, 0xc3});
+      else
+        Program.block(0x100,
+                      {0x31, 0xc9, 0xc4, P0, P1, Opcode, ModRM, 0x90, 0xc3});
+      Program.expect(Status::Proved);
+      Program.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+      Program.expect(Status::Dependent);
+    }
+}
+
+TEST(BinaryUndefinedIndependence,
      BitCountsDoNotCertifyUndefinedStatusFlagsAsConstants) {
   for (uint8_t Opcode : {0xbc, 0xbd}) {
     BinaryProgram Program;

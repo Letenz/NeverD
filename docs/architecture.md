@@ -208,6 +208,18 @@ RESET_ZF; the owner still computes the architectural result-zero ZF.
 BMI logic, bit counts, BEXTR and TBM; each family owns its admitted forms and
 the actual set of undefined flags.
 
+`X86LiftBMI2` owns flag-preserving MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX.
+VEX and APX forms share canonical prefix and memory-tail validators; raw bytes,
+implicit EDX/RDX and every public operand must agree before lifting. Both MULX
+halves are computed before either destination changes, with the high half
+winning when destinations alias. Shift counts are masked before LLVM shifts,
+and RORX immediates are scalar values. Their complete undefined-output audit
+has no new arbitrary bits; existing flag producers pass through unchanged.
+PDEP/PEXT retain the shared scalar intrinsic contract and native BMI2 lowering.
+The older BMI/ADX dispatcher now delegates these families and reuses the APX
+validator for ADX, removing its separate address parser. ADX legacy-form
+qualification remains separate.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR
