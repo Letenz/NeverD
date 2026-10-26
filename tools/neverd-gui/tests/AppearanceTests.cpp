@@ -345,6 +345,55 @@ private slots:
     }
   }
 
+  void menuShowsOnlyThePrimaryShortcut_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+  }
+
+  void menuShowsOnlyThePrimaryShortcut() {
+    QFETCH(bool, dark);
+    Theme::instance().setMode(dark ? Theme::Mode::Dark : Theme::Mode::Light);
+    Theme::instance().apply();
+    ActionRegistry registry;
+    QMenuBar bar;
+    registry.buildMenus(&bar, [](QMenu *, const QString &) {});
+    auto *comment = registry.action(ActionId::EditRepeatableComment);
+    auto *comments = bar.findChild<QMenu *>(QStringLiteral("menuComments"));
+    QVERIFY(comments);
+    QCOMPARE(comments->actions(), QList({comment}));
+
+    struct InspectableMenu : QMenu {
+      using QMenu::initStyleOption;
+    } menu;
+    menu.addAction(registry.action(ActionId::EditRename));
+    menu.addAction(comment);
+    menu.addAction(registry.action(ActionId::EditBookmark));
+    menu.ensurePolished();
+    menu.resize(menu.sizeHint());
+    QStyleOptionMenuItem option;
+    menu.initStyleOption(&option, comment);
+    QCOMPARE(option.text, QStringLiteral("Enter &comment...\t;"));
+    QVERIFY(option.reservedShortcutWidth >=
+            option.fontMetrics.horizontalAdvance(QStringLiteral(";")));
+    QCOMPARE(comment->shortcuts(), QList({QKeySequence(Qt::Key_Semicolon),
+                                          QKeySequence(Qt::Key_Slash)}));
+    QCOMPARE(comment->iconText(), QStringLiteral("Enter comment"));
+    QCOMPARE(comment->toolTip(), QStringLiteral("Enter comment (;, /)"));
+    const auto captures = qEnvironmentVariable("NEVERD_APPEARANCE_CAPTURES");
+    if (!captures.isEmpty()) {
+      QDir().mkpath(captures);
+      QVERIFY(menu.grab().save(captures + "/comment-menu-" +
+                               QTest::currentDataTag() + ".png"));
+    }
+    // A language change keeps the menu compact and preserves both bindings.
+    registry.retranslate();
+    menu.initStyleOption(&option, comment);
+    QCOMPARE(option.text, QStringLiteral("Enter &comment...\t;"));
+    QCOMPARE(comment->text(), QStringLiteral("Enter &comment..."));
+    QCOMPARE(comment->shortcuts().size(), 2);
+  }
+
   void longMenusScrollWithinOneColumn_data() {
     QTest::addColumn<bool>("dark");
     QTest::newRow("light") << false;

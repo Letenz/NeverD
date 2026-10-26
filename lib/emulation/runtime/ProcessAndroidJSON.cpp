@@ -876,6 +876,7 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
     } else if (Name == field::ObserveJavaState ||
                Name == field::ObserveCPUState ||
                Name == field::ObserveThreadCPUStates ||
+               Name == field::ObserveMemoryAtStop ||
                Name == field::ObserveMemoryOnFailure) {
       auto B = V.getAsBoolean();
       if (!B)
@@ -886,6 +887,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Out.ObserveCPUState = *B;
       else if (Name == field::ObserveThreadCPUStates)
         Out.ObserveThreadCPUStates = *B;
+      else if (Name == field::ObserveMemoryAtStop)
+        Out.ObserveMemoryAtStop = *B;
       else
         Out.ObserveMemoryOnFailure = *B;
     } else if (Name == field::ReadMemory) {

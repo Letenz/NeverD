@@ -59,6 +59,12 @@ tests the emitted source control flow, not native Windows unwinding.
 their source diagnostics and still fail native emission. The SDK LLVM suite
 checks recovery after emission exceptions and preservation of that source-only
 limitation through module preparation.
+`MedSSAMultiRoot.LoopLiveInsRespectDefinitionsAndUseOrder` checks x64 and
+AArch64 under ELF, COFF and Mach-O: a loop's first read keeps an incoming
+parameter, while an earlier definition at entry or before the read kills it.
+Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
+`NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
+and partial-register cases exercise the same block-local use/kill facts.
 
 # Testing NeverD
 
@@ -475,9 +481,13 @@ neighboring writeback/pair exclusions, zero-index shape requirements, finite
 tracing in both modes and complete 64-bit byte spans. Both C routes and linked
 LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes,
 extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
-These are explicit-IR tests; they do not
-qualify automatic decoding/lifting, relocated-image projection or native
-half/whole-vector ABI. Synthetic-stack and image requirements fail before body filtering.
+`ImageContextPreservesEveryRuntimeParameterAccess` repeats all 177 accesses with
+a Mach-O image present and requires LLVM to create no image globals: the
+caller supplies the runtime GPR bits directly. Its separate
+`cpta_image_memory_artifacts` property identifies the image-context export.
+These are explicit-IR tests; they do not qualify automatic decoding/lifting,
+image-derived address rebasing or native half/whole-vector ABI. Synthetic-stack
+and unresolved image-coordinate requirements fail before body filtering.
 Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
 both generated C files, the independent native harness and LLVM ELF/Mach-O objects
 in a fresh directory recorded in the test's properties. These artifacts allow
@@ -495,6 +505,21 @@ model. It does not qualify automatic lifting, image relocation, original SP,
 writeback/pairs, EL0 instruction execution, native half/whole-vector ABI,
 Apple hardware, other translation/tagging contexts or overflowing memory and
 every CPACHECK choice. Remote GitHub CI results require separate observation.
+The same pinned model also executes the image-context runtime-parameter export
+at EL1 with `--profile image`. This covers the explicit parameters, not
+image-derived address rebasing. Its separate EL0 environment enters EL0t using
+ERET and checks the exact returning SVC site, immediate and hardware-saved
+`SPSR_EL1.M`. The 82-check environment and live wrong-mode, wrong-immediate and
+wrong-site controls verify this boundary. `--profile el0-immediate` executes
+all 177 immediate samples at EL0; `--profile el0-register` executes all 184
+GPR/SIMD register-offset samples. Both generated-output profiles require 83
+checks on each of five C/object routes, under all four effective controls.
+This adds nonoverflow EL0 instruction execution for those explicit GPR-base
+fixtures. Literal SP access at EL0, overflowing memory, tagging, automatic
+immediate lifting, image-derived relocation and Apple CPA2 hardware remain
+unqualified. The companion
+[controlled environment](https://github.com/gmh5225/test_mac_intel/pull/3)
+owns the guest, profiles and independent evidence gates.
 `AArch64StackAddressMemory` separately checks no-image, explicit raw-SP
 parameters with all 177 immediate samples and 184 GPR/SIMD register-offset
 samples. Both C routes and linked LLVM objects execute at O0/O2, retaining
@@ -506,7 +531,7 @@ bases and malformed assembly/clobber contracts retain their refusal.
 the `cpta_stack_memory_artifacts` property, the register-offset SP matrix under
 `cpta_stack_register_memory_artifacts` and its matching GPR controls under
 `cpta_register_memory_artifacts`. The native exception verifier
-consumes successful complete seven-test SP and seven-test immediate reports:
+consumes successful complete seven-test SP and eight-test immediate reports:
 
 ```sh
 python3 scripts/verify_arm64e_sp_memory.py \
@@ -1213,6 +1238,20 @@ The `SizedCopy*` cases cover `strlcpy` full-source scanning, truncated and empty
 outputs, NUL termination without padding, full-width and zero capacities,
 read-only and page-tail memory, overlap and closed dynamic providers. Direct
 memory tests cover scan limits and expired deadlines without partial writes.
+The `CheckedSizedCopy*` cases exercise `__strlcpy_chk` through imports and
+dynamic providers: full-width capacity checks precede pointer access and source
+truncation, while accepted calls keep the same length, termination, errno and
+page-boundary behavior. The shared memory-refusal test also covers this entry,
+including fortify refusal before an expired deadline. The
+`ProcessPublic.AndroidFortifySizedCopyReportsMatchSDKAndCLI` case compares
+complete reports for truncation, fortify refusal and an invalid source.
+The `TerminatedCopy*` and `CheckedTerminatedCopy*` cases cover `strcpy` and
+`__strcpy_chk`: exact destination returns and bytes including NUL, no padding,
+full-width object sizes, empty strings, source-scan precedence over fortify,
+page boundaries, permissions, overlap and dynamic provider lifetime. Direct
+memory cases retain the complete backing on pointer, overlap, scan-limit,
+fortify and deadline refusal. `ProcessPublic.AndroidTerminatedCopyReportsMatchSDKAndCLI`
+compares whole SDK/CLI reports for both entries on success and failure.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -2186,6 +2225,12 @@ order and retain paired measurements and CPU time alongside output hashes.
 The full build's `neverd-acceleration-bench` target reports wall and process CPU
 time separately; use both when the host has competing workloads.
 
+The [LowIR to MedIR component benchmark](../tools/neverd-bench/med-bench.md)
+reuses decoded functions and measures standalone conversion, including SSA.
+It verifies every result and checks canonical dump hashes outside the measured
+interval. Its single-thread timings exclude pipeline-owned interprocedural
+summaries and do not establish end-to-end CLI or GUI latency.
+
 `NeverDDigestTests` owns the former Lift `InputDigest.*` vector checks and adds
 multi-block vectors, every byte alignment and padding boundary, read-only input
 next to an inaccessible page, bounded progress, cancellation and retry.
@@ -2926,6 +2971,11 @@ and shortcut tooltips through action changes, translation and disabled actions.
 shortcut dispatch to the same comment action, checks that `:` is unbound and
 the duplicate menu entry is gone, and preserves punctuation in single-line
 and multiline text fields. The shortcut collision check includes aliases.
+`NeverDGuiAppearance::menuShowsOnlyThePrimaryShortcut` checks that menus
+show only the primary comment key while both bindings stay registered and
+available in tooltips, in light and dark themes. `NEVERD_APPEARANCE_CAPTURES`
+saves the rendered menu. The shortcut browser and command-palette checks
+keep the key hints out of command names.
 Cocoa key dispatch skips if macOS refuses to activate the background test
 window; report that missing native coverage separately from offscreen checks.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual
@@ -7599,6 +7649,19 @@ configured owner count before execution; terminal-stop cases include faults and
 resource limits. `ProcessReport.ThreadCPUStates*` distinguishes disabled, empty,
 failed and successful captures; the public terminal-state test exercises the
 same opt-in through the SDK and CLI.
+
+`AndroidSnapshots.AtStopRAM*` compares whole workloads with reads disabled
+against explicit diagnostic snapshots at normal, service, CPU-fault and budget
+stops. Unmapped ranges fail independently, protected RAM remains observable,
+later ranges survive a failed capture, and both diagnostic flags reserve their
+shared error budget once. The existing initial-mapping and ordinary-read
+refusals stay strict. `ProcessReport.MemoryAtStop*` checks boolean admission;
+`ProcessPublic.AndroidMemoryAtStop*` checks matching SDK/CLI results and unchanged
+stops even when the first requested range is absent.
+
+`AArch64CompleteState.CompletePackets*` checks scalar widths, NZCV, all SIMD
+lanes, privilege retention and idempotent normalization of complete raw packets.
+The callback capture tests retain every-read failure coverage.
 
 `UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
 distinct scalar and SIMD values across repeated checked user/supervisor steps

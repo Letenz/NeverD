@@ -74,6 +74,23 @@ TEST(ProcessReport,
   EXPECT_EQ((*Registers->getArray("V31"))[0].getAsString(), "123456789abcdef");
   EXPECT_EQ((*Registers->getArray("V31"))[1].getAsString(), "fedcba9876543210");
 }
+TEST(ProcessReport, MemoryAtStopObservationRequiresAnExplicitBoolean) {
+  auto Default = llvm::cantFail(processOptionsFromJSON(R"({"android":{}})"));
+  EXPECT_FALSE(Default.Android->ObserveMemoryAtStop);
+  for (auto Value : {"true", "false"}) {
+    auto Parsed = llvm::cantFail(processOptionsFromJSON(
+        std::string(R"({"android":{"observe_memory_at_stop":)") + Value +
+        "}}"));
+    EXPECT_EQ(Parsed.Android->ObserveMemoryAtStop,
+              std::string(Value) == "true");
+  }
+  for (auto Value : {"1", "null", "[]", "{}", "\"true\""}) {
+    auto Bad = processOptionsFromJSON(
+        std::string(R"({"android":{"observe_memory_at_stop":)") + Value + "}}");
+    ASSERT_FALSE(bool(Bad));
+    llvm::consumeError(Bad.takeError());
+  }
+}
 TEST(ProcessReport, ThreadCPUStatesDistinguishOmittedEmptyAndFailedCaptures) {
   auto Default = llvm::cantFail(processOptionsFromJSON(R"({"android":{}})"));
   EXPECT_FALSE(Default.Android->ObserveThreadCPUStates);

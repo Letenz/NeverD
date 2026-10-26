@@ -34,15 +34,16 @@ struct NativeMemoryRegion {
 struct NativeMemoryRead {
   uint64_t Address = 0, Size = 0;
   /// Require a readable mapping before guest execution. False permits memory
-  /// allocated during the call; the complete range must be readable at the
-  /// final resumable stop. Neither setting creates or preserves mappings.
+  /// allocated during the call. Ordinary final reads require the complete
+  /// range to remain readable; diagnostic RAM snapshots report failures per
+  /// range instead. Neither setting creates or preserves mappings.
   bool RequireMappedAtEntry = true;
 };
 struct NativeMemorySnapshot {
   uint64_t Address;
   std::vector<uint8_t> Bytes;
-  /// Nonempty only when an opted-in failure snapshot could not read RAM.
-  /// Bytes is then empty; the process's original failure remains unchanged.
+  /// Nonempty only when an opted-in diagnostic snapshot could not read RAM.
+  /// Bytes is then empty; the process's original stop remains unchanged.
   std::string Diagnostic;
 };
 
@@ -163,6 +164,10 @@ struct AndroidNativeOptions {
   /// failures. Ignores guest read permissions, never reads devices or resumes
   /// execution, and records per-region errors without replacing the stop.
   bool ObserveMemoryOnFailure = false;
+  /// Snapshot ReadMemory from stopped RAM backing at every final stop. Each
+  /// unreadable range retains its diagnostic without replacing the original
+  /// stop or preventing later captures. Entry mapping requirements still apply.
+  bool ObserveMemoryAtStop = false;
   /// Concrete analysis choice for bytes returned by malloc and the new tail
   /// of realloc. Zero preserves the default. This is not a claim about an
   /// Android allocator or proof that reading uninitialized bytes is valid.

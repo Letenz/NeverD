@@ -152,10 +152,6 @@
         <translation>Commenta l&apos;indirizzo corrente</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>Inserisci commento ri&amp;petibile...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>Segna &amp;posizione...</translation>
     </message>

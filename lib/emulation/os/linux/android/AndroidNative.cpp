@@ -81,7 +81,7 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     ReportSize += ThreadBytes;
   }
   for (const auto &Read : Native.ReadMemory) {
-    if (Native.ObserveMemoryOnFailure) {
+    if (Native.ObserveMemoryOnFailure || Native.ObserveMemoryAtStop) {
       constexpr uint64_t DiagnosticBytes =
           ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
       if (DiagnosticBytes > Options.OutputLimit - ReportSize)
@@ -649,10 +649,10 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
   LibC.reportJNIState();
   // Guest/model reads can be prohibited after a terminal fault. Explicit
   // forensic snapshots use the existing stopped-RAM owner, without executing
-  // device callbacks, changing permissions or replacing the original failure.
+  // device callbacks, changing permissions or replacing the original stop.
   const bool Failed = Result.Stop == ProcessStopReason::CPUFailure ||
                       Result.Stop == ProcessStopReason::RuntimeFailure;
-  if (Failed && Native.ObserveMemoryOnFailure) {
+  if (Native.ObserveMemoryAtStop || (Failed && Native.ObserveMemoryOnFailure)) {
     constexpr size_t DiagnosticBytes =
         ::neverd::limits::emulation::kAndroidFailureMemoryDiagnosticBytes;
     const llvm::StringRef Suffix(diagnostic::SnapshotDiagnosticTruncated);

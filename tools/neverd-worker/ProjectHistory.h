@@ -63,10 +63,6 @@ private:
   Json interruptedWrite_;
   std::size_t cursor_ = 0;
   Json diskState() const;
-  /// Refuses \p state when one of its files would pass the size a later read
-  /// accepts.
-  static void checkSidecarBudgets(const Json &state);
-  void writeSidecars(const Json &state) const;
   Json document(const Json &state) const;
   void recover();
 };

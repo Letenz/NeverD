@@ -3381,6 +3381,87 @@ TEST(MedABIPass, X86CdeclRecoversStackAddressesDefinedInPredecessor) {
   EXPECT_EQ(Func.CallInfos[0].Args[2].ConstVal, 33u);
 }
 
+TEST(MedABIPass, X86CdeclSparseStackArgumentsKeepTheirBankAndOrder) {
+  constexpr Arch TheArch = Arch::X86;
+  constexpr va_t Callee = 0x2000;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool WithFP : {false, true})
+      for (bool MissingMiddle : {false, true})
+        for (bool KnownArity : {false, true}) {
+          SCOPED_TRACE(testing::Message()
+                       << int(Format) << ':' << WithFP << ':' << MissingMiddle
+                       << ':' << KnownArity);
+          BinaryImage Image;
+          Image.Arch = TheArch;
+          Image.Format = Format;
+          MedFunc Func;
+          Func.Entry = 0x1000;
+          Func.Blocks.resize(1);
+          MedBlock &Block = Func.Blocks.front();
+          Block.Id = 0;
+          const MedVar EntrySP = reg(10, 0, 4, TRI.StackPointer, TheArch);
+          addLiveIn(Block, EntrySP);
+          const MedVar CallSP = temp(20, 0, 4, TheArch);
+          Block.Ops.push_back(binary(NdOp::INT_SUB, CallSP, EntrySP,
+                                     MedVar::makeConst(12, 4)));
+          Block.Ops.push_back(unary(
+              NdOp::COPY, reg(10, 1, 4, TRI.StackPointer, TheArch), CallSP));
+          const MedVar FPValue = reg(40, 1, 8, x86reg::XMM0, TheArch);
+          if (WithFP)
+            Block.Ops.push_back(unary(
+                NdOp::COPY, FPValue, MedVar::makeConst(0x3ff0000000000000, 8)));
+          for (int I = 0; I != 3; ++I) {
+            if (MissingMiddle && I == 1)
+              continue;
+            const MedVar Address = temp(21 + I, 0, 4, TheArch);
+            Block.Ops.push_back(binary(NdOp::INT_ADD, Address, CallSP,
+                                       MedVar::makeConst(I * 4, 4)));
+            Block.Ops.push_back(binary(
+                NdOp::STORE, {}, Address, MedVar::makeConst(11 + I * 11, 4)));
+          }
+          MedOp Call;
+          Call.Opcode = NdOp::CALL;
+          Call.Output = reg(30, 0, 4, TRI.IntReturnReg, TheArch);
+          Call.addInput(MedVar::makeConst(Callee, 4));
+          Block.Ops.push_back(Call);
+          std::map<va_t, int> RegArity{{Callee, 0}};
+          std::map<va_t, int> TotalArity;
+          if (KnownArity)
+            TotalArity.emplace(Callee, 3);
+          const std::map<va_t, int> FPArity{{Callee, WithFP ? 1 : 0}};
+          recoverCallAbi(Func, TheArch, {{Callee, "cdecl_sparse_callee"}},
+                         &Image, &RegArity, &TotalArity, &FPArity);
+
+          ASSERT_EQ(Func.CallInfos.size(), 1u);
+          const MedCallInfo &Info = Func.CallInfos.front();
+          // With no fixed signature, the first stack gap still ends recovery.
+          const bool Complete = KnownArity || !MissingMiddle;
+          const size_t StackStart = WithFP ? 1u : 0u;
+          ASSERT_EQ(Info.Args.size(), StackStart + (Complete ? 3u : 1u));
+          EXPECT_EQ(Info.IntegerRegisterArgCount, 0);
+          EXPECT_EQ(Info.FloatingRegisterArgCount, WithFP ? 1 : 0);
+          EXPECT_EQ(Info.StackArgumentSlotBytes, 4);
+          EXPECT_EQ(Info.StackArgumentOffsets,
+                    Complete ? (std::vector<int64_t>{0, 4, 8})
+                             : (std::vector<int64_t>{0}));
+          if (WithFP)
+            EXPECT_EQ(Info.Args.front(), FPValue);
+          EXPECT_EQ(Info.Args[StackStart], MedVar::makeConst(11, 4));
+          if (Complete) {
+            if (MissingMiddle) {
+              EXPECT_EQ(Info.Args[StackStart + 1].Kind, MedVar::Unspecified);
+              EXPECT_EQ(Info.Args[StackStart + 1].Size, 4);
+              EXPECT_EQ(Info.Args[StackStart + 1].TheArch, TheArch);
+            } else {
+              EXPECT_EQ(Info.Args[StackStart + 1], MedVar::makeConst(22, 4));
+            }
+            EXPECT_EQ(Info.Args[StackStart + 2], MedVar::makeConst(33, 4));
+          }
+        }
+}
+
 TEST(MedABIPass, SplitStackArgumentSetupRequiresEveryIncomingPath) {
   for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
     for (BinaryFormat Format :

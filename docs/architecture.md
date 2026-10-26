@@ -160,6 +160,11 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+`MedSSA` seeds entry liveness with upward-exposed uses, then propagates each
+newly live block/variable pair through real predecessor edges until a definition
+blocks it. The synthetic dominance root carries no variable values. Block-local
+use/kill construction owns register aliases and call clobbers for this analysis.
+
 `CallRegisterUnread` proves absent GPR input observations independently of
 argument inference. Opaque calls read every candidate family, and a nested
 call's may-write mask never kills a later input observation. Partial writes,
@@ -478,11 +483,14 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-Automatic lifting still selects only register-offset operations. Image-backed
-immediate source projection fails explicitly until exact page/relocation
-occurrences, accessed-byte ownership and raw-base rebasing agree; source body
-filtering cannot bypass that requirement. This is not automatic immediate
-CPA2 lifting coverage.
+An explicit runtime GPR parameter remains in runtime coordinates even when the
+module also has an image: LLVM bypasses image resolution for that base, and
+both source boundaries share the same admission owner. Other image-context
+immediate bases fail explicitly until exact page/relocation occurrences,
+accessed-byte ownership and raw-base rebasing agree; source body filtering
+cannot bypass that requirement. Automatic lifting still selects only
+register-offset operations. This is not automatic immediate CPA2 lifting
+coverage or support for image-derived immediate addresses.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. The common machine table also owns literal
 SP forms. With no image, an explicit raw-SP parameter can select the physical SP
@@ -8049,10 +8057,21 @@ Each failed range retains its own bounded diagnostic and publishes no partial
 bytes, without changing the execution failure or preventing later captures.
 The default report and resumable-stop memory contract remain unchanged.
 
+`observe_memory_at_stop` explicitly selects the same diagnostic RAM capture
+at every final stop, including instruction/event limits and normal returns.
+A range unmapped by a completed thread retains its own diagnostic instead of
+turning the workload's stop into a runtime failure or discarding later ranges.
+Both diagnostic options share the stopped-backing reader, bounded errors and
+one per-range output reservation. They do not relax entry mapping requirements;
+ordinary final reads and the failure-only option retain their existing scope.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
-storage: partial failures, cancellation and deadline expiry cannot publish a
-prefix. `captureAArch64State` remains the sole owner of architectural widths
+storage and uses the architecture's shared normalization directly after all
+transport reads succeed. Callback-based backends use the same normalization;
+neither route imports transport metadata as the configured privilege mode.
+Partial failures, cancellation and deadline expiry cannot publish a
+prefix. `normalizeAArch64State` remains the sole owner of architectural widths
 and NZCV normalization. Retrying a failed transfer reinstalls the entire input;
 instruction admission, RAM transactions and translation-cache invalidation
 retain their existing boundaries.
@@ -8060,7 +8079,7 @@ retain their existing boundaries.
 After a successful EL0 capture, an identical input packet may reuse the engine's
 registers while its address space, mapping generation and transport base remain
 unchanged. The comparison includes every scalar and vector field from the raw
-capture; normalization remains owned by `captureAArch64State`. Any changed input,
+capture; normalization remains owned by `normalizeAArch64State`. Any changed input,
 mapping change or failed step requires a complete install. Supervisor steps keep
 complete installs, and every step still captures the complete output packet.
 
@@ -8190,7 +8209,17 @@ Fortify paths requiring unmodeled process-abort effects stop before publishing
 output. Existing memory, deadline and representable-result limits still apply.
 
 `AndroidStrings` owns bounded copies, including `strlcpy` source scanning,
-termination and atomic refusal. `__read_chk` owns only the Bionic extent checks;
+termination and atomic refusal. `__strlcpy_chk` checks the supplied capacity
+against the destination object size before either pointer is accessed, then
+reuses the same copy and full-source-length result. A zero capacity still scans
+the source; a short source does not relax the fortify capacity check.
+`strcpy` and `__strcpy_chk` share this staging and access owner, copy through
+NUL without padding and return the destination. API 28 ARM64 uses the C
+`__strcpy_chk` implementation: it scans the source before comparing its
+NUL-inclusive length to the destination object size. Scan faults and budgets
+precede that fortify check; the destination and overlap checks follow it.
+Undefined overlap and unsupported abort paths refuse without partial writes.
+`__read_chk` owns only the Bionic extent checks;
 descriptor state and suspended reads stay in the shared Linux read owner.
 Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
 `fstatat` service rather than duplicating pathname resolution or status layouts.

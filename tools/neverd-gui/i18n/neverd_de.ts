@@ -152,10 +152,6 @@
         <translation>Aktuelle Adresse kommentieren</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>&amp;Wiederholbaren Kommentar eingeben...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>Position &amp;markieren...</translation>
     </message>
