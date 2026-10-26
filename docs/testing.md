@@ -6401,6 +6401,12 @@ different addresses, recursion through aliases, canonical indirect import
 relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
 checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
 or absent metadata, evidence withdrawal, and the separate identity gate.
+`X86ReferenceBoundary.*` covers prefix-looking operands before a canonical
+x64 LEA, genuine prefixes, embedded instruction bytes, unreachable targets,
+overlapping paths, truncation, the exact decode budget and unsupported LOOP
+control. Producer and incoming-request cases exercise the same boundary owner.
+The metadata-refinement Python cases require every raw source to own a new
+caller code field, retain alternatives and reject missing or data-kind fields.
 The COFF cases also check primary x64 vftable references: exact RTTI types,
 locator and hierarchy consistency, bounded strings, unsupported secondary
 layouts, malformed data, instruction prefixes and negative displacements.

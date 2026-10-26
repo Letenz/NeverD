@@ -116,6 +116,12 @@ names actually requested by those callers participate; matching bytes do not
 import additional nominal names from the source pattern. This adds suggestions, never
 independent identity evidence or automatic names.
 `neverd-sigmaker --caller-context` emits these records, including short bodies.
+Generation and matching share the canonical x64 LEA field check. When the
+preceding byte could be an instruction prefix, a bounded Capstone walk from
+the declared function entry must reach that complete LEA without overlapping
+instruction paths. Genuine prefixes, unsupported control, unreachable targets
+and exhausted budgets stay unknown. The prefix budget is owned by
+`MaxReferenceBoundaryBytes`; unrelated fields keep their existing fast path.
 The supplement builder requires exact raw source ownership and keeps distinct
 same-byte names separate; they are queries, not claims of byte uniqueness.
 When incoming context is loaded, the name index also reuses complete existing
@@ -219,6 +225,11 @@ prevents its addition, while alternative names remain alternatives. The tool
 preserves bytes, names and existing fields, writes changed files separately,
 and records input/output hashes. Repeat `--name` to restrict a review to named
 records; evaluate the changed packs through the normal CLI before publication.
+`--caller-code` also permits missing code references in complete `!caller`
+records. The same raw-version intersection and kind checks apply; ordinary
+byte records and required-reference clauses do not gain function fields from
+this option. This can update an existing caller body without another record
+or byte-index entry.
 
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,
