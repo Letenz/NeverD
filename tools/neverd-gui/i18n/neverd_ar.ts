@@ -156,10 +156,6 @@
         <translation>إضافة تعليق إلى العنوان الحالي</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>إدخال تعليق قابل للتكرار(&amp;P)...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>وضع علامة على الموضع(&amp;K)...</translation>
     </message>

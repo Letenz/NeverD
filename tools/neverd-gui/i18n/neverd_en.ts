@@ -156,10 +156,6 @@
         <translation>Comment the current address</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>Enter re&amp;peatable comment...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>Mar&amp;k position...</translation>
     </message>

@@ -156,10 +156,6 @@
         <translation>Добавить комментарий к текущему адресу</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>Ввести &amp;повторяемый комментарий...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>Отметить по&amp;зицию...</translation>
     </message>

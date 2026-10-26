@@ -83,10 +83,15 @@ judge each change in the real window.
   main menus, context menus and submenus; do not split actions manually or
   impose a fixed menu height. Check an actual overflowing popup, including
   arrow interaction, wheel direction and keyboard access to its last item.
-- Keep one comment command, with `;` and `/` as equivalent shortcuts. Do not
+- Keep one comment command labelled **Enter comment...**, with `;` and `/`
+  as equivalent shortcuts. Do not
   restore the separate ordinary-comment action or its `:` key. Scope these
   keys to analysis views so text fields retain normal punctuation input;
-  show both bindings in shortcut help and check aliases for conflicts.
+  show both bindings in menus, shortcut help and the command palette, and
+  check aliases for conflicts. Qt menus display only the primary shortcut
+  automatically; the registry supplies a tab-separated hint for aliases so
+  Qt measures and paints the full shortcut column. Keep that hint out of
+  toolbar labels and the command-name columns of help and the palette.
 - Open the command palette where it was asked for. A click on the title bar's
   command center drops it from the bar's bottom edge, centered under the field
   and at least as wide (`TitleBar::clickedCommandCenter`), as in Visual Studio

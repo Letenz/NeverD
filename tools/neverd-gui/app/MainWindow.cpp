@@ -4041,7 +4041,8 @@ void MainWindow::showShortcuts() {
                        const QString &scope, const QIcon &icon = {}) {
     auto *item = new QTreeWidgetItem(tree);
     item->setIcon(0, icon);
-    item->setText(0, QString(text).remove(QLatin1Char('&')));
+    item->setText(
+        0, text.section(QLatin1Char('\t'), 0, 0).remove(QLatin1Char('&')));
     const auto hint = shortcutHint(keys);
     item->setText(1, hint.isEmpty() ? tr("Unassigned") : hint);
     item->setText(2, scope);
@@ -4121,7 +4122,9 @@ void MainWindow::showCommandPalette() {
     for (auto *action : actions_.allActions()) {
       if (!action->isEnabled())
         continue;
-      const QString label = action->text().remove(QLatin1Char('&'));
+      const QString label = action->text()
+                                .section(QLatin1Char('\t'), 0, 0)
+                                .remove(QLatin1Char('&'));
       if (!text.isEmpty() && !label.contains(text, Qt::CaseInsensitive))
         continue;
       auto *item = new QListWidgetItem(action->icon(), label, list);

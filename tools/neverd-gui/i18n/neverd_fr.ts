@@ -156,10 +156,6 @@
         <translation>Commenter l&apos;adresse actuelle</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>Saisir un commentaire &amp;répétable...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>Marquer la &amp;position...</translation>
     </message>

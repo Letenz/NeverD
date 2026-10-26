@@ -180,14 +180,20 @@ void ActionRegistry::retranslate() {
   for (std::size_t i = 0; i < std::size(Specs); ++i) {
     auto *action = actions_[i];
     const QString text = translated("Actions", Specs[i].text);
-    action->setText(text);
+    const auto shortcuts = action->shortcuts();
+    const QString keys = shortcutHint(shortcuts);
+    // QMenu normally displays only the primary shortcut. Its tab-separated
+    // hint participates in both layout and painting, including context menus.
+    action->setText(shortcuts.size() > 1 ? text + QLatin1Char('\t') + keys
+                                         : text);
     QString tip = translated("Actions", Specs[i].tip);
     action->setStatusTip(tip);
     QString plain = text;
     plain.remove(QLatin1Char('&'));
     if (plain.endsWith(QStringLiteral("...")))
       plain.chop(3);
-    const QString keys = shortcutHint(action->shortcuts());
+    // Tool buttons and accessible names must not inherit the menu's hint.
+    action->setIconText(plain);
     action->setToolTip(
         keys.isEmpty() ? plain : QStringLiteral("%1 (%2)").arg(plain, keys));
   }
