@@ -1,6 +1,6 @@
 **Languages**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
 
 # NeverD への貢献
 
@@ -179,6 +179,11 @@ CMake はリポジトリで設定されたリリースパッケージをダウ�
 デフォルトのローカル LLVM ビルドを使用してください。`NEVERD_LLVM_PREBUILT_TAG`、
 ミラー URL、キャッシュディレクトリ、明示的なチェックサムなどの高度な上書きは
 `cmake/NeverDLLVMPrebuilt.cmake` に記載されています。
+
+LLVM の修正は [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project) で管理します。
+まず fork にコミットしてマージし、NeverD の LLVM サブモジュールのリビジョンを更新します。
+統合ビルドはそのソースを直接コンパイルします。NeverD に LLVM パッチファイルやビルドディレクトリのソース上書きを追加しないでください。
+同じ動作を検証するには、修正済み fork からプリビルドパッケージを再構築する必要があります。
 
 <!-- i18n-section: workflow -->
 ## ブランチとプルリクエストの流れ

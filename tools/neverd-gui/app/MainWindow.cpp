@@ -124,6 +124,11 @@ namespace {
 using KDDockWidgets::InitialOption;
 
 constexpr char LayoutFileName[] = "desktop.json";
+// Application settings own main-window geometry. Automatic pane restoration
+// must neither show the unfinished startup window nor unmaximize a visible one.
+constexpr KDDockWidgets::RestoreOptions kPaneRestoreOptions{
+    KDDockWidgets::RestoreOption_RelativeToMainWindow,
+    KDDockWidgets::RestoreOption_AbsoluteFloatingDockWindows};
 /// The level of a session message that reports an error.
 constexpr int ErrorMessageLevel = 2;
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
@@ -1057,7 +1062,8 @@ void MainWindow::initializeLayout() {
   if (std::exchange(layoutInitialized_, true))
     return;
   if (!QFile::exists(layoutPath()) ||
-      !KDDockWidgets::LayoutSaver().restoreFromFile(layoutPath()))
+      !KDDockWidgets::LayoutSaver(kPaneRestoreOptions)
+           .restoreFromFile(layoutPath()))
     applyDefaultLayout();
   // Query and generated views reopen through an explicit analysis command.
   closeTransientDocks();
@@ -5583,12 +5589,7 @@ void MainWindow::leaveFocusMode() {
     toolbar->deleteLater();
   }
   actions_.action(ActionId::ViewFocusMode)->setChecked(false);
-  // Focus mode only moves panes. Restoring the untouched main-window geometry
-  // can lose its maximized state while the compositor processes the resize.
-  const KDDockWidgets::RestoreOptions options{
-      KDDockWidgets::RestoreOption_RelativeToMainWindow,
-      KDDockWidgets::RestoreOption_AbsoluteFloatingDockWindows};
-  if (!KDDockWidgets::LayoutSaver(options).restoreLayout(layout))
+  if (!KDDockWidgets::LayoutSaver(kPaneRestoreOptions).restoreLayout(layout))
     output_->append(tr("Could not restore the layout before focus mode."), 1);
   if (focus && focus->isVisible()) {
     focus->window()->raise();
@@ -5759,7 +5760,7 @@ void MainWindow::restoreProjectState() {
   if (const auto desktop =
           state.value(QString::fromLatin1(ProjectDatabase::DesktopState));
       !desktop.isEmpty() &&
-      !KDDockWidgets::LayoutSaver().restoreLayout(desktop))
+      !KDDockWidgets::LayoutSaver(kPaneRestoreOptions).restoreLayout(desktop))
     output_->append(
         tr("The saved desktop of this database could not be restored."), 1);
   const auto address = addressValue(location.value(QStringLiteral("address")));
