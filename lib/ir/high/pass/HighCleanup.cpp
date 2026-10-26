@@ -171,6 +171,24 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
     std::optional<MedVar> Restores;
   };
   std::vector<FrameRead> FrameReads;
+  VarKeySet ReadValues;
+  HighExprSet ReadExpressions;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    forEachRhsExpr(S, [&](const ExprPtr &Root) {
+      std::vector<ExprPtr> Pending{Root};
+      while (!Pending.empty() && FrameBudget) {
+        auto E = Pending.back();
+        Pending.pop_back();
+        --FrameBudget;
+        if (!E || !ReadExpressions.insert(E.get()).second)
+          continue;
+        if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi)
+          ReadValues.insert(varKey(E->Var));
+        E->forEachChildExpr(
+            [&](const ExprPtr &Child) { Pending.push_back(Child); });
+      }
+    });
+  });
   walkStmts(Func.Body, [&](const HighStmt &S) {
     const HighExpr *Restore = S.Kind == StmtKind::Assign && S.Dst &&
                                       S.Dst->Kind == ExprKind::Var &&
@@ -187,7 +205,7 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
                 forceInlineExpr(E->Operands[0]), Func, TargetArch,
                 FrameBudget)) {
           FrameRead Read{*At, E->Type->Size, std::nullopt};
-          if (E.get() == Restore)
+          if (E.get() == Restore && !ReadValues.count(varKey(S.Dst->Var)))
             Read.Restores = S.Dst->Var;
           FrameReads.push_back(std::move(Read));
         }
@@ -196,6 +214,8 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
     forEachExpr(S, Visit);
   });
   auto OnlyRestored = [&](int64_t Offset, const MedVar &V) {
+    if (!FrameBudget)
+      return false;
     return llvm::all_of(FrameReads, [&](const FrameRead &Read) {
       if (Read.Offset >= Offset + V.Size || Offset >= Read.Offset + Read.Size)
         return true;
@@ -226,7 +246,11 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
     const int64_t End = *Offset + V.Size;
     const bool OwnFrame = *Offset >= -Func.FrameSize && End <= 0;
     const bool Home = *Offset >= HomeBegin && End <= Layout.EntryStackBase;
-    if (!OwnFrame && !(Home && OnlyRestored(*Offset, V)))
+    // An ABI-preserved register can also carry ordinary data. A private
+    // spill is disposable only when every read is an unobserved restore,
+    // exactly as for a home slot above the entry SP. Otherwise deleting its
+    // initializer leaves a later source load undefined.
+    if ((!OwnFrame && !Home) || !OnlyRestored(*Offset, V))
       return false;
     if (OwnFrame && (IsFPReg(V) || IsLRReg(V)))
       return true;

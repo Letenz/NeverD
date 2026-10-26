@@ -8256,7 +8256,12 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
   // no sanitizer wrap. Keep wraps on add/sub/mul.
   if (Cur && Cur != &E &&
       (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi ||
-       Cur->Kind == ExprKind::Call))
+       Cur->Kind == ExprKind::Call ||
+       (Cur->Kind == ExprKind::UnaryOp && Cur->Op == NdOp::BOOL_NOT) ||
+       (Cur->Kind == ExprKind::BinOp &&
+        (Cur->Op == NdOp::INT_EQUAL || Cur->Op == NdOp::INT_NOTEQUAL ||
+         Cur->Op == NdOp::INT_LESS || Cur->Op == NdOp::INT_LESSEQUAL ||
+         Cur->Op == NdOp::INT_SLESS || Cur->Op == NdOp::INT_SLESSEQUAL))))
     return exprStr(*Cur);
   return exprStr(E);
 }
@@ -8370,13 +8375,12 @@ std::string HighCWriter::invertCondStr(const HighExpr &E) {
 }
 
 std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
-  const HighExpr *Cur = forwardedExpr(&E);
-  Cur = unwrapIntegerView(Cur);
+  const HighExpr *Cur = truthTestedValue(&E);
   if (!Cur)
     return "!(" + exprStr(E) + ")";
   if (Cur->Kind == ExprKind::UnaryOp && Cur->Op == NdOp::BOOL_NOT &&
       !Cur->Operands.empty() && Cur->Operands[0])
-    return exprStr(*Cur->Operands[0]);
+    return condStr(*Cur->Operands[0]);
 
   auto IsZeroLike = [this](const ExprPtr &Op) {
     if (!Op)
@@ -8531,7 +8535,7 @@ std::string HighCWriter::invertCondStrImpl(const HighExpr &E) {
       else if (IsZeroLike(Cur->Operands[0]) && Cur->Operands[1])
         X = Cur->Operands[1].get();
       if (X) {
-        std::string S = exprStr(*X);
+        std::string S = condStr(*X);
         const HighExpr *V = unwrapIntegerView(X);
         if (V && V->Kind == ExprKind::BinOp &&
             (V->Op == NdOp::BOOL_OR || V->Op == NdOp::BOOL_AND ||

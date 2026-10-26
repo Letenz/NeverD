@@ -4781,3 +4781,10 @@ target_include_directories(NeverDX86StateAccuracyTests PRIVATE
 add_neverd_unittest(NeverDMedCachedCallTargetTests
   core/MedCachedCallTargetTests.cpp
   LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDWindowsEHSourceTests
+  eh/COFFExceptionIRTests.cpp LINK_COMPONENTS Pipeline BackendC)
+target_include_directories(NeverDWindowsEHSourceTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDWindowsEHSourceTests PRIVATE
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}")

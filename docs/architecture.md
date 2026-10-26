@@ -12315,3 +12315,10 @@ pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
 An observed import identifies the captured callable's signature and never
 authorizes a new target load. Call barriers, partial writes, uncertain aliases
 and exhausted work retain the unresolved call.
+
+`HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
+redundant writebacks and complete-overwrite proofs within independent regions
+and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
+and exceptional/ordered observations retain their memory effects. Prologue
+cleanup preserves saved register values still observed as data. Word zero-test
+normalization retains operand widths, signedness, effects and source truth.

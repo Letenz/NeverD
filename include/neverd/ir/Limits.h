@@ -488,6 +488,7 @@ inline constexpr int kHighDemandedBytesShiftAmountsDepthLimit = 4;
 
 // lib/ir/high/pass/HighExprSimplify.cpp
 inline constexpr int kHighExprSimplifyZeroOrOneDepthLimit = 8;
+inline constexpr unsigned kHighExprSimplifyZeroTestViewDepthLimit = 16;
 inline constexpr int kHighExprSimplifySameIntegerValuePeelPeelDepthLimit = 4;
 
 // lib/ir/high/pass/HighFlowOracle.cpp

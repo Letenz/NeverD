@@ -14089,3 +14089,11 @@ mutable import captures and Win64 scalar results versus ELF aggregate transport.
 `NeverDWorkerCachedCallABI` generates PE fixtures with direct and cached
 seven-argument imports and zero/one-argument private callees, checking both C
 routes independently of function preparation order.
+
+Run `NeverDHighControlFlowTests` and `NeverDWindowsEHSourceTests` after changing
+frame forwarding or source expression cleanup. The frame fixtures execute C
+before/after optimization at O0/O2, including slot reuse and calls mutating
+saved cells. They retain stores around structured/unstructured EH, atomic and
+trapping operations, uncertain aliases, alternate entries and incomplete paths.
+The zero-test fixtures cover all byte pairs and integer-width boundaries with
+preserved call counts and undefined-behavior traps.
