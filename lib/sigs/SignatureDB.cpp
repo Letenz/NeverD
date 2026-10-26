@@ -1539,6 +1539,12 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   std::vector<uint32_t> ConfirmedMetadata;
   llvm::DenseSet<size_t> ContradictedMetadata;
   llvm::DenseMap<uint64_t, std::optional<llvm::StringRef>> VTableTypes;
+  llvm::DenseMap<uint64_t, std::optional<coff_loader::ThrowInfoType>>
+      ThrowTypes;
+  auto ThrowTypeOf = [](llvm::StringRef Name) {
+    return Name.starts_with("_TI") ? coff_loader::throwInfoTypeName(Name)
+                                   : std::nullopt;
+  };
   std::vector<uint8_t> Unconfirmable;
   for (size_t I = First; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
@@ -1612,11 +1618,18 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         R = End;
         continue;
       }
-      std::optional<Branch> To = branchTarget(Img, Start, References[R].Offset);
+      const auto Alternatives = llvm::ArrayRef(References).slice(R, End - R);
+      const bool IsThrowInfo =
+          llvm::any_of(Alternatives, [&](const StoredName &Name) {
+            return ThrowTypeOf(Name.Name).has_value();
+          });
+      std::optional<Branch> To =
+          IsThrowInfo ? std::nullopt
+                      : branchTarget(Img, Start, References[R].Offset);
       // Taking a named function's address carries the same exact target
       // constraint as calling it. Metadata symbols retain their data-specific
       // checks and cannot turn a vftable or import slot into executable code.
-      if (!To &&
+      if (!To && !IsThrowInfo &&
           llvm::none_of(llvm::ArrayRef(References).slice(R, End - R),
                         [](const StoredName &Name) {
                           return llvm::StringRef(Name.Name).starts_with(
@@ -1636,6 +1649,29 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         if (const std::optional<Branch> Next = thunkTarget(Img, *To))
           Where.Onward = Next->Target;
         Sites.push_back(std::move(Where));
+      } else if (IsThrowInfo) {
+        if (const auto Target =
+                addressReferenceTarget(Img, Start, References[R].Offset)) {
+          auto [At, Fresh] = ThrowTypes.try_emplace(*Target);
+          if (Fresh)
+            At->second = coff_loader::readThrowInfoType(Img, *Target);
+          if (At->second) {
+            bool Confirmed = false;
+            bool AllTypes = true;
+            for (const StoredName &Reference : Alternatives) {
+              const auto Type = ThrowTypeOf(Reference.Name);
+              AllTypes &= Type.has_value();
+              Confirmed |= Type && *Type == *At->second;
+            }
+            if (Confirmed) {
+              if (ConfirmedMetadata.empty())
+                ConfirmedMetadata.resize(Matches.size(), 0);
+              ++ConfirmedMetadata[I];
+            } else if (AllTypes) {
+              ContradictedMetadata.insert(I);
+            }
+          }
+        }
       } else if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
                               [](const StoredName &Name) {
                                 return llvm::StringRef(Name.Name).starts_with(

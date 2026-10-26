@@ -1304,6 +1304,28 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
         consumeError(TargetName.takeError());
         continue;
       }
+      const bool ThrowInfoReference =
+          TargetName->starts_with("_TI") &&
+          coff_loader::throwInfoTypeName(*TargetName).has_value();
+      if (ThrowInfoReference) {
+        if (!AddressReference ||
+            TargetOrErr->getComplexType() != COFF::IMAGE_SYM_DTYPE_NULL ||
+            TargetOrErr->getStorageClass() != COFF::IMAGE_SYM_CLASS_EXTERNAL ||
+            TargetOrErr->getSectionNumber() < COFF::IMAGE_SYM_UNDEFINED)
+          continue;
+        if (TargetOrErr->getSectionNumber() != COFF::IMAGE_SYM_UNDEFINED) {
+          auto TargetSection = Obj.getSection(TargetOrErr->getSectionNumber());
+          if (!TargetSection) {
+            consumeError(TargetSection.takeError());
+            continue;
+          }
+          const auto Flags = (*TargetSection)->Characteristics;
+          if (!(Flags & COFF::IMAGE_SCN_MEM_READ) ||
+              (Flags &
+               (COFF::IMAGE_SCN_MEM_WRITE | COFF::IMAGE_SCN_MEM_EXECUTE)))
+            continue;
+        }
+      }
       if (At &&
           (Machine == COFF::IMAGE_FILE_MACHINE_I386 ||
            Machine == COFF::IMAGE_FILE_MACHINE_AMD64) &&
@@ -1316,7 +1338,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       bool IsData = false;
       bool IsLocalData = false;
       std::string LocalName;
-      if ((DataReference || LayoutReference) && !LocalRelations.empty()) {
+      if ((DataReference || LayoutReference) && !ThrowInfoReference &&
+          !LocalRelations.empty()) {
         // Preserve exact relations first, including the anchor's own key.
         // A layout relation is permitted only inside one indivisible source
         // data section. Defined external names are source coordinates here,
@@ -1353,6 +1376,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
         }
       }
       if (DataReference && !coff_loader::primaryVTableTypeName(*TargetName) &&
+          !ThrowInfoReference &&
           !TargetName->starts_with(COFFImportPointerPrefix) &&
           TargetOrErr->getComplexType() == COFF::IMAGE_SYM_DTYPE_NULL &&
           TargetOrErr->getStorageClass() == COFF::IMAGE_SYM_CLASS_EXTERNAL &&
@@ -1374,6 +1398,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
         At = Field;
       } else if (AddressReference && !IsLocalData) {
         if (!coff_loader::primaryVTableTypeName(*TargetName) &&
+            !ThrowInfoReference &&
             !(hasCOFFFunctionType(*TargetOrErr) &&
               TargetOrErr->getSectionNumber() >= COFF::IMAGE_SYM_UNDEFINED))
           continue;
