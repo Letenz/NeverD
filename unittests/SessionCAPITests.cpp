@@ -9121,7 +9121,8 @@ TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
   SessionTestAccess::resetFunctions(State);
   SessionTestAccess::selectFunction(State, Entry);
   const auto Own = takeString(neverd_decompile(Session, Entry));
-  EXPECT_NE(Own.find("strlen("), std::string::npos) << Own;
+  EXPECT_NE(Own.find("strlen_"), std::string::npos) << Own;
+  EXPECT_NE(Own.find("__asm__(\"strlen\")"), std::string::npos) << Own;
   EXPECT_EQ(Own.find("#include <string.h>"), std::string::npos) << Own;
   // Any other change to the symbols goes with retiring the pipeline, which
   // drops the names read before, even when the table keeps its size.

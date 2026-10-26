@@ -2282,7 +2282,12 @@ exports, whose name binds a prototype, is called with at least what the
 prototype declares, as its export fixes the convention for the callers within
 the image too: the declared parameters join what its body reads in its own
 summary, so that a system call stub's callers pass the stack arguments its
-dispatcher reads, and a body that reads past them keeps those. Where every
+dispatcher reads, and a body that reads past them keeps those.
+`CallPrototypeArguments` carries that declaration provenance through final
+call recovery for both selected and omitted callees. A narrower recovered
+gate body cannot truncate arguments already established by its entry summary;
+documented WDK entries use the same boundary.
+Where every
 argument is on the stack (i386), each argument takes the slots it fills, a
 record's by value too (a `LONGLONG`, a `double` and a `POINT` take two), and
 a fastcall or thiscall prototype, which passes leading arguments in
@@ -4622,6 +4627,10 @@ declarations before SSA and reconvert only affected definitions and callers.
 Every caller in a request must supply all outgoing bytes through the shared
 `SourceCallABI` write proof; otherwise the declaration is withdrawn as a unit.
 Ordinary signature bounds cannot truncate an already bound source call.
+HighIR also keeps every validated explicit source ABI operand unchanged:
+ordinary register and outgoing-stack scans cannot replace its values or append
+arguments, even when its stack-only declaration uses fewer parameters than the
+platform's positional calling convention.
 LLVM source exports retain the fixed declaration of such a call even when the
 selected output omits its callee, instead of falling back to unknown extern
 varargs. Explicit native stack-word source calls use the same declaration path.

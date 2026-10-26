@@ -789,7 +789,8 @@ public:
   std::string globalNameStr(const llvm::GlobalValue *Global);
   /// Storage and aggregate integer constants retain their literal bits;
   /// expression uses may additionally carry an image-address spelling.
-  std::string constStr(const llvm::Constant *C, bool AllowImageAddress = true);
+  std::string constStr(const llvm::Constant *C, bool AllowImageAddress = true,
+                       bool *PointerSpelling = nullptr);
   std::string blockLabel(const llvm::BasicBlock *BB);
   std::string binopStr(unsigned Opcode, const std::string &LHS,
                        const std::string &RHS, llvm::Type *Ty);

@@ -32,6 +32,13 @@ partial outgoing writes, narrow reads, frame-address returns, preserved-register
 changes, external loads and values initialized by the callee itself. A selected
 call optimized away is checked by compiling and executing its resulting source,
 rather than requiring an intermediate call record to survive optimization.
+`IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
+routes with an incoming last-stack-word declaration and unrelated register and
+stack setup. `HighCPointerAddresses.Win64TwelveArgumentCallKeepsEveryStackArgument`
+separately retains and executes a positional call whose callee reads all twelve
+arguments. Both cases execute O0/O2 output: the stack-only case uses an
+independent source callee, and the positional case checks the complete emitted
+caller and callee against an independent sum oracle.
 The same target runs the shared `SourceFrameAnalysis` suite. Balanced RBP and
 x29/x30 frames, including local stack allocation and `leave`, execute through
 explicit, automatic and selected-caller paths;
@@ -4250,6 +4257,13 @@ the parameters its prototype declares and its code never reads, and that
 `neverd_decompile_all` takes the prototypes; the kernel inputs check
 `ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
 `ExRaiseStatus` the kernel exports without its PDB.
+`HighCPointerAddresses.DocumentedKernelArgumentsSurviveAnOpaqueGate` checks
+both source routes and the shared MedIR call operands for an exported service
+whose prototype declares inputs absent from the gate's own body.
+`Win64CallContract.CallersPassWhatAnExportedRoutinesPrototypeDeclares` also
+retains body reads beyond the declared prefix. The ntos `ZwSetSystemTime`
+caller at `0x140a3aad4` is an integration witness: its two zero arguments must
+survive omitted-callee recovery and its HighC must compile at O0 and O2.
 `IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
 exports and `_Noreturn` prototypes in the no-return index.
 `HighCReturnJoin.BareReturnBesideATailCallReturnsTheParameter` decompiles
@@ -8937,6 +8951,12 @@ form's target, state and size, and that a direct jump is never a long branch.
 `LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
 in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
 the segment rule without section headers.
+`LLVMCValues.FoldedImageStringAddressesKeepIntegerCarriers` checks empty and
+nonempty image strings reached through folded constant pointer/integer casts.
+Integer calls and returns retain explicit pointer conversions with preserved
+LLVM function types enabled and disabled; pointer calls and ordinary integer
+constants keep their own types. The x64/ARM64 source cases execute at O0/O2 with
+undefined-behavior traps.
 
 `LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
 `ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
