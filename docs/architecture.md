@@ -676,6 +676,18 @@ can feed another retained memory operation without reinterpreting them as image
 VAs. The software tracer commits only complete finite reads/writes for which the
 shared address owner proves control-independent access and writeback bits.
 
+SIMD single pre/post-index B/H/S/D/Q accesses use the same descriptor and
+original-instruction owner. A load defines two typed auxiliary SSA results:
+the complete zero-extended V register and completed X base. A store consumes
+the complete V value and returns the base. Xn/Vn numeric overlap is legal;
+V31 remains a vector register. LowIR binding collection, SSA conversion and
+finite tracing share the original result-transport query. Missing, shortened
+or duplicate bindings fail before conversion or memory effects. HighC and
+LLVMC retain the original instruction even when both load results are unused;
+the vector tuple remains internal and grants no native vector entry/return ABI.
+The x1-only automatic policy, exact image occurrences and complete storage
+proof also apply to these single SIMD accesses.
+
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
@@ -689,7 +701,8 @@ EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
 rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
-coverage; SIMD pre/post-index, pair and other ordinary-memory families,
+coverage; SIMD single pre/post-index accesses have separate explicit-IR,
+automatic-lifting and image regressions. Pair and other ordinary-memory families,
 original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically

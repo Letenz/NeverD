@@ -14256,6 +14256,26 @@ including the original native sample-inventory rejection. A post-index base
 may point one-past its storage; the positive native test retains that result,
 while an image missing an accessed byte must fail before emission.
 
+`AArch64VectorWritebackMemory.*` adds 100 independent LLVM MC 22.1.6
+B/H/S/D/Q single pre/post-index samples. Its ten tests sweep all 10,240
+encoding/imm9 combinations through both lifting routes and compare complete
+V values, returned bases and all buffer bytes through HighC, LLVMC and actual
+LLVM object output. Native C executes at O0/O2. Additional checks cover
+image-owned and runtime bases, legal one-past results, truncated storage,
+ADRP/ADD machine-code lifting, X16/V16 and V31 roles, x1 admission, dead
+results, malformed LowIR/MedIR/HighIR and LLVM calls before body filtering,
+and complete tracer commit/refusal.
+
+`NEVERD_ARM64E_VECTOR_WRITEBACK_ARTIFACT_DIR` exports the actual `high.c`,
+`llvm.c`, `llvm.o` and `harness.c`, recording
+`arm64e_vector_writeback_memory_artifact_directory`. The controlled environment's
+separate `vector-writeback`/`el0-vector-writeback` profiles require that complete
+ten-test report and exactly 100 samples per route and CPTA/CPTA0 combination.
+They retain all capability, deadline, control-readback and EL0-origin gates.
+This bounded export does not qualify original-SP stacks, pair accesses,
+overflow/tag environments, native vector ABI, foreign exception identity or
+Apple CPA2 hardware.
+
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
 mutable import captures and Win64 scalar results versus ELF aggregate transport.

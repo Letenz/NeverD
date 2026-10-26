@@ -32,6 +32,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/ir/low/LowIntrinsicOutputs.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/X86/X86CompactShape.h"
@@ -1411,25 +1412,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
           LOp.Inputs[0].isConst()) {
         const auto Id = static_cast<Intrinsic>(LOp.Inputs[0].Offset);
         const uint8_t Count = intrinsicOutputCount(Id);
-        for (size_t Next = LowOpIndex + 1;
-             Next < LB.Ops.size() && MOp.IntrinsicOutputs.size() < Count;
-             ++Next) {
-          const LowOp &Write = LB.Ops[Next];
-          if (Write.Addr != LOp.Addr)
-            break;
-          const bool IsTransport =
-              Write.Opcode == NdOp::COPY || Write.Opcode == NdOp::INT_ZEXT ||
-              Write.Opcode == NdOp::INT_SEXT || Write.Opcode == NdOp::SUBBYTES;
-          if (!IsTransport)
-            break;
-          if (Write.NumInputs == 0 || !Write.Inputs[0].isTemp())
-            continue;
-          MedVar Source = ndVarToMedVar(Write.Inputs[0]);
-          if (std::none_of(
-                  MOp.IntrinsicOutputs.begin(), MOp.IntrinsicOutputs.end(),
-                  [&](const MedVar &Existing) { return Existing == Source; }))
-            MOp.IntrinsicOutputs.push_back(Source);
-        }
+        for (const auto &Source : collectLowIntrinsicOutputBindings(
+                 LOp, llvm::ArrayRef(LB.Ops).drop_front(LowOpIndex + 1), Count))
+          MOp.IntrinsicOutputs.push_back(ndVarToMedVar(Source));
       }
 
       const OccurrenceKey MaterializationKey{LOp.Addr, LOp.Seq};

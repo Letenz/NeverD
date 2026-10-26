@@ -227,6 +227,43 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       Base = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
     if (!Base->getType()->isIntegerTy(kAddressMemoryPointerBits))
       llvm::report_fatal_error(kWritebackMalformed);
+    if (Instruction.isVector()) {
+      auto *VectorType = llvm::FixedVectorType::get(
+          Builder.getInt64Ty(),
+          kAddressMemoryVectorBytes / kAddressMemoryPointerBytes);
+      if (!Instruction.isLoad()) {
+        auto *Data = getVar(Op.Inputs[kWritebackDataOperand + 1], Builder);
+        if (!Data->getType()->isIntegerTy(kAddressMemoryVectorBits))
+          llvm::report_fatal_error(kWritebackMalformed);
+        auto *Asm = llvm::InlineAsm::get(
+            llvm::FunctionType::get(
+                Builder.getInt64Ty(),
+                {Builder.getInt64Ty(), VectorType, Builder.getInt32Ty()},
+                false),
+            kWritebackVectorStoreAsm, kWritebackVectorStoreConstraints, true);
+        return Builder.CreateCall(Asm,
+                                  {Base,
+                                   Builder.CreateBitCast(Data, VectorType),
+                                   Builder.getInt32(Instruction.scratchWord())},
+                                  kWritebackResult);
+      }
+      auto *ResultType =
+          llvm::StructType::get(*Ctx, {VectorType, Builder.getInt64Ty()});
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(
+              ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
+          kWritebackVectorLoadAsm, kWritebackVectorLoadConstraints, true);
+      auto *Result = Builder.CreateCall(
+          Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
+          kWritebackResult);
+      PendingIntrinsicOutputs[kWritebackValueIndex] = Builder.CreateBitCast(
+          Builder.CreateExtractValue(Result, {kWritebackValueIndex}),
+          Builder.getIntNTy(kAddressMemoryVectorBits));
+      auto *Updated = Builder.CreateExtractValue(Result, {kWritebackBaseIndex});
+      PendingIntrinsicOutputs[kWritebackBaseIndex] = Updated;
+      PendingIntrinsicCount = intrinsicOutputCount(IC);
+      return Updated;
+    }
     if (!Instruction.isLoad()) {
       auto *Data = getVar(Op.Inputs[kWritebackDataOperand + 1], Builder);
       if (Data->getType()->isPointerTy())

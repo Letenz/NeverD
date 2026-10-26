@@ -4,8 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// GPR single pre/post-index instructions. One native operation owns the
-/// access and AddressAdd, including their order and completed base result.
+/// GPR and SIMD single pre/post-index instructions. One native operation owns
+/// the access and AddressAdd, including their order and completed base result.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_A64_WRITEBACK_OPERATION
@@ -13,6 +13,12 @@
 #endif
 #ifndef NEVERD_A64_WRITEBACK_ENCODING
 #define NEVERD_A64_WRITEBACK_ENCODING(Word, Load, Access, Result)
+#endif
+#ifndef NEVERD_A64_WRITEBACK_VECTOR_ENCODING
+#define NEVERD_A64_WRITEBACK_VECTOR_ENCODING(Word, Load, Access)
+#endif
+#ifndef NEVERD_A64_WRITEBACK_MULTI_OUTPUT
+#define NEVERD_A64_WRITEBACK_MULTI_OUTPUT(Id, Count)
 #endif
 #ifndef NEVERD_A64_WRITEBACK_VALUE
 #define NEVERD_A64_WRITEBACK_VALUE(Type, Name, Value)
@@ -23,6 +29,10 @@
 
 NEVERD_A64_WRITEBACK_OPERATION(A64_LoadWriteback, "load_writeback")
 NEVERD_A64_WRITEBACK_OPERATION(A64_StoreWriteback, "store_writeback")
+NEVERD_A64_WRITEBACK_OPERATION(A64_VectorLoadWriteback, "vector_load_writeback")
+NEVERD_A64_WRITEBACK_OPERATION(A64_VectorStoreWriteback,
+                               "vector_store_writeback")
+NEVERD_A64_WRITEBACK_MULTI_OUTPUT(A64_VectorLoadWriteback, 2)
 NEVERD_A64_WRITEBACK_ENCODING(0x38000400U, false, 1, 0)
 NEVERD_A64_WRITEBACK_ENCODING(0x38400400U, true, 1, 4)
 NEVERD_A64_WRITEBACK_ENCODING(0x38800400U, true, 1, 8)
@@ -36,6 +46,17 @@ NEVERD_A64_WRITEBACK_ENCODING(0xb8400400U, true, 4, 4)
 NEVERD_A64_WRITEBACK_ENCODING(0xb8800400U, true, 4, 8)
 NEVERD_A64_WRITEBACK_ENCODING(0xf8000400U, false, 8, 0)
 NEVERD_A64_WRITEBACK_ENCODING(0xf8400400U, true, 8, 8)
+
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0x3c000400U, false, 1)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0x3c400400U, true, 1)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0x7c000400U, false, 2)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0x7c400400U, true, 2)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0xbc000400U, false, 4)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0xbc400400U, true, 4)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0xfc000400U, false, 8)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0xfc400400U, true, 8)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0x3c800400U, false, 16)
+NEVERD_A64_WRITEBACK_VECTOR_ENCODING(0x3cc00400U, true, 16)
 
 NEVERD_A64_WRITEBACK_VALUE(uint32_t, kWritebackOpcodeMask, 0xffe00400U)
 NEVERD_A64_WRITEBACK_VALUE(uint32_t, kWritebackPreIndexBit, 0x800U)
@@ -59,6 +80,14 @@ NEVERD_A64_WRITEBACK_TEXT(kWritebackLoadConstraints,
                           "=&{x17},={x16},1,i,~{memory}")
 NEVERD_A64_WRITEBACK_TEXT(kWritebackStoreConstraints,
                           "={x16},0,{x17},i,~{memory}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorLoadAsm,
+                          "// neverd.writeback.vector.load\n\t.inst ${3:c}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorStoreAsm,
+                          "// neverd.writeback.vector.store\n\t.inst ${3:c}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorLoadConstraints,
+                          "=&{v17},={x16},1,i,~{memory}")
+NEVERD_A64_WRITEBACK_TEXT(kWritebackVectorStoreConstraints,
+                          "={x16},0,{v17},i,~{memory}")
 NEVERD_A64_WRITEBACK_TEXT(kWritebackResult, "memory.writeback")
 NEVERD_A64_WRITEBACK_TEXT(kWritebackMalformed,
                           "malformed AArch64 writeback memory operation")
@@ -66,6 +95,8 @@ NEVERD_A64_WRITEBACK_TEXT(kWritebackSPUnsupported,
                           "writeback SP memory requires the original SP "
                           "alignment and memory-tagging environment")
 
+#undef NEVERD_A64_WRITEBACK_VECTOR_ENCODING
+#undef NEVERD_A64_WRITEBACK_MULTI_OUTPUT
 #undef NEVERD_A64_WRITEBACK_TEXT
 #undef NEVERD_A64_WRITEBACK_VALUE
 #undef NEVERD_A64_WRITEBACK_ENCODING
