@@ -2064,6 +2064,14 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+`SignatureDataContext` also owns frozen source-local data relations. The producer
+proves that two canonical zero-addend operands refer to one static address within
+the same COFF object. Their shared key names the exact operand of a uniquely
+defined external function; no local variable spelling escapes its object. Only
+that independently settled ordinary function can bind the relation, after all
+matching source refinements agree. The existing single data pass checks consumers
+without changing anchors or restarting inference. The parser/cache preserve a
+separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 Native `!loadcfg` metadata pairs a source configuration field's external pointer
 variable with its default function. The COFF loader owns the role/field mapping;
 `SignatureRuntimePointerContext` queries only its recorded slots after the data

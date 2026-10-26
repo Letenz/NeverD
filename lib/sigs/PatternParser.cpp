@@ -6,6 +6,7 @@
 
 #include "neverd/sigs/PatternParser.h"
 
+#include "LocalDataReference.h"
 #include "RuntimePointerContext.h"
 #include "VTableContext.h"
 
@@ -410,6 +411,7 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   auto CannotBeName = [](llvm::StringRef Field) {
     return Field.starts_with(PublicNamePrefix) ||
            Field.starts_with(DataReferencePrefix) ||
+           Field.starts_with(LocalDataReferencePrefix) ||
            Field.starts_with(ReferencePrefix) || Field == RequiredReferences ||
            Field == RequiredCaller || Field == VTableContext ||
            Field == LoadConfigContext || Field.starts_with(UnstatedByte);
@@ -434,10 +436,12 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
       continue;
     }
     if (Tokens[I].starts_with(ReferencePrefix) ||
-        Tokens[I].starts_with(DataReferencePrefix)) {
+        Tokens[I].starts_with(DataReferencePrefix) ||
+        Tokens[I].starts_with(LocalDataReferencePrefix)) {
       if (SawTail)
         return patternError("reference follows the tail pattern");
-      const bool IsData = Tokens[I].starts_with(DataReferencePrefix);
+      const bool IsLocal = Tokens[I].starts_with(LocalDataReferencePrefix);
+      const bool IsData = IsLocal || Tokens[I].starts_with(DataReferencePrefix);
       auto OffStr = Tokens[I].drop_front(IsData ? DataReferencePrefix.size()
                                                 : ReferencePrefix.size());
       unsigned Off;
@@ -452,8 +456,10 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
       if (IsData && !Mod.RequireReferences && !Mod.RequireCaller &&
           !Mod.IsLoadConfig)
         return patternError("data references require a contextual record");
+      if (IsLocal && (Mod.IsLoadConfig || !localDataAnchor(Tokens[I + 1])))
+        return patternError("invalid source-local data anchor");
       SawDataReference |= IsData;
-      Writer.Names.Names.push_back({Off, Tokens[++I], IsData});
+      Writer.Names.Names.push_back({Off, Tokens[++I], IsData, IsLocal});
       ++Mod.ReferenceCount;
       continue;
     }
@@ -491,11 +497,11 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   if (Mod.PublicNameCount == 0)
     return patternError("no public names found");
   if (SawDataReference && !Mod.IsLoadConfig) {
-    llvm::SmallVector<std::pair<uint32_t, bool>, 8> Sites;
+    llvm::SmallVector<std::pair<uint32_t, unsigned>, 8> Sites;
     for (const StoredName &Ref :
          llvm::ArrayRef(Writer.Names.Names)
              .slice(Mod.Names + Mod.PublicNameCount, Mod.ReferenceCount))
-      Sites.emplace_back(Ref.Offset, Ref.IsData);
+      Sites.emplace_back(Ref.Offset, unsigned(Ref.IsData) + Ref.IsLocalData);
     llvm::sort(Sites);
     for (size_t I = 1; I < Sites.size(); ++I)
       if (Sites[I].first == Sites[I - 1].first &&
@@ -600,7 +606,7 @@ PatternModule PatternParser::toPatternModule(const StoredModule &Module) {
     Result.PublicNames.push_back({Name.Offset, std::string(Name.Name)});
   for (const StoredName &Name : Module.references())
     Result.References.push_back(
-        {Name.Offset, std::string(Name.Name), Name.IsData});
+        {Name.Offset, std::string(Name.Name), Name.IsData, Name.IsLocalData});
   Result.TailBytes = Pattern(Module.LeadingCount, Module.TailCount);
   return Result;
 }

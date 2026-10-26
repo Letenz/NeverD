@@ -6216,6 +6216,15 @@ missing explicit function definitions and reference-only refinement without
 body duplication. Canonical indirect data operands share generator/runtime tests
 with ordinary data references; import references retain their separate kind.
 
+`LocalDataEvidence.*` checks same-object operand relations, renamed static
+symbols, distinct external anchors, missing/duplicate definitions, relocation
+addends and overlaps, storage bounds and incorrect symbol kinds. The local cases
+in `SignatureDataContext.*` reject wrong anchor names/offsets, external/local
+kind substitution, missing source variants and unrooted requests. Parser/cache
+tests preserve the separate kind and validate canonical keys even when cache
+pieces run in reverse. Python supplement/refinement tests retain every raw
+counterclaim and refuse to put local relations in ordinary byte records.
+
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
 Android/glibc/musl and unknown System V ELF, conflicting ABI notes, bounded
