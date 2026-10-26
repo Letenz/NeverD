@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>Выполнить условный переход безусловно</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>Добавить секцию анализа...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>Отобразить новый код или данные в адресное пространство анализа</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3242,6 +3250,54 @@ After:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>Беззнаковое значение (десятичное или шестнадцатеричное с 0x):</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>Добавить секцию анализа</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>Двоичные байты:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Обзор…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Выберите файл размером от 1 байта до %1, шестнадцатеричный адрес и имя секции. Функции нужны имя и права на выполнение.</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>Определить функцию, охватывающую эти байты</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>Имя функции:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>Отобразить двоичный файл по виртуальному адресу в текущем образе. Чтобы сохранить его, сохраните проект. Входной двоичный файл не изменяется.</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>Права доступа:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>Имя секции:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>Выберите двоичные байты</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>Проект изменился. Откройте этот диалог заново.</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>Виртуальный адрес:</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3436,8 +3492,8 @@ After:
         <translation>Входной файл перезагружен</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>Комментарии и история сохранены</translation>
+        <source>Project changes saved</source>
+        <translation>Изменения проекта сохранены</translation>
     </message>
     <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
