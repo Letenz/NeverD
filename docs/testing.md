@@ -1080,6 +1080,14 @@ controls, positional floating inputs and overlapping integer/vector reads.
 Independent providers compile and execute both C routes at O0/O2 with UBSan.
 Run the SysV, AAPCS64, i386 and FP-parameter suites alongside this shared ABI
 change; it does not recover unknown state that a callee actually observes.
+`FloatingCallLeftovers.*` in the same target checks speculative FP recovery
+against the shared call-leftover proof. Direct and indirect calls on x64 and
+AArch64 across COFF/ELF/Mach-O drop wholly clobbered joins, while mixed values,
+partial preservation, possible results and exceptional inputs remain visible.
+Known FP consumers retain unavailable operands. Floating result producers
+remain inputs even when their blocks follow the consumer in storage order.
+Independent providers execute both C routes on both branch paths at O0/O2
+with UBSan; native Windows and Apple ARM64 execution are separate coverage.
 `Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
 checks the same contract for explicit local declarations.
 `LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
