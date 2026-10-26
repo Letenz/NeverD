@@ -12,6 +12,7 @@
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 
+#include <array>
 #include <utility>
 #include <vector>
 
@@ -115,6 +116,60 @@ TEST(LowScalarConstant, InvalidUnaryOperationsNeverCreateFacts) {
     }
   for (NdOp Opcode : {NdOp::INT_NOT, NdOp::INT_NEGATE, NdOp::INT_NEG2})
     EXPECT_FALSE(lowScalarConstantResult(unary(Opcode, 4, 1, 8), constant));
+}
+
+TEST(LowScalarConstant, SelfDifferenceDoesNotNeedAnIncomingConstant) {
+  for (uint16_t Width = 1; Width <= sizeof(uint64_t); ++Width)
+    for (bool Temporary : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Temporary);
+      auto Op = binary(NdOp::INT_SUB, Width, 0, 0);
+      Op.Inputs[0] = Op.Inputs[1] =
+          Temporary ? NdVar::tmp(8, Width) : NdVar::reg(8, Width);
+      EXPECT_EQ(lowScalarConstantResult(Op, constant), 0u);
+      for (uint64_t Byte = 0; Byte != 256; ++Byte) {
+        NdOpEmulator Emulator(BinaryImage{});
+        auto Seed = unary(NdOp::COPY, Width,
+                          Byte * UINT64_C(0x0101010101010101), Width);
+        Seed.Output = Op.Inputs[0];
+        ASSERT_TRUE(Emulator.step(Seed));
+        ASSERT_TRUE(Emulator.step(Op));
+        EXPECT_EQ(Emulator.getRegister(0), 0u);
+      }
+    }
+}
+
+TEST(LowScalarConstant, SelfDifferenceRequiresTheSameScalarOccurrence) {
+  for (bool Temporary : {false, true})
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << Temporary << ':' << Mutation);
+      auto Op = binary(NdOp::INT_SUB, 4, 0, 0);
+      Op.Inputs[0] = Op.Inputs[1] =
+          Temporary ? NdVar::tmp(8, 4) : NdVar::reg(8, 4);
+      switch (Mutation) {
+      case 0:
+        ++Op.Inputs[1].Offset;
+        break;
+      case 1:
+        Op.Inputs[1] = Temporary ? NdVar::reg(8, 4) : NdVar::tmp(8, 4);
+        break;
+      case 2:
+        Op.Inputs[1].Size = 2;
+        break;
+      case 3:
+        Op.Output.Size = 8;
+        break;
+      case 4:
+        Op.Output.Size = Op.Inputs[0].Size = Op.Inputs[1].Size = 16;
+        break;
+      case 5:
+        Op.NumInputs = 1;
+        break;
+      case 6:
+        Op.Inputs[0] = Op.Inputs[1] = NdVar::ram(8, 4);
+        break;
+      }
+      EXPECT_FALSE(lowScalarConstantResult(Op, constant));
+    }
 }
 
 TEST(LowScalarConstant, MultiplicationMatchesConcreteFixedWidthExecution) {
@@ -334,4 +389,124 @@ TEST(ConstantRegisterCall, ExhaustedWorkCannotPublishAPrefix) {
       limits::ir::kConstantRegisterCallOperations);
   EXPECT_TRUE(constantRegisterCallTargets(Function).empty());
 }
+TEST(CallRegisterConstant, ExactOccurrenceAndRegisterByteWidths) {
+  const auto Seed = unary(NdOp::COPY, 8, 0x1234567800000302, 8);
+  auto Function = registerCall({Seed}, Seed.Output);
+  for (const auto Opcode : {NdOp::CALL, NdOp::INDIR_CALL}) {
+    auto &Call = Function.Blocks.front().Ops.back();
+    Call.Opcode = Opcode;
+    Call.Inputs[0] = Opcode == NdOp::CALL ? NdVar::cst(0x2000, 8) : Seed.Output;
+    const auto Site = *sourceCallOccurrenceKey(Call);
+    for (const uint16_t Width : {1, 2, 4, 8}) {
+      const auto Result =
+          constantRegisterValueAtCall(Function, Site, NdVar::reg(0, Width));
+      EXPECT_TRUE(Result.OccurrenceFound);
+      EXPECT_FALSE(Result.BudgetExceeded);
+      EXPECT_EQ(Result.Value,
+                Seed.Inputs[0].Offset & (UINT64_MAX >> ((8 - Width) * 8)));
+    }
+    auto Stale = Site;
+    ++Stale.Sequence;
+    EXPECT_FALSE(constantRegisterValueAtCall(Function, Stale, Seed.Output)
+                     .OccurrenceFound);
+  }
+}
+
+TEST(CallRegisterConstant, UpperByteWritesCannotInventOrEraseLowByteFacts) {
+  const auto Seed = unary(NdOp::COPY, 8, 2, 8);
+  auto Unknown = Seed;
+  Unknown.Output = NdVar::reg(1, 1);
+  Unknown.Inputs[0] = NdVar::reg(32, 1);
+  auto Function = registerCall({Seed, Unknown}, Seed.Output);
+  const auto Site =
+      *sourceCallOccurrenceKey(Function.Blocks.front().Ops.back());
+  EXPECT_EQ(constantRegisterValueAtCall(Function, Site, NdVar::reg(0, 1)).Value,
+            2u);
+  EXPECT_FALSE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  Function.Blocks.front().Ops[1].Output.Offset = 0;
+  EXPECT_FALSE(
+      constantRegisterValueAtCall(Function, Site, NdVar::reg(0, 1)).Value);
+}
+
+TEST(CallRegisterConstant,
+     AmbiguousOccurrencesAndBudgetExhaustionDiscardFacts) {
+  const auto Seed = unary(NdOp::COPY, 8, 0x140001040, 8);
+  auto Function = registerCall({Seed}, Seed.Output);
+  const auto Site =
+      *sourceCallOccurrenceKey(Function.Blocks.front().Ops.back());
+  ASSERT_TRUE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  auto Other = Function.Blocks.front();
+  Other.Id = 1;
+  Other.Ops.front().Inputs[0].Offset += 16;
+  Function.Blocks.push_back(Other);
+  EXPECT_TRUE(constantRegisterCallTargets(Function).empty());
+  EXPECT_FALSE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  Function.Blocks.resize(1);
+  Function.Blocks.emplace_back();
+  Function.Blocks.back().Ops.resize(
+      limits::ir::kConstantRegisterCallOperations -
+      Function.Blocks.front().Ops.size());
+  EXPECT_TRUE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
+  Function.Blocks.back().Ops.emplace_back();
+  const auto Result = constantRegisterValueAtCall(Function, Site, Seed.Output);
+  EXPECT_TRUE(Result.BudgetExceeded);
+  EXPECT_FALSE(Result.Value);
+}
+
+TEST(CallRegisterConstant, PartialWritesMatchIndependentByteStorage) {
+  for (bool KnownWrite : {false, true})
+    for (unsigned Offset = 0; Offset != 24; ++Offset)
+      for (unsigned Width : {1U, 2U, 4U, 8U, 16U}) {
+        if (KnownWrite && Width > sizeof(uint64_t))
+          continue;
+        SCOPED_TRACE(KnownWrite);
+        SCOPED_TRACE(Offset);
+        SCOPED_TRACE(Width);
+        std::array<uint8_t, 40> Bytes{};
+        std::array<bool, 40> Known{};
+        std::vector<LowOp> Setup;
+        for (unsigned Base = 0; Base != 24; Base += 8) {
+          uint64_t Bits = 0;
+          for (unsigned I = 0; I != 8; ++I) {
+            Bytes[Base + I] = 0x10 + Base + I;
+            Known[Base + I] = true;
+            Bits |= uint64_t{Bytes[Base + I]} << (I * 8);
+          }
+          auto Seed = unary(NdOp::COPY, 8, Bits, 8);
+          Seed.Output.Offset = Base;
+          Setup.push_back(Seed);
+        }
+        const uint64_t Bits = 0xfedcba9876543210;
+        auto Write = unary(NdOp::COPY, Width, Bits, Width);
+        Write.Output.Offset = Offset;
+        if (!KnownWrite)
+          Write.Inputs[0] = NdVar::reg(128, Width);
+        Setup.push_back(Write);
+        for (unsigned I = 0; I < Width; ++I) {
+          Known[Offset + I] = KnownWrite;
+          if (KnownWrite)
+            Bytes[Offset + I] = static_cast<uint8_t>(Bits >> (I * 8));
+        }
+        const auto Function = registerCall(std::move(Setup), NdVar::reg(0, 8));
+        const auto Site =
+            *sourceCallOccurrenceKey(Function.Blocks.front().Ops.back());
+        for (unsigned Begin = 0; Begin != 32; ++Begin)
+          for (unsigned Size : {1U, 2U, 4U, 8U}) {
+            std::optional<uint64_t> Expected = 0;
+            for (unsigned I = 0; I < Size; ++I) {
+              if (!Known[Begin + I]) {
+                Expected.reset();
+                break;
+              }
+              *Expected |= uint64_t{Bytes[Begin + I]} << (I * 8);
+            }
+            EXPECT_EQ(constantRegisterValueAtCall(Function, Site,
+                                                  NdVar::reg(Begin, Size))
+                          .Value,
+                      Expected)
+                << "read byte " << Begin << " width " << Size;
+          }
+      }
+}
+
 } // namespace

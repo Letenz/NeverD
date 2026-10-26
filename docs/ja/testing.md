@@ -2186,8 +2186,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` は Windows ARM64 の混合レジスター、幅、レジスター枯渇、スタック位置と可変引数拒否を確認する。`NeverDWorkerCallSiteTypes` は ARM64 PE の整数、double、ポインター呼び出しを両 C 経路で復元し、独立した C 関数と O0/O2 で実行する。拒否された編集で解析スナップショットが変わらないことも確認する。Windows ARM64 ネイティブ実行の検証ではない。
+`NeverDSourceCallABITests` は Windows ARM64 の固定・可変引数のレジスター、幅、枯渇とスタック位置を確認する。`NeverDWorkerCallSiteTypes` は名前付き float、レジスターとスタック上の double、整数、浮動小数点戻り値を両 C 経路で復元し、独立した C 関数と O0/O2 で実行する。未昇格の可変引数や不完全なスタック書き込みは拒否し、解析スナップショットを維持する。Windows ARM64 ネイティブ実行の検証ではない。
 
 worker の回帰には、18 個のレジスター／スタック混合引数、浮動小数点の戻り値、半分しか書かれていないスタック引数の拒否も含む。
 
+`SourceCallABI` と `CallRegisterConstant` は失効した一時値、不透明な効果、バイト範囲、呼び出し位置の曖昧さ、厳密な予算境界を検査する。worker は減算で可変引数のベクトル個数を求める呼び出し元を両 C 経路で実行する。
+
+`LowScalarConstant.SelfDifference*` は未知入力の復元を1〜8バイトの具体的なビットパターン実行と比較し、異なる値、メモリオペランド、不正な形を拒否します。`ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` は ELF、COFF、Mach-O の x86、x64、AArch64 を対象とします。worker は復元した分岐と自己減算による System V ベクトル数を HighC と LLVMC の O0/O2 で実行します。
+
+`X86CarryArithmeticFlags.SelfSubtract*` と `APXSelfSubtract*` は結果、算術フラグ、保持されるレジスター状態を確認します。worker のスカラー分岐テストは自己減算・自己比較のフラグによる分岐を含め、ネイティブ実行と O0/O2 の HighC/LLVMC を比較します。
+
 NeverSight LLVM fork の `BinaryRewriteRelocationTest` は x64 PLT、i386 GOT、Mach-O GOTPCREL、AArch64 PAGE/PAGEOFF の最終バイト列を確認します。NeverD の統合ビルドは記録された fork を直接コンパイルします。これらの MC 検査はネイティブ例外実行の検証ではありません。
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` は直接レジスター保持と私有スタック退避を検査します。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` は Linux x86 で異なる二つのスカラー引数を使い、メモリー・レジスター両ターゲットの HighC/LLVMC を O0/O2 で実行します。Python ABI 一覧と GUI 文字列検査には解析セクションのインターフェイスと表示文言を含みます。
+
+`NeverDSelfCompareFlagTests` は x86、x64、ARM32、AArch64 の元の関数と再構築した関数を実行して比較します。既定の機械語経路、`NEVERD_SEMANTIC_HIGHC=1`、`NEVERD_SEMANTIC_LLVMC=1` を個別に実行します。自己 CMP/SUB のフラグ、分岐、条件値を、論理テストとシフトしたオペランドを対照に検証し、既存の符号付きオーバーフロー回帰も実行します。
+
+自己比較の行列には、引数なしの等値条件と減算オーバーフロー条件の実行も含まれます。入力レジスタ値を必要としないため、どちらの C 経路でも未知状態のトラップを追加してはいけません。
+
+HFA インポートスロットのテストは厳密な C プロトタイプをコンパイルし、ヘッダー宣言とローカル宣言の完全な引数と戻り値を実行検証します。両 C 経路で float・double 構造体、連続呼び出し、AArch64 実行を検証します。

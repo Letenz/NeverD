@@ -11,6 +11,7 @@
 #define NEVERD_LIFT_X86_X86NATIVEMEMORY_H
 
 #include "neverd/lift/X86/X86Lifter.h"
+#include "neverd/support/X86/X86Addressing.h"
 
 namespace neverd {
 inline bool x86NativeDsAddressIsValid(Arch A, const cs_x86 &X86,
@@ -20,9 +21,7 @@ inline bool x86NativeDsAddressIsValid(Arch A, const cs_x86 &X86,
       Space == NdMemoryAddressSpace::X86GS)
     return true;
   const auto Base = Memory.mem.base;
-  const bool Stack = Base == X86_REG_RSP || Base == X86_REG_RBP ||
-                     Base == X86_REG_ESP || Base == X86_REG_EBP ||
-                     Base == X86_REG_BP;
+  const bool Stack = isStackDefaultBase(Base);
   const auto Segment = Memory.mem.segment;
   // A normalized address loses SS-default noncanonical/limit fault identity.
   // A long-mode SS override on a DS-default base cannot restore that identity.

@@ -100,6 +100,10 @@ add_neverd_unittest(NeverDMedStackDeltaTests
   LINK_COMPONENTS IRMed
 )
 
+add_neverd_unittest(NeverDMedDceTests
+  core/MedDceImplicitSpTests.cpp
+  LINK_COMPONENTS IRMed)
+
 add_neverd_unittest(NeverDFPParameterMaskTests
   core/FPParameterMaskTests.cpp
   core/MedCallingConvTests.cpp
@@ -709,10 +713,13 @@ add_neverd_unittest(NeverDX86BitCountTests
 
 add_neverd_unittest(NeverDX86MpxContextTests
   x86/X86MpxContextTests.cpp
+  x86/X86MpxMemoryTests.cpp
   LINK_COMPONENTS IRLowValidation)
 
 add_neverd_unittest(NeverDX86MpxEncodingTests
   x86/X86MpxEncodingTests.cpp
+  x86/X86MpxExecutionTests.cpp
+  x86/X86MpxAddressFaultTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86LegacyAdmissionTests

@@ -168,7 +168,7 @@ int runAnalysisSections(neverd_session_t Sess) {
       return failed(Description.takeError());
     auto Bytes =
         readBounded(std::filesystem::u8path(AnalysisSectionData.getValue()),
-                    64 * sdk::kMaxAnalysisSectionDescriptionBytes);
+                    sdk::kMaxAnalysisSectionBytes);
     if (!Bytes)
       return failed(Bytes.takeError());
     if (Description->find('\0') != std::string::npos) {

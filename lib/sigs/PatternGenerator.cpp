@@ -1069,8 +1069,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
                   Sym.getValue() != 0)) {
         const SourceAddress Address{Sym.getSectionNumber(), Sym.getValue()};
         auto [At, Fresh] = LocalAnchors.try_emplace(*Name, Address);
-        if (!Fresh || !isCOFFFunctionSymbol(Sym) ||
-            Sym.getStorageClass() != COFF::IMAGE_SYM_CLASS_EXTERNAL)
+        if (!Fresh || !isCOFFFunctionSymbol(Sym))
           At->second.reset();
       }
     }
@@ -1133,9 +1132,11 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
   }
 
   // A local relation is between two exact operands in this object. Only a
-  // unique external function can be its anchor; a bare static spelling never
-  // identifies anything in another object. Keep all other raw bodies so a
-  // missing or malformed anchor remains a counterclaim in offline auditing.
+  // uniquely defined typed function can be its anchor; a bare static data
+  // spelling never identifies anything in another object. The function must
+  // still be independently recognized before it binds data at runtime.
+  // Keep all other raw bodies so a missing or malformed anchor remains a
+  // counterclaim in offline auditing.
   auto LocalTarget = [&](const COFFCodeSection &Sec, uint64_t Begin,
                          uint64_t End, const COFFCodeSection::Relocation &Rel)
       -> std::optional<SourceAddress> {

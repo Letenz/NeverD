@@ -31,7 +31,9 @@ restores its saved sections. A foreign hash or malformed section fails opening
 without replacing the active worker session. The original input bytes stay
 unchanged. Unsaved additions disappear when the session is discarded.
 Reload restores saved sections and discards unsaved section changes along with
-other project edits; it also refreshes the normal code and function views.
+other project edits; it also refreshes the normal code and function views. It
+opens the input again with its open options and the PDB, DWARF, MAP and
+signature files chosen for it.
 
 ## Public C ABI
 
@@ -116,10 +118,17 @@ The existing section query emits optional `materialized_sz` for these initialize
 bytes independently of `file_sz: 0`; listing consumers use it to distinguish
 added code/data from uninitialized storage without inventing a file offset.
 
-Successful edits retire pipeline, discovery, string and patch-result caches.
-Normal function discovery can repopulate inferred functions afterwards. Failed
+Successful edits retire pipeline, discovery, string and immediate-search
+caches. Results of earlier patches and round trips, which read the input file,
+stay valid, including the object `neverd_roundtrip_obj()` returned. Normal
+function discovery can repopulate inferred functions afterwards. Failed
 validation publishes no image change. Annotations and user renames remain
 address-based; section operations are not entries in comment/rename undo history.
+
+Loading a PDB, DWARF or MAP file into a loaded session reads the input again.
+The session's sections then join the image that read produces through the same
+validation as an edit; a debug file that names a symbol a section declares, or
+otherwise conflicts with a section, is refused and leaves the session unchanged.
 
 ## Worker and GUI integration
 
@@ -237,4 +246,7 @@ The current GUI stores additions in the shared project folder,
 path and migration from `.neverd-analysis-sections.json`. Save persists project
 changes; **File → Pack database** includes them in a portable `.nddb`. Background
 analysis snapshots carry the active additions, including unsaved code, into the
-read-only analysis worker.
+read-only analysis worker. The snapshot carries their bytes as hexadecimal in
+one worker frame; additions too large for the frame fail background analysis
+with `budget_exceeded` before any bytes are encoded. A snapshot without
+additions imports nothing into a replica that opened without any.
