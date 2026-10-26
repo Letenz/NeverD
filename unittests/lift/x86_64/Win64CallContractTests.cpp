@@ -3403,6 +3403,81 @@ TEST(Win64CallContract, TheRuntimesOwnPrototypeFixesWhatItsSlotReads) {
   EXPECT_FALSE(Reads.count(slot(4)));
 }
 
+TEST(Win64CallContract, KernelEntryContractsRetainTheirStackArguments) {
+  constexpr va_t Stub = Text + 0x80;
+  std::vector<uint8_t> Code(0xA0, 0xCC);
+  // sub rsp,38h; three DWORD stack arguments; four register arguments.
+  std::vector<uint8_t> Caller = {
+      0x48, 0x83, 0xEC, 0x38, 0xC7, 0x44, 0x24, 0x20, 23, 0,    0,
+      0,    0xC7, 0x44, 0x24, 0x28, 29,   0,    0,    0,  0xC7, 0x44,
+      0x24, 0x30, 31,   0,    0,    0,    0x41, 0xB9, 19, 0,    0,
+      0,    0x41, 0xB8, 17,   0,    0,    0,    0xBA, 13, 0,    0,
+      0,    0xB9, 11,   0,    0,    0,    0xE8};
+  const auto Displacement = rel32(Text + Caller.size() + 4, Stub);
+  Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+  Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x38, 0xC3});
+  put(Code, Text, Caller);
+  // The entry's own body need not read arguments consumed by its dispatcher.
+  put(Code, Stub, {0x4C, 0x8B, 0xD1, 0x31, 0xC0, 0xC3});
+  auto Image = makeImage(Code, {{Text, "kernel_call"}}, {});
+  Image.Exports.push_back({"ZwDuplicateObject", 1, Stub});
+  for (bool DynamicFrame : {false, true}) {
+    SCOPED_TRACE(DynamicFrame);
+    if (DynamicFrame) {
+      // A private stack switch leaves no bounded incoming-slot body summary.
+      // The same documented call contract still owns all seven positions.
+      auto &TextSegment = Image.Segments.front();
+      const uint8_t StubCode[] = {0x48, 0x89, 0xD4, 0x48, 0x8B,
+                                  0x44, 0x24, 0x38, 0xC3};
+      std::copy(std::begin(StubCode), std::end(StubCode),
+                TextSegment.Data.begin() + (Stub - Text));
+    }
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        ASSERT_TRUE(Result.CallEntryStackArgs.count(Stub));
+        ASSERT_EQ(Result.CallEntryStackArgs.at(Stub), 7);
+        ASSERT_EQ(Result.MedFuncs.size(), 1u);
+        ASSERT_EQ(Result.MedFuncs.front().CallInfos.size(), 1u);
+        ASSERT_EQ(Result.MedFuncs.front().CallInfos.front().Args.size(), 7u);
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                          nullptr, &Image));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        const std::string Oracle =
+            std::string(LLVM ? "uint64_t" : "int64_t") + R"(
+ ZwDuplicateObject(uint64_t a, uint64_t b, uint64_t c,
+                           uint64_t d, uint32_t e, uint32_t f, uint32_t g) {
+  return a == 11 && b == 13 && c == 17 && d == 19 &&
+         e == 23 && f == 29 && g == 31;
+}
+int main(void) { return kernel_call() != 1; }
+)";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(Source + Oracle, {Level});
+      }
+  }
+}
+
 TEST(Win64CallContract, CallersPassWhatAnExportedRoutinesPrototypeDeclares) {
   // The image exports a system call stub that reads only RCX itself: the
   // kernel's dispatcher reads the rest of the five parameters its prototype
