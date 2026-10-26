@@ -14603,6 +14603,49 @@ ASan+UBSan compiler controls still reach the original 20-second limit on arm64
 and x86-64, so the separate 41-test SysV sanitizer group is unavailable and is
 not counted as passed. Code Review CI diagnostics remain unavailable.
 
+`AArch64OrderedMemory.*` owns nine ordered unscaled-memory checks. It covers
+all 13 GPR LRCPC2 and ten B/H/S/D/Q LRCPC3 LDAPUR/STLUR families with 115
+independent LLVM MC samples and all 11,776 encoding/imm9 combinations through
+both decoder routes. The original opcode preserves RCpc acquire/release and
+checked address addition. Tests retain those words through both C projections,
+LLVM, image-context runtime bases and initialized-image relocation, and check
+malformed source filtering, reserved encodings, register roles and dead effects.
+Automatic GPR admission applies to ordinary AArch64, classic arm64e and x1.
+
+Success fixtures retain five encoded displacement boundaries and choose a
+base that makes the effective access naturally aligned, including runtime SSA
+adjustments and relocated image aliases. Every result and all 66,064 buffer
+bytes remain checked. With unknown alignment controls, the finite tracer
+refuses unaligned ordered accesses before results, load records or writes;
+guard reads check unchanged storage in strict and lenient modes.
+`AArch64OrderedMemoryNative.*` separately requires the host's corresponding
+CPU feature. A missing native SIMD feature is an explicit skip.
+
+Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` and select the complete nine-test suite
+to export source, actual ELF/Mach-O objects and the unchanged replay harness.
+The three `arm64e_ordered_memory_*artifact_directory` properties distinguish
+explicit runtime parameters, image-context parameters and relocated storage.
+The controlled environment has `ordered`, `ordered-image` and
+`ordered-image-relocated` profiles and their `el0-` counterparts. Every profile
+requires the exact report, 115 samples, real LRCPC3 readback and every existing
+CPTA/control/origin gate. These sequential Normal WB nonoverflow checks do not
+qualify an unaligned/fault matrix, concurrency litmus behavior, original
+SP/stack/call/unwind, a native vector ABI or Apple CPTA-on hardware.
+
+All six ordered profiles pass five actual output routes and all four effective
+CPTA/CPTA0 settings, totaling 13,800 generated sample calls. The selected 490
+checks pass 484 and explicitly skip six, with no failures. The
+[ordered-memory record](evidence/arm64e-ordered-memory-2026-10-27.json) pins the
+source, model parameters, complete reports, each input hash and the retained
+feature-check refusal and unaligned hardware fault. It also records the
+finite-tracer correction and the initial test-build error.
+Native decode parity now compares explicit lifting refusals as well as
+successful IR, retaining the original 400,000-word randomized scan. A canary
+rejects one-sided refusals and preserves unrelated exceptions. The initial
+unhandled-refusal failure remains recorded separately. The 104-case scalar
+register-offset source matrix and the slow alias/source-ABI case from the
+earlier pair round were not rerun or counted as passed in this selection.
+
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
 mutable import captures and Win64 scalar results versus ELF aggregate transport.
