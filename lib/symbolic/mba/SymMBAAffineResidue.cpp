@@ -2019,11 +2019,11 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
   }
   if (Ctx.numOperands(Root) > limits::kMaxResidueProductFactors) {
     const size_t Factors = Ctx.numOperands(Root) - HasScale;
-    // Large products do not enter affine expansion. A complete odd-unit
-    // period beside an independent multiplier may still fit the bounded
-    // low-word proof, whose internal views coalesce repeated residues.
+    // Large products do not enter affine expansion. The bounded low-word
+    // proof can isolate a dominant prefix group while retaining unmatched
+    // factors. Its internal views coalesce repeated residues.
     if (!Needed || Needed > limits::kMaxAffineResidueTableBits ||
-        Factors <= Needed || (Factors - 1) % residueUnitPeriod(Needed))
+        Factors <= Needed)
       return Root;
     ++Budget.MultipleResidueAttempts;
     return foldResidueDecisions(Ctx, Root, Budget, Storage, true,
@@ -2066,10 +2066,11 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
           DecisionAttempted, DecisionResult, DecisionRequested,
           IncompatibleBase, DecisionComplete);
       if (IncompatibleBase && !DecisionAttempted && Operands.size() > Needed &&
-          (Operands.size() - 1) % residueUnitPeriod(Needed) == 0) {
+          (Operands.size() - 1) % residueUnitPeriod(Needed) <= 1) {
         // A different affine coordinate can still multiply a parity group
-        // whose even branch vanishes. The bounded bit proof retains every
-        // other coordinate instead of forcing it into the first base.
+        // whose even branch vanishes. Complete unit periods and their next
+        // exponents have cheap power readings. This is only a search hint;
+        // the bounded proof retains every unmatched word.
         DecisionAttempted = DecisionRequested = true;
         if (!Res.OptionalStart) {
           Res.OptionalStart = Res.Budget.used();

@@ -1900,6 +1900,18 @@ Keep both the older corpus and `residue-power` as regression controls. The
 independent benchmark oracle evaluates a postorder expression walk so these
 deep products retain semantic checks within Python's default recursion limit.
 
+Dominant-prefix regressions add degree-511–514 products with disturbed factors
+and multiple residual multipliers. Complete-word APInt oracles cover 8–257 bits,
+both selector branches and residual zero/even values; exact and one-short work
+and storage allowances check bounded refusal. Independent full-width Z3 checks
+cover 8/16/32/64-bit words with four observed bits, while larger observed words
+retain the separate APInt and corpus checks. The CLI/GUI worker source matrix
+also executes degree-513 and disturbed degree-512 fixtures through all six source
+routes at O0/O2. `--family residue-subgroup --count 54` adds 216 degree-511–1026
+cases with off-period counts, two low disturbances, complemented inputs, nested
+high offsets and multiple residual factors. Keep all preceding families frozen
+as output-cost and performance controls; incomplete proofs remain refusals.
+
 Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage

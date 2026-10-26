@@ -164,6 +164,29 @@ TEST(SymMBAResiduePowers, LargeGroupsReachTheSharedSimplifier) {
     }
 }
 
+TEST(SymMBAResiduePowers, PeriodNeighborsReachTheSharedSimplifier) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Observed : {4u, 6u, 8u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Observed);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, Observed, 513);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+      EXPECT_TRUE(Result.Changed) << "work=" << Result.Work;
+      EXPECT_LT(Result.Work, Options.MaxWork);
+      EXPECT_LT(Result.SizeAfter, F.Count);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned I = 0; I < 256; ++I) {
+        const std::array Values{llvm::APInt(Width, I),
+                                llvm::APInt(Width, I * 17),
+                                llvm::APInt(Width, I / 4)};
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
 TEST(SymMBAResiduePowers, ProjectedFactorsRetainLowDisturbances) {
   for (unsigned Width : {8u, 32u, 65u, 257u})
     for (unsigned Perturb : {0u, 1u, 128u, 256u}) {
@@ -191,6 +214,49 @@ TEST(SymMBAResiduePowers, ProjectedFactorsRetainLowDisturbances) {
       else
         EXPECT_EQ(F.oracle(Witness), Unperturbed);
     }
+}
+
+TEST(SymMBAResiduePowers, DominantPrefixesRetainDisturbedAndIndependentWords) {
+  std::mt19937_64 Random(0x524553494455414c);
+  for (unsigned Width : {8u, 32u, 65u, 257u})
+    for (unsigned Observed : {4u, 6u, 8u})
+      for (unsigned Count : {511u, 512u, 513u, 514u}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Width << ':' << Observed << ':' << Count);
+        SymContext Ctx;
+        const auto F = fixture(Ctx, Width, Observed, Count, 1);
+        const auto Z = Ctx.mkVar("z", Width);
+        // This multiplier can be even or zero independently of the selected
+        // X parity. It also moves the total count off a unit-period boundary.
+        const auto Other = Ctx.mkAdd(Z, Ctx.mkConst(Width, 3));
+        const auto Input = Ctx.mkMul(F.Input, Other);
+        MBAOptions Options;
+        Options.MaxWork = 65536;
+        Options.VerifySamples = 0;
+        const auto Result = simplifyMBADeep(Ctx, Input, Options);
+        EXPECT_TRUE(Result.Changed) << "work=" << Result.Work;
+        EXPECT_LT(Result.Work, Options.MaxWork);
+        EXPECT_LT(Result.SizeAfter, Result.SizeBefore / 2);
+        SymEvalPlan Reduced(Ctx, Result.Expr);
+        for (unsigned Trial = 0; Trial < 256; ++Trial) {
+          std::array<llvm::APInt, 3> Values;
+          for (auto &Value : Values) {
+            Value = llvm::APInt(Width, 0);
+            for (unsigned Bit = 0; Bit < Width; Bit += 64)
+              Value |= llvm::APInt(Width, Random()).shl(Bit);
+          }
+          // Exhaust every byte of X alongside independently varied complete
+          // words, including both branches and residual zero/even values.
+          Values[0].clearLowBits(8);
+          Values[0] |= llvm::APInt(Width, Trial);
+          if (Trial < 4)
+            Values[2] = std::array{llvm::APInt(Width, 0), llvm::APInt(Width, 1),
+                                   llvm::APInt(Width, 2),
+                                   -llvm::APInt(Width, 3)}[Trial];
+          EXPECT_EQ(Reduced.eval(Values),
+                    F.oracle(Values) * (Values[2] + llvm::APInt(Width, 3)));
+        }
+      }
 }
 
 TEST(SymMBAResiduePowers, ConstantResiduesRemainProductFactors) {
@@ -288,6 +354,71 @@ TEST(SymMBAResiduePowers, ParitySubgroupsKeepIndependentMultipliers) {
       EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
     }
   }
+}
+
+TEST(SymMBAResiduePowers, RetainedGroupsRespectExactAndShortResources) {
+  auto MakeInput = [](SymContext &Ctx) {
+    const auto F = fixture(Ctx, 65, 6, 513, 1);
+    return Ctx.mkMul(F.Input,
+                     Ctx.mkAdd(Ctx.mkVar("z", 65), Ctx.mkConst(65, 3)));
+  };
+  SymContext FullCtx;
+  const auto Input = MakeInput(FullCtx);
+  detail::WorkBudget FullBudget(65536);
+  size_t FullStorage = 1 << 24;
+  const auto Full = detail::foldResidueDecisions(FullCtx, Input, FullBudget,
+                                                 FullStorage, true);
+  ASSERT_NE(Full, Input);
+  const size_t Work = FullBudget.used(), Bytes = (1 << 24) - FullStorage;
+  ASSERT_GT(Work, 1u);
+  ASSERT_GT(Bytes, 1u);
+  for (auto Limits : {std::pair<size_t, size_t>{0, Bytes},
+                      {1, Bytes},
+                      {Work, 0},
+                      {Work - 1, Bytes},
+                      {Work, Bytes - 1},
+                      {Work, Bytes}}) {
+    SymContext Ctx;
+    const auto Original = MakeInput(Ctx);
+    const auto F = fixture(Ctx, 65, 6, 513, 1);
+    detail::WorkBudget Budget(Limits.first);
+    size_t Storage = Limits.second;
+    const auto Result =
+        detail::foldResidueDecisions(Ctx, Original, Budget, Storage, true);
+    EXPECT_LE(Budget.used(), Limits.first);
+    EXPECT_LE(Storage, Limits.second);
+    if (Limits.first == Work && Limits.second == Bytes)
+      EXPECT_EQ(Result.index(), Full.index());
+    SymEvalPlan Reduced(Ctx, Result);
+    for (unsigned I = 0; I < 256; ++I) {
+      const std::array Values{llvm::APInt(65, I), llvm::APInt(65, I * 17),
+                              llvm::APInt(65, I * 51)};
+      EXPECT_EQ(Reduced.eval(Values),
+                F.oracle(Values) * (Values[2] + llvm::APInt(65, 3)));
+    }
+  }
+}
+
+TEST(SymMBAResiduePowers, ResidualGroupsHaveIndependentSolverProofs) {
+  if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
+    GTEST_SKIP() << "Z3 unavailable";
+  for (unsigned Width : {8u, 16u, 32u, 64u})
+    for (unsigned Count : {512u, 513u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Count);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, 4, Count, 1);
+      const auto Input = Ctx.mkMul(
+          F.Input, Ctx.mkAdd(Ctx.mkVar("z", Width), Ctx.mkConst(Width, 3)));
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, Input, Options);
+      ASSERT_TRUE(Result.Changed);
+      EXPECT_LT(Result.Work, Options.MaxWork);
+      solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
+      EXPECT_EQ(Verifier(Ctx, Input, Result.Expr),
+                SynthVerification::Equivalent);
+    }
 }
 
 TEST(SymMBAResiduePowers, NativeWidthsHaveIndependentSolverProofs) {
