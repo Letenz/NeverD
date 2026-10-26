@@ -684,8 +684,11 @@ private:
   /// Resolve a relocation-authenticated data address through the section/run
   /// that owns the relocation symbol. Target and owner differ for one-past
   /// pointers, and Target==0 may still name a mapped .bss in ET_REL input.
+  /// WholeOwner forbids suffix/compact copies when an original instruction
+  /// retains a displacement that must execute inside the same storage run.
   llvm::Constant *tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
-                                            uint16_t DataSizeHint = 0);
+                                            uint16_t DataSizeHint = 0,
+                                            bool WholeOwner = false);
 
   /// True when tryResolveGlobalData has a concrete address-local route for
   /// \p Addr. Loader relocation evidence identifies pointer intent, but it does
