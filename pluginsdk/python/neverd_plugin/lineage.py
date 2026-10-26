@@ -139,6 +139,23 @@ class Lineage:
     def summary(self) -> dict[str, Any]:
         return json.loads(self._call("summary_json"))
 
+    def edit_releases(self, edit: Mapping[str, Any], *,
+                      options: Mapping[str, Any] | None = None,
+                      progress: Progress | None = None) -> Lineage:
+        """Apply release metadata atomically; omitted revision uses the current one.
+
+        Existing upserts may omit parents to retain them. Parent additions and
+        removals use parent_updates without fetching the whole parent inventory.
+        Requires the optional native release-edit export.
+        """
+        self._host.function("neverd_lineage_edit_releases_json")
+        request = dict(edit)
+        if "revision" not in request:
+            request["revision"] = self.summary()["revision"]
+        self._call("edit_releases_json", _json(request), _json(options or {}),
+                   progress=progress, callback=True, integer=True)
+        return self
+
     def query(self, kind: str, *, revision: str | None = None,
               progress: Progress | None = None, **options: Any) -> dict[str, Any]:
         if revision is None:
@@ -155,6 +172,7 @@ class Lineage:
             yield page
             if page["next_offset"] is None:
                 return
+            options.pop("focus", None)
             options["offset"] = page["next_offset"]
 
     def export(self, *, progress: Progress | None = None) -> str:

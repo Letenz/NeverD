@@ -8874,10 +8874,6 @@ Secondary SHA-256: %3
         <translation>评估</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>关联记录</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>关联来自已保存的报告，不推断版本顺序或补丁是否存在。</translation>
     </message>
@@ -8992,10 +8988,6 @@ Secondary SHA-256: %3
     <message>
         <source>Function filter</source>
         <translation>函数筛选</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>函数记录</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9353,6 +9345,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Zoom out</source>
         <translation>缩小</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>关联及父版本链接记录</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>函数及发布版本记录</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>发布版本</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9549,6 +9553,153 @@ Your previous graph is still available.</source>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>版本图文件不是有效的 UTF-8 JSON。请检查文件后重试。</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>发布版本元数据已保存到当前图中。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 个发布版本 · %2 条声明的父版本链接。日期和继承关系由您声明，不推断补丁是否存在。</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>添加发布版本(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>分支(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>编辑发布版本(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>标签(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>添加父版本…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>添加发布版本</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>分支</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>子版本</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>选择已分析的快照</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>选择父版本</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>选择…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>声明的子版本</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>声明的父版本</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>编辑发布版本</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>查找发布版本或分支</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>标识</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>标签</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>打开快照</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>父版本</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>发布时间已知（UTC）</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>发布时间（UTC）</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>发布版本</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>发布版本标识</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>发布版本筛选</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>要从此图中移除 %1 吗？其快照和已保存的对比仍然保留。</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>移除父版本链接</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>移除发布版本？</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>移除发布版本…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>删除前，请先从其子版本中移除此发布版本的父版本链接。</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>选择发布版本以查看其声明的父版本和子版本。</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>所选发布版本：%1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>快照</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>此引擎不支持发布版本时间线。</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>时间线</translation>
     </message>
 </context>
 </TS>

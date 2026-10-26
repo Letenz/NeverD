@@ -28,6 +28,7 @@ namespace neverd::gui {
 class ElidedLabel;
 class LineageGraph;
 class LineagePageView;
+class LineageReleaseView;
 class LineageDialog final : public QDialog {
   Q_OBJECT
 public:
@@ -43,6 +44,7 @@ private:
   LineagePageView *Versions, *Functions, *Sources, *Conflicts, *Reviews;
   LineagePageView *TraceNodes, *TraceEdges, *TraceConflicts;
   LineageGraph *Graph;
+  LineageReleaseView *Releases;
   QTabWidget *Tabs;
   QLabel *Summary, *Status;
   ElidedLabel *FunctionTitle, *TraceTitle;
@@ -63,6 +65,7 @@ private:
   QString versionLabel(const QString &ID) const;
   void updateTitles();
   void selectVersion(const QString &ID);
+  void navigateToVersion(const QString &ID);
   void trace(const QJsonObject &Row);
   void source(const QString &Report);
   void members(const QJsonObject &Conflict);

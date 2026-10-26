@@ -8946,10 +8946,6 @@ Secondary SHA-256: %3
         <translation>Оценки</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>Записи связей</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>Связи взяты из сохранённых отчётов. Порядок версий и наличие исправления не выводятся.</translation>
     </message>
@@ -9064,10 +9060,6 @@ Secondary SHA-256: %3
     <message>
         <source>Function filter</source>
         <translation>Фильтр функций</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>Записи функций</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9425,6 +9417,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Zoom out</source>
         <translation>Уменьшить</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>Записи сопоставлений и родительских связей</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>Записи функций и выпусков</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>Выпуски</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9621,6 +9625,153 @@ Your previous graph is still available.</source>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>Файл графа версий не содержит корректный JSON в кодировке UTF-8. Проверьте файл и повторите попытку.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>Метаданные выпуска сохранены в текущем графе.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>Выпусков: %1 · объявленных родительских связей: %2. Даты и происхождение указаны вами; наличие патча не выводится автоматически.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>&amp;Добавить выпуск…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Ветка</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>&amp;Изменить выпуск…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Метка</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>Добавить родительский выпуск…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>Добавить выпуск</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Ветка</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>Потомки</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>Выбрать проанализированный снимок</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>Выбрать родительский выпуск</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>Выбрать…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>Объявленные потомки</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>Объявленные родители</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>Изменить выпуск</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>Найти выпуск или ветку</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Метка</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>Открыть снимок</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>Родители</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>Время публикации известно (UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>Опубликовано (UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>Выпуск</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>ID выпуска</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>Фильтр выпусков</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>Удалить %1 из этого графа? Снимок и сохранённые сравнения останутся доступны.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>Удалить родительскую связь</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>Удалить выпуск?</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>Удалить выпуск…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>Перед удалением уберите у потомков связи, указывающие на этот выпуск как на родительский.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>Выберите выпуск для просмотра объявленных родителей и потомков.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>Выбранный выпуск: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Снимок</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>Этот движок не поддерживает хронологию выпусков.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>Хронология</translation>
     </message>
 </context>
 </TS>

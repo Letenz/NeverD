@@ -21,6 +21,7 @@ LineageSession::LineageSession(const QString &Worker, QObject *Parent)
   connect(&Client, &EngineClient::message, this, &LineageSession::receive);
   connect(&Client, &EngineClient::failure, this, [this](const QString &Error) {
     Ready = false;
+    ReleaseEditing = false;
     Requests.clear();
     Cancellable.clear();
     Message = tr("Version graph worker: %1").arg(Error);
@@ -36,6 +37,10 @@ void LineageSession::receive(const QJsonObject &Value) {
     Ready = Value["protocol_major"] == QJsonValue(1) &&
             Value["capabilities"].toArray().contains("lineage_load") &&
             CancellableOperations.contains("lineage_load");
+    ReleaseEditing =
+        Ready &&
+        Value["capabilities"].toArray().contains("lineage_edit_releases") &&
+        CancellableOperations.contains("lineage_edit_releases");
     if (!Ready)
       Message = tr("This worker does not support version comparison graphs.");
     emit changed();
@@ -140,6 +145,27 @@ void LineageSession::save(const QString &Path, const QString &Report) {
             const auto Path = Value["payload"].toObject()["path"].toString();
             Message = tr("Saved %1").arg(Path);
             emit saved(Path);
+          });
+}
+void LineageSession::editReleases(QJsonObject Edit, const QJsonObject &Options,
+                                  const QString &Focus) {
+  if (!Ready || !ReleaseEditing || busy() || Summary.isEmpty())
+    return;
+  if (!Edit.contains("revision"))
+    Edit["revision"] = revision();
+  Message.clear();
+  request("lineage_edit_releases", {{"edit", Edit}, {"options", Options}}, this,
+          [this, Focus](const QJsonObject &Value) {
+            if (Value["status"] != QJsonValue("ok")) {
+              Message = Value["error"].toObject()["message"].toString();
+              Message += tr("\nYour previous graph is still available.");
+              emit failed(Message);
+              return;
+            }
+            Summary = Value["payload"].toObject();
+            Message = tr("Release metadata saved in the current graph.");
+            emit releasesEdited(Focus);
+            emit collectionChanged(true);
           });
 }
 void LineageSession::cancel() {

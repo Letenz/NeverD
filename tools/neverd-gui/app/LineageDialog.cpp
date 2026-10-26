@@ -15,6 +15,7 @@
 #include "Icons.h"
 #include "LineageGraph.h"
 #include "LineagePageView.h"
+#include "LineageReleaseView.h"
 #include "ModelessDialog.h"
 #include "ShrinkableRow.h"
 
@@ -257,6 +258,10 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   Details->setMaximumHeight(Details->fontMetrics().height() * 7);
   RL->addWidget(Details);
   Tabs->addTab(ReviewPane, tr("Assessments"));
+  Releases = new LineageReleaseView(Session, Tabs);
+  Tabs->addTab(Releases, tr("Releases"));
+  connect(Releases, &LineageReleaseView::snapshotRequested, this,
+          &LineageDialog::navigateToVersion);
   Split->setStretchFactor(0, 1);
   Split->setStretchFactor(1, 3);
   Split->setSizes(
@@ -417,25 +422,7 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
                          R["supersedes"].toString()));
           });
   connect(Graph, &LineageGraph::versionActivated, this,
-          [this](const QString &ID) {
-            bool Selected = false;
-            const auto &Rows = Versions->rows();
-            for (int I = 0; I < Rows.size(); ++I)
-              if (Rows[I].toObject()["id"].toString() == ID) {
-                if (Versions->selected()["id"].toString() == ID)
-                  selectVersion(ID);
-                else
-                  Versions->table()->setCurrentIndex(
-                      Versions->table()->model()->index(I, 0));
-                Selected = true;
-                break;
-              }
-            if (!Selected) {
-              Versions->table()->setCurrentIndex({});
-              selectVersion(ID);
-            }
-            Tabs->setCurrentIndex(0);
-          });
+          &LineageDialog::navigateToVersion);
   connect(Graph, &LineageGraph::reportActivated, this, &LineageDialog::source);
   connect(Fit, &QPushButton::clicked, Graph, &LineageGraph::fit);
   connect(ZoomIn, &QPushButton::clicked, Graph, [this] { Graph->zoom(true); });
@@ -514,6 +501,8 @@ void LineageDialog::loaded(bool Appended) {
   Sources->setQuery({{"kind", "reports"}});
   Conflicts->setQuery({{"kind", "conflicts"}});
   Reviews->setQuery({{"kind", "reviews"}});
+  Releases->setOptions(Options);
+  Releases->reload(Appended);
   if (!TraceVersion.isEmpty())
     trace({{"version", TraceVersion}, {"address", TraceAddress}});
   Tabs->setCurrentIndex(SelectedTab);
@@ -532,12 +521,32 @@ QString LineageDialog::versionLabel(const QString &ID) const {
   return ID;
 }
 void LineageDialog::updateTitles() {
+  Releases->setSnapshot(CurrentVersion, versionLabel(CurrentVersion));
   if (!CurrentVersion.isEmpty())
     FunctionTitle->setFullText(
         tr("Functions in %1").arg(versionLabel(CurrentVersion)));
   if (!TraceVersion.isEmpty())
     TraceTitle->setFullText(tr("Trace from %1 in %2")
                                 .arg(TraceAddress, versionLabel(TraceVersion)));
+}
+void LineageDialog::navigateToVersion(const QString &ID) {
+  bool Selected = false;
+  const auto &Rows = Versions->rows();
+  for (int I = 0; I < Rows.size(); ++I)
+    if (Rows[I].toObject()["id"].toString() == ID) {
+      if (Versions->selected()["id"].toString() == ID)
+        selectVersion(ID);
+      else
+        Versions->table()->setCurrentIndex(
+            Versions->table()->model()->index(I, 0));
+      Selected = true;
+      break;
+    }
+  if (!Selected) {
+    Versions->table()->setCurrentIndex({});
+    selectVersion(ID);
+  }
+  Tabs->setCurrentIndex(0);
 }
 void LineageDialog::selectVersion(const QString &ID) {
   if (ID.isEmpty())
@@ -762,9 +771,9 @@ void LineageDialog::options() {
   };
   AddField("max_source_bytes", tr("Report text and labels (bytes)"),
            ::neverd::limits::diff::kDefaultLineageSourceBytes);
-  AddField("max_nodes", tr("Function records"),
+  AddField("max_nodes", tr("Function and release records"),
            ::neverd::limits::diff::kDefaultLineageNodes);
-  AddField("max_edges", tr("Association records"),
+  AddField("max_edges", tr("Association and parent link records"),
            ::neverd::limits::diff::kDefaultLineageEdges);
   AddField("max_work", tr("Processing work allowance"),
            ::neverd::limits::diff::kDefaultLineageWork);
@@ -812,6 +821,7 @@ void LineageDialog::options() {
     return;
   Options = Next;
   Session.setQueryOptions(Options);
+  Releases->setOptions(Options);
   Status->setText(
       tr("Resource settings will apply to subsequent loads and queries."));
 }

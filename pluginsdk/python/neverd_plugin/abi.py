@@ -2445,6 +2445,9 @@ for _lineage_read in ("status_json", "last_error", "summary_json"):
 _declare("neverd_lineage_load_json", "int",
          ["neverd_lineage_t", "const char *", "const char *",
           "neverd_lineage_progress_t", "void *"])
+_declare("neverd_lineage_edit_releases_json", "int",
+         ["neverd_lineage_t", "const char *", "const char *",
+          "neverd_lineage_progress_t", "void *"])
 for _lineage_query in ("query_json", "report_json"):
     _declare(f"neverd_lineage_{_lineage_query}", "const char *",
              ["neverd_lineage_t", "const char *", "neverd_lineage_progress_t", "void *"],

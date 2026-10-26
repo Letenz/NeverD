@@ -8910,10 +8910,6 @@ Sekundäre SHA-256: %3
         <translation>Bewertungen</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>Zuordnungsdatensätze</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>Zuordnungen stammen aus gespeicherten Berichten. Versionsreihenfolge und Patch-Vorhandensein werden nicht abgeleitet.</translation>
     </message>
@@ -9028,10 +9024,6 @@ Sekundäre SHA-256: %3
     <message>
         <source>Function filter</source>
         <translation>Funktionsfilter</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>Funktionsdatensätze</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9389,6 +9381,18 @@ Mehrdeutigkeiten und manuelle Entscheidungen gelten nur im jeweiligen Bericht. R
         <source>Zoom out</source>
         <translation>Verkleinern</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>Zuordnungs- und Elternverknüpfungsdatensätze</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>Funktions- und Release-Datensätze</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>Releases</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9585,6 +9589,153 @@ Ihr vorheriger Graph ist weiterhin verfügbar.</translation>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>Die Versionsgraph-Datei enthält kein gültiges UTF-8-JSON. Prüfen Sie die Datei und versuchen Sie es erneut.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>Release-Metadaten im aktuellen Graphen gespeichert.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 Releases · %2 deklarierte Elternverknüpfungen. Datum und Abstammung beruhen auf Ihren Angaben; das Vorhandensein eines Patches wird nicht abgeleitet.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>Release &amp;hinzufügen…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Zweig</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>Release &amp;bearbeiten…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Bezeichnung</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>Elternrelease hinzufügen…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>Release hinzufügen</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Zweig</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>Nachfolger</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>Analysierten Snapshot wählen</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>Elternrelease wählen</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>Auswählen…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>Deklarierte Nachfolger</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>Deklarierte Elternreleases</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>Release bearbeiten</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>Release oder Zweig suchen</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Bezeichnung</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>Snapshot öffnen</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>Elternreleases</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>Veröffentlichungszeit bekannt (UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>Veröffentlicht (UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>Release</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>Release-ID</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>Release-Filter</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>%1 aus diesem Graphen entfernen? Der Snapshot und gespeicherte Vergleiche bleiben verfügbar.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>Elternverknüpfung entfernen</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>Release entfernen?</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>Release entfernen…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>Entfernen Sie vor dem Löschen die Verknüpfungen, die dieses Release als Elternrelease seiner Nachfolger angeben.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>Wählen Sie ein Release, um seine deklarierten Eltern und Nachfolger zu prüfen.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>Ausgewähltes Release: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Momentaufnahme</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>Diese Engine unterstützt keine Release-Zeitachsen.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>Zeitachse</translation>
     </message>
 </context>
 </TS>

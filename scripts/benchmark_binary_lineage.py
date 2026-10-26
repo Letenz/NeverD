@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FUNCTIONS = 1000
 DEFAULT_SNAPSHOTS = 16
 DEFAULT_REPEATS = 3
+DEFAULT_RELEASES = 10000
 DEFAULT_TIMEOUT = 180.0
 FUNCTION_STRIDE = 16
 INVENTORY_PAGE_SIZE = 200
@@ -180,6 +181,48 @@ def corpus(path: Path) -> tuple[dict, str]:
     return manifest, (path / manifest["collection"]["file"]).read_bytes().decode("utf-8")
 
 
+def generate_releases(args: argparse.Namespace) -> None:
+    """Retain a sparse fork/merge DAG independently described by index pairs."""
+    require(args.releases >= 4, "at least four release records are required")
+    manifest, document = corpus(args.corpus)
+    require("release_graph" not in manifest, "input already contains a release workload")
+    output = args.output_dir.resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    sys.path.insert(0, str(ROOT / "pluginsdk" / "python"))
+    from neverd_plugin import Lineage
+    from neverd_plugin.ffi import HostAPI
+    library_hash = digest(args.library)
+    directory = os.add_dll_directory(str(args.library.parent)) if hasattr(os, "add_dll_directory") else None
+    with Lineage(host=HostAPI(ctypes.CDLL(str(args.library)))) as graph:
+        graph.load(document)
+        versions = [r["id"] for page in graph.pages("versions", limit=INVENTORY_PAGE_SIZE)
+                    for r in page["items"]]
+    if directory is not None:
+        directory.close()
+    identifiers = [f"release-{i:08d}" for i in range(args.releases)]
+    edges = [(parent, child) for child in range(1, args.releases)
+             for parent in sorted({(child - 1) // 2, max(0, child - 3)})]
+    parents: list[list[str]] = [[] for _ in identifiers]
+    for parent, child in edges:
+        parents[child].append(identifiers[parent])
+    records = [{"id": identifier, "label": f"Release {i}", "branch": f"branch-{i % 3}",
+                "version": versions[i % len(versions)], "published_at": None,
+                "parents": parents[i]} for i, identifier in enumerate(identifiers)]
+    candidate = json.loads(document)
+    candidate.update(schema_version=2, releases=list(reversed(records)))
+    for item in [*manifest["versions"], *manifest["reports"]]:
+        (output / item["file"]).write_bytes((args.corpus / item["file"]).read_bytes())
+    collection = output / "collection.ndlineage"
+    write_json(collection, candidate)
+    manifest.update(generator_sha256=digest(Path(__file__)),
+                    release_generator_library_sha256=library_hash,
+                    release_graph={"ids": identifiers, "edges": edges, "records": records},
+                    collection={"file": collection.name, "sha256": digest(collection),
+                                "size_bytes": collection.stat().st_size})
+    require(digest(args.library) == library_hash, "generator library changed")
+    write_json(output / "manifest.json", manifest)
+
+
 def sample(args: argparse.Namespace) -> None:
     manifest, document = corpus(args.corpus)
     manifest_hash = digest(args.corpus / "manifest.json")
@@ -269,6 +312,56 @@ def sample(args: argparse.Namespace) -> None:
                 require(not rows("trace_conflicts", **selected), "unexpected conflict after changing trace seed")
 
         timed("other_seed_traces_seconds", check_other_seeds)
+        if "release_graph" in manifest:
+            expected = manifest["release_graph"]
+            timeline = timed("release_inventory_seconds", lambda: rows("releases"))
+            require([r["id"] for r in timeline] == expected["ids"],
+                    "release timeline disagrees with authored parent-before-child IDs")
+            require(all(r["provenance"] == "analyst_declared" and "parents" not in r for r in timeline),
+                    "release provenance or bounded row contract changed")
+            require(summary["releases"] == len(expected["ids"]) and
+                    summary["release_links"] == len(expected["edges"]), "release counts disagree")
+            for index in sorted({0, len(timeline) // 2, len(timeline) - 1}):
+                identifier = expected["ids"][index]
+                actual = rows("release_parents", release=identifier)
+                require([r["id"] for r in actual] == [expected["ids"][a] for a, b in
+                    expected["edges"] if b == index], "release parent inventory changed")
+                actual = rows("release_children", release=identifier)
+                require([r["id"] for r in actual] == [expected["ids"][b] for a, b in
+                    expected["edges"] if a == index], "release child inventory changed")
+            last = dict(expected["records"][-1])
+            last.pop("parents")
+            renamed = {**last, "label": "Renamed benchmark release"}
+            saved_release = graph.export()
+            try:
+                graph.edit_releases({"upsert": [renamed]}, options={"max_work": 1})
+            except NeverDError:
+                require(graph.status()["operation_state"] == "resource_limited" and
+                        graph.export() == saved_release, "limited release edit changed retained data")
+            else:
+                raise ValueError("release edit bypassed work budget")
+            release_stop = None
+
+            def cancel_release(phase, _done, _total):
+                nonlocal release_stop
+                if phase == "lineage:commit":
+                    release_stop = time.perf_counter()
+                    graph.cancel()
+
+            try:
+                graph.edit_releases({"upsert": [renamed]}, progress=cancel_release)
+            except NeverDError:
+                returned = time.perf_counter()
+                require(release_stop is not None and graph.status()["operation_state"] == "cancelled",
+                        "release edit did not stop at the requested commit boundary")
+                timings["release_commit_cancel_return_seconds"] = returned - release_stop
+                require(graph.export() == saved_release, "cancelled release edit changed retained data")
+            else:
+                raise ValueError("cancelled release edit unexpectedly completed")
+            timed("release_label_edit_seconds", lambda: graph.edit_releases({"upsert": [renamed]}))
+            graph.edit_releases({"upsert": [last]})
+            require(graph.summary()["revision"] == revision and graph.export() == saved_release,
+                    "release label restoration lost parents or changed canonical identity")
         candidate = json.loads(document)
         candidate["versions"] = [{"id": start, "label": "Cancelled benchmark replacement", "branch": ""}]
         candidate_text = json.dumps(candidate)
@@ -340,7 +433,8 @@ def run(args: argparse.Namespace) -> None:
     corpus(args.corpus)
     require(all(s["summary"] == samples[0]["summary"] for s in samples), "samples changed graph identity")
     write_json(output / "result.json", {
-        "schema": RESULT_SCHEMA, "workload": "native-synthetic-chain-shortcuts-reverse",
+        "schema": RESULT_SCHEMA, "workload": ("native-synthetic-release-fork-merge" if
+                    "release_graph" in manifest else "native-synthetic-chain-shortcuts-reverse"),
         "corpus_manifest": str(args.corpus / "manifest.json"),
         "corpus_manifest_sha256": manifest_hash,
         "collection_sha256": manifest["collection"]["sha256"],
@@ -367,6 +461,11 @@ def main() -> None:
     generate_parser.add_argument("--functions", type=int, default=DEFAULT_FUNCTIONS)
     generate_parser.add_argument("--snapshots", type=int, default=DEFAULT_SNAPSHOTS)
     generate_parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    release_parser = commands.add_parser("generate-releases", help="add a retained release fork/merge DAG")
+    release_parser.add_argument("--library", type=Path, required=True)
+    release_parser.add_argument("--corpus", type=Path, required=True)
+    release_parser.add_argument("--output-dir", type=Path, required=True)
+    release_parser.add_argument("--releases", type=int, default=DEFAULT_RELEASES)
     for name in ("run", "_sample"):
         child = commands.add_parser(name)
         child.add_argument("--library", type=Path, required=True)
@@ -381,7 +480,8 @@ def main() -> None:
     for name in ("neverd", "compiler", "library", "corpus"):
         if hasattr(args, name):
             setattr(args, name, getattr(args, name).resolve(strict=True))
-    {"generate": generate, "run": run, "_sample": sample}[args.command](args)
+    {"generate": generate, "generate-releases": generate_releases,
+     "run": run, "_sample": sample}[args.command](args)
 
 
 if __name__ == "__main__":

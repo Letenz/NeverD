@@ -8874,10 +8874,6 @@ Secondary SHA-256: %3
         <translation>評価</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>関連付けレコード</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>関連付けは保存済みレポートに基づきます。リリース順序やパッチの有無は推定しません。</translation>
     </message>
@@ -8992,10 +8988,6 @@ Secondary SHA-256: %3
     <message>
         <source>Function filter</source>
         <translation>関数フィルター</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>関数レコード</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9353,6 +9345,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Zoom out</source>
         <translation>縮小</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>関連付けと親リンクのレコード数</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>関数とリリースのレコード数</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>リリース</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9549,6 +9553,153 @@ Your previous graph is still available.</source>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>バージョングラフファイルは有効な UTF-8 JSON ではありません。ファイルを確認して再試行してください。</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>リリースのメタデータを現在のグラフに保存しました。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 リリース · %2 件の宣言済み親リンク。日時と系譜はユーザーの宣言であり、パッチの存在は推論されません。</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>リリースを追加(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>ブランチ(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>リリースを編集(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>ラベル(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>親リリースを追加…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>リリースを追加</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>ブランチ</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>子リリース</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>解析済みスナップショットを選択</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>親リリースを選択</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>選択…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>宣言済みの子リリース</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>宣言済みの親リリース</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>リリースを編集</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>リリースまたはブランチを検索</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>ラベル</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>スナップショットを開く</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>親リリース</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>公開日時が既知（UTC）</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>公開日時（UTC）</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>リリース</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>リリースID</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>リリースフィルター</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>このグラフから %1 を削除しますか？スナップショットと保存済みの比較は保持されます。</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>親リンクを削除</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>リリースを削除しますか？</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>リリースを削除…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>削除する前に、子リリースからこのリリースへの親リンクを削除してください。</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>リリースを選択して、宣言された親と子を確認します。</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>選択中のリリース: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>スナップショット</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>このエンジンはリリースのタイムラインに対応していません。</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>タイムライン</translation>
     </message>
 </context>
 </TS>

@@ -149,6 +149,7 @@ struct PageBuilder {
   const ComparisonControl &Control;
   llvm::json::Array Rows;
   uint64_t Total = 0, Work = 0, Bytes = 0;
+  uint64_t Offset = Query.Offset;
 
   void charge(uint64_t Amount = 1) {
     Control.check();
@@ -160,7 +161,7 @@ struct PageBuilder {
   template <typename Render> void append(Render Make) {
     charge();
     const auto Position = Total++;
-    if (Position < Query.Offset || Rows.size() >= Query.Limit)
+    if (Position < Offset || Rows.size() >= Query.Limit)
       return;
     llvm::json::Value Row = Make();
     if (!Query.Report.empty()) {
@@ -194,6 +195,22 @@ struct PageBuilder {
     Rows.push_back(std::move(Row));
   }
 };
+
+llvm::json::Object release(const Lineage &L, uint32_t I) {
+  const auto &R = L.releases()[I];
+  return llvm::json::Object{
+      {"id", R.ID},
+      {"label", R.Label},
+      {"branch", R.Branch},
+      {"version", L.versions()[R.Version].ID},
+      {"version_label", L.versions()[R.Version].Label},
+      {"published_at", R.PublishedAt.empty()
+                           ? llvm::json::Value(nullptr)
+                           : llvm::json::Value(R.PublishedAt)},
+      {"parent_count", R.Parents.size()},
+      {"child_count", R.Children.size()},
+      {"provenance", "analyst_declared"}};
+}
 } // namespace
 
 LineageSettings readLineageSettings(const llvm::json::Object &O) {
@@ -210,14 +227,17 @@ LineageSettings readLineageSettings(const llvm::json::Object &O) {
 }
 
 LineageQuery readLineageQuery(const llvm::json::Object &O) {
-  fields(O, {"kind", "revision", "version", "address", "report", "search",
-             "index", "offset", "limit", "max_work", "timeout_ms", "latest"});
+  fields(O, {"kind", "revision", "version", "address", "report", "release",
+             "search", "focus", "index", "offset", "limit", "max_work",
+             "timeout_ms", "latest"});
   LineageQuery Q;
   Q.Kind = text(O, "kind", true);
   Q.Revision = text(O, "revision", true);
   Q.Version = text(O, "version");
   Q.Report = text(O, "report");
+  Q.Release = text(O, "release");
   Q.Search = text(O, "search");
+  Q.Focus = text(O, "focus");
   Q.Offset = count(O, "offset", 0, INT64_MAX);
   Q.Limit = count(O, "limit", Q.Limit, limits::kMaxPageSize, true);
   Q.Index = count(O, "index", 0, NoIndex - 1);
@@ -231,17 +251,37 @@ LineageQuery readLineageQuery(const llvm::json::Object &O) {
   }
   const bool Trace = llvm::StringRef(Q.Kind).starts_with("trace_");
   require(llvm::is_contained(
-              std::initializer_list<llvm::StringRef>{
-                  "versions", "reports", "functions", "edges", "conflicts",
-                  "conflict_members", "trace_nodes", "trace_edges",
-                  "trace_conflicts", "reviews", "decisions", "ambiguities",
-                  "ambiguity_primary", "ambiguity_secondary", "warnings",
-                  "native_regions", "native_region_anchors", "flow_regions",
-                  "flow_region_anchors"},
+              std::initializer_list<llvm::StringRef>{"versions",
+                                                     "reports",
+                                                     "functions",
+                                                     "edges",
+                                                     "conflicts",
+                                                     "conflict_members",
+                                                     "trace_nodes",
+                                                     "trace_edges",
+                                                     "trace_conflicts",
+                                                     "reviews",
+                                                     "decisions",
+                                                     "ambiguities",
+                                                     "ambiguity_primary",
+                                                     "ambiguity_secondary",
+                                                     "warnings",
+                                                     "native_regions",
+                                                     "native_region_anchors",
+                                                     "flow_regions",
+                                                     "flow_region_anchors",
+                                                     "releases",
+                                                     "release_parents",
+                                                     "release_children"},
               llvm::StringRef(Q.Kind)),
           "unknown lineage query kind");
-  require((Trace || Q.Kind == "functions") == !Q.Version.empty(),
+  require(Q.Kind == "releases" ||
+              (Trace || Q.Kind == "functions") == !Q.Version.empty(),
           "version is required only for functions and trace queries");
+  const bool ReleaseQuery =
+      Q.Kind == "release_parents" || Q.Kind == "release_children";
+  require(ReleaseQuery == !Q.Release.empty(),
+          "release is required only for release parent and child queries");
   require(Trace == (O.get("address") != nullptr),
           "address is required only for trace queries");
   if (Trace) {
@@ -264,10 +304,13 @@ LineageQuery readLineageQuery(const llvm::json::Object &O) {
       Q.Kind == "flow_region_anchors";
   require(Indexed == (O.get("index") != nullptr),
           "index is required only for conflict, ambiguity or region members");
-  require(Q.Kind == "functions" || !O.get("search"),
-          "search is only valid for functions");
+  require(Q.Kind == "functions" || Q.Kind == "releases" || !O.get("search"),
+          "search is only valid for functions or releases");
   require(Q.Kind == "reviews" || !O.get("latest"),
           "latest is only valid for reviews");
+  require(!O.get("focus") ||
+              (Q.Kind == "releases" && !Q.Focus.empty() && !O.get("offset")),
+          "focus is a release ID and cannot be combined with an offset");
   return Q;
 }
 
@@ -291,10 +334,13 @@ llvm::json::Object lineageSummary(const Lineage &L,
   return llvm::json::Object{
       {"schema", "neverd.bindiff.lineage.summary"},
       {"schema_version", LineageSchemaVersion},
+      {"document_schema_version", L.schemaVersion()},
       {"revision", L.revision()},
       {"provenance", "retained_reports"},
       {"native_authenticated", false},
       {"versions", L.versions().size()},
+      {"releases", L.releases().size()},
+      {"release_links", L.releaseLinks()},
       {"reports", L.reports().size()},
       {"nodes", L.nodes().size()},
       {"edges", L.edges().size()},
@@ -361,6 +407,46 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
             {"discovery_complete", V.Identity.DiscoveryComplete},
             {"functions", L.functions(I).size()}};
       });
+  } else if (Q.Kind == "releases") {
+    const auto Version =
+        Q.Version.empty() ? std::optional<uint32_t>() : L.version(Q.Version);
+    require(Q.Version.empty() || Version.has_value(),
+            "unknown lineage snapshot");
+    const auto Included = [&](uint32_t I) {
+      const auto &R = L.releases()[I];
+      B.charge(1 + R.ID.size() + R.Label.size() + R.Branch.size() +
+               Q.Search.size());
+      if (Version && R.Version != *Version)
+        return false;
+      return Q.Search.empty() ||
+             llvm::StringRef(R.Label).contains_insensitive(Q.Search) ||
+             llvm::StringRef(R.Branch).contains_insensitive(Q.Search) ||
+             llvm::StringRef(R.ID).contains_insensitive(Q.Search);
+    };
+    if (!Q.Focus.empty()) {
+      uint64_t Position = 0;
+      bool Found = false;
+      for (const auto I : L.releaseTimeline()) {
+        if (!Included(I))
+          continue;
+        if (L.releases()[I].ID == Q.Focus) {
+          B.Offset = Position / Q.Limit * Q.Limit;
+          Found = true;
+          break;
+        }
+        ++Position;
+      }
+      require(Found, "focused release is absent from this timeline query");
+    }
+    for (const auto I : L.releaseTimeline())
+      if (Included(I))
+        B.append([&] { return release(L, I); });
+  } else if (Q.Kind == "release_parents" || Q.Kind == "release_children") {
+    const auto R = L.release(Q.Release);
+    require(R.has_value(), "unknown lineage release");
+    for (const auto I : Q.Kind == "release_parents" ? L.releases()[*R].Parents
+                                                    : L.releases()[*R].Children)
+      B.append([&] { return release(L, I); });
   } else if (Q.Kind == "reports") {
     for (const auto &R : L.reports())
       B.append([&] {
@@ -570,8 +656,8 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
     }
     require(Found, "unknown lineage source report");
   }
-  require(Q.Offset <= B.Total, "lineage offset exceeds the collection");
-  const auto Next = Q.Offset + B.Rows.size();
+  require(B.Offset <= B.Total, "lineage offset exceeds the collection");
+  const auto Next = B.Offset + B.Rows.size();
   Result.JSON = llvm::json::Object{
       {"schema", "neverd.bindiff.lineage.page"},
       {"schema_version", LineageSchemaVersion},
@@ -579,7 +665,7 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
       {"kind", Q.Kind},
       {"provenance", "retained_reports"},
       {"total", B.Total},
-      {"offset", Q.Offset},
+      {"offset", B.Offset},
       {"next_offset",
        Next < B.Total ? llvm::json::Value(Next) : llvm::json::Value(nullptr)},
       {"work", B.Work},

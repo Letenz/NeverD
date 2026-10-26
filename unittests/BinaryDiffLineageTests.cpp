@@ -443,7 +443,7 @@ TEST(BinaryDiffLineage, WrapperValidationAndHistoricalStopsAreExplicit) {
   std::string Error;
   for (const auto &Mutate :
        std::vector<std::function<void(llvm::json::Object &)>>{
-           [](auto &O) { O["schema_version"] = 2; },
+           [](auto &O) { O["schema_version"] = 3; },
            [](auto &O) { O["trust_me"] = true; },
            [](auto &O) { O["reports"] = llvm::json::Array{}; },
            [](auto &O) { O["reports"] = llvm::json::Array{42}; },
@@ -870,4 +870,321 @@ TEST(BinaryDiffLineage, SSARegionPagesKeepOriginalAnchorsAndRespectStops) {
              [&] { (void)lineagePage(*L, Q, Control); });
   EXPECT_EQ(L->edges().size(), Edges);
   EXPECT_EQ(L->reports()[0].Evidence->Text, Text);
+}
+
+namespace {
+llvm::json::Object releaseRecord(llvm::StringRef ID, const Lineage &L,
+                                 llvm::json::Array Parents = {},
+                                 llvm::StringRef Date = {}) {
+  return llvm::json::Object{
+      {"id", ID.str()},
+      {"label", ID.str()},
+      {"branch", "stable"},
+      {"version", L.versions().front().ID},
+      {"published_at", Date.empty() ? llvm::json::Value(nullptr)
+                                    : llvm::json::Value(Date.str())},
+      {"parents", std::move(Parents)}};
+}
+std::shared_ptr<const Lineage> releases(const Lineage &L,
+                                        llvm::json::Array Rows) {
+  std::string Error;
+  auto Result =
+      editLineageReleases(L,
+                          llvm::json::Object{{"revision", L.revision()},
+                                             {"upsert", std::move(Rows)}},
+                          {}, Error);
+  EXPECT_TRUE(Result) << Error;
+  return Result;
+}
+llvm::json::Object releasePage(const Lineage &L, llvm::json::Object Query) {
+  Query["revision"] = L.revision();
+  return lineagePage(L, readLineageQuery(Query)).JSON;
+}
+} // namespace
+
+TEST(BinaryDiffLineage, ReleaseAliasesKeepSnapshotAndSourceIdentities) {
+  const auto L = load({report(program(0), program(1), {{0, 0}})});
+  ASSERT_TRUE(L);
+  const auto Original = writeLineage(*L);
+  auto R = releases(
+      *L, llvm::json::Array{
+              releaseRecord("merge", *L, llvm::json::Array{"stable", "preview"},
+                            "2026-10-25T08:00:00Z"),
+              releaseRecord("stable", *L, llvm::json::Array{"base"},
+                            "2026-10-24T08:00:00Z"),
+              releaseRecord("base", *L),
+              releaseRecord("preview", *L, llvm::json::Array{"base"})});
+  ASSERT_TRUE(R);
+  EXPECT_EQ(R->schemaVersion(), 2u);
+  EXPECT_EQ(R->releases().size(), 4u);
+  EXPECT_EQ(R->releaseLinks(), 4u);
+  EXPECT_EQ(R->versions().size(), L->versions().size());
+  EXPECT_EQ(R->nodes().size(), L->nodes().size());
+  EXPECT_EQ(R->edges().size(), L->edges().size());
+  EXPECT_EQ(R->reports()[0].Evidence->Text, L->reports()[0].Evidence->Text);
+  for (const auto &Release : R->releases())
+    EXPECT_EQ(Release.Version, 0u);
+  std::vector<std::string> Timeline;
+  for (const auto I : R->releaseTimeline())
+    Timeline.push_back(R->releases()[I].ID);
+  EXPECT_EQ(Timeline,
+            (std::vector<std::string>{"base", "stable", "preview", "merge"}));
+  const auto Parents = releasePage(
+      *R, llvm::json::Object{
+              {"kind", "release_parents"}, {"release", "merge"}, {"limit", 1}});
+  EXPECT_EQ(Parents.getInteger("total"), 2);
+  EXPECT_EQ(Parents.getInteger("next_offset"), 1);
+  EXPECT_EQ(Parents.getArray("items")->front().getAsObject()->getString("id"),
+            "preview");
+  const auto Children =
+      releasePage(*R, llvm::json::Object{{"kind", "release_children"},
+                                         {"release", "base"}});
+  EXPECT_EQ(Children.getInteger("total"), 2);
+  EXPECT_EQ(writeLineage(*L), Original);
+  std::string Error;
+  const auto Restored = readLineage(writeLineage(*R), {}, Error);
+  ASSERT_TRUE(Restored) << Error;
+  EXPECT_EQ(Restored->revision(), R->revision());
+  EXPECT_EQ(writeLineage(*Restored), writeLineage(*R));
+}
+
+TEST(BinaryDiffLineage, ReleaseSchemaUpgradePreservesLegacyDocuments) {
+  const auto L = load({report(program(0), program(1), {{0, 0}})});
+  ASSERT_TRUE(L);
+  const auto Old = writeLineage(*L);
+  std::string Error;
+  const auto Reopened = readLineage(Old, {}, Error);
+  ASSERT_TRUE(Reopened);
+  EXPECT_EQ(Reopened->schemaVersion(), 1u);
+  EXPECT_EQ(Reopened->revision(), L->revision());
+  EXPECT_EQ(writeLineage(*Reopened), Old);
+  const auto Upgraded = releases(*L, llvm::json::Array{});
+  ASSERT_TRUE(Upgraded);
+  EXPECT_EQ(Upgraded->schemaVersion(), 2u);
+  EXPECT_NE(Upgraded->revision(), L->revision());
+  const auto Empty = readLineage(writeLineage(*Upgraded), {}, Error);
+  ASSERT_TRUE(Empty);
+  EXPECT_EQ(Empty->schemaVersion(), 2u);
+  EXPECT_EQ(Empty->revision(), Upgraded->revision());
+  auto Invalid = llvm::json::parse(Old);
+  ASSERT_TRUE(bool(Invalid));
+  (*Invalid->getAsObject())["releases"] = llvm::json::Array{};
+  EXPECT_FALSE(readLineage(render(std::move(*Invalid)), {}, Error));
+  EXPECT_NE(Error.find("schema version 2"), std::string::npos);
+}
+
+TEST(BinaryDiffLineage, ReleaseMetadataRejectsInvalidDatesAndAncestry) {
+  const auto L = load({report(program(0), program(1), {{0, 0}})});
+  ASSERT_TRUE(L);
+  std::string Error;
+  const auto Reject = [&](llvm::json::Array Rows) {
+    EXPECT_FALSE(
+        editLineageReleases(*L,
+                            llvm::json::Object{{"revision", L->revision()},
+                                               {"upsert", std::move(Rows)}},
+                            {}, Error));
+    EXPECT_FALSE(Error.empty());
+  };
+  for (const auto Date :
+       {"2025-02-29T00:00:00Z", "2024-04-31T00:00:00Z", "0000-01-01T00:00:00Z",
+        "2024-01-01T24:00:00Z", "2024-01-01T00:60:00Z", "2024-01-01T00:00:60Z",
+        "2024-01-01T00:00:00+00:00", "2024-01-01", "2024-01-01T00:00:0xZ"})
+    Reject(
+        llvm::json::Array{releaseRecord("a", *L, llvm::json::Array{}, Date)});
+  ASSERT_TRUE(releases(
+      *L, llvm::json::Array{releaseRecord("leap", *L, llvm::json::Array{},
+                                          "2024-02-29T23:59:59Z")}));
+  Reject(llvm::json::Array{releaseRecord("a", *L), releaseRecord("a", *L)});
+  Reject(
+      llvm::json::Array{releaseRecord("a", *L, llvm::json::Array{"missing"})});
+  Reject(llvm::json::Array{releaseRecord("a", *L, llvm::json::Array{"a"})});
+  Reject(
+      llvm::json::Array{releaseRecord("a", *L),
+                        releaseRecord("b", *L, llvm::json::Array{"a", "a"})});
+  Reject(llvm::json::Array{releaseRecord("a", *L, llvm::json::Array{"b"}),
+                           releaseRecord("b", *L, llvm::json::Array{"a"})});
+  Reject(llvm::json::Array{
+      releaseRecord("late", *L, llvm::json::Array{}, "2030-01-01T00:00:00Z"),
+      releaseRecord("unknown", *L, llvm::json::Array{"late"}),
+      releaseRecord("early", *L, llvm::json::Array{"unknown"},
+                    "2020-01-01T00:00:00Z")});
+  auto Unknown = releaseRecord("a", *L);
+  Unknown["version"] = "missing";
+  Reject(llvm::json::Array{std::move(Unknown)});
+  auto Empty = releaseRecord(" ", *L);
+  Reject(llvm::json::Array{std::move(Empty)});
+}
+
+TEST(BinaryDiffLineage, ReleaseTimelineMatchesEverySmallForwardDAG) {
+  const auto L = load({report(program(0), program(1), {{0, 0}})});
+  ASSERT_TRUE(L);
+  for (unsigned Mask = 0; Mask < 64; ++Mask) {
+    llvm::json::Array Rows;
+    bool Edges[4][4]{};
+    unsigned Bit = 0;
+    for (unsigned Parent = 0; Parent < 4; ++Parent)
+      for (unsigned Child = Parent + 1; Child < 4; ++Child)
+        Edges[Parent][Child] = Mask & (1u << Bit++);
+    for (unsigned I = 0; I < 4; ++I) {
+      llvm::json::Array Parents;
+      for (unsigned P = 0; P < I; ++P)
+        if (Edges[P][I])
+          Parents.push_back(std::to_string(P));
+      Rows.push_back(releaseRecord(std::to_string(I), *L, std::move(Parents)));
+    }
+    const auto R = releases(*L, Rows);
+    ASSERT_TRUE(R);
+    unsigned Position[4]{};
+    for (unsigned I = 0; I < 4; ++I)
+      Position[R->releaseTimeline()[I]] = I;
+    unsigned Links = 0;
+    for (unsigned P = 0; P < 4; ++P)
+      for (unsigned C = P + 1; C < 4; ++C)
+        if (Edges[P][C]) {
+          ++Links;
+          EXPECT_LT(Position[P], Position[C]) << Mask;
+        }
+    EXPECT_EQ(R->releaseLinks(), Links);
+    std::reverse(Rows.begin(), Rows.end());
+    for (auto &Row : Rows) {
+      auto *Parents = Row.getAsObject()->getArray("parents");
+      std::reverse(Parents->begin(), Parents->end());
+    }
+    const auto Reordered = releases(*L, std::move(Rows));
+    ASSERT_TRUE(Reordered);
+    EXPECT_EQ(Reordered->revision(), R->revision()) << Mask;
+  }
+}
+
+TEST(BinaryDiffLineage, ReleaseLabelEditsKeepParentsBeyondOnePage) {
+  const auto L = load({report(program(0), program(1), {{0, 0}})});
+  ASSERT_TRUE(L);
+  llvm::json::Array Rows, Parents;
+  for (unsigned I = 0; I < 257; ++I) {
+    const auto ID = "parent-" + std::to_string(I);
+    Parents.push_back(ID);
+    Rows.push_back(releaseRecord(ID, *L));
+  }
+  Rows.push_back(releaseRecord("child", *L, std::move(Parents)));
+  const auto R = releases(*L, std::move(Rows));
+  ASSERT_TRUE(R);
+  auto Rename = releaseRecord("child", *R);
+  Rename["label"] = "Renamed without reading all parents";
+  Rename.erase("parents");
+  const auto Renamed = releases(*R, llvm::json::Array{std::move(Rename)});
+  ASSERT_TRUE(Renamed);
+  EXPECT_EQ(Renamed->releases()[*Renamed->release("child")].Parents.size(),
+            257u);
+  const auto Page =
+      releasePage(*Renamed, llvm::json::Object{{"kind", "release_parents"},
+                                               {"release", "child"},
+                                               {"offset", 200}});
+  EXPECT_EQ(Page.getInteger("total"), 257);
+  EXPECT_EQ(Page.getArray("items")->size(), 57u);
+  EXPECT_FALSE(Page.getArray("items")->front().getAsObject()->get("parents"));
+  std::string Error;
+  const auto Edited = editLineageReleases(
+      *Renamed,
+      llvm::json::Object{
+          {"revision", Renamed->revision()},
+          {"upsert", llvm::json::Array{releaseRecord("new-parent", *Renamed)}},
+          {"remove", llvm::json::Array{"parent-256"}},
+          {"parent_updates", llvm::json::Array{llvm::json::Object{
+                                 {"release", "child"},
+                                 {"remove", llvm::json::Array{"parent-256"}},
+                                 {"add", llvm::json::Array{"new-parent"}}}}}},
+      {}, Error);
+  ASSERT_TRUE(Edited) << Error;
+  EXPECT_FALSE(Edited->release("parent-256"));
+  const auto &Child = Edited->releases()[*Edited->release("child")];
+  EXPECT_EQ(Child.Parents.size(), 257u);
+  EXPECT_TRUE(
+      llvm::is_contained(Child.Parents, *Edited->release("new-parent")));
+  EXPECT_FALSE(editLineageReleases(
+      *Edited,
+      llvm::json::Object{{"revision", Edited->revision()},
+                         {"remove", llvm::json::Array{"new-parent"}}},
+      {}, Error));
+  EXPECT_NE(Error.find("unknown parent"), std::string::npos);
+  EXPECT_EQ(Edited->releaseLinks(), 257u);
+}
+
+TEST(BinaryDiffLineage, ReleaseFocusLocatesSelectionAfterTimelineMoves) {
+  const auto L = load({report(program(0), program(1), {{0, 0}})});
+  ASSERT_TRUE(L);
+  const auto R = releases(
+      *L,
+      llvm::json::Array{
+          releaseRecord("a", *L, llvm::json::Array{}, "2025-01-01T00:00:00Z"),
+          releaseRecord("b", *L, llvm::json::Array{}, "2025-02-01T00:00:00Z"),
+          releaseRecord("c", *L, llvm::json::Array{}, "2025-03-01T00:00:00Z"),
+          releaseRecord("d", *L, llvm::json::Array{}, "2025-04-01T00:00:00Z")});
+  ASSERT_TRUE(R);
+  auto Page = releasePage(
+      *R,
+      llvm::json::Object{{"kind", "releases"}, {"focus", "d"}, {"limit", 2}});
+  EXPECT_EQ(Page.getInteger("offset"), 2);
+  auto Moved =
+      releaseRecord("d", *R, llvm::json::Array{}, "2024-01-01T00:00:00Z");
+  Moved.erase("parents");
+  const auto Changed = releases(*R, llvm::json::Array{std::move(Moved)});
+  ASSERT_TRUE(Changed);
+  Page = releasePage(
+      *Changed,
+      llvm::json::Object{{"kind", "releases"}, {"focus", "d"}, {"limit", 2}});
+  EXPECT_EQ(Page.getInteger("offset"), 0);
+  EXPECT_EQ(Page.getInteger("total"), 4);
+  EXPECT_EQ(Page.getArray("items")->front().getAsObject()->getString("id"),
+            "d");
+  EXPECT_THROW(releasePage(*Changed, llvm::json::Object{{"kind", "releases"},
+                                                        {"focus", "d"},
+                                                        {"offset", 0}}),
+               std::invalid_argument);
+  EXPECT_THROW(
+      releasePage(*Changed, llvm::json::Object{{"kind", "releases"},
+                                               {"focus", "d"},
+                                               {"search", "does-not-exist"}}),
+      std::invalid_argument);
+}
+
+TEST(BinaryDiffLineage, ReleaseEditsHonorBudgetsAndCancellation) {
+  const auto L = load({report(program(0), program(1), {{0, 0}})});
+  ASSERT_TRUE(L);
+  const llvm::json::Object Edit{
+      {"revision", L->revision()},
+      {"upsert",
+       llvm::json::Array{releaseRecord("a", *L),
+                         releaseRecord("b", *L, llvm::json::Array{"a"})}}};
+  const auto Before = writeLineage(*L);
+  std::string Error;
+  const auto R = editLineageReleases(*L, Edit, {}, Error);
+  ASSERT_TRUE(R) << Error;
+  for (unsigned Kind = 0; Kind < 4; ++Kind) {
+    LineageSettings S;
+    if (Kind == 0)
+      S.MaxNodes = L->nodes().size() * 2 + 1;
+    else if (Kind == 1)
+      S.MaxEdges = L->edges().size() * 2;
+    else if (Kind == 2)
+      S.MaxWork = R->work() - 1;
+    else
+      S.MaxSourceBytes = L->sourceBytes();
+    expectStop(ComparisonState::ResourceLimited,
+               [&] { (void)editLineageReleases(*L, Edit, S, Error); });
+  }
+  std::atomic<bool> Stop{false};
+  ComparisonControl C;
+  C.Cancel = &Stop;
+  C.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
+    if (Phase == "lineage:release_edit")
+      Stop = true;
+  };
+  expectStop(ComparisonState::Cancelled,
+             [&] { (void)editLineageReleases(*L, Edit, {}, Error, C); });
+  EXPECT_TRUE(Stop);
+  EXPECT_EQ(writeLineage(*L), Before);
+  auto Stale = Edit;
+  Stale["revision"] = "old";
+  EXPECT_FALSE(editLineageReleases(*L, Stale, {}, Error));
+  EXPECT_NE(Error.find("stale"), std::string::npos);
 }

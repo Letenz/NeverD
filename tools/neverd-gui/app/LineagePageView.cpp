@@ -296,7 +296,8 @@ void LineagePageView::page(qint64 First) {
   Status->setText(tr("Loading evidence…"));
   auto Request = Query;
   Request["revision"] = Revision;
-  Request["offset"] = First;
+  if (!Request.contains("focus"))
+    Request["offset"] = First;
   Request["limit"] = RowsPerPage->value();
   Session.request(
       "lineage_query", {{"query", Request}}, this,
@@ -327,8 +328,9 @@ void LineagePageView::page(qint64 First) {
           return;
         }
         PreferredSelection.clear();
+        Query.remove("focus");
         Rows = Page["items"].toArray();
-        Offset = First;
+        Offset = Page["offset"].toInteger(First);
         NextOffset = Page["next_offset"].isDouble()
                          ? Page["next_offset"].toInteger()
                          : -1;

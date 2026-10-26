@@ -8910,10 +8910,6 @@ SHA-256 secundario: %3
         <translation>Evaluaciones</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>Registros de asociaciones</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>Las asociaciones proceden de informes guardados. No se infieren el orden de las versiones ni la presencia de parches.</translation>
     </message>
@@ -9028,10 +9024,6 @@ SHA-256 secundario: %3
     <message>
         <source>Function filter</source>
         <translation>Filtro de funciones</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>Registros de funciones</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9389,6 +9381,18 @@ Las ambigüedades y decisiones manuales se limitan al informe. Las hipótesis de
         <source>Zoom out</source>
         <translation>Alejar</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>Registros de asociaciones y vínculos padre</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>Registros de funciones y versiones</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>Versiones publicadas</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9585,6 +9589,153 @@ Su grafo anterior sigue disponible.</translation>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>El archivo del grafo de versiones no contiene JSON UTF-8 válido. Revise el archivo e inténtelo de nuevo.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>Metadatos de versión guardados en el grafo actual.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 versiones · %2 vínculos padre declarados. Las fechas y la ascendencia son declaraciones suyas; no se infiere la presencia de parches.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>&amp;Añadir versión…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Rama</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>&amp;Editar versión…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Etiqueta</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>Añadir versión padre…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>Añadir versión</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Rama</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>Hijas</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>Elegir instantánea analizada</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>Elegir versión padre</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>Elegir…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>Hijas declaradas</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>Padres declarados</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>Editar versión</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>Buscar versión o rama</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Etiqueta</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>Abrir instantánea</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>Padres</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>Hora de publicación conocida (UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>Publicación (UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>Versión</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>ID de versión</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>Filtro de versiones</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>¿Quitar %1 de este grafo? Su instantánea y las comparaciones guardadas seguirán disponibles.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>Quitar vínculo padre</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>¿Quitar versión?</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>Quitar versión…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>Antes de borrarla, quite los vínculos que la declaran como padre de sus versiones hijas.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>Seleccione una versión para examinar sus padres e hijas declarados.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>Versión seleccionada: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Instantánea</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>Este motor no admite cronologías de versiones.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>Cronología</translation>
     </message>
 </context>
 </TS>

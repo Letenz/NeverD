@@ -25,6 +25,7 @@ public:
   using Reply = std::function<void(const QJsonObject &)>;
   explicit LineageSession(const QString &Worker, QObject *Parent = nullptr);
   bool ready() const { return Ready; }
+  bool releaseEditingSupported() const { return ReleaseEditing; }
   bool busy() const { return !Requests.isEmpty(); }
   bool cancelRequested() const { return CancelRequested; }
   bool cancellable() const { return !Cancellable.isEmpty(); }
@@ -32,6 +33,8 @@ public:
   QString revision() const { return Summary["revision"].toString(); }
   QString message() const { return Message; }
   void load(const QJsonObject &Payload);
+  void editReleases(QJsonObject Edit, const QJsonObject &Options,
+                    const QString &Focus);
   void save(const QString &Path, const QString &Report = {});
   void cancel();
   void setQueryOptions(QJsonObject Options) {
@@ -43,6 +46,7 @@ public:
 signals:
   void changed();
   void collectionChanged(bool Appended);
+  void releasesEdited(const QString &Focus);
   void progress(const QJsonObject &Value);
   void failed(const QString &Message);
   void saved(const QString &Path);
@@ -57,7 +61,7 @@ private:
   QStringList Cancellable, CancellableOperations;
   QJsonObject Summary, QueryOptions;
   QString Message;
-  bool Ready = false, CancelRequested = false;
+  bool Ready = false, CancelRequested = false, ReleaseEditing = false;
   void receive(const QJsonObject &Value);
 };
 } // namespace neverd::gui

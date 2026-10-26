@@ -47,6 +47,10 @@ cl::opt<std::string> Save(
     cl::desc("Atomically save the collection, or --export-report source bytes"),
     cl::sub(LineageCmd));
 cl::opt<std::string>
+    ReleaseEdit("release-edit",
+                cl::desc("Apply a revision-bound release edit JSON file"),
+                cl::sub(LineageCmd));
+cl::opt<std::string>
     Options("options", cl::desc("Engine admission settings as a JSON object"),
             cl::init("{}"), cl::sub(LineageCmd));
 cl::opt<std::string> Query(
@@ -56,7 +60,8 @@ cl::opt<std::string> Query(
 cl::opt<std::string>
     List("list",
          cl::desc("Page kind: versions, reports, functions, edges, conflicts, "
-                  "reviews, trace_nodes, trace_edges, trace_conflicts"),
+                  "reviews, trace_nodes, trace_edges, trace_conflicts, "
+                  "releases, release_parents, release_children"),
          cl::sub(LineageCmd));
 cl::opt<std::string>
     Snapshot("snapshot",
@@ -68,6 +73,9 @@ cl::opt<std::string> Address("address",
 cl::opt<std::string>
     Source("source", cl::desc("Exact report ID for source evidence pages"),
            cl::sub(LineageCmd));
+cl::opt<std::string> Release("release",
+                             cl::desc("Release ID for parent or child pages"),
+                             cl::sub(LineageCmd));
 cl::opt<std::string>
     ExportReport("export-report",
                  cl::desc("Export exact original bytes of this report ID"),
@@ -209,6 +217,10 @@ std::string human(const llvm::json::Object &O) {
         if (const auto Branch = Row->getString("branch");
             Branch && !Branch->empty())
           OS << "  [" << *Branch << ']';
+        if (const auto Date = Row->getString("published_at"))
+          OS << "  " << *Date;
+        if (const auto Version = Row->getString("version"))
+          OS << "  snapshot " << Version->take_front(12);
         OS << '\n';
       } else
         OS << V << '\n';
@@ -244,16 +256,17 @@ int runLineage() {
     if (!Handle)
       throw std::runtime_error("cannot allocate lineage handle");
     Monitor Stop(Handle.get());
-    for (const auto *Option : {&Query, &List, &Address, &ExportReport, &Reopen})
+    for (const auto *Option : {&Query, &List, &Address, &ExportReport, &Reopen,
+                               &ReleaseEdit, &Release})
       if (Option->getNumOccurrences() && Option->empty())
         throw std::runtime_error("explicit lineage selectors cannot be empty");
     if (Reports.empty() && Reopen.empty())
       throw std::runtime_error("provide --report or --reopen");
     const bool PageFields =
         Snapshot.getNumOccurrences() || Source.getNumOccurrences() ||
-        Search.getNumOccurrences() || Index.getNumOccurrences() ||
-        Offset.getNumOccurrences() || Limit.getNumOccurrences() ||
-        History.getNumOccurrences();
+        Release.getNumOccurrences() || Search.getNumOccurrences() ||
+        Index.getNumOccurrences() || Offset.getNumOccurrences() ||
+        Limit.getNumOccurrences() || History.getNumOccurrences();
     const bool PageQuery = Query.getNumOccurrences() ||
                            List.getNumOccurrences() ||
                            Address.getNumOccurrences();
@@ -282,7 +295,20 @@ int runLineage() {
     if (!neverd_lineage_load_json(Handle.get(), Document.c_str(),
                                   Options.c_str(), nullptr, nullptr))
       throw std::runtime_error(take(neverd_lineage_last_error(Handle.get())));
-    const auto Summary = parse(take(neverd_lineage_summary_json(Handle.get())));
+    auto Summary = parse(take(neverd_lineage_summary_json(Handle.get())));
+    if (!ReleaseEdit.empty()) {
+      auto Edit = parse(read(ReleaseEdit, InputBytes));
+      auto *Object = Edit.getAsObject();
+      if (!Object)
+        throw std::runtime_error("--release-edit must contain a JSON object");
+      if (!Object->get("revision"))
+        (*Object)["revision"] = *Summary.getAsObject()->getString("revision");
+      const auto Text = render(std::move(Edit));
+      if (!neverd_lineage_edit_releases_json(Handle.get(), Text.c_str(),
+                                             Options.c_str(), nullptr, nullptr))
+        throw std::runtime_error(take(neverd_lineage_last_error(Handle.get())));
+      Summary = parse(take(neverd_lineage_summary_json(Handle.get())));
+    }
     const auto &S = *Summary.getAsObject();
     std::string Output, Saved;
     if (!ExportReport.empty()) {
@@ -311,6 +337,8 @@ int runLineage() {
             (*Q)["address"] = Address.getValue();
           if (!Source.empty())
             (*Q)["report"] = Source.getValue();
+          if (!Release.empty())
+            (*Q)["release"] = Release.getValue();
           if (Search.getNumOccurrences())
             (*Q)["search"] = Search.getValue();
           if (Index.getNumOccurrences())

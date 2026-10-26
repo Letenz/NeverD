@@ -18,6 +18,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/JSON.h"
 
 #include <cstdint>
 #include <memory>
@@ -29,6 +30,7 @@ namespace neverd::diff {
 
 inline constexpr llvm::StringLiteral LineageSchema = "neverd.bindiff.lineage";
 inline constexpr unsigned LineageSchemaVersion = 1;
+inline constexpr unsigned LineageReleaseSchemaVersion = 2;
 
 struct LineageSettings {
   uint64_t MaxSourceBytes = limits::diff::kDefaultLineageSourceBytes;
@@ -57,6 +59,14 @@ struct LineageVersion {
   uint32_t Report = NoIndex;
   bool Secondary = false;
   uint32_t FirstNode = 0;
+};
+
+/// Analyst-declared release identity, independent of analyzed content identity.
+/// Parent links never promote correspondence into patch or ancestry evidence.
+struct LineageRelease {
+  std::string ID, Label, Branch, PublishedAt;
+  uint32_t Version = NoIndex;
+  std::vector<uint32_t> Parents, Children;
 };
 
 struct LineageNode {
@@ -111,17 +121,22 @@ private:
 class Lineage {
 public:
   llvm::StringRef revision() const { return Revision; }
+  unsigned schemaVersion() const { return SchemaVersion; }
   llvm::ArrayRef<LineageVersion> versions() const { return Versions; }
+  llvm::ArrayRef<LineageRelease> releases() const { return Releases; }
+  llvm::ArrayRef<uint32_t> releaseTimeline() const { return ReleaseTimeline; }
+  uint64_t releaseLinks() const { return ReleaseLinks; }
   llvm::ArrayRef<LineageReport> reports() const { return Reports; }
   llvm::ArrayRef<LineageNode> nodes() const { return Nodes; }
   llvm::ArrayRef<LineageEdge> edges() const { return Edges; }
   llvm::ArrayRef<LineageConflict> conflicts() const { return Conflicts; }
   uint64_t reportBytes() const { return ReportBytes; }
-  /// Retained report text and version label/branch text; not process RSS.
+  /// Retained report and snapshot/release metadata text; not process RSS.
   uint64_t sourceBytes() const { return ReportBytes + MetadataBytes; }
   uint64_t work() const { return Work; }
   llvm::ArrayRef<SavedFunction> functions(uint32_t Version) const;
   std::optional<uint32_t> version(llvm::StringRef ID) const;
+  std::optional<uint32_t> release(llvm::StringRef ID) const;
   std::optional<uint32_t> node(uint32_t Version, uint64_t Address) const;
   /// Throws ComparisonInterrupted on stop/exhaustion; no partial projection.
   LineageTrace trace(uint32_t Source, uint64_t MaxWork,
@@ -131,15 +146,23 @@ private:
   friend std::shared_ptr<const Lineage>
   readLineage(llvm::StringRef, const LineageSettings &, std::string &,
               const ComparisonControl &, const Lineage *);
+  friend std::shared_ptr<const Lineage>
+  editLineageReleases(const Lineage &, const llvm::json::Object &,
+                      const LineageSettings &, std::string &,
+                      const ComparisonControl &);
   Lineage() = default;
   std::string Revision;
+  unsigned SchemaVersion = LineageSchemaVersion;
   std::vector<LineageVersion> Versions;
+  std::vector<LineageRelease> Releases;
+  std::vector<uint32_t> ReleaseTimeline;
   std::vector<LineageReport> Reports;
   std::vector<LineageNode> Nodes;
   std::vector<LineageEdge> Edges;
   std::vector<LineageConflict> Conflicts;
   std::vector<std::vector<uint32_t>> Adjacency, ComponentConflicts;
   uint64_t ReportBytes = 0, MetadataBytes = 0, Work = 0;
+  uint64_t ReleaseLinks = 0;
 };
 
 /// Strict lineage wrapper plus the existing readComparison for every unique
@@ -154,6 +177,14 @@ readLineage(llvm::StringRef Text, const LineageSettings &Settings,
 /// Source-only persistence; reopen always reconstructs the graph and conflicts.
 std::string writeLineage(const Lineage &Value,
                          const ComparisonControl &Control = {});
+
+/// Apply a revision-bound {revision, upsert, remove, parent_updates} edit.
+/// Existing upserts may omit parents to retain them. Validation,
+/// budget accounting and cancellation precede publication by the caller.
+std::shared_ptr<const Lineage>
+editLineageReleases(const Lineage &Value, const llvm::json::Object &Edit,
+                    const LineageSettings &Settings, std::string &Error,
+                    const ComparisonControl &Control = {});
 
 } // namespace neverd::diff
 

@@ -310,12 +310,15 @@ Json hello() {
          {"lineage_load", "lineage_summary", "lineage_status", "lineage_query",
           "lineage_save", "lineage_save_report", "lineage_close"})
       result["capabilities"].push_back(Operation);
+    if (LineageService::releaseEditingSupported())
+      result["capabilities"].push_back("lineage_edit_releases");
     result["lineage_cancellation"] =
         "cooperative; previous collection retained on stop";
     result["lineage_cancellable_operations"] = Json::array();
     for (const auto Operation : LineageService::CancellableOperations)
-      result["lineage_cancellable_operations"].push_back(
-          std::string(Operation));
+      if (LineageService::cancellable(Operation))
+        result["lineage_cancellable_operations"].push_back(
+            std::string(Operation));
   }
   // Function edits, data items and operand formats need an engine that keeps
   // them.

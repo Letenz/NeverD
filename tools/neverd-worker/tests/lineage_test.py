@@ -222,7 +222,75 @@ int rename(const char *from, const char *to) {
         assert json.loads(cli(args, "--report", incomplete, "--json", code=3))["incomplete_reports"] == 1
         ok(client, "lineage_close")
         assert not ok(client, "lineage_status")["result_available"]
+    check_releases(args, root, reports, originals)
     print("Lineage worker/CLI: native sources, cycles, pages, exact bytes, metadata, budgets, stale requests, cancellation and >32 MiB persistence passed")
+
+
+def check_releases(args, root, reports, originals):
+    with Client(args.worker) as client:
+        assert "lineage_edit_releases" in client.hello["capabilities"]
+        assert "lineage_edit_releases" in client.hello["lineage_cancellable_operations"]
+        loaded = ok(client, "lineage_load", {"reports": list(map(str, reports))})
+        version = ok(client, "lineage_query", {"query": {"kind": "versions"}})["items"][0]["id"]
+        old = root / "before-release-metadata.ndlineage"
+        ok(client, "lineage_save", {"path": str(old)})
+        def record(identifier, parents=(), date=None):
+            return {"id": identifier, "label": "Same label 中文", "branch": identifier,
+                    "version": version, "published_at": date, "parents": list(parents)}
+        edit = {"revision": loaded["revision"], "upsert": [
+            record("merge", ["stable", "preview"], "2026-10-25T08:00:00Z"),
+            record("stable", (), "2026-10-24T08:00:00Z"), record("preview")]}
+        added = ok(client, "lineage_edit_releases", {"edit": edit})
+        assert added["releases"] == 3 and added["versions"] == loaded["versions"]
+        assert added["schema_version"] == 1 and added["document_schema_version"] == 2
+        assert added["edit_completed"]
+        page = ok(client, "lineage_query", {"query": {"kind": "releases", "limit": 2}})
+        assert [r["id"] for r in page["items"]] == ["stable", "preview"]
+        assert page["total"] == 3 and page["next_offset"] == 2
+        edits = root / "release-edit.json"
+        edits.write_text(json.dumps(edit), encoding="utf-8")
+        saved = root / "with-release-metadata.ndlineage"
+        actual = json.loads(cli(args, "--reopen", old, "--release-edit", edits,
+                                "--list", "releases", "--limit", 2, "--save", saved, "--json"))
+        assert actual == page, (actual, page)
+        assert json.loads(saved.read_text())["schema_version"] == 2
+        parents = json.loads(cli(args, "--reopen", saved, "--list", "release_parents",
+                                 "--release", "merge", "--json"))
+        assert {r["id"] for r in parents["items"]} == {"stable", "preview"}
+        before = added["revision"]
+        for invalid in ({"revision": "stale", "remove": []},
+                        {"remove": ["stable"]},
+                        {"parent_updates": [{"release": "stable", "add": ["merge"]}]}):
+            refused = reply(client, "lineage_edit_releases", {"edit": invalid})
+            assert refused["status"] == "error", refused
+            assert ok(client, "lineage_summary")["revision"] == before
+        rename = record("merge")
+        del rename["parents"]
+        rename["label"] = "Relabelled, all parents retained"
+        ok(client, "lineage_edit_releases", {"edit": {"upsert": [rename]}})
+        assert ok(client, "lineage_query", {"query": {"kind": "release_parents", "release": "merge"}})["total"] == 2
+        # Both existing append and snapshot-label workflows retain the v2 envelope.
+        ok(client, "lineage_load", {"append": True, "reports": [str(reports[0])],
+            "version_updates": [{"id": version, "label": "Renamed snapshot", "branch": "analysis"}]})
+        snapshot_changed = ok(client, "lineage_query", {"query": {"kind": "releases"}})
+        assert snapshot_changed["total"] == 3
+        assert {r["version_label"] for r in snapshot_changed["items"]} == {"Renamed snapshot"}
+        final = ok(client, "lineage_edit_releases", {"edit": {
+            "remove": ["stable"], "parent_updates": [{"release": "merge", "remove": ["stable"]}]}})
+        assert final["releases"] == 2 and final["release_links"] == 1
+        before = final["revision"]
+        stopped = reply(client, "lineage_edit_releases", {"edit": {"remove": []},
+                                                         "options": {"max_work": 1}})
+        assert stopped["error"]["code"] == "resource_limited", stopped
+        assert ok(client, "lineage_summary")["revision"] == before
+        ok(client, "lineage_save", {"path": str(saved)})
+        ok(client, "lineage_close")
+        assert ok(client, "lineage_load", {"path": str(saved)})["revision"] == before
+        source = ok(client, "lineage_query", {"query": {"kind": "reports"}})["items"][0]["id"]
+        assert cli(args, "--reopen", saved, "--export-report", source) in originals
+        assert reply(client, "lineage_edit_releases", {"expected_lineage_revision": loaded["revision"],
+            "edit": {"remove": []}})["error"]["code"] == "stale_lineage"
+    print("Release metadata: CLI/worker parity, aliases, chronology, batch parent edits, stale requests, budgets and exact source export passed")
 
 
 def main():

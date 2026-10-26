@@ -8874,10 +8874,6 @@ Secondary SHA-256: %3
         <translation>평가</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>연결 레코드</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>연결은 저장된 보고서에서 가져옵니다. 릴리스 순서와 패치 존재 여부는 추론하지 않습니다.</translation>
     </message>
@@ -8992,10 +8988,6 @@ Secondary SHA-256: %3
     <message>
         <source>Function filter</source>
         <translation>함수 필터</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>함수 레코드</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9353,6 +9345,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Zoom out</source>
         <translation>축소</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>연관 관계 및 부모 링크 레코드</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>함수 및 릴리스 레코드</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>릴리스</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9549,6 +9553,153 @@ Your previous graph is still available.</source>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>버전 그래프 파일이 올바른 UTF-8 JSON 형식이 아닙니다. 파일을 확인한 후 다시 시도하세요.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>릴리스 메타데이터를 현재 그래프에 저장했습니다.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>릴리스 %1개 · 선언된 부모 링크 %2개. 날짜와 계보는 사용자가 지정하며, 패치 존재 여부를 추론하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>릴리스 추가(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>브랜치(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>릴리스 편집(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>레이블(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>부모 릴리스 추가…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>릴리스 추가</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>브랜치</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>자식 릴리스</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>분석된 스냅샷 선택</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>부모 릴리스 선택</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>선택…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>선언된 자식 릴리스</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>선언된 부모 릴리스</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>릴리스 편집</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>릴리스 또는 브랜치 찾기</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>레이블</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>스냅샷 열기</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>부모 릴리스</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>게시 시간이 알려져 있음(UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>게시 시간(UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>릴리스</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>릴리스 ID</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>릴리스 필터</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>이 그래프에서 %1을(를) 제거할까요? 스냅샷과 저장된 비교는 유지됩니다.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>부모 링크 제거</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>릴리스를 제거할까요?</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>릴리스 제거…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>삭제하기 전에 자식 릴리스에서 이 릴리스를 가리키는 부모 링크를 제거하세요.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>릴리스를 선택하여 선언된 부모 및 자식 릴리스를 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>선택한 릴리스: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>스냅샷</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>이 엔진은 릴리스 타임라인을 지원하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>타임라인</translation>
     </message>
 </context>
 </TS>

@@ -9054,10 +9054,6 @@ SHA-256 الثانوي: %3
         <translation>التقييمات</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>سجلات الارتباطات</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>تأتي الارتباطات من التقارير المحفوظة. لا يُستنتج ترتيب الإصدارات أو وجود التصحيح.</translation>
     </message>
@@ -9172,10 +9168,6 @@ SHA-256 الثانوي: %3
     <message>
         <source>Function filter</source>
         <translation>مرشح الدوال</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>سجلات الدوال</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9533,6 +9525,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Zoom out</source>
         <translation>تصغير</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>سجلات الارتباطات وروابط الإصدارات الأصلية</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>سجلات الدوال والإصدارات</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>الإصدارات</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9729,6 +9733,153 @@ Your previous graph is still available.</source>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>ملف رسم الإصدارات ليس JSON صالحاً بترميز UTF-8. تحقّق من الملف وحاول مجدداً.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>حُفظت بيانات الإصدار الوصفية في الرسم الحالي.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 إصدار · %2 رابط أصل مُعلَن. التواريخ وتسلسل الأصل من تصريحاتك؛ لا يُستنتج وجود التصحيح.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>إ&amp;ضافة إصدار…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>الفرع (&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>ت&amp;حرير الإصدار…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>التسمية (&amp;L)</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>إضافة إصدار أصل…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>إضافة إصدار</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>الفرع</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>الإصدارات المتفرعة</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>اختيار لقطة تم تحليلها</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>اختيار إصدار أصل</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>اختيار…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>الإصدارات المتفرعة المُعلَنة</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>الإصدارات الأصلية المُعلَنة</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>تحرير الإصدار</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>البحث عن إصدار أو فرع</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>المعرّف</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>التسمية</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>فتح اللقطة</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>الإصدارات الأصلية</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>وقت النشر معروف (UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>وقت النشر (UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>الإصدار</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>معرّف الإصدار</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>مرشح الإصدارات</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>هل تريد إزالة %1 من هذا الرسم؟ ستبقى لقطته والمقارنات المحفوظة متاحة.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>إزالة رابط الأصل</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>إزالة الإصدار؟</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>إزالة الإصدار…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>قبل حذفه، أزل من الإصدارات المتفرعة الروابط التي تشير إلى هذا الإصدار بوصفه أصلًا.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>اختر إصدارًا لفحص الإصدارات الأصلية والمتفرعة المُعلَنة له.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>الإصدار المحدد: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>لقطة</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>هذا المحرك لا يدعم المخططات الزمنية للإصدارات.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>المخطط الزمني</translation>
     </message>
 </context>
 </TS>

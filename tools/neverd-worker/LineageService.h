@@ -30,8 +30,10 @@ public:
   explicit LineageService(Writer Write);
   ~LineageService();
   static bool supported();
+  static bool releaseEditingSupported();
   static constexpr std::string_view CancellableOperations[] = {
-      "lineage_load", "lineage_query", "lineage_save", "lineage_save_report"};
+      "lineage_load", "lineage_query", "lineage_save", "lineage_save_report",
+      "lineage_edit_releases"};
   static bool cancellable(std::string_view Operation);
   Json execute(const std::string &Operation, const Json &Payload,
                const Progress &Notify, const Cancellation &Cancelled);

@@ -8910,10 +8910,6 @@ Secondary SHA-256: %3
         <translation>Assessments</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>Association records</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>Associations come from saved reports. Release order and patch presence are not inferred.</translation>
     </message>
@@ -9028,10 +9024,6 @@ Secondary SHA-256: %3
     <message>
         <source>Function filter</source>
         <translation>Function filter</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>Function records</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9389,6 +9381,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Zoom out</source>
         <translation>Zoom out</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>Association and parent link records</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>Function and release records</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>Releases</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9585,6 +9589,153 @@ Your previous graph is still available.</translation>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>The version graph file is not valid UTF-8 JSON. Check the file and try again.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>Release metadata saved in the current graph.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>&amp;Add release…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Branch</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>&amp;Edit release…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Label</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>Add parent…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>Add release</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Branch</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>Children</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>Choose analyzed snapshot</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>Choose parent release</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>Choose…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>Declared children</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>Declared parents</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>Edit release</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>Find a release or branch</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Label</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>Open snapshot</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>Parents</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>Publication time is known (UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>Published (UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>Release</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>Release ID</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>Release filter</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>Remove parent link</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>Remove release?</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>Remove release…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>Remove this release's parent links from its children before deleting it.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>Select a release to inspect its declared parents and children.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>Selected release: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Snapshot</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>This engine does not support release timelines.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>Timeline</translation>
     </message>
 </context>
 </TS>

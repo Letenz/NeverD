@@ -48,6 +48,14 @@ NEVERD_API int neverd_lineage_load_json(neverd_lineage_t Lineage,
                                         const char *Options,
                                         neverd_lineage_progress_t Progress,
                                         void *Context);
+/// Additive optional export. Edit is a bounded JSON object containing the exact
+/// revision and upsert/remove/parent_updates arrays. Existing release upserts
+/// may omit parents to preserve them. The complete candidate is validated and
+/// published atomically; failure retains the old collection and trace. Options
+/// and callback rules are the same as load_json. Upgrades persistence to v2.
+NEVERD_API int neverd_lineage_edit_releases_json(
+    neverd_lineage_t Lineage, const char *Edit, const char *Options,
+    neverd_lineage_progress_t Progress, void *Context);
 NEVERD_API const char *neverd_lineage_summary_json(neverd_lineage_t Lineage);
 /// Query requires kind and exact revision; see docs/binary-diff.md. Pages are
 /// bounded by the shared row/byte policy. Trace pages reuse a single complete

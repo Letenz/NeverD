@@ -866,6 +866,19 @@ whole reports never use the bounded backend-reply parser or cross IPC. Qt owns
 navigation and presentation only. See [lineage contracts](binary-diff-lineage.md)
 for accounting, cooperative checkpoints and report-only provenance.
 
+`Lineage` also owns analyst-declared release aliases, parent validation and
+timeline ordering in the v2 envelope. Releases reference existing snapshots;
+they never add correspondence edges. Iterative topological admission propagates
+the latest known ancestor timestamp through undated releases. The same core
+release editor applies record and parent deltas before revalidating the complete
+candidate. The C ABI alone publishes it and invalidates trace caches. Bounded
+release pages expose relation counts; parent/child pages carry the individual
+records. Core focus-by-ID locates a page after timeline edits, so Qt need not
+scan the inventory or select a different release at an old offset. Optional
+symbol discovery gates worker advertisement and desktop editing while preserving
+older graph operations. V1 document revisions and source report bytes remain
+unchanged; projection schema versions are independent of the v2 document.
+
 `lib/diff` owns the immutable comparison model, normalization-independent matching,
 block/instruction deltas, correspondence overrides and versioned persistence.
 It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.

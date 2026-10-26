@@ -8874,10 +8874,6 @@ Secondary SHA-256: %3
         <translation>評估</translation>
     </message>
     <message>
-        <source>Association records</source>
-        <translation>關聯記錄</translation>
-    </message>
-    <message>
         <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
         <translation>關聯來自已儲存的報告，不推斷版本順序或修補程式是否存在。</translation>
     </message>
@@ -8992,10 +8988,6 @@ Secondary SHA-256: %3
     <message>
         <source>Function filter</source>
         <translation>函式篩選</translation>
-    </message>
-    <message>
-        <source>Function records</source>
-        <translation>函式記錄</translation>
     </message>
     <message>
         <source>Functions</source>
@@ -9353,6 +9345,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Zoom out</source>
         <translation>縮小</translation>
     </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>關聯與父版本連結記錄</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>函式與發布版本記錄</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>發布版本</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
@@ -9549,6 +9553,153 @@ Your previous graph is still available.</source>
     <message>
         <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
         <translation>版本圖檔案不是有效的 UTF-8 JSON。請檢查檔案後再試一次。</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>發布版本中繼資料已儲存到目前的圖中。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 個發布版本 · %2 條宣告的父版本連結。日期與繼承關係由您宣告，不推斷修補程式是否存在。</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>新增發布版本(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>分支(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>編輯發布版本(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>標籤(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>新增父版本…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>新增發布版本</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>分支</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>子版本</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>選擇已分析的快照</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>選擇父版本</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>選擇…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>宣告的子版本</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>宣告的父版本</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>編輯發布版本</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>尋找發布版本或分支</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>識別碼</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>標籤</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>開啟快照</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>父版本</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>發布時間已知（UTC）</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>發布時間（UTC）</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>發布版本</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>發布版本識別碼</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>發布版本篩選</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>要從此圖中移除 %1 嗎？其快照與已儲存的比較仍會保留。</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>移除父版本連結</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>移除發布版本？</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>移除發布版本…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>刪除前，請先從其子版本中移除此發布版本的父版本連結。</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>選擇發布版本以檢視其宣告的父版本與子版本。</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>所選發布版本：%1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>快照</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>此引擎不支援發布版本時間軸。</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>時間軸</translation>
     </message>
 </context>
 </TS>

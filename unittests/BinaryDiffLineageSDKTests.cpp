@@ -252,3 +252,110 @@ TEST_F(BinaryDiffLineageSDK, TracePagesReuseWorkButHonorCurrentAdmission) {
             1);
   EXPECT_EQ(summary().getString("revision"), Revision);
 }
+
+TEST_F(BinaryDiffLineageSDK,
+       ReleaseEditsPublishAtomicallyAndPreserveTraceOnStop) {
+  ASSERT_EQ(neverd_lineage_load_json(Handle, Document.c_str(), nullptr, nullptr,
+                                     nullptr),
+            1);
+  const auto Revision = summary().getString("revision")->str();
+  const auto Versions = object(
+      query(llvm::json::Object{{"kind", "versions"}, {"revision", Revision}}));
+  const auto Version =
+      Versions.getArray("items")->front().getAsObject()->getString("id")->str();
+  const auto Trace = query(llvm::json::Object{{"kind", "trace_nodes"},
+                                              {"revision", Revision},
+                                              {"version", Version},
+                                              {"address", "0x1000"}});
+  ASSERT_FALSE(Trace.empty());
+  const auto Before = saved();
+  const auto Edit = render(
+      llvm::json::Object{{"revision", Revision},
+                         {"upsert", llvm::json::Array{llvm::json::Object{
+                                        {"id", "release-1"},
+                                        {"label", "Stable 1"},
+                                        {"branch", "stable"},
+                                        {"version", Version},
+                                        {"published_at", nullptr},
+                                        {"parents", llvm::json::Array{}}}}}});
+  struct Probe {
+    neverd_lineage_t Handle;
+    const char *Phase;
+    bool Reached = false;
+  };
+  const auto Cancel =
+      +[](void *Context, const char *Phase, neverd_va_t, neverd_va_t) {
+        auto &P = *static_cast<Probe *>(Context);
+        if (llvm::StringRef(Phase) == P.Phase) {
+          P.Reached = true;
+          neverd_lineage_cancel(P.Handle);
+        }
+      };
+  for (const auto Phase : {"lineage:release_edit", "lineage:parse",
+                           "lineage:publish", "lineage:commit"}) {
+    Probe P{Handle, Phase};
+    EXPECT_EQ(neverd_lineage_edit_releases_json(Handle, Edit.c_str(), nullptr,
+                                                Cancel, &P),
+              0);
+    EXPECT_TRUE(P.Reached) << Phase;
+    EXPECT_EQ(status().getString("operation_state"), "cancelled");
+    EXPECT_EQ(status().getString("loaded_revision"), Revision);
+    EXPECT_EQ(saved(), Before);
+    EXPECT_EQ(query(llvm::json::Object{{"kind", "trace_nodes"},
+                                       {"revision", Revision},
+                                       {"version", Version},
+                                       {"address", "0x1000"}}),
+              Trace);
+  }
+  EXPECT_EQ(neverd_lineage_edit_releases_json(
+                Handle, Edit.c_str(), "{\"max_work\":1}", nullptr, nullptr),
+            0);
+  EXPECT_EQ(status().getString("operation_state"), "resource_limited");
+  EXPECT_EQ(saved(), Before);
+  const auto Delay = +[](void *, const char *Phase, neverd_va_t, neverd_va_t) {
+    if (llvm::StringRef(Phase) == "lineage:start")
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  };
+  EXPECT_EQ(neverd_lineage_edit_releases_json(
+                Handle, Edit.c_str(), "{\"timeout_ms\":1}", Delay, nullptr),
+            0);
+  EXPECT_EQ(status().getString("operation_state"), "timed_out");
+  EXPECT_EQ(saved(), Before);
+  ASSERT_EQ(neverd_lineage_edit_releases_json(Handle, Edit.c_str(), nullptr,
+                                              nullptr, nullptr),
+            1)
+      << take(neverd_lineage_last_error(Handle));
+  const auto Current = summary().getString("revision")->str();
+  EXPECT_NE(Current, Revision);
+  EXPECT_EQ(summary().getInteger("document_schema_version"), 2);
+  EXPECT_EQ(summary().getInteger("releases"), 1);
+  EXPECT_EQ(summary().getInteger("schema_version"), 1);
+  const auto After = saved();
+  EXPECT_EQ(neverd_lineage_edit_releases_json(Handle, Edit.c_str(), nullptr,
+                                              nullptr, nullptr),
+            0);
+  EXPECT_NE(take(neverd_lineage_last_error(Handle)).find("stale"),
+            std::string::npos);
+  EXPECT_EQ(saved(), After);
+  EXPECT_TRUE(query(llvm::json::Object{{"kind", "trace_nodes"},
+                                       {"revision", Revision},
+                                       {"version", Version},
+                                       {"address", "0x1000"}})
+                  .empty());
+  EXPECT_FALSE(query(llvm::json::Object{{"kind", "trace_nodes"},
+                                        {"revision", Current},
+                                        {"version", Version},
+                                        {"address", "0x1000"}})
+                   .empty());
+  const auto Sources = object(
+      query(llvm::json::Object{{"kind", "reports"}, {"revision", Current}}));
+  const auto Source =
+      Sources.getArray("items")->front().getAsObject()->getString("id")->str();
+  EXPECT_EQ(take(neverd_lineage_report_json(Handle, Source.c_str(), nullptr,
+                                            nullptr)),
+            Report);
+  EXPECT_EQ(neverd_lineage_load_json(Handle, After.c_str(), nullptr, nullptr,
+                                     nullptr),
+            1);
+  EXPECT_EQ(saved(), After);
+}

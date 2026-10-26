@@ -93,6 +93,35 @@ void deadline(ComparisonControl &Control, uint64_t Milliseconds,
   Control.check();
 }
 
+struct Replacement {
+  std::shared_ptr<const Lineage> Data;
+  std::string Revision;
+};
+
+LineageSettings admissionSettings(Handle &H, const char *Options,
+                                  ComparisonControl &Control,
+                                  std::chrono::steady_clock::time_point Start) {
+  const auto O = object(Options, Control);
+  auto Settings = readLineageSettings(O);
+  deadline(Control, O.getInteger("timeout_ms").value_or(0), Start);
+  if (H.Trace) {
+    if (H.Trace->nodes().size() >= Settings.MaxNodes ||
+        H.Trace->edges().size() + H.Trace->conflicts().size() >=
+            Settings.MaxEdges)
+      throw ComparisonInterrupted(ComparisonState::ResourceLimited);
+    Settings.MaxNodes -= H.Trace->nodes().size();
+    Settings.MaxEdges -= H.Trace->edges().size() + H.Trace->conflicts().size();
+  }
+  return Settings;
+}
+
+int publish(Handle &H, Replacement Next) {
+  H.Data.swap(Next.Data);
+  H.Revision.swap(Next.Revision);
+  H.Trace.reset();
+  return 1;
+}
+
 /// No user callback or throwing preparation occurs after Commit. The final
 /// check and publication share the status lock; later cancellation is merely a
 /// request for a now-finished operation and cannot relabel it as stopped.
@@ -227,25 +256,10 @@ int neverd_lineage_load_json(neverd_lineage_t L, const char *Document,
                              const char *Options,
                              neverd_lineage_progress_t Progress,
                              void *Context) {
-  struct Replacement {
-    std::shared_ptr<const Lineage> Data;
-    std::string Revision;
-  };
   return operation<int>(
       L, Progress, Context,
       [&](Handle &H, ComparisonControl &Control, auto Start) {
-        auto O = object(Options, Control);
-        auto Settings = readLineageSettings(O);
-        deadline(Control, O.getInteger("timeout_ms").value_or(0), Start);
-        if (H.Trace) {
-          if (H.Trace->nodes().size() >= Settings.MaxNodes ||
-              H.Trace->edges().size() + H.Trace->conflicts().size() >=
-                  Settings.MaxEdges)
-            throw ComparisonInterrupted(ComparisonState::ResourceLimited);
-          Settings.MaxNodes -= H.Trace->nodes().size();
-          Settings.MaxEdges -=
-              H.Trace->edges().size() + H.Trace->conflicts().size();
-        }
+        const auto Settings = admissionSettings(H, Options, Control, Start);
         std::string Error;
         auto Data = readLineage(
             bounded(Document, limits::kMaxSavedComparisonBytes, Control),
@@ -253,12 +267,27 @@ int neverd_lineage_load_json(neverd_lineage_t L, const char *Document,
         require(bool(Data), Error);
         return Replacement{Data, Data->revision().str()};
       },
-      [](Handle &H, Replacement Next) {
-        H.Data.swap(Next.Data);
-        H.Revision.swap(Next.Revision);
-        H.Trace.reset();
-        return 1;
-      });
+      publish);
+}
+
+int neverd_lineage_edit_releases_json(neverd_lineage_t L, const char *Edit,
+                                      const char *Options,
+                                      neverd_lineage_progress_t Progress,
+                                      void *Context) {
+  return operation<int>(
+      L, Progress, Context,
+      [&](Handle &H, ComparisonControl &Control, auto Start) {
+        require(bool(H.Data), "no lineage is loaded");
+        require(Edit, "lineage release edit is required");
+        const auto Settings = admissionSettings(H, Options, Control, Start);
+        const auto Request = object(Edit, Control);
+        std::string Error;
+        auto Data =
+            editLineageReleases(*H.Data, Request, Settings, Error, Control);
+        require(bool(Data), Error);
+        return Replacement{Data, Data->revision().str()};
+      },
+      publish);
 }
 
 const char *neverd_lineage_summary_json(neverd_lineage_t L) {

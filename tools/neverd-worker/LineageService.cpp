@@ -40,6 +40,7 @@ struct API {
   ENTRY(status_json);
   ENTRY(last_error);
   ENTRY(load_json);
+  ENTRY(edit_releases_json);
   ENTRY(summary_json);
   ENTRY(query_json);
   ENTRY(export_json);
@@ -213,7 +214,12 @@ LineageService::LineageService(Writer W)
     : State(std::make_unique<Impl>(std::move(W))) {}
 LineageService::~LineageService() = default;
 bool LineageService::supported() { return bool(api()); }
+bool LineageService::releaseEditingSupported() {
+  return supported() && api().edit_releases_json;
+}
 bool LineageService::cancellable(std::string_view Operation) {
+  if (Operation == "lineage_edit_releases")
+    return releaseEditingSupported();
   return supported() && std::find(std::begin(CancellableOperations),
                                   std::end(CancellableOperations),
                                   Operation) != std::end(CancellableOperations);
@@ -261,6 +267,34 @@ Json LineageService::execute(const std::string &Operation, const Json &Payload,
     check(Cancelled);
     Forward F{S.Handle, Notify, Cancelled, {}, {}};
     Monitor Stop(F);
+    if (Operation == "lineage_edit_releases") {
+      if (!releaseEditingSupported())
+        throw Error("unsupported", "This engine cannot edit release metadata");
+      if (S.Summary.empty())
+        throw Error("invalid_request", "No version graph is loaded");
+      fields(P, {"edit", "options"});
+      auto Edit = P.value("edit", Json::object());
+      if (!Edit.is_object())
+        throw Error("invalid_request", "Release edit must be an object");
+      if (!Edit.contains("revision"))
+        Edit["revision"] = S.revision();
+      const auto Text =
+          transport::serializeJson(Edit, limits::kMaxOptionsBytes);
+      const auto Options = transport::serializeJson(
+          P.value("options", Json::object()), limits::kMaxOptionsBytes);
+      const auto OK = api().edit_releases_json(
+          S.Handle, Text.c_str(), Options.c_str(), Forward::progress, &F);
+      Stop.stop();
+      F.rethrow();
+      if (!OK)
+        (void)S.text(nullptr);
+      S.Summary =
+          parseJson(S.text(api().summary_json(S.Handle)), MaxBackendBytes);
+      S.Outcome = "complete";
+      auto Out = S.summary();
+      Out["edit_completed"] = true;
+      return Out;
+    }
     if (Operation == "lineage_load") {
       fields(P, {"reports", "path", "append", "versions", "version_updates",
                  "options"});

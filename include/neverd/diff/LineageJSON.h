@@ -18,7 +18,7 @@
 namespace neverd::diff {
 
 struct LineageQuery {
-  std::string Kind, Revision, Version, Report, Search;
+  std::string Kind, Revision, Version, Report, Release, Search, Focus;
   uint64_t Address = 0, Offset = 0;
   uint32_t Index = 0, Limit = limits::diff::kDefaultPageSize;
   uint64_t MaxWork = limits::diff::kDefaultLineageWork, TimeoutMilliseconds = 0;

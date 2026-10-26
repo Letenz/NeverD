@@ -54,8 +54,8 @@ project identity, format, architecture, ABI, normalization, revision, analysis
 settings, endianness, bitness, image base, entry and discovery completeness. Only
 the caller's filesystem path is excluded. Different inventories under the same
 identity are refused. Identical content analyzed identically is one snapshot;
-separate release aliases and chronological ancestry are outside this profile.
-Labels and branches are analyst-authored metadata, not evidence of ancestry.
+separate release records may refer to that same snapshot. Snapshot labels and
+branches are analyst-authored metadata, not evidence of ancestry.
 
 Active byte patches contribute their effective file offsets and bytes to the
 analysis identity, including data outside decoded functions. The underlying
@@ -105,6 +105,15 @@ is refused. All pages return `items`, `total`, `offset`, nullable `next_offset`,
 | `decisions`, `ambiguities`, `warnings`, `native_regions`, `flow_regions` | `report` |
 | `ambiguity_primary`, `ambiguity_secondary` | `report`, ambiguity `index` |
 | `native_region_anchors`, `flow_region_anchors` | `report`, hypothesis `index` |
+| `releases` | Optional `version`, `search`, or exact release ID `focus` |
+| `release_parents`, `release_children` | `release` ID |
+
+Release pages contain parent and child counts. Their separate relation pages
+avoid putting an entire parent inventory in one row. `focus` finds the page
+containing an exact release ID under the current filter and row allowance; it
+cannot be combined with `offset`. The returned `offset` is authoritative. This
+keeps the selected release reachable after its dates or parents change its place
+in the timeline.
 
 Use `offset`, `limit`, `max_work` and `timeout_ms` on any query. Default pages
 contain 200 rows; the shared maximum is 4,096 rows and 8 MiB. An oversized page
@@ -115,7 +124,8 @@ source export. `--history` selects superseded review history.
 
 Admission options are `max_source_bytes`, `max_nodes`, `max_edges`, `max_work`
 and `timeout_ms`. Defaults are 256 MiB retained report/label text, 1,048,576
-function records, 4,194,304 association records and 2,147,483,648 work units.
+function/release records, 4,194,304 association/parent-link records and
+2,147,483,648 work units.
 A zero deadline means no deadline. The deadline begins inside the native engine
 operation; preceding CLI/worker file reading and bundle preparation are
 cancellable but are outside that deadline. It is not a whole-command wall-clock
@@ -168,6 +178,92 @@ A `.ndlineage` v1 document has `schema: "neverd.bindiff.lineage"`,
 containing `{id, label, branch}` metadata. Reload revalidates source reports and
 reconstructs the graph; derived edges or conclusions are not trusted from disk.
 
+## Declared releases and timelines
+
+A release is a named occurrence of an analyzed snapshot. Two releases can share
+the exact same snapshot, while remaining separately visible in a branch or
+release timeline. Release records contain:
+
+```json
+{
+  "id": "stable-1.2",
+  "label": "Stable 1.2",
+  "branch": "stable",
+  "version": "SNAPSHOT_ID_FROM_VERSIONS",
+  "published_at": "2026-10-25T08:00:00Z",
+  "parents": ["stable-1.1"]
+}
+```
+
+`id` is a stable, nonempty release identifier; labels need not be unique.
+`published_at` is either null for an unknown time or a valid UTC timestamp in
+exact `YYYY-MM-DDTHH:MM:SSZ` form. Offsets, fractional seconds and leap-second
+notation are not accepted by this profile. A release can have no declared
+parents, one parent, or multiple parents for a merge. Parents must already exist
+or be created in the same edit. Cycles, repeated parents, self-parenting, missing
+snapshots and dangling parent references are refused. A known publication time
+cannot precede any known ancestor time, including through undated records.
+
+These are analyst declarations. The engine does not infer ancestry from report
+direction, filenames, branch labels, matching functions or timestamps. Timeline
+rows place declared parents before children. Among currently available rows,
+known UTC times precede unknown times, then IDs break ties. Unrelated adjacent
+rows do not thereby acquire a parent relationship. Function correspondence and
+patch assessments retain their original report-local meanings.
+
+Use a release edit file to create, relabel or remove records:
+
+```sh
+neverd lineage --reopen releases.ndlineage --release-edit edit.json \
+  --save releases.ndlineage --list releases --json
+neverd lineage --reopen releases.ndlineage --list release_parents \
+  --release stable-1.2 --limit 100 --json
+```
+
+An edit object contains the exact `revision` plus any of `upsert`, `remove` and
+`parent_updates`. CLI, worker and Python fill the current revision only when
+omitted; an explicitly stale revision fails. Upsert records contain the fields
+shown above. For an existing release, omitting `parents` preserves all parents,
+including those outside the current page. New records require an explicit
+parents array. A bounded parent edit needs only the changed links:
+
+```json
+{
+  "parent_updates": [
+    {"release": "stable-1.2", "add": ["hotfix-1.1.1"], "remove": ["stable-1.1"]}
+  ]
+}
+```
+
+The owner first applies record upserts/removals, then parent deltas, then validates
+the complete candidate. Duplicate record edits, IDs both removed and upserted,
+repeated parent edits, removing an undeclared parent and adding an already
+declared parent are errors. Removing a referenced release requires removing its
+child links in the same transaction. No intermediate graph becomes visible.
+Edits share load options, cancellation, retained-trace accounting and atomic
+publication. Their request object has the shared 1 MiB options allowance; large
+inventories remain editable through bounded deltas or whole-file loading.
+
+Python exposes `graph.edit_releases(edit, options=..., progress=...)`; the C ABI
+provides the additive optional `neverd_lineage_edit_releases_json` export. Missing
+that export leaves the original load/query/save workflows available. The worker
+advertises `lineage_edit_releases` only when the linked engine supports it.
+
+In the desktop's **Releases** tab, add or edit a release, choose its snapshot,
+and browse declared parents and children through bounded tables. Parent selection
+uses labels and IDs, so duplicate labels remain distinguishable. Editing metadata
+retains parent links unless explicitly changed. Successful edits focus the changed
+release and reset the release filter; deleting the final item on a page returns
+to the first page. Dates remain optional. Opening the associated snapshot returns
+to function inspection. Save the graph to persist these edits.
+
+Release editing upgrades the saved document to v2 with an additional `releases`
+array. V1 files keep their original revision derivation and persistence version
+until upgraded. Removing every release from v2 does not downgrade it. Older
+readers refuse v2 explicitly. Summary, page and status projection versions remain
+v1; summaries expose `document_schema_version` separately. Original `.nddiff`
+bytes, snapshot identities, decisions and assessment histories are unchanged.
+
 This profile does not complete the [advanced acceptance map](binary-diff-acceptance.md).
-Release aliases, package-wide graphs, automated patch/backport/revert evidence,
+Package-wide graphs, automated patch/backport/revert evidence,
 and independent large-corpus quality/latency qualification remain separate work.

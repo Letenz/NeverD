@@ -92,6 +92,69 @@ class LineageIntegrationTests(unittest.TestCase):
         self.lineage.load(saved)
         self.assertEqual(self.lineage.summary()["nodes"], 2)
 
+    def test_release_aliases_edits_and_parent_pages_preserve_evidence(self):
+        graph = self.lineage
+        version = graph.query("versions")["items"][0]["id"]
+        old = graph.export()
+        def release(identifier, parents=()):
+            return {"id": identifier, "label": "Same label", "branch": identifier,
+                    "version": version, "published_at": None, "parents": list(parents)}
+        graph.edit_releases({"upsert": [release("stable"), release("preview", ["stable"])]})
+        rows = graph.query("releases")["items"]
+        self.assertEqual([r["id"] for r in rows], ["stable", "preview"])
+        self.assertEqual([r["version"] for r in rows], [version, version])
+        focused = list(graph.pages("releases", focus="stable", limit=1))
+        self.assertEqual([p["offset"] for p in focused], [0, 1])
+        self.assertEqual([r["id"] for p in focused for r in p["items"]],
+                         ["stable", "preview"])
+        changed = release("preview")
+        del changed["parents"]
+        changed["label"] = "New label"
+        graph.edit_releases({"upsert": [changed]})
+        self.assertEqual(graph.query("release_parents", release="preview")["items"][0]["id"], "stable")
+        before = graph.export()
+        with self.assertRaises(NeverDError):
+            graph.edit_releases({"remove": ["stable"]})
+        self.assertEqual(graph.export(), before)
+        graph.edit_releases({"parent_updates": [{"release": "preview", "remove": ["stable"]}],
+                             "remove": ["stable"]})
+        self.assertEqual(graph.query("releases")["total"], 1)
+        saved = graph.export()
+        graph.load(saved)
+        self.assertEqual(graph.export(), saved)
+        self.assertEqual(json.loads(saved)["schema_version"], 2)
+        self.assertEqual(json.loads(old)["schema_version"], 1)
+        report_id = graph.query("reports")["items"][0]["id"]
+        self.assertEqual(graph.report(report_id), self.report)
+
+    def test_release_edit_callback_failure_preserves_collection(self):
+        before = self.lineage.export()
+        def fail(phase, *_):
+            if phase == "lineage:release_edit":
+                raise ValueError("release edit cancelled by owner")
+        with self.assertRaisesRegex(ValueError, "cancelled by owner"):
+            self.lineage.edit_releases({"upsert": []}, progress=fail)
+        self.assertEqual(self.lineage.status()["operation_state"], "cancelled")
+        self.assertEqual(self.lineage.export(), before)
+        with self.assertRaisesRegex(NeverDError, "stale"):
+            self.lineage.edit_releases({"revision": "stale", "upsert": []})
+        self.assertEqual(self.lineage.export(), before)
+
+    def test_missing_release_export_keeps_legacy_graph_workflows(self):
+        library = ctypes.CDLL(os.environ["NEVERD_TEST_LIBNEVERD"])
+        class LegacyExports:
+            def __getattr__(self, name):
+                if name == "neverd_lineage_edit_releases_json":
+                    raise AttributeError(name)
+                return getattr(library, name)
+        with Lineage(host=HostAPI(LegacyExports())) as graph:
+            graph.load_reports([self.report])
+            before = graph.export()
+            with self.assertRaisesRegex(RuntimeError, "does not export"):
+                graph.edit_releases({"upsert": []})
+            self.assertEqual(graph.export(), before)
+            self.assertEqual(graph.query("versions")["total"], 2)
+
     def test_callback_exception_and_reentrant_close_do_not_escape_c(self):
         saved = self.lineage.export()
 

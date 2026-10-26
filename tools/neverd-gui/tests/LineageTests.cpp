@@ -18,6 +18,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDateTimeEdit>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
@@ -30,6 +31,7 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -286,6 +288,60 @@ private slots:
         !Output.isEmpty()) {
       QTest::qWait(60);
       QVERIFY(View.grab().save(Output + "/locale-error-" + Locale + ".png"));
+    }
+    QVERIFY(Session.releaseEditingSupported());
+    Session.editReleases(
+        {{"upsert",
+          QJsonArray{QJsonObject{{"id", "parent"},
+                                 {"label", "Stable 1 中文"},
+                                 {"branch", "stable"},
+                                 {"version", Target},
+                                 {"published_at", QJsonValue::Null},
+                                 {"parents", QJsonArray{}}},
+                     QJsonObject{{"id", "child"},
+                                 {"label", "Stable 2 中文"},
+                                 {"branch", "stable"},
+                                 {"version", Target},
+                                 {"published_at", "2026-10-25T08:00:00Z"},
+                                 {"parents", QJsonArray{"parent"}}}}}},
+        {}, "child");
+    auto *Releases = View.findChild<LineagePageView *>("lineageReleases");
+    auto *Parents = View.findChild<LineagePageView *>("lineageReleaseParents");
+    auto *Relations = View.findChild<QTabWidget *>("lineageReleaseRelations");
+    QVERIFY(Releases && Parents && Relations);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() &&
+                                 Releases->selected()["id"] == "child" &&
+                                 Parents->rows().size() == 1,
+                             Timeout);
+    Tabs->setCurrentWidget(View.findChild<QWidget *>("lineageReleaseView"));
+    QCOMPARE(Tabs->tabText(Tabs->currentIndex()),
+             Translated("neverd::gui::LineageDialog", "Releases"));
+    const auto *EditRelease =
+        View.findChild<QPushButton *>("lineageReleaseEdit");
+    QVERIFY(EditRelease && EditRelease->isEnabled());
+    QCOMPARE(EditRelease->text(),
+             Translated("neverd::gui::LineageReleaseView", "&Edit release…"));
+    QTRY_VERIFY(SelectedRowVisible(Releases));
+    for (const auto *Name :
+         {"lineageReleaseAdd", "lineageReleaseEdit", "lineageReleaseRemove",
+          "lineageReleaseSnapshot"}) {
+      const auto *Button = View.findChild<QPushButton *>(Name);
+      QVERIFY(Button && Button->isVisible());
+      QVERIFY(View.rect().contains(
+          QRect(Button->mapTo(&View, QPoint()), Button->size())));
+    }
+    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Output.isEmpty()) {
+      QTest::qWait(60);
+      QVERIFY(View.grab().save(Output + "/release-" + Locale + ".png"));
+    }
+    Relations->setCurrentIndex(1);
+    QTRY_VERIFY(SelectedRowVisible(Parents));
+    QCOMPARE(Parents->selected()["id"].toString(), QString("parent"));
+    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Output.isEmpty()) {
+      QTest::qWait(60);
+      QVERIFY(View.grab().save(Output + "/release-parents-" + Locale + ".png"));
     }
   }
 
@@ -857,6 +913,225 @@ private slots:
     Reopened.show();
     QVERIFY(QTest::qWaitForWindowExposed(&Reopened));
     QTRY_COMPARE_WITH_TIMEOUT(Reopened.size(), Chosen, Timeout);
+  }
+
+  void releaseEditsKeepSelectionAcrossPagesAndParentNavigation() {
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Reports}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Releases = View.findChild<LineagePageView *>("lineageReleases");
+    auto *Parents = View.findChild<LineagePageView *>("lineageReleaseParents");
+    auto *Tabs = View.findChild<QTabWidget *>("lineageTabs");
+    auto *Relations = View.findChild<QTabWidget *>("lineageReleaseRelations");
+    QVERIFY(Versions && Releases && Parents && Tabs && Relations);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 3,
+                             Timeout);
+    const auto Version = Versions->selected()["id"];
+    Releases->findChild<QSpinBox *>("lineagePageRows")->setValue(2);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QJsonArray Rows;
+    for (const auto &ID :
+         {QString("a"), QString("b"), QString("c"), QString("d")}) {
+      const QString Date =
+          ID == "a" ? QString()
+                    : "2025-0" + QString::number(ID[0].unicode() - 'a' + 1) +
+                          "-01T00:00:00Z";
+      Rows.append(QJsonObject{
+          {"id", ID},
+          {"label", "Same label"},
+          {"branch", ID},
+          {"version", Version},
+          {"published_at",
+           Date.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(Date)},
+          {"parents", QJsonArray{}}});
+    }
+    Session.editReleases({{"upsert", Rows}}, {}, "d");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !Session.busy() && Releases->selected()["id"] == "d", Timeout);
+    QCOMPARE(Releases->offset(), qint64(2));
+    Tabs->setCurrentWidget(View.findChild<QWidget *>("lineageReleaseView"));
+    bool Edited = false;
+    QTimer::singleShot(0, this, [&] {
+      auto *D = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QVERIFY(D);
+      const auto Cleanup = qScopeGuard([&] {
+        if (D->isVisible())
+          D->reject();
+      });
+      QCOMPARE(D->objectName(), QString("lineageReleaseEditor"));
+      auto *Name = D->findChild<QLineEdit *>("lineageReleaseLabel");
+      auto *Date = D->findChild<QDateTimeEdit *>("lineageReleaseDate");
+      auto *Buttons = D->findChild<QDialogButtonBox *>();
+      QVERIFY(Name && Date && Buttons);
+      Name->setText("Renamed release 中文");
+      Date->setDateTime(
+          QDateTime::fromString("2024-01-01T00:00:00Z", Qt::ISODate));
+      QTest::mouseClick(Buttons->button(QDialogButtonBox::Save),
+                        Qt::LeftButton);
+      Edited = true;
+    });
+    QTest::mouseClick(View.findChild<QPushButton *>("lineageReleaseEdit"),
+                      Qt::LeftButton);
+    QVERIFY(Edited);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Releases->selected()["label"] ==
+                                                    "Renamed release 中文",
+                             Timeout);
+    QCOMPARE(Releases->offset(), qint64(0));
+    QCOMPARE(Releases->selected()["id"].toString(), QString("d"));
+    Relations->setCurrentIndex(1);
+    bool Chosen = false;
+    QTimer::singleShot(0, this, [&] {
+      auto *D = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QVERIFY(D);
+      const auto Cleanup = qScopeGuard([&] {
+        if (D->isVisible())
+          D->reject();
+      });
+      auto *Choices = D->findChild<LineagePageView *>("lineageReleaseChoices");
+      auto *Buttons = D->findChild<QDialogButtonBox *>();
+      QVERIFY(Choices && Buttons);
+      QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Choices->rows().size() == 4,
+                               Timeout);
+      for (int I = 0; I < Choices->rows().size(); ++I)
+        if (Choices->rows()[I].toObject()["id"] == "a") {
+          Choices->table()->setCurrentIndex(
+              Choices->table()->model()->index(I, 0));
+          break;
+        }
+      QCOMPARE(Choices->selected()["id"].toString(), QString("a"));
+      QCOMPARE(Choices->selected()["label"].toString(), QString("Same label"));
+      QVERIFY(Buttons->button(QDialogButtonBox::Ok)->isEnabled());
+      QTest::mouseClick(Buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
+      Chosen = true;
+    });
+    QTest::mouseClick(View.findChild<QPushButton *>("lineageReleaseAddParent"),
+                      Qt::LeftButton);
+    QVERIFY(Chosen);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Parents->rows().size() == 1,
+                             Timeout);
+    QCOMPARE(Releases->selected()["id"].toString(), QString("d"));
+    QCOMPARE(Parents->selected()["id"].toString(), QString("a"));
+    QCOMPARE(Errors.size(), 0);
+    QTest::mouseClick(
+        View.findChild<QPushButton *>("lineageReleaseRemoveParent"),
+        Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Parents->rows().isEmpty(),
+                             Timeout);
+    QCOMPARE(Releases->selected()["id"].toString(), QString("d"));
+    QCOMPARE(Releases->offset(), qint64(0));
+    Relations->setCurrentIndex(0);
+    Releases->findChild<QSpinBox *>("lineagePageRows")->setValue(1);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    Releases->setQuery({{"kind", "releases"}, {"focus", "a"}}, "a");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !Session.busy() && Releases->selected()["id"] == "a", Timeout);
+    QCOMPARE(Releases->offset(), qint64(3));
+    QTimer::singleShot(0, this, [&] {
+      auto *D = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+      QVERIFY(D);
+      QTest::mouseClick(D->button(QMessageBox::Yes), Qt::LeftButton);
+    });
+    QTest::mouseClick(View.findChild<QPushButton *>("lineageReleaseRemove"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() &&
+                                 Session.summary()["releases"].toInteger() == 3,
+                             Timeout);
+    QCOMPARE(Releases->offset(), qint64(0));
+    QCOMPARE(Releases->selected()["id"].toString(), QString("d"));
+    QTest::mouseClick(View.findChild<QPushButton *>("lineageReleaseSnapshot"),
+                      Qt::LeftButton);
+    auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() &&
+                                 Functions->selected()["version"] == Version,
+                             Timeout);
+    QCOMPARE(Tabs->currentIndex(), 0);
+    QCOMPARE(Errors.size(), 0);
+  }
+
+  void releaseLabelEditsKeepAllParentsAndTheirCurrentPage() {
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Reports}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Releases = View.findChild<LineagePageView *>("lineageReleases");
+    auto *Parents = View.findChild<LineagePageView *>("lineageReleaseParents");
+    auto *Tabs = View.findChild<QTabWidget *>("lineageTabs");
+    auto *Relations = View.findChild<QTabWidget *>("lineageReleaseRelations");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 3,
+                             Timeout);
+    const auto Version = Versions->selected()["id"];
+    QJsonArray Records, IDs;
+    for (unsigned I = 0; I < 257; ++I) {
+      const auto ID = QString("parent-%1").arg(I, 3, 10, QChar('0'));
+      IDs.append(ID);
+      Records.append(QJsonObject{{"id", ID},
+                                 {"label", "Duplicate label"},
+                                 {"branch", ID},
+                                 {"version", Version},
+                                 {"published_at", QJsonValue::Null},
+                                 {"parents", QJsonArray{}}});
+    }
+    Records.append(QJsonObject{{"id", "child"},
+                               {"label", "Child"},
+                               {"branch", "stable"},
+                               {"version", Version},
+                               {"published_at", QJsonValue::Null},
+                               {"parents", IDs}});
+    Session.editReleases({{"upsert", Records}}, {}, "child");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() &&
+                                 Releases->selected()["id"] == "child" &&
+                                 Parents->rows().size() == 200,
+                             Timeout);
+    QCOMPARE(Releases->offset(), qint64(200));
+    Tabs->setCurrentWidget(View.findChild<QWidget *>("lineageReleaseView"));
+    QTimer::singleShot(0, this, [&] {
+      auto *D = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      QVERIFY(D);
+      const auto Cleanup = qScopeGuard([&] {
+        if (D->isVisible())
+          D->reject();
+      });
+      auto *Name = D->findChild<QLineEdit *>("lineageReleaseLabel");
+      auto *Buttons = D->findChild<QDialogButtonBox *>();
+      QVERIFY(Name && Buttons);
+      Name->setText("All 257 parents retained");
+      QTest::mouseClick(Buttons->button(QDialogButtonBox::Save),
+                        Qt::LeftButton);
+    });
+    QTest::mouseClick(View.findChild<QPushButton *>("lineageReleaseEdit"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Releases->selected()["label"] ==
+                                                    "All 257 parents retained",
+                             Timeout);
+    QCOMPARE(Releases->selected()["parent_count"].toInteger(), qint64(257));
+    QCOMPARE(Releases->selected()["id"].toString(), QString("child"));
+    Relations->setCurrentIndex(1);
+    QTest::mouseClick(Parents->findChild<QToolButton *>("lineageNextPage"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Parents->rows().size() == 57,
+                             Timeout);
+    QCOMPARE(Parents->offset(), qint64(200));
+    QCOMPARE(Parents->selected()["id"].toString(), QString("parent-200"));
+    QTest::mouseClick(
+        View.findChild<QPushButton *>("lineageReleaseRemoveParent"),
+        Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !Session.busy() &&
+            Releases->selected()["parent_count"].toInteger() == 256 &&
+            Parents->rows().size() == 56,
+        Timeout);
+    QCOMPARE(Parents->offset(), qint64(200));
+    QCOMPARE(Parents->selected()["id"].toString(), QString("parent-201"));
+    QCOMPARE(Errors.size(), 0);
   }
 
   void invalidResourceSettingsKeepTheDialogAndInput() {

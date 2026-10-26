@@ -2496,8 +2496,40 @@ graph-to-table navigation and original evidence copy. Run the same binary with
 `XDG_CURRENT_DESKTOP=GNOME python3 tools/neverd-gui/tests/run_wayland_docking.py
 --scale 1.5 <binary>` for real corner dragging and geometry restoration inside
 the disposable compositor. The native gesture case explicitly skips with the
-offscreen platform. These tests do not qualify release chronology, fresh native
-authentication or automated patch presence.
+offscreen platform. These tests do not qualify fresh native authentication or
+automated patch presence.
+
+Release regressions separately cover multiple release identities sharing one
+snapshot, forks/merges, all 64 forward DAGs on four records, valid Gregorian UTC
+dates, ancestor date contradictions across undated records and malformed or
+cyclic parent declarations. V1 revision/persistence compatibility is separate
+from the v2 release envelope. Core/SDK tests check atomic edit cancellation,
+deadlines, budgets, stale revisions and retention of the previous trace. Worker,
+CLI and Python cases save/reopen v2, preserve exact source reports and retain
+all parents during label edits and snapshot metadata updates. The Python
+missing-export case verifies that optional release editing does not disable
+older graph operations. Desktop tests move a selected release across timeline
+pages after editing its date, disambiguate duplicate labels by ID, and edit one
+of 257 parents on its current page without losing the remaining links. Release
+and parent tabs are also exercised by the eleven-language layout fixture.
+These cases qualify declared chronology, not inferred release relationships.
+
+For real legacy-reader compatibility, retain the earlier library and run
+`python3 scripts/check_binary_lineage_compat.py --library NEW_LIBRARY
+--legacy-library OLD_LIBRARY --collection V1_COLLECTION --output-dir NEW_OUTPUT`.
+It uses separate processes to compare v1 identity and original reports, reopen
+the new engine's v1 output in the legacy engine, and check that explicit v2
+refusal and a missing release-edit export preserve the old graph. The receipt
+records the input libraries, collection and Python binding hashes.
+
+`scripts/benchmark_binary_lineage.py generate-releases --library LIBRARY
+--corpus EXISTING_NATIVE_CORPUS --releases 10000 --output-dir NEW_CORPUS`
+adds an authored sparse fork/merge DAG to an existing native fixture corpus.
+Use the ordinary `run --corpus NEW_CORPUS --library LIBRARY --output-dir NEW_RUN`
+command to measure fresh-process release inventory and label editing, verify
+parent/child pages, preserve parents on edits, and check cancellation and budget
+refusals against exact retained persistence. This synthetic workload does not
+establish matching quality or competitive performance.
 
 The lineage desktop regression also admits 200 snapshots with 48 KiB labels,
 then verifies the oversized default pages fail explicitly. Reducing each table's
