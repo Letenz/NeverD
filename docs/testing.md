@@ -3373,6 +3373,16 @@ close an active job. SDK and real-worker comparison checks retain the discovery
 stop phase and incomplete coverage; stopped snapshots never authorize scalar
 validation. Run the image-boundary, session-discovery and comparison suites when
 changing these shared cancellation boundaries. No input instructions execute.
+`FunctionDiscoveryAlignment.RestoredUnwindAdaptersDiscoverLeafTailEntries`
+checks x64 PE leaf tail entry discovery from complete restored-frame adapters,
+including forward/backward targets, small/large frames, v1/v2 unwind records,
+worker counts and repeated publication. `UnprovedUnwindTailAdaptersStayUnsplit`
+and `UnwindTailRequiresAnExecutableCompleteBody` reject inconsistent or absent
+metadata, stack/nonvolatile writes, conditional control flow, no-return calls,
+missing home space, local/interior/continuation targets, non-executable ranges,
+truncation, relocatable input and targets with no callable exit. These run in
+`NeverDImageAnalysisBoundaryTests` and the aggregate lift suite.
+
 `FunctionDiscoveryAlignment.LongCalleesNeedReachableCallableExits` checks the
 64/65-instruction linear-prefix and 256/257-instruction reachable-probe boundaries
 on x86/x64/ARM/Thumb/AArch64 in ELF and Mach-O. A long unlabelled callee can gain
