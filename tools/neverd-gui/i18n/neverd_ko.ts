@@ -1271,6 +1271,10 @@
         <source>Map new code or data into this analysis</source>
         <translation>새 코드나 데이터를 이 분석에 매핑합니다</translation>
     </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>주석 입력(&amp;C)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>

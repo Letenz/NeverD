@@ -1271,6 +1271,10 @@
         <source>Map new code or data into this analysis</source>
         <translation>Отобразить новый код или данные в адресное пространство анализа</translation>
     </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>Ввести &amp;комментарий...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>

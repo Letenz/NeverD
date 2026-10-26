@@ -1271,6 +1271,10 @@
         <source>Map new code or data into this analysis</source>
         <translation>Mapper du nouveau code ou de nouvelles données dans cette analyse</translation>
     </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>Saisir un &amp;commentaire...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>

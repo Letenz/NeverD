@@ -1271,6 +1271,10 @@
         <source>Map new code or data into this analysis</source>
         <translation>تعيين تعليمات برمجية أو بيانات جديدة في هذا التحليل</translation>
     </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>إدخال تعليق(&amp;C)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>

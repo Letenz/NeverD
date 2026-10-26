@@ -1271,6 +1271,10 @@
         <source>Map new code or data into this analysis</source>
         <translation>新しいコードまたはデータをこの解析にマップします</translation>
     </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>コメントを入力(&amp;C)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>

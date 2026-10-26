@@ -1271,6 +1271,10 @@
         <source>Map new code or data into this analysis</source>
         <translation>將新的程式碼或資料對應到此分析中</translation>
     </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>輸入註解(&amp;C)...</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
