@@ -2045,6 +2045,18 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+Native `!loadcfg` metadata pairs a source configuration field's external pointer
+variable with its default function. The COFF loader owns the role/field mapping;
+`SignatureRuntimePointerContext` queries only its recorded slots after the data
+pass. Immutable, relocation-backed storage and requested executable entries must
+agree with existing complete `!caller` bodies. This independent metadata gate
+can accept a short body only when all wildcards are bound canonical data operands
+and every reference names independently established storage. It does not lower
+the ordinary caller floor, restart incoming inference, or create data anchors.
+The resulting names remain candidates. `RuntimePointerEvidence` emits source
+configuration, pointer and explicitly typed function definitions, retaining
+incomplete counterclaims; the offline selector refines existing body references
+and publishes only missing metadata.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,

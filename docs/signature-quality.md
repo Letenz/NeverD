@@ -443,3 +443,12 @@ not reproduce that increase. The record retains every trial, the extra JSON
 cost and the phase controls. Concurrent builds prevent an end-to-end latency
 guarantee; an idle-host qualification remains necessary. No pattern was removed
 or verification weakened to obtain these timings.
+
+Source runtime pointer metadata (`!loadcfg`) is a separate candidate context.
+Loader-owned configuration roles establish pointer storage; source declarations
+establish the proposed default and an explicitly typed function body. A short
+body is eligible only with complete bytes and every wildcard covered by a
+canonical operand whose storage is independently bound. No ordinary strength
+threshold is reduced. Source conflicts, mutable or unrelocated slots, unresolved
+operands and contradictory known defaults remain unknown. Source metadata and
+matching bytes do not by themselves grant automatic naming authority.

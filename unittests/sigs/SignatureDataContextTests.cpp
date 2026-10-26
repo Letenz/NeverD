@@ -294,7 +294,10 @@ TEST(SignatureDataOperand, ExactImmediateBiasWidthsAndPrefixRefusals) {
     unsigned Width;
     unsigned Bias;
   };
-  const Form Forms[] = {{{0x48, 0x8b, 0x05, 0, 0, 0, 0}, 3, 8, 0},
+  const Form Forms[] = {{{0xff, 0x15, 0, 0, 0, 0}, 2, 8, 0},
+                        {{0xff, 0x25, 0, 0, 0, 0}, 2, 8, 0},
+                        {{0x48, 0xff, 0x25, 0, 0, 0, 0}, 3, 8, 0},
+                        {{0x48, 0x8b, 0x05, 0, 0, 0, 0}, 3, 8, 0},
                         {{0x4c, 0x89, 0x3d, 0, 0, 0, 0}, 3, 8, 0},
                         {{0x48, 0x8d, 0x0d, 0, 0, 0, 0}, 3, 1, 0},
                         {{0x8b, 0x05, 0, 0, 0, 0}, 2, 4, 0},
@@ -319,7 +322,7 @@ TEST(SignatureDataOperand, ExactImmediateBiasWidthsAndPrefixRefusals) {
       EXPECT_FALSE(x64DataReferenceField(Prefixed, Form.Field + 1));
     }
   }
-  EXPECT_FALSE(x64DataReferenceField({0xff, 0x15, 0, 0, 0, 0}, 2));
+  EXPECT_FALSE(x64DataReferenceField({0x4c, 0xff, 0x15, 0, 0, 0, 0}, 3));
   EXPECT_FALSE(x64DataReferenceField({0x8d, 0x05, 0, 0, 0, 0}, 2));
   EXPECT_FALSE(x64DataReferenceField({0x48, 0x8b, 0x45, 0, 0, 0, 0}, 3));
 }
