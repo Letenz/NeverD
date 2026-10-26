@@ -393,7 +393,16 @@ private slots:
           QJsonObject{{"id", Initial[I].toObject()["id"]},
                       {"label", QString("Snapshot %1: ").arg(I) + Padding},
                       {"branch", ""}});
-    Session.load({{"append", true}, {"version_updates", Updates}});
+    const auto Saved = Directory.filePath("large-page.ndlineage");
+    QSignalSpy SavedEvents(&Session, &LineageSession::saved);
+    Session.save(Saved);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && SavedEvents.size() == 1,
+                             Timeout);
+    auto Collection = QJsonDocument::fromJson(read(Saved)).object();
+    Collection["versions"] = Updates;
+    QVERIFY(
+        write(Saved, QJsonDocument(Collection).toJson(QJsonDocument::Compact)));
+    Session.load({{"path", Saved}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     QCOMPARE(Errors.size(), 0);
     QCOMPARE(Session.summary()["versions"].toInt(), 200);
@@ -451,6 +460,31 @@ private slots:
     if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
         !Output.isEmpty())
       QVERIFY(View.grab().save(Output + "/large-page-recovered.png"));
+  }
+
+  void largeReportDiagramsCanZoomAfterFitting() {
+    LineageGraph Graph;
+    Graph.resize(400, 240);
+    Graph.show();
+    QJsonArray Edges;
+    for (int I = 0; I < 200; ++I)
+      Edges.append(
+          QJsonObject{{"id", QString("report-%1").arg(I)},
+                      {"primary_version", "origin"},
+                      {"secondary_version", QString("snapshot-%1").arg(I)}});
+    Graph.setReports(Edges);
+    QTRY_VERIFY_WITH_TIMEOUT(Graph.transform().m11() < 1, Timeout);
+    const auto Fitted = Graph.transform();
+    Graph.zoom(false);
+    QCOMPARE(Graph.transform(), Fitted);
+    Graph.zoom(true);
+    const auto First = Graph.transform().m11();
+    QVERIFY(First > Fitted.m11());
+    Graph.zoom(true);
+    const auto Second = Graph.transform().m11();
+    QVERIFY(Second > First);
+    Graph.zoom(false);
+    QVERIFY(Graph.transform().m11() < Second);
   }
 
   void replacementResetsNavigationButAppendAndFailureKeepIt() {
