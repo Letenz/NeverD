@@ -74,6 +74,15 @@ This component is a tested foundation, not yet a lifting/emission contract:
 strict MPX admission remains closed until original-transfer effects and
 memory completion are connected throughout the pipeline.
 
+`lift/X86/X86MpxEncoding.h` owns the qualified MPX byte-to-operand mapping.
+The full and lightweight decoder adapters share it, including native-width
+addresses despite long-mode 67H, mode-sized BNDMOV memory fields, LOCK stores,
+and the architectural register NOP forms. Encoded MIB index, scale and absent
+base remain distinct; they do not authorize an ordinary memory operation at
+the displayed expression. Invalid banks, 16-bit memory forms, prohibited
+RIP-relative forms and competing mandatory prefixes do not acquire a qualified
+shape. Decoding a valid stateful instruction does not enable its strict lifter.
+
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
 semantics; they do not expose TILECFG or TMM values through an ordinary function
@@ -178,6 +187,16 @@ LowIR, and records SF/AF/PF as undefined while defining CF/OF/ZF. APX NF
 preserves all flags. The shared prefix and APX validators retain address
 ownership. Decoder flag metadata is checked separately from architectural
 effects: legacy BEXTR metadata currently over-reports control-flag resets.
+
+`X86LiftBitCount` owns TZCNT, LZCNT and POPCNT admission, arithmetic and
+undefined-output effects across legacy, REX2 and APX/NF forms. F3 selection,
+66 operand size and REX cancellation are authenticated independently; shared
+address validators retain memory-tail ownership. The source-zero carry value
+is captured before an aliased destination write. TZCNT/LZCNT record OF/SF/AF/PF
+as undefined, POPCNT defines all status flags, and NF preserves them. Legacy
+Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
+the architectural carry calculation. Completeness of this flag audit does not
+certify runtime CPU-feature selection or a complete opaque machine-state bank.
 
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed

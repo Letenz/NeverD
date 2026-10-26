@@ -626,12 +626,11 @@ TEST(X86APXBMISemantics, ApxCountNfPreservesFlagsAndPopcntClearsOwnedFlags) {
       ASSERT_EQ(Emulator.run(Aliased.Ops), Aliased.Ops.size());
       EXPECT_EQ(getGpr(Emulator, X86_REG_R18),
                 MergedDestination(Original, W.Width * 8, W.Width));
-      Flags Expected = Input;
-      Expected.CF = true;
-      Expected.ZF = false;
-      Expected.SF = false;
-      Expected.OF = false;
-      expectFlags(Emulator, Expected);
+      EXPECT_EQ(Emulator.getRegister(x86reg::CF), 1u);
+      EXPECT_EQ(Emulator.getRegister(x86reg::ZF), 0u);
+      EXPECT_EQ(Emulator.getRegister(x86reg::DF), Input.DF);
+      // OF/SF/AF/PF are undefined, not preserved or architecturally zero.
+      // X86BitCount checks their effects; the NF cases above check preservation.
       EXPECT_FALSE(Emulator.skips().any());
     }
   }

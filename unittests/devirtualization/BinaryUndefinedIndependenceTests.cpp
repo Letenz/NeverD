@@ -91,6 +91,40 @@ TEST(BinaryUndefinedIndependence,
   Program.expect(Status::Dependent);
 }
 
+TEST(BinaryUndefinedIndependence,
+     BitCountsDoNotCertifyUndefinedStatusFlagsAsConstants) {
+  for (uint8_t Opcode : {0xbc, 0xbd}) {
+    BinaryProgram Program;
+    Program.block(0x100, {0xf3, 0x48, 0x0f, Opcode, 0xc1, 0xc3});
+    Program.Contract.ReturnRegisters.push_back({x86reg::CF, 1});
+    Program.Contract.ReturnRegisters.push_back({x86reg::ZF, 1});
+    Program.expect(Status::Proved);
+    for (unsigned Flag : {x86reg::OF, x86reg::SF, x86reg::AF, x86reg::PF}) {
+      Program.Contract.ReturnRegisters.push_back({Flag, 1});
+      Program.expect(Status::Dependent);
+      Program.Contract.ReturnRegisters.pop_back();
+    }
+  }
+}
+
+TEST(BinaryUndefinedIndependence,
+     BitCountNFTransportsThePriorArbitraryAuxiliaryCarry) {
+  for (uint8_t Opcode : {0xf4, 0xf5, 0x88}) {
+    BinaryProgram Program;
+    // XOR creates arbitrary AF; APX NF must retain that exact producer.
+    Program.block(0x100,
+                  {0x31, 0xd2, 0x62, 0xf4, 0xfc, 0x0c, Opcode, 0xc1, 0xc3});
+    Program.expect(Status::Proved);
+    Program.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+    Program.expect(Status::Dependent);
+  }
+  BinaryProgram Defined;
+  // Ordinary POPCNT defines AF and therefore kills the earlier arbitrary bit.
+  Defined.block(0x100, {0x31, 0xd2, 0xf3, 0x48, 0x0f, 0xb8, 0xc1, 0xc3});
+  Defined.Contract.ReturnRegisters.push_back({x86reg::AF, 1});
+  Defined.expect(Status::Proved);
+}
+
 TEST(BinaryUndefinedIndependence, FlagSnapshotsShareOnlyTheirActualProducer) {
   BinaryProgram Shared;
   // xor ecx,ecx; lahf; mov dl,ah; lahf; xor dl,ah; movzx eax,dl; ret.
