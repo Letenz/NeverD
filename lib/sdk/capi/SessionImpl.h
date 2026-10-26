@@ -1406,6 +1406,11 @@ struct PipelineRunner {
 /// naming \p Kind.
 bool saveSidecar(Session *S, const std::filesystem::path &Path,
                  llvm::json::Value Values, llvm::StringRef Kind);
+/// Stream an already canonical value through the same atomic writer. Emit
+/// exactly one value with sorted keys and canonical addresses.
+bool saveSidecar(Session *S, const std::filesystem::path &Path,
+                 llvm::function_ref<void(llvm::json::OStream &)> Emit,
+                 llvm::StringRef Kind);
 
 /// The SHA-256 of the input as loaded, in lowercase hexadecimal: the one the
 /// loader took while it read the input, else one hash of the file, kept.

@@ -17,6 +17,7 @@
 #include "neverd/object/PEChecksum.h"
 #include "neverd/patch/Limits.h"
 #include "neverd/patch/PatchActions.h"
+#include "neverd/patch/PatchIO.h"
 #include "neverd/sigs/SignatureDB.h"
 #include "neverd/support/FilePath.h"
 
@@ -198,7 +199,8 @@ TEST_F(BytePatch, ReplayValidationDoesNotLosePreviousEdits) {
       Overlay.apply(Img, *Input, 0x1000, {0x90, 0x90}, PatchKind::Nop));
   std::string JSON;
   llvm::raw_string_ostream OS(JSON);
-  OS << llvm::json::Value(patchRowsJSON(Overlay));
+  llvm::json::OStream Output(OS);
+  writePatchRows(Output, Overlay);
   auto Rows = parsePatchRows(JSON);
   ASSERT_TRUE(bool(Rows)) << llvm::toString(Rows.takeError());
   (*Rows)[0].Original[0] ^= 1;
@@ -207,6 +209,50 @@ TEST_F(BytePatch, ReplayValidationDoesNotLosePreviousEdits) {
   llvm::consumeError(std::move(E));
   EXPECT_EQ(Img.Segments[0].Data[0], 0x90);
   EXPECT_EQ(Overlay.bytes(), 2u);
+}
+TEST_F(BytePatch, SerializedRowsKeepProtocolAndSidecarBytes) {
+  const auto Serialize = [&](unsigned Indent) {
+    std::string Text;
+    llvm::raw_string_ostream Stream(Text);
+    llvm::json::OStream Output(Stream, Indent);
+    writePatchRows(Output, Overlay);
+    return Text;
+  };
+  EXPECT_EQ(Serialize(0), "[]");
+  EXPECT_EQ(Serialize(2), "[]");
+  ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1004, {0xff}, PatchKind::Bytes));
+  ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1000, {0x90}, PatchKind::Nop));
+  const std::string Compact =
+      R"([{"addr":"0x0","current":"90","file_off":"0x0","kind":"nop","original":"75","size":1,"va":"0x1000"},{"addr":"0x4","current":"ff","file_off":"0x4","kind":"bytes","original":"00","size":1,"va":"0x1004"}])";
+  const std::string Sidecar = R"([
+  {
+    "addr": "0x0",
+    "current": "90",
+    "file_off": "0x0",
+    "kind": "nop",
+    "original": "75",
+    "size": 1,
+    "va": "0x1000"
+  },
+  {
+    "addr": "0x4",
+    "current": "ff",
+    "file_off": "0x4",
+    "kind": "bytes",
+    "original": "00",
+    "size": 1,
+    "va": "0x1004"
+  }
+])";
+  EXPECT_EQ(Serialize(0), Compact);
+  EXPECT_EQ(Serialize(2), Sidecar);
+  auto Parsed = parsePatchRows(Sidecar);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  EXPECT_TRUE(std::equal(Parsed->begin(), Parsed->end(), Overlay.rows().begin(),
+                         Overlay.rows().end(),
+                         [](const PatchRow &Row, const auto &Entry) {
+                           return Row == Entry.second;
+                         }));
 }
 TEST_F(BytePatch, ExportIsExclusiveAndReplaysImmutableInput) {
   ASSERT_FALSE(
@@ -369,7 +415,8 @@ TEST_F(BytePatch, OverlapAndPartialRevertReplayMatchesAByteOracle) {
     EXPECT_EQ(Row, Overlay.rows().end());
     std::string Text;
     llvm::raw_string_ostream Stream(Text);
-    Stream << llvm::json::Value(patchRowsJSON(Overlay));
+    llvm::json::OStream Output(Stream);
+    writePatchRows(Output, Overlay);
     auto Rows = parsePatchRows(Text);
     ASSERT_TRUE(bool(Rows)) << llvm::toString(Rows.takeError());
     Overlay.clear(Img);
