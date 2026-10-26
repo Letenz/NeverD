@@ -6,6 +6,7 @@
 
 #include "neverd/sigs/SignatureDB.h"
 
+#include "DataReference.h"
 #include "X86/X86ImportReference.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -516,6 +517,7 @@ void SignatureDB::apply(const BinaryImage &Img,
 
   // Collect executable segment data for matching.
   std::vector<SignatureMatcher::Hit> Hits;
+  std::vector<SignatureMatcher::Hit> DataHits;
   for (const auto &Seg : Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
@@ -527,41 +529,52 @@ void SignatureDB::apply(const BinaryImage &Img,
       const uint64_t Addr = Hit.Address;
       const size_t ModIdx = Hit.Module;
       const StoredModule &Mod = Modules[ModIdx];
-      // The names a module gives one offset are one routine's aliases, so
-      // each offset makes one match.
-      auto AddMatch = [&](uint32_t Offset,
-                          llvm::ArrayRef<std::string_view> Names) {
-        if (Offset > std::numeric_limits<uint64_t>::max() - Addr)
-          return;
-        SigMatch M;
-        M.Address = Addr + Offset;
-        M.Name = std::string(Names.front());
-        for (auto It = std::next(Names.begin()); It != Names.end(); ++It)
-          M.Aliases.emplace_back(*It);
-        M.LibraryName = libraryNameOf(ModIdx);
-        M.FuncLen = Mod.TotalLen;
-        Matches.push_back(std::move(M));
-        MatchModules.push_back(ModIdx);
-      };
-      const auto Publics = Mod.publicNames();
-      // A single name needs neither a grouping tree nor an alias buffer.
-      if (Publics.size() == 1) {
-        AddMatch(Publics.front().Offset, Publics.front().Name);
+      if (Idx.hasDataContext() && Mod.RequireReferences &&
+          llvm::any_of(Mod.references(),
+                       [](const StoredName &Ref) { return Ref.IsData; })) {
+        DataHits.push_back(Hit);
         continue;
       }
-      std::map<uint32_t, std::vector<std::string_view>> ByOffset;
-      for (const StoredName &Ref : Publics)
-        ByOffset[Ref.Offset].push_back(Ref.Name);
-      for (auto &[Offset, Names] : ByOffset) {
-        std::sort(Names.begin(), Names.end(), preferredAliasOrder);
-        Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
-        AddMatch(Offset, Names);
-      }
+      appendModuleMatches(Addr, ModIdx);
     }
   }
   checkReferences(Img, FuncEntries, std::move(Hits));
   applyCallerContext(Img, FuncEntries);
+  applyDataContext(Img, FuncEntries, DataHits);
   admitStatedNames(Img);
+}
+
+void SignatureDB::appendModuleMatches(uint64_t Addr, size_t ModIdx) {
+  const StoredModule &Mod = Modules[ModIdx];
+  // The names a module gives one offset are one routine's aliases, so
+  // each offset makes one match.
+  auto AddMatch = [&](uint32_t Offset, llvm::ArrayRef<std::string_view> Names) {
+    if (Offset > std::numeric_limits<uint64_t>::max() - Addr)
+      return;
+    SigMatch M;
+    M.Address = Addr + Offset;
+    M.Name = std::string(Names.front());
+    for (auto It = std::next(Names.begin()); It != Names.end(); ++It)
+      M.Aliases.emplace_back(*It);
+    M.LibraryName = libraryNameOf(ModIdx);
+    M.FuncLen = Mod.TotalLen;
+    Matches.push_back(std::move(M));
+    MatchModules.push_back(ModIdx);
+  };
+  const auto Publics = Mod.publicNames();
+  // A single name needs neither a grouping tree nor an alias buffer.
+  if (Publics.size() == 1) {
+    AddMatch(Publics.front().Offset, Publics.front().Name);
+    return;
+  }
+  std::map<uint32_t, std::vector<std::string_view>> ByOffset;
+  for (const StoredName &Ref : Publics)
+    ByOffset[Ref.Offset].push_back(Ref.Name);
+  for (auto &[Offset, Names] : ByOffset) {
+    std::sort(Names.begin(), Names.end(), preferredAliasOrder);
+    Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+    AddMatch(Offset, Names);
+  }
 }
 
 void SignatureDB::admitStatedNames(const BinaryImage &Img) {
@@ -1190,7 +1203,8 @@ void SignatureDB::applyCallerContextRound(
   auto ReferencesOf = [](const StoredModule &Mod) {
     llvm::SmallVector<Reference, 8> Result;
     for (const StoredName &Ref : Mod.references())
-      Result.emplace_back(Ref.Offset, Ref.Name);
+      if (!Ref.IsData)
+        Result.emplace_back(Ref.Offset, Ref.Name);
     llvm::sort(Result);
     Result.erase(std::unique(Result.begin(), Result.end()), Result.end());
     return Result;
@@ -1281,6 +1295,10 @@ void SignatureDB::applyCallerContextRound(
       for (const auto &[Expected, Candidates] : Queries) {
         for (const auto &Candidate : Candidates) {
           const StoredModule &Mod = Modules[Candidate.Module];
+          if (Mod.RequireReferences &&
+              llvm::any_of(Mod.references(),
+                           [](const StoredName &Ref) { return Ref.IsData; }))
+            continue;
           auto [Previous, Fresh] = Tried.try_emplace(
               std::pair{To->Target, Candidate.Module}, NoModule);
           if (!Fresh) {
@@ -1383,7 +1401,8 @@ void SignatureDB::applyCallerContextRound(
 void SignatureDB::checkReferences(const BinaryImage &Img,
                                   llvm::ArrayRef<uint64_t> Entries,
                                   std::vector<SignatureMatcher::Hit> Hits,
-                                  size_t FrozenMatches, size_t FirstChecked) {
+                                  size_t FrozenMatches, size_t FirstChecked,
+                                  const DataBindings *Data) {
   const size_t First = std::max(FrozenMatches, FirstChecked);
   bool AnyReferences = false;
   for (size_t I = First; I < MatchModules.size(); ++I)
@@ -1472,6 +1491,29 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
              References[End].Offset == References[R].Offset)
         ++End;
       ++Branches[I];
+      if (References[R].IsData) {
+        if (Data)
+          if (const auto Target =
+                  dataReferenceTarget(Img, Start, References[R].Offset,
+                                      Modules[MatchModules[I]].TotalLen)) {
+            const auto Bound = Data->find(*Target);
+            if (Bound != Data->end() && (Bound->second.Parent != Start ||
+                                         Bound->second.MultipleParents)) {
+              if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
+                               [&](const StoredName &Ref) {
+                                 return Ref.Name == Bound->second.Name;
+                               })) {
+                if (ConfirmedMetadata.empty())
+                  ConfirmedMetadata.resize(Matches.size(), 0);
+                ++ConfirmedMetadata[I];
+              } else {
+                ContradictedMetadata.insert(I);
+              }
+            }
+          }
+        R = End;
+        continue;
+      }
       std::optional<Branch> To = branchTarget(Img, Start, References[R].Offset);
       // Taking a named function's address carries the same exact target
       // constraint as calling it. Metadata symbols retain their data-specific
@@ -1578,7 +1620,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       continue;
     if (!Unconfirmable.empty() && Unconfirmable[I])
       continue;
-    At.emplace_back(Matches[I].Address, I);
+    if (FrozenMatches == 0)
+      At.emplace_back(Matches[I].Address, I);
     for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
       Calling.emplace_back(Sites[S].Target, I);
       if (Sites[S].Onward)
@@ -1587,7 +1630,6 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   }
   llvm::sort(Calling);
   Calling.erase(std::unique(Calling.begin(), Calling.end()), Calling.end());
-  llvm::sort(At);
   auto Range = [](const std::vector<Entry> &Pairs, uint64_t Address) {
     const auto Begin =
         std::lower_bound(Pairs.begin(), Pairs.end(), Entry{Address, 0});
@@ -1596,6 +1638,19 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       ++End;
     return llvm::make_range(Begin, End);
   };
+  if (FrozenMatches != 0) {
+    // Frozen validation only reads settlement at actually referenced targets.
+    // Newly appended matches cannot be evidence, and unrelated original
+    // matches need no grouping or sorting in every incoming/data pass.
+    for (size_t I = 0; I < FrozenMatches; ++I) {
+      const uint64_t Address = Matches[I].Address;
+      if (!Range(Calling, Address).empty() ||
+          (Img.Arch == Arch::ARM &&
+           !Range(Calling, Address & ~uint64_t(ThumbStateBit)).empty()))
+        At.emplace_back(Address, I);
+    }
+  }
+  llvm::sort(At);
 
   // The modules whose patterns match where a reference branches, to confirm
   // a reference by the named routine's own pattern: at an entry, the ones
@@ -1881,6 +1936,23 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         Dropped[I] = true;
   }
 
+  if (FrozenMatches != 0) {
+    // Only the newly checked suffix can change. Keep the frozen prefix and
+    // earlier validated incoming rows in place instead of moving the whole
+    // image's matches into fresh allocations.
+    size_t Kept = First;
+    for (size_t I = First; I < Matches.size(); ++I)
+      if (!Dropped[I]) {
+        if (Kept != I) {
+          Matches[Kept] = std::move(Matches[I]);
+          MatchModules[Kept] = MatchModules[I];
+        }
+        ++Kept;
+      }
+    Matches.resize(Kept);
+    MatchModules.resize(Kept);
+    return;
+  }
   std::vector<SigMatch> Kept;
   std::vector<size_t> KeptModules;
   Kept.reserve(Matches.size());

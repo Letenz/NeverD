@@ -32,6 +32,14 @@ class MetadataRefinementTests(unittest.TestCase):
         self.assertEqual(result.names, builder.parse_line(old).names)
         self.assertEqual(result.refs, ((3, "existing"), (4, "??_7Widget@@6B@"), (6, "__imp_API")))
 
+    def test_data_spelling_cannot_become_immutable_metadata(self):
+        old = "AABBCCDD 00 0000 0004 :0000 routine\n"
+        raw = "AABBCCDD 00 0000 0004 !evidence :0000 routine &0001 __imp_API\n"
+        self.assertEqual(self.refine(old, [raw]), old)
+        self.assertEqual(self.refine(old, [raw.replace("__imp_API", "??_7Widget@@6B@")]), old)
+        function_kind = raw.replace("&0001", "^0001")
+        self.assertEqual(self.refine(old, [raw, function_kind]), old)
+
     def test_missing_field_in_another_version_remains_unknown(self):
         old = "AABBCCDD 00 0000 0004 :0000 routine\n"
         raw = old.replace(" :", " !evidence :")

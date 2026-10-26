@@ -103,6 +103,11 @@ static cl::opt<bool> CollisionEvidence(
              "unreferenced functions; !evidence records cannot be loaded as "
              "signatures and imply --references"),
     cl::init(false));
+static cl::opt<bool> DataReferences(
+    "data-references",
+    cl::desc("Include typed external-data operands in contextual or collision "
+             "evidence output; requires a complete contextual output mode"),
+    cl::init(false));
 static cl::opt<bool>
     Verify("verify",
            cl::desc("Parse the positional .pat files with the signature "
@@ -205,6 +210,11 @@ int main(int Argc, char *Argv[]) {
   }
   if (Verify)
     return verifyPatterns();
+  if (DataReferences && !Contextual && !CallerContext && !CollisionEvidence) {
+    WithColor::error() << "--data-references requires --contextual, "
+                          "--caller-context or --collision-evidence\n";
+    return 1;
+  }
 
   if (OutputFile.empty()) {
     WithColor::error() << "no output file; pass -o <file.pat>\n";
@@ -237,6 +247,7 @@ int main(int Argc, char *Argv[]) {
   Opts.RequireReferences = Contextual;
   Opts.RequireCaller = CallerContext;
   Opts.CollisionEvidence = CollisionEvidence;
+  Opts.EmitDataReferences = DataReferences;
 
   auto ForMachine = [&](const ObjectFile &Obj) {
     return !Required || isObjectForMachine(Obj, *Required);

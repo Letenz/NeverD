@@ -22,6 +22,7 @@
 #include <iterator>
 #include <limits>
 #include <string>
+#include <utility>
 
 #if defined(__SSE2__)
 #include <emmintrin.h>
@@ -400,6 +401,7 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   // with, is no name.
   auto CannotBeName = [](llvm::StringRef Field) {
     return Field.starts_with(PublicNamePrefix) ||
+           Field.starts_with(DataReferencePrefix) ||
            Field.starts_with(ReferencePrefix) || Field == RequiredReferences ||
            Field == RequiredCaller || Field.starts_with(UnstatedByte);
   };
@@ -407,6 +409,7 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   // Remaining tokens form :offset/name pairs, then ^offset/name references,
   // followed by at most one tail.
   bool SawTail = false;
+  bool SawDataReference = false;
   for (size_t I = OpeningFields; I < Tokens.size(); ++I) {
     if (Tokens[I] == CollisionEvidenceOnly)
       return patternError("collision evidence is not a matchable signature");
@@ -418,10 +421,13 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
       Mod.RequireCaller = Tokens[I] == RequiredCaller;
       continue;
     }
-    if (Tokens[I].starts_with(ReferencePrefix)) {
+    if (Tokens[I].starts_with(ReferencePrefix) ||
+        Tokens[I].starts_with(DataReferencePrefix)) {
       if (SawTail)
         return patternError("reference follows the tail pattern");
-      auto OffStr = Tokens[I].drop_front(ReferencePrefix.size());
+      const bool IsData = Tokens[I].starts_with(DataReferencePrefix);
+      auto OffStr = Tokens[I].drop_front(IsData ? DataReferencePrefix.size()
+                                                : ReferencePrefix.size());
       unsigned Off;
       if (OffStr.empty() || OffStr.getAsInteger(Radix, Off))
         return patternError("invalid reference offset: " + Tokens[I]);
@@ -431,7 +437,10 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
         return patternError("reference name is missing after offset: " +
                             Tokens[I]);
 
-      Writer.Names.Names.push_back({Off, Tokens[++I]});
+      if (IsData && !Mod.RequireReferences && !Mod.RequireCaller)
+        return patternError("data references require a contextual record");
+      SawDataReference |= IsData;
+      Writer.Names.Names.push_back({Off, Tokens[++I], IsData});
       ++Mod.ReferenceCount;
       continue;
     }
@@ -468,6 +477,18 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
 
   if (Mod.PublicNameCount == 0)
     return patternError("no public names found");
+  if (SawDataReference) {
+    llvm::SmallVector<std::pair<uint32_t, bool>, 8> Sites;
+    for (const StoredName &Ref :
+         llvm::ArrayRef(Writer.Names.Names)
+             .slice(Mod.Names + Mod.PublicNameCount, Mod.ReferenceCount))
+      Sites.emplace_back(Ref.Offset, Ref.IsData);
+    llvm::sort(Sites);
+    for (size_t I = 1; I < Sites.size(); ++I)
+      if (Sites[I].first == Sites[I - 1].first &&
+          Sites[I].second != Sites[I - 1].second)
+        return patternError("reference site mixes function and data kinds");
+  }
   if (Mod.RequireReferences &&
       (Mod.ReferenceCount == 0 ||
        uint64_t(Mod.LeadingCount) + Mod.CRCLen + Mod.TailCount < Mod.TotalLen))
@@ -553,7 +574,8 @@ PatternModule PatternParser::toPatternModule(const StoredModule &Module) {
   for (const StoredName &Name : Module.publicNames())
     Result.PublicNames.push_back({Name.Offset, std::string(Name.Name)});
   for (const StoredName &Name : Module.references())
-    Result.References.push_back({Name.Offset, std::string(Name.Name)});
+    Result.References.push_back(
+        {Name.Offset, std::string(Name.Name), Name.IsData});
   Result.TailBytes = Pattern(Module.LeadingCount, Module.TailCount);
   return Result;
 }
