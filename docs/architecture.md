@@ -2745,6 +2745,11 @@ separate allocation for each distinct node hash. A tagged key admits every
 64-bit hash, including values reserved by the table implementation. Colliding
 hashes still compare the complete operator, width, auxiliary value and operand
 sequence; context copies and moves own their complete tables and node arenas.
+The compact two-word hash key uses one 64-bit bucket mix, without hashing its
+halves independently. Sum construction collects small coefficient maps in
+inline storage and sorts completed entries by base-node index before rebuilding.
+Larger sums retain hashed lookup; cancellation, recollection and canonical node
+order are unchanged.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every

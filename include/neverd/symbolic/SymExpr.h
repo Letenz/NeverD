@@ -514,7 +514,15 @@ private:
   /// identity checks follow the context-owned collision links below. Both
   /// halves fit in 32 bits, keeping the key and head in three words.
   using InternKey = std::pair<uint32_t, uint32_t>;
-  llvm::DenseMap<InternKey, SymRef> InternTable;
+  struct InternKeyInfo : llvm::DenseMapInfo<InternKey> {
+    static unsigned getHashValue(const InternKey &Key) {
+      // The pair stores one complete hash, not two independent identities.
+      // Mix it once for bucket selection while retaining the compact key.
+      return llvm::DenseMapInfo<uint64_t>::getHashValue(
+          (uint64_t(Key.first) << 32) | Key.second);
+    }
+  };
+  llvm::DenseMap<InternKey, SymRef, InternKeyInfo> InternTable;
   /// The two reserved key pairs have ordinary context-owned collision heads,
   /// so every complete 64-bit hash remains representable.
   std::array<SymRef, 2> ReservedInternHeads;
