@@ -1,9 +1,19 @@
+//===- SourceCallABITests.cpp - Source call carrier contracts -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Checks platform placement and refuses incomplete call-state evidence.
+
 #include "gtest/gtest.h"
 
 #include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
+
+#include <vector>
 using namespace neverd;
 namespace {
 SourceCallTypeHint contract(std::vector<TypeRef> Types, int Fixed = -1) {
@@ -21,7 +31,8 @@ TEST(SourceCallABI, PlacesFixedScalarArgumentsByPlatform) {
              Pointer = NdType::makePtr(NdType::makeVoid());
   std::string Error;
   for (auto A : {Arch::X64, Arch::AArch64})
-    for (auto F : {BinaryFormat::ELF, BinaryFormat::MachO}) {
+    for (auto F :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
       auto H = contract({Int, Double, Pointer});
       ASSERT_TRUE(assignAnalystCallABI(H, A, F, Error)) << Error;
       EXPECT_EQ(H.Signature.Parameters[1].Location.Kind,
@@ -36,6 +47,47 @@ TEST(SourceCallABI, PlacesFixedScalarArgumentsByPlatform) {
   EXPECT_EQ(
       Windows.Signature.Parameters[1].Location.RegisterOffset,
       getTargetRegInfo(Arch::X64).floatingParamRegs(BinaryFormat::COFF)[1]);
+}
+TEST(SourceCallABI, WindowsARM64FixedScalarsKeepSeparateBanksAndStackSlots) {
+  std::vector<TypeRef> Types;
+  for (unsigned I = 0; I < 9; ++I) {
+    Types.push_back(NdType::makeInt(4));
+    Types.push_back(NdType::makeFloat(8));
+  }
+  auto Hint = contract(Types);
+  Hint.Signature.ReturnType = NdType::makeFloat(8);
+  std::string Error;
+  ASSERT_TRUE(
+      assignAnalystCallABI(Hint, Arch::AArch64, BinaryFormat::COFF, Error))
+      << Error;
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned I = 0; I < 8; ++I) {
+    const auto &Integer = Hint.Signature.Parameters[I * 2].Location;
+    const auto &Floating = Hint.Signature.Parameters[I * 2 + 1].Location;
+    EXPECT_EQ(Integer.Kind, SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(Integer.RegisterOffset, TRI.IntParamRegs[I]);
+    EXPECT_EQ(Integer.ValueBytes, 4);
+    EXPECT_EQ(Floating.Kind, SourceABICarrierKind::FloatingRegister);
+    EXPECT_EQ(Floating.RegisterOffset, TRI.FPParamRegs[I]);
+    EXPECT_EQ(Floating.ValueBytes, 8);
+  }
+  for (unsigned I = 0; I < 2; ++I) {
+    const auto &Stack = Hint.Signature.Parameters[16 + I].Location;
+    EXPECT_EQ(Stack.Kind, SourceABICarrierKind::Stack);
+    EXPECT_EQ(Stack.EntryStackOffset, I * 8);
+    EXPECT_EQ(Stack.ValueBytes, I ? 8 : 4);
+  }
+  EXPECT_EQ(Hint.Signature.ReturnLocation.Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint.Signature.ReturnLocation.RegisterOffset, TRI.FPReturnReg);
+  EXPECT_EQ(Hint.Signature.ReturnLocation.ValueBytes, 8);
+
+  // Windows varargs use the integer bank even for named floating operands.
+  // Fixed-call placement must not silently admit that distinct convention.
+  Hint = contract(Types, 1);
+  EXPECT_FALSE(
+      assignAnalystCallABI(Hint, Arch::AArch64, BinaryFormat::COFF, Error));
+  EXPECT_NE(Error.find("Windows ARM64 variadic"), std::string::npos);
 }
 TEST(SourceCallABI,
      RequiresPromotedVariadicsAndExplicitFloatingDuplicateSupport) {
