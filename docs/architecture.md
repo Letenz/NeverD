@@ -244,6 +244,12 @@ HighIR consumes a direct call's recovered argument list as a whole, including
 empty lists and unavailable interior slots. Its local setup scan cannot append
 adjacent frame variables or replace those unknown operands with stale stores.
 Module call recovery finalizes this boundary for both C routes.
+For fragmented Windows SEH ranges, LLVM C follows the begin/end markers along
+the CFG and retains each block's complete ordered unwind chain. Independent
+handlers and a handler nested within a finally keep their own clauses. Normal
+edges assign PHIs before leaving the generated compounds; a block's finally
+executes the recovered cleanup only on unwind. Closed lexical ranges retain
+their compact rendering.
 HighIR adds this recovery for positional register/stack conventions. Independent
 register banks retain their source variadic and floating-return preparation.
 

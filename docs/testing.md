@@ -100,6 +100,13 @@ and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites
 loop backedges and exceptional prefixes retain their negative controls. Run both
 C route contract suites after changing this proof.
 
+`COFFExceptionIR.LLVMCMixedHandlersKeepUnwindOnlyCleanup` covers independent
+SEH handlers together with an inner handler whose failed filter unwinds through
+a finally. Both O0/O2 Windows object builds retain the nested clauses; host
+execution checks the normal paths and cleanup count. Run the complete
+`COFFExceptionIR.LLVMC*` group to retain compact closed ranges and shared-handler
+loops. Host normal-path checks do not qualify native Windows exception dispatch.
+
 # Testing NeverD
 
 `*LookupFailures*` and `ProcessReport.AndroidLoaderFailures*` cover strict

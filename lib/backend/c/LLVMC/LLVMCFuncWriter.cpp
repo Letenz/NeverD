@@ -9333,147 +9333,175 @@ void restoreSEHRangeEntryOrder(llvm::Function &Fn) {
     Begin->getParent()->moveBefore(Begin->getNormalDest()->getIterator());
 }
 
-struct SEHBlockScopes {
-  std::map<const llvm::BasicBlock *, bool> Protected;
-  llvm::SmallPtrSet<const llvm::BasicBlock *, 8> CleanupProtected;
+struct SEHBlockClause {
   const llvm::CatchSwitchInst *Dispatch = nullptr;
   const llvm::CatchPadInst *Pad = nullptr;
   const llvm::BasicBlock *Handler = nullptr;
   const llvm::CleanupPadInst *Cleanup = nullptr;
   llvm::SmallVector<const llvm::BasicBlock *, 4> CleanupBody;
+  const llvm::BasicBlock *Unwind = nullptr;
+};
+
+struct SEHBlockScopes {
+  using Scope = std::vector<const llvm::BasicBlock *>;
+  std::map<const llvm::BasicBlock *, Scope> Protected;
+  std::map<const llvm::BasicBlock *, SEHBlockClause> Clauses;
 };
 
 // Range markers own the scope state, independently of LLVM's block order.
-// A flat shared handler may have several normal exits and re-enter a loop;
-// representing each protected block as its own __try preserves those edges
-// without introducing a C goto into a protected compound statement.
+// Each protected block keeps its complete ordered unwind chain. All normal
+// and handler edges leave the C compounds before entering their destination;
+// a fragmented range never needs a goto into another protected statement.
 std::optional<SEHBlockScopes> planSEHBlockScopes(const llvm::Function &Fn) {
   SEHBlockScopes Plan;
+  unsigned Begins = 0, Ends = 0;
+  std::map<const llvm::BasicBlock *, std::pair<unsigned, unsigned>> Markers;
   for (const auto &BB : Fn) {
     if (const auto *Switch =
             llvm::dyn_cast<llvm::CatchSwitchInst>(BB.getTerminator())) {
-      if (Plan.Dispatch)
+      if (!isEHTokenNone(Switch->getParentPad()) ||
+          Switch->getNumHandlers() != 1)
         return std::nullopt;
-      Plan.Dispatch = Switch;
+      auto &Clause = Plan.Clauses[&BB];
+      Clause.Dispatch = Switch;
+      Clause.Pad = firstCatchPad(*Switch);
+      if (!Clause.Pad || Clause.Pad->arg_size() != 1)
+        return std::nullopt;
+      const auto *Ret = llvm::dyn_cast<llvm::CatchReturnInst>(
+          Clause.Pad->getParent()->getTerminator());
+      if (!Ret)
+        return std::nullopt;
+      Clause.Handler = Ret->getSuccessor();
+      Clause.Unwind = Switch->getUnwindDest();
     }
     for (const auto &Inst : BB)
       if (const auto *Pad = llvm::dyn_cast<llvm::CleanupPadInst>(&Inst)) {
-        if (Plan.Cleanup || !isEHTokenNone(Pad->getParentPad()))
+        if (!isEHTokenNone(Pad->getParentPad()))
           return std::nullopt;
-        Plan.Cleanup = Pad;
+        Plan.Clauses[&BB].Cleanup = Pad;
+      }
+    if (const auto *Invoke =
+            llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator()))
+      if (const auto *Callee = Invoke->getCalledFunction()) {
+        Begins += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin;
+        Ends += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end;
+        auto &Counts = Markers[Invoke->getUnwindDest()];
+        Counts.first +=
+            Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin;
+        Counts.second +=
+            Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end;
       }
   }
-  if (!Plan.Dispatch)
+  // Keep the lexical renderer for a single closed range. This plan owns
+  // fragmented or independently nested ranges whose block order is immaterial.
+  if (Plan.Clauses.empty() || !Begins || !Ends || (Begins == 1 && Ends == 1))
     return std::nullopt;
-  const auto *CleanupBlock = Plan.Cleanup ? Plan.Cleanup->getParent() : nullptr;
-  const llvm::BasicBlock *Dispatch = nullptr;
-  unsigned Begins = 0, Ends = 0;
-  for (const auto &BB : Fn) {
-    const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator());
-    if (!Invoke)
+  // The existing lexical renderer also owns one closed finally nested in
+  // one closed except. Preserve that compact source form when each clause
+  // has exactly one marker pair.
+  if (Plan.Clauses.size() == 2 &&
+      llvm::count_if(Plan.Clauses,
+                     [](const auto &Entry) {
+                       return Entry.second.Dispatch != nullptr;
+                     }) == 1 &&
+      llvm::all_of(Plan.Clauses, [&](const auto &Entry) {
+        return Markers[Entry.first] == std::pair(1u, 1u);
+      }))
+    return std::nullopt;
+  for (auto &[Entry, Clause] : Plan.Clauses) {
+    if (!Clause.Cleanup)
       continue;
-    if (Invoke->getUnwindDest() == CleanupBlock)
-      continue;
-    if (Dispatch && Dispatch != Invoke->getUnwindDest())
-      return std::nullopt;
-    Dispatch = Invoke->getUnwindDest();
-    const auto *Callee = Invoke->getCalledFunction();
-    if (Callee) {
-      Begins += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_begin;
-      Ends += Callee->getIntrinsicID() == llvm::Intrinsic::seh_try_end;
-    }
-  }
-  if (!Begins || !Ends || (Begins == 1 && Ends == 1) || !Dispatch)
-    return std::nullopt;
-  if (Dispatch != Plan.Dispatch->getParent() ||
-      Plan.Dispatch->getNumHandlers() != 1 || !Plan.Dispatch->unwindsToCaller())
-    return std::nullopt;
-  Plan.Pad = firstCatchPad(*Plan.Dispatch);
-  if (!Plan.Pad || Plan.Pad->arg_size() != 1)
-    return std::nullopt;
-  const auto *Ret = llvm::dyn_cast<llvm::CatchReturnInst>(
-      Plan.Pad->getParent()->getTerminator());
-  if (!Ret)
-    return std::nullopt;
-  Plan.Handler = Ret->getSuccessor();
-  // A linear unwind-only cleanup can accompany the shared handler. Its
-  // normal counterpart already lives in the normal CFG. A per-block finally
-  // must therefore run this body only when that block unwinds, never when an
-  // ordinary edge leaves its protected C compound statement.
-  if (CleanupBlock) {
+    // The normal cleanup counterpart already lives in the normal CFG. A
+    // per-block finally executes this linear body only while unwinding.
     llvm::SmallPtrSet<const llvm::BasicBlock *, 4> Seen;
-    const auto *BB = CleanupBlock;
+    const auto *BB = Entry;
     while (Seen.insert(BB).second) {
-      Plan.CleanupBody.push_back(BB);
+      Clause.CleanupBody.push_back(BB);
       const auto *Term = BB->getTerminator();
-      if (const auto *Return = llvm::dyn_cast<llvm::CleanupReturnInst>(Term)) {
-        if (Return->getCleanupPad() != Plan.Cleanup ||
-            Return->getUnwindDest() != Dispatch)
+      if (const auto *Ret = llvm::dyn_cast<llvm::CleanupReturnInst>(Term)) {
+        if (Ret->getCleanupPad() != Clause.Cleanup)
           return std::nullopt;
+        Clause.Unwind = Ret->getUnwindDest();
         break;
       }
       const llvm::BasicBlock *Next = nullptr;
-      if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
-        if (Invoke->getUnwindDest() != Dispatch)
-          return std::nullopt;
+      if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term))
         Next = Invoke->getNormalDest();
-      } else if (const auto *Branch = llvm::dyn_cast<llvm::UncondBrInst>(Term))
+      else if (const auto *Branch = llvm::dyn_cast<llvm::UncondBrInst>(Term))
         Next = Branch->getSuccessor(0);
       if (!Next || Next->getSinglePredecessor() != BB || Seen.count(Next))
         return std::nullopt;
       BB = Next;
     }
+    for (const auto *Body : Clause.CleanupBody)
+      if (const auto *Invoke =
+              llvm::dyn_cast<llvm::InvokeInst>(Body->getTerminator()))
+        if (Invoke->getUnwindDest() != Clause.Unwind)
+          return std::nullopt;
   }
-  struct Scope {
-    bool Protected = false;
-    bool Cleanup = false;
-  };
-  llvm::SmallVector<std::pair<const llvm::BasicBlock *, Scope>, 16> Work{
-      {&Fn.getEntryBlock(), {}}, {Plan.Handler, {}}};
+  std::map<const llvm::BasicBlock *, SEHBlockScopes::Scope> Chains;
+  for (const auto &[Entry, Clause] : Plan.Clauses) {
+    auto &Chain = Chains[Entry];
+    for (const auto *Current = Entry; Current;) {
+      const auto Found = Plan.Clauses.find(Current);
+      if (Found == Plan.Clauses.end() || llvm::is_contained(Chain, Current))
+        return std::nullopt;
+      Chain.push_back(Current);
+      Current = Found->second.Unwind;
+    }
+    std::reverse(Chain.begin(), Chain.end());
+  }
+  llvm::SmallVector<std::pair<const llvm::BasicBlock *, SEHBlockScopes::Scope>,
+                    16>
+      Work{{&Fn.getEntryBlock(), {}}};
+  for (const auto &[Entry, Clause] : Plan.Clauses)
+    if (Clause.Handler)
+      Work.emplace_back(Clause.Handler, SEHBlockScopes::Scope{});
   while (!Work.empty()) {
-    const auto [BB, Incoming] = Work.pop_back_val();
-    auto [It, Inserted] = Plan.Protected.emplace(BB, Incoming.Protected);
+    auto [BB, Incoming] = Work.pop_back_val();
+    auto [It, Inserted] = Plan.Protected.emplace(BB, Incoming);
     if (!Inserted) {
-      if (It->second != Incoming.Protected ||
-          Plan.CleanupProtected.count(BB) != Incoming.Cleanup)
+      if (It->second != Incoming)
         return std::nullopt;
       continue;
     }
-    if (Incoming.Cleanup)
-      Plan.CleanupProtected.insert(BB);
     const auto *Term = BB->getTerminator();
     if (const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Term)) {
+      const auto Found = Chains.find(Invoke->getUnwindDest());
+      if (Found == Chains.end())
+        return std::nullopt;
       const auto *Callee = Invoke->getCalledFunction();
       const auto ID =
           Callee ? Callee->getIntrinsicID() : llvm::Intrinsic::not_intrinsic;
-      Scope Outgoing = Incoming;
-      const bool Cleanup = Invoke->getUnwindDest() == CleanupBlock;
-      if (Cleanup && !Incoming.Protected)
-        return std::nullopt;
-      bool &Active = Cleanup ? Outgoing.Cleanup : Outgoing.Protected;
+      auto Outgoing = Found->second;
       if (ID == llvm::Intrinsic::seh_try_begin) {
-        if (Active || (!Cleanup && Incoming.Cleanup))
+        auto Outside = Outgoing;
+        Outside.pop_back();
+        if (Incoming != Outside)
           return std::nullopt;
-        Active = true;
-      } else if (ID == llvm::Intrinsic::seh_try_end) {
-        if (!Active || (!Cleanup && Incoming.Cleanup))
+      } else {
+        if (Incoming != Outgoing)
           return std::nullopt;
-        Active = false;
-      } else if (!Active || (!Cleanup && Incoming.Cleanup)) {
-        return std::nullopt;
+        if (ID == llvm::Intrinsic::seh_try_end)
+          Outgoing.pop_back();
       }
-      Work.emplace_back(Invoke->getNormalDest(), Outgoing);
+      Work.emplace_back(Invoke->getNormalDest(), std::move(Outgoing));
       continue;
     }
     if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchReturnInst,
-                  llvm::CleanupReturnInst, llvm::IndirectBrInst>(Term) ||
-        (Incoming.Cleanup && llvm::isa<llvm::ReturnInst>(Term)))
+                  llvm::CleanupReturnInst, llvm::IndirectBrInst>(Term))
+      return std::nullopt;
+    if (llvm::isa<llvm::ReturnInst>(Term) &&
+        llvm::any_of(Incoming, [&](const auto *Scope) {
+          return Plan.Clauses.at(Scope).Cleanup != nullptr;
+        }))
       return std::nullopt;
     for (const auto *Next : llvm::successors(BB))
       Work.emplace_back(Next, Incoming);
   }
   return Plan;
 }
+
 } // namespace
 
 void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
@@ -10304,15 +10332,10 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
                                   EHWraps.empty() && !UseRanges &&
                                   tryWriteScalarRegions(Fn, 1);
   if (BlockScopes) {
-    const auto Clause = std::find_if(
-        EHWraps.begin(), EHWraps.end(), [&](const EHWrapClause &Candidate) {
-          return Candidate.Kind == EHWrapClause::Kind::SEHExcept &&
-                 Candidate.Switch == BlockScopes->Dispatch;
-        });
-    if (Clause == EHWraps.end())
-      throw std::runtime_error("C SEH block scopes lack their shared handler");
     std::string NormalExit;
-    if (BlockScopes->Cleanup) {
+    if (llvm::any_of(BlockScopes->Clauses, [](const auto &Entry) {
+          return Entry.second.Cleanup != nullptr;
+        })) {
       NormalExit = "neverd_seh_normal";
       while (!UsedNames.insert(NormalExit).second)
         NormalExit += "_";
@@ -10348,14 +10371,17 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       AllocaLastValues.clear();
       AfterCxxThrow = false;
       OS << blockLabel(&BB) << ":\n";
-      if (Scope->second)
-        writeEHWrapOpen(*Clause, 1);
-      InCleanup = BlockScopes->CleanupProtected.count(&BB);
-      const int Indent = (Scope->second ? 2 : 1) + InCleanup;
+      InCleanup = llvm::any_of(Scope->second, [&](const auto *Entry) {
+        return BlockScopes->Clauses.at(Entry).Cleanup != nullptr;
+      });
+      int Indent = 1;
       if (InCleanup) {
-        emitIndent(Indent - 1);
+        emitIndent(Indent);
         OS << NormalExit << " = 0;\n";
-        emitIndent(Indent - 1);
+      }
+      for (const auto *Entry : Scope->second) {
+        (void)Entry;
+        emitIndent(Indent++);
         OS << "__try {\n";
       }
       for (auto &Inst : BB) {
@@ -10398,52 +10424,54 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       } else {
         writeInstruction(*Term, Indent);
       }
-      if (InCleanup) {
-        emitIndent(Indent - 1);
-        OS << "} __finally {\n";
-        emitIndent(Indent);
-        OS << "if (!" << NormalExit << ") {\n";
+      for (const auto *Entry : llvm::reverse(Scope->second)) {
+        --Indent;
+        const auto &Clause = BlockScopes->Clauses.at(Entry);
         KnownImmediates.clear();
         AllocaImmediates.clear();
         AllocaLastValues.clear();
         AfterCxxThrow = false;
-        for (const auto *CleanupBB : BlockScopes->CleanupBody) {
-          for (const auto &Inst : *CleanupBB)
-            if (!Inst.isTerminator() &&
-                !llvm::isa<llvm::CleanupPadInst, llvm::AllocaInst>(Inst))
+        emitIndent(Indent);
+        if (Clause.Cleanup) {
+          OS << "} __finally {\n";
+          emitIndent(Indent + 1);
+          OS << "if (!" << NormalExit << ") {\n";
+          for (const auto *CleanupBB : Clause.CleanupBody) {
+            for (const auto &Inst : *CleanupBB)
+              if (!Inst.isTerminator() &&
+                  !llvm::isa<llvm::CleanupPadInst, llvm::AllocaInst>(Inst))
+                writeInstruction(const_cast<llvm::Instruction &>(Inst),
+                                 Indent + 2);
+            const auto *CleanupTerm = CleanupBB->getTerminator();
+            const llvm::BasicBlock *Next = nullptr;
+            if (const auto *Invoke =
+                    llvm::dyn_cast<llvm::InvokeInst>(CleanupTerm)) {
+              writeCallLike(*const_cast<llvm::InvokeInst *>(Invoke),
+                            Invoke->getType()->isVoidTy() ? ""
+                                                          : getName(Invoke),
+                            Indent + 2);
+              Next = Invoke->getNormalDest();
+            } else if (const auto *Branch =
+                           llvm::dyn_cast<llvm::UncondBrInst>(CleanupTerm))
+              Next = Branch->getSuccessor(0);
+            if (Next && !AfterCxxThrow)
+              writePhiCopies(CleanupBB, Next, Indent + 2);
+          }
+          emitIndent(Indent + 1);
+          OS << "}\n";
+        } else {
+          OS << "} __except (" << windowsEHFilterExpr(*Clause.Dispatch)
+             << ") {\n";
+          for (const auto &Inst : *Clause.Pad->getParent())
+            if (!llvm::isa<llvm::CatchPadInst, llvm::CatchReturnInst>(Inst))
               writeInstruction(const_cast<llvm::Instruction &>(Inst),
                                Indent + 1);
-          const auto *CleanupTerm = CleanupBB->getTerminator();
-          const llvm::BasicBlock *Next = nullptr;
-          if (const auto *Invoke =
-                  llvm::dyn_cast<llvm::InvokeInst>(CleanupTerm)) {
-            writeCallLike(*const_cast<llvm::InvokeInst *>(Invoke),
-                          Invoke->getType()->isVoidTy() ? "" : getName(Invoke),
-                          Indent + 1);
-            Next = Invoke->getNormalDest();
-          } else if (const auto *Branch =
-                         llvm::dyn_cast<llvm::UncondBrInst>(CleanupTerm))
-            Next = Branch->getSuccessor(0);
-          if (Next && !AfterCxxThrow)
-            writePhiCopies(CleanupBB, Next, Indent + 1);
+          Edge(Clause.Pad->getParent(), Clause.Handler, Indent + 1);
         }
         emitIndent(Indent);
         OS << "}\n";
-        emitIndent(Indent - 1);
-        OS << "}\n";
       }
       InCleanup = false;
-      if (Scope->second) {
-        emitIndent(1);
-        OS << "} __except (" << Clause->Clause << ") {\n";
-        KnownImmediates.clear();
-        for (const auto &Inst : *BlockScopes->Pad->getParent())
-          if (!llvm::isa<llvm::CatchPadInst, llvm::CatchReturnInst>(Inst))
-            writeInstruction(const_cast<llvm::Instruction &>(Inst), 2);
-        Edge(BlockScopes->Pad->getParent(), BlockScopes->Handler, 2);
-        emitIndent(1);
-        OS << "}\n";
-      }
     }
   } else if (WroteScalarRegions) {
     // The complete region plan owns all blocks and PHI edges.
