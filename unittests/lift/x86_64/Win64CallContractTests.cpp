@@ -52,6 +52,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1155,6 +1156,156 @@ int main(void) {
             {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
     }
   }
+}
+
+TEST(Win64CallContract, AddressOnlySymbolsDoNotInventCallableTypes) {
+  constexpr va_t Target = Text + 0x80;
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(int(Architecture));
+      SCOPED_TRACE(int(Format));
+      const char *Symbol = Format == BinaryFormat::MachO ? "_callback_provider"
+                                                         : "callback_provider";
+      auto Image =
+          makeImage(std::vector<uint8_t>(0x90),
+                    {{Text, "callback_address"}, {Target, Symbol}}, {});
+      Image.Arch = Architecture;
+      Image.Format = Format;
+      HighFunc Address;
+      Address.Entry = Text;
+      Address.Name = "callback_address";
+      Address.ReturnType = NdType::makeInt(8, false);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.Val = HighExpr::makeConst(Target, 8,
+                                       ConstantAddressProvenance::CodeAddress);
+      Address.Body.push_back(std::move(Return));
+      CEmitterOptions Options;
+      Options.Image = &Image;
+      Options.TheArch = Architecture;
+      Options.Format = Format;
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      ASSERT_TRUE(HighCEmitter().emit({Address}, Output, Options));
+      EXPECT_EQ(Source.find("extern int callback_provider("), std::string::npos)
+          << Source;
+      // Each provider defines the SAME C identifier in the combined unit.
+      // Link-label aliases alone would conceal a guessed-prototype conflict.
+      for (const auto &[Type, Body, Check] :
+           {std::tuple{"uint64_t", "return x ^ UINT64_C(0xFEDCBA9876543210);",
+                       "return value != (37 ^ UINT64_C(0xFEDCBA9876543210));"},
+            std::tuple{"void *", "return &observed;",
+                       "return value != &observed;"},
+            std::tuple{"double", "return (double)x + 0.5;",
+                       "return value != 37.5;"},
+            std::tuple{"void", "observed = x;", "return observed != 37;"}}) {
+        SCOPED_TRACE(Type);
+        const bool Void = llvm::StringRef(Type) == "void";
+        std::string Oracle = "\nstatic uint64_t observed;\n";
+        Oracle += std::string(Type) +
+                  " callback_provider(uint64_t) __asm__(\"" + Symbol +
+                  "\");\n" + Type + " callback_provider(uint64_t x) { " + Body +
+                  " }\n";
+        Oracle += "int main(void) {\n"
+                  "  if (callback_address() != (uintptr_t)&callback_provider) "
+                  "return 1;\n  ";
+        if (!Void)
+          Oracle += std::string(Type) + " value = ";
+        Oracle += "((" + std::string(Type) +
+                  " (*)(uint64_t))(uintptr_t)callback_address())(37);\n  " +
+                  Check + "\n}\n";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+    }
+}
+
+TEST(Win64CallContract, SelectedWordCalleesKeepTheirPointerDeclarations) {
+  constexpr va_t Target = Text + 0x80;
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+      SCOPED_TRACE(int(Architecture));
+      SCOPED_TRACE(int(Format));
+      std::vector<uint8_t> Code(0x90);
+      if (Architecture == Arch::X64) {
+        put(Code, Text,
+            {0x48, 0x83, 0xec, 0x28, 0xe8, 0x77, 0, 0, 0, 0x48, 0x83, 0xc4,
+             0x28, 0xc3});
+        // mov rax,[rcx/rdi]; ret
+        put(Code, Target,
+            {0x48, 0x8b,
+             static_cast<uint8_t>(Format == BinaryFormat::COFF ? 0x01 : 0x07),
+             0xc3});
+      } else {
+        put(Code, Text,
+            {0xfd, 0x7b, 0xbf, 0xa9,   // stp x29,x30,[sp,#-16]!
+             0x1f, 0x00, 0x00, 0x94,   // bl read_pointer
+             0xfd, 0x7b, 0xc1, 0xa8,   // ldp x29,x30,[sp],#16
+             0xc0, 0x03, 0x5f, 0xd6}); // ret
+        put(Code, Target,
+            {0x00, 0x00, 0x40, 0xf9, // ldr x0,[x0]
+             0xc0, 0x03, 0x5f, 0xd6});
+      }
+      auto Image = makeImage(
+          Code, {{Text, "forward_pointer"}, {Target, "read_pointer"}}, {});
+      Image.Arch = Architecture;
+      Image.Format = Format;
+      for (bool Selected : {false, true}) {
+        SCOPED_TRACE(Selected);
+        std::string Source;
+        const std::vector<va_t> Entries =
+            Selected ? std::vector<va_t>{Text, Target} : std::vector<va_t>{0};
+        for (va_t Entry : Entries) {
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.SourceProjection = true;
+          Options.LiftMode = true;
+          Options.OnlyFunctionEntries =
+              Entry ? std::set<va_t>{Entry} : std::set<va_t>{Text, Target};
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          ASSERT_TRUE(Result.LlvmModule);
+          if (Entry != Target) {
+            auto *Callee = Result.LlvmModule->getFunction("read_pointer");
+            ASSERT_TRUE(Callee);
+            ASSERT_EQ(Callee->arg_size(), 1u);
+            EXPECT_TRUE(Callee->getArg(0)->getType()->isPointerTy());
+            EXPECT_EQ(Callee->isDeclaration(), Selected);
+          }
+          CEmitterOptions COptions;
+          COptions.TheArch = Architecture;
+          COptions.Format = Format;
+          COptions.PreserveLLVMFunctionTypes = true;
+          llvm::raw_string_ostream Output(Source);
+          ASSERT_TRUE(
+              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
+        }
+        const std::string Oracle = R"(
+int main(void) {
+  uint64_t values[] = {0, 37, UINT64_C(0xFEDCBA9876543210)};
+  for (unsigned i = 0; i != 3; ++i)
+    if (forward_pointer((uintptr_t)&values[i]) != values[i]) return 1;
+  return 0;
+}
+)";
+        // The public caller retains a machine-word input unless a whole-unit
+        // projection sees its pointer use. Cast at this harness boundary only;
+        // the emitted caller and callee must agree without source rewriting.
+        std::string Harness = Oracle;
+        if (!Selected)
+          Harness.replace(Harness.find("(uintptr_t)&values[i]"),
+                          std::string("(uintptr_t)&values[i]").size(),
+                          "(void *)&values[i]");
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source + Harness,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+    }
 }
 
 TEST(Win64CallContract, BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes) {

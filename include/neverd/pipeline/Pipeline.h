@@ -330,6 +330,10 @@ struct PipelineResult {
   /// (the native LLVM route of a session) reuses them instead of lifting them
   /// again, which costs as much as the rest of recovery.
   std::shared_ptr<const OmittedCalleeBodies> OmittedCallees;
+  /// Fixed machine-word declarations whose parameter carriers did not change
+  /// during omitted-callee recovery. Source LLVM uses these types for direct
+  /// calls; they supply neither bodies nor a source/native ABI proof.
+  std::vector<MedFunc> OmittedCalleeDeclarations;
   /// What reading those bodies read of each callee, shared by the restricted
   /// runs of the image (PipelineAnalysisCache): one selection's callees are
   /// mostly another's.
@@ -800,7 +804,8 @@ private:
       llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
       const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {},
       const std::set<va_t> *PrototypeArgumentCallees = nullptr,
-      bool PreserveUnknownSourceValues = false);
+      bool PreserveUnknownSourceValues = false,
+      llvm::ArrayRef<MedFunc> SourceCalleeDeclarations = {});
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

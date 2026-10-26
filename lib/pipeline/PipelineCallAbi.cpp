@@ -754,6 +754,43 @@ void boundRecoveredArguments(MedCallInfo &Call, const MedFunc &Callee) {
     boundRecoveredArguments(Call, *Bound);
 }
 
+/// Keep the typed spelling of an unchanged, ordinary machine-word signature.
+/// This is not a native source ABI: pointer/integer views share the original
+/// carriers, and the declaration never compacts or introduces parameters.
+std::optional<MedFunc> scalarCalleeDeclaration(const BinaryImage &Image,
+                                               const MedFunc &Body,
+                                               size_t ParameterCount) {
+  if ((Image.Arch != Arch::X64 && Image.Arch != Arch::AArch64) ||
+      Body.SourceTypeHint || Body.SourceParametersBound || Body.IsVariadic ||
+      Body.Params.size() != ParameterCount ||
+      Body.TypedParams.size() != ParameterCount ||
+      !Body.IntegerArgumentRegisters.empty() || !Body.MultiReturn.empty() ||
+      Body.ReturnsVectorRegister || Body.FPReturnViaX87 ||
+      Body.ConsumesX87Argument || Body.Name.empty() || Body.ExceptionMetadata ||
+      Body.RegistrationStates)
+    return std::nullopt;
+  const auto &Registers = getTargetRegInfo(Image.Arch);
+  const auto Word = [&](const TypeRef &Type) {
+    return Type && Type->Size == Registers.PointerSize &&
+           (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr);
+  };
+  if (!Word(Body.ReturnType))
+    return std::nullopt;
+  for (size_t I = 0; I < ParameterCount; ++I)
+    if (Body.Params[I].Size != Registers.PointerSize ||
+        Registers.isFPArgReg(Body.Params[I].RegOff, Image.abiFormat()) ||
+        !Word(Body.TypedParams[I].Type))
+      return std::nullopt;
+  MedFunc Declaration;
+  Declaration.Entry = Body.Entry;
+  Declaration.Name = Body.Name;
+  Declaration.CC = Body.CC;
+  Declaration.Params = Body.Params;
+  Declaration.TypedParams = Body.TypedParams;
+  Declaration.ReturnType = Body.ReturnType;
+  return Declaration;
+}
+
 /// The integer register arguments a call to \p Func passes through: its
 /// register parameters through \p MaxRegisterIndex, but only the named ones
 /// of a variadic function whose save area spills the rest.
@@ -1305,6 +1342,7 @@ AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
 
 void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                           const std::map<va_t, std::string> &AllFuncNames) {
+  Result.OmittedCalleeDeclarations.clear();
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
   std::map<va_t, int> CalleeRegArity;
@@ -1781,6 +1819,14 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   std::map<va_t, RecoveredArgumentBound> SignatureBounds;
   for (size_t I = 0; I < OmittedCallees.size(); ++I) {
     const MedFunc &F = *OmittedCallees[I];
+    // A memo hit retains the final arity. Only publish types when recovery
+    // kept the original complete carrier list; inserted forwarder operands
+    // or a changed order cannot borrow the conversion's old typed prefix.
+    if (!Regparm && I < Recovered && Omitted[I].Bounds &&
+        (!Omitted[I].Body || Omitted[I].Body->Params == F.Params))
+      if (auto Declaration =
+              scalarCalleeDeclaration(Img, F, Omitted[I].Parameters))
+        Result.OmittedCalleeDeclarations.push_back(std::move(*Declaration));
     if (I < Recovered) {
       const OmittedRecovery &Callee = Omitted[I];
       if (Callee.Body) {

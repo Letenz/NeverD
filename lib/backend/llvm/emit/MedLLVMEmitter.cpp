@@ -1241,7 +1241,12 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   EmittedFuncNames.clear();
   FuncNames.clear();
   PEImportCNames = Img ? peImportCNames(*Img) : std::set<std::string>{};
-  for (const MedFunc &F : Funcs) {
+  const auto Declarations = PreserveUnknownSourceValues
+                                ? SourceCalleeDeclarations
+                                : llvm::ArrayRef<MedFunc>{};
+  for (const MedFunc &F : llvm::concat<const MedFunc>(Funcs, Declarations)) {
+    if (EmittedFuncNames.count(F.Entry))
+      continue;
     std::string EmittedName = F.Name;
     auto Personality = NativePersonalityNames.find(F.Entry);
     llvm::StringRef SourceName(F.Name);
@@ -1352,6 +1357,16 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         Merged.push_back(Range);
     if (!Merged.empty())
       EmittedFuncCodeRanges[Func.Entry] = std::move(Merged);
+  }
+  for (const MedFunc &Declaration : Declarations) {
+    if (!Declaration.Blocks.empty())
+      throw std::invalid_argument("source callee declaration has a body");
+    // Definitions selected for this module own their types. A stale omitted
+    // declaration cannot replace a selected function or provide its ranges.
+    if (llvm::none_of(Funcs, [&](const auto &Function) {
+          return Function.Entry == Declaration.Entry;
+        }))
+      declareFunc(Declaration);
   }
   initializeCxxContinuationPlans(Funcs, BodyMask);
 

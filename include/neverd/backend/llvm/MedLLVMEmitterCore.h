@@ -100,6 +100,11 @@ public:
   void setSourceTargetSignatures(const SourceTargetSignatures *Signatures) {
     AnalystTargets = Signatures;
   }
+  /// Source-only declarations recovered by the shared call-ABI owner. They
+  /// keep omitted direct callees' parameter types without emitting bodies.
+  void setSourceCalleeDeclarations(llvm::ArrayRef<MedFunc> Declarations) {
+    SourceCalleeDeclarations = Declarations;
+  }
   /// Debug information to name the image's data by where the image's own
   /// symbols do not: publics a single function's load leaves unread.  Its
   /// lookups may run from every shard at once.
@@ -155,6 +160,7 @@ public:
   }
 
 private:
+  llvm::ArrayRef<MedFunc> SourceCalleeDeclarations;
   const MedFunc *PortableBody = nullptr;
   const PreparedPortableX87Function *PortableInterface = nullptr;
   std::string PortableOutputTriple;

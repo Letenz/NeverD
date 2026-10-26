@@ -344,6 +344,7 @@ struct Session {
   /// mutate the HighIR route's MedIR: later source variants rebuild from that
   /// same prepared input.
   std::optional<std::vector<MedFunc>> NativeMedFuncs;
+  std::vector<MedFunc> NativeCalleeDeclarations;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
   /// The image's strings under the options last searched with
@@ -982,6 +983,7 @@ struct Session {
     CurrentCallResults.clear();
     UsingAnalystCallContracts = false;
     NativeMedFuncs.reset();
+    NativeCalleeDeclarations.clear();
     PipeResult = {};
     LLVMCtx.reset();
     PipeRan = false;
@@ -1213,12 +1215,14 @@ struct Session {
       Recovery.CalleeSignatureMemo = PipeResult.CalleeSignatureMemo;
       recoverModuleCallAbi(Img, Recovery, FuncNames);
       NativeMedFuncs = std::move(Recovery.MedFuncs);
+      NativeCalleeDeclarations = std::move(Recovery.OmittedCalleeDeclarations);
     }
     std::vector<std::pair<va_t, std::string>> ImportMap;
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
     Emitter.setPreserveUnknownSourceValues(true);
+    Emitter.setSourceCalleeDeclarations(NativeCalleeDeclarations);
     Emitter.setOriginalImageStorageForSource(OriginalImageStorage);
     Emitter.setAnalystSourceProjection(UsingAnalystCallContracts);
     if (UsingAnalystCallContracts && CallVariant)
