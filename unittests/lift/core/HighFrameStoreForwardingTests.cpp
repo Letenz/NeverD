@@ -16,6 +16,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/high/HighSourceMap.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/lift/X86/X86Regs.h"
 
@@ -715,6 +716,37 @@ TEST(HighFrameStoreForwarding, DoesNotEraseMalformedMemoryExpressions) {
       if (Variant != 3)
         Observed = Observed->Operands[0];
       EXPECT_EQ(Observed->Kind, ExprKind::Load);
+    }
+}
+
+TEST(HighFrameStoreForwarding, UnchangedCallInputsRetainSourceIdentity) {
+  for (Arch A : Architectures)
+    for (bool Assigned : {false, true}) {
+      const auto T = NdType::makeInt(getTargetRegInfo(A).PointerSize, false);
+      auto F = roundTrip(A, T);
+      F.Entry = 0x1000;
+      auto Call = HighExpr::makeCall("observe", 0x2000, {frameSlot(A)});
+      Call->Type = Assigned ? T : NdType::makeVoid();
+      HighStmt S;
+      S.Addr = 0x1020;
+      if (Assigned) {
+        S = assign(temporary(10, T, A), Call);
+        S.Addr = 0x1020;
+      } else {
+        S.Kind = StmtKind::Call;
+        S.CallExpr = Call;
+      }
+      const HighSourceMap Sources = {
+          observeHighStatement(F.Entry, {S.Addr, 0}, S)};
+      F.Body.insert(F.Body.begin() + 1, std::move(S));
+      Call.reset();
+      forwardPrivateFrameLoads(F, A);
+      const HighStatementSourceIndex Index(Sources);
+      const auto Origin = Index.lookup(F.Entry, F.Body[1]);
+      ASSERT_TRUE(Origin);
+      EXPECT_EQ(Origin->Address, 0x1020u);
+      EXPECT_EQ(Origin->Sequence, 0);
+      EXPECT_TRUE(hasLoad(F.Body.back().RetVal));
     }
 }
 
