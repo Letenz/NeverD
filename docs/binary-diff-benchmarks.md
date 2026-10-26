@@ -78,6 +78,7 @@ python3 scripts/benchmark_binary_diff.py evaluate \
 | `neverd` | `matches` in a complete `neverd.bindiff` schema 3 report | Native ordered SHA-256 plus receipt |
 | `bindiff` | SQLite `function` rows; orientation comes from `metadata.file1/file2` | Native SHA-1 or SHA-256 plus receipt SHA-256 |
 | `diaphora` | SQLite `results` rows in `best` or `partial`; hex addresses | Receipt; retained export databases belong in its artifacts |
+| `ghidra-vt` | Accepted function associations exported by `ExportNeverDVTMatches.java` | Native ordered SHA-256 plus receipt |
 | `ghidra` | Accepted function associations in the `neverd.baseline.ghidra-vt-smoke.v1` JSON export | Receipt; retained import/VT invocation evidence belongs in its artifacts |
 
 Diaphora's `unreliable` and `multimatch` rows and Ghidra's available candidates,
@@ -88,7 +89,23 @@ Ghidra addresses must use the `ram` space. Other spaces need a qualified adapter
 These readers match the retained BinDiff 8, Diaphora tag 3.5.0 (internal format
 version 3.4), and Ghidra 12.1.3 diagnostic outputs. They do not launch or install
 those products. The Ghidra input is the recorded export format, not an arbitrary
-VT database. Automated competitor invocation/export remains separate work.
+VT database. Use the provided
+[`ExportNeverDVTMatches.java`](../tools/neverd-bench/ExportNeverDVTMatches.java)
+inside an existing completed Ghidra VT project:
+
+```bash
+/path/to/ghidra/support/analyzeHeadless /path/to/projects project-name \
+  -process after.elf -noanalysis \
+  -scriptPath /path/to/NeverD/tools/neverd-bench \
+  -postScript ExportNeverDVTMatches.java /session-name /path/to/new-matches.json
+```
+
+The script reads the existing association decisions and native program SHA-256
+identities, checks cancellation, and requires a new output file. Select
+`ghidra-vt` in its run receipt. It does not create a VT session or accept
+candidates. The legacy `ghidra` reader remains available for earlier receipts
+without native hashes. Automated competitor import, correlation and complete
+invocation orchestration remain separate work.
 
 Use `end-to-end` when each product performs its own import and analysis. A
 `common-input` receipt describes a separately prepared, qualified shared-input

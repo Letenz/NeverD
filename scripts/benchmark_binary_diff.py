@@ -117,10 +117,15 @@ def read_pairs(kind: str, path: Path, inputs: list[Path]) -> list[tuple[int, int
                     f"NeverD {side} input identity does not match the corpus")
         return [(address(row["primary"]), address(row["secondary"]))
                 for row in report["matches"]]
-    if kind == "ghidra":
+    if kind in ("ghidra", "ghidra-vt"):
         report = load(path)
-        require(report["schema"] == "neverd.baseline.ghidra-vt-smoke.v1",
+        schema = "neverd.benchmark.ghidra-vt.v1" if kind == "ghidra-vt" else "neverd.baseline.ghidra-vt-smoke.v1"
+        require(report["schema"] == schema,
                 "unsupported Ghidra export schema")
+        if kind == "ghidra-vt":
+            require(report["complete"] is True, "Ghidra export did not complete")
+            for key, source in zip(("source_sha256", "destination_sha256"), inputs):
+                require(report[key] == digest(source), "Ghidra input identity does not match the corpus")
         rows = [row for group in report["match_sets"] for row in group["matches"]
                 if row["type"] == "Function" and row["status"] == "ACCEPTED"]
         require(all(row["source_space"] == row["destination_space"] == "ram" for row in rows),
@@ -178,7 +183,7 @@ def evaluate(corpus_path: Path, run_path: Path) -> dict:
         "corpus_sha256": digest(corpus_path), "run_sha256": digest(run_path),
         "evaluator_sha256": digest(Path(__file__)),
         "result_sha256": run["result"]["sha256"], "input_sha256": run["input_sha256"],
-        "input_binding": "native-and-receipt" if run["format"] in ("neverd", "bindiff") else "receipt",
+        "input_binding": "native-and-receipt" if run["format"] in ("neverd", "bindiff", "ghidra-vt") else "receipt",
         "metrics": score(expected, pairs),
         "scope": "Owned development diagnostics; no held-out or timing qualification.",
         "metric_note": "A wrong pair can also miss a true pair; wrong and missed are not disjoint function counts.",

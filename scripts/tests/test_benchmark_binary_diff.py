@@ -188,6 +188,23 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown Diaphora"):
             bench.read_pairs("diaphora", path, self.inputs)
 
+    def test_native_ghidra_export_requires_the_actual_input_pair(self):
+        report = {
+            "schema": "neverd.benchmark.ghidra-vt.v1", "complete": True,
+            "source_sha256": bench.digest(self.inputs[0]),
+            "destination_sha256": bench.digest(self.inputs[1]),
+            "match_sets": [{"matches": [{"source": "4096", "destination": "8192",
+                "source_space": "ram", "destination_space": "ram", "type": "Function", "status": "ACCEPTED"}]}],
+        }
+        path = self.write("native-ghidra.json", report)
+        self.assertEqual(bench.read_pairs("ghidra-vt", path, self.inputs), [(4096, 8192)])
+        with self.assertRaisesRegex(ValueError, "input identity"):
+            bench.read_pairs("ghidra-vt", path, list(reversed(self.inputs)))
+        report["complete"] = False
+        self.write("native-ghidra.json", report)
+        with self.assertRaisesRegex(ValueError, "did not complete"):
+            bench.read_pairs("ghidra-vt", path, self.inputs)
+
     def test_bindiff_uses_metadata_orientation_and_unsigned_addresses(self):
         path = self.root / "result.BinDiff"
         with sqlite3.connect(path) as db:
