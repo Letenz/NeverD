@@ -226,6 +226,89 @@ TEST_F(BinaryDiffSDK, ByteOverlaysBindDataOnlyChangesAndReopenedReports) {
       << take(neverd_comparison_last_error(Restored));
 }
 
+TEST_F(BinaryDiffSDK, AnalysisSectionsBindDataOutsideTheFunctionInventory) {
+  auto A = input(body());
+  auto B = input(body());
+  const auto Before = take(neverd_comparison_export_json(compare(A, B)));
+  auto Original = llvm::json::parse(Before);
+  ASSERT_TRUE(bool(Original));
+  const uint8_t Data[] = {42, 3, 4};
+  ASSERT_EQ(neverd_analysis_section_add(
+                A, R"({"schema":"neverd.analysis-section.v1","name":".extra",
+                       "address":"0x2000","permissions":"rw"})",
+                Data, sizeof(Data)),
+            1)
+      << take(neverd_last_error(A));
+  auto C = compare(A, B);
+  const auto After = take(neverd_comparison_export_json(C));
+  auto Changed = llvm::json::parse(After);
+  ASSERT_TRUE(bool(Changed));
+  const auto &Old = *Original->getAsObject()->getObject("primary");
+  const auto &New = *Changed->getAsObject()->getObject("primary");
+  EXPECT_EQ(Old.getString("sha256"), New.getString("sha256"));
+  EXPECT_NE(Old.getString("analysis"), New.getString("analysis"));
+  EXPECT_NE(Old.getString("revision"), New.getString("revision"));
+  EXPECT_EQ(render(*Original->getAsObject()->get("functions")),
+            render(*Changed->getAsObject()->get("functions")));
+  EXPECT_EQ(neverd_comparison_restore_json(C, Before.c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), After);
+
+  auto L = neverd_lineage_create();
+  ASSERT_TRUE(L);
+  const auto Document =
+      render(llvm::json::Object{{"schema", "neverd.bindiff.lineage"},
+                                {"schema_version", 1},
+                                {"reports", llvm::json::Array{Before, After}}});
+  EXPECT_EQ(
+      neverd_lineage_load_json(L, Document.c_str(), nullptr, nullptr, nullptr),
+      1)
+      << take(neverd_lineage_last_error(L));
+  const auto Summary = parsed(neverd_lineage_summary_json(L));
+  ASSERT_TRUE(Summary.getAsObject());
+  EXPECT_EQ(Summary.getAsObject()->getInteger("versions"), 2);
+  neverd_lineage_destroy(L);
+
+  ASSERT_EQ(neverd_analysis_section_remove(A, ".extra"), 1);
+  C = compare(A, B);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Before.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+}
+
+TEST_F(BinaryDiffSDK, AnalysisSectionIdentityIgnoresInsertionOrder) {
+  auto A = input(body());
+  auto B = input(body());
+  const uint8_t Data[] = {42, 3, 4};
+  const char *Descriptions[] = {
+      R"({"schema":"neverd.analysis-section.v1","name":".first",
+          "address":"0x2000","permissions":"r"})",
+      R"({"schema":"neverd.analysis-section.v1","name":".second",
+          "address":"0x3000","permissions":"rw"})"};
+  for (unsigned I = 0; I < 2; ++I) {
+    ASSERT_EQ(
+        neverd_analysis_section_add(A, Descriptions[I], Data, sizeof(Data)), 1);
+    ASSERT_EQ(
+        neverd_analysis_section_add(B, Descriptions[1 - I], Data, sizeof(Data)),
+        1);
+  }
+  const auto Equal = parsed(neverd_comparison_export_json(compare(A, B)));
+  const auto *Left = Equal.getAsObject()->getObject("primary");
+  const auto *Right = Equal.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_EQ(Left->getString("analysis"), Right->getString("analysis"));
+  EXPECT_EQ(Left->getString("revision"), Right->getString("revision"));
+  const uint8_t Changed[] = {42, 3, 5};
+  ASSERT_EQ(neverd_analysis_section_remove(B, ".first"), 1);
+  ASSERT_EQ(
+      neverd_analysis_section_add(B, Descriptions[0], Changed, sizeof(Changed)),
+      1);
+  const auto Different = parsed(neverd_comparison_export_json(compare(A, B)));
+  Left = Different.getAsObject()->getObject("primary");
+  Right = Different.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_NE(Left->getString("analysis"), Right->getString("analysis"));
+  EXPECT_NE(Left->getString("revision"), Right->getString("revision"));
+}
+
 TEST_F(BinaryDiffSDK, ByteOverlayIdentityIgnoresEditKindsAndGrouping) {
   const std::array<uint8_t, 24> Bytes{0xb8, 7, 0, 0, 0, 0xc3};
   auto A = input(Bytes);
