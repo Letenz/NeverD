@@ -3216,6 +3216,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
             {row["id"]: row["status"] for row in document["capabilities"]},
             {
                 "analysis.ir-view.instruction-anchors": "experimental",
+                "analysis.materialized-image-sections": "experimental",
                 "analysis.external-bytecode-recovery": "experimental",
                 "analysis.interpreter-source-recovery": "experimental",
                 "debug.hardware": "unsupported",
@@ -3252,12 +3253,14 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd_byte_patch_preview",
                     "neverd_byte_patch_ranges_json",
                     "neverd_byte_patch_revert",
+                    "neverd_byte_patch_snapshot_free_v1",
                     "neverd_byte_patch_source_preview_json",
                     "neverd_byte_patch_source_target_json",
                     "neverd_byte_patches_export",
                     "neverd_byte_patches_json",
                     "neverd_byte_patches_load",
                     "neverd_byte_patches_save",
+                    "neverd_byte_patches_snapshot_v1",
                     "neverd_source_patch_context_json",
                 ],
                 "python": [
@@ -3397,6 +3400,26 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "python": [],
                 "cli": [],
                 "json": ["neverd_ir_view_json"],
+            },
+            "analysis.materialized-image-sections": {
+                "c": [
+                    "neverd_analysis_section_add",
+                    "neverd_analysis_section_remove",
+                    "neverd_analysis_sections_import_json",
+                    "neverd_analysis_sections_json",
+                ],
+                "python": [],
+                "cli": [
+                    "neverd analysis-sections",
+                    "neverd analysis-sections --add",
+                    "neverd analysis-sections --data",
+                    "neverd analysis-sections --json",
+                    "neverd analysis-sections --remove",
+                ],
+                "json": [
+                    "neverd_analysis_sections_import_json",
+                    "neverd_analysis_sections_json",
+                ],
             },
             "mobile.source-recovery": {
                 "c": [
