@@ -2135,3 +2135,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `NeverDSourceCallABITests` 檢查 Windows ARM64 的混合暫存器、位寬、暫存器耗盡、堆疊偏移及變參拒絕。`NeverDWorkerCallSiteTypes` 從 ARM64 PE 還原整數、double 與指標呼叫，在 O0/O2 下經兩條 C 路徑與獨立 C 被呼叫函式執行驗證，並檢查拒絕變參編輯後分析快照不變。這不是 Windows ARM64 原生執行驗證。
 
 該 worker 迴歸另涵蓋十八個混合暫存器／堆疊參數、浮點回傳，以及堆疊參數僅寫入一半時的拒絕。
+
+`LLVMAddressModelOverlayTests` 分別檢查 AArch64 修飾符、i386 GOT 與 Mach-O GOTPCREL 修正，涵蓋兩種已知 AArch64 守衛寫法及十二種部分修正組合。測試保留 LLVM 輸入與快取副本、隔離繼承的 Git 設定，並拒絕無法辨識的架構守衛。這些設定檢查不能取代原生重定位執行測試。

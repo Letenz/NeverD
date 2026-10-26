@@ -4534,6 +4534,10 @@ TEST(Win64CallContract, HeaderOnlyFloatingImportRetainsItsTypedABI) {
                 "  __builtin_memcpy(&result, &out, sizeof(result));\n"
                 "  return result != 7.75;\n}\n";
           } else {
+            // A register-target call can retain its typed import-slot load.
+            // Supply the loader binding as well as the imported function.
+            Oracle += Type + " (*__imp_fixture_fp)(" + Type + ", " + Type +
+                      ") = fixture_fp;\n";
             Oracle +=
                 "int main(void) { return forward_fp(1.25, -2.5) != 7.75; }\n";
           }

@@ -206,7 +206,7 @@ void Decoder::setStrict(bool S) {
 bool Decoder::decodeArchitectureFallback(const uint8_t *Bytes, size_t Len,
                                          va_t Addr) {
   return X86 && (decodePrefixedX86Fence(Bytes, Len, Addr) ||
-                 decodeUnprefixedX86MpxRegisterNop(Bytes, Len, Addr));
+                 decodeX86MpxFallback(Bytes, Len, Addr));
 }
 
 int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
