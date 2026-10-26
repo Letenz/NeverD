@@ -16,6 +16,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/high/HighSourceMap.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/lift/X86/X86Regs.h"
 
@@ -799,6 +800,45 @@ TEST(HighFrameStoreForwarding, DoesNotCarryFactsAcrossBranchesOrCalls) {
       forwardPrivateFrameLoads(Function, Architecture);
       EXPECT_TRUE(hasLoad(Function.Body.back().RetVal));
     }
+}
+
+TEST(HighFrameStoreForwarding, UnchangedCallsKeepTheirInstructionNavigation) {
+  for (Arch A : Architectures)
+    for (StmtKind Kind : {StmtKind::Assign, StmtKind::Call})
+      for (bool Indirect : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(A));
+        SCOPED_TRACE(static_cast<int>(Kind));
+        SCOPED_TRACE(Indirect);
+        auto F = roundTrip(A, NdType::makeInt(4, false));
+        F.Entry = 0x1000;
+        HighStmt Call;
+        Call.Kind = Kind;
+        Call.Addr = 0x1010;
+        auto Expression =
+            HighExpr::makeCall("effect", 0x2000, {HighExpr::makeConst(7, 4)});
+        if (Indirect) {
+          Expression->IsIndirectCall = true;
+          Expression->IndirectTarget = parameter(
+              1, NdType::makeInt(getTargetRegInfo(A).PointerSize, false), A);
+        }
+        if (Kind == StmtKind::Assign) {
+          Call.Dst = temporary(20, F.ReturnType, A);
+          Call.Val = std::move(Expression);
+        } else {
+          Call.CallExpr = std::move(Expression);
+        }
+        F.Body.insert(F.Body.begin() + 1, std::move(Call));
+        const HighSourceMap Sources = {
+            observeHighStatement(F.Entry, {0x1010, 3}, F.Body[1])};
+        forwardPrivateFrameLoads(F, A);
+        forwardPrivateFrameLoads(F, A);
+        const auto Origin =
+            HighStatementSourceIndex(Sources).lookup(F.Entry, F.Body[1]);
+        ASSERT_TRUE(Origin);
+        EXPECT_EQ(Origin->Address, 0x1010u);
+        EXPECT_EQ(Origin->Sequence, 3);
+        EXPECT_TRUE(hasLoad(F.Body.back().RetVal));
+      }
 }
 
 TEST(HighFrameStoreForwarding, OptimizesBothSidesOfACallIndependently) {
