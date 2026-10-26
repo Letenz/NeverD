@@ -845,8 +845,12 @@ status and unknown partial BNDLDX state. Branch cases distinguish conditional
 BNDINIT from preservation and select the current privilege's configuration.
 Failed input validation leaves the existing state intact. The tests also
 reject unknown/active transaction contexts before state publication. They
-do not qualify instruction decoding, memory-provider faults, IR preservation,
-native code generation or physical MPX hardware; strict lifting stays closed.
+also exercise whole-access memory completion: BNDMOV width/LOCK, unchanged
+banks on failed BNDMOV loads and BDE reads, invalid-directory status, and
+unavailable-provider refusal. Every permutation and partial prefix of BTE
+loads/stores checks destination knownness, retained provider effects and the
+untouched fourth field. Unknown stored bounds, invalid banks/modes/segments
+and missing operands cannot start an access.
 
 `NeverDX86MpxEncodingTests` checks the shared byte reader and full/for-lift/light
 decode routes: 504 memory combinations, 1,152 register combinations, 9,216
@@ -856,8 +860,20 @@ mode-sized BNDMOV memory, LOCK stores, absent MIB base/index and retained scale,
 prefix cancellation, truncation, instruction length and decoder reuse with text
 or detail disabled. Invalid banks, unsupported address forms and ambiguous
 mandatory prefixes cannot acquire a qualified encoding. Stateful instructions
-still refuse strict lifting without publishing LowIR; these checks do not
-certify memory faults, original-branch effects or physical MPX execution.
+still refuse strict lifting without publishing LowIR.
+
+The same target's `X86MpxExecution` cases execute original instruction bytes
+against explicit context and memory. They cover all bounds registers and GPR
+banks, both BNDMOV opcode directions, default SS and explicit segment choices,
+ignored long-mode 67H, RIP instruction extent, absent MIB base/index and
+ignored scale. Unknown input, enablement and transaction cases check refusal
+before memory effects. Fault cases distinguish invalid BDE from partial BTE
+load. A byte-RAM sequence checks BNDMK, spill/reload, table store/load, pointer
+mismatch initialization and boundary faults together. These provider tests
+qualify the portable single-instruction contract; they do not certify native
+fault delivery, original CALL/RET completion, IR state preservation or physical
+MPX hardware. Strict lifting remains closed until those integration boundaries
+are supplied.
 
 `NeverDX86TBMTests` exercises all nine trailing-bit operations through full,
 lightweight and lift decoding, with 32/64-bit values, register aliases,

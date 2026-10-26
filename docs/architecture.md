@@ -66,6 +66,14 @@ CPL 0–2, applies MAWA only to long-mode table indexing, and retains known-bit
 masks for bounds. It separates successful loads, invalid-directory #BR and
 implementation-dependent partial BNDLDX reads. Memory providers still own
 access validity, segment/canonical checks, ordering and partial stores.
+`ir/X86/X86MpxMemory.h` defines their whole-access completion contract. BNDMOV
+loads publish only after both fields complete; its memory stores retain LOCK
+and the selected segment, including default SS. Table operations sequence a
+BDE read before the three-field BTE access without probing the MIB pointer.
+An invalid BDE updates BNDSTATUS without changing the bank. A BTE read fault
+forgets only its destination, and store faults retain the provider's partial
+writes. Unavailable memory semantics are distinct from an architectural fault;
+they certify no effects from that request, not rollback of an earlier BDE read.
 Enabled operations require a known nontransactional context; an RTM/HLE
 checkpoint and abort continuation are not supplied by this state component.
 Original branch completion takes an explicit preserve/initialize effect;
@@ -82,6 +90,16 @@ base remain distinct; they do not authorize an ordinary memory operation at
 the displayed expression. Invalid banks, 16-bit memory forms, prohibited
 RIP-relative forms and competing mandatory prefixes do not acquire a qualified
 shape. Decoding a valid stateful instruction does not enable its strict lifter.
+
+`lift/X86/X86MpxExecution.h` connects that byte reader to the shared context and
+memory provider for concrete single-instruction execution. Its explicit GPR
+and segment-base snapshot does not treat unknown inputs as zero. Checks and
+BNDMK use effective values without memory or segment-base reads; BNDMOV passes
+the original offset and segment to memory. BNDLDX/BNDSTX translate base plus
+displacement and the selected segment base, treating an absent base as zero
+and the unscaled index as the comparison value. Their scale is ignored. This
+entry point does not yet provide original CALL/RET completion, RTM/HLE state,
+or bounds-state transport through LowIR, MedIR and native output.
 
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
