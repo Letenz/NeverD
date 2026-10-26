@@ -39,8 +39,9 @@ Key key(const MedVar &Value) {
 bool supported(NdOp Opcode) {
   return Opcode == NdOp::COPY || Opcode == NdOp::INT_ADD ||
          Opcode == NdOp::INT_SUB || Opcode == NdOp::INT_ZEXT ||
-         Opcode == NdOp::INT_SEXT || Opcode == NdOp::LOAD ||
-         Opcode == NdOp::STORE || Opcode == NdOp::RETURN;
+         Opcode == NdOp::INT_SEXT || Opcode == NdOp::SUBBYTES ||
+         Opcode == NdOp::LOAD || Opcode == NdOp::STORE ||
+         Opcode == NdOp::RETURN;
 }
 bool supported(const LowOp &Op, const TargetRegInfo &TRI) {
   // LowIR retains arithmetic flag calculations even when ordinary source
@@ -240,6 +241,11 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
       Result = Read(Op.Inputs[0]);
     else if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT) &&
              Op.NumInputs == 1 && Read(Op.Inputs[0]) == Role::Scalar)
+      Result = Role::Scalar;
+    else if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+             Read(Op.Inputs[0]) == Role::Scalar && Op.Inputs[1].isConst() &&
+             Op.Inputs[1].ConstVal <= Op.Inputs[0].Size &&
+             Op.Output.Size <= Op.Inputs[0].Size - Op.Inputs[1].ConstVal)
       Result = Role::Scalar;
     else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
              Op.NumInputs == 2) {
