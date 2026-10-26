@@ -29,7 +29,11 @@ ioctlTrace(const llvm::json::Value &Value) {
   const auto *Rows = O ? O->getArray(field::IoctlTraceRequests) : nullptr;
   auto Events = O ? O->getInteger(field::IoctlTraceEventLimit) : std::nullopt;
   auto Bytes = O ? O->getInteger(field::IoctlTraceByteLimit) : std::nullopt;
-  if (!O || O->size() != 3 || !Rows ||
+  const bool HasUnlisted = O && O->get(field::IoctlTraceIncludeUnlisted);
+  auto Unlisted =
+      O ? O->getBoolean(field::IoctlTraceIncludeUnlisted) : std::nullopt;
+  if (!O || O->size() != 3 + unsigned(HasUnlisted) ||
+      (HasUnlisted && !Unlisted) || !Rows ||
       Rows->size() > ::neverd::limits::emulation::
                          kProcessLinuxFilesJSONIoctlTraceRowsSizeLimit ||
       !Events || *Events <= 0 ||
@@ -41,6 +45,7 @@ ioctlTrace(const llvm::json::Value &Value) {
   LinuxIoctlTraceOptions Out;
   Out.EventLimit = *Events;
   Out.ByteLimit = *Bytes;
+  Out.IncludeUnlisted = Unlisted.value_or(Out.IncludeUnlisted);
   for (const auto &Row : *Rows) {
     const auto *R = Row.getAsObject();
     const auto *N = R ? R->get(field::DeviceRequest) : nullptr;
