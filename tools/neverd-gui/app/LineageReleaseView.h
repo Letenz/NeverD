@@ -12,6 +12,7 @@
 #define NEVERD_GUI_LINEAGERELEASEVIEW_H
 
 #include <QJsonObject>
+#include <QString>
 #include <QTimer>
 #include <QWidget>
 

@@ -1134,6 +1134,48 @@ private slots:
     QCOMPARE(Errors.size(), 0);
   }
 
+  void legacyWorkerKeepsExistingGraphActions() {
+    const auto Worker = qEnvironmentVariable("NEVERD_LEGACY_LINEAGE_WORKER");
+    if (Worker.isEmpty())
+      QSKIP("Set NEVERD_LEGACY_LINEAGE_WORKER to a retained v1 worker or a "
+            "current worker using the retained v1 engine");
+    LineageDialog View(Worker);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QSignalSpy Saved(&Session, &LineageSession::saved);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    QVERIFY(!Session.releaseEditingSupported());
+    Session.load({{"reports", Reports}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
+    auto *Tabs = View.findChild<QTabWidget *>("lineageTabs");
+    QVERIFY(Versions && Functions && Tabs);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Functions->rows().isEmpty(),
+                             Timeout);
+    QVERIFY(!Versions->selected().isEmpty());
+    const auto Revision = Session.revision();
+    Tabs->setCurrentWidget(View.findChild<QWidget *>("lineageReleaseView"));
+    for (const auto *Name :
+         {"lineageReleaseAdd", "lineageReleaseEdit", "lineageReleaseRemove",
+          "lineageReleaseAddParent"}) {
+      auto *Action = View.findChild<QPushButton *>(Name);
+      QVERIFY(Action);
+      QVERIFY(!Action->isEnabled());
+    }
+    auto *Status = View.findChild<QLabel *>("lineageReleaseStatus");
+    QVERIFY(Status);
+    QVERIFY(Status->text().contains("does not support"));
+    const auto Path = Directory.filePath("legacy-worker.ndlineage");
+    Session.save(Path);
+    QTRY_COMPARE_WITH_TIMEOUT(Saved.size(), 1, Timeout);
+    QCOMPARE(QJsonDocument::fromJson(read(Path)).object()["schema_version"],
+             QJsonValue(1));
+    QCOMPARE(Session.revision(), Revision);
+    QCOMPARE(Errors.size(), 0);
+  }
+
   void invalidResourceSettingsKeepTheDialogAndInput() {
     LineageDialog View(TEST_LINEAGE_WORKER);
     View.setAttribute(Qt::WA_DeleteOnClose, false);

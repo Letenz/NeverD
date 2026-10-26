@@ -2535,6 +2535,11 @@ It uses separate processes to compare v1 identity and original reports, reopen
 the new engine's v1 output in the legacy engine, and check that explicit v2
 refusal and a missing release-edit export preserve the old graph. The receipt
 records the input libraries, collection and Python binding hashes.
+Set `NEVERD_LEGACY_LINEAGE_WORKER` for the desktop
+`legacyWorkerKeepsExistingGraphActions` case. A retained v1 worker (or a current
+worker launched with the retained v1 library) must keep snapshot/function
+browsing and saving available while release editing stays explicitly unavailable.
+Without that external baseline this one compatibility case reports a skip.
 
 `scripts/benchmark_binary_lineage.py generate-releases --library LIBRARY
 --corpus EXISTING_NATIVE_CORPUS --releases 10000 --output-dir NEW_CORPUS`

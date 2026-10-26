@@ -63,6 +63,7 @@ LineageReleaseView::LineageReleaseView(LineageSession &S, QWidget *Owner)
   setObjectName("lineageReleaseView");
   auto *Root = new QVBoxLayout(this);
   Status = new QLabel(this);
+  Status->setObjectName("lineageReleaseStatus");
   Status->setTextFormat(Qt::PlainText);
   Status->setWordWrap(true);
   makeStatusLine(*Status);
