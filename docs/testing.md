@@ -1410,6 +1410,11 @@ rejection, pointer faults, unchanged errno and dynamic provider closure.
 against unchanged guarded memory. These cases do not call host libc as an oracle.
 Complement spans separately cover empty reject sets, first-member page tails,
 nonzero prefixes and both bounded scans; all shared accept-span cases still run.
+`AndroidSearch.*MemberSearch*` covers `strpbrk` through static and dynamic
+providers, first matches, unsigned byte sets, empty/no-match inputs, read-only
+page tails, NUL termination, overlapping strings and closed-provider refusal.
+The shared span budget cases also check pointer-result searches; whole SDK/CLI
+reports are compared by `ProcessPublic.AndroidMemberSearchReportsMatchSDKAndCLI`.
 
 `NeverDDirectTailCallMetadataTests` builds real x86, x64 and AArch64 CFGs and
 validates direct tail-call targets at strict instruction boundaries. It covers

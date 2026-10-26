@@ -8379,6 +8379,9 @@ uses the same outer limit before scanning its NUL-terminated input.
 metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
 the common string owner with bounded linear search and provider lifetime checks.
+`strpbrk` shares the bounded byte-set scan used by `strspn` and `strcspn`;
+it returns the first member's guest address or null at NUL, with unchanged errno.
+All three entries use the same guest access, deadline and provider checks.
 See [directory creation contracts](android-directory-creation.md).
 
 `LinuxFiles` also owns the explicit file creation, rename and unlink grants.
