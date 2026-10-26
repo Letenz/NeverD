@@ -12,6 +12,7 @@
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 
+#include <array>
 #include <utility>
 #include <vector>
 
@@ -388,12 +389,70 @@ TEST(CallRegisterConstant,
   EXPECT_FALSE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
   Function.Blocks.resize(1);
   Function.Blocks.emplace_back();
-  Function.Blocks.back().Ops.resize(19998);
+  Function.Blocks.back().Ops.resize(
+      limits::ir::kConstantRegisterCallOperations -
+      Function.Blocks.front().Ops.size());
   EXPECT_TRUE(constantRegisterValueAtCall(Function, Site, Seed.Output).Value);
   Function.Blocks.back().Ops.emplace_back();
   const auto Result = constantRegisterValueAtCall(Function, Site, Seed.Output);
   EXPECT_TRUE(Result.BudgetExceeded);
   EXPECT_FALSE(Result.Value);
+}
+
+TEST(CallRegisterConstant, PartialWritesMatchIndependentByteStorage) {
+  for (bool KnownWrite : {false, true})
+    for (unsigned Offset = 0; Offset != 24; ++Offset)
+      for (unsigned Width : {1U, 2U, 4U, 8U, 16U}) {
+        if (KnownWrite && Width > sizeof(uint64_t))
+          continue;
+        SCOPED_TRACE(KnownWrite);
+        SCOPED_TRACE(Offset);
+        SCOPED_TRACE(Width);
+        std::array<uint8_t, 40> Bytes{};
+        std::array<bool, 40> Known{};
+        std::vector<LowOp> Setup;
+        for (unsigned Base = 0; Base != 24; Base += 8) {
+          uint64_t Bits = 0;
+          for (unsigned I = 0; I != 8; ++I) {
+            Bytes[Base + I] = 0x10 + Base + I;
+            Known[Base + I] = true;
+            Bits |= uint64_t{Bytes[Base + I]} << (I * 8);
+          }
+          auto Seed = unary(NdOp::COPY, 8, Bits, 8);
+          Seed.Output.Offset = Base;
+          Setup.push_back(Seed);
+        }
+        const uint64_t Bits = 0xfedcba9876543210;
+        auto Write = unary(NdOp::COPY, Width, Bits, Width);
+        Write.Output.Offset = Offset;
+        if (!KnownWrite)
+          Write.Inputs[0] = NdVar::reg(128, Width);
+        Setup.push_back(Write);
+        for (unsigned I = 0; I < Width; ++I) {
+          Known[Offset + I] = KnownWrite;
+          if (KnownWrite)
+            Bytes[Offset + I] = static_cast<uint8_t>(Bits >> (I * 8));
+        }
+        const auto Function = registerCall(std::move(Setup), NdVar::reg(0, 8));
+        const auto Site =
+            *sourceCallOccurrenceKey(Function.Blocks.front().Ops.back());
+        for (unsigned Begin = 0; Begin != 32; ++Begin)
+          for (unsigned Size : {1U, 2U, 4U, 8U}) {
+            std::optional<uint64_t> Expected = 0;
+            for (unsigned I = 0; I < Size; ++I) {
+              if (!Known[Begin + I]) {
+                Expected.reset();
+                break;
+              }
+              *Expected |= uint64_t{Bytes[Begin + I]} << (I * 8);
+            }
+            EXPECT_EQ(constantRegisterValueAtCall(Function, Site,
+                                                  NdVar::reg(Begin, Size))
+                          .Value,
+                      Expected)
+                << "read byte " << Begin << " width " << Size;
+          }
+      }
 }
 
 } // namespace

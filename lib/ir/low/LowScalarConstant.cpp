@@ -13,6 +13,7 @@
 #include "llvm/ADT/APInt.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -147,6 +148,80 @@ std::optional<uint64_t> lowScalarConstantResult(
 namespace {
 using ValueLookup = llvm::function_ref<std::optional<uint64_t>(const NdVar &)>;
 
+// Pack storage into words without promoting the proof to word granularity.
+// A byte mask retains partial-register writes, including unaligned ranges.
+// Replacing an aligned constant updates one existing node instead of freeing
+// and allocating eight byte nodes on every machine operation.
+class RegisterConstants {
+  static constexpr unsigned WordBytes = sizeof(uint64_t);
+  struct Word {
+    uint64_t Bits = 0;
+    uint8_t Known = 0;
+  };
+  std::map<uint64_t, Word> Words;
+
+  static uint64_t base(uint64_t Offset) {
+    return Offset & ~(uint64_t{WordBytes} - 1);
+  }
+  static uint64_t bitsMask(unsigned Size) {
+    return UINT64_MAX >> ((WordBytes - Size) * 8);
+  }
+  static uint8_t byteMask(unsigned Begin, unsigned Size) {
+    return static_cast<uint8_t>(((1U << Size) - 1) << Begin);
+  }
+
+public:
+  void clear() { Words.clear(); }
+
+  std::optional<uint64_t> read(uint64_t Offset, unsigned Size) const {
+    uint64_t Bits = 0;
+    for (unsigned I = 0; I < Size;) {
+      const auto Address = Offset + I;
+      const auto Begin = static_cast<unsigned>(Address - base(Address));
+      const unsigned Count = std::min(Size - I, WordBytes - Begin);
+      const auto Found = Words.find(base(Address));
+      const auto Mask = byteMask(Begin, Count);
+      if (Found == Words.end() || (Found->second.Known & Mask) != Mask)
+        return {};
+      Bits |= ((Found->second.Bits >> (Begin * 8)) & bitsMask(Count))
+              << (I * 8);
+      I += Count;
+    }
+    return Bits;
+  }
+
+  void write(uint64_t Offset, unsigned Size, uint64_t Bits) {
+    for (unsigned I = 0; I < Size;) {
+      const auto Address = Offset + I;
+      const auto Begin = static_cast<unsigned>(Address - base(Address));
+      const unsigned Count = std::min(Size - I, WordBytes - Begin);
+      auto &Value = Words[base(Address)];
+      const uint64_t Mask = bitsMask(Count) << (Begin * 8);
+      Value.Bits =
+          (Value.Bits & ~Mask) | ((Bits >> (I * 8)) << (Begin * 8) & Mask);
+      Value.Known |= byteMask(Begin, Count);
+      I += Count;
+    }
+  }
+
+  void forget(uint64_t Offset, unsigned Size) {
+    const uint64_t End = Offset + Size;
+    // Visit only materialized words, even for a very wide unknown output.
+    for (auto It = Words.lower_bound(base(Offset));
+         It != Words.end() && It->first < End;) {
+      const auto Begin =
+          static_cast<unsigned>(Offset > It->first ? Offset - It->first : 0);
+      const auto Count = static_cast<unsigned>(
+          std::min<uint64_t>(WordBytes, End - It->first) - Begin);
+      It->second.Known &= ~byteMask(Begin, Count);
+      if (!It->second.Known)
+        It = Words.erase(It);
+      else
+        ++It;
+    }
+  }
+};
+
 bool visitScalarCallValues(
     const LowFunc &Function, llvm::function_ref<bool(const LowOp &)> Select,
     llvm::function_ref<void(const LowOp &, ValueLookup)> Observe) {
@@ -157,7 +232,7 @@ bool visitScalarCallValues(
     Work += Block.Ops.size();
     if (std::none_of(Block.Ops.begin(), Block.Ops.end(), Select))
       continue;
-    std::map<uint64_t, uint8_t> Registers;
+    RegisterConstants Registers;
     std::map<uint64_t, std::pair<uint16_t, uint64_t>> Temps;
     va_t Instruction = InvalidVA;
     auto ValueOf = [&](const NdVar &Value) -> std::optional<uint64_t> {
@@ -173,14 +248,7 @@ bool visitScalarCallValues(
       }
       if (!Value.isReg() || Value.Offset > UINT64_MAX - Value.Size)
         return {};
-      uint64_t Bits = 0;
-      for (unsigned I = 0; I < Value.Size; ++I) {
-        const auto It = Registers.find(Value.Offset + I);
-        if (It == Registers.end())
-          return {};
-        Bits |= uint64_t{It->second} << (I * 8);
-      }
-      return Bits;
+      return Registers.read(Value.Offset, Value.Size);
     };
     for (const auto &Op : Block.Ops) {
       if (Op.Addr != Instruction) {
@@ -211,11 +279,10 @@ bool visitScalarCallValues(
       } else if (Output.Offset <= UINT64_MAX - Output.Size) {
         // Erase overlapping byte facts even for a wide unknown result. Never
         // interpret an architectural subregister write as a whole GPR write.
-        Registers.erase(Registers.lower_bound(Output.Offset),
-                        Registers.lower_bound(Output.Offset + Output.Size));
         if (Result)
-          for (unsigned I = 0; I < Output.Size; ++I)
-            Registers.emplace(Output.Offset + I, uint8_t(*Result >> (I * 8)));
+          Registers.write(Output.Offset, Output.Size, *Result);
+        else
+          Registers.forget(Output.Offset, Output.Size);
       } else
         Registers.clear();
     }
