@@ -990,6 +990,34 @@ def residue_power_corpus(width, count):
     return rows
 
 
+def residue_quotient_corpus(width, count):
+    """Degree-512–1025 products with nested high offsets and low disturbances.
+
+    The nested flavor changes every full-width factor while preserving its
+    observed residue. Immediate degree neighbors and a one-factor low change
+    prevent repeated-residue assumptions from becoming unconditional rewrites.
+    """
+    rows = []
+    for index in range(count):
+        kind = index % 72
+        degree = (512, 513, 640, 641, 768, 769, 1024, 1025)[kind // 9]
+        observed = (4, 6, 8)[kind % 9 // 3]
+        split = (observed + 2) // 3
+        mode = kind % 3
+        factors = []
+        for i in range(degree):
+            offset = (i << split) + int(mode == 2 and i == 0)
+            value = f"((x+{offset})^(y<<{split}))"
+            if mode == 1:
+                value = f"(({value}+{(2*i+1) << observed})^{(3*i+1) << observed})"
+            factors.append(value)
+        if mode == 2:
+            factors.reverse()
+        rows.append(f"({3 << (width-observed)}*z*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def sparse_linear_mixed_degree_corpus(width, count):
     """Degree-4–18 products with disjoint constant, linear and perturbed tails.
 
@@ -1163,7 +1191,7 @@ def main():
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
                  "distributed-prefix", "multiple-residual", "carry-product",
                  "permuted-carry-product", "complemented-carry-product",
-                 "residue-power",
+                 "residue-power", "residue-quotient",
                  "sparse-linear-mixed-degree"),
         default="complement",
     )
@@ -1205,6 +1233,7 @@ def main():
                 "permuted-carry-product": permuted_carry_product_corpus,
                 "complemented-carry-product": complemented_carry_product_corpus,
                 "residue-power": residue_power_corpus,
+                "residue-quotient": residue_quotient_corpus,
                 "sparse-linear-mixed-degree": sparse_linear_mixed_degree_corpus,
             }[args.family]
             expressions = generate(width, args.count)

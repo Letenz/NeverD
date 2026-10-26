@@ -29,18 +29,20 @@ namespace {
 struct PowerFixture {
   SymRef Input;
   unsigned Width, Observed, Count;
+  unsigned Perturb = 0;
 
   llvm::APInt oracle(const std::array<llvm::APInt, 3> &Values) const {
     auto Result = llvm::APInt(Width, 3).shl(Width - Observed) * Values[2];
     for (unsigned I = 0; I < Count; ++I)
-      Result *= (Values[0] + llvm::APInt(Width, I).shl((Observed + 2) / 3)) ^
+      Result *= (Values[0] + llvm::APInt(Width, I).shl((Observed + 2) / 3) +
+                 llvm::APInt(Width, I == 0 ? Perturb : 0)) ^
                 Values[1].shl((Observed + 2) / 3);
     return Result;
   }
 };
 
 PowerFixture fixture(SymContext &Ctx, unsigned Width, unsigned Observed,
-                     unsigned Count) {
+                     unsigned Count, unsigned Perturb = 0) {
   const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
   const auto Z = Ctx.mkVar("z", Width);
   const unsigned Split = (Observed + 2) / 3;
@@ -49,10 +51,12 @@ PowerFixture fixture(SymContext &Ctx, unsigned Width, unsigned Observed,
       Ctx.mkConst(llvm::APInt(Width, 3).shl(Width - Observed)), Z};
   for (unsigned I = 0; I < Count; ++I)
     Factors.push_back(Ctx.mkXor(
-        Ctx.mkAdd(X, Ctx.mkConst(llvm::APInt(Width, I).shl(Split))), High));
+        Ctx.mkAdd(X, Ctx.mkConst(llvm::APInt(Width, I).shl(Split) +
+                                 llvm::APInt(Width, I == 0 ? Perturb : 0))),
+        High));
   // Z has independent parity. In particular, an odd Z cannot justify
   // treating the repeated X factors as odd before reducing their powers.
-  return {Ctx.mkMul(Factors), Width, Observed, Count};
+  return {Ctx.mkMul(Factors), Width, Observed, Count, Perturb};
 }
 
 TEST(SymMBAResiduePowers, LowWordsKeepEvenInputsAndSmallExponents) {
@@ -108,39 +112,152 @@ TEST(SymMBAResiduePowers, LargeGroupsRetainFullWidthWords) {
     }
 }
 
+TEST(SymMBAResiduePowers, LargeBoundedDecisionsDoNotRequireAffineExpansion) {
+  std::mt19937_64 Random(0x504f574552353132);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Observed : {4u, 6u, 8u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Observed);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, Observed, 512);
+      ASSERT_GT(Ctx.numOperands(F.Input), 512u);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      const auto Result =
+          detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage, true);
+      EXPECT_LE(Budget.used(), 65536u);
+      EXPECT_NE(Result, F.Input) << "work=" << Budget.used();
+      EXPECT_LT(detail::readingCost(Ctx, Result),
+                detail::readingCost(Ctx, F.Input));
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned Trial = 0; Trial < 64; ++Trial) {
+        std::array<llvm::APInt, 3> Values;
+        for (auto &Value : Values) {
+          Value = llvm::APInt(Width, 0);
+          for (unsigned Bit = 0; Bit < Width; Bit += 64)
+            Value |= llvm::APInt(Width, Random()).shl(Bit);
+        }
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
+TEST(SymMBAResiduePowers, LargeGroupsReachTheSharedSimplifier) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Observed : {4u, 6u, 8u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Observed);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, Observed, 512);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+      EXPECT_TRUE(Result.Changed) << "work=" << Result.Work;
+      EXPECT_LT(Result.Work, Options.MaxWork);
+      EXPECT_LT(Result.SizeAfter, F.Count);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned I = 0; I < 256; ++I) {
+        const std::array Values{llvm::APInt(Width, I),
+                                llvm::APInt(Width, I * 17),
+                                llvm::APInt(Width, I / 4)};
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
+TEST(SymMBAResiduePowers, ProjectedFactorsRetainLowDisturbances) {
+  for (unsigned Width : {8u, 32u, 65u, 257u})
+    for (unsigned Perturb : {0u, 1u, 128u, 256u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Perturb);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, 8, 512, Perturb);
+      detail::WorkBudget Budget(65536);
+      size_t Storage = 1 << 24;
+      const auto Result =
+          detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage, true);
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned I = 0; I < 256; ++I)
+        for (unsigned J : {0u, 1u, 7u, 31u}) {
+          const std::array Values{llvm::APInt(Width, I), llvm::APInt(Width, J),
+                                  llvm::APInt(Width, I * 53)};
+          EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+        }
+      const std::array Witness{llvm::APInt(Width, 1), llvm::APInt(Width, 0),
+                               llvm::APInt(Width, 1)};
+      const auto Unperturbed = llvm::APInt(Width, 3).shl(Width - 8);
+      EXPECT_EQ(F.oracle(Witness),
+                Unperturbed * llvm::APInt(Width, 1 + Perturb));
+      if (Perturb == 1 || Perturb == 128)
+        EXPECT_NE(F.oracle(Witness), Unperturbed);
+      else
+        EXPECT_EQ(F.oracle(Witness), Unperturbed);
+    }
+}
+
+TEST(SymMBAResiduePowers, ConstantResiduesRemainProductFactors) {
+  for (unsigned Width : {16u, 32u, 65u, 257u})
+    for (unsigned Residue : {0u, 1u, 2u, 3u, 255u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Residue);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, 8, 512);
+      const auto X = Ctx.mkVar("x", Width), Z = Ctx.mkVar("z", Width);
+      const auto Carrier =
+          Ctx.mkAdd(Ctx.mkConst(Width, Residue),
+                    Ctx.mkMul(Ctx.mkConst(llvm::APInt(Width, 1).shl(8)), X));
+      llvm::SmallVector<SymRef, 16> Factors(Ctx.operands(F.Input));
+      for (auto &Factor : Factors)
+        if (Factor == Z)
+          Factor = Carrier;
+      const auto Input = Ctx.mkMul(Factors);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, Input, Options);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned I = 0; I < 256; ++I) {
+        std::array Values{llvm::APInt(Width, I), llvm::APInt(Width, I * 17),
+                          llvm::APInt(Width, 0)};
+        Values[2] = llvm::APInt(Width, Residue) + Values[0].shl(8);
+        EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
 TEST(SymMBAResiduePowers, ExactAndShortResourcesKeepCompleteProofs) {
-  SymContext FullCtx;
-  const auto F = fixture(FullCtx, 64, 8, 64);
-  detail::WorkBudget FullBudget(65536);
-  size_t FullStorage = 1 << 24;
-  const auto Full =
-      detail::foldResidueDecisions(FullCtx, F.Input, FullBudget, FullStorage);
-  ASSERT_NE(Full, F.Input);
-  const auto Work = FullBudget.used();
-  const size_t Bytes = (1 << 24) - FullStorage;
-  ASSERT_GT(Work, 1u);
-  ASSERT_GT(Bytes, 1u);
-  for (auto Limits : {std::pair<size_t, size_t>{0, Bytes},
-                      {1, Bytes},
-                      {Work, 0},
-                      {Work - 1, Bytes},
-                      {Work, Bytes - 1},
-                      {Work, Bytes}}) {
-    SymContext Ctx;
-    const auto Input = fixture(Ctx, 64, 8, 64);
-    detail::WorkBudget Budget(Limits.first);
-    size_t Storage = Limits.second;
-    const auto Result =
-        detail::foldResidueDecisions(Ctx, Input.Input, Budget, Storage);
-    EXPECT_LE(Budget.used(), Limits.first);
-    EXPECT_LE(Storage, Limits.second);
-    if (Limits.first == Work && Limits.second == Bytes)
-      EXPECT_EQ(Result.index(), Full.index());
-    SymEvalPlan Reduced(Ctx, Result);
-    for (unsigned I = 0; I < 256; ++I) {
-      const std::array Values{llvm::APInt(64, I), llvm::APInt(64, I * 17),
-                              llvm::APInt(64, I * 51)};
-      EXPECT_EQ(Reduced.eval(Values), Input.oracle(Values));
+  for (unsigned Count : {64u, 512u}) {
+    SCOPED_TRACE(Count);
+    SymContext FullCtx;
+    const auto F = fixture(FullCtx, 64, 8, Count);
+    detail::WorkBudget FullBudget(65536);
+    size_t FullStorage = 1 << 24;
+    const auto Full =
+        detail::foldResidueDecisions(FullCtx, F.Input, FullBudget, FullStorage);
+    ASSERT_NE(Full, F.Input);
+    const auto Work = FullBudget.used();
+    const size_t Bytes = (1 << 24) - FullStorage;
+    ASSERT_GT(Work, 1u);
+    ASSERT_GT(Bytes, 1u);
+    for (auto Limits : {std::pair<size_t, size_t>{0, Bytes},
+                        {1, Bytes},
+                        {Work, 0},
+                        {Work - 1, Bytes},
+                        {Work, Bytes - 1},
+                        {Work, Bytes}}) {
+      SymContext Ctx;
+      const auto Input = fixture(Ctx, 64, 8, Count);
+      detail::WorkBudget Budget(Limits.first);
+      size_t Storage = Limits.second;
+      const auto Result =
+          detail::foldResidueDecisions(Ctx, Input.Input, Budget, Storage);
+      EXPECT_LE(Budget.used(), Limits.first);
+      EXPECT_LE(Storage, Limits.second);
+      if (Limits.first == Work && Limits.second == Bytes)
+        EXPECT_EQ(Result.index(), Full.index());
+      SymEvalPlan Reduced(Ctx, Result);
+      for (unsigned I = 0; I < 256; ++I) {
+        const std::array Values{llvm::APInt(64, I), llvm::APInt(64, I * 17),
+                                llvm::APInt(64, I * 51)};
+        EXPECT_EQ(Reduced.eval(Values), Input.oracle(Values));
+      }
     }
   }
 }
@@ -177,7 +294,7 @@ TEST(SymMBAResiduePowers, NativeWidthsHaveIndependentSolverProofs) {
   if (!solver::proofBackendAvailable(solver::ProofBackend::Z3))
     GTEST_SKIP() << "Z3 unavailable";
   for (unsigned Width : {8u, 16u, 32u, 64u})
-    for (unsigned Count : {2u, 7u, 16u, 17u}) {
+    for (unsigned Count : {2u, 7u, 16u, 17u, 512u}) {
       SCOPED_TRACE(::testing::Message() << Width << ':' << Count);
       SymContext Ctx;
       const auto F = fixture(Ctx, Width, Count < 8 ? 8 : 4, Count);
@@ -187,7 +304,7 @@ TEST(SymMBAResiduePowers, NativeWidthsHaveIndependentSolverProofs) {
           detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
       // A complete period must exercise an actual rewrite in each native
       // width; unchanged neighbor controls alone would make this proof vacuous.
-      if (Count == 16)
+      if (Count == 16 || Count == 512)
         ASSERT_NE(Result, F.Input);
       solver::SymSynthVerifier Verifier({}, solver::ProofBackend::Z3, 10000);
       EXPECT_EQ(Verifier(Ctx, F.Input, Result), SynthVerification::Equivalent);

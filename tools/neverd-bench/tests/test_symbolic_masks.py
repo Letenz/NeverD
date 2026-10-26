@@ -28,6 +28,17 @@ class WordOracleTests(unittest.TestCase):
                 self.equivalent(rows[2],
                                 f"x+y+z+w+{scale}*z*((~x)&1)", width)
 
+    def test_large_quotients_preserve_high_views_and_low_changes(self):
+        for width in (8, 32, 64):
+            rows = bench.residue_quotient_corpus(width, 72)
+            self.assertEqual(rows, bench.residue_quotient_corpus(width, 72))
+            scale = 3 << (width - 4)
+            expected = f"x+y+z+w+{scale}*z*(x&1)"
+            self.equivalent(rows[0], expected, width)
+            self.equivalent(rows[1], expected, width)
+            with self.assertRaises(AssertionError):
+                self.equivalent(rows[2], expected, width)
+
     def test_narrow_arithmetic_and_default_width_promotion(self):
         self.equivalent("(x+1)&255", "zext(extract(x,0,8)+1#8,32)")
         self.equivalent("(x&255)+1", "extract(x,0,8)+1")

@@ -2003,22 +2003,35 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
                                               size_t &Storage,
                                               bool &StorageLimited) {
   if (Budget.exhausted() || Ctx.op(Root) != SymOp::Mul ||
-      Ctx.numOperands(Root) < limits::kMinResidueProductFactors ||
-      Ctx.numOperands(Root) > limits::kMaxResidueProductFactors)
+      Ctx.numOperands(Root) < limits::kMinResidueProductFactors)
     return Root;
   const unsigned Width = Ctx.width(Root);
-  llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(Root));
-  auto Operands = llvm::ArrayRef<SymRef>(Inputs);
+  const auto First = Ctx.operand(Root, 0);
+  const bool HasScale = Ctx.isConst(First);
   const size_t SourceWords = (size_t(Width) - 1) / 64 + 1;
   Resources Res{Budget, Storage, 1, SourceWords};
   Res.StorageLimited = &StorageLimited;
   unsigned Needed = Width;
-  if (Ctx.isConst(Operands.front())) {
+  if (HasScale) {
     if (!Res.scalar(SourceWords))
       return Root;
-    Needed -= Ctx.constValue(Operands.front()).countr_zero();
-    Operands = Operands.drop_front();
+    Needed -= Ctx.constValue(First).countr_zero();
   }
+  if (Ctx.numOperands(Root) > limits::kMaxResidueProductFactors) {
+    const size_t Factors = Ctx.numOperands(Root) - HasScale;
+    // Large products do not enter affine expansion. A complete odd-unit
+    // period beside an independent multiplier may still fit the bounded
+    // low-word proof, whose internal views coalesce repeated residues.
+    if (!Needed || Needed > limits::kMaxAffineResidueTableBits ||
+        Factors <= Needed || (Factors - 1) % residueUnitPeriod(Needed))
+      return Root;
+    ++Budget.MultipleResidueAttempts;
+    return foldResidueDecisions(Ctx, Root, Budget, Storage, true,
+                                limits::kMaxMultipleResidueWork,
+                                &StorageLimited);
+  }
+  llvm::SmallVector<SymRef, 16> Inputs(Ctx.operands(Root));
+  auto Operands = llvm::ArrayRef<SymRef>(Inputs).drop_front(HasScale);
   PrefixConstants Prefixes{Ctx, Res, {}};
   SymRef Best = Root;
   bool DecisionAttempted = false;
