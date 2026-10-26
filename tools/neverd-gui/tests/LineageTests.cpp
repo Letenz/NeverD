@@ -198,6 +198,14 @@ private slots:
              Locale == "ar" ? Qt::RightToLeft : Qt::LeftToRight);
     QCOMPARE(Session.message(), Translated("neverd::gui::LineageSession",
                                            "Version graph loaded."));
+    const auto SelectedRowVisible = [](LineagePageView *Page) {
+      const auto *Table = Page->table();
+      const auto Row = Table->visualRect(Table->currentIndex());
+      const auto Viewport = Table->viewport()->rect();
+      return Row.isValid() && Row.top() >= Viewport.top() &&
+             Row.bottom() <= Viewport.bottom();
+    };
+    QTRY_VERIFY(SelectedRowVisible(Versions) && SelectedRowVisible(Functions));
     QTest::qWait(60);
     if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
         !Output.isEmpty()) {
@@ -244,6 +252,7 @@ private slots:
                  Translated("neverd::gui::LineageSession",
                             "\nYour previous graph is still available."));
     View.setLayoutDirection(Locale == "ar" ? Qt::RightToLeft : Qt::LeftToRight);
+    QTRY_VERIFY(SelectedRowVisible(Versions) && SelectedRowVisible(Functions));
     if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
         !Output.isEmpty()) {
       QTest::qWait(60);
