@@ -242,10 +242,9 @@ void LineagePageView::changeEvent(QEvent *Event) {
 void LineagePageView::updateTableMinimumHeight() {
   // Header and scrollbar geometry vary with the interface language, style
   // and font. Preserve space for a complete evidence row in a narrow window.
-  const auto RowHeight =
-      std::max({Table->verticalHeader()->defaultSectionSize(),
-                Table->verticalHeader()->minimumSectionSize(),
-                Table->sizeHintForRow(0)});
+  const auto RowHeight = std::max(
+      {Table->verticalHeader()->defaultSectionSize(),
+       Table->verticalHeader()->minimumSectionSize(), Table->rowHeight(0)});
   Table->setMinimumHeight(Table->horizontalHeader()->sizeHint().height() +
                           RowHeight +
                           Table->horizontalScrollBar()->sizeHint().height() +
