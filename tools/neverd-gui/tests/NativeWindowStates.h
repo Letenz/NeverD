@@ -23,6 +23,12 @@ namespace neverd::gui::test {
 bool setNativeFullScreen(QWidget &Window, bool FullScreen);
 bool setNativeWindowState(QWidget &Window, Qt::WindowStates States,
                           const std::function<void()> &Apply = {});
+#ifdef Q_OS_MACOS
+bool nativeWindowIsMinimized(QWidget &Window);
+bool reopenNativeApplication();
+bool hasNativeApplicationModalWindow();
+void quitNativeApplication();
+#endif
 
 class NativeWindowStates final : public QObject {
 public:

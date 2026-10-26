@@ -249,6 +249,47 @@ jobs:
           interaction_status=$?
           cat build-gui/ci-diagnostics/native-interactions.txt
           exit "$interaction_status"
+      - name: Verify native Quick Start lifecycle
+        if: ${{ !cancelled() && steps.build_workbench.outcome == 'success' }}
+        shell: bash
+        run: |
+          mkdir -p build-gui/ci-diagnostics
+          command=(build-gui/bin/neverd-gui-tests
+            quickStartMinimizesAndReopens
+            quickStartReusesItsWindowAndClosesWithTheWorkbench
+            startupQuickStartDoesNotWaitForExposureOrWorker
+            openingAFileCancelsStartupQuickStart
+            startupQuickStartGreetsAlone
+            fileDropOpensFromQuickStart
+            quickStartQuitsWhileMinimized
+            quickStartRestoresFromTheDock
+            -o build-gui/ci-diagnostics/native-quick-start.txt,txt
+            -o build-gui/ci-diagnostics/native-quick-start.xml,xml)
+          set +e
+          if [ '${{ runner.os }}' = Linux ]; then
+            xvfb-run -a -s '-screen 0 1920x1080x24' bash -c '
+              openbox > build-gui/ci-diagnostics/quick-start-window-manager.txt 2>&1 &
+              manager=$!
+              trap "kill $manager 2>/dev/null || true" EXIT
+              QT_QPA_PLATFORM=xcb "$@"
+            ' bash "${command[@]}"
+          else
+            "${command[@]}"
+          fi
+          status=$?
+          cat build-gui/ci-diagnostics/native-quick-start.txt
+          exit "$status"
+      - name: Retain native Quick Start diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-gui-${{ runner.os }}-quick-start-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build-gui/ci-diagnostics/native-quick-start.txt
+            build-gui/ci-diagnostics/native-quick-start.xml
+            build-gui/ci-diagnostics/quick-start-window-manager.txt
+          if-no-files-found: warn
+          retention-days: 7
       - name: Retain desktop GUI contract diagnostics
         id: gui_diagnostics
         if: ${{ always() && runner.os != 'Linux' }}

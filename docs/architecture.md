@@ -1067,6 +1067,17 @@ A committed patch command proves that reloading must invalidate analysis, so
 it does not produce two more complete inventories just to detect that change.
 Ordinary reloads still compare before and after.
 
+The SDK's versioned byte-patch snapshot copies canonical rows and raw bytes into
+independent owned storage. The worker builds its history DOM directly from those
+rows, avoiding a complete JSON serialization, parse and address normalization.
+It resolves acquisition and release together and retains JSON compatibility with
+older SDKs. Snapshot storage survives session edits and destruction; the overlay
+still owns all admission, ordering and kind decisions. CLI JSON and sidecar
+formats remain unchanged.
+Their shared writer reuses hexadecimal scratch storage and emits only
+formatter-produced hex directly; general strings retain JSON escaping and
+external input retains its existing validation.
+
 Shared transport JSON has separate entry points for bounded external frames
 and SDK-owned documents. Backend parsing preserves native JSON number types,
 rounding and last-duplicate-key behavior, with an owning SIMD conversion when

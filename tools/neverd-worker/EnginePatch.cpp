@@ -16,6 +16,8 @@
 #include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 
+#include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -31,6 +33,8 @@ struct PatchFunctions {
   decltype(&neverd_byte_patch_context_json) context;
   // Older SDKs still provide complete rows; retain their patch capability.
   decltype(&neverd_byte_patch_ranges_json) ranges;
+  decltype(&neverd_byte_patches_snapshot_v1) snapshot;
+  decltype(&neverd_byte_patch_snapshot_free_v1) freeSnapshot;
   explicit operator bool() const {
     return preview && apply && revert && rows && load && exportFile && context;
   }
@@ -52,8 +56,22 @@ const PatchFunctions &patches() {
       engineSymbol<decltype(&neverd_byte_patch_context_json)>(
           "neverd_byte_patch_context_json"),
       engineSymbol<decltype(&neverd_byte_patch_ranges_json)>(
-          "neverd_byte_patch_ranges_json")};
+          "neverd_byte_patch_ranges_json"),
+      engineSymbol<decltype(&neverd_byte_patches_snapshot_v1)>(
+          "neverd_byte_patches_snapshot_v1"),
+      engineSymbol<decltype(&neverd_byte_patch_snapshot_free_v1)>(
+          "neverd_byte_patch_snapshot_free_v1")};
   return F;
+}
+
+std::string patchBytesHex(const uint8_t *Bytes, size_t Size) {
+  constexpr char Digits[] = "0123456789abcdef";
+  std::string Text(Size * 2, '\0');
+  for (size_t I = 0; I < Size; ++I) {
+    Text[I * 2] = Digits[Bytes[I] >> 4];
+    Text[I * 2 + 1] = Digits[Bytes[I] & 15];
+  }
+  return Text;
 }
 } // namespace
 bool Engine::keepsBytePatches() { return bool(patches()); }
@@ -72,7 +90,32 @@ bool Engine::provesSourcePatches() {
 }
 
 Json Engine::bytePatchRows() const {
-  return patches() ? backendJson(patches().rows(session_)) : Json::array();
+  const auto &F = patches();
+  if (!F)
+    return Json::array();
+  if (!F.snapshot || !F.freeSnapshot)
+    return backendJson(F.rows(session_));
+
+  std::unique_ptr<const neverd_byte_patch_snapshot_v1, decltype(F.freeSnapshot)>
+      Snapshot(F.snapshot(session_), F.freeSnapshot);
+  if (!Snapshot)
+    throw Error("engine_error", error());
+  Json::array_t Rows;
+  Rows.reserve(Snapshot->row_count);
+  for (size_t I = 0; I < Snapshot->row_count; ++I) {
+    const auto &Row = Snapshot->rows[I];
+    const auto Offset = hexAddress(Row.file_offset);
+    Json::object_t Item;
+    Item.emplace("addr", Offset);
+    Item.emplace("current", patchBytesHex(Row.current, Row.size));
+    Item.emplace("file_off", Offset);
+    Item.emplace("kind", Row.kind);
+    Item.emplace("original", patchBytesHex(Row.original, Row.size));
+    Item.emplace("size", Row.size);
+    Item.emplace("va", hexAddress(Row.address));
+    Rows.emplace_back(std::move(Item));
+  }
+  return Json(std::move(Rows));
 }
 bool Engine::reloadBytePatches(bool knownChanged) {
   if (!patches())
