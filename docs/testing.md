@@ -7579,6 +7579,10 @@ refusals stay strict. `ProcessReport.MemoryAtStop*` checks boolean admission;
 `ProcessPublic.AndroidMemoryAtStop*` checks matching SDK/CLI results and unchanged
 stops even when the first requested range is absent.
 
+`AArch64CompleteState.CompletePackets*` checks scalar widths, NZCV, all SIMD
+lanes, privilege retention and idempotent normalization of complete raw packets.
+The callback capture tests retain every-read failure coverage.
+
 `UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
 distinct scalar and SIMD values across repeated checked user/supervisor steps
 and context restoration. Linux's `NeverDUnicornStateTransferTests` injects each

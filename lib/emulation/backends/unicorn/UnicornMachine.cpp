@@ -500,7 +500,7 @@ private:
 };
 /// Borrow a complete register packet for one transport call. IDs and storage
 /// pointers come from the same inventory; architectural width normalization
-/// and publication remain owned by captureAArch64State.
+/// remains owned by the shared AArch64 state helpers.
 class AArch64RegisterPacket {
 public:
   explicit AArch64RegisterPacket(AArch64MachineState &State) {
@@ -620,16 +620,9 @@ public:
     AArch64MachineState Captured;
     if (auto E = AArch64RegisterPacket(Captured).read(CPU.Engine))
       return E;
-    auto Next = State;
-    if (auto E = captureAArch64State(
-            Next,
-            [&](AArch64Register Register) -> llvm::Expected<uint64_t> {
-              return Captured.reg(Register);
-            },
-            [&](unsigned Index) -> llvm::Expected<RegisterValue> {
-              return Captured.Vectors[Index];
-            }))
-      return E;
+    auto Next = Captured;
+    Next.UserMode = State.UserMode;
+    normalizeAArch64State(Next);
     uint64_t Mode = 0;
     if (CPU.UserMode) {
       if (auto E = check(uc_reg_read(CPU.Engine, UC_ARM64_REG_PSTATE, &Mode)))

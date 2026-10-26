@@ -8043,8 +8043,11 @@ ordinary final reads and the failure-only option retain their existing scope.
 
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
-storage: partial failures, cancellation and deadline expiry cannot publish a
-prefix. `captureAArch64State` remains the sole owner of architectural widths
+storage and uses the architecture's shared normalization directly after all
+transport reads succeed. Callback-based backends use the same normalization;
+neither route imports transport metadata as the configured privilege mode.
+Partial failures, cancellation and deadline expiry cannot publish a
+prefix. `normalizeAArch64State` remains the sole owner of architectural widths
 and NZCV normalization. Retrying a failed transfer reinstalls the entire input;
 instruction admission, RAM transactions and translation-cache invalidation
 retain their existing boundaries.
@@ -8052,7 +8055,7 @@ retain their existing boundaries.
 After a successful EL0 capture, an identical input packet may reuse the engine's
 registers while its address space, mapping generation and transport base remain
 unchanged. The comparison includes every scalar and vector field from the raw
-capture; normalization remains owned by `captureAArch64State`. Any changed input,
+capture; normalization remains owned by `normalizeAArch64State`. Any changed input,
 mapping change or failed step requires a complete install. Supervisor steps keep
 complete installs, and every step still captures the complete output packet.
 
