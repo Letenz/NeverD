@@ -1505,7 +1505,9 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
                                          Bound->second.MultipleParents)) {
               if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
                                [&](const StoredName &Ref) {
-                                 return Ref.Name == Bound->second.Name;
+                                 return Ref.Name == Bound->second.Name &&
+                                        Ref.IsLocalData ==
+                                            Bound->second.IsLocalData;
                                })) {
                 if (ConfirmedMetadata.empty())
                   ConfirmedMetadata.resize(Matches.size(), 0);
