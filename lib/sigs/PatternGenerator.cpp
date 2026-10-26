@@ -329,6 +329,12 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
         isX86ImportReferenceField(Code.drop_front(FunctionOffset), Offset,
                                   Machine == COFF::IMAGE_FILE_MACHINE_AMD64))
       return Offset;
+    if (Rel32 &&
+        isX86ConditionalReferenceField(Code.drop_front(FunctionOffset), Offset,
+                                       Machine ==
+                                           COFF::IMAGE_FILE_MACHINE_AMD64) &&
+        readLE<uint32_t>(Code.data() + RelocationOffset) == 0)
+      return Offset;
     // Otherwise the opcode before the field must be a direct branch.
     if (!Rel32 || Offset == 0)
       return std::nullopt;
@@ -727,10 +733,11 @@ PatternGeneratorStats generateELF(const ELFObjectFileBase &Obj,
           continue;
         const uint64_t Start = std::max(From, Begin);
         markWildcard(Wildcard, Start - Begin, std::min(To, End) - Start);
-        // A branch to one of the routine's own names is recursion, not a
-        // reference to anything the image has to confirm.
+        // Self references do not need runtime confirmation, but collision
+        // evidence must retain their source constraints.
         if (Rel.Routine.empty() || Rel.Offset < Begin ||
-            llvm::is_contained(R.Names, Rel.Routine))
+            (!Opts.CollisionEvidence &&
+             llvm::is_contained(R.Names, Rel.Routine)))
           continue;
         if (const std::optional<uint64_t> At = elfBranchReferenceOffset(
                 Machine, Rel.Type, Fn.Data, Rel.Offset - Begin))
@@ -942,10 +949,10 @@ PatternGeneratorStats generateMachO(const MachOObjectFile &Obj,
         continue;
       const uint64_t Start = std::max(From, Begin);
       markWildcard(Wildcard, Start - Begin, std::min(To, End) - Start);
-      // A branch to one of the routine's own names is recursion, not a
-      // reference to anything the image has to confirm.
+      // Self references do not need runtime confirmation, but collision
+      // evidence must retain their source constraints.
       if (Rel.Routine.empty() || Rel.Offset < Begin ||
-          llvm::is_contained(R.Names, Rel.Routine))
+          (!Opts.CollisionEvidence && llvm::is_contained(R.Names, Rel.Routine)))
         continue;
       if (const std::optional<uint64_t> At = machOBranchReferenceOffset(
               CPUType, Rel.Type, Fn.Data, Rel.Offset - Begin))
@@ -1155,6 +1162,15 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
         consumeError(TargetName.takeError());
         continue;
       }
+      if (At &&
+          (Machine == COFF::IMAGE_FILE_MACHINE_I386 ||
+           Machine == COFF::IMAGE_FILE_MACHINE_AMD64) &&
+          isX86ConditionalReferenceField(
+              Sec.Contents.slice(Fn.Offset, Size), *At,
+              Machine == COFF::IMAGE_FILE_MACHINE_AMD64) &&
+          (!hasCOFFFunctionType(*TargetOrErr) ||
+           TargetOrErr->getSectionNumber() < COFF::IMAGE_SYM_UNDEFINED))
+        continue;
       if (AddressReference) {
         if (!coff_loader::primaryVTableTypeName(*TargetName) &&
             !(hasCOFFFunctionType(*TargetOrErr) &&
@@ -1172,10 +1188,12 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
                                         COFF::IMAGE_FILE_MACHINE_AMD64) &&
           !TargetName->starts_with(COFFImportPointerPrefix))
         continue;
-      // A branch to the function's own start is recursion, not a reference
-      // to anything the image has to confirm.
+      // Runtime patterns omit self references. Raw collision evidence keeps
+      // them: a self address can distinguish an otherwise identical body
+      // that references an independently identified different function.
       if (!isReferenceName(*TargetName) ||
-          llvm::is_contained(Fn.Names, *TargetName))
+          (!Opts.CollisionEvidence &&
+           llvm::is_contained(Fn.Names, *TargetName)))
         continue;
       References.push_back({static_cast<uint32_t>(*At), TargetName->str()});
       // Where no object defines the symbol, the link resolves it to its
@@ -1184,7 +1202,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
           It != Opts.AlternateNames.end())
         for (const std::string &Alternate : It->second)
           if (isReferenceName(Alternate) &&
-              !llvm::is_contained(Fn.Names, StringRef(Alternate)))
+              (Opts.CollisionEvidence ||
+               !llvm::is_contained(Fn.Names, StringRef(Alternate))))
             References.push_back({static_cast<uint32_t>(*At), Alternate});
     }
     if (!Supported) {

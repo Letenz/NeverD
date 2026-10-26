@@ -4,6 +4,8 @@
 
 # NeverD-Architektur
 
+Bei gelinkten x64-PE-Dateien erfasst die Funktionserkennung kanonische RIP-relative LEA-Codeadressen im vorhandenen Aufrufscan. Ziele benötigen weiterhin einen unabhängigen Einstieg und einen begrenzten Nachweis eines aufrufbaren Ausgangs; interne Labels, Fortsetzungen und nicht unterstützte Funktionskörper bleiben ausgeschlossen. Erkennung und Signaturen teilen sich die Prüfung der Adresskodierung. Bedingte COFF-rel32-Referenzen erfordern außerdem explizite Funktionssymbole und Relokationen ohne Addend. Offline prüft `--single-reference-context` jede Bedingung mit einer Referenzstelle gegen alle überlappenden ursprünglichen Quelldeklarationen und bewahrt sämtliche Alternativen der Stelle.
+
 Der COFF-Loader trennt V2-Epilogpositionen von Prologoperationen. V2 stellt anhand der gesicherten Register des primären Frames und der genauen Epilogposition wieder her; die Freigabe des Stackbereichs liegt davor. Ungültige Bereiche, Größen und Wiederherstellungsfolgen werden vor Stackzugriffen abgelehnt. V1 behält die Erkennung anhand von Instruktionen. Alle Backends teilen die Stackprüfung und Ausnahmebehandlung.
 
 Nur die anfängliche Folge von `UWOP_EPILOG` definiert V2-Epiloge. Spätere Marker belegen zwei Slots, ohne Zustand wiederherzustellen oder die Reihenfolge der Prolog-Offsets zu beeinflussen; unvollständige Paare bleiben ungültig.

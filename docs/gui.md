@@ -679,8 +679,10 @@ Knowledge Exchange assets, and it registers only the `neverd://` scheme.
 | Ctrl+W | Save the project |
 | Ctrl+Shift+P | Command palette |
 
-There is one comment command: **Enter repeatable comment**. Both `;` and `/`
+There is one comment command: **Enter comment...**. Both `;` and `/`
 open the same editor and edit the same saved comment; `:` has no binding.
+Menus show only the primary key `;` to keep the shortcut column compact.
+Tooltips, shortcut help and the command palette list both bindings.
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →

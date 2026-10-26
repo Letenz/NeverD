@@ -156,10 +156,6 @@
         <translation>현재 주소에 주석을 추가합니다</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>반복 주석 입력(&amp;P)...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>책갈피 추가(&amp;K)...</translation>
     </message>

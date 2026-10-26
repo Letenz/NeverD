@@ -12,6 +12,8 @@ extern char *__strncpy_chk(char *, const char *, u64, u64);
 extern char *__strncpy_chk2(char *, const char *, u64, u64, u64);
 extern u64 strlcpy(char *, const char *, u64);
 __asm__(".type strlcpy, %function");
+extern u64 __strlcpy_chk(char *, const char *, u64, u64);
+__asm__(".type __strlcpy_chk, %function");
 extern int *__errno(void);
 extern int mprotect(void *, u64, int);
 extern void *dlopen(const char *, int);
@@ -39,6 +41,32 @@ u64 copy_sized_readonly(void *page, char *dst, const char *src, u64 count) {
   if (mprotect(page, 4096, 1))
     return 98;
   return strlcpy(dst, src, count);
+}
+
+u64 copy_sized_checked(char *dst, const char *src, u64 count, u64 dst_size,
+                       u64 route, u64 *error) {
+  u64 (*copy)(char *, const char *, u64, u64) = __strlcpy_chk;
+  if (route) {
+    void *library = dlopen("libcopy-sized-checked.so", 2);
+    if (!library)
+      return 97;
+    copy = dlsym(library, "__strlcpy_chk");
+    if (!copy)
+      return 96;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  u64 result = copy(dst, src, count, dst_size);
+  *error = (u64)*__errno();
+  return result;
+}
+
+u64 copy_sized_checked_readonly(void *page, char *dst, const char *src,
+                                u64 count, u64 dst_size) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return __strlcpy_chk(dst, src, count, dst_size);
 }
 
 u64 copy_raw(char *dst, const char *src, u64 count) {

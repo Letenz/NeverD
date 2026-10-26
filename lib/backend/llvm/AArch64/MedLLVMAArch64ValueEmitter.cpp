@@ -52,13 +52,15 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       llvm::report_fatal_error(kAddressMemoryMalformed);
     const auto Instruction = *aarch64AddressMemoryInstruction(
         Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
-    if (Instruction.stackBase())
-      llvm::report_fatal_error(kAddressMemorySPUnsupported);
-    // Relocate the base through the existing memory owner. The raw index
-    // remains a separate operand: the original instruction still owns its
-    // extension, scale and checked addition.
+    const bool RawParameter =
+        !Instruction.hasRegisterIndex() &&
+        Op.Inputs[kAddressMemoryBaseOperand + 1].Kind == MedVar::Param;
+    // Image-derived bases use the existing memory owner. An explicit runtime
+    // parameter already supplies its original GPR bits. The raw index remains
+    // separate: the instruction owns its extension, scale and checked addition.
     llvm::Value *Base = nullptr;
-    if (Instruction.isLoad() && OriginalImageStorageForSource && Img)
+    if (!RawParameter && Instruction.isLoad() &&
+        OriginalImageStorageForSource && Img)
       if (const auto *Table = recoveredJumpTableForLoad(Op);
           Table && Table->HasBaseAddr && Table->HasDispatchSlotMap &&
           !Table->SlotIndices.empty()) {
@@ -88,11 +90,11 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
               Builder.getInt64(Storage->Pad + Table->BaseAddr - Storage->Base));
         }
       }
-    if (!Base)
+    if (!Instruction.stackBase() && !RawParameter && !Base)
       Base = resolveAtomicMemoryPtr(
           Op.Inputs[kAddressMemoryBaseOperand + 1], Instruction.accessBytes(),
           sizeToType(Instruction.accessBytes()), Builder);
-    auto *BaseInteger = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
+    const auto &Machine = Instruction.machine();
     auto Integer = [&](const MedVar &Input) -> llvm::Value * {
       auto *Value = getVar(Input, Builder);
       if (Value->getType()->isPointerTy())
@@ -101,6 +103,10 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
         llvm::report_fatal_error(kAddressMemoryMalformed);
       return Builder.CreateZExtOrTrunc(Value, Builder.getInt64Ty());
     };
+    auto *BaseInteger =
+        Instruction.stackBase() || RawParameter
+            ? Integer(Op.Inputs[kAddressMemoryBaseOperand + 1])
+            : Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
     if (Instruction.isVector()) {
       auto *VectorType = llvm::FixedVectorType::get(
           Builder.getInt64Ty(),
@@ -118,7 +124,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                     {Builder.getInt64Ty(), Builder.getInt64Ty(),
                                      Builder.getInt32Ty(), VectorType},
                                     false),
-            kAddressVectorStoreAsm, kAddressVectorStoreConstraints, true);
+            Machine.Asm, Machine.Constraints, true);
         return Builder.CreateCall(
             Asm,
             {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
@@ -129,7 +135,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                   {Builder.getInt64Ty(), Builder.getInt64Ty(),
                                    Builder.getInt32Ty()},
                                   false),
-          kAddressVectorLoadAsm, kAddressVectorLoadConstraints, true);
+          Machine.Asm, Machine.Constraints, true);
       auto *Result = Builder.CreateCall(
           Asm,
           {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
@@ -146,7 +152,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                   {Builder.getInt64Ty(), Builder.getInt64Ty(),
                                    Builder.getInt32Ty(), Builder.getInt64Ty()},
                                   false),
-          kAddressStoreAsm, kAddressStoreConstraints, /*hasSideEffects=*/true);
+          Machine.Asm, Machine.Constraints, /*hasSideEffects=*/true);
       return Builder.CreateCall(
           Asm, {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),
                 Builder.getInt32(Instruction.scratchWord()),
@@ -157,7 +163,7 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
             Builder.getInt64Ty(),
             {Builder.getInt64Ty(), Builder.getInt64Ty(), Builder.getInt32Ty()},
             false),
-        kAddressLoadAsm, kAddressLoadConstraints, /*hasSideEffects=*/true);
+        Machine.Asm, Machine.Constraints, /*hasSideEffects=*/true);
     auto *Result = Builder.CreateCall(
         Asm,
         {BaseInteger, Integer(Op.Inputs[kAddressMemoryIndexOperand + 1]),

@@ -445,6 +445,7 @@ add_neverd_unittest(NeverDLiftTests
   format/MachOI386RelocationScatteredTests.cpp
   format/MachOFunctionListingTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/PEFunctionAddressTests.cpp
   format/FunctionDiscoveryCancellationTests.cpp
   format/ELFFunctionListingTests.cpp
   format/ELFWithoutSectionsTests.cpp
@@ -1918,6 +1919,7 @@ add_neverd_unittest(NeverDImageAnalysisBoundaryTests
   core/MedConstantPropagationTests.cpp
   core/MedImmutableTableScanTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/PEFunctionAddressTests.cpp
   format/FunctionDiscoveryCancellationTests.cpp
   LINK_COMPONENTS IR Loader
 )

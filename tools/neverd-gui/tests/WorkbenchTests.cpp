@@ -1760,9 +1760,17 @@ private slots:
       QVERIFY(activateTestWindow(assembly->window()));
       assembly->focusContent();
       QTRY_VERIFY(assembly->listing()->hasFocus());
+      QTRY_VERIFY(bench.action(ActionId::EditRepeatableComment)->isEnabled());
       bench.action(ActionId::OptionsPalette)->trigger();
       QPointer<QDialog> palette = visibleDialog("commandPalette");
       QVERIFY(palette);
+      auto *commands = palette->findChild<QListWidget *>();
+      QVERIFY(commands);
+      const auto comments = commands->findItems(
+          QStringLiteral("Enter comment..."), Qt::MatchExactly);
+      QCOMPARE(comments.size(), 1);
+      QCOMPARE(comments.front()->data(Qt::UserRole).toString(),
+               QStringLiteral("EditRepeatableComment"));
       QCOMPARE(QApplication::activePopupWidget(), palette.data());
       QVERIFY(!QApplication::activeModalWidget());
       if (QGuiApplication::platformName() == QLatin1String("cocoa")) {
@@ -2189,6 +2197,7 @@ private slots:
           ++matches;
           QCOMPARE(item->data(0, Qt::UserRole).toString(),
                    QStringLiteral("EditRepeatableComment"));
+          QCOMPARE(item->text(0), QStringLiteral("Enter comment..."));
           QCOMPARE(item->text(1), QStringLiteral(";, /"));
           QCOMPARE(item->text(2), QStringLiteral("Analysis views"));
         }
@@ -3376,6 +3385,15 @@ private slots:
     QTest::addColumn<bool>("floating");
     QTest::newRow("docked") << false;
     QTest::newRow("floating") << true;
+    // Each data row constructs fresh native owners. Repeated ownership
+    // transitions must preserve the browser and its keyboard focus.
+    for (unsigned Repeat = 2; Repeat <= 5; ++Repeat) {
+      QTest::newRow(qPrintable(QStringLiteral("docked-repeat-%1").arg(Repeat)))
+          << false;
+      QTest::newRow(
+          qPrintable(QStringLiteral("floating-repeat-%1").arg(Repeat)))
+          << true;
+    }
   }
 
   void localReferencesAllowWorkbenchInteraction() {

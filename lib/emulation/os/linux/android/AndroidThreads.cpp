@@ -212,6 +212,25 @@ std::vector<linux_model::ProcTask> GuestThreads::procTasks() const {
   }
   return Tasks;
 }
+std::vector<NativeThreadCPUState> GuestThreads::observeCPUStates() const {
+  std::vector<NativeThreadCPUState> States;
+  for (size_t I = 0; I < Threads.size(); ++I) {
+    const auto &Thread = Threads[I];
+    if (Thread.Report.Finished)
+      continue;
+    auto &Snapshot = States.emplace_back();
+    Snapshot.Current = I == Current;
+    auto &State = Snapshot.State;
+    State.ThreadID = Thread.Kernel.ID;
+    auto Registers = Snapshot.Current ? CPU.readRegisters()
+                                      : CPU.readRegisters(*Thread.Context);
+    if (Registers)
+      State.Registers = std::move(*Registers);
+    else
+      State.Diagnostic = llvm::toString(Registers.takeError());
+  }
+  return States;
+}
 void GuestThreads::report() {
   if (!enabled())
     return;

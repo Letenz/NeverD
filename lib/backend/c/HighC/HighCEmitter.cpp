@@ -4728,10 +4728,11 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
         throw std::invalid_argument(kAddressMemoryMalformed);
       const auto Instruction = *aarch64AddressMemoryInstruction(
           Expr->Operands[kAddressMemoryWordOperand]->ConstVal);
-      if (Instruction.stackBase())
-        throw std::invalid_argument(kAddressMemorySPUnsupported);
-      if (Opts.Image && !Instruction.hasRegisterIndex())
-        throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
+      const auto &Base = Expr->Operands[kAddressMemoryBaseOperand];
+      if (const char *Reason = Instruction.sourceBaseFailure(
+              Opts.Image != nullptr,
+              Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
+        throw std::invalid_argument(Reason);
     }
     if (isAArch64PAuthLoadIntrinsic(Expr->IntrinsicId)) {
       if (Opts.TheArch != Arch::AArch64 ||
