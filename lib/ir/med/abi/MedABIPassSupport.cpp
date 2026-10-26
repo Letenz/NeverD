@@ -525,7 +525,7 @@ std::optional<MedCallTarget> resolveMedCallTarget(const MedBlock &Block,
       llvm::APInt Slot(Address->Offset.getBitWidth(), Address->Base.ConstVal,
                        false, true);
       Slot += Address->Offset;
-      return MedCallTarget{Slot.getZExtValue(), true};
+      return MedCallTarget{Slot.getZExtValue(), true, Before};
     }
     return std::nullopt;
   }

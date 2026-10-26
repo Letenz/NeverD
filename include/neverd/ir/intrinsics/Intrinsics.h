@@ -482,6 +482,10 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_ADDRESS_IMMEDIATE_MEMORY_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemoryOperations.def"
 
+// Append-only: one memory instruction returns its completed writeback.
+#define NEVERD_A64_WRITEBACK_OPERATION(Id, ...) Id,
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"
+
   _Count = 16000
 };
 

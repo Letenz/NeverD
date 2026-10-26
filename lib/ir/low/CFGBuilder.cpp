@@ -1880,7 +1880,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         Dereference->Opcode != Occurrence.DereferenceOpcode ||
         (Dereference->Opcode != NdOp::LOAD &&
          Dereference->Opcode != NdOp::STORE &&
-         !lowAArch64AddressMemoryShapeIsValid(*Dereference)))
+         !lowAArch64AddressMemoryShapeIsValid(*Dereference) &&
+         !lowAArch64WritebackMemoryShapeIsValid(*Dereference)))
       return false;
     NdVar DereferenceAddress = Current;
     bool SawDereference = false;
@@ -1905,7 +1906,10 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         SawDereference = true;
         continue;
       }
+      if (SawDereference && lowImageBaseMemoryWritebackCommit(Op, Dereference))
+        continue;
       if (lowMemoryOperands(Op).Complete ||
+          lowAArch64WritebackMemoryShapeIsValid(Op) ||
           lowAArch64AddressMemoryShapeIsValid(Op) ||
           proofValueClobbers(Op.Output, Current))
         return false;
@@ -3529,7 +3533,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
         }
 
         if (CanAuthenticatePageByDereference &&
-            lowAArch64AddressMemoryShapeIsValid(Op)) {
+            (lowAArch64AddressMemoryShapeIsValid(Op) ||
+             lowAArch64WritebackMemoryShapeIsValid(Op))) {
           const auto Offset =
               relativeOffset(Op.Inputs[kAddressMemoryBaseOperand + 1]);
           if (Offset && *Offset == 0 &&
@@ -4021,7 +4026,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
         if (Memory.Complete) {
           if (LocalDereference ||
               (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
-               !lowAArch64AddressMemoryShapeIsValid(Op)) ||
+               !lowAArch64AddressMemoryShapeIsValid(Op) &&
+               !lowAArch64WritebackMemoryShapeIsValid(Op)) ||
               !Memory.Base || *Memory.Base != LocalAddressValue ||
               Op.Output == LocalAddressValue ||
               overlapsRegister(Op.Output, LocalAddressValue)) {
@@ -4040,6 +4046,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
           LocalAddressValue = Op.Output;
           continue;
         }
+        if (lowImageBaseMemoryWritebackCommit(Op, LocalDereference))
+          continue;
         if (!LocalDereference || Op.Output == LocalAddressValue ||
             overlapsRegister(Op.Output, LocalAddressValue)) {
           InvalidLocalShape = true;
@@ -4169,7 +4177,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
         const auto Memory = lowImageBaseMemoryWitness(Img, Op, CurrentAddress);
         if (Memory.Complete) {
           if ((Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
-               !lowAArch64AddressMemoryShapeIsValid(Op)) ||
+               !lowAArch64AddressMemoryShapeIsValid(Op) &&
+               !lowAArch64WritebackMemoryShapeIsValid(Op)) ||
               !Memory.Base || *Memory.Base != DereferenceAddress ||
               Dereference) {
             InvalidDereference = true;
@@ -4195,6 +4204,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
           }
           DereferenceAddress = Op.Output;
         }
+        if (lowImageBaseMemoryWritebackCommit(Op, Dereference))
+          continue;
         if (overlapsRegister(Op.Output, CurrentValue)) {
           InvalidDereference = true;
           break;

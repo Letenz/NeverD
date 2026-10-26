@@ -15,6 +15,7 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include <cstddef>
 #include <map>
 #include <optional>
 
@@ -23,6 +24,8 @@ namespace neverd {
 struct MedCallTarget {
   va_t Address;
   bool ThroughSlot;
+  /// Original input-block LOAD index, meaningful when ThroughSlot is true.
+  std::size_t LoadIndex = 0;
 };
 
 /// Query SSA values before \p Before. Calls, uncertain aliases, partial writes
@@ -34,6 +37,7 @@ resolveMedCallTarget(const MedBlock &Block, size_t Before, const MedVar &Value,
 /// Give a pre-SSA block prefix private value versions before using the same
 /// proof. Overlapping register writes and intervening calls kill old carriers.
 /// The original operations and runtime target operand remain unchanged.
+/// Observation indexes still refer to the original input block.
 std::optional<MedCallTarget>
 resolvePreSSAMedCallTarget(const MedBlock &Block, const MedVar &Value,
                            Arch Architecture, size_t *WorkRemaining = nullptr);

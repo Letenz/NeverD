@@ -314,6 +314,8 @@ TEST(X86APXBMISemantics, OrdinaryFormsUpdateOnlyArchitecturallyOwnedFlags) {
     default:
       FAIL() << "unexpected instruction";
     }
+    // AF/PF are arbitrary; the concrete choice is audited in X86BMILogicTests.
+    Expected.AF = Expected.PF = false;
     EXPECT_EQ(getGpr(Emulator, F.Destination), Result);
     expectFlags(Emulator, Expected);
     EXPECT_FALSE(Emulator.skips().any());
@@ -1101,6 +1103,7 @@ TEST(X86APXBMISemantics, DestructiveBitResetUsesOriginalSourceForCarry) {
           Expected.ZF = F.Id == X86_INS_BLSR && Result == 0;
           Expected.SF = (Result >> (F.Width * 8 - 1)) != 0;
           Expected.OF = false;
+          Expected.AF = Expected.PF = false;
         }
         expectFlags(Emulator, Expected);
       }

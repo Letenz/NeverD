@@ -5300,6 +5300,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     OS << Memory->Code;
     return true;
   }
+  if (auto Writeback = renderAArch64WritebackMemoryCall(
+          Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Writeback->Code;
+    return true;
+  }
   if (auto AuthenticatedLoad = renderAArch64PAuthLoadCall(
           Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);
