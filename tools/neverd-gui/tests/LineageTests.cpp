@@ -751,6 +751,12 @@ private slots:
                              Timeout);
     QTest::qWait(60);
     QCOMPARE(Versions->selected().value("label").toString(), Long);
+    const auto Label = Versions->table()->currentIndex().siblingAtColumn(0);
+    QCOMPARE(Label.data(Qt::ToolTipRole).toString(), Long);
+    for (const auto Break :
+         {QChar('\r'), QChar('\n'), QChar(QChar::LineSeparator),
+          QChar(QChar::ParagraphSeparator)})
+      QVERIFY(!Label.data().toString().contains(Break));
     QCOMPARE(View.size(), Before);
     QVERIFY(Functions->table()->viewport()->height() >=
             Functions->table()->fontMetrics().height() * 3);

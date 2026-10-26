@@ -38,8 +38,8 @@ The diagram shows the current source-report page, not an entire unbounded graph.
 Fit shows the complete page; Zoom in remains available after fitting a dense
 diagram into a small window.
 Keyboard activation and Copy copy original row evidence; context menus also copy
-full values. Long labels shorten only for display; headings and graph nodes use a single
-line for the label. Headings retain their full
+full values. Long labels shorten only for display; table cells, headings and graph nodes
+use a single line for the label. Headings retain their full
 accessible text and tooltips, and copied row evidence retains the original label.
 Adding comparisons and editing metadata retain the selected snapshot, page,
 filter and trace. Opening a replacement collection starts on its first snapshot

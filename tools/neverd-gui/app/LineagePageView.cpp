@@ -14,6 +14,7 @@
 #include "Icons.h"
 #include "LineageSession.h"
 #include "ShrinkableRow.h"
+#include "SingleLineText.h"
 
 #include <QAction>
 #include <QApplication>
@@ -77,7 +78,7 @@ QString cell(const QJsonValue &Value) {
   return QString::fromUtf8("—");
 }
 QString display(const QJsonObject &Row, const QString &Key) {
-  const auto Value = cell(Row[Key]);
+  const auto Value = singleLineDisplayText(cell(Row[Key]));
   if (Key == "name" && Value.isEmpty())
     return Row["address"].toString();
   if ((Key == "id" || Key == "report") && Value.size() == 64)
