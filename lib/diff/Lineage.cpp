@@ -56,6 +56,17 @@ struct Budget {
   }
 };
 
+/// Measure the shared JSON writer without allocating its complete output.
+class EncodedSizeStream final : public llvm::raw_ostream {
+public:
+  ~EncodedSizeStream() override { flush(); }
+
+private:
+  void write_impl(const char *, size_t Size) override { Written += Size; }
+  uint64_t current_pos() const override { return Written; }
+  uint64_t Written = 0;
+};
+
 std::string digest(llvm::StringRef Text, Budget &B) {
   llvm::SHA256 Hash;
   while (!Text.empty()) {
@@ -143,6 +154,29 @@ llvm::json::Object releaseMetadata(const Lineage &L, const LineageRelease &R,
       {"parents", std::move(Parents)}};
 }
 
+llvm::json::Object lineageMetadata(const Lineage &Value,
+                                   const ComparisonControl &Control) {
+  llvm::json::Array Versions;
+  for (const auto &V : Value.versions()) {
+    Control.check();
+    Versions.push_back(llvm::json::Object{
+        {"id", V.ID}, {"label", V.Label}, {"branch", V.Branch}});
+  }
+  llvm::json::Object Document{{"schema", LineageSchema},
+                              {"schema_version", Value.schemaVersion()},
+                              {"reports", llvm::json::Array{}},
+                              {"versions", std::move(Versions)}};
+  if (Value.schemaVersion() == LineageReleaseSchemaVersion) {
+    llvm::json::Array Releases;
+    for (const auto &R : Value.releases()) {
+      Control.check();
+      Releases.push_back(releaseMetadata(Value, R, Control));
+    }
+    Document["releases"] = std::move(Releases);
+  }
+  return Document;
+}
+
 } // namespace
 
 std::optional<std::string> LineageSettings::validate() const {
@@ -197,6 +231,161 @@ std::optional<uint32_t> Lineage::node(uint32_t Version,
   if (It == Functions.end() || It->Address != Address)
     return std::nullopt;
   return Versions[Version].FirstNode + uint32_t(It - Functions.begin());
+}
+
+void Lineage::readReleases(const llvm::json::Value *Metadata,
+                           const LineageSettings &Settings, uint64_t PriorNodes,
+                           uint64_t HeldEdges, uint64_t &HeldBytes,
+                           const ComparisonControl &Control) {
+  Budget B{Work, Settings.MaxWork, Control};
+  if (Metadata) {
+    const auto *Rows = Metadata->getAsArray();
+    require(Rows, "lineage releases must be an array");
+    allowance(PriorNodes + Nodes.size(), Rows->size(), Settings.MaxNodes);
+    std::map<std::string, const llvm::json::Object *> Records;
+    for (const auto &Row : *Rows) {
+      B.charge();
+      const auto *O = Row.getAsObject();
+      require(O, "lineage release must be an object");
+      fields(*O,
+             {"id", "label", "branch", "version", "published_at", "parents"});
+      const auto ID = text(*O, "id");
+      require(!llvm::StringRef(ID).trim().empty(),
+              "release ID must not be empty");
+      require(Records.emplace(ID, O).second, "duplicate lineage release ID");
+    }
+    for (const auto &[ID, O] : Records) {
+      B.charge();
+      LineageRelease R;
+      R.ID = ID;
+      R.Label = text(*O, "label");
+      R.Branch = text(*O, "branch");
+      require(!llvm::StringRef(R.Label).trim().empty(),
+              "release label must not be empty");
+      const auto Version = version(text(*O, "version"));
+      require(Version.has_value(), "release names an unknown snapshot");
+      R.Version = *Version;
+      const auto *Date = O->get("published_at");
+      require(Date, "release publication time must be null or UTC text");
+      if (Date->kind() != llvm::json::Value::Null) {
+        R.PublishedAt = text(*O, "published_at");
+        require(publicationTime(R.PublishedAt),
+                "release publication time must be a valid "
+                "YYYY-MM-DDTHH:MM:SSZ UTC timestamp");
+      }
+      const auto Bytes =
+          R.ID.size() + R.Label.size() + R.Branch.size() + R.PublishedAt.size();
+      allowance(sourceBytes(), Bytes, Settings.MaxSourceBytes);
+      allowance(HeldBytes, Bytes, Settings.MaxSourceBytes);
+      MetadataBytes += Bytes;
+      HeldBytes += Bytes;
+      B.charge(Bytes);
+      Releases.push_back(std::move(R));
+    }
+    for (uint32_t I = 0; I < Releases.size(); ++I) {
+      B.charge();
+      auto &R = Releases[I];
+      const auto *Parents = Records.at(R.ID)->getArray("parents");
+      require(Parents, "release parents must be an array");
+      allowance(HeldEdges + ReleaseLinks, Parents->size(), Settings.MaxEdges);
+      std::set<uint32_t> Unique;
+      for (const auto &P : *Parents) {
+        B.charge();
+        const auto Name = P.getAsString();
+        require(Name.has_value(), "release parent ID must be a string");
+        const auto Parent = release(*Name);
+        require(Parent.has_value(), "release names an unknown parent");
+        require(*Parent != I && Unique.insert(*Parent).second,
+                "release parent is repeated or self-referential");
+        auto &Previous = Releases[*Parent];
+        require(Previous.PublishedAt.empty() || R.PublishedAt.empty() ||
+                    Previous.PublishedAt <= R.PublishedAt,
+                "release publication precedes its declared parent");
+        Previous.Children.push_back(I);
+      }
+      R.Parents.assign(Unique.begin(), Unique.end());
+      ReleaseLinks += R.Parents.size();
+    }
+    const auto Earlier = [&](uint32_t A, uint32_t C) {
+      const auto &L = Releases[A], &R = Releases[C];
+      if (L.PublishedAt.empty() != R.PublishedAt.empty())
+        return !L.PublishedAt.empty();
+      if (L.PublishedAt != R.PublishedAt)
+        return L.PublishedAt < R.PublishedAt;
+      return L.ID < R.ID;
+    };
+    std::set<uint32_t, decltype(Earlier)> Ready(Earlier);
+    std::vector<uint32_t> Remaining;
+    std::vector<std::string> LatestAncestor(Releases.size());
+    for (uint32_t I = 0; I < Releases.size(); ++I) {
+      B.charge();
+      Remaining.push_back(uint32_t(Releases[I].Parents.size()));
+      if (!Remaining.back())
+        Ready.insert(I);
+    }
+    while (!Ready.empty()) {
+      B.charge();
+      const auto I = *Ready.begin();
+      Ready.erase(Ready.begin());
+      const auto &R = Releases[I];
+      require(R.PublishedAt.empty() || LatestAncestor[I].empty() ||
+                  LatestAncestor[I] <= R.PublishedAt,
+              "release publication precedes a declared ancestor");
+      const auto Latest = std::max(LatestAncestor[I], R.PublishedAt);
+      ReleaseTimeline.push_back(I);
+      for (const auto Child : R.Children) {
+        B.charge();
+        LatestAncestor[Child] = std::max(LatestAncestor[Child], Latest);
+        if (!--Remaining[Child])
+          Ready.insert(Child);
+      }
+    }
+    require(ReleaseTimeline.size() == Releases.size(),
+            "release parent declarations contain a cycle");
+  }
+}
+
+void Lineage::updateRevision(uint64_t MaxWork,
+                             const ComparisonControl &Control) {
+  Budget B{Work, MaxWork, Control};
+  // The revision binds source report digests and metadata, not caller order.
+  llvm::json::Array SourceIDs, Labels;
+  for (const auto &R : Reports) {
+    B.charge();
+    SourceIDs.push_back(R.Evidence->ID);
+  }
+  for (const auto &V : Versions) {
+    B.charge();
+    Labels.push_back(llvm::json::Array{V.ID, V.Label, V.Branch});
+  }
+  std::string RevisionText;
+  llvm::raw_string_ostream OS(RevisionText);
+  llvm::json::Array RevisionData{SchemaVersion == LineageSchemaVersion
+                                     ? "neverd.bindiff.lineage-v1"
+                                     : "neverd.bindiff.lineage-v2",
+                                 std::move(SourceIDs), std::move(Labels)};
+  if (SchemaVersion == LineageReleaseSchemaVersion) {
+    llvm::json::Array ReleaseRows;
+    for (const auto &R : Releases) {
+      B.charge(1 + R.Parents.size());
+      ReleaseRows.push_back(releaseMetadata(*this, R, Control));
+    }
+    RevisionData.push_back(std::move(ReleaseRows));
+  }
+  OS << llvm::json::Value(std::move(RevisionData));
+  Revision = digest(RevisionText, B);
+}
+
+void Lineage::admitSerialization(uint64_t MaxWork,
+                                 const ComparisonControl &Control) {
+  Budget B{Work, MaxWork, Control};
+  EncodedSizeStream OS;
+  OS << llvm::json::Value(lineageMetadata(*this, Control));
+  B.charge(OS.tell());
+  // The empty reports array already contributes its delimiters. The retained
+  // count adds only encoded strings and their separating commas.
+  allowance(OS.tell(), EncodedReportBytes,
+            limits::diff::kMaxSavedComparisonBytes);
 }
 
 std::shared_ptr<const Lineage> readLineage(llvm::StringRef Text,
@@ -274,6 +463,10 @@ std::shared_ptr<const Lineage> readLineage(llvm::StringRef Text,
       Evidence->ID = ID;
       Evidence->Text = Raw->str();
       Evidence->Saved = std::move(*Saved);
+      EncodedSizeStream Encoded;
+      Encoded << llvm::json::Value(*Raw);
+      B.charge(Encoded.tell());
+      Evidence->EncodedBytes = Encoded.tell();
       Sources.emplace(ID, std::move(Evidence));
     }
     Control.report("lineage:reports", Reports->size(), Reports->size());
@@ -283,6 +476,7 @@ std::shared_ptr<const Lineage> readLineage(llvm::StringRef Text,
       B.charge();
       const auto Report = uint32_t(Out->Reports.size());
       Out->Reports.push_back({Evidence});
+      Out->EncodedReportBytes += Evidence->EncodedBytes + (Report ? 1 : 0);
       for (bool Secondary : {false, true}) {
         const auto &S = Evidence->Saved;
         const auto &Identity = Secondary ? S.Secondary : S.Primary;
@@ -451,140 +645,10 @@ std::shared_ptr<const Lineage> readLineage(llvm::StringRef Text,
       B.charge();
       Out->ComponentConflicts[Out->Conflicts[I].Component].push_back(I);
     }
-    if (const auto *Metadata = Root->get("releases")) {
-      const auto *Rows = Metadata->getAsArray();
-      require(Rows, "lineage releases must be an array");
-      allowance(PriorNodes + Out->Nodes.size(), Rows->size(),
-                Settings.MaxNodes);
-      std::map<std::string, const llvm::json::Object *> Records;
-      for (const auto &Row : *Rows) {
-        B.charge();
-        const auto *O = Row.getAsObject();
-        require(O, "lineage release must be an object");
-        fields(*O,
-               {"id", "label", "branch", "version", "published_at", "parents"});
-        const auto ID = text(*O, "id");
-        require(!llvm::StringRef(ID).trim().empty(),
-                "release ID must not be empty");
-        require(Records.emplace(ID, O).second, "duplicate lineage release ID");
-      }
-      for (const auto &[ID, O] : Records) {
-        B.charge();
-        LineageRelease R;
-        R.ID = ID;
-        R.Label = text(*O, "label");
-        R.Branch = text(*O, "branch");
-        require(!llvm::StringRef(R.Label).trim().empty(),
-                "release label must not be empty");
-        const auto Version = Out->version(text(*O, "version"));
-        require(Version.has_value(), "release names an unknown snapshot");
-        R.Version = *Version;
-        const auto *Date = O->get("published_at");
-        require(Date, "release publication time must be null or UTC text");
-        if (Date->kind() != llvm::json::Value::Null) {
-          R.PublishedAt = text(*O, "published_at");
-          require(publicationTime(R.PublishedAt),
-                  "release publication time must be a valid "
-                  "YYYY-MM-DDTHH:MM:SSZ UTC timestamp");
-        }
-        const auto Bytes = R.ID.size() + R.Label.size() + R.Branch.size() +
-                           R.PublishedAt.size();
-        allowance(Out->sourceBytes(), Bytes, Settings.MaxSourceBytes);
-        allowance(HeldBytes, Bytes, Settings.MaxSourceBytes);
-        Out->MetadataBytes += Bytes;
-        HeldBytes += Bytes;
-        B.charge(Bytes);
-        Out->Releases.push_back(std::move(R));
-      }
-      for (uint32_t I = 0; I < Out->Releases.size(); ++I) {
-        B.charge();
-        auto &R = Out->Releases[I];
-        const auto *Parents = Records.at(R.ID)->getArray("parents");
-        require(Parents, "release parents must be an array");
-        allowance(PriorEdges + Out->Edges.size() + Rejections.size() +
-                      Out->ReleaseLinks,
-                  Parents->size(), Settings.MaxEdges);
-        std::set<uint32_t> Unique;
-        for (const auto &P : *Parents) {
-          B.charge();
-          const auto Name = P.getAsString();
-          require(Name.has_value(), "release parent ID must be a string");
-          const auto Parent = Out->release(*Name);
-          require(Parent.has_value(), "release names an unknown parent");
-          require(*Parent != I && Unique.insert(*Parent).second,
-                  "release parent is repeated or self-referential");
-          auto &Previous = Out->Releases[*Parent];
-          require(Previous.PublishedAt.empty() || R.PublishedAt.empty() ||
-                      Previous.PublishedAt <= R.PublishedAt,
-                  "release publication precedes its declared parent");
-          Previous.Children.push_back(I);
-        }
-        R.Parents.assign(Unique.begin(), Unique.end());
-        Out->ReleaseLinks += R.Parents.size();
-      }
-      const auto Earlier = [&](uint32_t A, uint32_t C) {
-        const auto &L = Out->Releases[A], &R = Out->Releases[C];
-        if (L.PublishedAt.empty() != R.PublishedAt.empty())
-          return !L.PublishedAt.empty();
-        if (L.PublishedAt != R.PublishedAt)
-          return L.PublishedAt < R.PublishedAt;
-        return L.ID < R.ID;
-      };
-      std::set<uint32_t, decltype(Earlier)> Ready(Earlier);
-      std::vector<uint32_t> Remaining;
-      std::vector<std::string> LatestAncestor(Out->Releases.size());
-      for (uint32_t I = 0; I < Out->Releases.size(); ++I) {
-        B.charge();
-        Remaining.push_back(uint32_t(Out->Releases[I].Parents.size()));
-        if (!Remaining.back())
-          Ready.insert(I);
-      }
-      while (!Ready.empty()) {
-        B.charge();
-        const auto I = *Ready.begin();
-        Ready.erase(Ready.begin());
-        const auto &R = Out->Releases[I];
-        require(R.PublishedAt.empty() || LatestAncestor[I].empty() ||
-                    LatestAncestor[I] <= R.PublishedAt,
-                "release publication precedes a declared ancestor");
-        const auto Latest = std::max(LatestAncestor[I], R.PublishedAt);
-        Out->ReleaseTimeline.push_back(I);
-        for (const auto Child : R.Children) {
-          B.charge();
-          LatestAncestor[Child] = std::max(LatestAncestor[Child], Latest);
-          if (!--Remaining[Child])
-            Ready.insert(Child);
-        }
-      }
-      require(Out->ReleaseTimeline.size() == Out->Releases.size(),
-              "release parent declarations contain a cycle");
-    }
-    // The revision binds source report digests and metadata, not caller order.
-    llvm::json::Array SourceIDs, Labels;
-    for (const auto &R : Out->Reports) {
-      B.charge();
-      SourceIDs.push_back(R.Evidence->ID);
-    }
-    for (const auto &V : Out->Versions) {
-      B.charge();
-      Labels.push_back(llvm::json::Array{V.ID, V.Label, V.Branch});
-    }
-    std::string RevisionText;
-    llvm::raw_string_ostream OS(RevisionText);
-    llvm::json::Array Revision{Out->SchemaVersion == LineageSchemaVersion
-                                   ? "neverd.bindiff.lineage-v1"
-                                   : "neverd.bindiff.lineage-v2",
-                               std::move(SourceIDs), std::move(Labels)};
-    if (Out->SchemaVersion == LineageReleaseSchemaVersion) {
-      llvm::json::Array Releases;
-      for (const auto &R : Out->Releases) {
-        B.charge(1 + R.Parents.size());
-        Releases.push_back(releaseMetadata(*Out, R, Control));
-      }
-      Revision.push_back(std::move(Releases));
-    }
-    OS << llvm::json::Value(std::move(Revision));
-    Out->Revision = digest(RevisionText, B);
+    Out->readReleases(Root->get("releases"), Settings, PriorNodes,
+                      PriorEdges + Out->Edges.size() + Rejections.size(),
+                      HeldBytes, Control);
+    Out->updateRevision(Settings.MaxWork, Control);
     Control.report("lineage:publish");
     return Out;
   } catch (const ComparisonInterrupted &) {
@@ -637,31 +701,16 @@ LineageTrace Lineage::trace(uint32_t Source, uint64_t MaxWork,
 
 std::string writeLineage(const Lineage &Value,
                          const ComparisonControl &Control) {
-  llvm::json::Array Reports, Versions;
+  auto Document = lineageMetadata(Value, Control);
+  llvm::json::Array Reports;
   for (const auto &R : Value.reports()) {
     Control.check();
-    Reports.push_back(R.Evidence->Text);
+    Reports.push_back(llvm::StringRef(R.Evidence->Text));
   }
-  for (const auto &V : Value.versions()) {
-    Control.check();
-    Versions.push_back(llvm::json::Object{
-        {"id", V.ID}, {"label", V.Label}, {"branch", V.Branch}});
-  }
+  Document["reports"] = std::move(Reports);
   Control.check();
   std::string Text;
   llvm::raw_string_ostream OS(Text);
-  llvm::json::Object Document{{"schema", LineageSchema},
-                              {"schema_version", Value.schemaVersion()},
-                              {"reports", std::move(Reports)},
-                              {"versions", std::move(Versions)}};
-  if (Value.schemaVersion() == LineageReleaseSchemaVersion) {
-    llvm::json::Array Releases;
-    for (const auto &R : Value.releases()) {
-      Control.check();
-      Releases.push_back(releaseMetadata(Value, R, Control));
-    }
-    Document["releases"] = std::move(Releases);
-  }
   OS << llvm::json::Value(std::move(Document));
   Control.check();
   allowance(0, Text.size(), limits::diff::kMaxSavedComparisonBytes);
@@ -676,8 +725,8 @@ editLineageReleases(const Lineage &Value, const llvm::json::Object &Edit,
   try {
     if (const auto Invalid = Settings.validate())
       throw std::invalid_argument(*Invalid);
-    uint64_t Work = 0;
-    Budget B{Work, Settings.MaxWork, Control};
+    auto Out = std::shared_ptr<Lineage>(new Lineage);
+    Budget B{Out->Work, Settings.MaxWork, Control};
     B.charge();
     fields(Edit, {"revision", "upsert", "remove", "parent_updates"});
     require(text(Edit, "revision") == Value.revision(),
@@ -713,37 +762,41 @@ editLineageReleases(const Lineage &Value, const llvm::json::Object &Edit,
         require(Changed.insert(ID).second,
                 "release edit repeats or both removes and upserts an ID");
       }
-    // The serialized collection contains every retained report and metadata
-    // byte. Refuse an insufficient budget before copying those bytes, while
-    // leaving the exact serialization charge below unchanged.
-    allowance(Work, Value.sourceBytes(), Settings.MaxWork);
+    uint64_t HeldBytes = Value.sourceBytes();
+    allowance(HeldBytes, 0, Settings.MaxSourceBytes);
+    const uint64_t PriorNodes = Value.nodes().size() + Value.releases().size();
+    uint64_t Rejections = 0;
+    for (const auto &C : Value.conflicts()) {
+      B.charge();
+      Rejections += C.Kind == LineageConflictKind::RejectedPair;
+    }
+    const uint64_t GraphEdges = Value.edges().size() + Rejections;
+    allowance(PriorNodes, Value.nodes().size(), Settings.MaxNodes);
+    allowance(GraphEdges + Value.releaseLinks(), GraphEdges, Settings.MaxEdges);
     Control.report("lineage:release_edit");
-    const auto Saved = writeLineage(Value, Control);
-    B.charge(Saved.size());
-    auto Document = llvm::json::parse(Saved);
-    if (!Document)
-      throw std::runtime_error(llvm::toString(Document.takeError()));
-    auto &Root = *Document->getAsObject();
     llvm::json::Array Releases;
-    std::map<std::string, const llvm::json::Object *> Existing;
-    if (const auto *Previous = Root.getArray("releases"))
-      for (const auto &R : *Previous) {
-        B.charge();
-        const auto *O = R.getAsObject();
-        const auto ID = O->getString("id")->str();
-        Existing.emplace(ID, O);
-        if (!Changed.contains(ID))
-          Releases.push_back(R);
+    for (const auto &R : Value.releases()) {
+      B.charge();
+      if (!Changed.contains(R.ID)) {
+        B.charge(R.ID.size() + R.Label.size() + R.Branch.size() +
+                 R.PublishedAt.size() + R.Parents.size());
+        Releases.push_back(releaseMetadata(Value, R, Control));
       }
+    }
     if (Upsert)
       for (const auto &R : *Upsert) {
         B.charge();
         auto Updated = *R.getAsObject();
         if (!Updated.get("parents")) {
-          const auto Old = Existing.find(text(Updated, "id"));
-          require(Old != Existing.end(),
+          const auto Old = Value.release(text(Updated, "id"));
+          require(Old.has_value(),
                   "new release requires an explicit parents array");
-          Updated["parents"] = *Old->second->get("parents");
+          llvm::json::Array Parents;
+          for (const auto P : Value.releases()[*Old].Parents) {
+            B.charge(1 + Value.releases()[P].ID.size());
+            Parents.push_back(Value.releases()[P].ID);
+          }
+          Updated["parents"] = std::move(Parents);
         }
         Releases.push_back(std::move(Updated));
       }
@@ -807,22 +860,51 @@ editLineageReleases(const Lineage &Value, const llvm::json::Object &Edit,
         Record["parents"] = std::move(Next);
       }
     }
-    Root["schema_version"] = LineageReleaseSchemaVersion;
-    Root["releases"] = std::move(Releases);
-    std::string Candidate;
-    llvm::raw_string_ostream OS(Candidate);
-    OS << *Document;
-    B.charge(Candidate.size());
-    auto Remaining = Settings;
-    if (Work == Settings.MaxWork)
-      throw ComparisonInterrupted(ComparisonState::ResourceLimited);
-    Remaining.MaxWork -= Work;
-    auto Result = readLineage(Candidate, Remaining, Error, Control, &Value);
-    // readLineage created a fresh unpublished object. Include preparation in
-    // its operation receipt before the caller can publish the const result.
-    if (Result)
-      std::const_pointer_cast<Lineage>(Result)->Work += Work;
-    return Result;
+    Control.report("lineage:reuse_graph");
+    Out->SchemaVersion = LineageReleaseSchemaVersion;
+    Out->ReportBytes = Value.ReportBytes;
+    Out->EncodedReportBytes = Value.EncodedReportBytes;
+    for (const auto &V : Value.Versions) {
+      const auto Bytes = V.Label.size() + V.Branch.size();
+      B.charge(1 + Bytes);
+      allowance(HeldBytes, Bytes, Settings.MaxSourceBytes);
+      HeldBytes += Bytes;
+      Out->MetadataBytes += Bytes;
+      Out->Versions.push_back(V);
+    }
+    const auto Copy = [&](const auto &Source, auto &Target) {
+      B.charge(Source.size());
+      Target.reserve(Source.size());
+      for (const auto &Item : Source) {
+        Control.check();
+        Target.push_back(Item);
+      }
+    };
+    Copy(Value.Reports, Out->Reports);
+    Copy(Value.Nodes, Out->Nodes);
+    Copy(Value.Edges, Out->Edges);
+    for (const auto &C : Value.Conflicts) {
+      B.charge(1 + C.Members.size());
+      Out->Conflicts.push_back(C);
+    }
+    const auto CopyIndex = [&](const auto &Source, auto &Target) {
+      B.charge(Source.size());
+      Target.reserve(Source.size());
+      for (const auto &Row : Source) {
+        B.charge(Row.size());
+        Target.push_back(Row);
+      }
+    };
+    CopyIndex(Value.Adjacency, Out->Adjacency);
+    CopyIndex(Value.ComponentConflicts, Out->ComponentConflicts);
+    llvm::json::Value Metadata(std::move(Releases));
+    Out->readReleases(&Metadata, Settings, PriorNodes,
+                      GraphEdges * 2 + Value.releaseLinks(), HeldBytes,
+                      Control);
+    Out->updateRevision(Settings.MaxWork, Control);
+    Out->admitSerialization(Settings.MaxWork, Control);
+    Control.report("lineage:publish");
+    return Out;
   } catch (const ComparisonInterrupted &) {
     throw;
   } catch (const std::invalid_argument &E) {

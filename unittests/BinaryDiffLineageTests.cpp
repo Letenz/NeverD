@@ -1147,6 +1147,89 @@ TEST(BinaryDiffLineage, ReleaseFocusLocatesSelectionAfterTimelineMoves) {
       std::invalid_argument);
 }
 
+TEST(BinaryDiffLineage, ReleaseEditsDoNotRevisitRetainedSourceBytes) {
+  const auto Text = report(program(0), program(1), {{0, 0}});
+  const auto Small = load({Text});
+  const auto Padded = load({Text + std::string(4 * 1024 * 1024, ' ')});
+  ASSERT_TRUE(Small);
+  ASSERT_TRUE(Padded);
+  EXPECT_EQ(Padded->reports()[0].Evidence->EncodedBytes,
+            Small->reports()[0].Evidence->EncodedBytes + 4 * 1024 * 1024);
+  const auto First =
+      releases(*Small, llvm::json::Array{releaseRecord("a", *Small)});
+  ASSERT_TRUE(First);
+  LineageSettings Settings;
+  Settings.MaxWork = First->work();
+  ComparisonControl Control;
+  Control.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
+    EXPECT_NE(Phase, "parse");
+    EXPECT_NE(Phase, "lineage:parse");
+    EXPECT_NE(Phase, "lineage:reports");
+  };
+  std::string Error;
+  const auto Next = editLineageReleases(
+      *Padded,
+      llvm::json::Object{
+          {"revision", Padded->revision()},
+          {"upsert", llvm::json::Array{releaseRecord("a", *Padded)}}},
+      Settings, Error, Control);
+  ASSERT_TRUE(Next) << Error;
+  EXPECT_EQ(Next->work(), First->work());
+  EXPECT_EQ(Next->reports()[0].Evidence, Padded->reports()[0].Evidence);
+  EXPECT_EQ(Next->reports()[0].Evidence->Text,
+            Text + std::string(4 * 1024 * 1024, ' '));
+  const auto Reopened = readLineage(writeLineage(*Next), {}, Error);
+  ASSERT_TRUE(Reopened) << Error;
+  EXPECT_EQ(Reopened->revision(), Next->revision());
+  EXPECT_EQ(writeLineage(*Reopened), writeLineage(*Next));
+}
+
+TEST(BinaryDiffLineage, ReleaseEditsRetainEveryGraphProjection) {
+  const auto A = program(0), B = program(1), C = program(2);
+  const auto L =
+      load({report(A, B, {{0, 0}, {1, 1}}), report(B, C, {{0, 0}, {1, 1}}),
+            report(C, A, {{0, 1}, {1, 0}}), report(A, C, {}, true)});
+  ASSERT_TRUE(L);
+  ASSERT_FALSE(L->conflicts().empty());
+  const auto R = releases(
+      *L,
+      llvm::json::Array{releaseRecord("base", *L),
+                        releaseRecord("head", *L, llvm::json::Array{"base"})});
+  ASSERT_TRUE(R);
+  const auto Compare = [&](llvm::json::Object Query) {
+    auto Before = releasePage(*L, Query);
+    auto After = releasePage(*R, Query);
+    for (auto &Row : *Before.getArray("items")) {
+      EXPECT_EQ(Row.getAsObject()->getString("lineage_revision"),
+                L->revision());
+      Row.getAsObject()->erase("lineage_revision");
+    }
+    for (auto &Row : *After.getArray("items")) {
+      EXPECT_EQ(Row.getAsObject()->getString("lineage_revision"),
+                R->revision());
+      Row.getAsObject()->erase("lineage_revision");
+    }
+    EXPECT_EQ(render(*Before.get("items")), render(*After.get("items")))
+        << render(llvm::json::Value(std::move(Query)));
+    EXPECT_EQ(Before.getInteger("total"), After.getInteger("total"));
+  };
+  for (const auto Kind : {"versions", "reports", "edges", "conflicts"})
+    Compare(llvm::json::Object{{"kind", Kind}});
+  for (const auto &V : L->versions()) {
+    Compare(llvm::json::Object{{"kind", "functions"}, {"version", V.ID}});
+    for (const auto &F : L->functions(*L->version(V.ID)))
+      for (const auto Kind : {"trace_nodes", "trace_edges", "trace_conflicts"})
+        Compare(
+            llvm::json::Object{{"kind", Kind},
+                               {"version", V.ID},
+                               {"address", "0x" + llvm::utohexstr(F.Address)}});
+  }
+  for (uint32_t I = 0; I < L->conflicts().size(); ++I)
+    Compare(llvm::json::Object{{"kind", "conflict_members"}, {"index", I}});
+  for (uint32_t I = 0; I < L->reports().size(); ++I)
+    EXPECT_EQ(R->reports()[I].Evidence, L->reports()[I].Evidence);
+}
+
 TEST(BinaryDiffLineage, ReleaseEditsHonorBudgetsAndCancellation) {
   const auto L = load({report(program(0), program(1), {{0, 0}})});
   ASSERT_TRUE(L);
@@ -1166,7 +1249,7 @@ TEST(BinaryDiffLineage, ReleaseEditsHonorBudgetsAndCancellation) {
   EXPECT_EQ(AtBudget->work(), R->work());
   EXPECT_EQ(AtBudget->revision(), R->revision());
   LineageSettings TooSmall;
-  TooSmall.MaxWork = L->sourceBytes() - 1;
+  TooSmall.MaxWork = 1;
   bool Preparing = false;
   ComparisonControl Admission;
   Admission.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
@@ -1189,16 +1272,19 @@ TEST(BinaryDiffLineage, ReleaseEditsHonorBudgetsAndCancellation) {
     expectStop(ComparisonState::ResourceLimited,
                [&] { (void)editLineageReleases(*L, Edit, S, Error); });
   }
-  std::atomic<bool> Stop{false};
-  ComparisonControl C;
-  C.Cancel = &Stop;
-  C.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
-    if (Phase == "lineage:release_edit")
-      Stop = true;
-  };
-  expectStop(ComparisonState::Cancelled,
-             [&] { (void)editLineageReleases(*L, Edit, {}, Error, C); });
-  EXPECT_TRUE(Stop);
+  for (const auto *Phase :
+       {"lineage:release_edit", "lineage:reuse_graph", "lineage:publish"}) {
+    std::atomic<bool> Stop{false};
+    ComparisonControl C;
+    C.Cancel = &Stop;
+    C.Progress = [&](llvm::StringRef Current, uint64_t, uint64_t) {
+      if (Current == Phase)
+        Stop = true;
+    };
+    expectStop(ComparisonState::Cancelled,
+               [&] { (void)editLineageReleases(*L, Edit, {}, Error, C); });
+    EXPECT_TRUE(Stop);
+  }
   EXPECT_EQ(writeLineage(*L), Before);
   auto Stale = Edit;
   Stale["revision"] = "old";

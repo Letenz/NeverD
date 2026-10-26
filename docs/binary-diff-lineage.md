@@ -248,7 +248,11 @@ repeated parent edits, removing an undeclared parent and adding an already
 declared parent are errors. Removing a referenced release requires removing its
 child links in the same transaction. No intermediate graph becomes visible.
 Edits share load options, cancellation, retained-trace accounting and atomic
-publication. Their request object has the shared 1 MiB options allowance; large
+publication. They reuse the validated source evidence and copy the unchanged
+association graph; work covers the edit, graph copying and release validation
+without serializing or reparsing the original reports. Node, edge and source-byte
+allowances still account for the old collection and candidate held together.
+Their request object has the shared 1 MiB options allowance; large
 inventories remain editable through bounded deltas or whole-file loading.
 
 Python exposes `graph.edit_releases(edit, options=..., progress=...)`; the C ABI

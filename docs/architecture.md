@@ -1029,8 +1029,14 @@ for accounting, cooperative checkpoints and report-only provenance.
 timeline ordering in the v2 envelope. Releases reference existing snapshots;
 they never add correspondence edges. Iterative topological admission propagates
 the latest known ancestor timestamp through undated releases. The same core
-release editor applies record and parent deltas before revalidating the complete
-candidate. The C ABI alone publishes it and invalidates trace caches. Bounded
+release editor applies record and parent deltas through the same release reader
+and revision owner used by initial admission. It copies the admitted immutable
+association graph and shares the original evidence; metadata edits do not
+serialize, hash or parse the retained reports again. Current allowances still
+cover the old and candidate graphs and metadata. Source evidence retains its
+encoded string size from the shared JSON writer, so candidate persistence bounds
+can be checked without materializing another complete document. The C ABI alone
+publishes the result and invalidates trace caches. Bounded
 release pages expose relation counts; parent/child pages carry the individual
 records. Core focus-by-ID locates a page after timeline edits, so Qt need not
 scan the inventory or select a different release at an old offset. Optional

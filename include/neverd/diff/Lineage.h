@@ -45,6 +45,8 @@ struct LineageSettings {
 struct LineageEvidence {
   std::string ID, Text;
   SavedComparison Saved;
+  /// Exact JSON string size from the shared serializer, retained with Text.
+  uint64_t EncodedBytes = 0;
 };
 
 struct LineageReport {
@@ -151,6 +153,12 @@ private:
                       const LineageSettings &, std::string &,
                       const ComparisonControl &);
   Lineage() = default;
+  void readReleases(const llvm::json::Value *Metadata,
+                    const LineageSettings &Settings, uint64_t PriorNodes,
+                    uint64_t HeldEdges, uint64_t &HeldBytes,
+                    const ComparisonControl &Control);
+  void updateRevision(uint64_t MaxWork, const ComparisonControl &Control);
+  void admitSerialization(uint64_t MaxWork, const ComparisonControl &Control);
   std::string Revision;
   unsigned SchemaVersion = LineageSchemaVersion;
   std::vector<LineageVersion> Versions;
@@ -163,6 +171,7 @@ private:
   std::vector<std::vector<uint32_t>> Adjacency, ComponentConflicts;
   uint64_t ReportBytes = 0, MetadataBytes = 0, Work = 0;
   uint64_t ReleaseLinks = 0;
+  uint64_t EncodedReportBytes = 0;
 };
 
 /// Strict lineage wrapper plus the existing readComparison for every unique

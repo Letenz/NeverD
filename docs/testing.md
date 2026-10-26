@@ -2670,7 +2670,13 @@ snapshot, forks/merges, all 64 forward DAGs on four records, valid Gregorian UTC
 dates, ancestor date contradictions across undated records and malformed or
 cyclic parent declarations. V1 revision/persistence compatibility is separate
 from the v2 release envelope. Core/SDK tests check atomic edit cancellation,
-deadlines, budgets, stale revisions and retention of the previous trace. Worker,
+deadlines, budgets, stale revisions and retention of the previous trace.
+Core tests also retain every graph projection across release edits, checking each
+row's new collection revision while preserving its remaining evidence. Appending
+4 MiB of whitespace to a retained report must not increase the work required to
+edit a release; its exact source bytes and encoded persistence size remain
+accounted for. Stops at edit preparation, graph reuse and publication retain the
+previous collection. Worker,
 CLI and Python cases save/reopen v2, preserve exact source reports and retain
 all parents during label edits and snapshot metadata updates. The Python
 missing-export case verifies that optional release editing does not disable
