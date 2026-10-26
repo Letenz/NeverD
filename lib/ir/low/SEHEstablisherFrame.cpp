@@ -570,6 +570,43 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   auto OverlapsSP = [&](const NdVar &V) {
     return Overlaps(V, TRI.StackPointer);
   };
+  // Source calls do not explicitly read the physical return-slot address.
+  // They still require a separate range proof before frame loads can be
+  // projected. Keep actual handler SP reads unsupported when the fault can
+  // leave more than one SP, including a return before restoring the frame.
+  auto HandlerRestoresSPBeforeReading = [&]() -> std::optional<bool> {
+    if (!Charge(N))
+      return std::nullopt;
+    std::vector<bool> Seen(N, false);
+    std::vector<int> Pending{HandlerId};
+    while (!Pending.empty()) {
+      if (!Charge())
+        return std::nullopt;
+      const int B = Pending.back();
+      Pending.pop_back();
+      if (Seen[B])
+        continue;
+      Seen[B] = true;
+      bool Restored = false;
+      for (const LowOp &Op : Low.Blocks[B].Ops) {
+        if (!Charge(Op.NumInputs + 1))
+          return std::nullopt;
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          if (OverlapsSP(Op.Inputs[I]))
+            return false;
+        if (Op.Opcode == NdOp::RETURN)
+          return false;
+        if (Op.Output == NdVar::reg(TRI.StackPointer, TRI.PointerSize)) {
+          Restored = true;
+          break;
+        }
+      }
+      if (!Restored)
+        Pending.insert(Pending.end(), Low.Blocks[B].Succs.begin(),
+                       Low.Blocks[B].Succs.end());
+    }
+    return true;
+  };
   // `lea fp, [rsp + FrameOffset]` (`mov fp, rsp` for a zero offset): one
   // full-width copy of a value the same instruction computes as SP plus that
   // constant.
@@ -646,7 +683,17 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
           continue;
         const bool AfterPrologue =
             B != 0 || Boundary.Address + Boundary.Size > PrologueEnd;
-        if (HasFrameRegister && AfterPrologue && !ProtectedBlock[B]) {
+        if (HasFrameRegister && AfterPrologue &&
+            (ProtectedBlock[B] || OrdinaryEntry) &&
+            Use == LowSEHFrameUse::SourceProjection &&
+            !Result.HasVaryingEntrySP) {
+          const auto Unobserved = HandlerRestoresSPBeforeReading();
+          if (!Unobserved)
+            return Fail("frame propagation budget exhausted");
+          Result.HasVaryingEntrySP = *Unobserved;
+        }
+        if (HasFrameRegister && AfterPrologue &&
+            (!ProtectedBlock[B] || Result.HasVaryingEntrySP)) {
           DynamicSP = true;
           continue;
         }
@@ -680,7 +727,7 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
     }
   // Ordinary flow into a shared handler is not proven to bring the SP the
   // dispatcher resumes with once SP moves on the way in.
-  if (DynamicSP && OrdinaryEntry && !IndependentSP)
+  if (DynamicSP && OrdinaryEntry && !IndependentSP && !Result.HasVaryingEntrySP)
     return Fail("SP moves before a handler that ordinary flow also enters");
   Result.FrameBytes = FrameBytes;
   Result.DynamicSP = DynamicSP;

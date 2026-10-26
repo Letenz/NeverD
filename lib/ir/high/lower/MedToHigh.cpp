@@ -34,6 +34,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
@@ -830,18 +831,40 @@ bool MedToHighConverter::memoryReadReachesCallTarget(
   const MedBlock *Block = CallTargetUse.Block;
   if (!Block || CallTargetUse.CallIdx > Block->Ops.size())
     return false;
-  size_t ReadIdx = CallTargetUse.CallIdx;
-  for (size_t I = CallTargetUse.CallIdx; I-- > 0;) {
-    const MedOp &Op = Block->Ops[I];
-    if (Op.Opcode == NdOp::LOAD && Op.Output.Kind == Value.Kind &&
-        Op.Output.Id == Value.Id && Op.Output.SSAVer == Value.SSAVer) {
-      ReadIdx = I;
-      break;
+  std::vector<CallTargetUseSite> Path;
+  const MedBlock *ReadBlock = nullptr;
+  size_t ReadIdx = 0;
+  size_t Before = CallTargetUse.CallIdx;
+  for (int Depth = 0; Depth < limits::kCallTargetSlotDepth; ++Depth) {
+    if (llvm::any_of(Path, [&](const auto &Use) { return Use.Block == Block; }))
+      return false;
+    Path.push_back({Block, Before});
+    for (size_t I = Before; I-- > 0;) {
+      const MedOp &Op = Block->Ops[I];
+      if (Op.Opcode == NdOp::LOAD && Op.Output.Kind == Value.Kind &&
+          Op.Output.Id == Value.Id && Op.Output.SSAVer == Value.SSAVer) {
+        ReadBlock = Block;
+        ReadIdx = I;
+        break;
+      }
     }
+    if (ReadBlock)
+      break;
+    // A single normal predecessor preserves the original observation's
+    // path. Joins, exceptional entries and cycles need a separate must-proof.
+    if (!CurMed || Block->Preds.size() != 1 || !Block->ExceptionalPreds.empty())
+      return false;
+    const auto Pred = llvm::find_if(CurMed->Blocks, [&](const MedBlock &B) {
+      return B.Id == Block->Preds.front();
+    });
+    if (Pred == CurMed->Blocks.end())
+      return false;
+    Block = &*Pred;
+    Before = Block->Ops.size();
   }
-  if (ReadIdx == CallTargetUse.CallIdx)
+  if (!ReadBlock)
     return false;
-  const MedOp &Read = Block->Ops[ReadIdx];
+  const MedOp &Read = ReadBlock->Ops[ReadIdx];
   if (Read.MemoryOrdering != NdMemoryOrdering::None ||
       Read.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
@@ -849,11 +872,12 @@ bool MedToHighConverter::memoryReadReachesCallTarget(
   // Whether \p Address, used by the op at \p Before, is this function's own
   // stack: the stack pointer through copies, zero extensions and constant
   // offsets.
-  auto frameAddress = [&](size_t Before, MedVar Address) {
+  auto frameAddress = [&](const MedBlock &Scope, size_t Before,
+                          MedVar Address) {
     for (size_t I = Before; I-- > 0;) {
       if (Address.Kind == MedVar::Reg && Address.RegOff == StackPointer)
         return true;
-      const MedOp &Def = Block->Ops[I];
+      const MedOp &Def = Scope.Ops[I];
       if (Def.Output.Kind != Address.Kind || Def.Output.Id != Address.Id ||
           Def.Output.SSAVer != Address.SSAVer || Def.NumInputs < 1)
         continue;
@@ -872,29 +896,32 @@ bool MedToHighConverter::memoryReadReachesCallTarget(
   // of image or heap memory name different storage, and so do a heap store
   // and a stack read.  A pointer the function loaded is assumed not to point
   // into its own frame.
-  const bool ReadsFrame = frameAddress(ReadIdx, Read.Inputs[0]);
-  for (size_t I = ReadIdx + 1; I < CallTargetUse.CallIdx; ++I) {
-    const MedOp &Op = Block->Ops[I];
-    if (Op.MemoryOrdering != NdMemoryOrdering::None)
-      return false;
-    // A store, call or atomic can change the memory the read observed.
-    switch (Op.Opcode) {
-    case NdOp::STORE:
-      if (Op.NumInputs >= 1 &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          Read.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          frameAddress(I, Op.Inputs[0]) != ReadsFrame)
-        continue;
-      return false;
-    case NdOp::CALL:
-    case NdOp::INDIR_CALL:
-    case NdOp::INTRINSIC:
-    case NdOp::ATOMIC_XCHG:
-    case NdOp::ATOMIC_ADD:
-    case NdOp::ATOMIC_CMPXCHG:
-      return false;
-    default:
-      break;
+  const bool ReadsFrame = frameAddress(*ReadBlock, ReadIdx, Read.Inputs[0]);
+  for (const auto &Use : Path) {
+    const size_t Begin = Use.Block == ReadBlock ? ReadIdx + 1 : 0;
+    for (size_t I = Begin; I < Use.CallIdx; ++I) {
+      const MedOp &Op = Use.Block->Ops[I];
+      if (Op.MemoryOrdering != NdMemoryOrdering::None)
+        return false;
+      // A store, call or atomic can change the memory the read observed.
+      switch (Op.Opcode) {
+      case NdOp::STORE:
+        if (Op.NumInputs >= 1 &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Read.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            frameAddress(*Use.Block, I, Op.Inputs[0]) != ReadsFrame)
+          continue;
+        return false;
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL:
+      case NdOp::INTRINSIC:
+      case NdOp::ATOMIC_XCHG:
+      case NdOp::ATOMIC_ADD:
+      case NdOp::ATOMIC_CMPXCHG:
+        return false;
+      default:
+        break;
+      }
     }
   }
   return true;

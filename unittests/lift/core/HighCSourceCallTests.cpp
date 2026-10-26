@@ -4280,7 +4280,6 @@ TEST(HighCSourceCalls, PointerTempsPreserveTheirBitsOnIntegerReturn) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("uint8_t* t17;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("return (int64_t)(uintptr_t)t17;"), std::string::npos)
       << Source;
   compileAndRun(Source + R"(

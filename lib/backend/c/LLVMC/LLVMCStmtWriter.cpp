@@ -617,6 +617,12 @@ LLVMCWriter::allocaStoredValueBefore(const llvm::LoadInst *Load,
   auto It = Definitions.find(Load);
   if (It != Definitions.end())
     return It->second;
+  // Module include discovery also queries image addresses before a function's
+  // dominance tree exists. Local reaching stores remain valid there, but a
+  // cross-block query must belong to the currently analyzed function.
+  const auto *Root = Dominators.getRootNode();
+  if (!Root || Root->getBlock()->getParent() != Load->getFunction())
+    return nullptr;
   if (InitializedAllocaLoads.count(Load))
     return CrossBlockLoadValues.lookup(Load);
   if (!Dominators.isReachableFromEntry(Load->getParent()))
@@ -5294,6 +5300,12 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     OS << Memory->Code;
     return true;
   }
+  if (auto Writeback = renderAArch64WritebackMemoryCall(
+          Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
+    emitIndent(Indent);
+    OS << Writeback->Code;
+    return true;
+  }
   if (auto AuthenticatedLoad = renderAArch64PAuthLoadCall(
           Opts.TheArch, Call, Name, ResultLive, ArgStrs)) {
     emitIndent(Indent);
@@ -6469,7 +6481,8 @@ bool LLVMCWriter::declaredParameterIsInteger(const llvm::CallBase &Call,
   // (indirectCalleeType), and an import named for its slot is declared
   // without parameters.
   if (Opts.PreserveLLVMFunctionTypes)
-    return false;
+    return ArgIdx < Call.getFunctionType()->getNumParams() &&
+           Call.getFunctionType()->getParamType(ArgIdx)->isIntegerTy();
   const llvm::Function *Callee = Call.getCalledFunction();
   if (!Callee) {
     if (llvm::isa<llvm::InlineAsm>(Call.getCalledOperand()) ||
@@ -7929,10 +7942,10 @@ void LLVMCWriter::writeReturn(llvm::ReturnInst &Ret, int Indent) {
   }
   if (auto *RV = Ret.getReturnValue()) {
     if (auto *Collapsed = tryCollapseHiLo(Analysis, RV)) {
-      OS << "return " << valueStr(Collapsed) << ";\n";
+      OS << "return " << integerPointerOperandStr(Collapsed) << ";\n";
     } else {
       auto *FnRetTy = Ret.getFunction()->getReturnType();
-      std::string RetExpr = valueStr(RV);
+      std::string RetExpr = integerPointerOperandStr(RV);
       if (RV->getType() != FnRetTy && FnRetTy->isIntegerTy() &&
           RV->getType()->isIntegerTy() &&
           FnRetTy->getIntegerBitWidth() < RV->getType()->getIntegerBitWidth())

@@ -76,6 +76,9 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
           if (isAArch64AddressMemoryIntrinsic(Id) &&
               !aarch64AddressMemoryMedShapeIsValid(Op))
             Err(kAddressMemoryMalformed, Blk.Id, Op.Addr);
+          if (isAArch64WritebackMemoryIntrinsic(Id) &&
+              !aarch64WritebackMemoryMedShapeIsValid(Op))
+            Err(kWritebackMalformed, Blk.Id, Op.Addr);
           if (isAArch64PAuthLoadIntrinsic(Id) &&
               !aarch64PAuthLoadMedShapeIsValid(Op))
             Err(kPAuthLoadMalformed, Blk.Id, Op.Addr);

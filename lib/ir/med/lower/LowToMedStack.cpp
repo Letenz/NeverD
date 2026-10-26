@@ -310,7 +310,10 @@ void LowToMedConverter::analyzeStack(const LowFunc &Low) {
   if (TargetArch == Arch::AArch64 &&
       std::any_of(Low.Blocks.begin(), Low.Blocks.end(), [](const auto &Block) {
         return std::any_of(Block.Ops.begin(), Block.Ops.end(),
-                           lowAArch64AddressMemoryShapeIsValid);
+                           [](const LowOp &Op) {
+                             return lowAArch64AddressMemoryShapeIsValid(Op) ||
+                                    lowAArch64WritebackMemoryShapeIsValid(Op);
+                           });
       })) {
     // Raw memory operands retain a base, not a precomputed access address.
     // Reuse the must-analysis at the exact use rather than the flow-insensitive

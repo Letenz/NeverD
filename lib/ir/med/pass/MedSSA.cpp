@@ -634,15 +634,15 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         // Ordinary flow and runtime resumption must agree on the same frame.
         // A runtime-only continuation is a real root: its SP is the proved
         // target frame, not a second ordinary function-entry SP.
-        bool IndependentEntries = false;
+        bool UnresolvedEntries = false;
         const auto FrameBytes = proveSEHEstablisherFrame(
             Low, Func, Func.Blocks[B].StartAddr, TRI,
             /*OrdinaryEntry=*/!IsRoot[B], LocalUnwindDigest,
             /*CxxContinuation=*/false, nullptr, nullptr,
-            SEHSourceProjectionEnabled, &IndependentEntries);
-        Func.HasUnresolvedSEHFrame |= IndependentEntries;
+            SEHSourceProjectionEnabled, &UnresolvedEntries);
+        Func.HasUnresolvedSEHFrame |= UnresolvedEntries;
         if (!IsRoot[B]) {
-          if (IndependentEntries)
+          if (UnresolvedEntries)
             SharedSourceSPRoots.insert(B);
           continue;
         }

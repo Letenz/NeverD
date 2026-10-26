@@ -15,6 +15,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/low/LowIR.h"
 
@@ -99,6 +100,38 @@ inline bool lowAArch64AddressMemoryShapeIsValid(const LowOp &Op) {
 
 inline bool lowAArch64AddressLoadShapeIsValid(const LowOp &Op) {
   return Op.Output.Size && lowAArch64AddressMemoryShapeIsValid(Op);
+}
+
+inline bool lowAArch64WritebackMemoryShapeIsValid(const LowOp &Op) {
+  if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+      !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != kAddressMemoryIdentifierBytes ||
+      Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      Op.NumInputs != aarch64WritebackMemoryOperandCount(
+                          static_cast<Intrinsic>(Op.Inputs[0].Offset)) +
+                          1 ||
+      (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  for (unsigned I = 1; I != Op.NumInputs; ++I) {
+    const auto &Input = Op.Inputs[I];
+    if (!Input.isConst() && !Input.isReg() && !Input.isTemp())
+      return false;
+  }
+  const bool Store = static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
+                     Intrinsic::A64_StoreWriteback;
+  return aarch64WritebackMemoryShapeIsValid(
+      static_cast<Intrinsic>(Op.Inputs[0].Offset), Op.NumInputs, Op.Output.Size,
+      Op.Inputs[kWritebackBaseOperand + 1].Size,
+      Op.Inputs[kWritebackWordOperand + 1].Size,
+      Op.Inputs[kWritebackWordOperand + 1].isConst()
+          ? std::optional<uint64_t>(Op.Inputs[kWritebackWordOperand + 1].Offset)
+          : std::nullopt,
+      Store ? Op.Inputs[kWritebackDataOperand + 1].Size : 0,
+      Store && Op.Inputs[kWritebackDataOperand + 1].isConst()
+          ? std::optional<uint64_t>(Op.Inputs[kWritebackDataOperand + 1].Offset)
+          : std::nullopt);
 }
 
 inline bool lowAArch64PAuthLoadShapeIsValid(const LowOp &Op) {
