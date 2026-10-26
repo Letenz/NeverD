@@ -369,6 +369,12 @@ public:
   void produceBinary(const QString &operation, const QJsonObject &payload,
                      QObject *owner, Reply done, Failure failed = {});
 
+  /// Extend the active image and refresh its revision and dependent views.
+  void addAnalysisSection(const QJsonObject &description, Reply done = {},
+                          Failure failed = {});
+  void removeAnalysisSection(const QString &name, Reply done = {},
+                             Failure failed = {});
+
   // Local types.
   /// Adds the types \p source declares in \p language (c, cpp, rust or go)
   /// to the program's local types; \p done has the types declared or the

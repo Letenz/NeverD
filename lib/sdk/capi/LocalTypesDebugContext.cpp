@@ -246,8 +246,10 @@ private:
     // does: no constructor sends a small one through memory.
     Named->Passing = NdRecordPassing::ByValue;
     const uint32_t Alignment = Library.alignOf(Record);
-    if (Alignment <= std::numeric_limits<uint16_t>::max())
+    if (Alignment <= std::numeric_limits<uint16_t>::max()) {
       Named->Alignment = static_cast<uint16_t>(Alignment);
+      Named->FieldDisplayAlignment = static_cast<uint16_t>(Alignment);
+    }
     if (!Name.empty())
       Records[Name] = Named;
     if (Record.Defined) {
@@ -472,6 +474,7 @@ LocalTypesDebugContext::~LocalTypesDebugContext() {
     Type.Type->FieldDisplayNames = std::move(Type.Names);
     Type.Type->FieldDisplayOffsets = std::move(Type.Offsets);
     Type.Type->FieldDisplayTypes = std::move(Type.Types);
+    Type.Type->FieldDisplayAlignment = Type.Alignment;
   }
 }
 
@@ -490,6 +493,7 @@ bool LocalTypesDebugContext::takeLibraryNames(const TypeRef &Type) const {
   std::vector<std::string> Names;
   std::vector<uint16_t> Offsets;
   std::vector<TypeRef> Members;
+  uint16_t Alignment = Type->FieldDisplayAlignment;
   const types::LocalType *Local = nullptr;
   if (Type->IsEnum) {
     Local = Types->find(Type->SourceName);
@@ -521,17 +525,26 @@ bool LocalTypesDebugContext::takeLibraryNames(const TypeRef &Type) const {
     Names = From->FieldDisplayNames;
     Offsets = From->FieldDisplayOffsets;
     Members = From->FieldDisplayTypes;
+    Alignment = From->FieldDisplayAlignment;
   }
   CompletedRecords.insert(Type.get());
   Read.insert(Local->Name);
-  if (Names == Type->FieldDisplayNames && Offsets == Type->FieldDisplayOffsets)
+  // A bounded conversion can retain every name and offset while leaving
+  // member types incomplete. The matching library must complete those too;
+  // otherwise a scalar access may name an entire union or structure in C.
+  if (Names == Type->FieldDisplayNames &&
+      Offsets == Type->FieldDisplayOffsets &&
+      Members == Type->FieldDisplayTypes &&
+      Alignment == Type->FieldDisplayAlignment)
     return true;
   Completed.push_back({Type, std::move(Type->FieldDisplayNames),
                        std::move(Type->FieldDisplayOffsets),
-                       std::move(Type->FieldDisplayTypes)});
+                       std::move(Type->FieldDisplayTypes),
+                       Type->FieldDisplayAlignment});
   Type->FieldDisplayNames = std::move(Names);
   Type->FieldDisplayOffsets = std::move(Offsets);
   Type->FieldDisplayTypes = std::move(Members);
+  Type->FieldDisplayAlignment = Alignment;
   return true;
 }
 
@@ -799,13 +812,21 @@ std::optional<FunctionSym> LocalTypesDebugContext::entrySignature() const {
   const types::LocalType *Type = Types->find(EntryType);
   if (!Type || Type->Kind != types::TypeKind::Typedef || !Type->Target ||
       Type->Target->Kind != types::TypeExprKind::Pointer ||
-      !Type->Target->Element ||
-      Type->Target->Element->Kind != types::TypeExprKind::Function ||
-      !Type->Target->Element->Function)
+      !Type->Target->Element)
     return std::nullopt;
-  const types::FunctionDef &Function = *Type->Target->Element->Function;
+  const auto &Pointee = *Type->Target->Element;
+  const types::FunctionDef *Function = Pointee.Function.get();
+  if (Pointee.Kind == types::TypeExprKind::Named) {
+    const types::LocalType *Named = Types->resolve(Pointee.Name);
+    Function = Named && Named->Kind == types::TypeKind::Function
+                   ? Named->Function.get()
+                   : nullptr;
+  } else if (Pointee.Kind != types::TypeExprKind::Function)
+    Function = nullptr;
+  if (!Function)
+    return std::nullopt;
   std::optional<FunctionSym> Signature =
-      signatureOf(*Types, Function, std::string());
+      signatureOf(*Types, *Function, std::string());
   if (!Signature)
     return Signature;
   for (const types::HeaderLibrary Library : Headers)

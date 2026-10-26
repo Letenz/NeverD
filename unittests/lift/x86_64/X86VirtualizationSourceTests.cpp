@@ -667,6 +667,67 @@ int main(void) {
     }
 }
 
+TEST(X86VirtualizationSource, WindowsIntrinsicsCompileWithRealMingwHeaders) {
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  if (Compiler.empty() || !llvm::sys::fs::exists(Compiler))
+    GTEST_SKIP() << "Clang is unavailable";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-intrinsic-headers",
+                                                    Directory));
+  auto Cleanup = llvm::scope_exit(
+      [&] { (void)llvm::sys::fs::remove_directories(Directory); });
+  llvm::SmallString<128> Input(Directory), Object(Directory), Errors(Directory);
+  llvm::sys::path::append(Input, "intrinsics.c");
+  llvm::sys::path::append(Object, "intrinsics.obj");
+  llvm::sys::path::append(Errors, "clang.err");
+  auto Write = [&](llvm::StringRef Text) {
+    std::error_code Error;
+    llvm::raw_fd_ostream OS(Input, Error);
+    EXPECT_FALSE(Error);
+    OS << Text;
+    OS.close();
+    EXPECT_FALSE(OS.has_error());
+  };
+  auto Compile = [&](llvm::StringRef Optimization) {
+    const std::vector<llvm::StringRef> Arguments = {
+        Compiler,
+        "--target=x86_64-w64-windows-gnu",
+        "-std=gnu11",
+        "-fms-extensions",
+        "-fno-strict-aliasing",
+        Optimization,
+        "-c",
+        Input,
+        "-o",
+        Object};
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, Errors.str()};
+    return llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
+                                     Redirects);
+  };
+  Write("#include <stdint.h>\n#include <string.h>\n#include <intrin.h>\n");
+  if (Compile("-O0") != 0)
+    GTEST_SKIP() << "MinGW target headers are unavailable";
+  const std::vector<std::vector<uint8_t>> Cases = {
+      {0x53, 0xb8, 7, 0, 0, 0, 0xb9, 1, 0, 0, 0, 0x0f, 0xa2, 0x5b, 0xc3},
+      {0xcd, 0x2c, 0xc3}};
+  for (const auto &Bytes : Cases) {
+    auto Image = image(Arch::X64, BinaryFormat::COFF, Bytes);
+    std::string High, LLVM;
+    sourceRoutes(Image, false, Entry, {}, &High, &LLVM);
+    ASSERT_FALSE(::testing::Test::HasFailure());
+    for (const auto &Source : {High, LLVM}) {
+      Write(Source);
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        const int Status = Compile(Optimization);
+        const auto Diagnostics = llvm::MemoryBuffer::getFile(Errors);
+        EXPECT_EQ(Status, 0)
+            << (Diagnostics ? (*Diagnostics)->getBuffer().str() : "") << Source;
+      }
+    }
+  }
+}
+
 namespace {
 std::string freestandingC(std::string Source) {
   // Cross-target checks use the real compiler intrinsic headers without

@@ -12,6 +12,7 @@
 #include "neverd/ir/intrinsics/X86/X86RepState.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -3938,6 +3939,7 @@ LowFunc buildAArch64PageBaseUse(std::vector<uint8_t> Bytes,
   Image.Mode = InstructionMode::Default;
   Image.Bits = Bitness::Bits64;
   Image.Format = BinaryFormat::MachO;
+  Image.MachOCPUSubtype = macho_loader::arm64e::kCPUSubtype;
   Image.Base = kEntry;
   Image.Entry = kEntry;
 
@@ -3987,18 +3989,32 @@ LowFunc buildAArch64PageBaseUse(std::vector<uint8_t> Bytes,
   return Builder.build(Image, Dec, kEntry, "aarch64_page_base_use");
 }
 
-LowFunc buildAArch64RelocationFreeOffsetLoad(bool WritableData = false) {
+#define A64_IMMEDIATE_IMAGE_VALUE(Type, Name, Value)                           \
+  constexpr Type Name = Value;
+#include "AArch64ImmediateImageFixtures.def"
+
+LowFunc buildAArch64RelocationFreeOffsetLoad(bool WritableData = false,
+                                             bool ExplicitAdd = false) {
   constexpr va_t DataPage = 0x9000;
   constexpr va_t Target = DataPage + 0x10;
   // adrp x8,0x9000; ldr x8,[x8,#0x10]; ret
-  std::vector<uint8_t> Bytes = {0x48, 0x00, 0x00, 0x90, 0x08, 0x09,
-                                0x40, 0xf9, 0xc0, 0x03, 0x5f, 0xd6};
+  const std::vector<uint32_t> Words =
+      ExplicitAdd
+          ? std::vector<uint32_t>{kImmediateImageADRP, kImmediateImageADD,
+                                  kImmediateImageOffsetLoad,
+                                  kImmediateImageReturn}
+          : std::vector<uint32_t>{kImmediateImageADRP, kImmediateImageLoad,
+                                  kImmediateImageReturn};
+  std::vector<uint8_t> Bytes(Words.size() * kImmediateImageWordBytes);
+  for (size_t I = 0; I != Words.size(); ++I)
+    writeLE<uint32_t>(Bytes.data() + I * kImmediateImageWordBytes, Words[I]);
 
   BinaryImage Image;
   Image.Arch = Arch::AArch64;
   Image.Mode = InstructionMode::Default;
   Image.Bits = Bitness::Bits64;
   Image.Format = BinaryFormat::MachO;
+  Image.MachOCPUSubtype = macho_loader::arm64e::kCPUSubtypeX1;
   Image.Base = kEntry;
   Image.Entry = kEntry;
 
@@ -5210,27 +5226,43 @@ TEST(LowInstructionBoundary,
 }
 
 TEST(LowInstructionBoundary,
-     AArch64UnsignedOffsetLoadPublishesExactRelocationFreeOccurrence) {
+     AArch64UnsignedOffsetLoadKeepsTheRawPageBaseAndDisplacement) {
   const LowFunc Function = buildAArch64RelocationFreeOffsetLoad();
-  std::vector<const RelocatedInstructionAddressOccurrence *> Found;
-  for (const RelocatedInstructionAddressOccurrence &Occurrence :
-       Function.RelocatedInstructionAddressOccurrences)
-    if (Occurrence.TargetVA == 0x9010)
-      Found.push_back(&Occurrence);
+  const auto *Root = findAddressMaterialization(Function, kEntry);
+  ASSERT_NE(Root, nullptr);
+  EXPECT_EQ(Root->Inputs[0].Offset, kImmediateImagePage);
+  EXPECT_EQ(Root->Inputs[0].Provenance, ConstantAddressProvenance::DataAddress);
+  EXPECT_EQ(Root->Inputs[0].AddressOwnerVA, kImmediateImagePage);
+  unsigned Reads = 0;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (lowAArch64AddressMemoryShapeIsValid(Op)) {
+        ++Reads;
+        EXPECT_EQ(Op.Inputs[kAddressMemoryWordOperand + 1].Offset,
+                  kImmediateImageLoad);
+        EXPECT_FALSE(lowIntrinsicMemoryOperands(Op).Complete);
+      }
+  EXPECT_EQ(Reads, 1U);
+  EXPECT_TRUE(Function.RelocatedInstructionAddressOccurrences.empty());
+}
 
-  ASSERT_EQ(Found.size(), 1u);
-  const RelocatedInstructionAddressOccurrence &Occurrence = *Found.front();
-  EXPECT_EQ(Occurrence.Authority, RelocatedInstructionAddressProofKind::
-                                      AArch64RelocationFreeDataDereference);
-  EXPECT_EQ(Occurrence.FieldVA, InvalidVA);
+TEST(LowInstructionBoundary,
+     AArch64ImmediateDereferenceAuthenticatesItsOriginalADRPAddBase) {
+  const LowFunc Function = buildAArch64RelocationFreeOffsetLoad(false, true);
+  const auto &Occurrences = Function.RelocatedInstructionAddressOccurrences;
+  ASSERT_EQ(Occurrences.size(), 1U);
+  const auto &Occurrence = Occurrences.front();
+  EXPECT_EQ(Occurrence.TargetVA, kImmediateImageTarget);
+  EXPECT_EQ(Occurrence.TargetOwnerVA, kImmediateImagePage);
+  EXPECT_EQ(Occurrence.InstructionAddr, kEntry + kImmediateImageWordBytes);
+  EXPECT_EQ(Occurrence.DereferenceInstructionAddr,
+            kEntry + 2 * kImmediateImageWordBytes);
+  EXPECT_EQ(Occurrence.DereferenceOpcode, NdOp::INTRINSIC);
+  EXPECT_EQ(Occurrence.DereferenceAccessSize, kImmediateImageAccessBytes);
   EXPECT_TRUE(Occurrence.DefinesOutput);
   EXPECT_FALSE(Occurrence.OutputMayDepend);
-  EXPECT_EQ(Occurrence.Provenance, ConstantAddressProvenance::DataAddress);
-  EXPECT_EQ(Occurrence.TargetOwnerVA, 0x9000u);
-  EXPECT_EQ(Occurrence.InstructionAddr, kEntry + 4);
-  EXPECT_EQ(Occurrence.DereferenceInstructionAddr, kEntry + 4);
-  EXPECT_EQ(Occurrence.DereferenceOpcode, NdOp::LOAD);
-  EXPECT_EQ(Occurrence.DereferenceAccessSize, 8u);
+  EXPECT_EQ(Occurrence.Authority, RelocatedInstructionAddressProofKind::
+                                      AArch64RelocationFreeDataDereference);
 }
 
 TEST(LowInstructionBoundary,

@@ -88,6 +88,7 @@ NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryBaseShift, 5)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryIndexShift, 16)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryRegistersMask,
                                 0x1f03ffU)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(bool, kAddressMemoryUnspecifiedImmediate, true)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryPointerBytes, 8)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryPointerBits, 64)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(unsigned, kAddressMemoryWordBytes, 4)
@@ -186,8 +187,8 @@ NEVERD_A64_ADDRESS_MEMORY_TEXT(
     "reconstructed stack environments are unqualified")
 NEVERD_A64_ADDRESS_MEMORY_TEXT(
     kAddressMemoryImmediateImageUnsupported,
-    "immediate original memory requires an explicit runtime GPR parameter "
-    "or occurrence-bound image relocation")
+    "immediate original memory requires a runtime GPR value or a complete "
+    "occurrence-bound image span")
 
 #ifndef NEVERD_A64_ADDRESS_UNSIGNED_MEMORY_ENCODING
 #define NEVERD_A64_ADDRESS_UNSIGNED_MEMORY_ENCODING(Id, Word, Access, Result,  \

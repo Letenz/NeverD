@@ -851,6 +851,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 13: iterative DCE (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");
   const auto TIter = Clock::now();
+  forwardPrivateFrameLoads(Func, TargetArch);
   iterativeDCE(Func, Entries);
   const auto TPost = Clock::now();
 
@@ -881,9 +882,14 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
                           << Func.Name << ", " << Func.Body.size()
                           << " stmts)\n");
   forwardPrivateFrameLoads(Func, TargetArch);
+  simplifyAllExprs(Func.Body);
   if (SymbolicSimplification)
     simplifyExprSemantics(Func.Body, SemanticThreadLimit);
   breakStmtCycles(Func.Body);
+  // Symbolic word arithmetic may publish a negated sum for a difference.
+  // Restore source comparisons without substituting any local definitions
+  // back into the shared expression graph.
+  simplifyAllExprs(Func.Body);
   // Semantic rewriting can make the scalar definitions that held an MBA
   // expansion dead. Remove them without feeding the shared result back through
   // copy propagation, which could create a cycle in the expression DAG.

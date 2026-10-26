@@ -29,6 +29,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/libc/LibCFixedIntegerArguments.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
@@ -3795,6 +3796,23 @@ ImportPrototypeArguments importPrototypeArguments(
             if (Function->PrototypeLibrary == UserPrototypeLibrary)
               Result.UserDeclared.insert(Addr);
           }
+      // The existing WDK registry also authenticates each stack operand's
+      // width. Publish those uses before SSA, using the same placement owner
+      // as a parsed declaration. Counts alone lose them when recovery moves
+      // RSP between a private spill and the actual call's outgoing area.
+      if (Img.Arch == Arch::X64 && Img.abiFormat() == BinaryFormat::COFF &&
+          !Result.IntegerArguments.count(Addr))
+        if (const auto *Prototype = libc::windowsKernelPrototype(Name)) {
+          std::vector<TypeRef> Parameters;
+          for (unsigned I = 0; I < Prototype->ArgCount; ++I)
+            Parameters.push_back(
+                NdType::makeInt(Prototype->ArgWidths[I], false));
+          // This adapter publishes arguments only, never a result type.
+          if (auto Integer = fixedIntegerCallArguments(
+                  Img.Arch, Img.abiFormat(), NdType::makeInt(8, false),
+                  Parameters))
+            Result.IntegerArguments.emplace(Addr, std::move(*Integer));
+        }
       Routine = UserArguments(Name);
       UserDeclared = Routine.has_value();
       PrototypeOwnsArguments = Routine.has_value();
@@ -3921,6 +3939,14 @@ ImportPrototypeArguments importPrototypeArguments(
         Result.UserDeclared.insert(Addr);
     }
   };
+  // An import's declaration belongs to the image, independently of whether
+  // the caller loads its IAT word directly or caches that value in its frame.
+  // Late target discovery must find the same pre-SSA argument contract.
+  for (const auto &Import : Img.Imports)
+    if (Import.IATAddr)
+      Classify(Import.IATAddr);
+  for (const auto &[Slot, Name] : Img.ImportPtrSlots)
+    Classify(Slot);
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
       for (size_t I = 0; I < Block.Ops.size(); ++I) {
@@ -4050,6 +4076,37 @@ void setOmittedImportArguments(
   }
 }
 
+static LocalRegisterEffect summarizeRecoveredCallRegisters(
+    const BinaryImage &Img, const CallRegisterBodyView &Body,
+    const libc::NoReturnTargetIndex &NoReturnTargets,
+    const std::map<va_t, GPRReadWidths> &FixedCallReads,
+    const std::map<va_t, va_t> &ArgumentSources,
+    const libc::StackProbeIndex &StackProbes) {
+  // Late MedIR target recovery cannot repair a summary that already treated
+  // this call as opaque. Demand analysis and cache warmup use the same proof.
+  // Only this private summary view changes; lifting retains the original
+  // machine operand, especially a captured mutable import.
+  CallRegisterBody Projection;
+  Projection.Blocks.assign(Body.Blocks.begin(), Body.Blocks.end());
+  Projection.Complete = Body.Complete;
+  Projection.UnsafeIndirectBranches = Body.UnsafeIndirectBranches;
+  Projection.HasIndependentRoots = Body.HasIndependentRoots;
+  size_t Work = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!Img.IsRelocatable)
+    for (auto &Block : Projection.Blocks)
+      for (const auto &[Index, Target] :
+           resolveLowBlockCallTargets(Block, Img.Arch, &Work)) {
+        if (Target.ThroughSlot || !Img.hasExecutableCodeOwnerAt(Target.Address))
+          continue;
+        auto &Call = Block.Ops[Index];
+        Call.Opcode = NdOp::CALL;
+        Call.Inputs[0] = NdVar::cst(Target.Address, Call.Inputs[0].Size);
+      }
+  return localRegisterEffect(Img, CallRegisterBodyView(Projection),
+                             &NoReturnTargets, &FixedCallReads,
+                             &ArgumentSources, &StackProbes);
+}
+
 void computeCallRegisterEffects(
     const BinaryImage &Img, const std::set<va_t> &FuncEntries,
     const libc::NoReturnTargetIndex &NoReturnTargets,
@@ -4133,6 +4190,11 @@ void computeCallRegisterEffects(
     pipeline_detail::mergeFixedCallReads(FixedCallReads, Reads);
     return Reads;
   };
+  auto Summarize = [&](const CallRegisterBodyView &Body) {
+    return summarizeRecoveredCallRegisters(
+        Img, Body, NoReturnTargets, FixedCallReads, Result.CallArgumentSources,
+        StackProbes);
+  };
   // A callee's body as a run takes it: retained and validated, or lifted
   // with the run's settings.
   auto BuildCallee = [&](Decoder &Dec, va_t Entry) {
@@ -4150,8 +4212,7 @@ void computeCallRegisterEffects(
   for (const LowFunc &LF : Result.LowFuncs) {
     CollectFormattedCalls(CallRegisterBodyView(LF), /*Converted=*/true);
     auto Effect = std::make_shared<const LocalRegisterEffect>(
-        localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads,
-                            &Result.CallArgumentSources, &StackProbes));
+        Summarize(CallRegisterBodyView(LF)));
     Effects[LF.Entry] = Effect.get();
     Kept.push_back(std::move(Effect));
     if (forwardsToGuardDispatch(Img, LF.Blocks))
@@ -4278,9 +4339,7 @@ void computeCallRegisterEffects(
                             : CallRegisterBodyView(Bodies[I]);
         auto Reads = CollectFormattedCalls(Body, /*Converted=*/false);
         auto Facts = std::make_shared<pipeline_detail::CalleeFacts>();
-        Facts->Effect =
-            localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads,
-                                &Result.CallArgumentSources, &StackProbes);
+        Facts->Effect = Summarize(Body);
         Effects[Callee] = &Facts->Effect;
         Kept.push_back(Facts);
         const bool Forwards = forwardsToGuardDispatch(Img, Body.Blocks);
@@ -4320,6 +4379,7 @@ void computeCallRegisterEffects(
   // pointer's contract, whatever its name.
   std::set<va_t> DispatchThunks;
   std::map<va_t, GPRReadWidths> FixedEntryReads;
+  std::map<va_t, int> FixedEntryStackArgs;
   if (Win64) {
     DispatchThunks = GuardForwarders;
     auto Classify = [&](va_t Entry, llvm::StringRef Name) {
@@ -4339,6 +4399,8 @@ void computeCallRegisterEffects(
       for (unsigned I = 0; I < 4 && I < Proto->ArgCount; ++I)
         Widths[Win64Args[I] / 8] = Proto->ArgWidths[I];
       FixedEntryReads[Entry] = Widths;
+      FixedEntryStackArgs[Entry] =
+          Proto->ArgCount > std::size(Win64Args) ? Proto->ArgCount : 0;
     };
     std::set<va_t> Callees;
     for (const auto &[Entry, Effect] : Effects)
@@ -4361,7 +4423,6 @@ void computeCallRegisterEffects(
   }
   // A libc import with a fixed prototype reads its parameters however the
   // code reaches it; a documented contract above decides first.
-  std::map<va_t, int> FixedEntryStackArgs;
   if (const CallArgumentConvention *Convention =
           callArgumentConvention(Img.Arch, Img.abiFormat());
       Convention && Convention->ImportArgumentsFromPrototype) {
@@ -4771,8 +4832,8 @@ void warmCalleeFacts(
     std::map<va_t, GPRReadWidths> FixedCallReads;
     pipeline_detail::mergeFixedCallReads(FixedCallReads,
                                          Callee->FormattedReads);
-    Callee->Effect = localRegisterEffect(Img, Body, &Targets, &FixedCallReads,
-                                         &ArgumentSources, &StackProbes);
+    Callee->Effect = summarizeRecoveredCallRegisters(
+        Img, Body, Targets, FixedCallReads, ArgumentSources, StackProbes);
     Callee->Consulted =
         pipeline_detail::consultedCallReads(Body.Blocks, FixedCallReads);
     Callee->ForwardsToGuardDispatch = forwardsToGuardDispatch(Img, Body.Blocks);

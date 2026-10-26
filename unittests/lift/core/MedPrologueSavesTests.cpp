@@ -14,6 +14,7 @@
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include <algorithm>
 #include <initializer_list>
 #include <limits>
 #include <utility>
@@ -836,6 +837,136 @@ TEST(SourceCallReturnReads, RepeatedReadsShareCompleteByteHistories) {
       validateSourceCallReturnReads(Func, callSlotImage(), Error, 8192));
   EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
       << Error;
+}
+
+TEST(SourceCallReturnReads, NonMemoryOperationsDoNotMultiplyByteHistories) {
+  for (unsigned Written : {4u, 8u}) {
+    auto Func = observedCallSlot();
+    auto &Ops = Func.Blocks.front().Ops;
+    Ops.insert(Ops.begin() + 5, op(NdOp::STORE, none(),
+                                   {temp(20), MedVar::makeConst(29, Written)}));
+    Ops.insert(Ops.begin() + 6, 2048, op(NdOp::NOP, none(), {}));
+    std::string Error;
+    EXPECT_EQ(validateSourceCallReturnReads(Func, callSlotImage(), Error, 8192),
+              Written == 8)
+        << Error;
+    if (Written != 8)
+      EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+          << Error;
+  }
+}
+
+TEST(SourceCallReturnReads, BoundedAllocationsSeparateTheFixedFrame) {
+  for (bool Bounded : {false, true})
+    for (bool Overlap : {false, true}) {
+      auto Func = observedCallSlot();
+      auto &Ops = Func.Blocks.front().Ops;
+      if (!Overlap)
+        Ops[2].Opcode = NdOp::INT_ADD;
+      Ops.insert(Ops.begin() + 4,
+                 {op(Bounded ? NdOp::INT_ZEXT : NdOp::COPY, temp(30),
+                     {MedVar::makeUnspecified(Bounded ? 4 : 8, Arch::X64)}),
+                  op(NdOp::INT_SUB, sp(2), {sp(1), temp(30)})});
+      std::string Error;
+      EXPECT_EQ(validateSourceCallReturnReads(Func, callSlotImage(), Error),
+                Bounded && !Overlap)
+          << Error;
+    }
+}
+
+TEST(SourceCallReturnReads, SparseStackWritesNeedOnlyOneOperationScan) {
+  auto Func = observedCallSlot();
+  auto &Ops = Func.Blocks.front().Ops;
+  Ops[2].Inputs[1] = MedVar::makeConst(16, 8);
+  Ops.insert(Ops.begin() + 4, 2048, op(NdOp::NOP, none(), {}));
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error, 4352))
+      << Error;
+  Ops[2].Inputs[1] = MedVar::makeConst(8, 8);
+  EXPECT_FALSE(
+      validateSourceCallReturnReads(Func, callSlotImage(), Error, 4352));
+  EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+      << Error;
+}
+
+TEST(SourceCallReturnReads, ManyCallsShareTheConvergedStackBasis) {
+  for (bool Cycle : {false, true})
+    for (bool Reversed : {false, true}) {
+      SCOPED_TRACE(testing::Message() << Cycle << ":" << Reversed);
+      auto Func = observedCallSlot();
+      auto &Entry = Func.Blocks.front();
+      const auto Call = Entry.Ops[4];
+      const auto Load = Entry.Ops[5];
+      Entry.Ops.resize(3);
+      Entry.Ops[2].Opcode = NdOp::INT_ADD;
+      Entry.Ops[2].Inputs[1] = MedVar::makeConst(16, 8);
+      Entry.Succs = {1};
+      constexpr int Blocks = 128;
+      for (int I = 1; I <= Blocks; ++I) {
+        MedBlock Block;
+        Block.Id = I;
+        Block.StartAddr = 0x2000 + I * 32;
+        Block.Preds = {I - 1};
+        if (I < Blocks)
+          Block.Succs = {I + 1};
+        Block.Ops.assign(24, op(NdOp::NOP, none(), {}));
+        Block.Ops.push_back(Call);
+        Block.Ops.push_back(Load);
+        Func.Blocks.push_back(std::move(Block));
+      }
+      if (Cycle) {
+        Func.Blocks.back().Succs = {1};
+        Func.Blocks[1].Preds.push_back(Blocks);
+      }
+      if (Reversed)
+        std::reverse(Func.Blocks.begin() + 1, Func.Blocks.end());
+      std::string Error;
+      EXPECT_TRUE(
+          validateSourceCallReturnReads(Func, callSlotImage(), Error, 16384))
+          << Error;
+      // Sharing the stack analysis must retain the physical return-slot
+      // hazard when the same graph actually reads that slot.
+      Func.Blocks[0].Ops[2].Opcode = NdOp::INT_SUB;
+      Func.Blocks[0].Ops[2].Inputs[1] = MedVar::makeConst(8, 8);
+      EXPECT_FALSE(
+          validateSourceCallReturnReads(Func, callSlotImage(), Error, 16384));
+      EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+          << Error;
+    }
+}
+
+TEST(SourceCallReturnReads, BackedgeConflictsCannotPublishAProvisionalBasis) {
+  for (bool Reversed : {false, true}) {
+    auto Func = observedCallSlot();
+    auto &Entry = Func.Blocks.front();
+    const auto Call = Entry.Ops[4];
+    const auto Load = Entry.Ops[5];
+    Entry.Ops.resize(3);
+    Entry.Ops[2].Opcode = NdOp::INT_ADD;
+    Entry.Ops[2].Inputs[1] = MedVar::makeConst(16, 8);
+    Entry.Succs = {1};
+    MedBlock Loop;
+    Loop.Id = 1;
+    Loop.StartAddr = 0x2000;
+    Loop.Preds = {0, 2};
+    Loop.Succs = {2};
+    Loop.Ops = {Call, Load};
+    Func.Blocks.push_back(Loop);
+    MedBlock Backedge;
+    Backedge.Id = 2;
+    Backedge.StartAddr = 0x3000;
+    Backedge.Preds = {1};
+    Backedge.Succs = {1};
+    Backedge.Ops = {
+        op(NdOp::INT_ADD, sp(2), {sp(1), MedVar::makeConst(24, 8)})};
+    Func.Blocks.push_back(Backedge);
+    if (Reversed)
+      std::swap(Func.Blocks[1], Func.Blocks[2]);
+    std::string Error;
+    EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+    EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+        << Error;
+  }
 }
 
 TEST(SourceCallReturnReads, TailJumpsDoNotAcquireAPush) {

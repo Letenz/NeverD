@@ -225,6 +225,7 @@ private:
 
   // Commands.
   void openDialog();
+  void addAnalysisSection();
   /// The binary or database to open, asked in a dialog over \p parent;
   /// empty when the user cancels.
   QString askForFile(QWidget *parent) const;

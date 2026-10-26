@@ -55,6 +55,49 @@
 namespace neverd::worker {
 namespace fs = std::filesystem;
 namespace {
+using AddAnalysisSection = int (*)(neverd_session_t, const char *,
+                                   const unsigned char *, size_t);
+using RemoveAnalysisSection = int (*)(neverd_session_t, const char *);
+using AnalysisSections = const char *(*)(neverd_session_t, int);
+using ImportAnalysisSections = int (*)(neverd_session_t, const char *);
+constexpr std::size_t MaxAnalysisSectionBytes =
+    neverd::sdk::kMaxAnalysisSectionBytes;
+constexpr std::size_t MaxAnalysisSectionState =
+    neverd::sdk::kMaxAnalysisSectionStateBytes;
+
+std::vector<unsigned char> sectionBytes(const std::string &hex) {
+  if (hex.empty() || hex.size() % 2 || hex.size() / 2 > MaxAnalysisSectionBytes)
+    throw Error("invalid_request", "Invalid analysis section byte count");
+  const auto digit = [](char value) -> unsigned {
+    if (value >= '0' && value <= '9')
+      return unsigned(value - '0');
+    if (value >= 'a' && value <= 'f')
+      return unsigned(value - 'a' + 10);
+    if (value >= 'A' && value <= 'F')
+      return unsigned(value - 'A' + 10);
+    throw Error("invalid_request", "Analysis bytes must be hexadecimal pairs");
+  };
+  std::vector<unsigned char> bytes;
+  bytes.reserve(hex.size() / 2);
+  for (std::size_t i = 0; i < hex.size(); i += 2)
+    bytes.push_back(
+        static_cast<unsigned char>((digit(hex[i]) << 4) | digit(hex[i + 1])));
+  return bytes;
+}
+
+fs::path analysisSectionPath(fs::path path) {
+  return project_files::path(path, project_files::File::AnalysisSections);
+}
+
+fs::path analysisSectionReadPath(const fs::path &path) {
+  auto current = analysisSectionPath(path);
+  if (fs::exists(current))
+    return current;
+  auto legacy = path;
+  legacy +=
+      project_files::describe(project_files::File::AnalysisSections).Legacy;
+  return fs::exists(legacy) ? legacy : current;
+}
 // A signature source is external to the image. Never silently replay a
 // different file/tree into a replica of an already loaded project.
 Json signatureStamp(const fs::path &path) {
@@ -1756,6 +1799,9 @@ Json Engine::metadata() const {
           {"symbol_count", neverd_session_symbol_count(session_)},
           {"language", headers.value("language", Json::object())},
           {"analyzed", analyzed_},
+          {"analysis_sections_supported",
+           engineSymbol<AddAnalysisSection>("neverd_analysis_section_add") !=
+               nullptr},
           {"analysis_state", analyzed_ ? "complete" : "not_analyzed"},
           {"read_only", readOnly_},
           {"dirty", dirty_},
@@ -1945,10 +1991,15 @@ Json Engine::analysisSnapshot() {
   options["analysis"] = false;
   options["warm"] = false;
   options["read_only"] = true;
+  Json analysisSections = nullptr;
+  if (const auto query =
+          engineSymbol<AnalysisSections>("neverd_analysis_sections_json"))
+    analysisSections = backendJson(query(session_, 1), true);
   return {{"schema", 1},
           {"open", options},
           {"input_sha256", inputHash()},
           {"state", userState()},
+          {"analysis_sections", std::move(analysisSections)},
           {"signatures", signatureInputs_},
           {"pdb", pdbInput_},
           {"dwarf", dwarfInput_},
@@ -1985,6 +2036,16 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
                 "The analysis input differs from the open project");
+  if (const auto sections = snapshot.value("analysis_sections", Json());
+      !sections.is_null()) {
+    const auto import = engineSymbol<ImportAnalysisSections>(
+        "neverd_analysis_sections_import_json");
+    if (!import || !import(session_, sections.dump().c_str()))
+      throw Error("invalid_analysis_section",
+                  "Cannot restore the owner's analysis image additions");
+    newListing();
+    invalidate();
+  }
   auto actual = userState();
   auto expected = snapshot.at("state");
   // A rename's original spelling is derived from the names the image has, and
@@ -2098,6 +2159,94 @@ Json Engine::updateAnalysisNames(const Json &snapshot) {
   restoredSnapshot_ = snapshot;
   localNamesChanged();
   return {{"updated", true}};
+}
+
+void Engine::loadAnalysisSections(neverd_session_t session,
+                                  const fs::path &path) {
+  const auto sidecar = analysisSectionReadPath(path);
+  if (!fs::exists(sidecar))
+    return;
+  const auto add =
+      engineSymbol<AddAnalysisSection>("neverd_analysis_section_add");
+  if (!add)
+    throw Error("unsupported",
+                "The engine cannot load saved analysis sections");
+  const auto size = fs::file_size(sidecar);
+  if (size > MaxAnalysisSectionState)
+    throw Error("budget_exceeded",
+                "Analysis section sidecar exceeds its byte limit");
+  std::ifstream input(sidecar, std::ios::binary);
+  if (!input)
+    throw Error("load_failed", "Cannot read analysis section sidecar");
+  std::string text(static_cast<std::size_t>(size), '\0');
+  input.read(text.data(), static_cast<std::streamsize>(text.size()));
+  if (!input || input.peek() != std::char_traits<char>::eof())
+    throw Error("load_failed",
+                "Analysis section sidecar changed while reading");
+  if (const auto import = engineSymbol<ImportAnalysisSections>(
+          "neverd_analysis_sections_import_json")) {
+    if (text.find('\0') != std::string::npos)
+      throw Error("load_failed", "Embedded NUL in analysis section sidecar");
+    if (!import(session, text.c_str()))
+      throw Error("load_failed", ownedString(neverd_last_error(session)));
+    return;
+  }
+  // Compatibility with the first additive section API: import only into the
+  // unpublished next session. New engines own state validation in the SDK.
+  const auto document = parseJson(text, MaxAnalysisSectionState);
+  const auto dashboard =
+      Json::parse(ownedString(neverd_dashboard_json(session)));
+  if (document.value("schema", "") != "neverd.analysis-sections.v1" ||
+      document.value("sample_sha256", "") !=
+          dashboard.at("hashes").at("sha256").get<std::string>() ||
+      !document.contains("sections") || !document["sections"].is_array() ||
+      document["sections"].size() > neverd::sdk::kMaxAnalysisSections)
+    throw Error("load_failed",
+                "Saved analysis sections do not match the loaded input");
+  for (auto section : document["sections"]) {
+    const auto bytes = sectionBytes(
+        stringField(section, "data_hex", {}, MaxAnalysisSectionState));
+    if (!section.contains("size") || section["size"] != bytes.size())
+      throw Error("load_failed", "Saved analysis section byte count differs");
+    section.erase("size");
+    section.erase("data_hex");
+    if (!add(session, section.dump().c_str(), bytes.data(), bytes.size()))
+      throw Error("load_failed", ownedString(neverd_last_error(session)));
+  }
+}
+
+void Engine::saveAnalysisSections() {
+  const auto query =
+      engineSymbol<AnalysisSections>("neverd_analysis_sections_json");
+  if (!query)
+    return;
+  const auto text = ownedString(query(session_, 1));
+  if (text.empty())
+    throw Error("save_failed", error());
+  auto document = parseJson(text, MaxAnalysisSectionState);
+  const auto path = analysisSectionPath(
+      utf8Path(ownedString(neverd_session_file_path(session_))));
+  if (document.at("sections").empty() && !fs::exists(path))
+    return;
+  if (!document.contains("sample_sha256"))
+    document["sample_sha256"] =
+        backendJson(neverd_dashboard_json(session_)).at("hashes").at("sha256");
+  if (document.dump().size() > MaxAnalysisSectionState)
+    throw Error("budget_exceeded",
+                "Analysis section sidecar exceeds its byte limit");
+  if (const auto ec = project_files::prepare(
+          utf8Path(ownedString(neverd_session_file_path(session_)))))
+    throw Error("save_failed", ec.message());
+  atomicWrite(path, sidecarText(document));
+}
+
+void Engine::changedAnalysisSections() {
+  analyzed_ = false;
+  preparedFunction_.reset();
+  dirty_ = true;
+  ++revision_;
+  newListing();
+  invalidate();
 }
 
 Json Engine::execute(const std::string &operation, const Json &p) {
@@ -2538,6 +2687,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       throw Error(
           "input_changed",
           "Input changed while loading; retry after the writer finishes");
+    loadAnalysisSections(next.get(), path);
     auto nextCodeEdits =
         readCodeEdits(ownedString(neverd_session_file_path(next.get())));
     neverd_session_destroy(session_);
@@ -2651,6 +2801,63 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     return result;
   }
   requireLoaded();
+  if (operation == "analysis_sections") {
+    const auto query =
+        engineSymbol<AnalysisSections>("neverd_analysis_sections_json");
+    if (!query)
+      throw Error("unsupported",
+                  "The engine does not support analysis sections");
+    return backendJson(query(session_, 0), true);
+  }
+  if (operation == "analysis_section_add") {
+    requireWriter();
+    const auto add =
+        engineSymbol<AddAnalysisSection>("neverd_analysis_section_add");
+    if (!add)
+      throw Error("unsupported",
+                  "The engine does not support analysis sections");
+    const auto path = stringField(p, "path", {}, 32768);
+    std::vector<unsigned char> bytes;
+    if (!path.empty()) {
+      if (p.contains("data_hex"))
+        throw Error("invalid_request",
+                    "Choose a file or inline bytes, not both");
+      const auto file = utf8Path(path);
+      const auto size = fs::file_size(file);
+      if (!size || size > MaxAnalysisSectionBytes)
+        throw Error("budget_exceeded",
+                    "Analysis section file must contain 1 byte to 64 MiB");
+      std::ifstream input(file, std::ios::binary);
+      bytes.resize(static_cast<std::size_t>(size));
+      if (!input.read(reinterpret_cast<char *>(bytes.data()),
+                      static_cast<std::streamsize>(size)) ||
+          input.peek() != std::char_traits<char>::eof())
+        throw Error("load_failed",
+                    "Analysis section file changed or could not be read");
+    } else {
+      bytes = sectionBytes(stringField(p, "data_hex", {}, MaxFrameBytes));
+    }
+    auto description = p;
+    description.erase("path");
+    description.erase("data_hex");
+    if (!add(session_, description.dump().c_str(), bytes.data(), bytes.size()))
+      throw Error("invalid_analysis_section", error());
+    changedAnalysisSections();
+    return metadata();
+  }
+  if (operation == "analysis_section_remove") {
+    requireWriter();
+    const auto remove =
+        engineSymbol<RemoveAnalysisSection>("neverd_analysis_section_remove");
+    if (!remove)
+      throw Error("unsupported",
+                  "The engine does not support analysis sections");
+    const auto name = stringField(p, "name", {}, 512);
+    if (!remove(session_, name.c_str()))
+      throw Error("invalid_analysis_section", error());
+    changedAnalysisSections();
+    return metadata();
+  }
   if (operation == unwind_query::kOperation) {
     const auto Query = unwind_query::function();
     if (!Query)
@@ -4033,11 +4240,27 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     auto &store = history();
     auto state = store.committedState();
     state["annotations"] = backendJson(neverd_annotations_json(session_));
+    saveAnalysisSections();
     store.persist(state);
     dirty_ = false;
     return {{"saved", true}, {"dirty", false}};
   }
   if (operation == "reload") {
+    const auto sections =
+        engineSymbol<AnalysisSections>("neverd_analysis_sections_json");
+    if (sections &&
+        (!backendJson(sections(session_, 0), true).at("sections").empty() ||
+         fs::exists(analysisSectionReadPath(
+             utf8Path(ownedString(neverd_session_file_path(session_))))))) {
+      // Reload all saved image additions transactionally too. Reusing the
+      // current image would retain unsaved section edits after "Discard".
+      const auto identity = projectId_;
+      auto result = execute(
+          "open", {{"path", ownedString(neverd_session_file_path(session_))},
+                   {"read_only", readOnly_}});
+      projectId_ = identity;
+      return result;
+    }
     reloadCodeEdits();
     const bool annotationsLoaded = neverd_annotations_load(session_) == 0;
     const bool renamesLoaded = neverd_renames_load(session_) == 0;

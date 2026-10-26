@@ -69,8 +69,7 @@ aarch64AddressMemoryC(const AArch64AddressMemoryInstruction &Instruction,
           .str();
     return llvm::formatv(kAddressStoreCExpression, ValueName, BaseName,
                          IndexName, Base, Index, Instruction.scratchWord(),
-                         BaseInput, IndexInput, DataInput, Data,
-                         llvm::StringRef{}, Asm, Clobbers)
+                         BaseInput, IndexInput, DataInput, Data, Asm, Clobbers)
         .str();
   }
   if (Instruction.isVector())

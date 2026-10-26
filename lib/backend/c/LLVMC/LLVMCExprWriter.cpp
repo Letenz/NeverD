@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "../CDeferredValue.h"
+#include "../CDisplayFieldPath.h"
+#include "../CDisplayFrameRecord.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCStorage.h"
 #include "LLVMCVariableEdits.h"
@@ -1331,26 +1333,6 @@ void completeDisplayRecord(DebugContext *Dbg, const TypeRef &Ty) {
   }
 }
 
-// LLVM-C names members only: every display lookup here passes
-// ArrayElements false, so an array stays one member, as this takes it.
-std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
-  std::string Path;
-  llvm::StringRef Rest(Field);
-  while (!Rest.empty()) {
-    const auto Split = Rest.split('.');
-    const std::string Comp = Split.first.str();
-    const std::string Name = canonicalizeCProjectionIdentifier(Comp, "");
-    if (Name.empty() || Name != Comp)
-      return std::nullopt;
-    if (!Path.empty())
-      Path += '.';
-    Path += Name;
-    Rest = Split.second;
-  }
-  if (Path.empty())
-    return std::nullopt;
-  return Path;
-}
 } // namespace
 
 uint16_t LLVMCWriter::llvmAccessSize(const llvm::Type *Ty) const {
@@ -1376,11 +1358,8 @@ TypeRef LLVMCWriter::cDisplayType(const TypeRef &Ty) const {
   if (Ty->Kind == NdTypeKind::Ptr)
     return NdType::makePtr(cDisplayType(Ty->Pointee));
   if (Ty->Kind == NdTypeKind::Struct && !Ty->SourceName.empty()) {
-    auto Out = NdType::makeNamedRecord(cNamedTypeSpelling(Ty->SourceName),
-                                       Ty->Size ? Ty->Size : 8, Ty->IsEnum);
-    Out->FieldDisplayNames = Ty->FieldDisplayNames;
-    Out->FieldDisplayOffsets = Ty->FieldDisplayOffsets;
-    Out->FieldDisplayTypes = Ty->FieldDisplayTypes;
+    auto Out = std::make_shared<NdType>(*Ty);
+    Out->SourceName = cNamedTypeSpelling(Ty->SourceName);
     return Out;
   }
   return Ty;
@@ -1614,6 +1593,8 @@ uint64_t frameMemberSize(const TypeRef &Ty) {
     const uint64_t Element = frameMemberSize(Ty->ElemType);
     return Element && Element * Ty->ArrayCount == Ty->Size ? Ty->Size : 0;
   }
+  case NdTypeKind::Struct:
+    return isCDisplayFrameRecord(Ty) ? Ty->Size : 0;
   default:
     return 0;
   }
@@ -1624,6 +1605,8 @@ uint64_t frameMemberSize(const TypeRef &Ty) {
 uint64_t frameMemberAlignment(const TypeRef &Ty) {
   if (!Ty)
     return 8;
+  if (Ty->Kind == NdTypeKind::Struct)
+    return cDisplayFrameRecordAlignment(Ty);
   if (Ty->Kind == NdTypeKind::Array)
     return frameMemberAlignment(Ty->ElemType);
   return Ty->Size;
@@ -2429,7 +2412,7 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   completeDisplayRecord(Dbg, Rec);
   auto Field =
       Rec->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero,
-                              /*ArrayElements=*/false, Class);
+                              /*ArrayElements=*/true, Class);
   if (!Field)
     return std::nullopt;
   auto Path = canonicalizeDisplayPath(*Field);
@@ -2438,13 +2421,13 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
   TypedAccess Out;
   Out.Text = BaseName + "->" + *Path;
   Out.Type = Rec->displayFieldTypeAt(Peeled->second, AccessSize,
-                                     /*ArrayElements=*/false, Class);
+                                     /*ArrayElements=*/true, Class);
   // A value of a size is no whole record no member of which holds it, as a
   // union whose alternatives are all that wide is; the address of one is.
   if (EnterNestedAtZero && AccessSize && Out.Type &&
       Out.Type->Kind == NdTypeKind::Struct && !Out.Type->IsEnum &&
       !Out.Type->displayFieldPathAt(0, AccessSize, /*EnterNestedAtZero=*/true,
-                                    /*ArrayElements=*/false, Class))
+                                    /*ArrayElements=*/true, Class))
     return std::nullopt;
   MemberRecords.insert(Rec->SourceName);
   return Out;
@@ -3627,11 +3610,14 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   }
 }
 
-std::string LLVMCWriter::integerPointerOperandStr(const llvm::Value *Operand) {
+std::string LLVMCWriter::integerPointerOperandStr(const llvm::Value *Operand,
+                                                  const llvm::CallBase *Call,
+                                                  unsigned ArgIdx) {
   if (!Operand)
     return {};
   bool PointerSpelling = false;
-  std::string Text = valueStr(Operand, &PointerSpelling);
+  std::string Text = Call ? callArgStr(Operand, *Call, ArgIdx, &PointerSpelling)
+                          : valueStr(Operand, &PointerSpelling);
   if (!Operand->getType()->isIntegerTy() || !PointerSpelling)
     return Text;
   // The pointer-offset printer may return `&frame` for an integer IR value.
@@ -4303,7 +4289,7 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
       TypedPointer = true;
     }
   }
-  std::string Val = valueStr(AI.getValOperand());
+  std::string Val = integerPointerOperandStr(AI.getValOperand());
   if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(
           peelIntegerView(AI.getValOperand()))) {
     const unsigned W =

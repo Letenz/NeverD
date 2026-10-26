@@ -29,6 +29,7 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/AArch64ImmediateMemoryImage.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportedMemoryCopy.h"
@@ -12403,10 +12404,12 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         DereferenceRec->second.IsResumableTerminator ||
         Dereference->Opcode != Occurrence.DereferenceOpcode ||
         (Dereference->Opcode != NdOp::LOAD &&
-         Dereference->Opcode != NdOp::STORE))
+         Dereference->Opcode != NdOp::STORE &&
+         !lowAArch64AddressMemoryShapeIsValid(*Dereference)))
       return false;
     NdVar DereferenceAddress = Current;
     bool SawDereference = false;
+    LowImageBaseMemoryWitness Memory;
     bool SawFinalArithmetic =
         DereferenceRec->second.Addr != Final.InstructionAddr;
     if (!consumeProduct(DereferenceRec->second.Ops.size(), 37))
@@ -12419,16 +12422,22 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         }
         continue;
       }
-      const LowMemoryOperandView CandidateMemory = lowMemoryOperands(Op);
       if (&Op == Dereference) {
-        if (!CandidateMemory.Complete || !CandidateMemory.Address ||
-            *CandidateMemory.Address != DereferenceAddress || SawDereference ||
+        if (lowAArch64AddressMemoryShapeIsValid(Op) &&
+            !consumeImmutableDataSpanQuery())
+          return false;
+        Memory = lowImageBaseMemoryWitness(*CurrentImg, Op, Address,
+                                           Occurrence.TargetOwnerVA);
+        if (!Memory.Complete || !Memory.Base ||
+            *Memory.Base != DereferenceAddress || SawDereference ||
             proofValueClobbers(Op.Output, Current))
           return false;
         SawDereference = true;
         continue;
       }
-      if (CandidateMemory.Complete || proofValueClobbers(Op.Output, Current))
+      if (lowMemoryOperands(Op).Complete ||
+          lowAArch64AddressMemoryShapeIsValid(Op) ||
+          proofValueClobbers(Op.Output, Current))
         return false;
       if (!SawDereference) {
         if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
@@ -12442,11 +12451,10 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     }
     if (!consumeWork(22))
       return false;
-    const LowMemoryOperandView Memory = lowMemoryOperands(*Dereference);
     if (!SawFinalArithmetic || !SawDereference || !Memory.Complete ||
-        !Memory.Address ||
+        !Memory.Base ||
         DereferenceAddress != Occurrence.DereferenceAddressWitness ||
-        *Memory.Address != DereferenceAddress ||
+        *Memory.Base != DereferenceAddress ||
         Memory.AccessSize != Occurrence.DereferenceAccessSize ||
         Memory.AccessSize == 0 || Memory.AccessSize - 1 > InvalidVA - Address)
       return false;

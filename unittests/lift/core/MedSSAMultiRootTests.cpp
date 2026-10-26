@@ -21,6 +21,7 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/ir/med/MedCallReturnReads.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -618,6 +619,55 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
         Seen.insert(Op.Addr);
       }
   EXPECT_EQ(Seen, Expected);
+}
+
+TEST(MedSEHEstablisherFrame, CallBeforeStackRestoreKeepsHandlerFrameLive) {
+  for (bool Indirect : {false, true}) {
+    SCOPED_TRACE(Indirect);
+    auto Img = makeFixedSEHFrameImage();
+    auto &Code = Img.Segments.front().Data;
+    Code.resize(0x45, 0xcc);
+    Img.Segments.front().Size = Code.size();
+    Img.Sections.front().Size = Code.size();
+    Img.Symbols.front().Size = Code.size();
+    Img.ExceptionMetadata.Functions.front().CodeRange.End =
+        Img.Entry + Code.size();
+    // Remember the allocated SP in a preserved register. Neither the handler
+    // nor the join explicitly reads SP before the join restores it from RDI.
+    const uint8_t Save[] = {0x48, 0x89, 0xe7, 0x90, 0x90, 0x90, 0x90, 0x90};
+    std::copy(std::begin(Save), std::end(Save), Code.begin() + 8);
+    const uint8_t Handler[] = {0x31, 0xc0, 0xeb, 0x0c};
+    std::copy(std::begin(Handler), std::end(Handler), Code.begin() + 0x20);
+    const uint8_t Join[] = {0xe8, 0xcb, 0,    0,    0,    0x48, 0x89,
+                            0xfc, 0x8b, 0x44, 0x24, 0x24, 0x48, 0x81,
+                            0xc4, 0x80, 0,    0,    0,    0x5f, 0xc3};
+    std::copy(std::begin(Join), std::end(Join), Code.begin() + 0x30);
+    if (Indirect) {
+      Code[0x30] = 0xff;
+      Code[0x31] = 0xd2; // call rdx
+      std::fill(Code.begin() + 0x32, Code.begin() + 0x35, 0x90);
+    }
+    Img.ExceptionMetadata.rebuildIndex();
+    auto Low = decodeFixedSEHFrame(Img);
+    LowToMedConverter Converter;
+    Converter.setBinaryImage(&Img);
+    auto Med = Converter.convert(Low, Arch::X64, BinaryFormat::COFF);
+    ASSERT_TRUE(verifyMedFunc(Med, "seh-call-before-stack-restore"));
+    std::string Error;
+    EXPECT_TRUE(validateSourceCallReturnReads(
+        Med, Img, Error, limits::ir::kSourceCallReturnReadWork, &Low))
+        << Error;
+    unsigned Seen = 0;
+    for (const auto &Block : Med.Blocks)
+      if (Block.StartAddr == Img.Entry + 0x20)
+        for (const auto &Op : Block.Ops)
+          if (Op.Output.Kind == MedVar::Reg &&
+              Op.Output.RegOff == getTargetRegInfo(Arch::X64).StackPointer) {
+            EXPECT_EQ(entrySPOffset(Med, Op.Output), -136);
+            ++Seen;
+          }
+    EXPECT_EQ(Seen, 1u);
+  }
 }
 
 TEST(MedSEHEstablisherFrame, AllocationFactsCannotEraseAddressProvenance) {

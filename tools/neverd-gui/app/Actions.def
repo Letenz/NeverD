@@ -316,6 +316,12 @@ NEVERD_VIEW_ACTION(EditBookmark,
                    "bookmark",
                    QT_TRANSLATE_NOOP("Actions", "Bookmark the current address"))
 
+NEVERD_ACTION(EditAddAnalysisSection,
+              QT_TRANSLATE_NOOP("Actions", "Add analysis section..."), "",
+              "jump_segment",
+              QT_TRANSLATE_NOOP("Actions",
+                                "Map new code or data into this analysis"))
+
 NEVERD_VIEW_ACTION(
     EditExportData, QT_TRANSLATE_NOOP("Actions", "Export data..."), "Shift+E",
     "save", QT_TRANSLATE_NOOP("Actions", "Copy or save the selected bytes"))

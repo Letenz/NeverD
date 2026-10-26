@@ -179,16 +179,11 @@ struct AArch64AddressMemoryInstruction {
                : kAddressMemoryRegisterMask;
   }
   bool stackBase() const { return base() == kAddressMemoryRegisterMask; }
-  /// A caller-supplied GPR is already in runtime coordinates. It needs no
-  /// image rebasing, even when this module also contains image-backed code.
-  /// Other immediate bases still need an occurrence-bound address owner.
   /// A raw SP parameter supplies its alignment/tag bits only without an image;
   /// a relocated address or a synthetic frame is not that environment.
   const char *sourceBaseFailure(bool HasImage, bool IsParameter) const {
     if (stackBase() && (HasImage || !IsParameter))
       return kAddressMemorySPUnsupported;
-    if (HasImage && !hasRegisterIndex() && !IsParameter)
-      return kAddressMemoryImmediateImageUnsupported;
     return nullptr;
   }
   unsigned indexShift() const {
