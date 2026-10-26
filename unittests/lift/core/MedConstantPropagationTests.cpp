@@ -38,6 +38,53 @@ MedOp operation(NdOp Opcode, MedVar Output, std::vector<MedVar> Inputs) {
   return Op;
 }
 
+TEST(MedConstantPropagation, SelfComparisonNeedsOneStableObservation) {
+  for (auto Kind : {MedVar::Reg, MedVar::Temp, MedVar::Param, MedVar::Const})
+    for (uint16_t Width : {1, 2, 4, 8}) {
+      auto A = Kind == MedVar::Const ? MedVar::makeConst(19, Width)
+                                     : variable(7, Width);
+      A.Kind = Kind;
+      for (NdOp Opcode :
+           {NdOp::INT_EQUAL, NdOp::INT_LESSEQUAL, NdOp::INT_SLESSEQUAL})
+        EXPECT_EQ(selfComparisonConstant(Opcode, A, A), true);
+      for (NdOp Opcode : {NdOp::INT_NOTEQUAL, NdOp::INT_LESS, NdOp::INT_SLESS,
+                          NdOp::INT_SBOR})
+        EXPECT_EQ(selfComparisonConstant(Opcode, A, A), false);
+      for (NdOp Opcode :
+           {NdOp::INT_CARRY, NdOp::INT_SOVF, NdOp::INT_AND, NdOp::FLOAT_EQUAL})
+        EXPECT_FALSE(selfComparisonConstant(Opcode, A, A));
+    }
+
+  const auto A = variable(7);
+  for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+    auto Left = A;
+    auto Right = A;
+    switch (Mutation) {
+    case 0:
+      Left.Kind = Right.Kind = MedVar::Unspecified;
+      break;
+    case 1:
+      Left.Id = Right.Id = -1;
+      break;
+    case 2:
+      ++Right.SSAVer;
+      break;
+    case 3:
+      Right.Kind = MedVar::Reg;
+      Left.Kind = MedVar::Temp;
+      break;
+    case 4:
+      Right.Size = 4;
+      break;
+    case 5:
+      Left.Size = Right.Size = 0;
+      break;
+    }
+    EXPECT_FALSE(selfComparisonConstant(NdOp::INT_EQUAL, Left, Right));
+    EXPECT_FALSE(selfComparisonConstant(NdOp::INT_SBOR, Left, Right));
+  }
+}
+
 MedFunc loop(MedVar Seed) {
   MedFunc Func;
   Func.Blocks.resize(4);

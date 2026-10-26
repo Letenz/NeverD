@@ -16,9 +16,15 @@
 #include "llvm/ADT/DenseMap.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
+#include <map>
 #include <optional>
+#include <set>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 namespace neverd {
 namespace {
@@ -72,6 +78,27 @@ std::optional<MedVar> viewOfConstant(NdOp View, uint64_t ViewOffset,
 }
 } // namespace
 
+std::optional<bool> selfComparisonConstant(NdOp Opcode, const MedVar &A,
+                                           const MedVar &B) {
+  if ((A.Kind != MedVar::Reg && A.Kind != MedVar::Temp &&
+       A.Kind != MedVar::Param && A.Kind != MedVar::Const) ||
+      (!A.isConst() && A.Id < 0) || !A.Size || A.Size != B.Size || A != B)
+    return std::nullopt;
+  switch (Opcode) {
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESSEQUAL:
+    return true;
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_SBOR:
+    return false;
+  default:
+    return std::nullopt;
+  }
+}
+
 bool hasCompleteOrdinaryPhiInputs(const MedBlock &Block, const PhiNode &Phi,
                                   const std::set<int> &Incoming) {
   if (Phi.ExceptionalEntry || !Phi.Output.Size || Block.Preds.empty() ||
@@ -116,12 +143,23 @@ bool propagateInvariantConstants(MedFunc &Func) {
     if (!Blocks.count(Id))
       return false;
 
-  llvm::DenseMap<Key, ConstantNode, ConstantKeyInfo> Nodes;
+  // Keep the large nodes outside the hash table: resizing the SSA index need
+  // only move keys and positions, while node storage stays contiguous.
+  llvm::DenseMap<Key, size_t, ConstantKeyInfo> DefinitionIndex;
+  std::vector<ConstantNode> Nodes;
+  Nodes.reserve(Definitions);
+  auto Find = [&](const MedVar &Value) -> ConstantNode * {
+    auto It = DefinitionIndex.find(key(Value));
+    return It == DefinitionIndex.end() ? nullptr : &Nodes[It->second];
+  };
   auto Add = [&](const MedVar &Output, std::vector<MedVar> Inputs, bool Valid) {
     if (Output.isConst() || Output.Id < 0 || !Output.Size)
       return;
-    auto [It, Inserted] = Nodes.try_emplace(key(Output));
-    auto &Node = It->second;
+    auto [It, Inserted] =
+        DefinitionIndex.try_emplace(key(Output), Nodes.size());
+    if (Inserted)
+      Nodes.emplace_back();
+    auto &Node = Nodes[It->second];
     if (!Inserted) {
       Node.State = Knowledge::Varying;
       Node.Inputs.clear();
@@ -169,9 +207,9 @@ bool propagateInvariantConstants(MedFunc &Func) {
       Add(Op.Output,
           Tracked ? std::vector{Op.Inputs[0]} : std::vector<MedVar>{}, Tracked);
       if ((Extend || Slice) && !Op.Output.isConst() && Op.Output.Id >= 0)
-        if (auto It = Nodes.find(key(Op.Output)); It != Nodes.end()) {
-          It->second.View = Op.Opcode;
-          It->second.ViewOffset = Slice ? Op.Inputs[1].ConstVal : 0;
+        if (auto *Node = Find(Op.Output)) {
+          Node->View = Op.Opcode;
+          Node->ViewOffset = Slice ? Op.Inputs[1].ConstVal : 0;
         }
     }
   }
@@ -181,7 +219,7 @@ bool propagateInvariantConstants(MedFunc &Func) {
   // cycles: it also determines when the existing shared budget is exhausted.
   std::vector<ConstantNode *> Ordered;
   Ordered.reserve(Nodes.size());
-  for (auto &[Id, Node] : Nodes)
+  for (auto &Node : Nodes)
     Ordered.push_back(&Node);
   std::sort(Ordered.begin(), Ordered.end(), [](const auto *A, const auto *B) {
     return key(A->Output) < key(B->Output);
@@ -199,8 +237,8 @@ bool propagateInvariantConstants(MedFunc &Func) {
       if (!Budget--)
         return false;
       if (!Input.isConst())
-        if (auto It = Nodes.find(key(Input)); It != Nodes.end())
-          It->second.Users.push_back(&Node);
+        if (auto *Definition = Find(Input))
+          Definition->Users.push_back(&Node);
     }
     Enqueue(&Node);
   }
@@ -224,15 +262,15 @@ bool propagateInvariantConstants(MedFunc &Func) {
         }
         const MedVar *Constant = &Input;
         if (!Input.isConst()) {
-          const auto It = Nodes.find(key(Input));
-          if (It == Nodes.end() || It->second.Output.Size != Input.Size ||
-              It->second.State == Knowledge::Varying) {
+          const auto *Definition = Find(Input);
+          if (!Definition || Definition->Output.Size != Input.Size ||
+              Definition->State == Knowledge::Varying) {
             State = Knowledge::Varying;
             break;
           }
-          if (It->second.State == Knowledge::Pending)
+          if (Definition->State == Knowledge::Pending)
             continue;
-          Constant = &It->second.Value;
+          Constant = &Definition->Value;
         }
         const std::optional<MedVar> Viewed =
             Node.View == NdOp::COPY
@@ -311,12 +349,12 @@ bool propagateInvariantConstants(MedFunc &Func) {
   auto Replace = [&](MedVar &Input, bool Numeric, bool KeepsViews) {
     if (Input.isConst())
       return;
-    auto It = Nodes.find(key(Input));
-    if (It == Nodes.end() || It->second.State != Knowledge::Constant ||
-        It->second.Output.Size != Input.Size ||
-        (KeepsViews && It->second.FromView))
+    const auto *Definition = Find(Input);
+    if (!Definition || Definition->State != Knowledge::Constant ||
+        Definition->Output.Size != Input.Size ||
+        (KeepsViews && Definition->FromView))
       return;
-    Input = It->second.Value;
+    Input = Definition->Value;
     if (Numeric && Input.Provenance == ConstantAddressProvenance::Unknown)
       Input.Provenance = ConstantAddressProvenance::Scalar;
     Changed = true;

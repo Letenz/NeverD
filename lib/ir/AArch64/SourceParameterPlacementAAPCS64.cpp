@@ -46,10 +46,11 @@ neverd::aapcs64FloatingAggregate(const TypeRef &Record) {
   return Leaves;
 }
 
-std::optional<SourceParameterPlacement>
-source_placement::placeAAPCS64(const TargetRegInfo &TRI, BinaryFormat F,
-                               const TypeRef &ReturnType,
-                               llvm::ArrayRef<TypeRef> ParamTypes) {
+std::optional<SourceParameterPlacement> source_placement::placeAAPCS64(
+    const TargetRegInfo &TRI, BinaryFormat F, const TypeRef &ReturnType,
+    llvm::ArrayRef<TypeRef> ParamTypes, bool Variadic) {
+  if (Variadic && F != BinaryFormat::COFF)
+    return std::nullopt;
   // The result's storage address travels in X8, so the result moves no
   // parameter.
   (void)ReturnType;
@@ -104,6 +105,18 @@ source_placement::placeAAPCS64(const TargetRegInfo &TRI, BinaryFormat F,
 
   for (const TypeRef &Type : ParamTypes) {
     std::vector<SourceParameterPiece> Pieces;
+    // Windows variadics use one eight-byte slot per supported scalar, even
+    // for the named floating prefix. Preserve the logical source type while
+    // describing its raw bits in X0-X7 or the outgoing stack. Aggregates and
+    // 128-bit values require their own complete variadic classification.
+    if (Variadic) {
+      if ((!isIntegerScalar(Type) && !isFloatingScalar(Type)) || !Type->Size ||
+          Type->Size > kRegisterBytes)
+        break;
+      Pieces = Integers(Type->Size, false);
+      Placement.Parameters.push_back(std::move(Pieces));
+      continue;
+    }
     if (isIntegerScalar(Type) && Type->Size <= 2 * kRegisterBytes) {
       Pieces = Integers(Type->Size, Type->Size > kRegisterBytes);
     } else if (isFloatingScalar(Type)) {

@@ -33,10 +33,21 @@ class MetadataRefinementTests(unittest.TestCase):
         self.assertEqual(result.local_sites, {7})
         self.assertEqual(result.key, builder.parse_line(old).key)
         self.assertEqual(self.refine(old, [local, raw], local_data=True), old)
-        self.assertEqual(self.refine(old, [local, local.replace("00000007:", "00000008:")],
-                                     local_data=True), old)
         ordinary = old.replace(" !caller", "")
         self.assertEqual(self.refine(ordinary, [local], local_data=True), ordinary)
+
+    def test_local_alternatives_are_complete_and_never_hide_a_missing_site(self):
+        old = "90909090488D05........C3 00 0000 000C !refs :0000 consumer\n"
+        raw = old.replace("!refs", "!evidence")
+        first = raw.rstrip() + " %0007 00000013:anchor\n"
+        second = raw.rstrip() + " %0007 00000014:anchor\n"
+        for sources in ([first, second], [second, first]):
+            result = builder.parse_line(self.refine(old, sources, local_data=True))
+            self.assertEqual(result.refs, ((7, "00000013:anchor"), (7, "00000014:anchor")))
+            self.assertEqual(result.local_sites, {7})
+            self.assertEqual(self.refine(old, [*sources, raw], local_data=True), old)
+        existing = old.rstrip() + " &0007 external\n"
+        self.assertEqual(self.refine(existing, [first, second], local_data=True), existing)
 
     def test_same_body_gains_only_missing_immutable_fields(self):
         old = "AABBCCDD....C3 00 0000 0007 :0000 routine ^0003 existing\n"

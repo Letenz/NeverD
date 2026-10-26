@@ -2212,8 +2212,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-يفحص `NeverDSourceCallABITests` مجموعات السجلات المختلطة والعروض ونفاد السجلات وإزاحات المكدس ورفض المعاملات المتغيرة في Windows ARM64. يستعيد `NeverDWorkerCallSiteTypes` استدعاءً بمعامل صحيح وdouble ومؤشر من PE لـ ARM64، وينفذ مخرجات مساري C مع دالة C مستقلة عند O0/O2؛ ويحافظ الرفض على لقطة التحليل. لا يثبت ذلك التنفيذ الأصلي على Windows ARM64.
+يفحص `NeverDSourceCallABITests` حوامل Windows ARM64 الثابتة والمتغيرة والعروض ونفاد السجلات وإزاحات المكدس. ينفذ `NeverDWorkerCallSiteTypes` مساري C مع دوال مستقلة عند O0/O2، بما يشمل float مسمى وdouble في السجلات والمكدس والأعداد الصحيحة والنتيجة العائمة. تُرفض المعاملات غير المرقاة والكتابات الجزئية دون تغيير لقطة التحليل. لا يثبت ذلك التنفيذ الأصلي على Windows ARM64.
 
 يغطي اختبار worker أيضًا ثمانية عشر معاملًا موزعًا على السجلات والمكدس، وقيمة إرجاع عائمة، ورفض معامل مكدس كُتب نصفه فقط.
 
+يتحقق `SourceCallABI` و`CallRegisterConstant` من القيم المؤقتة المنتهية والتأثيرات غير الشفافة ونطاقات البايت وغموض الاستدعاءات وحدود الميزانية الدقيقة. ينفذ worker أيضًا مساري C لمستدعٍ يحسب عدّاد المتجهات للمعاملات المتغيرة بالطرح.
+
+تقارن اختبارات `LowScalarConstant.SelfDifference*` استعادة المدخل المجهول بالتنفيذ الفعلي لأنماط البايت بعروض من بايت إلى ثمانية، وترفض القيم المختلفة والذاكرة والأشكال غير الصحيحة. يغطي `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` معماريات x86 وx64 وAArch64 مع ELF وCOFF وMach-O. تنفذ اختبارات worker الفرع المستعاد وعدّاد متجهات System V الناتج عن الطرح الذاتي عبر HighC وLLVMC عند O0/O2.
+
+تتحقق اختبارات `X86CarryArithmeticFlags.SelfSubtract*` و`APXSelfSubtract*` من النتيجة والأعلام الحسابية والسجلات المحفوظة. تقارن اختبارات الفروع العددية للعامل التنفيذ الأصلي مع HighC/LLVMC عند O0/O2، بما يشمل الفروع المعتمدة على أعلام SUB/CMP للسجل نفسه.
+
 يفحص `BinaryRewriteRelocationTest` في فرع LLVM الخاص بـ NeverSight البايتات النهائية لـ x64 PLT وi386 GOT وMach-O GOTPCREL وAArch64 PAGE/PAGEOFF. يترجم بناء NeverD المتكامل الفرع المسجل مباشرة. لا تثبت فحوص MC هذه تنفيذ الاستثناءات الأصلي.
+
+يغطي `MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` الالتقاط في السجلات والحفظ في المكدس الخاص. ينفذ `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` ناتج HighC وLLVMC عند O0/O2 على Linux x86 بمعاملين عدديين مختلفين، لأهداف الذاكرة والسجلات. يشمل فحص ABI في Python وكتالوج مصادر GUI واجهات أقسام التحليل ورسائلها.
+
+ينفذ `NeverDSelfCompareFlagTests` الدوال الأصلية والمعاد بناؤها على x86 وx64 وARM32 وAArch64. شغّل مسار الشيفرة الآلية الافتراضي و`NEVERD_SEMANTIC_HIGHC=1` و`NEVERD_SEMANTIC_LLVMC=1` كلّاً على حدة. تغطي المصفوفة أعلام CMP/SUB ذات المعاملين المتساويين والفروع والقيم الشرطية، مع اختبارات منطقية ومعاملات مزاحة للمقارنة، إضافة إلى اختبارات تجاوز السعة الموقّع القائمة.
+
+تنفذ المصفوفة أيضاً حالات مساواة وتجاوز سعة الطرح دون معاملات للدالة. لا تحتاج هذه الحالات إلى قيم سجلات واردة، ويجب ألا يضيف أي من مساري C فخاً للحالة المجهولة.
+
+تترجم اختبارات خانات استيراد HFA نماذج C الصارمة وتنفذ الوسيطات والنتائج الكاملة لتصريحات الترويسات والتصريحات المحلية. يغطي مسارا C سجلات float وdouble والاستدعاءات المتسلسلة والتنفيذ على AArch64.

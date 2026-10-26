@@ -2004,4 +2004,18 @@ Prima delle chiamate originali, `SourceFrameAnalysis` può osservare byte privat
 
 Le anteprime conservano le opzioni di caricamento, le regole di analisi, i metadati utente e una copia indipendente delle prove delle firme della sessione. Il limite di visualizzazione non limita mai la verifica dell’intero intervallo; le anteprime troncate lo segnalano esplicitamente. La rimozione di un predicato Thumb deve coprire l’intero blocco IT.
 
-I tipi di chiamata Windows ARM64 con parametri scalari e puntatori fissi riutilizzano `placeAAPCS64` tramite `SourceCallABI`: banchi interi e in virgola mobile indipendenti e slot di stack da otto byte quando i registri sono esauriti. Le chiamate variadiche restano rifiutate, poiché anche i parametri floating con nome usano portatori interi. Non si aggiungono ARM64EC, aggregati o esecuzione nativa dei driver.
+I tipi di chiamata Windows ARM64 riutilizzano `placeAAPCS64` tramite `SourceCallABI`: i parametri fissi usano banchi interi e floating indipendenti. Gli scalari variadici, compresi i floating con nome, usano un solo banco intero e poi slot di stack da otto byte. Le dichiarazioni AArch64 esplicite descrivono i bit floating nei registri interi; entrambi i percorsi C reinterpretano tali bit. Restano i limiti per firme inferite e risultati floating. ARM64EC, aggregati ed esecuzione nativa dei driver sono esclusi.
+
+`LowScalarConstant` condivide i fatti per byte dei target in registro e del conteggio AL variadico System V: aritmetica a larghezza fissa, durata dei temporanei, invalidazione opaca e budget. Occorrenze ambigue o budget esauriti non pubblicano costanti. La prova delle scritture sullo stack elimina anche indirizzi temporanei fra istruzioni e scritture precedenti a effetti opachi.
+
+`LowScalarConstant` riconosce anche la sottrazione intera a larghezza fissa di un registro o temporaneo locale all’istruzione da se stesso. Il recupero dei salti e i controlli ABI delle chiamate condividono questa identità a tempo costante: anche un ingresso sconosciuto può quindi produrre uno zero dimostrato. Occorrenze diverse, operandi in memoria e larghezze errate restano non dimostrati.
+
+Il lifter x86 tratta SUB/CMP interi con registri identici come `0 - 0` prima di salvare gli operandi dei flag. Elimina false dipendenze dai registri in ingresso mantenendo scritture parziali, registri di CMP, sorgenti APX NDD e conservazione dei flag con NF.
+
+`MedCallTarget` conserva l’indice della lettura originale dell’importazione attraverso i salvataggi privati. HighIR riusa la prova di lettura della memoria prima di usare direttamente il nome dell’importazione; se lo slot cambia, mantiene il puntatore acquisito. `MedABIPass` divide le scritture ampie degli argomenti secondo l’ABI dimostrata dell’importazione anche nelle chiamate indirette.
+
+La semplificazione condivisa dei flag MedIR conserva entrambi gli operandi della sottrazione, anche per `A-A`. Un confronto con sé stesso non deve diventare un confronto con zero; i test logici mantengono la propria regola dipendente dall’ingresso.
+
+Le condizioni intere che confrontano lo stesso valore SSA con sé stesso diventano costanti booleane prima dell’emissione del sorgente, incluso l’overflow della sottrazione. Gli operandi non specificati restano espliciti.
+
+Le destinazioni HFA salvate usano la stessa firma sorgente verificata della ricostruzione degli argomenti e dei risultati di struttura. Il prototipo conserva il puntatore originale e i tipi completi, compresi i gruppi di registri scomposti e gli argomenti sullo stack.
