@@ -14,6 +14,12 @@ C(Intrinsic::X87FptanPair, "neverd_x87_fptan_pair");
 C(Intrinsic::X87FsincosPair, "neverd_x87_fsincos_pair");
 C(Intrinsic::X87FxtractPair, "neverd_x87_fxtract_pair");
 C(Intrinsic::X64Syscall, "neverd_x64_syscall");
+
+// Far and interrupt returns: terminal architectural control transfers.  The
+// operands name the stack cells read (CS:IP[:FLAGS[:SS:SP]]); the helper never
+// returns and reconstructs no privilege/segment transition.
+C(Intrinsic::Retf, "neverd_far_return");
+C(Intrinsic::Iret, "neverd_interrupt_return");
 C(Intrinsic::X64WindowsSyscall, "neverd_x64_windows_syscall");
 
 // SSE4.2 CRC32 (the function takes the crc32 target feature,
