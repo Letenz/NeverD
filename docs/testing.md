@@ -247,6 +247,16 @@ four-source arithmetic. Pair these with `NeverDX86FourFMAExactTests`,
 unknown-value regressions. Hardware AVX512_4FMAPS/AVX512_4VNNIW behavior remains
 unqualified on hosts without those capabilities.
 
+`X86NativeMemoryCarrier.*` in `NeverDX86CompressExpandSourceTests` compiles owned
+compact/four-source, descriptor, query and atomic assembly in dynamically
+allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 48 objects
+include both explicit address sizes for scalar operations. The decoded memory
+operand must avoid reserved frame bases and retain its address width. Separate
+admission checks retain exact older BX constraints while rejecting replacement
+constraints outside the owned contract. Run it with both SDKs, alongside the
+compact/four-source, descriptor and atomic source checks. These tests do not
+execute unavailable four-source or atomic hardware instructions.
+
 `NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
 port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
 Independent recorder functions check 1,584 operand cases per program through
