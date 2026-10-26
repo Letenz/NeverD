@@ -61,6 +61,18 @@
 
 namespace neverd {
 
+namespace {
+bool isMachORuntimeDataAddress(const BinaryImage &Image, uint64_t Address) {
+  if (!Image.isMachO())
+    return false;
+  const auto *Section = Image.getSectionFor(Address);
+  return Section &&
+         (llvm::StringRef(Section->Name)
+              .starts_with(section_names::macho::ObjCMetadataPrefix) ||
+          Section->Name == section_names::macho::CfString);
+}
+} // namespace
+
 //===----------------------------------------------------------------------===//
 // Global data resolution
 //===----------------------------------------------------------------------===//
@@ -187,13 +199,8 @@ bool MedLLVMEmitter::canResolveGlobalDataConstant(uint64_t Addr) const {
 
   // Objective-C runtime objects intentionally remain external identities and
   // therefore do not require file-backed bytes in the rebuilt module.
-  if (Img->isMachO()) {
-    const Section *Sec = Img->getSectionFor(Addr);
-    if (Sec && (llvm::StringRef(Sec->Name).starts_with(
-                    section_names::macho::ObjCMetadataPrefix) ||
-                Sec->Name == section_names::macho::CfString))
-      return true;
-  }
+  if (isMachORuntimeDataAddress(*Img, Addr))
+    return true;
 
   if (isMutableDataSeg(Seg)) {
     uint64_t RunStart = 0, RunEnd = 0;
@@ -262,9 +269,10 @@ MedLLVMEmitter::tryResolveDirectGlobalDataAddress(const MedVar &Address,
   return tryResolveGlobalData(*NumericAddress, DataSizeHint);
 }
 
-llvm::Constant *
-MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
-                                          uint16_t DataSizeHint) {
+llvm::Constant *MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr,
+                                                          uint64_t OwnerVA,
+                                                          uint16_t DataSizeHint,
+                                                          bool WholeOwner) {
   if (!Img || OwnerVA == InvalidVA)
     return tryResolveGlobalData(Addr, DataSizeHint);
 
@@ -307,7 +315,8 @@ MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
   // path is required when zero denotes NOBITS storage or when one-past lands
   // in another section and value-only lookup would choose that neighbour.
   const Section *NumericSec = Img->getSectionFor(Addr);
-  if (Addr < OwnerEnd && NumericSec == OwnerSec &&
+  if ((!WholeOwner || isMachORuntimeDataAddress(*Img, Addr)) &&
+      Addr < OwnerEnd && NumericSec == OwnerSec &&
       !(Addr == 0 && !Img->hasObjectDataProvenance(0)))
     if (llvm::Constant *Direct = tryResolveGlobalData(Addr, DataSizeHint))
       return Direct;
@@ -441,21 +450,16 @@ llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
   // still encoded for the on-disk image.  Keep every direct reference into
   // these sections anchored at its original VA; the patch resolver turns the
   // synthetic symbol back into that slid address.
-  if (Img->isMachO()) {
-    const Section *Sec = Img->getSectionFor(Addr);
-    if (Sec && (llvm::StringRef(Sec->Name).starts_with(
-                    section_names::macho::ObjCMetadataPrefix) ||
-                Sec->Name == section_names::macho::CfString)) {
-      std::string Name = makeNdDataSymbol(Addr);
-      llvm::GlobalVariable *GV = Mod->getNamedGlobal(Name);
-      if (!GV)
-        GV = new llvm::GlobalVariable(
-            *Mod, llvm::Type::getInt8Ty(*Ctx), /*isConstant=*/false,
-            llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name);
-      GV->setDSOLocal(true);
-      GlobalDataCache[Addr] = GV;
-      return GV;
-    }
+  if (isMachORuntimeDataAddress(*Img, Addr)) {
+    std::string Name = makeNdDataSymbol(Addr);
+    llvm::GlobalVariable *GV = Mod->getNamedGlobal(Name);
+    if (!GV)
+      GV = new llvm::GlobalVariable(
+          *Mod, llvm::Type::getInt8Ty(*Ctx), /*isConstant=*/false,
+          llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name);
+    GV->setDSOLocal(true);
+    GlobalDataCache[Addr] = GV;
+    return GV;
   }
 
   // Writable data (.data / .bss): recreate the WHOLE segment as one cohesive

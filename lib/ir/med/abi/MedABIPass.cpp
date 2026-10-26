@@ -39,6 +39,7 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
@@ -269,7 +270,8 @@ ReachingStackPtrResult
 findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
                      int BeforeIdx, MedDefSiteIndex *Defs = nullptr,
                      const MedBlockIdIndex *Index = nullptr,
-                     size_t *Remaining = nullptr, bool ComputeDelta = true) {
+                     size_t *Remaining = nullptr, bool ComputeDelta = true,
+                     BinaryFormat Format = BinaryFormat::Unknown) {
   // Walk transparent predecessors once and collect every boundary at which the
   // reaching SP becomes concrete: a local SP definition, an SP PHI, or a
   // function-entry block.  The former recursive walk only marked the current
@@ -315,7 +317,7 @@ findReachingStackPtr(const MedFunc &Func, const TargetRegInfo &TRI, int BlockId,
   auto MergeBoundary = [&](const MedVar &Value) {
     MergeBasis(Value);
     if (ComputeDelta)
-      MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs));
+      MergeDelta(stackPtrDelta(Func, TRI, Value, 0, Defs, Format));
   };
 
   while (!Worklist.empty()) {
@@ -413,33 +415,145 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
   const auto &TRI = getTargetRegInfo(Architecture);
   if (Func.SkippedSSA || Func.Blocks.empty())
     return Result;
-  const MedBlockIdIndex Blocks(Func);
-  for (const auto &Block : Func.Blocks) {
+
+  // Each block boundary has at most two changes: no reaching origin becomes
+  // one exact definition, then conflicting origins make it unknown. Share
+  // that fixed point across every call. Repeating the backward ABI query at
+  // each call otherwise rescans the same large predecessor graph and exhausts
+  // the source proof's budget on ordinary functions with many calls.
+  struct Basis {
+    enum Kind { NoOrigin, Exact, Unknown } State = NoOrigin;
+    MedVar Value;
+
+    bool merge(const Basis &Other) {
+      if (Other.State == NoOrigin || State == Unknown)
+        return false;
+      if (State == NoOrigin) {
+        *this = Other;
+        return true;
+      }
+      if (Other.State == Unknown ||
+          entrySpKey(Value) != entrySpKey(Other.Value)) {
+        State = Unknown;
+        return true;
+      }
+      return false;
+    }
+  };
+  const auto Charge = [&](size_t Count) {
+    if (Count > Remaining) {
+      Remaining = 0;
+      return false;
+    }
+    Remaining -= Count;
+    return true;
+  };
+  const auto StackDefinition = [&](const MedVar &Value) {
+    return Value.Kind == MedVar::Reg && Value.Size &&
+           Value.RegOff == TRI.StackPointer;
+  };
+  const size_t Count = Func.Blocks.size();
+  std::map<int, size_t> Index;
+  std::vector<Basis> Entries(Count), Exits(Count);
+  std::vector<bool> EntryBoundary(Count), ExitBoundary(Count), Queued(Count);
+  std::vector<std::vector<size_t>> Users(Count);
+  std::vector<std::vector<const MedOp *>> InheritedCalls(Count);
+  for (size_t I = 0; I < Count; ++I) {
+    const auto &Block = Func.Blocks[I];
+    for (size_t Work : {size_t{1}, Block.Ops.size()})
+      if (!Charge(Work))
+        return {};
+    if (!Index.emplace(Block.Id, I).second)
+      return {};
+    for (const auto &Phi : Block.Phis) {
+      if (!Charge(1))
+        return {};
+      if (StackDefinition(Phi.Output)) {
+        Entries[I] = {Basis::Exact, Phi.Output};
+        EntryBoundary[I] = true;
+        break;
+      }
+    }
     std::optional<MedVar> LocalStack;
-    for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      if (!Remaining)
-        return Result;
-      --Remaining;
-      const auto &Op = Block.Ops[I];
+    if (EntryBoundary[I])
+      LocalStack = Entries[I].Value;
+    for (const auto &Op : Block.Ops) {
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           !Op.Dead) {
-        if (LocalStack) {
-          if (LocalStack->Size == TRI.PointerSize)
-            Result.emplace(&Op, *LocalStack);
-        } else {
-          const auto Stack =
-              findReachingStackPtr(Func, TRI, Block.Id, static_cast<int>(I),
-                                   nullptr, &Blocks, &Remaining, false);
-          if (Stack.Basis && Stack.Basis->Size == TRI.PointerSize)
-            Result.emplace(&Op, *Stack.Basis);
-        }
+        if (!LocalStack)
+          InheritedCalls[I].push_back(&Op);
+        else if (LocalStack->Size == TRI.PointerSize)
+          Result.emplace(&Op, *LocalStack);
       }
-      // Cache the same most recent definition used by the backward ABI walk.
-      // A call's own output, if any, belongs only to subsequent occurrences.
-      if (Op.Output.Kind == MedVar::Reg && Op.Output.Size &&
-          Op.Output.RegOff == TRI.StackPointer)
+      // A local definition owns subsequent calls independently of incoming
+      // paths. Retain only calls before that definition for the fixed point.
+      if (StackDefinition(Op.Output)) {
         LocalStack = Op.Output;
+        Exits[I] = {Basis::Exact, Op.Output};
+        ExitBoundary[I] = true;
+      }
     }
+  }
+  for (size_t I = 0; I < Count; ++I) {
+    const auto &Block = Func.Blocks[I];
+    if (!EntryBoundary[I]) {
+      if (!Charge(Block.Preds.empty() ? Block.ExceptionalPreds.size()
+                                      : Block.Preds.size()))
+        return {};
+      const auto Predecessor = [&](int Id) {
+        const auto Found = Index.find(Id);
+        if (Found == Index.end())
+          Entries[I].State = Basis::Unknown;
+        else
+          Users[Found->second].push_back(I);
+      };
+      if (!Block.Preds.empty()) {
+        for (int Pred : Block.Preds)
+          Predecessor(Pred);
+      } else if (!Block.ExceptionalPreds.empty()) {
+        // Match the ABI walk: a landing pad without ordinary predecessors
+        // inherits the source block's final SP unless an SP PHI owns it.
+        for (const auto &Edge : Block.ExceptionalPreds)
+          Predecessor(Edge.BlockId);
+      } else {
+        Entries[I].State = Basis::Unknown;
+      }
+    }
+    if (!ExitBoundary[I])
+      Exits[I] = Entries[I];
+  }
+  std::deque<size_t> Pending;
+  const auto Enqueue = [&](size_t I) {
+    if (!Queued[I]) {
+      Queued[I] = true;
+      Pending.push_back(I);
+    }
+  };
+  for (size_t I = 0; I < Count; ++I)
+    if (Exits[I].State != Basis::NoOrigin)
+      Enqueue(I);
+  while (!Pending.empty()) {
+    const size_t I = Pending.front();
+    Pending.pop_front();
+    Queued[I] = false;
+    if (!Charge(1) || !Charge(Users[I].size()))
+      return {};
+    for (size_t User : Users[I])
+      if (Entries[User].merge(Exits[I]) && !ExitBoundary[User]) {
+        Exits[User] = Entries[User];
+        Enqueue(User);
+      }
+  }
+  // Publish inherited bases only after every incoming history has reached
+  // the fixed point. Local bases were collected during the first scan, so
+  // publishing does not revisit unrelated operations in large functions.
+  for (size_t B = 0; B < Count; ++B) {
+    if (!Charge(InheritedCalls[B].size()))
+      return {};
+    if (Entries[B].State == Basis::Exact &&
+        Entries[B].Value.Size == TRI.PointerSize)
+      for (const MedOp *Call : InheritedCalls[B])
+        Result.emplace(Call, Entries[B].Value);
   }
   return Result;
 }
@@ -1493,7 +1607,8 @@ void recoverCallAbi(
         auto &Prev = Blk.Ops[J];
         if (Prev.Output.Kind == MedVar::Reg &&
             Prev.Output.RegOff == TRI.StackPointer) {
-          if (auto D = stackPtrDelta(Func, TRI, Prev.Output, 0, &DefSites)) {
+          if (auto D =
+                  stackPtrDelta(Func, TRI, Prev.Output, 0, &DefSites, Fmt)) {
             CallSpDelta = *D;
             HaveCallSpDelta = true;
           }
@@ -1507,8 +1622,9 @@ void recoverCallAbi(
         }
       }
       if (!HaveCallSpBasis || !HaveCallSpDelta) {
-        ReachingStackPtrResult Reaching = findReachingStackPtr(
-            Func, TRI, Blk.Id, static_cast<int>(OI), &DefSites, &BlockIds);
+        ReachingStackPtrResult Reaching =
+            findReachingStackPtr(Func, TRI, Blk.Id, static_cast<int>(OI),
+                                 &DefSites, &BlockIds, nullptr, true, Fmt);
         if (!HaveCallSpBasis && Reaching.Basis) {
           buildCallSpOffsets(Func, TRI, *Reaching.Basis, 0, CallSpOffsets, 0,
                              &DefSites);
@@ -1525,7 +1641,7 @@ void recoverCallAbi(
       auto CallRelativeStackOffset =
           [&](const MedVar &Address) -> std::optional<int64_t> {
         if (HaveCallSpDelta)
-          if (auto Delta = stackPtrDelta(Func, TRI, Address, 0, &DefSites))
+          if (auto Delta = stackPtrDelta(Func, TRI, Address, 0, &DefSites, Fmt))
             return safety::detail::checkedStackOffset(*Delta, CallSpDelta,
                                                       /*Subtract=*/true);
         return relStackOff(Func, TRI, Address, CallSpOffsets, 0, &DefSites);
@@ -2354,8 +2470,8 @@ void recoverCallAbi(
               if (Candidate.Opcode != NdOp::STORE || Candidate.NumInputs < 2 ||
                   Candidate.MemoryAddressSpace != NdMemoryAddressSpace::Default)
                 continue;
-              auto D =
-                  stackPtrDelta(Func, TRI, Candidate.Inputs[0], 0, &DefSites);
+              auto D = stackPtrDelta(Func, TRI, Candidate.Inputs[0], 0,
+                                     &DefSites, Fmt);
               if (D && *D == *TargetOffset) {
                 MedVar Value = Candidate.Inputs[1];
                 Active.erase(BlockId);

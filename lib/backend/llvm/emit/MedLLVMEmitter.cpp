@@ -22,6 +22,8 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
+#include "../../AArch64ImmediateMemoryBase.h"
+
 #include "neverd/Common.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/Limits.h"
@@ -41,6 +43,7 @@
 #include "neverd/ir/med/MedRawEnvironment.h"
 #include "neverd/ir/med/X86/X86CompactShape.h"
 #include "neverd/ir/med/X86/X86FourSourceShape.h"
+#include "neverd/loader/AArch64MemoryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
@@ -788,6 +791,9 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // bodies. Validate mutable storage and metadata before any such traversal,
   // then reuse the same plan during emission.
   for (const auto &Func : Funcs) {
+    std::optional<AArch64ImmediateMedBases> MemoryBases;
+    if (Img_ && TheArch == Arch::AArch64)
+      MemoryBases.emplace(Func);
     if (const char *Error = validateAArch64SVEState(Func, TheArch))
       throw std::runtime_error(Error);
     if (Func.HasUnresolvedSEHFrame && !PreserveUnknownSourceValues)
@@ -822,6 +828,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
               throw std::runtime_error(kAddressMemoryMalformed);
             const auto Instruction = *aarch64AddressMemoryInstruction(
                 Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
+            const auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
+            if (Img_ && !Instruction.hasRegisterIndex() &&
+                !MemoryBases->supports(*Img_, Instruction, Base))
+              throw std::runtime_error(kAddressMemoryImmediateImageUnsupported);
             if (const char *Reason = Instruction.sourceBaseFailure(
                     Img_ != nullptr,
                     Op.Inputs[kAddressMemoryBaseOperand + 1].Kind ==

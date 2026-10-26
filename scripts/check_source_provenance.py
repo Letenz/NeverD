@@ -404,6 +404,41 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/evidence/patch-history-2026-10-25.json",
+        rule="private-path",
+        commits=frozenset({"2388152e9b28a5b613b55e2897be2699950c0ece"}),
+        line="",
+        reason=(
+            "Reviewed deletion of checkout-specific benchmark command paths. "
+            "The cleanup uses the current checkout and relative build paths; "
+            "measurements and artifact hashes are unchanged. Only exact removed "
+            "line digests in this published cleanup commit are covered. "
+            "Current source and future occurrences remain forbidden."
+        ),
+        line_sha256=frozenset({
+            "08d11975c9bcb42f8c9c815588e1b6733c25c07dd7a969fec05fe8edfaae45f2",
+            "7cefd0889458e4fabb7baeeece0756eae7fe277fdb911658dcc0fe0722b27fbe",
+            "d3ada58b4f339865b8016cda1ac1fc42c4a4b64bf19fa24c84ac0f62293230db",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/evidence/patch-scaling-2026-10-25.json",
+        rule="private-path",
+        commits=frozenset({"2388152e9b28a5b613b55e2897be2699950c0ece"}),
+        line="",
+        reason=(
+            "Reviewed deletion of checkout-specific delivered-test paths. "
+            "The cleanup retains command arguments, measurements and hashes "
+            "while making build paths relative. Only the exact removed line "
+            "digests in this published cleanup commit are covered; current "
+            "source and future occurrences remain forbidden."
+        ),
+        line_sha256=frozenset({
+            "7cefd0889458e4fabb7baeeece0756eae7fe277fdb911658dcc0fe0722b27fbe",
+            "d3ada58b4f339865b8016cda1ac1fc42c4a4b64bf19fa24c84ac0f62293230db",
+        }),
+    ),
+    HistoryAllowance(
         path="docs/web-analysis-implementation.md",
         rule="private-path",
         commits=frozenset({

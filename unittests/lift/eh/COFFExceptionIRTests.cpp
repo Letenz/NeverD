@@ -149,7 +149,8 @@ CompilerResult runCCompiler(llvm::StringRef Source,
   return Result;
 }
 
-void checkStandaloneSEHSource(llvm::StringRef Source) {
+void checkStandaloneSEHSource(llvm::StringRef Source,
+                              bool CompileObject = false) {
   ASSERT_TRUE(hasHostFixtureCompiler());
   // Supply the small platform-header interface independently of the emitter.
   // The compiler still checks the real SEH intrinsic scopes, and the source
@@ -177,6 +178,20 @@ void checkStandaloneSEHSource(llvm::StringRef Source) {
       Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
                "-fsyntax-only", "-isystem", Directory});
   EXPECT_EQ(Result.ExitCode, 0) << Result.Error << "\n" << Source.str();
+  if (CompileObject) {
+    const std::string ObjectPath = Directory.str().str() + "/seh.obj";
+    llvm::FileRemover RemoveObject(ObjectPath);
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      // SEH catches machine faults as well as language-level throwing calls.
+      // In particular, a trap in a nested protected region must keep the
+      // parent's unwind registration and escaped filter locals at O0.
+      const auto Object = runCCompiler(
+          Source, {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
+                   "-fasync-exceptions", "-std=c11", Level, "-c", "-o",
+                   ObjectPath, "-isystem", Directory});
+      EXPECT_EQ(Object.ExitCode, 0) << Object.Error << "\n" << Source.str();
+    }
+  }
 }
 
 std::string emitHighC(llvm::ArrayRef<HighFunc> Funcs,
@@ -3028,6 +3043,197 @@ TEST(COFFExceptionIR, LLVMCNestedFinallyInsideExceptContainsBothBodies) {
                      {"--target=x86_64-pc-windows-msvc", "-fms-extensions",
                       "-std=c11", "-fsyntax-only", "-Werror=uninitialized"});
     EXPECT_EQ(Syntax.ExitCode, 0) << Syntax.Error << "\n" << Source;
+  }
+}
+
+TEST(COFFExceptionIR, LLVMCSharedHandlerKeepsNestedUnwindOnlyCleanup) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("shared-seh-nested-cleanup", Context);
+  Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+  llvm::IRBuilder<> B(Context);
+  auto Declare = [&](llvm::StringRef Name, llvm::Type *Return,
+                     llvm::ArrayRef<llvm::Type *> Args = {}) {
+    return llvm::Function::Create(llvm::FunctionType::get(Return, Args, false),
+                                  llvm::GlobalValue::ExternalLinkage, Name,
+                                  Module);
+  };
+  auto *F = Declare("nested_cleanup", B.getInt32Ty(), {B.getInt32Ty()});
+  F->getArg(0)->setName("take_inner");
+  F->setPersonalityFn(Declare("__C_specific_handler", B.getInt32Ty()));
+  auto Block = [&](llvm::StringRef Name) {
+    return llvm::BasicBlock::Create(Context, Name, F);
+  };
+  auto *Entry = Block("entry");
+  auto *Choice = Block("choice");
+  auto *BeginInner = Block("begin_inner");
+  auto *Body = Block("body");
+  auto *EndInner = Block("end_inner");
+  auto *AfterInner = Block("after_inner");
+  auto *EndOuter = Block("end_outer");
+  auto *EarlyEnd = Block("early_end");
+  auto *Tail = Block("tail");
+  auto *Dispatch = Block("dispatch");
+  auto *PadBlock = Block("pad");
+  auto *Handler = Block("handler");
+  auto *CleanupBlock = Block("cleanup");
+  auto *CleanupEnd = Block("cleanup_end");
+  auto *TryBegin = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_begin);
+  auto *TryEnd = llvm::Intrinsic::getOrInsertDeclaration(
+      &Module, llvm::Intrinsic::seh_try_end);
+  auto *Step = Declare("protected_step", B.getVoidTy());
+  auto *CleanupCall = Declare("cleanup_step", B.getVoidTy(), {B.getInt32Ty()});
+  B.SetInsertPoint(Entry);
+  B.CreateInvoke(TryBegin, Choice, Dispatch);
+  B.SetInsertPoint(Choice);
+  B.CreateCondBr(B.CreateICmpNE(F->getArg(0), B.getInt32(0)), BeginInner,
+                 EarlyEnd);
+  B.SetInsertPoint(BeginInner);
+  B.CreateInvoke(TryBegin, Body, CleanupBlock);
+  B.SetInsertPoint(Body);
+  B.CreateInvoke(Step, EndInner, CleanupBlock);
+  B.SetInsertPoint(EndInner);
+  B.CreateInvoke(TryEnd, AfterInner, CleanupBlock);
+  B.SetInsertPoint(AfterInner);
+  B.CreateInvoke(CleanupCall, EndOuter, Dispatch, {B.getInt32(0)});
+  B.SetInsertPoint(EndOuter);
+  B.CreateInvoke(TryEnd, Tail, Dispatch);
+  B.SetInsertPoint(EarlyEnd);
+  B.CreateInvoke(TryEnd, Tail, Dispatch);
+  B.SetInsertPoint(Tail);
+  auto *Value = B.CreatePHI(B.getInt32Ty(), 3, "result");
+  Value->addIncoming(B.getInt32(7), EndOuter);
+  Value->addIncoming(B.getInt32(11), EarlyEnd);
+  Value->addIncoming(B.getInt32(99), Handler);
+  B.CreateRet(Value);
+  B.SetInsertPoint(Dispatch);
+  auto *Switch =
+      B.CreateCatchSwitch(llvm::ConstantTokenNone::get(Context), nullptr, 1);
+  Switch->addHandler(PadBlock);
+  B.SetInsertPoint(PadBlock);
+  auto *Pad =
+      B.CreateCatchPad(Switch, {llvm::ConstantPointerNull::get(B.getPtrTy())});
+  B.CreateCatchRet(Pad, Handler);
+  B.SetInsertPoint(Handler);
+  B.CreateBr(Tail);
+  B.SetInsertPoint(CleanupBlock);
+  auto *Cleanup = B.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+  B.CreateInvoke(CleanupCall, CleanupEnd, Dispatch, {B.getInt32(1)});
+  B.SetInsertPoint(CleanupEnd);
+  B.CreateCleanupRet(Cleanup, Dispatch);
+  ASSERT_FALSE(llvm::verifyFunction(*F, &llvm::errs()));
+  const std::string Source = emitLLVMC(Module);
+  EXPECT_NE(Source.find("if (!neverd_seh_normal)"), std::string::npos)
+      << Source;
+  const std::string Prelude =
+      "#include <stdint.h>\n#define EXCEPTION_EXECUTE_HANDLER 1\n";
+  if (hasHostFixtureCompiler())
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      const auto Compiled = runCCompiler(
+          Prelude + Source,
+          {"--target=x86_64-pc-windows-msvc", "-fms-extensions", "-std=c11",
+           "-Xclang", "-fasync-exceptions", "-c", Level});
+      EXPECT_EQ(Compiled.ExitCode, 0) << Compiled.Error << "\n" << Source;
+    }
+  // A host check of normal paths: cleanup's normal counterpart runs exactly
+  // once and the unwind-only body never substitutes for it. Native Windows
+  // object generation above checks the actual nested SEH and every goto.
+  const std::string Harness = R"(
+#define __try if (1)
+#define __except(filter) else
+#define __finally if (1)
+static unsigned normal_calls, unwind_calls, steps;
+void protected_step(void) { ++steps; }
+void cleanup_step(uint32_t abnormal) {
+  if (abnormal) ++unwind_calls; else ++normal_calls;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(Prelude + Harness + Source + R"(
+int main(void) {
+  if (nested_cleanup(0) != 11 || normal_calls || unwind_calls || steps) return 1;
+  if (nested_cleanup(1) != 7 || normal_calls != 1 || unwind_calls || steps != 1)
+    return 2;
+  return 0;
+}
+)",
+                                              {Level});
+}
+
+TEST(COFFExceptionIR, LLVMCFinallyAndFilterShareTheParentLocalAddress) {
+  REQUIRE_HOST_FIXTURE_COMPILER();
+  for (bool FilterUsesFrame : {false, true}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("seh-parent-local-area", Context);
+    Module.setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+    Module.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> Builder(Context);
+    auto *Void = Builder.getVoidTy();
+    auto *Pointer = Builder.getPtrTy();
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Void, false),
+        llvm::GlobalValue::ExternalLinkage, "parent_frame", Module);
+    auto Personality = Module.getOrInsertFunction(
+        "__C_specific_handler",
+        llvm::FunctionType::get(Builder.getInt32Ty(), true));
+    Function->setPersonalityFn(
+        llvm::cast<llvm::Constant>(Personality.getCallee()));
+    auto Raise = Module.getOrInsertFunction("may_raise", Void);
+    auto Finally = Module.getOrInsertFunction("use_parent", Void, Pointer);
+    auto Filter = Module.getOrInsertFunction(
+        "filter_parent",
+        FilterUsesFrame
+            ? llvm::FunctionType::get(Builder.getInt32Ty(), {Pointer, Pointer},
+                                      false)
+            : llvm::FunctionType::get(Builder.getInt32Ty(), {Pointer}, false));
+    auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+    auto *Normal = llvm::BasicBlock::Create(Context, "normal", Function);
+    auto *Cleanup = llvm::BasicBlock::Create(Context, "cleanup", Function);
+    auto *Dispatch = llvm::BasicBlock::Create(Context, "dispatch", Function);
+    auto *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
+    auto *Handler = llvm::BasicBlock::Create(Context, "handler", Function);
+    Builder.SetInsertPoint(Entry);
+    Builder.CreateInvoke(Raise, Normal, Cleanup);
+    Builder.SetInsertPoint(Normal);
+    Builder.CreateRetVoid();
+    Builder.SetInsertPoint(Cleanup);
+    auto *CleanupToken =
+        Builder.CreateCleanupPad(llvm::ConstantTokenNone::get(Context));
+    auto *Address = Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+        &Module, llvm::Intrinsic::localaddress));
+    Builder.CreateCall(Finally, {Address},
+                       {llvm::OperandBundleDef("funclet", CleanupToken)});
+    Builder.CreateCleanupRet(CleanupToken, Dispatch);
+    Builder.SetInsertPoint(Dispatch);
+    auto *Switch = Builder.CreateCatchSwitch(
+        llvm::ConstantTokenNone::get(Context), nullptr, 1);
+    Switch->addHandler(Pad);
+    Builder.SetInsertPoint(Pad);
+    auto *Catch = Builder.CreateCatchPad(Switch, {Filter.getCallee()});
+    Builder.CreateCatchRet(Catch, Handler);
+    Builder.SetInsertPoint(Handler);
+    Builder.CreateRetVoid();
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+    const auto Try = Source.find("__try {");
+    const auto FinallyAt = Source.find("} __finally {");
+    const auto Intrinsic = Source.find("__asm__(\"llvm.localaddress\")");
+    ASSERT_NE(Try, std::string::npos) << Source;
+    ASSERT_NE(FinallyAt, std::string::npos) << Source;
+    ASSERT_NE(Intrinsic, std::string::npos) << Source;
+    EXPECT_LT(Intrinsic, Try) << Source;
+    EXPECT_EQ(Source.find("__asm__(\"llvm.localaddress\")", Intrinsic + 1),
+              std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find(" = seh_parent_frame", FinallyAt), std::string::npos)
+        << Source;
+    checkStandaloneSEHSource(Source, /*CompileObject=*/true);
   }
 }
 
