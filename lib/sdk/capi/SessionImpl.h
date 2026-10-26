@@ -1213,7 +1213,8 @@ struct Session {
       // The pipeline's callee memo keeps the forwarder probes of those
       // callees, which serve where this recovery reads the same.
       Recovery.CalleeSignatureMemo = PipeResult.CalleeSignatureMemo;
-      recoverModuleCallAbi(Img, Recovery, FuncNames);
+      recoverModuleCallAbi(Img, Recovery, FuncNames,
+                           /*SourceDeclarations=*/true);
       NativeMedFuncs = std::move(Recovery.MedFuncs);
       NativeCalleeDeclarations = std::move(Recovery.OmittedCalleeDeclarations);
     }

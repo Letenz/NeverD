@@ -33,6 +33,7 @@
 #include "neverd/sbf/SBFIR.h"
 #include "neverd/solver/SymSynthVerifier.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -294,6 +295,9 @@ struct OmittedCalleeBodies {
   /// The entries of the functions they were lifted around, in order.
   std::vector<va_t> Functions;
   std::vector<std::shared_ptr<const MedFunc>> Bodies;
+  /// Include direct callees whose arity is known but whose source types are
+  /// not.
+  bool IncludesSourceDeclarations = false;
 };
 
 struct PipelineResult {

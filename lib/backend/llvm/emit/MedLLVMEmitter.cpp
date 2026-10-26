@@ -1244,9 +1244,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   const auto Declarations = PreserveUnknownSourceValues
                                 ? SourceCalleeDeclarations
                                 : llvm::ArrayRef<MedFunc>{};
-  for (const MedFunc &F : llvm::concat<const MedFunc>(Funcs, Declarations)) {
-    if (EmittedFuncNames.count(F.Entry))
-      continue;
+  const auto NameFunction = [&](const MedFunc &F) {
     std::string EmittedName = F.Name;
     auto Personality = NativePersonalityNames.find(F.Entry);
     llvm::StringRef SourceName(F.Name);
@@ -1283,6 +1281,17 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       EmittedName = std::move(*Shadow);
     EmittedFuncNames[F.Entry] = EmittedName;
     FuncNames[F.Entry] = std::move(EmittedName);
+  };
+  for (const MedFunc &Function : Funcs)
+    NameFunction(Function);
+  std::map<va_t, const MedFunc *> OmittedDeclarations;
+  for (const MedFunc &Declaration : Declarations) {
+    if (!Declaration.Blocks.empty())
+      throw std::invalid_argument("source callee declaration has a body");
+    if (EmittedFuncNames.count(Declaration.Entry))
+      continue;
+    NameFunction(Declaration);
+    OmittedDeclarations.emplace(Declaration.Entry, &Declaration);
   }
   for (auto &[Addr, Name] : Imports)
     FuncNames[Addr] = llvm_name::fromObjectSymbol(Name, Fmt).str();
@@ -1358,16 +1367,10 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     if (!Merged.empty())
       EmittedFuncCodeRanges[Func.Entry] = std::move(Merged);
   }
-  for (const MedFunc &Declaration : Declarations) {
-    if (!Declaration.Blocks.empty())
-      throw std::invalid_argument("source callee declaration has a body");
-    // Definitions selected for this module own their types. A stale omitted
-    // declaration cannot replace a selected function or provide its ranges.
-    if (llvm::none_of(Funcs, [&](const auto &Function) {
-          return Function.Entry == Declaration.Entry;
-        }))
-      declareFunc(Declaration);
-  }
+  // Definitions selected for this module own their types. Omitted declarations
+  // supply no implementation, interior-code range or exception contract.
+  for (const auto &[Entry, Declaration] : OmittedDeclarations)
+    declareFunc(*Declaration);
   initializeCxxContinuationPlans(Funcs, BodyMask);
 
   DirectCallArgumentCounts.clear();

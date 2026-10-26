@@ -23,6 +23,7 @@
 #include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/c/CEmitterOptions.h"
+#include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -1178,16 +1179,23 @@ TEST(Win64CallContract, AddressOnlySymbolsDoNotInventCallableTypes) {
       Address.ReturnType = NdType::makeInt(8, false);
       HighStmt Return;
       Return.Kind = StmtKind::Return;
-      Return.Val = HighExpr::makeConst(Target, 8,
-                                       ConstantAddressProvenance::CodeAddress);
+      Return.RetVal = HighExpr::makeConst(
+          Target, 8, ConstantAddressProvenance::CodeAddress);
       Address.Body.push_back(std::move(Return));
       CEmitterOptions Options;
       Options.Image = &Image;
       Options.TheArch = Architecture;
       Options.Format = Format;
+      std::vector<CSourceName> Names;
+      Options.SourceNames = &Names;
       std::string Source;
       llvm::raw_string_ostream Output(Source);
       ASSERT_TRUE(HighCEmitter().emit({Address}, Output, Options));
+      EXPECT_TRUE(llvm::any_of(Names, [&](const CSourceName &Name) {
+        return Name.TheKind == CSourceName::Kind::Function &&
+               Name.Symbol == Symbol && Name.Address == Target &&
+               Source.find(Name.Identifier) != std::string::npos;
+      }));
       EXPECT_EQ(Source.find("extern int callback_provider("), std::string::npos)
           << Source;
       // Each provider defines the SAME C identifier in the combined unit.
@@ -1223,10 +1231,62 @@ TEST(Win64CallContract, AddressOnlySymbolsDoNotInventCallableTypes) {
     }
 }
 
+TEST(Win64CallContract, AddressOnlyCallbackConvertsToItsKnownParameterType) {
+  constexpr va_t Target = Text + 0x80;
+  auto Image = makeImage(
+      std::vector<uint8_t>(0x90),
+      {{Text, "invoke_typed_callback"}, {Target, "callback_provider"}}, {});
+  const auto Word = NdType::makeInt(8, false);
+  class Prototype : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != Iat)
+        return std::nullopt;
+      const auto Word = NdType::makeInt(8, false);
+      FunctionSym Function;
+      Function.Addr = Iat;
+      Function.Name = "apply_callback";
+      Function.ReturnType = Word;
+      Function.Params = {
+          {"callback", NdType::makePtr(NdType::makeFunc(Word, {Word}))}};
+      return Function;
+    }
+  } Debug;
+  HighFunc Caller;
+  Caller.Entry = Text;
+  Caller.Name = "invoke_typed_callback";
+  Caller.ReturnType = Word;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeCall(
+      "apply_callback", Iat,
+      {HighExpr::makeConst(Target, 8, ConstantAddressProvenance::CodeAddress)});
+  Return.RetVal->Type = Word;
+  Caller.Body.push_back(std::move(Return));
+  CEmitterOptions Options;
+  Options.Image = &Image;
+  Options.TheArch = Image.Arch;
+  Options.Format = Image.Format;
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Caller}, Output, Options, &Debug));
+  const std::string Oracle = R"(
+uint64_t callback_provider(uint64_t value) { return value ^ UINT64_C(0xFEDCBA9876543210); }
+uint64_t apply_callback(uint64_t (*callback)(uint64_t)) { return callback(37); }
+int main(void) { return invoke_typed_callback() != (37 ^ UINT64_C(0xFEDCBA9876543210)); }
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Source + Oracle, {Level, "-Werror=incompatible-pointer-types",
+                          "-fsanitize=undefined", "-fsanitize-trap=all"});
+}
+
 TEST(Win64CallContract, SelectedWordCalleesKeepTheirPointerDeclarations) {
   constexpr va_t Target = Text + 0x80;
   for (Arch Architecture : {Arch::X64, Arch::AArch64})
-    for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
       SCOPED_TRACE(int(Architecture));
       SCOPED_TRACE(int(Format));
       std::vector<uint8_t> Code(0x90);
@@ -1253,38 +1313,48 @@ TEST(Win64CallContract, SelectedWordCalleesKeepTheirPointerDeclarations) {
           Code, {{Text, "forward_pointer"}, {Target, "read_pointer"}}, {});
       Image.Arch = Architecture;
       Image.Format = Format;
+      PipelineAnalysisCache Cache;
       for (bool Selected : {false, true}) {
         SCOPED_TRACE(Selected);
-        std::string Source;
-        const std::vector<va_t> Entries =
-            Selected ? std::vector<va_t>{Text, Target} : std::vector<va_t>{0};
-        for (va_t Entry : Entries) {
-          llvm::LLVMContext Context;
-          PipelineOptions Options;
-          Options.EmitDumpOutput = false;
-          Options.SourceProjection = true;
-          Options.LiftMode = true;
-          Options.OnlyFunctionEntries =
-              Entry ? std::set<va_t>{Entry} : std::set<va_t>{Text, Target};
-          auto Result = Pipeline().run(Image, Context, Options);
-          ASSERT_TRUE(Result.Success) << Result.Error;
-          ASSERT_TRUE(Result.LlvmModule);
-          if (Entry != Target) {
-            auto *Callee = Result.LlvmModule->getFunction("read_pointer");
-            ASSERT_TRUE(Callee);
-            ASSERT_EQ(Callee->arg_size(), 1u);
-            EXPECT_TRUE(Callee->getArg(0)->getType()->isPointerTy());
-            EXPECT_EQ(Callee->isDeclaration(), Selected);
+        for (unsigned Round = 0; Round != 2; ++Round) {
+          SCOPED_TRACE(Round);
+          std::string Source;
+          bool CallerTakesPointer = false;
+          const std::vector<va_t> Entries =
+              Selected ? std::vector<va_t>{Text, Target} : std::vector<va_t>{0};
+          for (va_t Entry : Entries) {
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.SourceProjection = true;
+            Options.LiftMode = true;
+            Options.AnalysisCache = &Cache;
+            Options.OnlyFunctionEntries =
+                Entry ? std::set<va_t>{Entry} : std::set<va_t>{Text, Target};
+            auto Result = Pipeline().run(Image, Context, Options);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            ASSERT_TRUE(Result.LlvmModule);
+            if (Entry != Target) {
+              auto *Callee = Result.LlvmModule->getFunction("read_pointer");
+              ASSERT_TRUE(Callee);
+              ASSERT_EQ(Callee->arg_size(), 1u);
+              EXPECT_TRUE(Callee->getArg(0)->getType()->isPointerTy());
+              EXPECT_EQ(Callee->isDeclaration(), Selected);
+              const auto *Caller =
+                  Result.LlvmModule->getFunction("forward_pointer");
+              ASSERT_TRUE(Caller);
+              ASSERT_EQ(Caller->arg_size(), 1u);
+              CallerTakesPointer = Caller->getArg(0)->getType()->isPointerTy();
+            }
+            CEmitterOptions COptions;
+            COptions.TheArch = Architecture;
+            COptions.Format = Format;
+            COptions.PreserveLLVMFunctionTypes = true;
+            llvm::raw_string_ostream Output(Source);
+            ASSERT_TRUE(
+                LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
           }
-          CEmitterOptions COptions;
-          COptions.TheArch = Architecture;
-          COptions.Format = Format;
-          COptions.PreserveLLVMFunctionTypes = true;
-          llvm::raw_string_ostream Output(Source);
-          ASSERT_TRUE(
-              LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions));
-        }
-        const std::string Oracle = R"(
+          const std::string Oracle = R"(
 int main(void) {
   uint64_t values[] = {0, 37, UINT64_C(0xFEDCBA9876543210)};
   for (unsigned i = 0; i != 3; ++i)
@@ -1292,18 +1362,20 @@ int main(void) {
   return 0;
 }
 )";
-        // The public caller retains a machine-word input unless a whole-unit
-        // projection sees its pointer use. Cast at this harness boundary only;
-        // the emitted caller and callee must agree without source rewriting.
-        std::string Harness = Oracle;
-        if (!Selected)
-          Harness.replace(Harness.find("(uintptr_t)&values[i]"),
-                          std::string("(uintptr_t)&values[i]").size(),
-                          "(void *)&values[i]");
-        for (llvm::StringRef Level : {"-O0", "-O2"})
-          source_call_execution_test::compileAndRun(
-              Source + Harness,
-              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+          // The public caller retains a machine-word input unless a whole-unit
+          // projection sees its pointer use. Cast at this harness boundary
+          // only; the emitted caller and callee must agree without source
+          // rewriting.
+          std::string Harness = Oracle;
+          if (CallerTakesPointer)
+            Harness.replace(Harness.find("(uintptr_t)&values[i]"),
+                            std::string("(uintptr_t)&values[i]").size(),
+                            "(void *)&values[i]");
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Harness,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
       }
     }
 }
