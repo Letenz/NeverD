@@ -12336,3 +12336,11 @@ Source parameter binding can supply display types without mutating machine IR.
 C frame records use validated display alignment and bounded member layouts;
 these declarations grant no ABI, nonalias or lifetime facts. Both C writers
 share record/member-path validation and preserve captured callable values.
+
+Analysis-image additions are owned by Session's C ABI in `NeverDCAPISections.cpp`.
+It validates and atomically extends existing BinaryImage segments, sections and
+function roots, then retires derived caches. Worker and CLI own writer leases
+and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
+Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
+for the same input. File rewriting retains the original file-backed load.
+See [analysis sections](analysis-sections.md).

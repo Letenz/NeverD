@@ -401,6 +401,8 @@ struct Session {
   Decoder Dec;
 
   std::vector<FuncInfo> Functions;
+  /// Caller-declared analysis sections. Bytes live in Img, never FilePath.
+  llvm::json::Array AnalysisSections;
   /// What resetFunctionsFromImage last built Functions from, while nothing
   /// but a name refresh has changed the list since (functionListCurrent).
   /// The image's own tables change only on loads, which build the list
@@ -1395,6 +1397,10 @@ struct PipelineRunner {
   PipelineResult Result;
 
   bool load(const char *InputPath, std::string &Err, const Session *Policy);
+  /// Read-only views of the same loaded file retain its analysis additions.
+  /// File rewriting and round trips continue to use load().
+  bool loadAnalysis(const char *InputPath, std::string &Err,
+                    const Session *Policy);
   /// Runs the pipeline over the image with \p Debug, else the image's own
   /// debug information.
   bool run(PipelineOptions Opts, std::string &Err,

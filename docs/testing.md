@@ -14113,3 +14113,11 @@ alignment/undefined-behavior checks. Run `NeverDHighCStoreForwardingTests` and
 `NeverDHighControlFlowTests` for captured pointer and callback display changes.
 `NeverDWorkerParameterTypePropagation` edits a generated PE parameter between
 record types and checks aliases, arrays, undo/redo, reopening and unchanged LowIR.
+
+`NeverDWorkerAnalysisSections` exercises the C ABI and IPC with public ELF/PE
+x64/AArch64 fixtures: atomic mutations, high addresses, original-image references,
+materialized listing rows, LowIR/MedIR/HighC/CFG, save/load and analysis replicas.
+`NeverDAnalysisSectionsCLI` checks persisted CLI/worker interop and writer leases.
+`NeverDGuiAnalysisSections` drives the production dialog, native views and .nddb
+save/reopen/removal; `NeverDGuiQueries` checks edit fences and cache retirement.
+See [analysis-section commands](analysis-sections.md#verification).

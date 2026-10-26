@@ -185,6 +185,20 @@ cl::SubCommand OperandsCmd("operands",
                            "list those formats");
 cl::SubCommand SearchCmd("search", "Search bytes/strings in binary");
 cl::SubCommand SectionsCmd("sections", "List binary sections");
+cl::SubCommand
+    AnalysisSectionsCmd("analysis-sections",
+                        "List, add or remove analysis image sections");
+cl::opt<std::string>
+    AnalysisSectionAdd("add",
+                       cl::desc("Add a section described by this JSON file"),
+                       cl::sub(AnalysisSectionsCmd));
+cl::opt<std::string>
+    AnalysisSectionData("data",
+                        cl::desc("Raw machine-code/data file for --add"),
+                        cl::sub(AnalysisSectionsCmd));
+cl::opt<std::string> AnalysisSectionRemove(
+    "remove", cl::desc("Remove a previously added analysis section by name"),
+    cl::sub(AnalysisSectionsCmd));
 cl::SubCommand SymbolsCmd("symbols", "List all symbols");
 cl::SubCommand RelocsCmd("relocs", "List relocations");
 cl::SubCommand HeadersCmd("headers", "Show comprehensive binary headers");
@@ -291,7 +305,8 @@ cl::opt<std::string> InputFile(
     cl::sub(SectionsCmd), cl::sub(SymbolsCmd), cl::sub(RelocsCmd),
     cl::sub(HeadersCmd), cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
     cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(SymbolicCmd),
-    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd));
+    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd),
+    cl::sub(AnalysisSectionsCmd));
 
 cl::opt<std::string> OutputFile("o", cl::desc("Output file"), cl::init(""),
                                 cl::sub(PatchBytesCmd), cl::sub(LiftCmd),
@@ -1427,21 +1442,20 @@ cl::opt<std::string>
                     cl::value_desc(unwind_query::kAddressValue),
                     cl::sub(InfoCmd));
 
-cl::opt<bool>
-    JsonOutput("json", cl::desc("Output as JSON"), cl::sub(InfoCmd),
-               cl::sub(IdentifyCmd), cl::sub(FuncsCmd), cl::sub(DisasmCmd),
-               cl::sub(CfgCmd), cl::sub(HexCmd), cl::sub(StringsCmd),
-               cl::sub(XrefsCmd), cl::sub(PathsCmd), cl::sub(CallTreeCmd),
-               cl::sub(ImportsCmd), cl::sub(ExportsCmd), cl::sub(SegmentsCmd),
-               cl::sub(PluginsCmd), cl::sub(BookmarksCmd), cl::sub(AnnotateCmd),
-               cl::sub(CallGraphCmd), cl::sub(RenameCmd),
-               cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd),
-               cl::sub(OperandsCmd), cl::sub(SearchCmd), cl::sub(SectionsCmd),
-               cl::sub(SymbolsCmd), cl::sub(RelocsCmd), cl::sub(HeadersCmd),
-               cl::sub(EntryPointsCmd), cl::sub(SwitchesCmd),
-               cl::sub(DashboardCmd), cl::sub(SigsCmd), cl::sub(AuditCmd),
-               cl::sub(HuntCmd), cl::sub(MobileCmd), cl::sub(DecompileCmd),
-               cl::sub(TypesCmd), cl::sub(PathsCmd), cl::sub(CallTreeCmd));
+cl::opt<bool> JsonOutput(
+    "json", cl::desc("Output as JSON"), cl::sub(InfoCmd), cl::sub(IdentifyCmd),
+    cl::sub(FuncsCmd), cl::sub(DisasmCmd), cl::sub(CfgCmd), cl::sub(HexCmd),
+    cl::sub(StringsCmd), cl::sub(XrefsCmd), cl::sub(PathsCmd),
+    cl::sub(CallTreeCmd), cl::sub(ImportsCmd), cl::sub(ExportsCmd),
+    cl::sub(SegmentsCmd), cl::sub(PluginsCmd), cl::sub(BookmarksCmd),
+    cl::sub(AnnotateCmd), cl::sub(CallGraphCmd), cl::sub(RenameCmd),
+    cl::sub(FunctionEditsCmd), cl::sub(ItemsCmd), cl::sub(OperandsCmd),
+    cl::sub(SearchCmd), cl::sub(SectionsCmd), cl::sub(SymbolsCmd),
+    cl::sub(RelocsCmd), cl::sub(HeadersCmd), cl::sub(EntryPointsCmd),
+    cl::sub(SwitchesCmd), cl::sub(DashboardCmd), cl::sub(SigsCmd),
+    cl::sub(AuditCmd), cl::sub(HuntCmd), cl::sub(MobileCmd),
+    cl::sub(DecompileCmd), cl::sub(TypesCmd), cl::sub(PathsCmd),
+    cl::sub(CallTreeCmd), cl::sub(AnalysisSectionsCmd));
 
 //===----------------------------------------------------------------------===//
 // Plugins-specific options
