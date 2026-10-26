@@ -115,9 +115,10 @@ std::optional<uint64_t> dataReferenceTarget(const BinaryImage &Img,
 
 void SignatureDB::applyDataContext(const BinaryImage &Img,
                                    llvm::ArrayRef<uint64_t> Entries,
-                                   llvm::ArrayRef<SignatureMatcher::Hit> Hits) {
-  if (Hits.empty() || Matches.empty() || !Img.isCOFF() ||
-      Img.Arch != Arch::X64 || Img.IsRelocatable)
+                                   llvm::ArrayRef<SignatureMatcher::Hit> Hits,
+                                   llvm::ArrayRef<uint64_t> DeferredCallers) {
+  if ((Hits.empty() && DeferredCallers.empty()) || Matches.empty() ||
+      !Img.isCOFF() || Img.Arch != Arch::X64 || Img.IsRelocatable)
     return;
   // Only pending addresses and source-anchor names need settlement. Retain
   // every competing claim at those addresses without sorting or allocating
@@ -159,7 +160,7 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
       continue;
     Pending.push_back(Hit);
   }
-  if (Pending.empty())
+  if (Pending.empty() && DeferredCallers.empty())
     return;
 
   const size_t Frozen = Matches.size();
@@ -314,8 +315,8 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
   // Exactly one data pass. Newly admitted candidates cannot confirm one
   // another or retroactively establish their own data bindings.
   checkReferences(Img, Entries, {}, Frozen, Frozen, &Bindings);
-  if (Matches.size() != Frozen)
-    applyCallerContext(Img, Entries, Frozen, &Bindings);
+  if (Matches.size() != Frozen || !DeferredCallers.empty())
+    applyCallerContext(Img, Entries, Frozen, &Bindings, DeferredCallers);
 }
 
 } // namespace neverd::sigs

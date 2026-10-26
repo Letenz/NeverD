@@ -318,17 +318,22 @@ private:
                           llvm::ArrayRef<uint64_t> Entries);
   void applyDataContext(const BinaryImage &Img,
                         llvm::ArrayRef<uint64_t> Entries,
-                        llvm::ArrayRef<SignatureMatcher::Hit> Hits);
+                        llvm::ArrayRef<SignatureMatcher::Hit> Hits,
+                        llvm::ArrayRef<uint64_t> DeferredCallers);
   void applyCallerContext(const BinaryImage &Img,
                           llvm::ArrayRef<uint64_t> Entries,
                           size_t FirstParent = 0,
-                          const DataBindings *Data = nullptr);
+                          const DataBindings *Data = nullptr,
+                          llvm::ArrayRef<uint64_t> Revisit = {},
+                          std::vector<uint64_t> *DeferredCallers = nullptr);
   void applyCallerContextRound(const BinaryImage &Img,
                                llvm::ArrayRef<uint64_t> Entries,
                                std::unordered_map<uint64_t, std::string> &Names,
                                llvm::ArrayRef<size_t> FrozenCandidates,
                                size_t FrozenMatches, size_t FirstParent,
-                               const DataBindings *Data);
+                               const DataBindings *Data,
+                               llvm::ArrayRef<uint64_t> Revisit,
+                               std::vector<uint64_t> *DeferredCallers);
   /// A present FrozenMatches validates only later incoming candidates against
   /// the frozen prefix, including an empty original set. Their outcomes cannot
   /// change anchors or feed another

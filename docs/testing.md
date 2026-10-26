@@ -6519,6 +6519,12 @@ and incorrect symbol kinds. The local cases in `SignatureDataContext.*` reject
 wrong anchor names/offsets, external/local
 kind substitution, missing source variants and unrooted requests. Consumer
 alternatives require one exact bound operand; they cannot become anchor evidence.
+Deferred caller cases additionally cover identical narrow/wide getter bodies,
+caller-only data packs, reversed input order and changed buffers on reapplication.
+Missing sources/bodies, unknown rival operands, ambiguous or weak parents,
+conflicting bindings and unreadable data cannot resolve the ambiguity. The
+external-data metadata tests preserve raw omissions, reference kinds, alternatives
+and existing fields without changing ordinary byte claims.
 Parser/cache tests preserve the separate kind and validate canonical keys even when cache
 pieces run in reverse. Python supplement/refinement tests retain every raw
 counterclaim and refuse to put local relations in ordinary byte records.

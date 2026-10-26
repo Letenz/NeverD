@@ -770,7 +770,7 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
     }
   LoadConfigStorage = std::move(Configs);
   DataContext = llvm::any_of(Modules, [](const StoredModule &Mod) {
-    return Mod.RequireReferences &&
+    return (Mod.RequireReferences || Mod.RequireCaller) &&
            llvm::any_of(Mod.references(),
                         [](const StoredName &Ref) { return Ref.IsData; });
   });

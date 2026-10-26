@@ -9,6 +9,31 @@ from scripts.signatures import refine_pattern_metadata as metadata
 
 
 class MetadataRefinementTests(unittest.TestCase):
+    def test_external_operands_keep_all_versions_kinds_and_existing_fields(self):
+        old = "488D05........C3 00 0000 0008 !caller :0000 getter\n"
+        raw = old.replace("!caller", "!evidence")
+        first = raw.rstrip() + " &0003 narrow\n"
+        second = first.replace("narrow", "wide")
+        self.assertEqual(self.refine(old, [first]), old)
+        for sources in ([first, second], [second, first]):
+            result = builder.parse_line(self.refine(old, sources, external_data=True))
+            self.assertEqual(result.refs, ((3, "narrow"), (3, "wide")))
+            self.assertEqual(result.key, builder.parse_line(old).key)
+            self.assertEqual(result.data_sites, {3})
+            self.assertFalse(result.local_sites)
+            for unknown in (raw, first.replace("&0003", "^0003"),
+                            raw.rstrip() + " %0003 00000013:anchor\n"):
+                self.assertEqual(self.refine(old, [*sources, unknown], external_data=True,
+                                             local_data=True, caller_code=True), old)
+        ordinary = old.replace(" !caller", "")
+        self.assertEqual(self.refine(ordinary, [first], external_data=True), ordinary)
+        for kind in ("^", "&", "%"):
+            original = "00000013:anchor" if kind == "%" else "original"
+            prior = old.rstrip() + f" {kind}0003 {original}\n"
+            self.assertEqual(self.refine(prior, [first], external_data=True), prior)
+        aliases = old.replace("getter", "getter :0000 missing")
+        self.assertEqual(self.refine(aliases, [first], external_data=True), aliases)
+
     def test_throw_info_fields_need_metadata_kind_and_every_raw_version(self):
         old = "90909090488D05........C3 00 0000 000C :0000 thrower\n"
         raw = old.replace(" :", " !evidence :")

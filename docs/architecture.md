@@ -2301,6 +2301,13 @@ create bindings or alter the proof of their parents. A source/name-index gate
 avoids constructing another settlement map when no new parent has a query.
 Otherwise, the continuation settles only visited addresses from a sorted
 frozen-row index, retaining all competing claims at those addresses.
+The initial caller pass also retains ordinary parents whose complete incoming
+alternatives remain ambiguous and carry explicit data operands. These parents
+are revisited once through that same frozen-row index after bindings exist,
+including when no globally scanned data consumer matched. The retry reuses the
+ordinary admission and source-agreement checks; it cannot establish bindings or
+restart the data pass. Missing alternative bodies or unresolved constraints
+remain unknown. The deferred parent list belongs to one application only.
 The parser/cache preserve a separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 An explicit source-layout mode also proves signed coordinate differences within
 one non-COMDAT data section. Only a canonical zero-addend static operand can
