@@ -2741,8 +2741,8 @@ effect and profitability checks can publish it. Exhaustion preserves the
 expression. GUI menu requests, CLI single-function options and whole-program
 source sessions all reach these same policies.
 Expression interning beneath these passes uses a flat hash table, avoiding a
-separate allocation for each distinct node hash. A tagged key admits every
-64-bit hash, including values reserved by the table implementation. Colliding
+separate allocation for each distinct node hash. Reserved key pairs use
+separate context-owned heads, so every 64-bit hash remains representable. Colliding
 hashes still compare the complete operator, width, auxiliary value and operand
 sequence; context copies and moves own their complete tables and node arenas.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
