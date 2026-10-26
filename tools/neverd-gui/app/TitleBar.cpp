@@ -71,7 +71,8 @@ public:
 
 protected:
   bool event(QEvent *event) override {
-    if (event->type() == QEvent::HoverEnter ||
+    if (event->type() == QEvent::Enter || event->type() == QEvent::Leave ||
+        event->type() == QEvent::HoverEnter ||
         event->type() == QEvent::HoverLeave)
       update();
     return QAbstractButton::event(event);
