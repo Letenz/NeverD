@@ -29,11 +29,29 @@ class SupplementTests(unittest.TestCase):
 
     def test_local_relations_reject_noncanonical_and_mixed_kinds(self):
         head = "488D05........C3 00 0000 0008 !refs :0000 a %0003 "
-        for name in ("13:anchor", "0000001a:anchor", "00000013:"):
+        for name in ("13:anchor", "0000001a:anchor", "00000013:",
+                     "00000013+00000000:anchor", "00000013-00000000:anchor",
+                     "00000013+0000000a:anchor", "00000013+100000000:anchor",
+                     "00000013+8:anchor", "00000013+-00000008:anchor",
+                     "00000013+00000008:"):
             with self.assertRaises(builder.BuildError):
                 builder.parse_line(head + name)
         with self.assertRaises(builder.BuildError):
             builder.parse_line(head + "00000013:anchor &0003 global")
+
+    def test_layout_deltas_retain_missing_and_cross_kind_counterclaims(self):
+        head = "488D05........C3 00 0000 0008 !refs :0000 a %0003 "
+        for key in ("00000013+00000008:anchor", "00000013-00000008:anchor",
+                    "00000013+FFFFFFFF:anchor", "00000013-FFFFFFFF:anchor"):
+            candidate = head + key
+            line = builder.parse_line(candidate)
+            self.assertEqual(line.with_refs(line.refs).text, candidate)
+            rival = candidate.replace(":0000 a", ":0000 b").replace(key, "00000013:anchor")
+            self.assertEqual(len(self.select(candidate, [("runtime", candidate + "\n" + rival)])), 1)
+            unknown = rival.split(" %0003")[0]
+            self.assertFalse(self.select(candidate, [("runtime", candidate + "\n" + unknown)]))
+            external = rival.replace("%0003", "&0003")
+            self.assertFalse(self.select(candidate, [("runtime", candidate + "\n" + external)]))
 
     def test_ordinary_selection_does_not_publish_offline_data_relations(self):
         ordinary = "90909090909090909090909090909090488D05........C3 00 0000 0018 :0000 anchor"

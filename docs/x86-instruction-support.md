@@ -347,7 +347,7 @@ decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.
 The register forms of unprefixed `0F 1A/1B` and `F3 0F 1B` are architectural
 NOPs, as specified by the SDM's BNDLDX/BNDSTX/BNDMK descriptions. Their
 qualified segment/address/REX prefixes retain the complete instruction extent.
-Strict lifting rejects the seven unmodeled MPX operations without appending
+Strict lifting rejects the seven stateful MPX operations without appending
 partial effects. Existing
 serialized MPX, standalone HLE and generic SHA placeholder IDs remain readable,
 but both LLVM and HighC output fail explicitly instead of silently dropping
@@ -383,8 +383,16 @@ order is implementation-dependent. An invalid BDE instead preserves the bank
 and reports its address in BNDSTATUS. Active or unknown transaction contexts
 are refused before state publication; RTM/HLE checkpoint/abort integration is
 still required. This is not yet connected to strict lifting or native output:
-instruction-state integration, memory-provider completion and original-branch
-effects surviving every IR route remain open.
+instruction-state transport and original-branch effects surviving every IR
+route remain open.
+
+The context now sequences whole-access memory providers for BNDMOV and the
+BDE/BTE transactions. BNDMOV loads publish after both fields complete. Memory
+stores retain width, LOCK and provider-owned partial effects. Table reads
+distinguish BDE access faults, invalid entries and partial BTE loads; no access
+is made to the MIB pointer itself, and stores leave the fourth BTE field alone.
+Unavailable provider semantics are an explicit refusal rather than a fabricated
+memory fault or successful no-op.
 
 The byte-owned MPX decoder now normalizes long-mode `67H` address operands to
 full-width GPRs and RIP, retaining the prefix separately. Register-only forms
@@ -398,9 +406,26 @@ memory addressing, RIP-relative BNDMK/table operations and competing mandatory
 prefixes. Classification of other decoder forms does not imply qualification.
 Its tests cover 504 memory decode combinations, 1,152 register combinations,
 9,216 architectural NOP cases and 6,912 SIB comparisons against independently
-decoded native-width MOV addresses. These are encoding checks, not MPX hardware
-execution or end-to-end lifting qualification. Original-branch effects,
-memory-provider completion and transactional state integration remain open.
+decoded native-width MOV addresses.
+
+`executeX86MpxInstruction` now binds the same raw-byte admission to explicit
+GPR/segment inputs, the bounds context and a memory provider. It preserves
+default SS and explicit segments for BNDMOV; table-pointer translation uses
+the selected segment base without probing that pointer. An absent MIB base
+discards displacement, while an absent index supplies zero and scale is
+ignored. Tests execute both modes, all banks, aliasing moves, address-only
+checks, refused contexts and provider faults. A byte-memory instruction
+sequence also verifies spill/reload and table roundtrips. This is portable
+single-instruction execution, not MPX hardware or end-to-end lifting
+qualification. Original-transfer completion, state transport throughout the
+IR pipeline and transactional state integration remain open.
+
+BNDMOV requests retain the original SP/BP default-stack property independently
+of the selected segment. R12/R13 are data-default bases. In long mode,
+CS/DS/ES/SS overrides alone cannot reconstruct the noncanonical-address fault
+class; FS/GS remain separate overrides. A 42-case original-MOV probe on an
+Intel host checked these base/prefix distinctions. That probe validates the
+ordinary addressing rule, not enabled MPX hardware execution.
 
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and

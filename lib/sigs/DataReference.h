@@ -18,9 +18,15 @@
 namespace neverd {
 struct BinaryImage;
 namespace sigs {
+struct LocalDataAnchor;
 std::optional<uint64_t> dataReferenceTarget(const BinaryImage &Img,
                                             uint64_t Start, uint32_t Offset,
                                             uint32_t Length);
+/// Invert a parsed source-layout relation inside the same mapped data region.
+/// The consumer and frozen anchor operands separately validate their extents.
+std::optional<uint64_t> localDataReferenceBase(const BinaryImage &Img,
+                                               uint64_t Target,
+                                               const LocalDataAnchor &Anchor);
 } // namespace sigs
 } // namespace neverd
 

@@ -539,7 +539,8 @@ def parse_line(text: str, *, evidence: bool = False) -> PatternLine | None:
         if token.startswith(("^", "&", "%")) and index + 1 < len(tokens):
             offset, kind = int(token[1:], 16), {"^": 0, "&": 1, "%": 2}[token[0]]
             if kind == 2 and (not (required or caller or evidence) or not re.fullmatch(
-                    r"[0-9A-F]{8}:[^\s\x00-\x20\x7f]+", tokens[index + 1])):
+                    r"[0-9A-F]{8}(?:[+-](?!00000000:)[0-9A-F]{8})?:[^\s\x00-\x20\x7f]+",
+                    tokens[index + 1])):
                 raise BuildError("invalid source-local data anchor")
             if offset in kinds and kinds[offset] != kind and not load_config:
                 raise BuildError("reference site mixes function and data kinds")

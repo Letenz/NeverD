@@ -865,6 +865,9 @@ bool MedToHighConverter::memoryReadReachesCallTarget(
   if (!ReadBlock)
     return false;
   const MedOp &Read = ReadBlock->Ops[ReadIdx];
+  if (Read.MemoryOrdering != NdMemoryOrdering::None ||
+      Read.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
   const uint64_t StackPointer = getTargetRegInfo(TargetArch).StackPointer;
   // Whether \p Address, used by the op at \p Before, is this function's own
   // stack: the stack pointer through copies, zero extensions and constant

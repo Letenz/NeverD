@@ -688,23 +688,53 @@ TEST(X86SystemExtensions,
   }
 }
 
-TEST(X86SystemState, FarAndInterruptReturnsCannotBecomeAbiReturns) {
+TEST(X86SystemState, FarAndInterruptReturnsLiftToTerminalStateTransfers) {
+  // Far and interrupt returns leave the ordinary call/return domain: they are
+  // terminal architectural control transfers, never ABI returns.  Each lifts
+  // to a void, no-return Retf/Iret intrinsic whose operands name every stack
+  // cell the transfer reads (CS:IP, plus FLAGS and, for 64-bit IRET, SS:RSP).
+  // The lift never emits an ordinary RETURN and never silently drops the
+  // transferred state; it grants no privilege/segment reconstruction.
+  struct Case {
+    std::vector<uint8_t> Bytes;
+    Intrinsic Id;
+    unsigned Cells;
+  };
   for (auto A : {Arch::X86, Arch::X64}) {
     Decoder D;
     ASSERT_TRUE(D.init(A));
-    std::vector<std::vector<uint8_t>> Encodings = {
-        {0xcb}, {0xca, 0x08, 0x00}, {0x66, 0xcb}, {0xcf}, {0x66, 0xcf}};
+    D.setStrict(true);
+    std::vector<Case> Cases = {
+        {{0xcb}, Intrinsic::Retf, 2},         // retf
+        {{0xca, 0x08, 0x00}, Intrinsic::Retf, 2}, // retf imm16
+        {{0x66, 0xcb}, Intrinsic::Retf, 2},   // retfw
+        {{0xcf}, Intrinsic::Iret, 3},         // iretd (ip/cs/flags)
+        {{0x66, 0xcf}, Intrinsic::Iret, 3},   // iretw
+    };
     if (A == Arch::X64) {
-      Encodings.push_back({0x48, 0xcf});
-      Encodings.push_back({0x48, 0xcb});
+      Cases.push_back({{0x48, 0xcf}, Intrinsic::Iret, 5}); // iretq: +ss:rsp
+      Cases.push_back({{0x48, 0xcb}, Intrinsic::Retf, 2}); // retfq
     }
-    for (const auto &Bytes : Encodings) {
+    for (const auto &C : Cases) {
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      SCOPED_TRACE(testing::PrintToString(C.Bytes));
       DecodedInsn I{};
-      ASSERT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I),
-                Bytes.size());
+      ASSERT_EQ(D.decodeOneForLift(C.Bytes.data(), C.Bytes.size(), 0x1000, I),
+                static_cast<int>(C.Bytes.size()));
       std::vector<LowOp> Ops;
-      EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
-      EXPECT_TRUE(Ops.empty());
+      ASSERT_NO_THROW(D.liftToLow(I, Ops));
+      ASSERT_FALSE(Ops.empty());
+      // No far/interrupt return becomes an ordinary ABI RETURN.
+      for (const auto &Op : Ops)
+        EXPECT_NE(Op.Opcode, NdOp::RETURN);
+      // The terminal op is the void state-transfer intrinsic; Inputs[0] is the
+      // intrinsic id and the remaining inputs name each transferred cell.
+      const auto &Term = Ops.back();
+      ASSERT_EQ(Term.Opcode, NdOp::INTRINSIC);
+      EXPECT_EQ(Term.Output.Size, 0);
+      ASSERT_GE(Term.NumInputs, 1u);
+      EXPECT_EQ(Term.Inputs[0].Offset, static_cast<uint64_t>(C.Id));
+      EXPECT_EQ(Term.NumInputs, C.Cells + 1u);
     }
   }
 }

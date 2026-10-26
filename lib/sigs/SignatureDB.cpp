@@ -7,6 +7,7 @@
 #include "neverd/sigs/SignatureDB.h"
 
 #include "DataReference.h"
+#include "LocalDataReference.h"
 #include "X86/X86ImportReference.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -1473,10 +1474,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   llvm::DenseSet<size_t> ContradictedMetadata;
   llvm::DenseMap<uint64_t, std::optional<llvm::StringRef>> VTableTypes;
   std::vector<uint8_t> Unconfirmable;
-  for (size_t I = 0; I < Matches.size(); ++I) {
+  for (size_t I = First; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
-    if (I < First)
-      continue;
     llvm::SmallVector<StoredName, 8> References(ReferencesOf(I).begin(),
                                                 ReferencesOf(I).end());
     if (References.empty())
@@ -1500,15 +1499,42 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
           if (const auto Target =
                   dataReferenceTarget(Img, Start, References[R].Offset,
                                       Modules[MatchModules[I]].TotalLen)) {
-            const auto Bound = Data->find(*Target);
-            if (Bound != Data->end() && (Bound->second.Parent != Start ||
-                                         Bound->second.MultipleParents)) {
-              if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
-                               [&](const StoredName &Ref) {
-                                 return Ref.Name == Bound->second.Name &&
-                                        Ref.IsLocalData ==
-                                            Bound->second.IsLocalData;
-                               })) {
+            bool Known = false;
+            const bool Confirmed = llvm::any_of(
+                llvm::ArrayRef(References).slice(R, End - R),
+                [&](const StoredName &Ref) {
+                  // Validated exact keys need only their existing string
+                  // comparison. Decode coordinates only for signed deltas.
+                  const bool Relative =
+                      Ref.IsLocalData &&
+                      Ref.Name[local_data_syntax::
+                                   LocalDataAnchorOffsetDigits] !=
+                          local_data_syntax::LocalDataAnchorSeparator;
+                  const auto Anchor =
+                      Relative ? localDataAnchor(Ref.Name) : std::nullopt;
+                  const auto Base =
+                      Anchor ? localDataReferenceBase(Img, *Target, *Anchor)
+                             : Target;
+                  if (!Base)
+                    return false;
+                  const auto Bound = Data->find(*Base);
+                  if (Bound == Data->end() || (Bound->second.Parent == Start &&
+                                               !Bound->second.MultipleParents))
+                    return false;
+                  Known = true;
+                  if (Ref.IsLocalData != Bound->second.IsLocalData)
+                    return false;
+                  if (!Anchor)
+                    return Ref.Name == Bound->second.Name;
+                  const auto BoundAnchor = localDataAnchor(Bound->second.Name);
+                  // Query only the frozen exact operand. Relative consumers
+                  // never establish bindings, including for another delta.
+                  return !BoundAnchor->Delta &&
+                         BoundAnchor->Offset == Anchor->Offset &&
+                         BoundAnchor->Name == Anchor->Name;
+                });
+            if (Known) {
+              if (Confirmed) {
                 if (ConfirmedMetadata.empty())
                   ConfirmedMetadata.resize(Matches.size(), 0);
                 ++ConfirmedMetadata[I];
@@ -1621,9 +1647,9 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // contradict it. The set changes only between parallel check rounds.
   llvm::DenseSet<Entry> DisprovedPatterns;
   std::vector<Entry> Calling, At;
-  for (size_t I = 0; I < Matches.size(); ++I) {
-    if (I >= Frozen && I < First)
-      continue;
+  // Only the checked suffix owns outgoing sites. Frozen prefix settlement is
+  // collected below, at the targets that these sites actually read.
+  for (size_t I = First; I < Matches.size(); ++I) {
     if (!Unconfirmable.empty() && Unconfirmable[I])
       continue;
     if (!FrozenMatches)
@@ -1644,7 +1670,7 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       ++End;
     return llvm::make_range(Begin, End);
   };
-  if (FrozenMatches.has_value()) {
+  if (FrozenMatches.has_value() && !Calling.empty()) {
     // Frozen validation only reads settlement at actually referenced targets.
     // Newly appended matches cannot be evidence, and unrelated original
     // matches need no grouping or sorting in every incoming/data pass.
@@ -1661,13 +1687,22 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // The modules whose patterns match where a reference branches, to confirm
   // a reference by the named routine's own pattern: at an entry, the ones
   // that matched there; at any other target, the ones the index finds.
-  std::vector<uint64_t> Tried(Entries.begin(), Entries.end());
-  llvm::sort(Tried);
   std::vector<uint64_t> Untried;
-  for (size_t C = 0; C < Calling.size(); ++C)
-    if ((C == 0 || Calling[C].first != Calling[C - 1].first) &&
-        !std::binary_search(Tried.begin(), Tried.end(), Calling[C].first))
-      Untried.push_back(Calling[C].first);
+  if (!Calling.empty()) {
+    // Metadata-only checks have no code targets. Other frozen checks can
+    // reuse the already sorted entry view without copying it every round.
+    llvm::ArrayRef<uint64_t> Tried = Entries;
+    std::vector<uint64_t> SortedEntries;
+    if (!llvm::is_sorted(Tried)) {
+      SortedEntries.assign(Tried.begin(), Tried.end());
+      llvm::sort(SortedEntries);
+      Tried = SortedEntries;
+    }
+    for (size_t C = 0; C < Calling.size(); ++C)
+      if ((C == 0 || Calling[C].first != Calling[C - 1].first) &&
+          !std::binary_search(Tried.begin(), Tried.end(), Calling[C].first))
+        Untried.push_back(Calling[C].first);
+  }
   if (!Untried.empty())
     for (const Segment &Seg : Img.Segments)
       if (Seg.isExecutable() && !Seg.Data.empty())
@@ -1710,8 +1745,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   // retained entries; absence has the same meaning as an uncached null result.
   llvm::DenseMap<uint64_t, const Import *> ImportStubs;
   std::vector<bool> Dropped(Matches.size(), false);
-  for (size_t I = 0; I < Matches.size(); ++I)
-    Dropped[I] = I >= First && RequiresReferences(I);
+  for (size_t I = First; I < Matches.size(); ++I)
+    Dropped[I] = RequiresReferences(I);
   auto SettleAt = [&](uint64_t Address) {
     llvm::SmallVector<const SigMatch *, 4> Proposals;
     for (const Entry &Match : Range(At, Address))
