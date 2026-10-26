@@ -755,6 +755,17 @@ reject unknown/active transaction contexts before state publication. They
 do not qualify instruction decoding, memory-provider faults, IR preservation,
 native code generation or physical MPX hardware; strict lifting stays closed.
 
+`NeverDX86MpxEncodingTests` checks the shared byte reader and full/for-lift/light
+decode routes: 504 memory combinations, 1,152 register combinations, 9,216
+architectural register NOP cases and 6,912 SIB addresses compared with ordinary
+native-width MOV decoding. It covers ignored long-mode 67H, high GPRs and RIP,
+mode-sized BNDMOV memory, LOCK stores, absent MIB base/index and retained scale,
+prefix cancellation, truncation, instruction length and decoder reuse with text
+or detail disabled. Invalid banks, unsupported address forms and ambiguous
+mandatory prefixes cannot acquire a qualified encoding. Stateful instructions
+still refuse strict lifting without publishing LowIR; these checks do not
+certify memory faults, original-branch effects or physical MPX execution.
+
 `NeverDX86TBMTests` exercises all nine trailing-bit operations through full,
 lightweight and lift decoding, with 32/64-bit values, register aliases,
 register/memory sources, i386 ignored XOP fields and FS/GS/address overrides.

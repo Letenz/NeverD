@@ -331,11 +331,13 @@ private:
   /// binaries accept them.  Returns true after populating InsnBuf.
   bool decodePrefixedX86Fence(const uint8_t *Bytes, size_t Len, va_t Addr);
 
-  /// Decode the unprefixed register forms of 0F 1A /r and 0F 1B /r.  These
-  /// encodings are no-ops, but Capstone rejects them instead of consuming the
-  /// ModR/M byte.  Mandatory-prefix MPX encodings are deliberately excluded.
-  bool decodeUnprefixedX86MpxRegisterNop(const uint8_t *Bytes, size_t Len,
-                                         va_t Addr);
+  /// Decode qualified MPX forms rejected by Capstone, including LOCK BNDMOV
+  /// stores and architectural register NOPs. Never infer MPX enablement.
+  bool decodeX86MpxFallback(const uint8_t *Bytes, size_t Len, va_t Addr);
+
+  /// Normalize MPX address operands from the original encoding, including
+  /// ignored 67H in long mode. Shared by full and lightweight decoding.
+  void fixupX86MpxDetail(cs_insn *I) const;
 
   /// Both full and lightweight decodes use the same x86 metadata profile.
   void fixupX86DecodeMetadata(cs_insn *I) const;

@@ -95,6 +95,7 @@ add_neverd_component_library(NeverDLift
   ARM/ARMLifter.cpp
   ARM/ARMRegs.cpp
   X86/X86FPEncoding.cpp
+  X86/X86MpxEncoding.cpp
   X86/X86LiftAtomic.cpp
   X86/X86LiftControl.cpp
   X86/X86LiftCore.cpp

@@ -281,9 +281,11 @@ whole-program source qualification for this fixture is still incomplete.
 
 MPX memory forms retain their decoded identity in both full and lightweight
 decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.
-Only the unprefixed register forms of `0F 1A/1B` remain architectural NOPs, as
-specified by the SDM's BNDLDX/BNDSTX descriptions. Strict lifting rejects the
-seven unmodeled MPX operations without appending partial effects. Existing
+The register forms of unprefixed `0F 1A/1B` and `F3 0F 1B` are architectural
+NOPs, as specified by the SDM's BNDLDX/BNDSTX/BNDMK descriptions. Their
+qualified segment/address/REX prefixes retain the complete instruction extent.
+Strict lifting rejects the seven unmodeled MPX operations without appending
+partial effects. Existing
 serialized MPX, standalone HLE and generic SHA placeholder IDs remain readable,
 but both LLVM and HighC output fail explicitly instead of silently dropping
 them. Specific SHA and bounded RTM instruction contracts are separate.
@@ -318,8 +320,24 @@ order is implementation-dependent. An invalid BDE instead preserves the bank
 and reports its address in BNDSTATUS. Active or unknown transaction contexts
 are refused before state publication; RTM/HLE checkpoint/abort integration is
 still required. This is not yet connected to strict lifting or native output:
-decoded operand authentication, memory-provider completion and original-branch
+instruction-state integration, memory-provider completion and original-branch
 effects surviving every IR route remain open.
+
+The byte-owned MPX decoder now normalizes long-mode `67H` address operands to
+full-width GPRs and RIP, retaining the prefix separately. Register-only forms
+ignore `67H` in either supported mode. It decodes the SDM's `LOCK BNDMOV`
+memory-store form, keeps BNDMOV's 8-byte i386 versus 16-byte long-mode memory
+footprint, and preserves MIB index/scale/absent-base distinctions. Checks and
+BNDMK still describe address calculations, while table instructions describe
+translation inputs; their displayed memory expression is not a direct access.
+The qualified encoding reader refuses invalid bounds registers, i386 16-bit
+memory addressing, RIP-relative BNDMK/table operations and competing mandatory
+prefixes. Classification of other decoder forms does not imply qualification.
+Its tests cover 504 memory decode combinations, 1,152 register combinations,
+9,216 architectural NOP cases and 6,912 SIB comparisons against independently
+decoded native-width MOV addresses. These are encoding checks, not MPX hardware
+execution or end-to-end lifting qualification. Original-branch effects,
+memory-provider completion and transactional state integration remain open.
 
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and
