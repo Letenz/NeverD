@@ -14098,3 +14098,12 @@ CPTA/CPTA0 combinations remain mandatory; EL0 additionally requires exact
 hardware-origin observations. Nonoverflow model coverage does not qualify
 native Apple CPA2 hardware, overflowing/tagged memory, source stacks or whole
 images.
+
+The 2026-10-26 writeback [evidence](evidence/arm64e-writeback-memory-2026-10-26.json)
+pins the source and environment revisions, build dependency receipt, exact
+input hashes and ten successful EL1/EL0 routes (5,200 exported sample calls).
+The final selected suites have 369 passes and three explicit native-hardware
+skips. Failed diagnostic attempts remain in the local evidence directory,
+including the original native sample-inventory rejection. A post-index base
+may point one-past its storage; the positive native test retains that result,
+while an image missing an accessed byte must fail before emission.
