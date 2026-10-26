@@ -20,6 +20,10 @@
 namespace {
 using namespace neverd;
 
+#define CACHED_CALL_STRING(Name, Value) constexpr const char *Name = Value;
+#define CACHED_CALL_INTEGER(Name, Value) constexpr uint64_t Name = Value;
+#include "MedCachedCallTargetFixtures.def"
+
 MedVar value(int Id, uint16_t Bytes = 8) {
   MedVar V;
   V.Kind = MedVar::Temp;
@@ -43,6 +47,26 @@ MedOp op(NdOp Opcode, MedVar Output, std::initializer_list<MedVar> Inputs) {
   for (const auto &V : Inputs)
     O.addInput(V);
   return O;
+}
+
+template <typename Check>
+unsigned checkCallAt(const HighFunc &F, va_t Site, const Check &Verify) {
+  unsigned Matches = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    forEachRhsExpr(S, [&](const ExprPtr &Root) {
+      const auto Find = [&](auto &&Self, const ExprPtr &E) -> void {
+        if (!E)
+          return;
+        if (E->Kind == ExprKind::Call && E->CallSiteAddr == Site) {
+          ++Matches;
+          Verify(*E);
+        }
+        E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+      };
+      Find(Find, Root);
+    });
+  });
+  return Matches;
 }
 
 MedBlock cached(bool Import = true) {
@@ -215,6 +239,151 @@ TEST(MedCachedCallTarget, HighIRCallsTheCapturedValueAfterTheSlotChanges) {
   });
   EXPECT_TRUE(Found);
 }
+
+TEST(MedCachedCallTarget, HighIRNamesOnlyImportsWhoseReadStillReachesTheCall) {
+  enum class Transport { Direct, Copy, Spill };
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (Transport Via : {Transport::Direct, Transport::Copy, Transport::Spill})
+      for (bool SlotChanges : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(static_cast<int>(Via));
+        SCOPED_TRACE(SlotChanges);
+        const auto &Registers = getTargetRegInfo(Architecture);
+        const auto PointerBytes = Registers.PointerSize;
+        int Next = 0;
+        const auto Temp = [&] {
+          auto V = value(Next++, PointerBytes);
+          V.TheArch = Architecture;
+          V.SSAVer = 1;
+          return V;
+        };
+        auto SP = Temp();
+        SP.Kind = MedVar::Reg;
+        SP.RegOff = Registers.StackPointer;
+        SP.SSAVer = 0;
+        const auto Address = Temp();
+        const auto Observed = Temp();
+        const auto Result = Temp();
+        MedBlock B;
+        B.Id = 0;
+        B.StartAddr = kObservationEntry;
+        B.Ops = {op(NdOp::INT_ADD, Address,
+                    {MedVar::makeConst(kObservationSlotBase, PointerBytes),
+                     MedVar::makeConst(kObservationSlotOffset, PointerBytes)}),
+                 op(NdOp::LOAD, Observed, {Address})};
+        const auto ObservationIndex = B.Ops.size() - 1;
+        if (SlotChanges)
+          B.Ops.push_back(op(NdOp::STORE, {},
+                             {Address, MedVar::makeConst(kReplacementCallable,
+                                                         PointerBytes)}));
+        MedVar Target = Observed;
+        if (Via == Transport::Copy) {
+          Target = Temp();
+          B.Ops.push_back(op(NdOp::COPY, Target, {Observed}));
+        } else if (Via == Transport::Spill) {
+          const auto Frame = Temp();
+          Target = Temp();
+          B.Ops.push_back(op(
+              NdOp::INT_SUB, Frame,
+              {SP, MedVar::makeConst(kObservationSpillOffset, PointerBytes)}));
+          B.Ops.push_back(op(NdOp::STORE, {}, {Frame, Observed}));
+          B.Ops.push_back(op(NdOp::LOAD, Target, {Frame}));
+        }
+        const auto CallIndex = B.Ops.size();
+        const auto CallSite = kObservationEntry + CallIndex;
+        const auto Observation = resolveMedCallTarget(B, CallIndex, Target);
+        ASSERT_TRUE(Observation);
+        EXPECT_TRUE(Observation->ThroughSlot);
+        EXPECT_EQ(Observation->LoadIndex, ObservationIndex);
+        const auto PreSSA = resolvePreSSAMedCallTarget(B, Target, Architecture);
+        ASSERT_TRUE(PreSSA);
+        EXPECT_EQ(PreSSA->LoadIndex, ObservationIndex);
+        B.Ops.push_back(op(NdOp::INDIR_CALL, Result, {Target}));
+        B.Ops.push_back(op(NdOp::RETURN, {}, {Result}));
+        for (size_t I = 0; I < B.Ops.size(); ++I)
+          B.Ops[I].Addr = kObservationEntry + I;
+        MedFunc F;
+        F.Entry = kObservationEntry;
+        F.Name = kObservationFunction;
+        F.FrameSize = kObservationFrameBytes;
+        F.Blocks = {B};
+        const auto Slot = kObservationSlotBase + kObservationSlotOffset;
+        const std::map<va_t, std::string> Names{{Slot, kObservedImport}};
+        MedToHighConverter Converter;
+        Converter.setFuncNames(&Names);
+        const auto High = Converter.convert(F, Architecture);
+        const unsigned Calls =
+            checkCallAt(High, CallSite, [&](const HighExpr &E) {
+              EXPECT_EQ(E.CallAddr, Slot);
+              EXPECT_EQ(E.IsIndirectCall, SlotChanges);
+              if (SlotChanges)
+                EXPECT_TRUE(E.IndirectTarget);
+              else
+                EXPECT_EQ(E.CallTarget, kObservedImport);
+            });
+        EXPECT_EQ(Calls, 1u);
+      }
+}
+
+TEST(MedCachedCallTarget,
+     CrossBlockObservationsKeepTheSignatureAndCapturedValue) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (bool SlotChanges : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(SlotChanges);
+      const auto PointerBytes = getTargetRegInfo(Architecture).PointerSize;
+      auto Observed = value(0, PointerBytes);
+      Observed.TheArch = Architecture;
+      Observed.SSAVer = 1;
+      auto Result = value(1, PointerBytes);
+      Result.TheArch = Architecture;
+      Result.SSAVer = 1;
+      const auto Slot = kObservationSlotBase + kObservationSlotOffset;
+      MedBlock Read;
+      Read.Id = 0;
+      Read.StartAddr = kObservationEntry;
+      Read.Succs = {1};
+      Read.Ops = {
+          op(NdOp::LOAD, Observed, {MedVar::makeConst(Slot, PointerBytes)}),
+          op(NdOp::BRANCH, {},
+             {MedVar::makeConst(kObservationSuccessor, PointerBytes)})};
+      MedBlock Call;
+      Call.Id = 1;
+      Call.StartAddr = kObservationSuccessor;
+      Call.Preds = {0};
+      if (SlotChanges)
+        Call.Ops.push_back(
+            op(NdOp::STORE, {},
+               {MedVar::makeConst(Slot, PointerBytes),
+                MedVar::makeConst(kReplacementCallable, PointerBytes)}));
+      const auto CallSite = Call.StartAddr + Call.Ops.size();
+      Call.Ops.push_back(op(NdOp::INDIR_CALL, Result, {Observed}));
+      Call.Ops.push_back(op(NdOp::RETURN, {}, {Result}));
+      MedFunc F;
+      F.Entry = kObservationEntry;
+      F.Name = kObservationFunction;
+      F.Blocks = {Read, Call};
+      for (auto &B : F.Blocks) {
+        for (size_t I = 0; I < B.Ops.size(); ++I)
+          B.Ops[I].Addr = B.StartAddr + I;
+        B.EndAddr = B.StartAddr + B.Ops.size();
+      }
+      const std::map<va_t, std::string> Names{{Slot, kObservedImport}};
+      MedToHighConverter Converter;
+      Converter.setFuncNames(&Names);
+      const auto High = Converter.convert(F, Architecture);
+      const unsigned Calls =
+          checkCallAt(High, CallSite, [&](const HighExpr &E) {
+            EXPECT_EQ(E.CallAddr, Slot);
+            EXPECT_TRUE(E.IsIndirectCall);
+            ASSERT_TRUE(E.IndirectTarget);
+            ASSERT_EQ(E.IndirectTarget->Kind, ExprKind::Var);
+            EXPECT_EQ(E.IndirectTarget->Var, Observed);
+          });
+      EXPECT_EQ(Calls, 1u);
+    }
+}
+
 TEST(MedCachedCallTarget, MachineSummaryAdapterKeepsTheOriginalCallOperand) {
   for (bool Import : {false, true}) {
     const auto M = cached(Import);

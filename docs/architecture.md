@@ -12376,9 +12376,13 @@ keep their bytes. Device/GPU admission remains in the shared service dispatch.
 `MedCallTarget` observes cached callable values through the Med ABI owner's
 exact address, width and overlap proof. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
-An observed import identifies the captured callable's signature and never
-authorizes a new target load. Call barriers, partial writes, uncertain aliases
-and exhausted work retain the unresolved call.
+An observation retains the original LOAD index, including through private SSA
+versions. HighIR names an imported call only when the same memory-reachability
+proof used for callee-read inlining proves that original observation can reach
+the call unchanged. Copies and private spills share this decision. A predecessor
+observation retains the captured callable's signature without authorizing a new
+slot read. Barriers, partial writes and uncertain aliases stop spill/reload
+proofs; exhausted work publishes no partial observation.
 
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions
