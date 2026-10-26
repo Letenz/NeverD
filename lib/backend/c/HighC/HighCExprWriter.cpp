@@ -2621,8 +2621,18 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                                 Defined && Expected->Kind != NdTypeKind::Array
                                     ? declaredTypedef(Expected)
                                     : std::nullopt);
-          if (((Header && Typedef) || PointerUnion) && Text != "0" &&
-              !llvm::StringRef(Text).starts_with("(void*)"))
+          // A selected source declaration can spell an integer pointee as
+          // long while the machine carrier and local fields use int32_t.
+          // Equal widths do not make those C pointer types compatible. The
+          // admitted portable declaration owns its qualifiers and spelling;
+          // an object pointer converts through void * to that exact type.
+          const bool PortablePointer =
+              !Defined && Expected->Kind == NdTypeKind::Ptr &&
+              (!Expected->Pointee ||
+               Expected->Pointee->Kind != NdTypeKind::Func) &&
+              !c_library::portableScalarDeclaration(*Callee, Name).empty();
+          if (((Header && Typedef) || PointerUnion || PortablePointer) &&
+              Text != "0" && !llvm::StringRef(Text).starts_with("(void*)"))
             Text =
                 "(void*)" +
                 std::string(printsAsInteger(*Op, Text) ? "(uintptr_t)" : "") +
