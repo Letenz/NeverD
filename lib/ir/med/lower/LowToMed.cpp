@@ -786,6 +786,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
           (TheArch != Arch::AArch64 ||
            !lowAArch64AddressMemoryShapeIsValid(Op)))
         throw LowToMedConversionError(kAddressMemoryMalformed);
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          isAArch64WritebackMemoryIntrinsic(
+              static_cast<Intrinsic>(Op.Inputs[0].Offset)) &&
+          (TheArch != Arch::AArch64 ||
+           !lowAArch64WritebackMemoryShapeIsValid(Op)))
+        throw LowToMedConversionError(kWritebackMalformed);
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");

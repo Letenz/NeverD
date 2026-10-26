@@ -14077,3 +14077,24 @@ SDK/CLI report pairs with independently expected guarded bytes, across ordinary
 and RELR callers, four service routes, permission changes, holes and a closed
 dynamic provider. Named input RAM and unmap/replacement regressions verify that
 VMA names and address reuse cannot manufacture anonymous allocation provenance.
+
+`AArch64WritebackMemory.*` in `NeverDArm64eAnalysisTests` covers GPR single
+pre/post-index operations with 130 independent LLVM MC 22.1.6 samples: 13
+load/store classes, both modes and five signed imm9 boundary values. Its
+independent Capstone operand check also sweeps all 13,312 encoding/imm9
+combinations through full and fast lifting. Native HighC, LLVMC and LLVM object
+checks compare the loaded X value, completed base and every buffer byte against
+original-register instructions; C runs at O0/O2. Separate cases exercise image
+contexts, complete image storage, returned runtime bases, malformed contracts,
+tracer commits and decoded ADRP/ADD occurrences. This is not SP, SIMD or pair
+writeback coverage.
+
+Setting `NEVERD_ARM64E_WRITEBACK_ARTIFACT_DIR` exports `high.c`, `llvm.c`,
+`llvm.o` and `harness.c` from the actual execution test, with the dedicated
+`arm64e_writeback_memory_artifact_directory` report property. The controlled Arm
+model's `writeback`/`el0-writeback` profiles require all eight named tests, that
+export and 130 samples in every one of the five output routes. All four
+CPTA/CPTA0 combinations remain mandatory; EL0 additionally requires exact
+hardware-origin observations. Nonoverflow model coverage does not qualify
+native Apple CPA2 hardware, overflowing/tagged memory, source stacks or whole
+images.

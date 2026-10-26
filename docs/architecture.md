@@ -613,11 +613,35 @@ layout also observes original reads through unique local definitions.
 Private-copy source replay recomputes stack-access annotations from the current
 MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
+GPR single pre/post-index accesses use `AArch64WritebackMemory.def` and its
+validated original-word descriptor. Loads return the completed X value below
+the completed base in one 128-bit result; stores return the completed base.
+The lifter publishes the W view before its zero-extended X view, then commits
+the base. The native instruction owns both the access and writeback, preserving
+pre/post ordering and access-EL `AddressAdd` behavior. No ordinary integer ADD
+reconstructs the base. Constrained-unpredictable base/data overlap is refused;
+XZR and SP have distinct encoded roles. Automatic image admission follows the
+same x1-only policy as single immediates; original-SP writeback execution still
+requires an unavailable SP alignment/tagging contract.
+
+Both source routes and LLVM validate the complete contract before source-only
+filtering. A discarded result retains the memory instruction. Exact image-base
+witnesses authenticate the incoming occurrence; only the original instruction's
+completed-base extraction may follow it without invalidating that witness.
+Image materialization includes the incoming base, accessed bytes and outgoing
+base in one complete owner. It does not require a post-index instruction to
+access bytes at its outgoing base. Returned bases are runtime coordinates and
+can feed another retained memory operation without reinterpreting them as image
+VAs. The software tracer commits only complete finite reads/writes for which the
+shared address owner proves control-independent access and writeback bits.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
-rebasing have the bounded qualification above. Pre/post-index, pair and other
-ordinary-memory families, original-SP stack/call projection and Apple native
+rebasing have the bounded qualification above. GPR single pre/post-index
+writeback has separate explicit-IR, automatic-lifting and image regression
+coverage; SIMD pre/post-index, pair and other ordinary-memory families,
+original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
 lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector

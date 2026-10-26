@@ -33,6 +33,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PointerC.h"
+#include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
 #include "neverd/backend/c/render/X86/X87GuardedValueRender.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/SourceABI.h"
@@ -2202,6 +2203,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         (Opts.TheArch != Arch::AArch64 ||
          !aarch64AddressMemoryHighShapeIsValid(E)))
       throw std::invalid_argument(kAddressMemoryMalformed);
+    if (isAArch64WritebackMemoryIntrinsic(E.IntrinsicId) &&
+        (Opts.TheArch != Arch::AArch64 ||
+         !aarch64WritebackMemoryHighShapeIsValid(E)))
+      throw std::invalid_argument(kWritebackMalformed);
     if (isAArch64PAuthLoadIntrinsic(E.IntrinsicId) &&
         (Opts.TheArch != Arch::AArch64 || !aarch64PAuthLoadHighShapeIsValid(E)))
       throw std::invalid_argument(kPAuthLoadMalformed);
@@ -2254,7 +2259,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
-      if (isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+      if ((isAArch64AddressMemoryIntrinsic(E.IntrinsicId) ||
+           isAArch64WritebackMemoryIntrinsic(E.IntrinsicId)) &&
           I == kAddressMemoryBaseOperand)
         if (const auto It = OriginalMemoryBases.find({CurrentFunc, &E});
             It != OriginalMemoryBases.end()) {

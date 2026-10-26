@@ -17,6 +17,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 
 #include <stdexcept>
@@ -58,6 +59,8 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
     throw std::invalid_argument(aarch64_sve::kMalformedVector);
   if (isAArch64AddressMemoryIntrinsic(Id) && TheArch != Arch::AArch64)
     throw std::invalid_argument(kAddressMemoryMalformed);
+  if (isAArch64WritebackMemoryIntrinsic(Id) && TheArch != Arch::AArch64)
+    throw std::invalid_argument(kWritebackMalformed);
   if (isAArch64PAuthLoadIntrinsic(Id) && TheArch != Arch::AArch64)
     throw std::invalid_argument(kPAuthLoadMalformed);
   std::string Result;
