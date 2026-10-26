@@ -39,6 +39,12 @@ class WordOracleTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 self.equivalent(rows[2], expected, width)
 
+    def test_oracle_checks_products_beyond_python_recursion_depth(self):
+        row = bench.residue_quotient_corpus(32, 72)[-1]
+        self.equivalent(row, row)
+        with self.assertRaises(AssertionError):
+            self.equivalent(row, "0")
+
     def test_narrow_arithmetic_and_default_width_promotion(self):
         self.equivalent("(x+1)&255", "zext(extract(x,0,8)+1#8,32)")
         self.equivalent("(x&255)+1", "extract(x,0,8)+1")

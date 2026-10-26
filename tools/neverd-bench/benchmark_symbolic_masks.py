@@ -1068,14 +1068,14 @@ def check_semantics(expressions, results, width):
                             r"word(\1,\2)", expression)
         return ast.parse(expression, mode="eval")
 
-    def typed(node, values):
+    def typed(node, values, evaluated):
         if isinstance(node, ast.Constant) and type(node.value) is int:
             return node.value & mask, width
         if isinstance(node, ast.Name) and node.id in values:
             return values[node.id], width
         if isinstance(node, ast.BinOp) and type(node.op) in binary:
-            left, left_width = typed(node.left, values)
-            right, right_width = typed(node.right, values)
+            left, left_width = evaluated[node.left]
+            right, right_width = evaluated[node.right]
             bits = max(left_width, right_width)
             word_mask = (1 << bits) - 1
             left &= word_mask
@@ -1084,7 +1084,7 @@ def check_semantics(expressions, results, width):
                 return 0, bits
             return binary[type(node.op)](left, right) & word_mask, bits
         if isinstance(node, ast.UnaryOp) and type(node.op) in unary:
-            value, bits = typed(node.operand, values)
+            value, bits = evaluated[node.operand]
             bits = bits or width
             return unary[type(node.op)](value) & ((1 << bits) - 1), bits
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -1098,14 +1098,14 @@ def check_semantics(expressions, results, width):
                     if isinstance(value, ast.Name) and value.id in values:
                         return values[value.id] & ((1 << bits.value) - 1), bits.value
             if name == "extract" and len(node.args) == 3:
-                value, _ = typed(node.args[0], values)
+                value, _ = evaluated[node.args[0]]
                 offset, bits = node.args[1:]
                 if (isinstance(offset, ast.Constant) and type(offset.value) is int
                         and isinstance(bits, ast.Constant) and type(bits.value) is int
                         and offset.value >= 0 and bits.value > 0):
                     return (value >> offset.value) & ((1 << bits.value) - 1), bits.value
             if name in ("zext", "sext", "trunc") and len(node.args) == 2:
-                value, source_bits = typed(node.args[0], values)
+                value, source_bits = evaluated[node.args[0]]
                 target = node.args[1]
                 if (isinstance(target, ast.Constant) and type(target.value) is int
                         and target.value > 0):
@@ -1116,8 +1116,31 @@ def check_semantics(expressions, results, width):
                     return value & ((1 << target.value) - 1), target.value
         raise ValueError(f"Unsupported benchmark expression: {ast.dump(node)}")
 
-    def evaluate(node, values):
-        return typed(node, values)[0] & mask
+    def evaluation_order(node):
+        pending = [(node, False)]
+        order = []
+        while pending:
+            current, visited = pending.pop()
+            if visited:
+                order.append(current)
+                continue
+            pending.append((current, True))
+            if isinstance(current, ast.BinOp):
+                pending.extend(((current.right, False), (current.left, False)))
+            elif isinstance(current, ast.UnaryOp):
+                pending.append((current.operand, False))
+            elif (isinstance(current, ast.Call)
+                  and isinstance(current.func, ast.Name)
+                  and current.func.id in ("extract", "zext", "sext", "trunc")
+                  and current.args):
+                pending.append((current.args[0], False))
+        return order
+
+    def evaluate(order, values):
+        evaluated = {}
+        for node in order:
+            evaluated[node] = typed(node, values, evaluated)
+        return evaluated[order[-1]][0] & mask
 
     rng = random.Random(0x53454D00 + width)
     edges = (0, 1, mask, mask >> 1, 1 << (width - 1), mask // 3)
@@ -1142,8 +1165,8 @@ def check_semantics(expressions, results, width):
     if len(expressions) != len(results):
         raise AssertionError("Engine returned an incomplete corpus")
     for expression, result in zip(expressions, results):
-        before = parse(expression).body
-        after = parse(result["output"]).body
+        before = evaluation_order(parse(expression).body)
+        after = evaluation_order(parse(result["output"]).body)
         for values in assignments:
             if evaluate(before, values) != evaluate(after, values):
                 raise AssertionError((width, expression, result["output"], values))

@@ -1747,14 +1747,16 @@ source matrix also executes degree-16/64 groups with an independent multiplier
 through all six source routes at O0/O2. A degree-512 fixture also executes the
 large-product path through these same CLI and GUI-worker routes.
 
-Products beyond affine expansion's 512-factor admission use bounded low-word
-representatives and multiplicity-weighted sums. Only ring and bitwise operations
-are projected; unsupported words keep their full identity. Tests retain the
-original full-width product oracle, low-bit disturbances, exact/short resources,
+Eligible products beyond affine expansion's 512-factor admission use bounded
+low-word representatives and multiplicity-weighted sums. Only ring and bitwise
+operations are projected; unsupported words keep their full identity. Tests retain
+the original full-width product oracle, low-bit disturbances, exact/short resources,
 and independent Z3 proofs at 8/16/32/64 bits. The proof and work limits are
 unchanged. `--family residue-quotient --count 72` adds 288 degree-512–1025 cases
 with nested high offsets, immediate degree neighbors and low-bit disturbances.
-Keep both the older corpus and `residue-power` as regression controls.
+Keep both the older corpus and `residue-power` as regression controls. The
+independent benchmark oracle evaluates a postorder expression walk so these
+deep products retain semantic checks within Python's default recursion limit.
 
 Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
