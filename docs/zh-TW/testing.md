@@ -2141,3 +2141,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `LLVMAddressModelOverlayTests` 分別檢查 AArch64 修飾符、i386 GOT 與 Mach-O GOTPCREL 修正，涵蓋兩種已知 AArch64 守衛寫法及十二種部分修正組合。測試保留 LLVM 輸入與快取副本、隔離繼承的 Git 設定，並拒絕無法辨識的架構守衛。這些設定檢查不能取代原生重定位執行測試。
 
 `LowScalarConstant.SelfDifference*` 將未知輸入的恢復與一至八位元組的具體位元組模式執行比對，並拒絕不同值、記憶體運算元及錯誤形狀。`ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` 涵蓋 ELF、COFF、Mach-O 下的 x86、x64、AArch64。worker 在 O0/O2 下透過 HighC 與 LLVMC 執行恢復的分支及自減得到的 System V 向量計數。
+
+`X86CarryArithmeticFlags.SelfSubtract*` 和 `APXSelfSubtract*` 檢查結果位元、算術旗標及未修改的暫存器狀態。worker 純量分支測試將原生執行與 O0/O2 下的 HighC/LLVMC 比較，包含依賴自減和自身比較旗標的分支。

@@ -2195,3 +2195,5 @@ worker の回帰には、18 個のレジスター／スタック混合引数、�
 `LLVMAddressModelOverlayTests` は AArch64 修飾子、i386 GOT、Mach-O GOTPCREL の修正を個別に検査します。既知の二種類の AArch64 ガードと十二通りの部分修正を網羅し、LLVM 入力とキャッシュ済みコピーを保持し、継承した Git 設定を隔離して未知のアーキテクチャガードを拒否します。構成検査はネイティブ再配置の実行テストを代替しません。
 
 `LowScalarConstant.SelfDifference*` は未知入力の復元を1〜8バイトの具体的なビットパターン実行と比較し、異なる値、メモリオペランド、不正な形を拒否します。`ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` は ELF、COFF、Mach-O の x86、x64、AArch64 を対象とします。worker は復元した分岐と自己減算による System V ベクトル数を HighC と LLVMC の O0/O2 で実行します。
+
+`X86CarryArithmeticFlags.SelfSubtract*` と `APXSelfSubtract*` は結果、算術フラグ、保持されるレジスター状態を確認します。worker のスカラー分岐テストは自己減算・自己比較のフラグによる分岐を含め、ネイティブ実行と O0/O2 の HighC/LLVMC を比較します。

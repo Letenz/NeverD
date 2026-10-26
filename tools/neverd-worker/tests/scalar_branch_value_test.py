@@ -17,13 +17,16 @@ ASSEMBLY = """
 .type dispatch_probe,@function
 dispatch_probe:
 .Lorigin:
-lea rax,[rip+BASE]
 COMPUTE
+lea rax,[rip+BASE]
 add rax,rcx
 jmp rax
 .byte 0xe9
 .Ldone:
 mov eax,0x42
+ret
+.Lbad:
+mov eax,7
 ret
 .Lbase:
 .size dispatch_probe,.-dispatch_probe
@@ -38,6 +41,8 @@ CASES = (
     ("neg", ".byte 0xb9\n.long -(.Ldone-.Lorigin)\nneg ecx", 20),
     ("sext", ".byte 0xb9\n.long .Ldone-.Lbase\nmovsxd rcx,ecx", 21),
     ("self-sub", "sub ecx,ecx\n.byte 0x81,0xc1\n.long .Ldone-.Lorigin", 21),
+    ("self-sub-flags", "sub rcx,rcx\njc .Lbad\n.byte 0xb9\n.long .Ldone-.Lorigin", 23),
+    ("self-cmp-flags", "cmp rcx,rcx\njnz .Lbad\n.byte 0xb9\n.long .Ldone-.Lorigin", 23),
 )
 
 

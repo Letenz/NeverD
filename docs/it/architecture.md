@@ -2009,3 +2009,5 @@ I tipi di chiamata Windows ARM64 riutilizzano `placeAAPCS64` tramite `SourceCall
 `LowScalarConstant` condivide i fatti per byte dei target in registro e del conteggio AL variadico System V: aritmetica a larghezza fissa, durata dei temporanei, invalidazione opaca e budget. Occorrenze ambigue o budget esauriti non pubblicano costanti. La prova delle scritture sullo stack elimina anche indirizzi temporanei fra istruzioni e scritture precedenti a effetti opachi.
 
 `LowScalarConstant` riconosce anche la sottrazione intera a larghezza fissa di un registro o temporaneo locale all’istruzione da se stesso. Il recupero dei salti e i controlli ABI delle chiamate condividono questa identità a tempo costante: anche un ingresso sconosciuto può quindi produrre uno zero dimostrato. Occorrenze diverse, operandi in memoria e larghezze errate restano non dimostrati.
+
+Il lifter x86 tratta SUB/CMP interi con registri identici come `0 - 0` prima di salvare gli operandi dei flag. Elimina false dipendenze dai registri in ingresso mantenendo scritture parziali, registri di CMP, sorgenti APX NDD e conservazione dei flag con NF.

@@ -12358,3 +12358,5 @@ for the same input. File rewriting retains the original file-backed load.
 See [analysis sections](analysis-sections.md).
 
 `LowScalarConstant` also recognizes fixed-width integer self-subtraction of the same register or instruction-local temporary. Branch recovery and call-site ABI checks share this constant-time identity, so an unknown incoming value can still establish a zero result. Different occurrences, memory operands and malformed widths remain unproved.
+
+The x86 lifter treats integer SUB/CMP with identical register operands as `0 - 0` before taking flag snapshots. This removes false incoming-register dependencies while retaining partial-register writes, CMP preservation, APX NDD sources and NF flag preservation.

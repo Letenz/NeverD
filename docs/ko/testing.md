@@ -2185,3 +2185,5 @@ worker 회귀에는 레지스터와 스택에 나뉜 인자 18개, 부동소수�
 `LLVMAddressModelOverlayTests`는 AArch64 지정자, i386 GOT, Mach-O GOTPCREL 수정을 각각 검사합니다. 알려진 두 AArch64 가드 형식과 열두 가지 부분 수정 조합을 다루며 LLVM 입력과 캐시 복사본을 보존하고, 상속된 Git 설정을 격리하며, 알 수 없는 아키텍처 가드를 거부합니다. 구성 검사는 네이티브 재배치 실행 테스트를 대신하지 않습니다.
 
 `LowScalarConstant.SelfDifference*`는 알 수 없는 입력의 복구를 1~8바이트의 구체적인 바이트 패턴 실행과 비교하고 서로 다른 값, 메모리 피연산자 및 잘못된 형태를 거부합니다. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary`는 ELF, COFF, Mach-O의 x86, x64, AArch64를 다룹니다. worker는 복구한 분기와 자기 뺄셈으로 얻은 System V 벡터 수를 HighC와 LLVMC의 O0/O2에서 실행합니다.
+
+`X86CarryArithmeticFlags.SelfSubtract*`와 `APXSelfSubtract*`는 결과 비트, 산술 플래그와 보존된 레지스터 상태를 확인합니다. worker 스칼라 분기 테스트는 자기 뺄셈 및 비교 플래그 분기를 포함하여 네이티브 실행과 O0/O2 HighC/LLVMC를 비교합니다.

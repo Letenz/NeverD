@@ -2013,3 +2013,5 @@ Windows-ARM64-Aufruftypen verwenden `placeAAPCS64` über `SourceCallABI`: feste 
 `LowScalarConstant` teilt Bytefakten für Registerziele und den variadischen System-V-AL-Zähler: Festbreitenarithmetik, Lebensdauer temporärer Werte, opake Effekte und Arbeitsbudget. Mehrdeutige Aufrufstellen oder erschöpfte Budgets liefern keine Konstante. Der Stapelschreibnachweis verwirft temporäre Adressen an Instruktionsgrenzen und frühere Schreibvorgänge nach opaken Effekten.
 
 `LowScalarConstant` erkennt auch die Ganzzahlsubtraktion eines Registers oder befehlslokalen Temporärwerts von sich selbst bei fester Breite. Sprungrekonstruktion und ABI-Prüfungen an Aufrufstellen teilen diese Identität mit konstanter Laufzeit; auch ein unbekannter Eingangswert liefert damit eine bewiesene Null. Verschiedene Vorkommen, Speicheroperanden und fehlerhafte Breiten bleiben unbewiesen.
+
+Der x86-Lifter behandelt ganzzahlige SUB/CMP mit identischen Registern vor dem Sichern der Flag-Operanden als `0 - 0`. Dies entfernt falsche Abhängigkeiten von Eingangsregistern und erhält Teilregisterschreibzugriffe, die Register bei CMP, APX-NDD-Quellen und die Flag-Erhaltung durch NF.
