@@ -138,7 +138,12 @@ and last-opened time. Long names retain both ends; hovering shows the full path
 and time. Delete or its context menu forgets it. A file dragged over the dialog
 shows that a drop opens it. **Display at startup** decides whether the next
 start shows it again; **File → Quick start** shows it any time, over the
-workbench. The workbench opens with the default desktop:
+workbench. Application settings restore the main window's position, size and
+maximized state once at startup. Automatic desktop and project restoration
+arranges the panes within that window; it does not move, resize, show or
+unmaximize it. Detached panes keep their saved positions. **Windows → Load
+desktop** explicitly restores the saved window geometry as well.
+The workbench opens with the default desktop:
 
 - the title bar the window draws itself, as Visual Studio Code does: the
   application icon, the menus, a command center that names the open file and
@@ -627,7 +632,8 @@ programs, and `neverd-gui neverd://…` (or `--link URL`) sends the link to the
 workbench that has its program, matching the SHA-256 when supplied, otherwise
 the input's name, or the only workbench with a program open when neither is
 supplied. A mismatched hash does not fall back to a matching name. The selected
-workbench comes to the front.
+workbench comes to the front, leaving minimization if necessary while keeping
+its size and maximized/full-screen state.
 When none has it, a recently opened file the link names opens in a new
 workbench at the link, `neverd-gui FILE LINK` names the file, and
 `--no-launch` only sends. `neverd-gui --register-link-handler` makes a

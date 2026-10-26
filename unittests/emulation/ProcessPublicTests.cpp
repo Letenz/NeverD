@@ -5023,9 +5023,26 @@ TEST_F(ProcessPublic, AndroidGPUCommandsMatchSDKAndCLI) {
   (*Device->getArray("read_only_mappings"))[0].getAsObject()->operator[](
       "bytes_hex") = std::string(8192, '0');
   (*Device->getObject("kgsl_contexts"))["memory_objects"] = true;
-  for (const char *Entry :
-       {"devices_gpu_commands", "devices_gpu_objects", "devices_gpu_legacy"}) {
+  for (const char *Entry : {"devices_gpu_commands", "devices_gpu_objects",
+                            "devices_gpu_legacy", "devices_gpu_stream"}) {
     (*Request.getAsObject()->getObject("android"))["entry_symbol"] = Entry;
+    if (llvm::StringRef(Entry) == "devices_gpu_stream") {
+      (*Request.getAsObject())["instruction_limit"] = 2000000;
+      (*Request.getAsObject())["linux_time"] = llvm::json::Object{
+          {"advance_on_idle", true},
+          {"clocks",
+           llvm::json::Array{llvm::json::Object{
+               {"id", 1}, {"seconds", 20}, {"nanoseconds", 999500000}}}}};
+      (*Request.getAsObject()->getObject(
+          "linux_files"))["ioctl_trace"] = llvm::json::Object{
+          {"event_limit", 4},
+          {"byte_limit", 96},
+          {"include_unlisted", false},
+          {"requests", llvm::json::Array{llvm::json::Object{
+                           {"request", 3222014230LL},
+                           {"memory", llvm::json::Array{llvm::json::Object{
+                                          {"offset", 0}, {"size", 12}}}}}}}};
+    }
     for (unsigned Route = 0; Route != 4; ++Route) {
       SCOPED_TRACE(Route);
       (*Request.getAsObject()->getObject("android"))["arguments"] =
@@ -5038,6 +5055,12 @@ TEST_F(ProcessPublic, AndroidGPUCommandsMatchSDKAndCLI) {
       ASSERT_EQ(Report.getAsObject()->getString(field::Stop), "returned")
           << Text;
       EXPECT_EQ(Report.getAsObject()->getString(field::ReturnValue), "0");
+      if (llvm::StringRef(Entry) == "devices_gpu_stream") {
+        EXPECT_EQ(Report.getAsObject()->getBoolean("ioctl_trace_truncated"),
+                  false);
+        ASSERT_TRUE(Report.getAsObject()->getArray("ioctl_trace"));
+        EXPECT_EQ(Report.getAsObject()->getArray("ioctl_trace")->size(), 4u);
+      }
       EXPECT_EQ(runCLIRequest(Path, AndroidNativeAArch64, Options, Output),
                 process_cli::Success);
       ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Report));

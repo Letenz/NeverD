@@ -2308,8 +2308,8 @@ Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparamet
 
 `SourceCallABI` und `CallRegisterConstant` prüfen abgelaufene temporäre Werte, opake Effekte, Bytebereiche, mehrdeutige Aufrufstellen und genaue Budgetgrenzen. Der Worker führt außerdem beide C-Ausgaben eines Aufrufers aus, der den variadischen Vektorzähler durch Subtraktion berechnet.
 
-`LLVMAddressModelOverlayTests` prüft die Korrekturen für AArch64-Spezifizierer, i386-GOT und Mach-O-GOTPCREL getrennt. Es deckt beide bekannten AArch64-Schutzbedingungen und alle zwölf Kombinationen teilweiser Korrekturen ab, erhält LLVM-Eingabe und Cache-Kopie, isoliert geerbte Git-Einstellungen und weist unbekannte Architekturbedingungen zurück. Diese Konfigurationsprüfungen ersetzen keine nativen Relokationstests.
-
 `LowScalarConstant.SelfDifference*` vergleicht die Rekonstruktion unbekannter Eingaben mit konkreten Bytemustern für Breiten von einem bis acht Byte und verwirft verschiedene Vorkommen, Speicheroperanden und fehlerhafte Formen. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` deckt x86, x64 und AArch64 unter ELF, COFF und Mach-O ab. Worker-Tests führen den rekonstruierten Sprung und den durch Selbstsubtraktion ermittelten System-V-Vektorzähler mit HighC und LLVMC bei O0/O2 aus.
 
 `X86CarryArithmeticFlags.SelfSubtract*` und `APXSelfSubtract*` prüfen Ergebnisbits, arithmetische Flags und erhaltene Register. Die skalaren Worker-Verzweigungstests vergleichen native Ausführung mit HighC/LLVMC unter O0/O2, einschließlich Verzweigungen nach SUB/CMP desselben Registers.
+
+`BinaryRewriteRelocationTest` im NeverSight-LLVM-Fork prüft die endgültigen Bytes für x64 PLT, i386 GOT, Mach-O GOTPCREL und AArch64 PAGE/PAGEOFF. Integrierte NeverD-Builds kompilieren die erfasste Fork-Revision direkt. Diese MC-Prüfungen qualifizieren keine native Ausnahmeausführung.

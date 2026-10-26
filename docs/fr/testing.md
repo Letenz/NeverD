@@ -2307,8 +2307,8 @@ Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile,
 
 `SourceCallABI` et `CallRegisterConstant` vérifient temporaires expirés, effets opaques, plages d’octets, occurrences ambiguës et limites exactes du budget. Le worker exécute aussi les deux sorties C d’un appelant calculant son compteur variadique par soustraction.
 
-`LLVMAddressModelOverlayTests` vérifie séparément les corrections des spécificateurs AArch64, du GOT i386 et de GOTPCREL Mach-O. Il couvre les deux formes connues de garde AArch64 et les douze combinaisons de corrections partielles, préserve la source LLVM et la copie en cache, isole les réglages Git hérités et rejette une garde inconnue. Ces contrôles de configuration ne remplacent pas les tests natifs de relocalisation.
-
 `LowScalarConstant.SelfDifference*` compare cette récupération à une exécution concrète de motifs d’octets pour les largeurs de un à huit octets, avec refus des occurrences distinctes, de la mémoire et des formes invalides. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` couvre x86, x64 et AArch64 sous ELF, COFF et Mach-O. Les tests worker exécutent la branche récupérée et le compteur vectoriel System V obtenu par auto-soustraction via HighC et LLVMC à O0/O2.
 
 `X86CarryArithmeticFlags.SelfSubtract*` et `APXSelfSubtract*` vérifient le résultat, les indicateurs arithmétiques et les registres préservés. Les tests de branches scalaires du worker comparent l’exécution native à HighC/LLVMC en O0/O2, y compris les branches issues de SUB/CMP sur un même registre.
+
+`BinaryRewriteRelocationTest`, dans le fork LLVM NeverSight, vérifie les octets finaux de x64 PLT, GOT i386, GOTPCREL Mach-O et PAGE/PAGEOFF AArch64. La compilation intégrée de NeverD compile directement le fork enregistré. Ces contrôles MC ne valident pas l’exécution native des exceptions.

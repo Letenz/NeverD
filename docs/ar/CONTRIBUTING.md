@@ -1,6 +1,6 @@
 **اللغات**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](CONTRIBUTING.md)
 
-<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
 
 # المساهمة في NeverD
 
@@ -176,6 +176,11 @@ python scripts/build.py build-release --parallel
 LLVM المحلي الافتراضي. توثّق الخيارات المتقدمة مثل
 `NEVERD_LLVM_PREBUILT_TAG`، وعنوان المرآة، ودليل الذاكرة المؤقتة، والمجموع
 الصريح في `cmake/NeverDLLVMPrebuilt.cmake`.
+
+تُنشر إصلاحات LLVM في [فرع LLVM الخاص بـ NeverSight](https://github.com/NeverSight/llvm-project).
+سجل الإصلاحات وادمجها هناك، ثم حدّث مراجعة الوحدة الفرعية LLVM في NeverD.
+يترجم البناء المتكامل هذا المصدر مباشرة؛ لا تضف ملفات رقع LLVM أو نسخ مصدر معدلة في دليل بناء NeverD.
+يجب إعادة بناء الحزم المسبقة من الفرع المصحح للتحقق من السلوك نفسه.
 
 <!-- i18n-section: workflow -->
 ## سير الفروع وطلبات السحب

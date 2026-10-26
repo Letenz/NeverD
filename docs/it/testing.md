@@ -2288,8 +2288,8 @@ La regressione worker copre anche diciotto parametri misti registro/stack, un ri
 
 `SourceCallABI` e `CallRegisterConstant` verificano temporanei scaduti, effetti opachi, intervalli di byte, occorrenze ambigue e limiti esatti del budget. Il worker esegue anche entrambe le uscite C di un chiamante che calcola il conteggio variadico per sottrazione.
 
-`LLVMAddressModelOverlayTests` verifica separatamente le correzioni degli specificatori AArch64, del GOT i386 e di GOTPCREL Mach-O. Copre entrambe le forme note della guardia AArch64 e tutte le dodici combinazioni di correzioni parziali, conserva l’input LLVM e la copia in cache, isola le impostazioni Git ereditate e rifiuta guardie sconosciute. Questi controlli di configurazione non sostituiscono i test nativi di rilocazione.
-
 `LowScalarConstant.SelfDifference*` confronta il recupero degli ingressi sconosciuti con l’esecuzione concreta di schemi di byte da uno a otto byte e rifiuta occorrenze diverse, memoria e forme errate. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` copre x86, x64 e AArch64 su ELF, COFF e Mach-O. I test worker eseguono il salto recuperato e il conteggio vettoriale System V ottenuto per autosottrazione tramite HighC e LLVMC a O0/O2.
 
 `X86CarryArithmeticFlags.SelfSubtract*` e `APXSelfSubtract*` verificano risultato, flag aritmetici e registri preservati. I test delle diramazioni scalari del worker confrontano l’esecuzione nativa con HighC/LLVMC a O0/O2, incluse le diramazioni dopo SUB/CMP dello stesso registro.
+
+`BinaryRewriteRelocationTest` nel fork LLVM NeverSight verifica i byte finali di PLT x64, GOT i386, GOTPCREL Mach-O e PAGE/PAGEOFF AArch64. La compilazione integrata di NeverD compila direttamente il fork registrato. Questi controlli MC non qualificano l’esecuzione nativa delle eccezioni.

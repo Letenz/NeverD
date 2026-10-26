@@ -121,6 +121,7 @@
 #include <QWindow>
 #include <cmath>
 #include <functional>
+#include <kddockwidgets/LayoutSaver.h>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/TabBar.h>
 #include <kddockwidgets/qtwidgets/views/TitleBar.h>
@@ -7863,6 +7864,87 @@ private slots:
     QVERIFY(bench.session.filePath().isEmpty());
   }
 
+  void automaticLayoutsPreserveMainWindow_data() {
+    QTest::addColumn<bool>("maximized");
+    QTest::addColumn<bool>("startupDesktop");
+    QTest::newRow("normal-startup") << false << true;
+    QTest::newRow("maximized-startup") << true << true;
+    QTest::newRow("normal-project") << false << false;
+    QTest::newRow("maximized-project") << true << false;
+  }
+
+  void automaticLayoutsPreserveMainWindow() {
+    QFETCH(bool, maximized);
+    QFETCH(bool, startupDesktop);
+    Theme::instance().apply();
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, "startup-layout.bin");
+    const auto desktop = directory.filePath("desktop.json");
+    {
+      Workbench previous;
+      previous.window->setLayoutPath(desktop);
+      previous.window->setGeometry(QRect(80, 90, 1200, 760));
+      // Model a desktop saved while maximized, including its restore frame.
+      auto layout = QJsonDocument::fromJson(
+                        KDDockWidgets::LayoutSaver().serializeLayout())
+                        .object();
+      auto windows = layout.value("mainWindows").toArray();
+      auto window = windows[0].toObject();
+      window.insert("windowState", int(Qt::WindowMaximized));
+      window.insert("isVisible", true);
+      windows[0] = window;
+      layout.insert("mainWindows", windows);
+      QFile file(desktop);
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QJsonDocument(layout).toJson());
+      QCOMPARE(ProjectDatabase::writeProjectFile(
+                   path, ProjectDatabase::WorkbenchSuffix,
+                   QJsonDocument(QJsonObject{{"desktop", layout}})),
+               QString());
+    }
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    if (startupDesktop)
+      bench.window->setLayoutPath(desktop);
+    bench.window->setGeometry(QRect(140, 150, 1300, 780));
+    if (maximized)
+      bench.window->setWindowState(Qt::WindowMaximized);
+    const auto geometry = bench.window->geometry();
+    const auto state = bench.window->windowState();
+    bench.window->initializeLayout();
+    // The desktop must not expose an unfinished window or override the
+    // geometry already selected by the application's startup settings.
+    QVERIFY(!bench.window->isVisible());
+    QCOMPARE(bench.window->geometry(), geometry);
+    QCOMPARE(bench.window->windowState(), state);
+    bench.window->showWorkbench();
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    QTRY_COMPARE(bench.window->windowHandle()->windowState(),
+                 maximized ? Qt::WindowMaximized : Qt::WindowNoState);
+    const auto shownGeometry = bench.window->geometry();
+    int visibleMoves = 0;
+    struct Observer : QObject {
+      std::function<void(QEvent *)> Observe;
+      bool eventFilter(QObject *, QEvent *event) override {
+        Observe(event);
+        return false;
+      }
+    } observer;
+    observer.Observe = [&](QEvent *event) {
+      if (event->type() == QEvent::Move || event->type() == QEvent::Resize ||
+          event->type() == QEvent::WindowStateChange)
+        ++visibleMoves;
+    };
+    bench.window->installEventFilter(&observer);
+    LoadDialogAcceptor loads;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY(ListingViewTestAccess::settled(
+        *bench.window->disassembly()->listing()));
+    QCOMPARE(bench.window->geometry(), shownGeometry);
+    QCOMPARE(bench.window->windowState(), state);
+    QCOMPARE(visibleMoves, 0);
+  }
+
   void startupQuickStartDoesNotWaitForExposureOrWorker_data() {
     QTest::addColumn<bool>("go");
     QTest::newRow("close") << false;
@@ -10089,6 +10171,55 @@ private slots:
     open(QStringLiteral("neverd:///bookmarks?rva=0x40"));
     QTRY_VERIFY(error.startsWith(QStringLiteral("No bookmark is at")));
     QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
+  }
+
+  void externalLinksPreserveWindowState_data() {
+    QTest::addColumn<bool>("maximized");
+    QTest::addColumn<bool>("minimized");
+    QTest::newRow("normal") << false << false;
+    QTest::newRow("maximized") << true << false;
+    QTest::newRow("normal-minimized") << false << true;
+    QTest::newRow("maximized-minimized") << true << true;
+  }
+
+  void externalLinksPreserveWindowState() {
+    QFETCH(bool, maximized);
+    QFETCH(bool, minimized);
+    Theme::instance().apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    if (maximized)
+      bench.window->showMaximized();
+    bench.window->openFile(writeFixture(directory, "window-link.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    const auto state = maximized ? Qt::WindowMaximized : Qt::WindowNoState;
+    QTRY_COMPARE(bench.window->windowHandle()->windowState(), state);
+    const auto geometry = bench.window->geometry();
+    if (minimized) {
+      bench.window->showMinimized();
+      QTRY_VERIFY(bench.window->isMinimized());
+    }
+
+    QLocalSocket socket;
+    socket.connectToServer(bench.window->instanceServer().serverName());
+    QVERIFY(socket.waitForConnected(1000));
+    socket.write("{\"cmd\":\"open_link\",\"uri\":\"neverd:///"
+                 "window-link.bin/addresses?rva=0x52\"}\n");
+    QByteArray reply;
+    QTRY_VERIFY_WITH_TIMEOUT((reply += socket.readAll()).contains('\n'),
+                             OpenTimeoutMs);
+    const auto result =
+        QJsonDocument::fromJson(reply.left(reply.indexOf('\n'))).object();
+    QCOMPARE(result.value("status").toString(), QStringLiteral("ok"));
+    QTRY_VERIFY(!bench.window->isMinimized());
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    QCOMPARE(bench.window->isMaximized(), maximized);
+    QTRY_COMPARE(bench.window->windowHandle()->windowState(), state);
+    QCOMPARE(bench.window->geometry(), geometry);
+    QTRY_COMPARE(bench.window->disassembly()->currentItem(),
+                 std::optional<Address>(Base + 0x52));
   }
 
   void otherProgramsFindTheWorkbenchAndOpenLinksInIt() {

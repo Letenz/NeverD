@@ -369,7 +369,8 @@ public:
           }
         });
     std::erase_if(Order, [&](size_t I) {
-      return Modules[I].RequireCaller || Modules[I].IsVTable;
+      return Modules[I].RequireCaller || Modules[I].IsVTable ||
+             Modules[I].IsLoadConfig;
     });
     Spare.resize(Order.size());
     CandidateOrder.resize(Order.size());
@@ -739,6 +740,7 @@ void SignatureMatcher::HashIndex::build(
   CandidateStorage = std::move(Storage);
   CallerStorage.reset();
   VTableStorage.reset();
+  LoadConfigStorage.reset();
   DataContext = false;
   DataAnchorStorage.reset();
 }
@@ -749,6 +751,7 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
   CandidateStorage = std::move(Storage);
   CallerStorage.reset();
   VTableStorage.reset();
+  LoadConfigStorage.reset();
   DataAnchorStorage.reset();
   std::shared_ptr<std::vector<size_t>> Tables;
   for (size_t I = 0; I < Modules.size(); ++I)
@@ -758,6 +761,14 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
       Tables->push_back(I);
     }
   VTableStorage = std::move(Tables);
+  std::shared_ptr<std::vector<size_t>> Configs;
+  for (size_t I = 0; I < Modules.size(); ++I)
+    if (Modules[I].IsLoadConfig) {
+      if (!Configs)
+        Configs = std::make_shared<std::vector<size_t>>();
+      Configs->push_back(I);
+    }
+  LoadConfigStorage = std::move(Configs);
   DataContext = llvm::any_of(Modules, [](const StoredModule &Mod) {
     return Mod.RequireReferences &&
            llvm::any_of(Mod.references(),

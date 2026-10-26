@@ -691,9 +691,25 @@ add_neverd_unittest(NeverDX86BEXTRTests
   x86/X86BEXTRTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
+add_neverd_unittest(NeverDX86BMI2Tests
+  x86/X86BMI2Tests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BMILogicTests
+  x86/X86BMILogicTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BitCountTests
+  x86/X86BitCountTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
 add_neverd_unittest(NeverDX86MpxContextTests
   x86/X86MpxContextTests.cpp
   LINK_COMPONENTS IRLowValidation)
+
+add_neverd_unittest(NeverDX86MpxEncodingTests
+  x86/X86MpxEncodingTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86LegacyAdmissionTests
   x86/X86LegacyAdmissionTests.cpp
@@ -4566,6 +4582,24 @@ if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
         "${CMAKE_CURRENT_SOURCE_DIR}/x86/tbm_pipeline_test.py"
         "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
     set_tests_properties(NeverDX86TBMPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BMI2Pipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bmi2_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BMI2Pipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BMILogicPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bmi_logic_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BMILogicPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BitCountPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bitcount_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BitCountPipeline PROPERTIES
       TIMEOUT 600 LABELS "unit;x86;source;cli")
     add_test(NAME NeverDX86BEXTRPipeline
       COMMAND "${Python3_EXECUTABLE}"
