@@ -6163,6 +6163,14 @@ check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
 cache and generator tests preserve the caller constraint. The SDK profile
 fixture loads `.npat` explicitly and through automatic selection.
 
+`SignatureVTableContext.*` covers complete primary tables, weak alternatives,
+source conflicts, sibling contradictions, requested entries, immutable ownership,
+malformed RTTI and empty frozen call cycles. `VTableEvidence.*` retains supported
+weak search policies and incomplete source counterclaims. Parser/cache cases
+reject malformed table records and preserve the kind through reversed cache
+pieces. `scripts.tests.test_vtable_context` checks unpruned evidence, missing
+inputs, exact deduplication and isolation from function folding/refinement.
+
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
 Android/glibc/musl and unknown System V ELF, conflicting ABI notes, bounded
