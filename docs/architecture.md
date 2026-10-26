@@ -12308,3 +12308,11 @@ VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
 this authority. Discard replaces each target page through AddressSpace while
 retaining permissions and VMA policy; old physical aliases and pinned views
 keep their bytes. Device/GPU admission remains in the shared service dispatch.
+
+Analysis-image additions are owned by Session's C ABI in `NeverDCAPISections.cpp`.
+It validates and atomically extends existing BinaryImage segments, sections and
+function roots, then retires derived caches. Worker and CLI own writer leases
+and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
+Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
+for the same input. File rewriting retains the original file-backed load.
+See [analysis sections](analysis-sections.md).

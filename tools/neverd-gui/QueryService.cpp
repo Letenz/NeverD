@@ -38,6 +38,7 @@ bool readable(const QString &operation) {
                                         "patch_source_preview",
                                         "source_patch_context",
                                         "metadata",
+                                        "analysis_sections",
                                         "analysis_snapshot",
                                         "code_edit_prepare",
                                         "history",
@@ -89,6 +90,8 @@ bool command(const QString &operation) {
                                         "map_load",
                                         "annotation_set",
                                         "rename",
+                                        "analysis_section_add",
+                                        "analysis_section_remove",
                                         "code_edit",
                                         "function_create",
                                         "function_delete",
@@ -664,6 +667,12 @@ struct QueryService::State {
 
     // This is an executor fact, including a view error after successful
     // analysis. Administrative and uncorrelated replies cannot establish it.
+    if (job->kind == Command && status == "ok" &&
+        (job->spec.operation == "analysis_section_add" ||
+         job->spec.operation == "analysis_section_remove" ||
+         (job->spec.operation == "reload" &&
+          response.value("analysis_state") == "not_analyzed")))
+      analysisComplete = false;
     if (!admissionFailure && status != "cancelled" && !project.isEmpty() &&
         response.value("analysis_state") == "complete" && !analysisComplete) {
       analysisComplete = true;

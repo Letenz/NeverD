@@ -99,6 +99,42 @@ class QueryServiceTests final : public QObject {
   }
 
 private slots:
+  void sectionEditsInvalidateCachedCodeAndAnalysis() {
+    Harness h;
+    establish(h);
+    h.service.subscribe(text(), &h.owner, {});
+    QTRY_COMPARE(h.sent.size(), 1);
+    h.reply(0, {{"text", "original"}}, "1", "project-one", "ok", {},
+            "complete");
+    QTRY_VERIFY(!h.service.hasPending());
+    QVERIFY(h.service.analysisComplete());
+    const auto epoch = h.service.sessionEpoch();
+    for (const QString operation : {QString("analysis_section_add"),
+                                    QString("analysis_section_remove")}) {
+      const int index = h.sent.size();
+      QVERIFY(h.service.enqueueCommand(operation, {}, &h.owner, {}));
+      QTRY_COMPARE(h.sent.size(), index + 1);
+      h.reply(index, {}, QString::number(index + 2), "project-one", "ok", {},
+              "not_analyzed");
+      QTRY_VERIFY(!h.service.hasPending());
+      QVERIFY(!h.service.analysisComplete());
+      QCOMPARE(h.service.sessionEpoch(), epoch);
+      h.service.subscribe(text(), &h.owner, {});
+      QTRY_COMPARE(h.sent.size(), index + 2);
+      h.reply(index + 1, {{"text", "changed"}}, QString::number(index + 2),
+              "project-one", "ok", {}, "complete");
+      QTRY_VERIFY(!h.service.hasPending());
+      QVERIFY(h.service.analysisComplete());
+    }
+    // Writes cannot enter through a read-only subscription.
+    QJsonObject refused;
+    h.service.subscribe(
+        {"analysis_section_add", {}}, &h.owner,
+        [&](const QJsonObject &response) { refused = response; });
+    QTRY_VERIFY(!refused.isEmpty());
+    QCOMPARE(refused.value("status").toString(), QString("error"));
+  }
+
   void backgroundSnapshotFollowsSubscribersAndIsNotReplayedByCache() {
     Harness h;
     QStringList order;

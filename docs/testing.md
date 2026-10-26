@@ -14082,3 +14082,11 @@ SDK/CLI report pairs with independently expected guarded bytes, across ordinary
 and RELR callers, four service routes, permission changes, holes and a closed
 dynamic provider. Named input RAM and unmap/replacement regressions verify that
 VMA names and address reuse cannot manufacture anonymous allocation provenance.
+
+`NeverDWorkerAnalysisSections` exercises the C ABI and IPC with public ELF/PE
+x64/AArch64 fixtures: atomic mutations, high addresses, original-image references,
+materialized listing rows, LowIR/MedIR/HighC/CFG, save/load and analysis replicas.
+`NeverDAnalysisSectionsCLI` checks persisted CLI/worker interop and writer leases.
+`NeverDGuiAnalysisSections` drives the production dialog, native views and .nddb
+save/reopen/removal; `NeverDGuiQueries` checks edit fences and cache retirement.
+See [analysis-section commands](analysis-sections.md#verification).
