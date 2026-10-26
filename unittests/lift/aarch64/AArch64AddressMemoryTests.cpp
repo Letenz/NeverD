@@ -7623,8 +7623,12 @@ TEST(AArch64StructureMemory, LLVMAdmissionValidatesEveryVectorBeforeSelection) {
         Owned->setCallingConv(llvm::CallingConv::Fast);
       } else if (Mutation == 3) {
         Owned->addFnAttr(llvm::Attribute::Speculatable);
-      } else {
+      } else if (Mutation == 4) {
         Owned->setMemoryEffects(llvm::MemoryEffects::none());
+      } else {
+        Owned->setCalledOperand(llvm::InlineAsm::get(
+            Asm->getFunctionType(), Asm->getAsmString(),
+            writebackConstraintsWithoutMemoryClobber(*Asm), true));
       }
       auto *Other = llvm::Function::Create(
           llvm::FunctionType::get(llvm::Type::getVoidTy(C), false),

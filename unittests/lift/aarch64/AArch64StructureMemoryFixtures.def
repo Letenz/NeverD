@@ -2283,7 +2283,7 @@ STRUCTURE_MEMORY_CASE(0x4deaed3dU, 0x4defee14U, 4, 1, 8, 1, 0, true, true, true,
 #undef STRUCTURE_MEMORY_CASE
 #endif
 #ifdef STRUCTURE_MEMORY_VALUE
-STRUCTURE_MEMORY_VALUE(unsigned, kStructureTestCallMutations, 5)
+STRUCTURE_MEMORY_VALUE(unsigned, kStructureTestCallMutations, 6)
 STRUCTURE_MEMORY_VALUE(size_t, kStructureTestCases, 1134)
 STRUCTURE_MEMORY_VALUE(unsigned, kStructureTestBaseRegister, 9)
 STRUCTURE_MEMORY_VALUE(unsigned, kStructureTestIndexRegister, 10)
