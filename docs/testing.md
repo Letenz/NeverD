@@ -2472,6 +2472,16 @@ Source-key validation uses
 checked by `NeverDGuiLanguages`. Change, assessment, call-impact and dependency
 review regressions run in both left-to-right and right-to-left layouts.
 
+`WorkbenchTests::tabFromAssemblyWaitsForPagesAndUnfoldsTarget` also switches
+between independent code tabs and returns through Tab to the exact secondary
+instruction mapping of the retained document. Hiding a completed tab cancels
+pending work without discarding that selection. Cross-reference tests select
+the originating and alternate tabs before requesting native keyboard focus.
+Local instance tests require a short private `XDG_RUNTIME_DIR`: the full Unix
+socket path includes the instance subdirectory and process identifier. The
+private Wayland helper uses a short temporary-directory prefix for the same
+reason.
+
 `BinaryDiffSDK.ByteOverlaysBindDataOnlyChangesAndReopenedReports` checks that
 patching data outside decoded functions changes analysis identity, invalidates
 earlier saved binding, survives sidecar reload and recovers the original identity

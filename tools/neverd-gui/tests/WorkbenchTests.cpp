@@ -3679,8 +3679,11 @@ private slots:
     assembly->navigate(Base + 0x1a0);
     QTRY_COMPARE(assembly->currentFunction(),
                  std::optional<Address>(Base + 0x1a0));
-    bench.window->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    auto *originDock = bench.dockFor(origin);
+    auto *otherDock = bench.dockFor(other);
+    QVERIFY(originDock && otherDock);
+    originDock->setAsCurrentTab();
+    QVERIFY(activateTestWindow(origin->window()));
     auto *code = origin->text();
     const int row = scenario == "call-token" ? 1 : 0;
     code->setCursorLine(row);
@@ -3726,13 +3729,12 @@ private slots:
         if (list->model().addressAt(i) == Base + 0x163) {
           chooser.stop();
           // Browsing elsewhere must not redirect acceptance to that pane.
-          bench.window->activateWindow();
-          QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+          otherDock->setAsCurrentTab();
+          QVERIFY(activateTestWindow(other->window()));
           other->text()->setFocus();
           QTRY_VERIFY(other->text()->hasFocus());
           QVERIFY(dialog->isVisible());
-          dialog->activateWindow();
-          QVERIFY(QTest::qWaitForWindowActive(dialog));
+          QVERIFY(activateTestWindow(dialog));
           list->table()->setFocus();
           QTRY_VERIFY(list->table()->hasFocus());
           chosen = true;
@@ -5126,8 +5128,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     const Address function = Base + 0x140, other = Base + 0x180;
-    bench.window->activateWindow();
-    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    QVERIFY(activateTestWindow(bench.window.get()));
     assembly->navigate(function + 9);
     assembly->focusContent();
     // Tab during a listing jump also waits for the correct function to land.
@@ -5141,7 +5142,7 @@ private slots:
     QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
     QVERIFY(code->preludeFolded());
     QVERIFY(code->verticalScrollBar()->value() > 256);
-    QVERIFY(code->hasFocus());
+    QTRY_VERIFY(code->hasFocus());
 
     // Reuse the complete function without a decompile and expand just the
     // target operation; the declaration prelude stays folded.
@@ -5174,7 +5175,7 @@ private slots:
     QTRY_VERIFY(!code->loading() && code->function() == other);
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
     QCOMPARE(code->commentTarget()->value("line").toInt(), 550);
-    QVERIFY(code->hasFocus());
+    QTRY_VERIFY(code->hasFocus());
 
     // Missing mappings are reported without guessing a nearby source row.
     assembly->navigate(other + 5);
@@ -5189,9 +5190,13 @@ private slots:
 
     // Two code panes can display the same representation. Reverse Tab must
     // return to the actual pane used, rather than the default source dock.
+    const auto originalVersion = code->documentVersion();
     bench.action(ActionId::ViewLowIR)->trigger();
     auto *second = bench.codeView(QStringLiteral("low"));
     QVERIFY(second && second != view);
+    QTRY_VERIFY(!view->isVisible());
+    QCOMPARE(code->documentVersion(), originalVersion);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
     second->setRepresentation(QStringLiteral("source"));
     QTRY_VERIFY(!second->text()->loading());
     second->text()->setFocus();
@@ -5208,6 +5213,17 @@ private slots:
              std::optional<Address>(function + 9));
     QCOMPARE(code->function(), std::optional<Address>(other));
     QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+    // Returning to the retained tab keeps the secondary instruction mapping,
+    // including a reverse Tab to assembly, without reloading the document.
+    auto *originalDock = bench.dockFor(view);
+    QVERIFY(originalDock);
+    originalDock->setAsCurrentTab();
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    QCOMPARE(code->documentVersion(), originalVersion);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(other + 9));
+    QTest::keyClick(code, Qt::Key_Tab);
+    QTRY_COMPARE(assembly->currentAddress(), std::optional<Address>(other + 9));
   }
 
   void pseudocodeNamesAndCommentsEditTheirSource_data() {
