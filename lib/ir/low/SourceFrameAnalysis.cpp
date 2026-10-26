@@ -1300,10 +1300,13 @@ public:
             if (Read(*Memory.Address, I).MayBeFrame)
               return false;
         const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
+        // The declared carrier must agree with the original load, including
+        // for native ABI inference that compares independently recovered IRs.
+        // A narrower load cannot authenticate the declaration's extra bytes.
         const bool IncomingRead =
             Address && Op.Opcode == NdOp::LOAD &&
             IncomingStackSlots.count(*Address) &&
-            Memory.AccessSize <= IncomingStackSlots.at(*Address);
+            Memory.AccessSize == IncomingStackSlots.at(*Address);
         if (IncomingRead && (!SP || *SP > 0))
           return false;
         if (Address && !IncomingRead) {
