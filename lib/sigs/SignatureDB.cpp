@@ -44,6 +44,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -519,6 +520,7 @@ void SignatureDB::apply(const BinaryImage &Img,
   // Collect executable segment data for matching.
   std::vector<SignatureMatcher::Hit> Hits;
   std::vector<SignatureMatcher::Hit> DataHits;
+  std::vector<SignatureMatcher::Hit> PairHits;
   for (const auto &Seg : Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
@@ -530,6 +532,21 @@ void SignatureDB::apply(const BinaryImage &Img,
       const uint64_t Addr = Hit.Address;
       const size_t ModIdx = Hit.Module;
       const StoredModule &Mod = Modules[ModIdx];
+      // A short required clause needs an explicit unpruned source body before
+      // its address-taken leaf can contribute to a joint byte fingerprint.
+      if (Img.isCOFF() && Img.Arch == Arch::X64 && !Img.IsRelocatable &&
+          Mod.RequireReferences && Mod.ReferenceCount == 1 &&
+          !Mod.references().front().IsData && Mod.PublicNameCount == 1 &&
+          Mod.publicNames().front().Offset == 0 && !Mod.CRCLen &&
+          Mod.TotalLen < SignatureMatcher::MinStatedBytes + sizeof(uint32_t) &&
+          SignatureMatcher::fixedByteCount(Mod) <
+              SignatureMatcher::MinStatedBytes &&
+          llvm::any_of(
+              Idx.callerModules(Modules, Mod.publicNames().front().Name),
+              [&](const auto &Source) {
+                return Modules[Source.Module].RequireCaller;
+              }))
+        PairHits.push_back(Hit);
       if (Idx.hasDataContext() && Mod.RequireReferences &&
           llvm::any_of(Mod.references(),
                        [](const StoredName &Ref) { return Ref.IsData; })) {
@@ -540,6 +557,7 @@ void SignatureDB::apply(const BinaryImage &Img,
     }
   }
   checkReferences(Img, FuncEntries, std::move(Hits));
+  applyCodeAddressPairs(Img, FuncEntries, PairHits);
   std::vector<DeferredCaller> DeferredCallers;
   applyCallerContext(Img, FuncEntries, 0, nullptr, {}, &DeferredCallers);
   applyVTableContext(Img, FuncEntries);
@@ -1094,6 +1112,159 @@ std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
 }
 
 } // namespace
+
+void SignatureDB::applyCodeAddressPairs(
+    const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
+    llvm::ArrayRef<SignatureMatcher::Hit> Hits) {
+  if (Hits.empty())
+    return;
+  const auto &Idx = index();
+  std::vector<uint64_t> Sorted(Entries.begin(), Entries.end());
+  llvm::sort(Sorted);
+  auto SingleStart = [](const StoredModule &Mod) {
+    return Mod.PublicNameCount == 1 && Mod.publicNames().front().Offset == 0;
+  };
+  auto AddressField = [](const StoredModule &Mod, uint32_t Offset) {
+    if (Mod.CRCLen || uint64_t(Offset) + sizeof(uint32_t) > Mod.TotalLen)
+      return false;
+    for (size_t I = Offset; I < uint64_t(Offset) + sizeof(uint32_t); ++I)
+      if (Mod.isStated(I))
+        return false;
+    return true;
+  };
+  // Both bodies are shorter than MinStatedBytes plus one rel32 field. Check
+  // every byte's owner, including nested data sections, without a new scan.
+  auto CodeBody = [&](uint64_t Start, uint32_t Size) {
+    if (!Img.isFunctionEntryCandidateAt(Start) || Size > InvalidVA - Start ||
+        !std::binary_search(Sorted.begin(), Sorted.end(), Start))
+      return false;
+    const Segment *Seg = Img.getSegmentFor(Start);
+    const Section *Sec = Img.getSectionFor(Start);
+    for (uint32_t I = 0; I < Size; ++I)
+      if (Img.getSegmentFor(Start + I) != Seg ||
+          Img.getSectionFor(Start + I) != Sec || !Img.isCodeAddress(Start + I))
+        return false;
+    return true;
+  };
+  struct Proof {
+    uint64_t Parent, Target;
+    size_t Module, Leaf;
+  };
+  std::vector<Proof> Proofs;
+  for (const auto &Hit : Hits) {
+    const auto &Mod = Modules[Hit.Module];
+    const auto &Ref = Mod.references().front();
+    const size_t Fixed = SignatureMatcher::fixedByteCount(Mod);
+    if (Mod.CRCLen || !SignatureMatcher::isFullyVerified(Mod) ||
+        Mod.TotalLen != Fixed + sizeof(uint32_t) ||
+        !AddressField(Mod, Ref.Offset) || !CodeBody(Hit.Address, Mod.TotalLen))
+      continue;
+    const auto Target = addressReferenceTarget(Img, Hit.Address, Ref.Offset);
+    if (!Target)
+      continue;
+
+    // A required clause can omit source references. Every matching unpruned
+    // source variant must instead state this one exact code-address edge.
+    bool Source = false, Complete = true;
+    for (const auto &C :
+         Idx.callerModules(Modules, Mod.publicNames().front().Name)) {
+      const auto &Full = Modules[C.Module];
+      if (!Full.RequireCaller)
+        continue;
+      const uint8_t *Bytes = Img.readVA(Hit.Address, Full.TotalLen);
+      if (!Bytes || !SignatureMatcher::matchPattern(Full, Bytes, Full.TotalLen))
+        continue;
+      Source = true;
+      if (!SingleStart(Full) || Full.TotalLen != Mod.TotalLen || Full.CRCLen ||
+          !SignatureMatcher::isFullyVerified(Full) ||
+          Full.ReferenceCount != 1 || Full.references().front().IsData ||
+          Full.references().front().Offset != Ref.Offset ||
+          Full.references().front().Name != Ref.Name ||
+          !AddressField(Full, Ref.Offset) ||
+          SignatureMatcher::fixedByteCount(Full) != Fixed)
+        Complete = false;
+    }
+    if (!Source || !Complete)
+      continue;
+
+    std::optional<size_t> Leaf;
+    for (const auto &C : Idx.callerModules(Modules, Ref.Name)) {
+      const auto &Body = Modules[C.Module];
+      if (!Body.RequireCaller)
+        continue;
+      const uint8_t *Bytes = Img.readVA(*Target, Body.TotalLen);
+      if (!Bytes || !SignatureMatcher::matchPattern(Body, Bytes, Body.TotalLen))
+        continue;
+      const size_t BodyFixed = SignatureMatcher::fixedByteCount(Body);
+      if (!SingleStart(Body) || Body.ReferenceCount || Body.CRCLen ||
+          !SignatureMatcher::isFullyVerified(Body) ||
+          Body.TotalLen != BodyFixed ||
+          BodyFixed >= SignatureMatcher::MinStatedBytes ||
+          Fixed + BodyFixed < SignatureMatcher::MinStatedBytes ||
+          !CodeBody(*Target, Body.TotalLen) ||
+          (*Target < Hit.Address + Mod.TotalLen &&
+           Hit.Address < *Target + Body.TotalLen) ||
+          (Leaf && Modules[*Leaf].TotalLen != Body.TotalLen)) {
+        Complete = false;
+        break;
+      }
+      Leaf = C.Module;
+    }
+    if (Complete && Leaf)
+      Proofs.push_back({Hit.Address, *Target, Hit.Module, *Leaf});
+  }
+  if (Proofs.empty())
+    return;
+
+  // Freeze existing claims only at the proof endpoints. New pairs cannot
+  // confirm each other, overwrite an independent name, or form a cycle.
+  std::map<uint64_t, llvm::SmallVector<const SigMatch *, 4>> At;
+  std::set<uint64_t> Parents;
+  for (const auto &P : Proofs) {
+    At.try_emplace(P.Parent);
+    At.try_emplace(P.Target);
+    Parents.insert(P.Parent);
+  }
+  for (const auto &M : Matches)
+    if (auto I = At.find(M.Address); I != At.end())
+      I->second.push_back(&M);
+  std::map<uint64_t, SettledRoutine> Frozen;
+  for (const auto &[Address, Claims] : At)
+    if (auto Name = settle(Claims))
+      Frozen.emplace(Address, std::move(*Name));
+  llvm::sort(Proofs, [](const Proof &A, const Proof &B) {
+    return std::tie(A.Parent, A.Module, A.Target, A.Leaf) <
+           std::tie(B.Parent, B.Module, B.Target, B.Leaf);
+  });
+  for (size_t I = 0; I < Proofs.size();) {
+    const Proof &P = Proofs[I++];
+    const auto ParentName = Modules[P.Module].publicNames().front().Name;
+    const auto LeafName = Modules[P.Leaf].publicNames().front().Name;
+    bool Agreed = !Parents.count(P.Target);
+    while (I < Proofs.size() && Proofs[I].Parent == P.Parent) {
+      const auto &Other = Proofs[I++];
+      Agreed &=
+          Other.Target == P.Target &&
+          Modules[Other.Module].TotalLen == Modules[P.Module].TotalLen &&
+          Modules[Other.Module].publicNames().front().Name == ParentName &&
+          Modules[Other.Leaf].publicNames().front().Name == LeafName;
+    }
+    const auto Parent = Frozen.find(P.Parent), Child = Frozen.find(P.Target);
+    if (!Agreed ||
+        (Parent != Frozen.end() && !Parent->second.hasName(ParentName)) ||
+        (Child != Frozen.end() && !Child->second.hasName(LeafName)))
+      continue;
+    if (Parent == Frozen.end()) {
+      appendModuleMatches(P.Parent, P.Module);
+      Matches.back().Confirmed = true;
+    }
+    if (Child == Frozen.end()) {
+      appendModuleMatches(P.Target, P.Leaf);
+      Matches.back().CallerConfirmed = true;
+      Matches.back().Confirmed = true;
+    }
+  }
+}
 
 void SignatureDB::applyCallerContext(
     const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
