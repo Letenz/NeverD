@@ -2978,12 +2978,17 @@ void executeDecodedImmediateImageBases() {
         }
 }
 
+struct ImmediateMemoryExecution {
+  bool ExecuteNative = true;
+  const char *ArtifactProperty = nullptr;
+  bool AlignAccesses = false;
+};
+
 void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
                                     bool Stack, bool Immediate,
                                     const BinaryImage *Image = nullptr,
                                     bool Relocate = false,
-                                    bool ExecuteNative = true,
-                                    const char *ArtifactProperty = nullptr) {
+                                    ImmediateMemoryExecution Execution = {}) {
   llvm::SmallString<kVectorPathStorage> ArtifactDirectory;
   if (const auto *Root =
           std::getenv(Stack || !Immediate ? kStackArtifactEnvironment
@@ -3001,13 +3006,13 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory(Prefix, ArtifactDirectory));
     ::testing::Test::RecordProperty(
-        ArtifactProperty ? ArtifactProperty
-        : Relocate       ? kImmediateRelocatedArtifactProperty
-        : Image          ? kImmediateImageArtifactProperty
-        : Stack          ? (Immediate ? kStackArtifactProperty
-                                      : kStackRegisterArtifactProperty)
-                         : (Immediate ? kImmediateArtifactProperty
-                                      : kRegisterArtifactProperty),
+        Execution.ArtifactProperty ? Execution.ArtifactProperty
+        : Relocate                 ? kImmediateRelocatedArtifactProperty
+        : Image                    ? kImmediateImageArtifactProperty
+        : Stack ? (Immediate ? kStackArtifactProperty
+                             : kStackRegisterArtifactProperty)
+                : (Immediate ? kImmediateArtifactProperty
+                             : kRegisterArtifactProperty),
         ArtifactDirectory.str().str());
   }
   auto SaveArtifact = [&](llvm::StringRef Name, llvm::StringRef Bytes) {
@@ -3025,6 +3030,12 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
   std::vector<MedFunc> Functions;
   std::string Wrappers, Entries;
   std::string Declarations = kVectorNativeIncludes;
+  const auto BasePosition = [&](const ImmediateMemoryCase &Case) {
+    return kImmediateBasePosition +
+           (Execution.AlignAccesses
+                ? (-uint64_t(Case.Offset) & (Case.Access - 1))
+                : 0);
+  };
   for (size_t I = 0; I != Cases.size(); ++I) {
     const auto &Case = Cases[I];
     auto Function = immediateMemoryFunction(Case, I);
@@ -3034,7 +3045,7 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
                                        aarch64AddressMemoryMedShapeIsValid);
       ASSERT_NE(Memory, Ops.end());
       const auto Address = MedVar::makeConst(
-          Image->Segments.front().VA + kImmediateBasePosition, kScalarBytes,
+          Image->Segments.front().VA + BasePosition(Case), kScalarBytes,
           ConstantAddressProvenance::DataAddress, Image->Segments.front().VA);
       Memory->Inputs[kAddressMemoryBaseOperand + 1] = Address;
       if (I % 2) {
@@ -3108,7 +3119,7 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
     }
     for (size_t I = 0; I != Cases.size(); ++I)
       Wrappers += llvm::formatv(kImmediateRelocatedWrapper, I,
-                                kImmediateBasePosition, kImmediateMemoryBytes)
+                                BasePosition(Cases[I]), kImmediateMemoryBytes)
                       .str();
     MedFunc Base;
     Base.Name = kImmediateImageBaseName;
@@ -3147,7 +3158,13 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
   ASSERT_FALSE(llvm::verifyModule(*Module));
   const auto Harness =
       (Relocate ? std::string(kImmediateImageBaseDeclaration) : std::string{}) +
-      llvm::formatv(kImmediateNativeHarness, Wrappers, Entries).str();
+      llvm::formatv(kImmediateNativeHarness, Wrappers, Entries,
+                    Execution.AlignAccesses
+                        ? llvm::formatv(kImmediateAlignedBasePositionExpression,
+                                        kImmediateBasePosition)
+                              .str()
+                        : llvm::utostr(kImmediateBasePosition))
+          .str();
   SaveArtifact(kImmediateHarnessArtifact, Declarations + Harness);
   for (bool LLVMRoute : {false, true}) {
     CEmitterOptions Options;
@@ -3169,7 +3186,7 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
     SaveArtifact(LLVMRoute ? kImmediateLLVMCArtifact : kImmediateHighCArtifact,
                  Source);
 #if defined(__APPLE__) && defined(__aarch64__)
-    compileMemoryC(Source + Adapters + Harness, ExecuteNative);
+    compileMemoryC(Source + Adapters + Harness, Execution.ExecuteNative);
 #else
     compileMemoryC(Source, false);
 #endif
@@ -3198,7 +3215,7 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
   Output.write(reinterpret_cast<const char *>(Object.ObjectData.data()),
                Object.ObjectData.size());
   Output.close();
-  if (ExecuteNative)
+  if (Execution.ExecuteNative)
     compileMemoryC(Declarations + Harness, true, {}, ObjectPath);
 #endif
   if (!ArtifactDirectory.empty()) {
@@ -6656,19 +6673,24 @@ TEST(AArch64OrderedMemory, BothCProjectionsAndLLVMRetainOrderedInstructions) {
   // Compile every family independently of this host's optional CPU features.
   // The exported exact source/object inputs are executed by the Arm model.
   executeImmediateMemoryFamilies(OrderedMemoryCases, false, true, nullptr,
-                                 false, false, kOrderedArtifactProperty);
+                                 false,
+                                 {.ExecuteNative = false,
+                                  .ArtifactProperty = kOrderedArtifactProperty,
+                                  .AlignAccesses = true});
 }
 
 TEST(AArch64OrderedMemoryNative, GPRFamiliesExecuteBothSourcesAndLLVM) {
   if (!nativeOrderedMemorySupported(false))
     GTEST_SKIP() << kOrderedUnsupported;
-  executeImmediateMemoryFamilies(orderedRegisterCases(false), false, true);
+  executeImmediateMemoryFamilies(orderedRegisterCases(false), false, true,
+                                 nullptr, false, {.AlignAccesses = true});
 }
 
 TEST(AArch64OrderedMemoryNative, SIMDFamiliesExecuteBothSourcesAndLLVM) {
   if (!nativeOrderedMemorySupported(true))
     GTEST_SKIP() << kOrderedUnsupported;
-  executeImmediateMemoryFamilies(orderedRegisterCases(true), false, true);
+  executeImmediateMemoryFamilies(orderedRegisterCases(true), false, true,
+                                 nullptr, false, {.AlignAccesses = true});
 }
 
 TEST(AArch64OrderedMemory, ImageContextPreservesRuntimeBases) {
@@ -6676,8 +6698,11 @@ TEST(AArch64OrderedMemory, ImageContextPreservesRuntimeBases) {
   Image.Arch = Arch::AArch64;
   Image.Bits = Bitness::Bits64;
   Image.Format = BinaryFormat::MachO;
-  executeImmediateMemoryFamilies(OrderedMemoryCases, false, true, &Image, false,
-                                 false, kOrderedImageArtifactProperty);
+  executeImmediateMemoryFamilies(
+      OrderedMemoryCases, false, true, &Image, false,
+      {.ExecuteNative = false,
+       .ArtifactProperty = kOrderedImageArtifactProperty,
+       .AlignAccesses = true});
 }
 
 TEST(AArch64OrderedMemory, ImageRelocationRetainsCompleteOrderedAccesses) {
@@ -6710,8 +6735,11 @@ TEST(AArch64OrderedMemory, ImageRelocationRetainsCompleteOrderedAccesses) {
         Short, Instruction, Base, ConstantAddressProvenance::DataAddress,
         Data.VA));
   }
-  executeImmediateMemoryFamilies(OrderedMemoryCases, false, true, &Image, true,
-                                 false, kOrderedRelocatedArtifactProperty);
+  executeImmediateMemoryFamilies(
+      OrderedMemoryCases, false, true, &Image, true,
+      {.ExecuteNative = false,
+       .ArtifactProperty = kOrderedRelocatedArtifactProperty,
+       .AlignAccesses = true});
 }
 
 TEST(AArch64OrderedMemory, TracerUsesExactOriginalMemoryShapes) {
