@@ -2310,3 +2310,7 @@ La regresión del worker también cubre dieciocho parámetros mixtos de registro
 La matriz también ejecuta casos sin argumentos de igualdad y desbordamiento de resta. No necesitan valores de registros entrantes y ninguna de las dos rutas C debe añadir una trampa de estado desconocido.
 
 Las pruebas de entradas de importación HFA compilan prototipos C estrictos y ejecutan argumentos y resultados completos para declaraciones de cabecera y locales. Ambas rutas C cubren estructuras float y double, llamadas encadenadas y ejecución en AArch64.
+
+## Pruebas de declaraciones seleccionadas
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combina direcciones con proveedores de entero, puntero, flotante y void. `AddressOnlyCallbackConvertsToItsKnownParameterType` ejecuta un callback tipado. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` compara selecciones separadas, la unidad completa y cachés frías/calientes. El C generado desde modelos x64/ARM64 PE, ELF y Mach-O se ejecuta en el host con O0/O2 y UBSan; no certifica ejecución nativa en todas las plataformas. Ejecutar las pruebas de contratos de llamada, proyección de punteros, ABI de fuente y caché de funciones llamadas.

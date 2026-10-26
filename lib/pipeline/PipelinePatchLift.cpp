@@ -256,7 +256,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // different executable return ABI.
   settleReturnContracts(Img, Result, Opts.SourceProjection ? Dbg : nullptr);
 
-  recoverModuleCallAbi(Img, Result, AllFuncNames, Opts.SourceProjection);
+  recoverModuleCallAbi(Img, Result, AllFuncNames,
+                       Opts.SourceProjection && !Opts.PatchMode);
 
   remodelStructReturnForwarderCalls(Img, Result);
 

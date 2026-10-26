@@ -2305,3 +2305,7 @@ La regressione worker copre anche diciotto parametri misti registro/stack, un ri
 La matrice esegue anche casi senza argomenti per uguaglianza e overflow della sottrazione. Non richiedono valori di registro in ingresso e nessuno dei due percorsi C deve introdurre una trappola per stato sconosciuto.
 
 I test degli slot di importazione HFA compilano prototipi C rigorosi ed eseguono argomenti e risultati completi per dichiarazioni locali e negli header. Entrambi i percorsi C coprono strutture float e double, chiamate concatenate ed esecuzione AArch64.
+
+## Verifica delle dichiarazioni selezionate
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combina indirizzi con implementazioni che restituiscono interi, puntatori, valori floating o void. `AddressOnlyCallbackConvertsToItsKnownParameterType` esegue un callback tipizzato. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` confronta selezioni separate, unità completa e cache fredda/calda. Il C generato dai modelli x64/ARM64 PE, ELF e Mach-O viene eseguito sul host con O0/O2 e UBSan; ciò non qualifica ogni piattaforma nativa. Eseguire i test dei contratti di chiamata, proiezione dei puntatori, ABI sorgente e cache dei chiamati.

@@ -2023,3 +2023,7 @@ La semplificazione condivisa dei flag MedIR conserva entrambi gli operandi della
 Le condizioni intere che confrontano lo stesso valore SSA con sé stesso diventano costanti booleane prima dell’emissione del sorgente, incluso l’overflow della sottrazione. Gli operandi non specificati restano espliciti.
 
 Le destinazioni HFA salvate usano la stessa firma sorgente verificata della ricostruzione degli argomenti e dei risultati di struttura. Il prototipo conserva il puntatore originale e i tipi completi, compresi i gruppi di registri scomposti e gli argomenti sullo stack.
+
+## Dichiarazioni delle funzioni selezionate
+
+HighC rappresenta un simbolo usato solo come indirizzo e privo di firma nota con un alias di byte associato al nome del linker, senza inventare il tipo restituito. Conserva la conversione del callback tipizzato e la navigazione verso simbolo e indirizzo. LLVM per il sorgente riusa il lettore limitato delle funzioni omesse anche quando il numero di argomenti è noto. Mantiene dichiarazioni fisse x64/ARM64 di interi o puntatori della dimensione di una parola solo se portatori e tipi restano invariati dopo il recupero. I contratti espliciti hanno precedenza; non vengono forniti corpi, contratti di eccezione o autorizzazioni al lifting nativo. La cache distingue queste letture e mantiene la stessa decisione a caldo.

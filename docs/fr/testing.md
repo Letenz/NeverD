@@ -2324,3 +2324,7 @@ Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile,
 La matrice exécute aussi des cas sans argument d’égalité et de débordement de soustraction. Ils ne nécessitent aucune valeur de registre entrante et ne doivent acquérir aucun piège d’état inconnu dans les deux voies C.
 
 Les tests des entrées d’importation HFA compilent des prototypes C stricts et exécutent les arguments et résultats complets des déclarations locales et des en-têtes. Les deux voies C couvrent les structures float et double, les appels en chaîne et l’exécution AArch64.
+
+## Vérification des déclarations sélectionnées
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combine les adresses avec des fournisseurs retournant entier, pointeur, flottant ou void. `AddressOnlyCallbackConvertsToItsKnownParameterType` exécute un callback typé. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` compare les sélections séparées, l’unité complète et les caches froid/chaud. Le C produit depuis les modèles x64/ARM64 PE, ELF et Mach-O est exécuté sur l’hôte à O0/O2 avec UBSan ; cela ne qualifie pas l’exécution native de toutes les cibles. Relancer les tests des contrats d’appel, projections de pointeurs, ABI source et cache des appelés.

@@ -2027,3 +2027,7 @@ Die gemeinsame MedIR-Flag-Vereinfachung erhält beide Subtraktionsoperanden, auc
 Ganzzahlbedingungen, die denselben SSA-Wert mit sich selbst vergleichen, werden vor der Quellausgabe zu booleschen Konstanten. Dies umfasst Subtraktionsüberlauf; unspezifizierte Operanden bleiben explizit.
 
 Gespeicherte HFA-Aufrufziele verwenden dieselbe geprüfte Quellsignatur wie die Rekonstruktion der Strukturargumente und Ergebnisse. Der Prototyp erhält den ursprünglichen Funktionszeiger und die vollständigen Strukturtypen, einschließlich aufgeteilter Registergruppen und Stackargumente.
+
+## Deklarationen ausgewählter Funktionen
+
+HighC stellt reine Funktionsadressen ohne bekannte Signatur als Byte-Array-Alias mit Linkersymbol dar und erfindet keinen Rückgabetyp. Typisierte Callback-Konvertierungen und die Navigation zu Symbol und Adresse bleiben erhalten. Quell-LLVM nutzt den begrenzten Leser ausgelassener Funktionen auch bei bekannter Argumentzahl. Feste x64/ARM64-Wort-Deklarationen für Ganzzahlen oder Zeiger bleiben nur erhalten, wenn Träger und Typen nach der Rekonstruktion unverändert sind. Explizite Quellverträge haben Vorrang; Funktionskörper, Ausnahmeverträge oder native Lifting-Rechte entstehen nicht. Der Cache unterscheidet diese Lesevorgänge und erhält dieselbe Deklarationsentscheidung bei Wiederverwendung.

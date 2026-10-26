@@ -12575,3 +12575,7 @@ Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A se
 Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.
 
 Captured HFA call targets use the same checked source signature as record argument and result reconstruction. The prototype keeps the original callable value and the complete record types, including flattened register groups and stack arguments.
+
+## Selected callable declarations
+
+HighC represents an address-only function symbol without a known signature as a linker-labelled byte alias. The address supplies no guessed return type; typed callback arguments retain their declared function-pointer conversion and source navigation retains the original symbol and address. Source LLVM requests the existing bounded omitted-callee reader even when an arity summary is complete. It retains fixed x64/ARM64 machine-word integer/pointer declarations only when recovery leaves the carriers and types unchanged. Explicit source contracts keep precedence; bodies, exception contracts and native lifting permissions are not supplied. The memo distinguishes source-type reads and retains the same declaration decision on warm recovery.

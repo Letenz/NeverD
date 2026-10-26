@@ -2235,3 +2235,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 تنفذ المصفوفة أيضاً حالات مساواة وتجاوز سعة الطرح دون معاملات للدالة. لا تحتاج هذه الحالات إلى قيم سجلات واردة، ويجب ألا يضيف أي من مساري C فخاً للحالة المجهولة.
 
 تترجم اختبارات خانات استيراد HFA نماذج C الصارمة وتنفذ الوسيطات والنتائج الكاملة لتصريحات الترويسات والتصريحات المحلية. يغطي مسارا C سجلات float وdouble والاستدعاءات المتسلسلة والتنفيذ على AArch64.
+
+## اختبارات تصريحات الدوال المحددة
+
+يجمع `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` العناوين مع تطبيقات تعيد أعداداً صحيحة أو مؤشرات أو قيماً عائمة أو void. ينفذ `AddressOnlyCallbackConvertsToItsKnownParameterType` استدعاءً عكسياً مكتوباً. يقارن `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` التحديد المنفصل والوحدة الكاملة والذاكرة المخبئية الباردة والدافئة. ينفذ C الناتج من نماذج x64/ARM64 لتنسيقات PE وELF وMach-O على المضيف مع O0/O2 وUBSan؛ ولا يثبت التنفيذ الأصلي على جميع المنصات. شغّل اختبارات عقود الاستدعاء وإسقاط المؤشرات وABI المصدر وذاكرة الدوال المستدعاة بعد تغيير هذه الحدود.

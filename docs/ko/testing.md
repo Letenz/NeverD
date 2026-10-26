@@ -2199,3 +2199,7 @@ NeverSight LLVM fork의 `BinaryRewriteRelocationTest`는 x64 PLT, i386 GOT, Mach
 자기 비교 행렬은 인수가 없는 동등 비교 및 뺄셈 오버플로 사례도 실행합니다. 입력 레지스터 값이 필요하지 않으므로 두 C 경로 모두 알 수 없는 상태의 트랩을 추가하면 안 됩니다.
 
 HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고 헤더 및 로컬 선언의 완전한 인수와 반환값을 실행 검증합니다. 두 C 경로 모두 float 및 double 구조체, 연속 호출, AArch64 실행을 다룹니다.
+
+## 선택한 함수 선언 검사
+
+`Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes`는 주소 출력을 정수, 포인터, 부동소수점, void 구현과 결합한다. `AddressOnlyCallbackConvertsToItsKnownParameterType`는 형식이 지정된 콜백을 실행한다. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules`는 개별 선택과 전체 단위 및 콜드·웜 캐시를 비교한다. x64/ARM64 PE, ELF, Mach-O 모델이 생성한 C를 호스트에서 O0/O2와 UBSan으로 실행한다. 모든 대상의 네이티브 실행을 검증한 것은 아니다. 경계 변경 후 호출 계약, 포인터 투영, 소스 ABI 및 피호출 함수 캐시 검사를 실행한다.
