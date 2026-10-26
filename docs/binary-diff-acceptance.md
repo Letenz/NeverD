@@ -156,3 +156,19 @@ after repair. All twelve lineage cases passed in each native Wayland scale;
 offscreen runs passed eleven and explicitly skipped the compositor gesture.
 CLI, worker and shared-library hashes remained identical to the qualified
 integration. Later layout and upstream changes still need their own coverage.
+
+The frozen integration `9db401cc32e2872d3e6ce0af96084a9f005a6a25`
+includes upstream `e4bac38ad97853d86c75cd67d8a107c86c1f1357` and signature
+gitlink `4ad4e052e78666a1ac20541535878133e3a3ca8d`. Its complete selected
+build succeeded. Of 6,565 selected CTests, 6,486 passed, 79 skipped and none
+failed. The three additional skips require an unconfigured Windows exception
+corpus; they are not successful executions. All 126 disjoint AMX cases, both
+three-sample synthetic scale workloads, 89 byte-exact historical reopens,
+111 native-backed Python checks and 73 signature-script checks passed.
+Comparison, appearance and lineage checks passed at 150% offscreen scaling,
+with compositor gestures explicitly skipped there. Each private Wayland run
+at 100% and 150% passed all twelve lineage cases without skips. Source hashes
+remained unchanged throughout this qualification. The Release/LLVM/Capstone
+profile and disabled optional backends remain as described above. Subsequent
+localization, right-to-left navigation and upstream integration have separate
+qualification records.
