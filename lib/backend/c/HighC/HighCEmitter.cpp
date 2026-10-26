@@ -1575,11 +1575,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
         NeedsGnuX86Intrinsics = true;
-      // GCC's and Clang's CPUID is <cpuid.h>'s.
-      if (Opts.Format != BinaryFormat::COFF &&
-          (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+      if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           Ex.IntrinsicId == Intrinsic::Cpuid)
-        NeedsGnuCpuid = true;
+        NeedsCpuid = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;
       if (!Name.empty()) {
@@ -1834,7 +1832,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("intrin.h");
   if (NeedsGnuX86Intrinsics)
     Headers.insert("x86intrin.h");
-  if (NeedsGnuCpuid)
+  if (NeedsCpuid && Opts.Format != BinaryFormat::COFF)
     Headers.insert("cpuid.h");
 
   // The headers declare what the unit's types and routines name as NeverD
@@ -1843,6 +1841,13 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     OS << "#define _GNU_SOURCE 1\n";
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";
+  // MinGW omits this declaration when Clang supplies the builtin, while
+  // Clang's intrin.h declares it only for _MSC_VER. A builtin still needs its
+  // prototype in C. Match the intrinsic's exact interface on either compiler.
+  if (NeedsCpuid && Opts.Format == BinaryFormat::COFF)
+    OS << "#ifndef __cpuidex\n"
+          "extern void __cpuidex(int[4], int, int);\n"
+          "#endif\n";
   IncludedHeaders = Headers;
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
