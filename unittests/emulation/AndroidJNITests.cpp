@@ -63,6 +63,58 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, SystemClockSharesLinuxEpochsIdleAndInstructionTime) {
+  Options.LinuxTime.emplace();
+  Options.LinuxTime->Clocks = {{1, {10, 123456789}}, {7, {50, 987654321}}};
+  Options.LinuxTime->AdvanceOnIdle = true;
+  for (unsigned mode : {0u, 5u}) {
+    Options.Android->Arguments = {mode};
+    Options.LinuxTime->NanosecondsPerInstruction = mode ? 31 : 0;
+    auto result = run("jni_system_clock");
+    ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidJNI, SystemClockRequiresEachClockAndSignedNanosecondRange) {
+  for (unsigned mode : {1u, 2u, 3u}) {
+    Options.Android->Arguments = {mode};
+    Options.LinuxTime.reset();
+    auto absent = run("jni_system_clock");
+    EXPECT_EQ(absent.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(absent.Diagnostic.find("no explicit linux_time input"),
+              std::string::npos);
+    Options.LinuxTime.emplace().Clocks = {{mode == 1 ? 7 : 1, {10, 123456789}}};
+    auto other_clock = run("jni_system_clock");
+    EXPECT_EQ(other_clock.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(other_clock.Diagnostic.find("no explicit linux_time input"),
+              std::string::npos);
+    const int clock = mode == 1 ? 1 : 7;
+    for (auto time :
+         {LinuxTimespec{-1, 999999999}, LinuxTimespec{9223372036, 854775808}}) {
+      Options.LinuxTime->Clocks = {{clock, time}};
+      auto invalid = run("jni_system_clock");
+      EXPECT_EQ(invalid.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(invalid.Diagnostic,
+                mode == 1 ? "Android monotonic time exceeds its range"
+                          : "Android boot time exceeds its range");
+    }
+    Options.LinuxTime->Clocks = {{clock, {9223372036, 854775807}}};
+    auto maximum = run("jni_system_clock");
+    ASSERT_EQ(maximum.Stop, ProcessStopReason::Returned) << maximum.Diagnostic;
+    EXPECT_EQ(maximum.ReturnValue,
+              mode == 3 ? uint64_t(INT64_MAX) : uint64_t(INT64_MAX) / 1000000);
+    Options.LinuxTime->Clocks = {{clock, {0, 0}}};
+    auto zero = run("jni_system_clock");
+    ASSERT_EQ(zero.Stop, ProcessStopReason::Returned) << zero.Diagnostic;
+    EXPECT_EQ(zero.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidJNI, SystemClockDoesNotSupplyOtherNativeMethods) {
+  Options.Android->Arguments = {4};
+  auto result = run("jni_system_clock");
+  EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(result.Diagnostic.find("unmodeled Java method"), std::string::npos);
+}
 TEST_P(AndroidJNI,
        LoaderFailuresRetainExceptionsAcrossDetachWithoutClosingNamespaces) {
   using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
