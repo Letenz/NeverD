@@ -830,15 +830,7 @@ bindComparison(const SavedComparison &Saved, const Program &Primary,
                   std::string("the ") + Name + " input changed: SHA-256 " +
                       Now->SHA256 + ", the comparison was made from " +
                       Was->SHA256);
-    if (Was->Analysis != Now->Analysis || Was->Revision != Now->Revision ||
-        Was->ProjectInputName != Now->ProjectInputName ||
-        Was->ProjectStateSHA256 != Now->ProjectStateSHA256 ||
-        Was->Architecture != Now->Architecture || Was->Format != Now->Format ||
-        Was->Bits != Now->Bits || Was->Endian != Now->Endian ||
-        Was->ABI != Now->ABI || Was->Normalization != Now->Normalization ||
-        Was->ImageBase != Now->ImageBase ||
-        Was->EntryPoint != Now->EntryPoint ||
-        Was->DiscoveryComplete != Now->DiscoveryComplete)
+    if (programAnalysisIdentity(*Was) != programAnalysisIdentity(*Now))
       return Fail(BindFailure::StaleAnalysis,
                   std::string("the ") + Name +
                       " input was analyzed with other settings: \"" +

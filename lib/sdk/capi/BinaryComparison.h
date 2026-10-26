@@ -14,6 +14,7 @@
 #include "neverd/diff/Comparison.h"
 #include "neverd/diff/Program.h"
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -34,6 +35,8 @@ struct ComparisonInputOptions {
 
 struct ComparisonInput {
   diff::Program Program;
+  /// Owned presentation names, excluded from matching and snapshot identity.
+  std::map<uint64_t, std::string> DisplayNames;
   std::optional<diff::ComparisonState> Stopped;
   std::string StoppedPhase;
 };

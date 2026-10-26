@@ -737,6 +737,7 @@ add_neverd_unittest(NeverDX86VirtualizationTests
   LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86VirtualizationSourceTests
+  NO_PRETTY_VALUES
   x86_64/X86VirtualizationSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE

@@ -232,7 +232,7 @@ ComparisonImpactDialog::ComparisonImpactDialog(ComparisonSession &S,
                          ? tr("input discovery complete")
                          : tr("input discovery partial")));
         if (Functions->rowCount() && !FunctionTable->currentIndex().isValid())
-          FunctionTable->selectRow(0);
+          FunctionTable->setCurrentIndex(FunctionTable->model()->index(0, 0));
         controls();
       });
   for (auto *M : {Functions, Sites})
@@ -255,7 +255,7 @@ ComparisonImpactDialog::ComparisonImpactDialog(ComparisonSession &S,
                                : E["state"].toString().replace('_', ' ')));
             }
             if (Sites->rowCount() && !SiteTable->currentIndex().isValid())
-              SiteTable->selectRow(0);
+              SiteTable->setCurrentIndex(SiteTable->model()->index(0, 0));
             showSite();
           });
   connect(&Session, &ComparisonSession::changed, this, [this] {

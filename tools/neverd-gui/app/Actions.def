@@ -102,6 +102,8 @@ NEVERD_ACTION(FileCompare, QT_TRANSLATE_NOOP("Actions", "Compare &binaries…"),
               QT_TRANSLATE_NOOP("Actions",
                                 "Compare two binaries, inspect changes and "
                                 "review function correspondence"))
+NEVERD_ACTION(FileLineage, QT_TRANSLATE_NOOP("Actions", "Version comparison &graph…"),
+              "", "compare", QT_TRANSLATE_NOOP("Actions", "Trace functions and inspect conflicting evidence across saved comparisons"))
 NEVERD_ACTION(FileReload,
               QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
               "refresh",

@@ -3187,18 +3187,46 @@ TEST(X86SystemStateSource, EveryOwnedInstructionSurvivesBothSourceRoutes) {
         }
 }
 
-TEST(X86SystemStateSource, GeneratedAssemblyCompilesForBothWordSizesAtO0AndO2) {
-  for (const auto A : {Arch::X86, Arch::X64})
-    for (const auto &E : systemEncodings(A)) {
-      SCOPED_TRACE(E.Mnemonic);
-      SCOPED_TRACE(static_cast<unsigned>(A));
-      size_t Offset;
-      auto Image = image(A, BinaryFormat::ELF, function(A, E.Bytes, Offset));
-      compileRoutes(Image, false, Entry + Offset, E.Mnemonic);
-      if (::testing::Test::HasFailure())
-        return;
-    }
+namespace {
+struct SystemInstructionCase {
+  Arch TheArch;
+  SystemEncoding Encoding;
+  std::string Name;
+};
+
+std::vector<SystemInstructionCase> systemInstructionCases() {
+  std::vector<SystemInstructionCase> Cases;
+  for (const auto A : {Arch::X86, Arch::X64}) {
+    size_t Index = 0;
+    for (const auto &Encoding : systemEncodings(A))
+      Cases.push_back({A, Encoding,
+                       std::string(A == Arch::X86 ? "X86_" : "X64_") +
+                           Encoding.Mnemonic + "_" + std::to_string(Index++)});
+  }
+  return Cases;
 }
+
+class X86SystemStateAssembly
+    : public testing::TestWithParam<SystemInstructionCase> {};
+} // namespace
+
+TEST_P(X86SystemStateAssembly, EveryRouteCompilesAtO0AndO2) {
+  const auto &Case = GetParam();
+  size_t Offset;
+  auto Image = image(Case.TheArch, BinaryFormat::ELF,
+                     function(Case.TheArch, Case.Encoding.Bytes, Offset));
+  compileRoutes(Image, false, Entry + Offset, Case.Encoding.Mnemonic);
+}
+
+// Each instruction retains both C routes and LLVM at O0/O2. Giving each
+// encoding its own CTest deadline keeps a growing matrix from timing out
+// while also reporting the exact failing architecture and encoding.
+INSTANTIATE_TEST_SUITE_P(
+    SystemInstructions, X86SystemStateAssembly,
+    testing::ValuesIn(systemInstructionCases()),
+    [](const testing::TestParamInfo<SystemInstructionCase> &Info) {
+      return Info.param.Name;
+    });
 
 namespace {
 std::vector<uint8_t> implicitMsrFunction(const SystemEncoding &E, bool Dead,
@@ -3948,50 +3976,59 @@ TEST(X86SystemStateSource, FailedLslPreservesUpperDestinationInExecutableCode) {
 }
 
 namespace {
-void checkDescriptorQueryCompletion(llvm::StringRef NativeCCompiler = {}) {
-  for (const uint8_t Opcode : {0x02, 0x03})
-    for (const uint8_t Width : {2, 4, 8})
-      for (const bool Memory : {false, true})
-        for (const bool Success : {false, true})
-          for (const bool NoOpt : {false, true}) {
-            SCOPED_TRACE(Opcode);
-            SCOPED_TRACE(Width);
-            SCOPED_TRACE(Memory);
-            SCOPED_TRACE(Success);
-            SCOPED_TRACE(NoOpt);
-            std::vector<uint8_t> Bytes = {
-                0x48, 0x83, 0xec, 0x10, // Own a selector slot.
-                0x48, 0xb8, 0x89, 0x67, 0x45, 0x23, 0x01,
-                0xef, 0xcd, 0xab, 0x31, 0xc9}; // Full-width prior and a null
-                                               // selector.
-            if (Success)
-              Bytes.insert(Bytes.end(), {0x8c, 0xc9}); // mov cx, cs
-            if (Memory)
-              Bytes.insert(Bytes.end(), {0x66, 0x89, 0x0c, 0x24});
-            // Establish all arithmetic flags immediately before the query.
-            Bytes.insert(Bytes.end(), {0x39, 0xc9}); // cmp ecx, ecx
-            const auto Offset = Bytes.size();
-            if (Width == 2)
-              Bytes.push_back(0x66);
-            else if (Width == 8)
-              Bytes.push_back(0x48);
-            Bytes.insert(Bytes.end(), {0x0f, Opcode});
-            if (Memory)
-              Bytes.insert(Bytes.end(), {0x04, 0x24});
-            else
-              Bytes.push_back(0xc1);
-            // Mix the result with the actual arithmetic flags, keeping high
-            // destination bits visible on failed and narrow writes.
-            Bytes.insert(Bytes.end(), {0x9c, 0x5a, 0x81, 0xe2, 0xd5, 0x08, 0,
-                                       0,    0x48, 0xc1, 0xe2, 0x20, 0x48, 0x31,
-                                       0xd0, 0x48, 0x83, 0xc4, 0x10, 0xc3});
-            auto Image = image(Arch::X64, BinaryFormat::ELF, std::move(Bytes));
-            // Successful wide LAR leaves result bits 19:16 undefined. Keep
-            // every failed/narrow destination bit in the comparison.
-            std::string Driver = Opcode == 0x02 && Width != 2 && Success
-                                     ? "#define RESULT_MASK (~0xf0000ULL)\n"
-                                     : "#define RESULT_MASK (~0ULL)\n";
-            Driver += R"c(
+struct DescriptorQueryCase {
+  uint8_t Opcode;
+  uint8_t Width;
+};
+
+class X86DescriptorQueryCompletion
+    : public testing::TestWithParam<DescriptorQueryCase> {};
+
+void checkDescriptorQueryCompletion(const DescriptorQueryCase &Case,
+                                    llvm::StringRef NativeCCompiler = {}) {
+  const auto Opcode = Case.Opcode;
+  const auto Width = Case.Width;
+  for (const bool Memory : {false, true})
+    for (const bool Success : {false, true})
+      for (const bool NoOpt : {false, true}) {
+        SCOPED_TRACE(Opcode);
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(Memory);
+        SCOPED_TRACE(Success);
+        SCOPED_TRACE(NoOpt);
+        std::vector<uint8_t> Bytes = {
+            0x48, 0x83, 0xec, 0x10, // Own a selector slot.
+            0x48, 0xb8, 0x89, 0x67, 0x45, 0x23,
+            0x01, 0xef, 0xcd, 0xab, 0x31, 0xc9}; // Full-width prior and a null
+                                                 // selector.
+        if (Success)
+          Bytes.insert(Bytes.end(), {0x8c, 0xc9}); // mov cx, cs
+        if (Memory)
+          Bytes.insert(Bytes.end(), {0x66, 0x89, 0x0c, 0x24});
+        // Establish all arithmetic flags immediately before the query.
+        Bytes.insert(Bytes.end(), {0x39, 0xc9}); // cmp ecx, ecx
+        const auto Offset = Bytes.size();
+        if (Width == 2)
+          Bytes.push_back(0x66);
+        else if (Width == 8)
+          Bytes.push_back(0x48);
+        Bytes.insert(Bytes.end(), {0x0f, Opcode});
+        if (Memory)
+          Bytes.insert(Bytes.end(), {0x04, 0x24});
+        else
+          Bytes.push_back(0xc1);
+        // Mix the result with the actual arithmetic flags, keeping high
+        // destination bits visible on failed and narrow writes.
+        Bytes.insert(Bytes.end(), {0x9c, 0x5a, 0x81, 0xe2, 0xd5, 0x08, 0,
+                                   0,    0x48, 0xc1, 0xe2, 0x20, 0x48, 0x31,
+                                   0xd0, 0x48, 0x83, 0xc4, 0x10, 0xc3});
+        auto Image = image(Arch::X64, BinaryFormat::ELF, std::move(Bytes));
+        // Successful wide LAR leaves result bits 19:16 undefined. Keep
+        // every failed/narrow destination bit in the comparison.
+        std::string Driver = Opcode == 0x02 && Width != 2 && Success
+                                 ? "#define RESULT_MASK (~0xf0000ULL)\n"
+                                 : "#define RESULT_MASK (~0ULL)\n";
+        Driver += R"c(
 extern unsigned long long virtualization_test(void);
 extern unsigned long long neverd_original(void);
 int main(void) {
@@ -3999,30 +4036,40 @@ int main(void) {
 }
 __asm__(".text\n.globl neverd_original\nneverd_original:\n"
 )c";
-            llvm::raw_string_ostream OS(Driver);
-            for (const auto Byte : Image.Segments.front().Data)
-              OS << "\".byte " << unsigned(Byte) << "\\n\"\n";
-            OS << ");\n";
-            compileRoutes(Image, NoOpt, Entry + Offset,
-                          Opcode == 0x02 ? "lar" : "lsl", std::nullopt, false,
-                          false, Driver, {}, 8, false, NativeCCompiler);
-            if (::testing::Test::HasFailure())
-              return;
-          }
+        llvm::raw_string_ostream OS(Driver);
+        for (const auto Byte : Image.Segments.front().Data)
+          OS << "\".byte " << unsigned(Byte) << "\\n\"\n";
+        OS << ");\n";
+        compileRoutes(Image, NoOpt, Entry + Offset,
+                      Opcode == 0x02 ? "lar" : "lsl", std::nullopt, false,
+                      false, Driver, {}, 8, false, NativeCCompiler);
+        if (::testing::Test::HasFailure())
+          return;
+      }
 }
 } // namespace
 
-TEST(X86SystemStateSource, DescriptorResultsAndFlagsMatchOriginalInstructions) {
-  checkDescriptorQueryCompletion();
+TEST_P(X86DescriptorQueryCompletion, ResultsAndFlagsMatchOriginalInstructions) {
+  checkDescriptorQueryCompletion(GetParam());
 }
 
-TEST(X86SystemStateSource,
-     NeverCDescriptorResultsAndFlagsMatchOriginalInstructions) {
+TEST_P(X86DescriptorQueryCompletion,
+       NeverCResultsAndFlagsMatchOriginalInstructions) {
   const char *Compiler = std::getenv("NEVERD_TEST_NEVERC");
   if (!Compiler || !llvm::sys::fs::exists(Compiler))
     GTEST_SKIP() << "set NEVERD_TEST_NEVERC to the qualified NeverC compiler";
-  checkDescriptorQueryCompletion(Compiler);
+  checkDescriptorQueryCompletion(GetParam(), Compiler);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    DescriptorWidths, X86DescriptorQueryCompletion,
+    testing::Values(DescriptorQueryCase{0x02, 2}, DescriptorQueryCase{0x02, 4},
+                    DescriptorQueryCase{0x02, 8}, DescriptorQueryCase{0x03, 2},
+                    DescriptorQueryCase{0x03, 4}, DescriptorQueryCase{0x03, 8}),
+    [](const testing::TestParamInfo<DescriptorQueryCase> &Info) {
+      return std::string(Info.param.Opcode == 0x02 ? "LAR" : "LSL") +
+             std::to_string(8 * Info.param.Width);
+    });
 
 TEST(X86MaskedStoreSource, AllFourStoreFamiliesCompileThroughEveryRoute) {
   for (const bool Integer : {false, true})
@@ -5145,26 +5192,28 @@ __asm__(".text\n.globl neverd_original\nneverd_original:\n"
     Source += "\".byte " + std::to_string(Byte) + "\\n\"\n";
   return Source + ");\n";
 }
+
+class X86AmxEncodingSource : public testing::TestWithParam<size_t> {};
 } // namespace
 
-TEST(X86AmxSource, EveryBankOperationAndEncodingCompilesAcrossNativeFormats) {
-  for (const auto &E : amxEncodings())
-    for (const auto Format :
-         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
-      for (bool NoOpt : {false, true}) {
-        SCOPED_TRACE(E.Assembly);
-        SCOPED_TRACE(static_cast<unsigned>(Format));
-        SCOPED_TRACE(NoOpt);
-        size_t Offset;
-        auto Image = image(Arch::X64, Format, amxFunction(E, Offset));
-        const bool FixedBank =
-            E.Kind == 2 || E.Kind == 3 || (E.Kind >= 9 && E.Kind < 22);
-        compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
-                      false, false, {},
-                      FixedBank ? E.Bytes : std::vector<uint8_t>{}, 0, true);
-        if (::testing::Test::HasFailure())
-          return;
-      }
+TEST_P(X86AmxEncodingSource, EveryRouteCompilesAcrossNativeFormats) {
+  const auto &E = amxEncodings()[GetParam()];
+  for (const auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(E.Assembly);
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      SCOPED_TRACE(NoOpt);
+      size_t Offset;
+      auto Image = image(Arch::X64, Format, amxFunction(E, Offset));
+      const bool FixedBank =
+          E.Kind == 2 || E.Kind == 3 || (E.Kind >= 9 && E.Kind < 22);
+      compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
+                    false, false, {},
+                    FixedBank ? E.Bytes : std::vector<uint8_t>{}, 0, true);
+      if (::testing::Test::HasFailure())
+        return;
+    }
 }
 
 TEST(X86AmxSource, NativeContractsRejectLostEffectsAndControls) {
@@ -5284,19 +5333,29 @@ TEST(X86AmxSource, NeverCCompilesBothRoutesWithoutAssembly) {
   RecordProperty("amx_native_c_object_compilations", Cases);
 }
 
-TEST(X86AmxSource, NativeCompletionAndFaultsMatchOriginalBytes) {
-  for (const auto &E : amxEncodings())
-    for (bool NoOpt : {false, true}) {
-      SCOPED_TRACE(E.Assembly);
-      SCOPED_TRACE(NoOpt);
-      size_t Offset;
-      auto Image = image(Arch::X64, BinaryFormat::ELF, amxFunction(E, Offset));
-      compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt,
-                    false, false, amxOutcomeDriver(Image));
-      if (::testing::Test::HasFailure())
-        return;
-    }
+TEST_P(X86AmxEncodingSource, NativeCompletionAndFaultsMatchOriginalBytes) {
+  const auto &E = amxEncodings()[GetParam()];
+  for (bool NoOpt : {false, true}) {
+    SCOPED_TRACE(E.Assembly);
+    SCOPED_TRACE(NoOpt);
+    size_t Offset;
+    auto Image = image(Arch::X64, BinaryFormat::ELF, amxFunction(E, Offset));
+    compileRoutes(Image, NoOpt, Entry + Offset, E.Mnemonic, std::nullopt, false,
+                  false, amxOutcomeDriver(Image));
+    if (::testing::Test::HasFailure())
+      return;
+  }
 }
+
+// Keep the format, optimization and native-fault checks together for each
+// encoding without charging the entire growing matrix to one test deadline.
+INSTANTIATE_TEST_SUITE_P(AmxEncodings, X86AmxEncodingSource,
+                         testing::Range(size_t{0}, amxEncodings().size()),
+                         [](const testing::TestParamInfo<size_t> &Info) {
+                           return std::string(
+                                      amxEncodings()[Info.param].Mnemonic) +
+                                  "_" + std::to_string(Info.param);
+                         });
 
 TEST(X86AmxSource, MalformedAssemblyCannotDropBankMemoryOrFeatureEffects) {
   for (const auto Descriptor :
