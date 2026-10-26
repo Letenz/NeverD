@@ -2498,6 +2498,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // the import's address, declared by the name it links as.  A slot a call
   // goes through as well is already the function pointer the call declares.
   ImportDataSlotNames.clear();
+  ImportDataSlotTypes.clear();
   bool DeclaredDataSlot = false;
   for (va_t Slot : ImportDataSlotReads) {
     const std::string Symbol = importDataSlotIdentifier(Slot);
@@ -2511,7 +2512,20 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       }
     const std::string Identifier =
         GlobalIdentifierAllocator.allocateVerbatim(Symbol);
-    OS << "extern void *" << Identifier;
+    HighExpr Query;
+    Query.Kind = ExprKind::Call;
+    Query.CallAddr = Slot;
+    Query.CallTarget = "indirect";
+    Query.IsIndirectCall = true;
+    const auto Callee = debugCallee(Query);
+    const auto Function = Callee ? fixedCalleeFunctionType(*Callee) : nullptr;
+    if (Function) {
+      const auto Pointer = NdType::makePtr(Function);
+      OS << "extern " << declarationToC(Pointer, Identifier);
+      ImportDataSlotTypes.emplace(Slot, Pointer);
+    } else {
+      OS << "extern void *" << Identifier;
+    }
     if (Identifier != Symbol)
       OS << " __asm__(\"" << Symbol << "\")";
     OS << ";\n";

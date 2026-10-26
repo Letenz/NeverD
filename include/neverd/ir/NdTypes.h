@@ -118,6 +118,9 @@ struct NdType {
   /// Display-only TPI member types, used to name nested slots such as
   /// `TPtr<T>::p` at `outer+8`.  Not an ABI layout.
   std::vector<std::shared_ptr<NdType>> FieldDisplayTypes;
+  /// Alignment of the current validated C display definition. Like its
+  /// display members, this does not authorize an ABI or native memory extent.
+  uint16_t FieldDisplayAlignment = 0;
   /// LF_ENUM records share the named-record encoding; they return in RAX.
   bool IsEnum = false;
   /// A record of the registers a multi-register return fills, one scalar

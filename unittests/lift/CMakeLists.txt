@@ -4773,3 +4773,10 @@ add_neverd_unittest(NeverDX86StateAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86StateAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDHighPointerTypeInferenceTests
+  core/HighPointerTypeInferenceTests.cpp LINK_COMPONENTS BackendC)
+target_compile_definitions(NeverDHighPointerTypeInferenceTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+add_neverd_unittest(NeverDCDisplayFrameRecordTests
+  core/CDisplayFrameRecordTests.cpp LINK_COMPONENTS BackendC)

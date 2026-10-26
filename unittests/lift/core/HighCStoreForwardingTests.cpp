@@ -761,7 +761,7 @@ TEST(HighCStoreForwarding, NamedPointerFrameSlotKeepsExplicitPointerBits) {
 }
 
 TEST(HighCStoreForwarding,
-     NamedPointerFrameLoadAssignedToIntegerUsesPointerBits) {
+     NamedPointerFrameLoadInfersPointerAndReturnsItsBits) {
   const auto I64 = NdType::makeInt(8);
   const auto Pointer = NdType::makePtr(NdType::makeInt(4));
   MedVar Bits;
@@ -778,15 +778,20 @@ TEST(HighCStoreForwarding,
   HighStmt Assign;
   Assign.Kind = StmtKind::Assign;
   Assign.Dst = HighExpr::makeVar(Bits, I64);
-  // The machine carrier remains an integer even though the named frame slot
-  // is projected as a pointer.
+  // The source alias may infer the stored pointer, while its unchanged machine
+  // carrier and integer return retain the exact pointer bits.
   Assign.Val = HighExpr::makeLoad(frameSlot(8), I64);
   Func.Body.push_back(std::move(Assign));
   Func.Body.push_back(ret(HighExpr::makeVar(Bits, I64)));
 
   const auto Body = emitBody(Func);
-  EXPECT_NE(Body.find("t19 = (int64_t)(uintptr_t)(var_m8);"), std::string::npos)
+  EXPECT_NE(Body.find("int32_t* t19;"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("t19 = (int32_t*)(uintptr_t)(var_m8);"),
+            std::string::npos)
       << Body;
+  EXPECT_NE(Body.find("return (int64_t)(uintptr_t)t19;"), std::string::npos)
+      << Body;
+  EXPECT_EQ(Func.Body[1].Dst->Type, I64);
 }
 
 TEST(HighCStoreForwarding,

@@ -636,8 +636,11 @@ public:
   /// Pointer-sized Load chain used as a callee: `*(void **)p` / `**(void
   /// ***)p`. A loaded vtable slot `Load(Load(obj)+imm)` is
   /// `*(void **)((uintptr_t)(*(void **)(obj)) + imm)`, not integer soup.
+  TypeRef indirectCallFunctionType(const HighExpr &Call) const;
+  TypeRef fixedCalleeFunctionType(const FunctionSym &Callee) const;
   std::string indirectCalleeStr(const HighExpr &E,
-                                const TypeRef &ReturnType = nullptr);
+                                const TypeRef &ReturnType = nullptr,
+                                const TypeRef &FunctionType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
   /// The instruction a call \p E of an intrinsic that keeps its operand was
   /// lifted from (`brk #0x3E8`, intrinsicInstructionText); empty for any
@@ -701,6 +704,11 @@ public:
   /// record's pointer member, or an object of the image declared as a
   /// pointer.  An integer it is stored to takes it as the address it is.
   TypeRef printedPointerType(const HighExpr &Value) const;
+  /// An unchanged local pointer behind full-width machine bit views, where
+  /// the destination has the same declared pointer type. Never replay its
+  /// definition: a captured pointer may outlive a reassignment of its source.
+  std::optional<std::string> implicitPointerConversion(const HighExpr &Value,
+                                                       const TypeRef &To);
   /// Whether \p Text, as \p Value printed, is a pointer in C: a local the
   /// text declares one, a typed record's pointer member or a pointer object,
   /// as the value or as the definition it is forwarded from.  An integer it
@@ -1135,6 +1143,7 @@ public:
   /// slot's own name, or the function pointer a call through it declares.
   std::set<va_t> ImportDataSlotReads;
   std::map<va_t, std::string> ImportDataSlotNames;
+  std::map<va_t, TypeRef> ImportDataSlotTypes;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
   /// The identifiers functionIdentifier() spelled for functions no map
   /// names, and the symbols they stand for (recordSourceNames()).

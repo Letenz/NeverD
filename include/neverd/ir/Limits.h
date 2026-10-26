@@ -513,6 +513,11 @@ inline constexpr int kHighSymSimplifyStatementRegionsStatementCountLimit = 1024;
 inline constexpr int
     kHighSymSimplifyStatementRegionsFinishTotalWeightMinArgument1 = 4096;
 
+// lib/ir/high/pass/HighPointerTypeInference.cpp
+inline constexpr size_t kHighPointerTypeMaxOperations = 2000000;
+inline constexpr size_t kHighPointerTypeMaxStateEntries = 1000000;
+inline constexpr unsigned kHighPointerTypeMaxExpressionDepth = 64;
+
 // lib/ir/high/pass/HighTypeInference.cpp
 inline constexpr int
     kHighTypeInferenceMedToHighConverterInferTypesUnwrapDepthLimit = 8;
