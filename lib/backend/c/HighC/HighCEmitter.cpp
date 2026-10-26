@@ -293,10 +293,11 @@ std::string memoryPointerCast(llvm::StringRef Type, llvm::StringRef Address,
                  std::to_string(cMemoryAddressSpace(AddressSpace)) + ")))";
   // addrStr already emits `(uintptr_t)base + imm` for typed pointer offsets.
   // Another integer round-trip is `*(T *)(uintptr_t)((uintptr_t)p + 8)`.
-  // `&member` is already a typed object address; do not recast it.  An
-  // element of a byte backing (`&table[8]`) is a byte's address.
-  if (Address.starts_with("&") && !Address.contains('['))
-    return Address.str();
+  // A displayed member's address can point to a pointer, signed integer or
+  // floating object even when the machine operation accesses unsigned bits.
+  // Retain the operation's exact pointee type for atomic builtin operands.
+  if (Address.starts_with("&"))
+    return "(" + Qualified + " *)(" + Address.str() + ")";
   if (Address.contains("(uintptr_t)"))
     return "(" + Qualified + " *)(" + Address.str() + ")";
   return "(" + Qualified + " *)" + uintptrOf(Address);

@@ -43885,6 +43885,43 @@ int main(void) {
                             true);
 }
 
+TEST(HighCPointerAddresses, CompareExchangePreservesTypedPointerMemberBits) {
+  auto Record = NdType::makeNamedRecord("AtomicPointerHolder", 8);
+  Record->FieldDisplayNames = {"pointer"};
+  Record->FieldDisplayOffsets = {0};
+  Record->FieldDisplayTypes = {NdType::makePtr(NdType::makeInt(1, false))};
+  const auto Pointer = NdType::makePtr(Record);
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Function;
+  Function.Name = "compare_pointer";
+  Function.ReturnType = Word;
+  Function.Params = {{"arg0", Pointer}, {"arg1", Word}, {"arg2", Word}};
+  auto Exchange = HighExpr::makeBinop(
+      NdOp::ATOMIC_CMPXCHG, parameter(0, Pointer), parameter(1, Word));
+  Exchange->Operands.push_back(parameter(2, Word));
+  Exchange->Type = Word;
+  Exchange->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  returnValue(Function, Exchange);
+  const auto Source = emitFunctions({Function});
+  ASSERT_NE(Source.find("->pointer"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+typedef struct AtomicPointerHolder { uint8_t *pointer; } AtomicPointerHolder;
+)" + Source + R"(
+int main(void) {
+  uint8_t first = 37, second = 91;
+  AtomicPointerHolder record = {&first};
+  uint64_t previous = compare_pointer(&record, (uintptr_t)&first,
+                                     (uintptr_t)&second);
+  if (previous != (uintptr_t)&first || record.pointer != &second) return 1;
+  previous = compare_pointer(&record, (uintptr_t)&first, 0);
+  return previous != (uintptr_t)&second || record.pointer != &second ||
+         first != 37 || second != 91;
+}
+)",
+                            true);
+}
+
 TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
   if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
       llvm::Triple::x86_64)
