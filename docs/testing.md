@@ -2685,8 +2685,12 @@ pages after editing its date, disambiguate duplicate labels by ID, and edit one
 of 257 parents on its current page without losing the remaining links. Release
 creation exercises keyboard activation, cancellation, snapshot selection and
 saving an explicitly unknown publication date in a v2 collection. Release
-and parent tabs are also exercised by the eleven-language layout fixture,
-which optionally captures both themes at the native runner's selected scale.
+and parent tabs are also exercised by the eleven-language layout fixture.
+Both themes must keep complete evidence rows, status text and every visible
+button inside all ancestor clipping bounds at the narrow window width. Long
+translated action rows wrap in the reading direction; custom frame margins and
+wrapped guidance contribute to the window minimum. The fixture optionally
+captures both themes at the native runner's selected scale.
 These cases qualify declared chronology, not inferred release relationships.
 
 For real legacy-reader compatibility, retain the earlier library and run

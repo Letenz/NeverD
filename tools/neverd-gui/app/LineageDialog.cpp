@@ -12,6 +12,7 @@
 
 #include "../ResourceLimits.h"
 #include "ElidedLabel.h"
+#include "FlowLayout.h"
 #include "Icons.h"
 #include "LineageGraph.h"
 #include "LineagePageView.h"
@@ -91,7 +92,7 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   if (screen())
     resize(size().boundedTo(screen()->availableGeometry().size()));
   auto *Root = new QVBoxLayout(this);
-  auto *Actions = new QHBoxLayout;
+  auto *Actions = new FlowLayout;
   Add = button(tr("&Add comparisons…"), "lineageAdd", this);
   Add->setIcon(icon("open"));
   Open = button(tr("&Open graph…"), "lineageOpen", this);
@@ -100,7 +101,6 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   Cancel = button(tr("Cancel"), "lineageCancel", this);
   for (auto *B : {Add, Open, Save})
     Actions->addWidget(B);
-  Actions->addStretch();
   Actions->addWidget(OptionsButton);
   Actions->addWidget(Cancel);
   Root->addLayout(Actions);
@@ -120,7 +120,9 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   Root->addWidget(Split, 1);
   auto *Left = new QWidget(Split);
   auto *LeftLayout = new QVBoxLayout(Left);
-  LeftLayout->setContentsMargins(0, 0, 0, 0);
+  // Keep control frames inside the pane, including the outer edge that Qt's
+  // right-to-left splitter geometry can place one pixel beyond its viewport.
+  LeftLayout->setContentsMargins(Root->spacing(), 0, Root->spacing(), 0);
   LeftLayout->addWidget(label(tr("Analyzed snapshots"), Left));
   Versions = page(Session, {tr("Label"), tr("Branch"), tr("Functions")},
                   {"label", "branch", "functions"}, "lineageVersions", Left);
@@ -186,11 +188,10 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   Tabs->addTab(TracePane, tr("Trace"));
   auto *SourcesPane = new QWidget(Tabs);
   auto *SL = new QVBoxLayout(SourcesPane);
-  auto *GraphActions = new QHBoxLayout;
-  GraphActions->addWidget(label(tr("Diagram of the current source-report page; "
-                                   "layout does not indicate release order."),
-                                SourcesPane),
-                          1);
+  SL->addWidget(label(tr("Diagram of the current source-report page; "
+                         "layout does not indicate release order."),
+                      SourcesPane));
+  auto *GraphActions = new FlowLayout;
   auto *Fit = button(tr("Fit"), "lineageGraphFit", SourcesPane);
   auto *ZoomIn = button(tr("Zoom in"), "lineageGraphZoomIn", SourcesPane);
   auto *ZoomOut = button(tr("Zoom out"), "lineageGraphZoomOut", SourcesPane);
@@ -214,14 +215,13 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
   SourceSplit->setStretchFactor(1, 1);
   SourceSplit->setSizes({limits::kLineageGraphInitialHeight,
                          limits::kLineageSourceInitialHeight});
-  auto *SourceActions = new QHBoxLayout;
+  auto *SourceActions = new FlowLayout;
   Inspect = button(tr("Inspect source &evidence…"), "lineageInspectSource",
                    SourcesPane);
   Export =
       button(tr("Export original report…"), "lineageExportSource", SourcesPane);
   SourceActions->addWidget(Inspect);
   SourceActions->addWidget(Export);
-  SourceActions->addStretch();
   SL->addLayout(SourceActions);
   Tabs->addTab(SourcesPane, tr("Graph / sources"));
   auto *ConflictPane = new QWidget(Tabs);
@@ -840,12 +840,17 @@ void LineageDialog::save() {
 bool LineageDialog::event(QEvent *Event) {
   const auto Result = QDialog::event(Event);
   if (layout() && (Event->type() == QEvent::LayoutRequest ||
-                   Event->type() == QEvent::Resize))
-    // The baseline minimum cannot override the content's font-dependent
-    // minimum: otherwise table rows and the status controls overlap.
-    setMinimumHeight(std::max({limits::kLineageMinimumHeight,
-                               layout()->minimumSize().height(),
-                               layout()->minimumHeightForWidth(width())}));
+                   Event->type() == QEvent::Resize)) {
+    // Include the custom frame's content margins, as well as the layout's
+    // own margins. Explicit baseline minima otherwise prevent Qt from growing
+    // either axis when translated controls or theme fonts need more room.
+    auto Minimum = layout()->totalMinimumSize().expandedTo(
+        QSize(limits::kLineageMinimumWidth, limits::kLineageMinimumHeight));
+    Minimum.setHeight(
+        std::max(Minimum.height(), layout()->totalMinimumHeightForWidth(
+                                       std::max(width(), Minimum.width()))));
+    setMinimumSize(Minimum);
+  }
   return Result;
 }
 

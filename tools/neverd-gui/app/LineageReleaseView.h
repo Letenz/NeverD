@@ -36,6 +36,9 @@ public:
 signals:
   void snapshotRequested(const QString &ID);
 
+protected:
+  bool event(QEvent *Event) override;
+
 private:
   LineageSession &Session;
   LineagePageView *Releases, *Parents, *Children;

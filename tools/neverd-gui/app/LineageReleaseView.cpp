@@ -12,6 +12,7 @@
 
 #include "../ResourceLimits.h"
 #include "ElidedLabel.h"
+#include "FlowLayout.h"
 #include "LineagePageView.h"
 #include "LineageSession.h"
 #include "ShrinkableRow.h"
@@ -20,6 +21,7 @@
 #include <QDateTimeEdit>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QJsonArray>
@@ -33,6 +35,7 @@
 #include <QTimeZone>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -106,7 +109,7 @@ LineageReleaseView::LineageReleaseView(LineageSession &S, QWidget *Owner)
       {"label", "branch", "published_at", "id"}, "lineageReleaseParents",
       ParentPane);
   PL->addWidget(Parents, 1);
-  auto *ParentActions = new QHBoxLayout;
+  auto *ParentActions = new FlowLayout;
   AddParent = button(tr("Add parent…"), "lineageReleaseAddParent", ParentPane);
   RemoveParent = button(tr("Remove parent link"), "lineageReleaseRemoveParent",
                         ParentPane);
@@ -170,6 +173,18 @@ LineageReleaseView::LineageReleaseView(LineageSession &S, QWidget *Owner)
   connect(AddParent, &QPushButton::clicked, this, [this] { parent(true); });
   connect(RemoveParent, &QPushButton::clicked, this, [this] { parent(false); });
   update();
+}
+
+bool LineageReleaseView::event(QEvent *Event) {
+  const auto Result = QWidget::event(Event);
+  if (isVisible() && layout() &&
+      (Event->type() == QEvent::Show || Event->type() == QEvent::Resize ||
+       Event->type() == QEvent::LayoutRequest))
+    // The outer splitter cannot propagate height-for-width through this tab.
+    // Reserve wrapped guidance here so it cannot overlap the timeline controls.
+    setMinimumHeight(std::max(layout()->minimumSize().height(),
+                              layout()->minimumHeightForWidth(width())));
+  return Result;
 }
 
 void LineageReleaseView::update() {

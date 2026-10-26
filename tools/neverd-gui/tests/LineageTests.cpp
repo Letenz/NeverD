@@ -31,6 +31,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QProcess>
@@ -219,10 +220,11 @@ private slots:
                          .arg(View.height())
                          .arg(View.minimumWidth())
                          .arg(View.minimumHeight());
-      for (const auto *Page : {Versions, Functions}) {
+      for (const auto *Page : View.findChildren<LineagePageView *>()) {
         const auto *Table = Page->table();
         Text += QString(" %1: table=%2 min=%3 viewport=%4 header=%5 "
-                        "headerHint=%6 row=%7 visualTop=%8 visualBottom=%9")
+                        "headerHint=%6 row=%7 visualTop=%8 visualBottom=%9 "
+                        "pageHeight=%10 statusTop=%11 tableBottom=%12")
                     .arg(Page->objectName())
                     .arg(Table->height())
                     .arg(Table->minimumHeight())
@@ -231,7 +233,29 @@ private slots:
                     .arg(Table->horizontalHeader()->sizeHint().height())
                     .arg(Table->rowHeight(Table->currentIndex().row()))
                     .arg(Table->visualRect(Table->currentIndex()).top())
-                    .arg(Table->visualRect(Table->currentIndex()).bottom());
+                    .arg(Table->visualRect(Table->currentIndex()).bottom())
+                    .arg(Page->height())
+                    .arg(Page->findChild<QLabel *>("lineagePageStatus")->y())
+                    .arg(Table->geometry().bottom());
+      }
+      for (const auto *Widget : View.findChildren<QWidget *>())
+        if (const auto *Layout = Widget->layout();
+            Layout && !Widget->objectName().startsWith("qt_scrollarea_"))
+          Text += QString(" layout=%1/%2 width=%3 minimumWidth=%4 hint=%5")
+                      .arg(Widget->metaObject()->className())
+                      .arg(Widget->objectName())
+                      .arg(Widget->width())
+                      .arg(Layout->minimumSize().width())
+                      .arg(Widget->minimumSizeHint().width());
+      for (const auto *Layout : View.findChildren<QLayout *>()) {
+        if (Layout->minimumSize().width() <= View.width() / 2)
+          continue;
+        Text += QString(" wideLayout=%1/%2 items=")
+                    .arg(Layout->metaObject()->className())
+                    .arg(Layout->minimumSize().width());
+        for (int I = 0; I < Layout->count(); ++I)
+          if (const auto *Widget = Layout->itemAt(I)->widget())
+            Text += Widget->objectName() + ',';
       }
       return Text;
     };
@@ -243,7 +267,7 @@ private slots:
       QVERIFY(QDir().mkpath(Output));
       QVERIFY(View.grab().save(Output + "/locale-" + Locale + ".png"));
     }
-    QCOMPARE(View.width(), 760);
+    QVERIFY2(View.width() == 760, qPrintable(RowGeometry()));
     const auto *Status = Versions->findChild<QLabel *>("lineagePageStatus");
     QVERIFY(Status && Status->isVisible());
     QVERIFY(Status->width() >=
@@ -322,7 +346,12 @@ private slots:
     QVERIFY(EditRelease && EditRelease->isEnabled());
     QCOMPARE(EditRelease->text(),
              Translated("neverd::gui::LineageReleaseView", "&Edit release…"));
-    QTRY_VERIFY(SelectedRowVisible(Releases));
+    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Output.isEmpty()) {
+      QTest::qWait(60);
+      QVERIFY(View.grab().save(Output + "/release-layout-" + Locale + ".png"));
+    }
+    QTRY_VERIFY2(SelectedRowVisible(Releases), qPrintable(RowGeometry()));
     for (const auto *Name :
          {"lineageReleaseAdd", "lineageReleaseEdit", "lineageReleaseRemove",
           "lineageReleaseSnapshot"}) {
@@ -331,20 +360,42 @@ private slots:
       QVERIFY(View.rect().contains(
           QRect(Button->mapTo(&View, QPoint()), Button->size())));
     }
+    const auto ActionGeometry = [&]() -> QString {
+      for (const auto *Button : View.findChildren<QPushButton *>()) {
+        if (!Button->isVisible())
+          continue;
+        if (Button->width() < Button->minimumSizeHint().width())
+          return QString("narrow action=%1 width=%2 minimum=%3")
+              .arg(Button->objectName())
+              .arg(Button->width())
+              .arg(Button->minimumSizeHint().width());
+        for (const QWidget *Parent = Button->parentWidget(); Parent;
+             Parent = Parent->parentWidget()) {
+          const QRect Bounds(Button->mapTo(Parent, QPoint()), Button->size());
+          if (!Parent->rect().contains(Bounds))
+            return "clipped action=" + Button->objectName() +
+                   " ancestor=" + Parent->metaObject()->className() + '/' +
+                   Parent->objectName();
+          if (Parent == &View)
+            break;
+        }
+      }
+      return {};
+    };
     const auto CaptureRelease = [&](const QString &Name,
                                     LineagePageView *Page) {
       const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
-      if (Output.isEmpty())
-        return;
       const auto OriginalMode = Theme::instance().mode();
       const auto RestoreTheme =
           qScopeGuard([&] { Theme::instance().setMode(OriginalMode); });
       for (const auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
         Theme::instance().setMode(Mode);
         QTest::qWait(60);
-        QTRY_VERIFY(SelectedRowVisible(Page));
-        QVERIFY(View.grab().save(Output + '/' + Name + '-' + Locale + '-' +
-                                 Theme::modeName(Mode) + ".png"));
+        if (!Output.isEmpty())
+          QVERIFY(View.grab().save(Output + '/' + Name + '-' + Locale + '-' +
+                                   Theme::modeName(Mode) + ".png"));
+        QTRY_VERIFY2(SelectedRowVisible(Page) && ActionGeometry().isEmpty(),
+                     qPrintable(ActionGeometry() + ' ' + RowGeometry()));
       }
     };
     CaptureRelease("release", Releases);
@@ -1049,7 +1100,7 @@ private slots:
     QVERIFY(Versions && Releases && Parents && Tabs && Relations);
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 3,
                              Timeout);
-    const auto Version = Versions->selected()["id"];
+    const auto Version = Versions->selected()["id"].toString();
     Releases->findChild<QSpinBox *>("lineagePageRows")->setValue(2);
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     QJsonArray Rows;
@@ -1186,7 +1237,7 @@ private slots:
     auto *Relations = View.findChild<QTabWidget *>("lineageReleaseRelations");
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 3,
                              Timeout);
-    const auto Version = Versions->selected()["id"];
+    const auto Version = Versions->selected()["id"].toString();
     QJsonArray Records, IDs;
     for (unsigned I = 0; I < 257; ++I) {
       const auto ID = QString("parent-%1").arg(I, 3, 10, QChar('0'));
