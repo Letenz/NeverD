@@ -135,8 +135,8 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
 | XBEGIN and full RTM regions | Original abort target, register/memory checkpoint, nesting and rollback continuation. A C `_xbegin()` status result cannot substitute for the decoded instruction. Strict/permissive lifting and legacy IR admission explicitly refuse that incomplete representation. |
-| Remaining compact-memory address forms | Native LLVM and both C routes now support DS/FS/GS compact memory. A 64-bit RSP/RBP-based address without FS/GS still lacks its #SS fault provenance. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
-| Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
+| Remaining compact-memory address forms | Native LLVM and both C routes retain long-mode RSP/RBP stack-reference provenance independently of DS overrides, alongside DS/FS/GS data addresses. In i386, SS-default stack bases and explicit CS/ES/SS segments remain refused; an explicit DS override is supported. Physical AVX-512 fault execution remains unqualified. |
+| Remaining four-source address forms and hardware qualification | Native lowering uses explicit SSA sources and the same long-mode stack-reference contract as compact memory. i386 non-DS/FS/GS segments and physical AVX512_4FMAPS/AVX512_4VNNIW execution/exception behavior still require qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | AMX tile row-memory with addr64 SP/BP bases | Its SIB index is the architectural stride and cannot also carry the configuration API's offset relative to RBP. These forms fail before LowIR effects unless FS/GS selects the segment. LDTILECFG/STTILECFG use the independent version-2 stack-reference contract below. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
@@ -2050,8 +2050,9 @@ transport, effects, flags and ABI preservation, not physical atomicity.
 
 The twelve compress-store/expand-load families retain their original opcode
 kind and 128/256/512-bit width. `X86CompressExpand.h` owns the stable LowIR
-control: element bytes, the floating-point kind bit and load zeroing. LowIR
-and MedIR adapters live in their own `X86/` directories; native LLVM transport
+control: element bytes, the floating-point kind bit, load zeroing and the
+independent `0x20` stack-reference bit. LowIR and MedIR adapters live in their
+own `X86/` directories; native LLVM transport
 and C projection likewise stay in the owning component's `X86/` directory.
 Both decoders, Low-to-Med conversion, verification, execution and emitters
 consume that contract. Invalid controls, insufficient mask widths, mismatched
@@ -2073,9 +2074,13 @@ addresses. LLVM's address-space pointer is converted through its integer
 offset before entering the native interface; the instruction owns segment
 base addition. A constrained data-register carrier retains default DS addressing.
 The pinned-SDK and ordinary C assembly alternatives use AX, avoiding compiler-owned
-realignment and PIC bases; exact older BX-owned IR remains readable. The remaining
-stack/segment provenance limitations are listed above. The full LLVM and
-NeverD matrices include i386; NeverC's builtin frontend remains x86-64 only.
+realignment and PIC bases; exact older BX-owned IR remains readable for data
+references. A long-mode stack reference uses native control `0x100` when the
+SDK/compiler advertises that capability. Its owned assembly fallback computes
+the address relative to unchanged RBP in RDX, retains RBP as the SIB base and
+declares RDX/flags/memory clobbers. FS/GS, addr32 and R12/R13 data defaults remain
+separate. The remaining i386 segment limitations are listed above. The full
+LLVM and NeverD matrices include i386; NeverC's builtin frontend remains x86-64 only.
 
 Concrete execution refuses unknown active masks, addresses and source/prior
 values. A zero mask suppresses address and segment-base resolution; all-active
@@ -2091,8 +2096,8 @@ unknown inputs, both decoder routes and both x86 modes. Its existing
 partial-store fault model is a software projection; hardware partial-fault
 completion has not been independently qualified.
 `NeverDX86CompressExpandSourceTests` checks shared contracts, altered native
-and assembly effects, unknown-entry rejection, 162 wrapper variants and 162
-pipeline variants with explicit address/mask/vector input setup and observable
+and assembly effects, unknown-entry rejection, 216 x64 wrapper/pipeline variants
+and 162 i386 wrappers with explicit address/mask/vector input setup and observable
 load results. Their `KMOVW` setup also checks that a narrowing machine `COPY`
 survives Med-to-High expression substitution. The shared conversion retains
 that byte slice; an executable regression covers i386, x86-64 and AArch64.
@@ -2102,7 +2107,7 @@ Run the source test with `NEVERD_COMPACT_EXPORT_DIR` set, then use
 `scripts/verify_x86_compact_memory.py --exports DIR --keep AUDIT_DIR
 --llc LLVM/bin/llc --neverc NEVERC/bin/neverc --pipeline`. The script audits
 EVEX bytes independently of the lifter and checks width, kind, masks,
-zeroing, prefixes, DS-default addressing and instruction counts. It covers
+zeroing, prefixes, data/stack SIB provenance and instruction counts. It covers
 ELF/COFF/Mach-O at O0/O2, both C routes and both assembly dialects. Its C
 recorders execute the emitted operand/return transport and compare compacted
 bytes, inactive lanes, high ignored mask bits and repeated zero-mask effects
@@ -2118,8 +2123,9 @@ The architectural reference is Intel's
 
 `X86FourSourceMemory` appends one stable intrinsic identity without renumbering
 older IDs. Its operands are a segment-relative address, accumulator, packed
-four-source value, lane mask and constant kind/zeroing control. SS forms pack
-only the low dword of each XMM source; packed forms retain all four ZMM values.
+four-source value, lane mask and constant kind/zeroing/stack-reference control.
+Scalar SS forms pack only the low dword of each XMM source; packed forms retain
+all four ZMM values.
 The lifter snapshots those reads before any aliasing destination write.
 LowIR, MedIR, concrete execution and both source routes share shape and operand
 observation rules in `ir/intrinsics/X86/X86FourSource.h`. Unknown active operands
@@ -2136,23 +2142,42 @@ corresponding builtins in `336a54b88` and `__NEVERC_X86_FOUR_SOURCE__`; C output
 when available and otherwise uses the owned ATT/Intel assembly form.
 
 The native pointer carrier uses constrained data registers; the pinned-SDK and
-ordinary C assembly alternatives use AX. The remaining default-stack and i386
+ordinary C assembly alternatives use AX. Stack references use the independent
+native control or the RBP-plus-RDX fallback described above. The remaining i386
 segment limitations match compact memory. LLVM and NeverD cover i386 and x64;
 NeverC's frontend remains x64-only. Compiler `avx512f` enables the carriers,
 but execution additionally requires AVX512_4FMAPS or AVX512_4VNNIW and the
 appropriate enabled extended state. Ordinary AVX512F hardware is insufficient.
 
-The address-carrier follow-up passes 13 source/ownership tests on each SDK,
+The earlier data-address follow-up passed 13 source/ownership tests on each SDK,
 including realigned dynamic frames for both modes and all three formats. Each
 SDK's compact/four-source exports pass 1,962 object audits covering 19,602
 functions and 37,422 native instructions, plus 32 executable C transport
 recorders. The compiler register/stack interpreter also passes full LLVM and
 NeverC probes at O0/O2. These checks retain the hardware-execution limits above.
 
+The long-mode stack-reference follow-up passes 9,828 raw admission cases and
+54 realigned-frame object checks per SDK. Each SDK's expanded compact/four-source
+matrix passes 2,556 object audits, covering 23,958 functions and 45,540 native
+encodings, plus 32 executable C operand/return recorders. Across the pinned
+and native SDKs this is 5,112 objects, 91,080 native encodings and 64 recorders.
+The shared pipeline/source/private-cleanup suites pass 670 cases per SDK with
+three Windows EH corpus prerequisites unavailable. AMX source qualification
+passes its 156-case matrix per SDK with the explicit native-API/hardware skips;
+all 129 AMX address exports remain byte-identical to the previously qualified
+3,072-object corpus.
+
+The four-source register interpreter additionally checks ten LLVM, NeverC and
+NeverC-to-LLVM bridge objects at O0/O2, including both NeverC wide-vector ABIs.
+Four pointer bit patterns, including noncanonical and wrapping addresses,
+exercise 240 functions and 720 controlled native completions. This checks
+address, all four source registers, masks, returned values and preserved GPRs;
+it does not execute the native arithmetic or qualify physical faults.
+
 The numerical executors retain independent four-iteration FP and integer tests,
 including source/destination aliasing, mask suppression, saturation and memory
 completion. `NeverDX86FourSourceSourceTests` checks malformed effects and source
-groups, unknown operands, 36 wrapper variants and 36 raw pipeline variants.
+groups, unknown operands, 48 x64 wrapper/pipeline variants and 36 i386 wrappers.
 Set `NEVERD_FOUR_SOURCE_EXPORT_DIR` and run
 `scripts/verify_x86_four_source.py --exports DIR --keep AUDIT_DIR
 --llc LLVM/bin/llc --neverc NEVERC/bin/neverc` for O0/O2 ELF/COFF/Mach-O objects,

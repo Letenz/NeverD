@@ -26,6 +26,14 @@ inline constexpr const char X86FourSourceCompilerDispatch[] =
     "1\n"
     "#define NEVERD_X86_FOUR_SOURCE(native, ...) native\n"
     "#else\n#define NEVERD_X86_FOUR_SOURCE(native, ...) __VA_ARGS__\n"
+    "#endif\n#endif\n"
+    "#ifndef NEVERD_X86_FOUR_SOURCE_STACK\n"
+    "#if defined(__NEVERC_X86_FOUR_SOURCE__) && "
+    "__NEVERC_X86_FOUR_SOURCE__ >= 1 && "
+    "defined(__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__) && "
+    "__NEVERC_X86_NATIVE_MEMORY_STACK_REFERENCE__ >= 1\n"
+    "#define NEVERD_X86_FOUR_SOURCE_STACK(native, ...) native\n"
+    "#else\n#define NEVERD_X86_FOUR_SOURCE_STACK(native, ...) __VA_ARGS__\n"
     "#endif\n#endif\n";
 X86FourSourcePlan x86FourSourceHighPlan(Arch A, const HighExpr &E);
 std::optional<X86FourSourcePlan> x86FourSourceCallPlan(Arch A,

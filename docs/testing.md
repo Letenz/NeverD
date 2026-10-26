@@ -271,13 +271,23 @@ unqualified on hosts without those capabilities.
 
 `X86NativeMemoryCarrier.*` in `NeverDX86CompressExpandSourceTests` compiles owned
 compact/four-source, descriptor, query and atomic assembly in dynamically
-allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 48 objects
-include both explicit address sizes for scalar operations. The decoded memory
-operand must avoid reserved frame bases and retain its address width. Separate
-admission checks retain exact older BX constraints while rejecting replacement
+allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 54 objects
+include both explicit address sizes for scalar operations and long-mode
+stack-reference compact/four-source operands. Data addresses must avoid
+reserved frame bases; stack addresses retain unchanged RBP plus an RDX offset.
+Raw-byte admission covers all eighteen vector families, three decoder routes,
+both lift policies, RAX/RSP/RBP/R12/R13, address widths and segment overrides.
+Separate admission checks retain exact older BX constraints while rejecting replacement
 constraints outside the owned contract. Run it with both SDKs, alongside the
 compact/four-source, descriptor and atomic source checks. These tests do not
 execute unavailable four-source or atomic hardware instructions.
+
+`NeverDMedLLVMDeadSlotsTests` covers the dead entry-register identity copies
+exposed by the RBP-saving vector pipeline fixtures. Only adjacent plain
+load/store pairs in nonescaping private slots can be discarded. Live read
+results, intervening writes, escaping slots, volatile/atomic operations and
+source annotations each retain their effects. Pair these tests with the full
+Med entry-frame and High control-flow suites when changing private cleanup.
 
 `NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
 port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
@@ -1036,15 +1046,16 @@ APX hardware and does not qualify native memory faults or opaque state.
 
 `NeverDX86InstructionCoverageTests` checks that x86 strict and permissive
 policies both refuse unknown instruction IDs, unmapped register results,
-malformed operand counts that emit no operations and unqualified compact-memory
-stack references. Full, lightweight and lift decode
-routes must retain preceding LowIR and retract the failed instruction's partial
+malformed operand counts that emit no operations and the unowned VMRUN
+transition. Full, lightweight and lift decode routes must retain preceding
+LowIR and retract the failed instruction's partial
 address/load effects. Missing detail fails explicitly; real architectural NOPs
 remain supported. Pair it with `NeverDX86UndefinedEffectsTests` to check stale
 undefined-output and preserved-state certificates after refusal.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
-and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 75 independent
+and both `X86AmxSource.*` and `AmxEncodings/*` in
+`NeverDX86VirtualizationSourceTests`. The 75 independent
 encoding fixtures cover every bank operation, register/immediate and extended
 row selectors, APX memory, FS/GS/SS and address-size overrides, including RSP
 configuration accesses with absent, DS and SS prefixes. The source

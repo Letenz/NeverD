@@ -350,6 +350,10 @@ only when its private slot has one later definition dominating every read.
 This keeps SSA promotion from recomputing whole-function dominance frontiers
 for already defined temporaries. Bypassed definitions, first loop iterations,
 ordered accesses and escaping storage retain the original seed.
+Private cleanup also removes an adjacent load followed by its sole use, a
+plain store of the same value to the same nonescaping slot. This breaks dead
+entry-register identity cycles without discarding unknown values observed by
+native operations, returns, ordered accesses or source-annotated memory.
 
 LowIR owns x64 internal-call return proofs. Replaced-PC tail transfers require
 an exact write to the pushed return slot and a checked parent stack. Bounded
@@ -7040,7 +7044,13 @@ and segment-relative addresses. Unknown observed inputs are retained during
 emission and rejected before executable publication. Suppressed inputs use
 the same shared observation rule in concrete execution and source projection.
 Their unknown-size volatile memory effects keep even zero-mask instructions.
-Stack-default fault provenance remains an explicit unsupported boundary.
+The control separately retains long-mode stack-default address provenance.
+`backend/llvm/X86/X86NativeMemoryAddress.h` owns the native `0x100` control and
+SDK capability check shared with AMX. Native LLVM and NeverC use that control;
+older SDKs and ordinary C retain RBP as the SIB base and compute the offset in
+RDX without changing RBP. An explicit DS override does not erase RSP/RBP stack
+provenance; FS/GS and address-size-32 operands do not acquire it. i386 SS-default
+and explicit non-DS/FS/GS segments remain refused.
 
 `X86FourSource.h` owns the explicit four-source memory shape and observation
 rules. The lifter snapshots independent register inputs into one packed SSA
@@ -7050,7 +7060,7 @@ the C renderer owns their native-builtin/checked-assembly projection. Numerical
 execution lives under `ir/low/X86/`, retaining the existing sequential FP and
 integer algorithms. Pure COPY/CONCAT transport cannot manufacture missing
 source bytes. Compact and four-source native functions share entry-unknown
-validation; their lifters share DS-carrier address admission. C scalar integer
+validation; their lifters share ordinary-SIB address admission. C scalar integer
 carriers accommodate the complete 256-byte source group, independently of the
 64-byte compiler vector limit. Legacy implicit-bank identities stay readable
 without acquiring an unproved native source-state contract.

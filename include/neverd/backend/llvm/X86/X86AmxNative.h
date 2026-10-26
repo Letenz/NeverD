@@ -13,6 +13,7 @@
 #ifndef NEVERD_BACKEND_LLVM_X86_X86AMXNATIVE_H
 #define NEVERD_BACKEND_LLVM_X86_X86AMXNATIVE_H
 
+#include "neverd/backend/llvm/X86/X86NativeMemoryAddress.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
 
 #include <array>
@@ -21,7 +22,7 @@
 #include <string_view>
 
 namespace neverd {
-inline constexpr unsigned X86AmxNativeStackReference = 0x100;
+inline constexpr unsigned X86AmxNativeStackReference = X86NativeStackReference;
 inline std::string x86AmxNativeSuffix(uint32_t D) {
   constexpr std::array<const char *, unsigned(X86AmxOp::Count)> Names = {
       "ldtilecfg",       "sttilecfg",       "tilerelease",   "tilezero",

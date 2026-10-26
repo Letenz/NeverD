@@ -32,7 +32,7 @@ TEST(X86InstructionCoverage, RefusalsKeepThePriorLowIRInBothPolicies) {
   const std::vector<std::vector<uint8_t>> Cases = {
       {0x90},
       {0x8b, 0x04, 0x08},
-      {0x62, 0xf2, 0x7d, 0x0a, 0x89, 0x0c, 0x24},
+      {0x0f, 0x01, 0xd8}, // VMRUN has no owned continuation.
       {0x31, 0xc0}};
   for (Arch A : {Arch::X86, Arch::X64})
     for (bool Strict : {false, true})
