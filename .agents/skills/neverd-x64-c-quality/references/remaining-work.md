@@ -173,11 +173,13 @@ when its argument count stays the same. Apple ARM64 packed stack placement,
 x86/ARM32 adapters, nonordinary conventions and general incoming machine-state
 projection remain separate gaps. Explicit x64/ARM64 source stack declarations
 now initialize their exact entry bytes in the shared MedIR frame, including
-floating bit transport. Bounded complete PE/ELF leaves can derive full-word
-integer stack inputs automatically, including restored RBP or x29/x30 frames
+floating bit transport. Bounded complete PE/ELF leaves can derive aligned
+1/2/4/8-byte integer stack inputs automatically, including restored RBP or x29/x30 frames
 and explicit local stack allocation. The shared byte proof checks original
 restoration against the current format's preserved bank; saved state, frame
-escape, external memory and partial words cannot become such inputs. Every
+escape, external memory and unaligned carriers cannot become such inputs.
+The memo retains each input width, signed/unsigned loads preserve their bits,
+and narrow declarations do not initialize adjacent bytes. Every
 selected caller must completely write the same outgoing bytes. Selected-only
 LLVM exports retain fixed declarations rather than falling back to varargs.
 These rules do not supply an arbitrary VM dispatcher with a missing bytecode

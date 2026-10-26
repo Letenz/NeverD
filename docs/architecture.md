@@ -4757,7 +4757,10 @@ same initialization. This transports an already supplied declaration and does
 not infer an original prototype or authorize a machine-code rewrite.
 
 `PipelineIncomingStack` also derives internal integer source declarations for
-bounded, complete x64/ARM64 PE/ELF leaves that read whole incoming stack words.
+bounded, complete x64/ARM64 PE/ELF leaves that read aligned incoming scalar
+carriers. Their exact 1/2/4/8-byte widths survive the omitted-callee memo,
+entry binding and outgoing-byte proof. Signed and unsigned extensions preserve
+the loaded bits; a narrow input never initializes adjacent stack bytes.
 The shared entry-stack proof owns offsets, and a separate value walk rejects
 external memory, frame escape and undefined inputs. Private frame/link spills
 may survive in the leaf: `SourceFrameAnalysis` checks the original LowIR byte
@@ -4782,7 +4785,7 @@ Exact register-call targets use the shared bounded LowIR scalar query. The origi
 Selected callers use the existing omitted-callee reader and its image- and
 summary-sensitive memo. A bounded instruction preflight only avoids unnecessary
 CFG builds; the ordinary complete CFG and MedIR still establish the declaration.
-The memo accounts for cached stack locations, and follows its existing reset
+The memo accounts for cached stack locations and widths, and follows its existing reset
 contract when image bytes or analysis policy change. Work limits belong to
 `pipeline/Limits.h`. These projections do not infer arbitrary framed/VM state
 inputs, floating types, or an external calling convention.

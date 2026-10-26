@@ -38,7 +38,8 @@ Key key(const MedVar &Value) {
 
 bool supported(NdOp Opcode) {
   return Opcode == NdOp::COPY || Opcode == NdOp::INT_ADD ||
-         Opcode == NdOp::INT_SUB || Opcode == NdOp::LOAD ||
+         Opcode == NdOp::INT_SUB || Opcode == NdOp::INT_ZEXT ||
+         Opcode == NdOp::INT_SEXT || Opcode == NdOp::LOAD ||
          Opcode == NdOp::STORE || Opcode == NdOp::RETURN;
 }
 bool supported(const LowOp &Op, const TargetRegInfo &TRI) {
@@ -53,8 +54,9 @@ bool supported(const LowOp &Op, const TargetRegInfo &TRI) {
          (!Op.Output.isReg() || !Op.Output.Size ||
           (TRI.isFlag(Op.Output.Offset, Op.Output.Size) &&
            Op.Output.Offset != TRI.FlagDF) ||
-          ((Op.Output.Offset == TRI.IntReturnReg ||
-            Op.Output.Offset == TRI.StackPointer ||
+          (Op.Output.Offset == TRI.IntReturnReg &&
+           Op.Output.Size <= TRI.PointerSize) ||
+          ((Op.Output.Offset == TRI.StackPointer ||
             TRI.isFrameOrLinkReg(Op.Output.Offset)) &&
            Op.Output.Size == TRI.PointerSize)) &&
          (Op.Opcode != NdOp::RETURN ||
@@ -180,12 +182,14 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
   const auto Layout = TRI.integerArgumentLayout(Med.CC == CallingConv::Win64);
   const int RegisterCount = static_cast<int>(Layout.Registers.size());
   const int64_t Minimum = Image.Arch == Arch::X64 ? TRI.PointerSize : 0;
-  std::set<int64_t> Inputs;
-  auto AddInput = [&](int64_t Offset) {
-    if (Offset < Minimum || Offset % TRI.PointerSize ||
-        Offset > limits::ir::kMaxSourceStackArgumentBytes - TRI.PointerSize)
+  std::map<int64_t, uint16_t> Inputs;
+  auto AddInput = [&](int64_t Offset, uint16_t Size) {
+    if (Size != 1 && Size != 2 && Size != 4 && Size != TRI.PointerSize)
       return false;
-    Inputs.insert(Offset);
+    if (Offset < Minimum || Offset % TRI.PointerSize ||
+        Offset > limits::ir::kMaxSourceStackArgumentBytes - Size)
+      return false;
+    Inputs[Offset] = std::max(Inputs[Offset], Size);
     return Inputs.size() <= limits::ir::kMaxSourceABIParameters;
   };
   enum class Role { Scalar, Address, Saved };
@@ -197,8 +201,6 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
       return Role::Scalar;
     if (auto It = Values.find(key(Value)); It != Values.end())
       return It->second;
-    if (Value.Size != TRI.PointerSize)
-      return {};
     if (Value.Kind == MedVar::Param && Value.RegOff == kNoParamReg &&
         Value.Id >= RegisterCount &&
         Value.Id - RegisterCount <=
@@ -206,7 +208,7 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
       const int64_t Offset =
           Layout.EntryStackBase +
           int64_t(Value.Id - RegisterCount) * Layout.SlotBytes;
-      if (AddInput(Offset))
+      if (AddInput(Offset, Value.Size))
         return Role::Scalar;
     }
     return {};
@@ -236,6 +238,9 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
     std::optional<Role> Result;
     if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
       Result = Read(Op.Inputs[0]);
+    else if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT) &&
+             Op.NumInputs == 1 && Read(Op.Inputs[0]) == Role::Scalar)
+      Result = Role::Scalar;
     else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
              Op.NumInputs == 2) {
       const auto A = Read(Op.Inputs[0]), B = Read(Op.Inputs[1]);
@@ -252,7 +257,7 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
       if (Offset != Frame.end()) {
         if (Offset->second < 0)
           Result = Role::Saved;
-        else if (AddInput(Offset->second))
+        else if (AddInput(Offset->second, Op.Output.Size))
           Result = Role::Scalar;
       }
     } else if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
@@ -277,15 +282,10 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
       Returned = true;
       continue;
     }
-    // AArch64 stack ADD/SUB exposes its immediate through a four-byte
-    // temporary even when the pointer arithmetic is eight bytes. This is a
-    // known scalar operand, not permission to infer a narrow incoming word.
-    const bool ScalarImmediate =
-        Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-        Op.Inputs[0].isConst() && Op.Output.Kind == MedVar::Temp &&
-        Op.Output.Size && Op.Output.Size <= TRI.PointerSize &&
-        Op.Inputs[0].Size == Op.Output.Size;
-    if (!Result || (Op.Output.Size != TRI.PointerSize && !ScalarImmediate) ||
+    // Scalar views retain exactly the observed bytes. Frame addresses and
+    // saved registers still require complete pointer-width identities.
+    if (!Result || !Op.Output.Size || Op.Output.Size > TRI.PointerSize ||
+        (*Result != Role::Scalar && Op.Output.Size != TRI.PointerSize) ||
         (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
         !Values.emplace(key(Op.Output), *Result).second)
       return {};
@@ -294,11 +294,12 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
   }
   if (!Returned || Inputs.empty())
     return {};
-  const std::vector<int64_t> OffsetsSorted(Inputs.begin(), Inputs.end());
+  const std::vector<std::pair<int64_t, uint16_t>> Sorted(Inputs.begin(),
+                                                         Inputs.end());
   // The role walk cannot authorize a restored machine frame. Authenticate
   // the original LowIR with the shared byte-identity proof, including the
-  // format-specific preserved bank and every declared incoming word.
-  auto Hint = incomingStackSourceHint(Image.Arch, OffsetsSorted);
+  // format-specific preserved bank and every declared incoming byte.
+  auto Hint = incomingStackSourceHint(Image.Arch, Sorted);
   if (!Hint || !restoresNativeSourceState(Low, Image.Arch, {}, nullptr, &*Hint,
                                           Image.abiFormat()))
     return {};
@@ -306,8 +307,9 @@ inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
 }
 
 std::optional<SourceFunctionTypeHint>
-incomingStackSourceHint(Arch Architecture, llvm::ArrayRef<int64_t> Offsets) {
-  if (Offsets.empty())
+incomingStackSourceHint(Arch Architecture,
+                        llvm::ArrayRef<std::pair<int64_t, uint16_t>> Inputs) {
+  if (Inputs.empty())
     return {};
   const auto &TRI = getTargetRegInfo(Architecture);
   SourceFunctionTypeHint Hint;
@@ -317,12 +319,11 @@ incomingStackSourceHint(Arch Architecture, llvm::ArrayRef<int64_t> Offsets) {
   Hint.ReturnType = NdType::makeInt(TRI.PointerSize, false);
   Hint.ReturnLocation = {SourceABICarrierKind::IntegerRegister,
                          TRI.IntReturnReg, 0, TRI.PointerSize};
-  for (int64_t Offset : Offsets) {
+  for (const auto &[Offset, Size] : Inputs) {
     SourceParameterTypeHint Parameter;
     Parameter.Name = "stack_arg" + std::to_string(Hint.Parameters.size());
-    Parameter.Type = Hint.ReturnType;
-    Parameter.Location = {SourceABICarrierKind::Stack, 0, Offset,
-                          TRI.PointerSize};
+    Parameter.Type = NdType::makeInt(Size, false);
+    Parameter.Location = {SourceABICarrierKind::Stack, 0, Offset, Size};
     Hint.Parameters.push_back(std::move(Parameter));
   }
   std::string Diagnostic;

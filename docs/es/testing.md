@@ -8,7 +8,9 @@
 
 ## Recuperación de valores de pila de entrada
 
-`NeverDSourceEntryBindingTests` compila y ejecuta la matriz x64/ARM64, PE/ELF, HighC/LLVMC: módulos completos, llamadores seleccionados, transferencia explícita de bits flotantes y reutilización y reinicio de caché. Los controles negativos rechazan escrituras parciales, lecturas estrechas, escape de direcciones de marco y entradas indefinidas. Las definiciones independientes de los destinos comprueban las declaraciones fijas. Estas ejecuciones en el anfitrión no certifican controladores nativos de Windows ARM64. La matriz incluye marcos RBP y x29/x30 equilibrados. Rechaza bytes guardados sobrescritos, RBP alterado aunque SP se restaure y el uso de la dirección de retorno como parámetro; comprueba por separado los registros preservados de ELF y Windows.
+`NeverDSourceEntryBindingTests` compila y ejecuta la matriz x64/ARM64, PE/ELF, HighC/LLVMC: módulos completos, llamadores seleccionados, transferencia explícita de bits flotantes y reutilización y reinicio de caché. Los controles negativos rechazan escrituras parciales, parámetros desalineados, escape de direcciones de marco y entradas indefinidas. Las definiciones independientes de los destinos comprueban las declaraciones fijas. Estas ejecuciones en el anfitrión no certifican controladores nativos de Windows ARM64. La matriz incluye marcos RBP y x29/x30 equilibrados. Rechaza bytes guardados sobrescritos, RBP alterado aunque SP se restaure y el uso de la dirección de retorno como parámetro; comprueba por separado los registros preservados de ELF y Windows.
+
+La nueva matriz ejecuta lecturas con y sin signo de 1/2/4 bytes por ambas rutas C en O0/O2 con UBSan, para la salida completa o solo el llamador. Los llamadores escriben únicamente los bytes leídos; se rechazan lecturas que superen la anchura declarada.
 
 Las llamadas por registro conocidas se ejecutan en ambas rutas C para x64/ARM64 PE/ELF, con módulo completo y llamador seleccionado. El LowIR original sigue siendo indirecto. Los controles rechazan escrituras parciales obsoletas, efectos opacos, temporales reutilizados, celdas de memoria y presupuestos agotados.
 
