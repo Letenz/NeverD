@@ -50,7 +50,7 @@ caller-context query and retains `output.callx-contexts.json` for every sample.
 It uses the same loader, execution profile, process isolation and request
 budgets. This query is not added to the default export kinds. Target evidence
 is conditional on the recorded summary/caller and recognized entry model;
-every site retains dynamic fallback. Schema 4 covers complete function CFGs,
+every site retains dynamic fallback. Schema 5 covers complete function CFGs,
 nested parameters, return values and typed scratch effects. It retains prior
 entry-prefix evidence under a separate scope and records generalized inputs,
 summary dependencies and resource/recursion barriers. It also records projected
@@ -76,6 +76,17 @@ returning path; actual argument substitution must retain every alternative and
 stay within the same four-value bound. Aliases, partial overwrites, unknown
 values and overflow retain conservative invalidation. These are memory-transfer
 facts, separate from global CALLX closure or executed-handler coverage.
+
+Finite symbolic parameter origins also survive a join before a common store
+or return. Summaries publish complete `return_input_alternatives` separately
+from concrete `return_value_alternatives`; private formal origins are never
+serialized as VM addresses. Unknown and fifth alternatives still absorb the
+fact, and memory effects retain conservative alias handling. A generic CALLX
+can bind an `entry_input_alternatives` expression from those origins, including
+common full-width loads through selected pointers while entry memory remains
+unchanged;
+its proof includes every leaf and the final complete union, with the same
+four-value, work, retained-memory and output-element limits.
 
 Completed specialized summaries may reuse their proven conditional input
 dependencies without taking another variant slot. Reports retain the original
