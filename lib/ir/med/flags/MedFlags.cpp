@@ -26,12 +26,12 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedConstantPropagation.h"
 
 #include "llvm/ADT/StringMap.h"
 
 #include <algorithm>
 #include <map>
-#include <optional>
 #include <string>
 
 namespace neverd {
@@ -206,30 +206,10 @@ MedOp buildCmpOp(CondCode CC, const MedVar &A, const MedVar &B,
   // Materialize their boolean here, before source emission would turn an
   // otherwise unused incoming register into an unknown-state guard. Distinct
   // reads and unspecified values are not interchangeable SSA observations.
-  if ((A.Kind == MedVar::Reg || A.Kind == MedVar::Temp ||
-       A.Kind == MedVar::Param || A.Kind == MedVar::Const) &&
-      A.Size && A.Size == B.Size && A == B) {
-    std::optional<bool> Known;
-    switch (Op.Opcode) {
-    case NdOp::INT_EQUAL:
-    case NdOp::INT_LESSEQUAL:
-    case NdOp::INT_SLESSEQUAL:
-      Known = true;
-      break;
-    case NdOp::INT_NOTEQUAL:
-    case NdOp::INT_LESS:
-    case NdOp::INT_SLESS:
-    case NdOp::INT_SBOR:
-      Known = false;
-      break;
-    default:
-      break;
-    }
-    if (Known) {
-      Op.Opcode = NdOp::COPY;
-      Op.addInput(MedVar::makeConst(*Known, 1));
-      return Op;
-    }
+  if (const auto Known = selfComparisonConstant(Op.Opcode, A, B)) {
+    Op.Opcode = NdOp::COPY;
+    Op.addInput(MedVar::makeConst(*Known, 1));
+    return Op;
   }
   if (condSwapsOperands(CC)) {
     Op.addInput(B);

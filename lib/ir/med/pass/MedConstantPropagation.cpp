@@ -72,6 +72,27 @@ std::optional<MedVar> viewOfConstant(NdOp View, uint64_t ViewOffset,
 }
 } // namespace
 
+std::optional<bool> selfComparisonConstant(NdOp Opcode, const MedVar &A,
+                                           const MedVar &B) {
+  if ((A.Kind != MedVar::Reg && A.Kind != MedVar::Temp &&
+       A.Kind != MedVar::Param && A.Kind != MedVar::Const) ||
+      (!A.isConst() && A.Id < 0) || !A.Size || A.Size != B.Size || A != B)
+    return std::nullopt;
+  switch (Opcode) {
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESSEQUAL:
+    return true;
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_SBOR:
+    return false;
+  default:
+    return std::nullopt;
+  }
+}
+
 bool hasCompleteOrdinaryPhiInputs(const MedBlock &Block, const PhiNode &Phi,
                                   const std::set<int> &Incoming) {
   if (Phi.ExceptionalEntry || !Phi.Output.Size || Block.Preds.empty() ||
