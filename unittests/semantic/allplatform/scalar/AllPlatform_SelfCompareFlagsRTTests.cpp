@@ -163,6 +163,19 @@ std::vector<RoundTripTC> makeCases(bool IsX86, bool Is64) {
   Unobserved.Category = "SelfCompareFlags";
   Unobserved.OptLevel = 2;
   Cases.push_back(Unobserved);
+  const std::string OverflowAsm =
+      IsX86  ? std::string(Is64 ? "subq %%r11,%%r11" : "subl %%ecx,%%ecx") +
+                   "\\n\\tjo 1f\\n\\tmov $42,%0\\n\\tjmp 2f\\n1: "
+                   "mov $7,%0\\n2:"
+      : Is64 ? "subs %0,x19,x19\\n\\tb.vs 1f\\n\\tmov %0,#42\\n\\tb 2f\\n1: "
+               "mov %0,#7\\n2:"
+             : "subs %0,r8,r8\\n\\tbvs 1f\\n\\tmov %0,#42\\n\\tb 2f\\n1: "
+               "mov %0,#7\\n2:";
+  const std::string Clobber = IsX86 ? (Is64 ? ",\"r11\"" : ",\"ecx\"") : "";
+  Unobserved.Name = "unobserved_self_sub_overflow_branch";
+  Unobserved.CSrc = "long f(void){long r; __asm__ volatile(\"" + OverflowAsm +
+                    "\":\"=&r\"(r)::\"cc\"" + Clobber + "); return r;}\n";
+  Cases.push_back(Unobserved);
   return Cases;
 }
 
