@@ -364,10 +364,11 @@ void compileMemoryC(
 }
 
 std::string memorySource(const MedFunc &Function, llvm::Module &Module,
-                         bool LLVMRoute) {
+                         bool LLVMRoute, const BinaryImage *Image = nullptr) {
   CEmitterOptions Options;
   Options.TheArch = Arch::AArch64;
   Options.Format = BinaryFormat::MachO;
+  Options.Image = Image;
   std::string Source;
   llvm::raw_string_ostream Out(Source);
   if (LLVMRoute)
@@ -2807,6 +2808,24 @@ TEST(AArch64ImmediateMemory, ImageContextPreservesEveryRuntimeParameterAccess) {
   Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
   Data.Data.resize(Data.Size);
   Image.Segments.push_back(std::move(Data));
+  // Zero is the required dummy index, and the original word is metadata.
+  // Neither becomes an image pointer merely by matching a mapped address.
+  const auto &Case = ImmediateMemoryCases[0];
+  for (va_t Address : {va_t(0), va_t(Case.Word)}) {
+    Image.Segments.front().VA = Address;
+    const auto Function = immediateMemoryFunction(Case, 0);
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit({Function}, Context, kName,
+                                        Arch::AArch64, {}, &Image);
+    ASSERT_TRUE(Module);
+    EXPECT_TRUE(Module->global_empty());
+    for (bool LLVMRoute : {false, true})
+      compileMemoryC(memorySource(Function, *Module, LLVMRoute, &Image), false,
+                     [&](llvm::MemoryBufferRef Buffer) {
+                       inspectMemoryObject(Buffer, Case.Scratch);
+                     });
+  }
+  Image.Segments.front().VA = kStorageBase;
   executeImmediateMemoryFamilies(ImmediateMemoryCases, false, true, &Image);
 }
 
