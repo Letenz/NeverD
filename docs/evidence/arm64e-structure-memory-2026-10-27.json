@@ -347,7 +347,37 @@
         "binary_sha256": "34744462870914d0db4c058cb259369c064cdf10d4713e53691d40728646507e"
       }
     },
-    "build_receipt_sha256": "82ecdab34d1e14c95ecd16e4122f429c3a5e0048551875c75f20f699e9b9e356"
+    "build_receipt_sha256": "82ecdab34d1e14c95ecd16e4122f429c3a5e0048551875c75f20f699e9b9e356",
+    "optional_real_code_parity": {
+      "command": [
+        "${NEVERD_WORKTREE}/build-arm64e/bin/NeverDLiftTests",
+        "--gtest_filter=A64NativeParity.OptionalRealBinaryWalk",
+        "--gtest_output=json:${NEVERD_WORKTREE}/build-arm64e/arm64e-structure-memory-evidence/native-parity-generated-text.json"
+      ],
+      "source_object_sha256": "7e4db315e3f2206a020d923c22eead8330ebd6443ef957a2638d36e222e320af",
+      "corpus_sha256": "38be0cf0d3d11bf5b2923673ca5f57fc7c48f736f1cd2a88df39141daf7bed8a",
+      "corpus_bytes": 1152,
+      "exit_code": 0,
+      "seconds": 0.2026981250019162,
+      "scope": "Native fast-decoder supported subset inside actual batch-zero LLVM ELF text; not a claim of fast decoding every AdvSIMD word.",
+      "tests": 1,
+      "skipped": 0,
+      "report_sha256": "04271e5044f6df99e71c50a9a142cee7212fe89ef1d83c29665595939178a52d"
+    },
+    "skip_inventory": {
+      "arm64e": {
+        "count": 5,
+        "reason": "Required ordered-memory feature is not reported by the execution host."
+      },
+      "native-memory": {
+        "count": 3088,
+        "reason": "Backend/platform or checked-feature execution unavailable; raw test report retains every individual reason."
+      },
+      "mops-parity": {
+        "count": 1,
+        "reason": "Optional external real-code corpus was not set during the original cohort. A later supplied actual LLVM ELF text corpus passes the same test; see optional_real_code_parity."
+      }
+    }
   },
   "bounded_mixed_width_profiles": {
     "source_head": "446c37922d03719f12bdc541a1d8d9e25477a498",
