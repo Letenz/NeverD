@@ -1,0 +1,338 @@
+//===- AArch64ImmediateMemoryBase.h - Source base admission -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Distinguish runtime GPR values from image coordinates before body filtering.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_LIB_BACKEND_AARCH64IMMEDIATEMEMORYBASE_H
+#define NEVERD_LIB_BACKEND_AARCH64IMMEDIATEMEMORYBASE_H
+
+#include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
+#include "neverd/loader/AArch64MemoryImage.h"
+
+#include <algorithm>
+#include <map>
+#include <optional>
+#include <set>
+#include <tuple>
+#include <type_traits>
+#include <vector>
+
+namespace neverd {
+namespace aarch64_memory_base_detail {
+enum class Step { Scalar, Runtime, Derived, Unsupported };
+
+/// Every dependency must remain in runtime/scalar coordinates. A cycle alone
+/// supplies no entry value. Image-derived joins and arithmetic need a separate
+/// all-arms span owner; they cannot borrow a runtime parameter's permission.
+template <typename Value, typename Key, typename Expand>
+bool runtimeValue(Value Root, Key key, Expand expand) {
+  std::vector<Value> Work{Root};
+  std::set<std::decay_t<decltype(key(Root))>> Seen;
+  bool HasRuntime = false;
+  while (!Work.empty()) {
+    const auto Current = Work.back();
+    Work.pop_back();
+    if (!Seen.insert(key(Current)).second)
+      continue;
+    switch (expand(Current, Work)) {
+    case Step::Runtime:
+      HasRuntime = true;
+      break;
+    case Step::Unsupported:
+      return false;
+    case Step::Scalar:
+    case Step::Derived:
+      break;
+    }
+  }
+  return HasRuntime;
+}
+} // namespace aarch64_memory_base_detail
+
+class AArch64ImmediateMedBases {
+  using Key = std::tuple<int, int, int, uint16_t>;
+  const MedFunc &Function;
+  std::map<Key, const MedOp *> Definitions;
+  std::map<Key, const PhiNode *> Phis;
+  std::set<Key> Parameters;
+  bool SkippedSSA;
+  static Key key(const MedVar &Value) {
+    return {Value.Kind, Value.Id, Value.SSAVer, Value.Size};
+  }
+
+public:
+  explicit AArch64ImmediateMedBases(const MedFunc &Function)
+      : Function(Function), SkippedSSA(Function.SkippedSSA) {
+    for (const auto &Parameter : Function.Params)
+      Parameters.insert(key(Parameter));
+    for (const auto &Block : Function.Blocks) {
+      for (const auto &Op : Block.Ops)
+        if (Op.Output.Id >= 0 && Op.Output.Size) {
+          const auto [It, Inserted] = Definitions.emplace(key(Op.Output), &Op);
+          if (!Inserted)
+            It->second = nullptr;
+        }
+      for (const auto &Phi : Block.Phis) {
+        const auto [It, Inserted] = Phis.emplace(key(Phi.Output), &Phi);
+        if (!Inserted)
+          It->second = nullptr;
+      }
+    }
+  }
+
+  bool supports(const BinaryImage &Image,
+                const AArch64AddressMemoryInstruction &Instruction,
+                const MedVar &Base) const {
+    MedVar Constant = Base;
+    std::set<Key> Copies;
+    while (!SkippedSSA && !Constant.isConst() &&
+           Copies.insert(key(Constant)).second) {
+      const auto It = Definitions.find(key(Constant));
+      const auto *Def = It == Definitions.end() ? nullptr : It->second;
+      if (!Def || Def->Opcode != NdOp::COPY || Def->NumInputs != 1 ||
+          Def->Inputs[0].Size != Constant.Size)
+        break;
+      Constant = Def->Inputs[0];
+    }
+    if (Constant.isConst())
+      return bool(aarch64ImmediateMemoryImageSpan(
+          Image, Instruction, Constant.ConstVal, Constant.Provenance,
+          Constant.AddressOwnerVA));
+    using Step = aarch64_memory_base_detail::Step;
+    return aarch64_memory_base_detail::runtimeValue(
+        Base,
+        [](const MedVar &Value) {
+          return std::tuple(Value.Kind, Value.Id, Value.SSAVer, Value.Size,
+                            Value.ConstVal, Value.Provenance,
+                            Value.AddressOwnerVA);
+        },
+        [&](const MedVar &Value, std::vector<MedVar> &Work) {
+          if (Value.isConst())
+            return Value.Provenance == ConstantAddressProvenance::Scalar
+                       ? Step::Scalar
+                       : Step::Unsupported;
+          const bool Parameter =
+              Value.Kind == MedVar::Param || Parameters.count(key(Value)) ||
+              (Value.Kind == MedVar::Reg &&
+               std::any_of(Function.Params.begin(), Function.Params.end(),
+                           [&](const MedVar &Parameter) {
+                             return Parameter.RegOff == Value.RegOff &&
+                                    isEntryLiveInValue(Function, Value,
+                                                       Parameter.RegOff);
+                           }));
+          if (const auto It = Phis.find(key(Value)); It != Phis.end()) {
+            if (!It->second)
+              return Step::Unsupported;
+            for (const auto &Incoming : It->second->Args)
+              Work.push_back(Incoming.second);
+            if (It->second->ExceptionalEntry)
+              Work.push_back(*It->second->ExceptionalEntry);
+            return Parameter ? Step::Runtime : Step::Derived;
+          }
+          const auto It = Definitions.find(key(Value));
+          if (It == Definitions.end())
+            return Parameter ? Step::Runtime : Step::Unsupported;
+          const auto *Def = It->second;
+          if (!Def || Def->NumInputs > Def->Inputs.size())
+            return Step::Unsupported;
+          if (Def->Opcode == NdOp::LOAD || Def->Opcode == NdOp::CALL)
+            return Step::Runtime;
+          if (Def->Opcode == NdOp::INTRINSIC && Def->NumInputs &&
+              Def->Inputs[0].isConst()) {
+            const auto Id = static_cast<Intrinsic>(Def->Inputs[0].ConstVal);
+            if ((isAArch64AddressMemoryIntrinsic(Id) &&
+                 !isAArch64AddressStoreIntrinsic(Id)) ||
+                isAArch64PAuthLoadIntrinsic(Id) || Def->NumInputs == 1)
+              return Step::Runtime;
+          }
+          const unsigned First =
+              Def->Opcode == NdOp::SELECT || Def->Opcode == NdOp::INTRINSIC ? 1
+                                                                            : 0;
+          for (unsigned I = First; I < Def->NumInputs; ++I)
+            Work.push_back(Def->Inputs[I]);
+          return Parameter || Def->Opcode == NdOp::INTRINSIC ? Step::Runtime
+                                                             : Step::Derived;
+        });
+  }
+};
+
+class AArch64ImmediateHighBases {
+  const HighFunc &Function;
+  using Definition = std::pair<const HighStmt *, const HighExpr *>;
+  VarKeyMap<std::vector<Definition>> Definitions;
+  bool HasAddressTaken = false;
+  mutable std::optional<HighSourceFlowGraph> Flow;
+
+  bool dominates(const HighStmt &Definition, const HighStmt &Use) const {
+    if (&Definition == &Use)
+      return false;
+    if (!Flow)
+      Flow = buildHighSourceFlowGraph(Function);
+    if (!Flow->Diagnostics.Complete || !Flow->Diagnostics.Items.empty())
+      return false;
+    std::optional<size_t> Defined, Used;
+    for (size_t I = 0; I < Flow->Nodes.size(); ++I) {
+      if (Flow->Nodes[I].Statement == &Definition)
+        Defined = I;
+      if (Flow->Nodes[I].Statement == &Use)
+        Used = I;
+    }
+    if (!Defined || !Used)
+      return false;
+    std::vector<std::pair<size_t, bool>> Work{{Flow->Entry, false}};
+    std::set<std::pair<size_t, bool>> Seen;
+    bool ReachesUse = false;
+    while (!Work.empty()) {
+      auto [At, DefinedOnPath] = Work.back();
+      Work.pop_back();
+      DefinedOnPath |= At == *Defined;
+      if (!Seen.insert({At, DefinedOnPath}).second)
+        continue;
+      if (At == *Used) {
+        if (!DefinedOnPath)
+          return false;
+        ReachesUse = true;
+      }
+      for (const auto Next : Flow->Nodes[At].Successors)
+        Work.push_back({Next, DefinedOnPath});
+    }
+    return ReachesUse;
+  }
+
+public:
+  explicit AArch64ImmediateHighBases(const HighFunc &Function)
+      : Function(Function) {
+    std::vector<const HighExpr *> Work;
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+          Statement.Val &&
+          (Statement.Dst->Kind == ExprKind::Var ||
+           Statement.Dst->Kind == ExprKind::Phi))
+        Definitions[varKey(Statement.Dst->Var)].push_back(
+            {&Statement, Statement.Val.get()});
+      forEachExpr(Statement,
+                  [&](const ExprPtr &Value) { Work.push_back(Value.get()); });
+    });
+    std::set<const HighExpr *> Seen;
+    while (!Work.empty()) {
+      const auto *Value = Work.back();
+      Work.pop_back();
+      if (!Value || !Seen.insert(Value).second)
+        continue;
+      HasAddressTaken |= Value->Kind == ExprKind::Addr;
+      Value->forEachChildExpr(
+          [&](const ExprPtr &Child) { Work.push_back(Child.get()); });
+    }
+  }
+
+  /// Source variables are mutable. A single textual definition is not enough:
+  /// the source-flow owner must prove it dominates this exact use, and an
+  /// address-taken local must not acquire a constant-value certificate.
+  const HighExpr *imageConstant(const HighExpr &Base,
+                                const HighStmt *Use) const {
+    const HighExpr *Value = &Base;
+    std::set<const HighExpr *> Seen;
+    while (Seen.insert(Value).second) {
+      if (Value->Kind == ExprKind::Const)
+        return Value;
+      if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
+          Value->Type && Value->Type->Size == kAddressMemoryPointerBytes &&
+          Value->Operands.size() == 1 && Value->Operands.front() &&
+          Value->Operands.front()->Type &&
+          Value->Operands.front()->Type->Size == kAddressMemoryPointerBytes &&
+          (Value->Type->Kind == NdTypeKind::Int ||
+           Value->Type->Kind == NdTypeKind::Ptr) &&
+          (Value->Operands.front()->Type->Kind == NdTypeKind::Int ||
+           Value->Operands.front()->Type->Kind == NdTypeKind::Ptr)) {
+        Value = Value->Operands.front().get();
+        continue;
+      }
+      if (HasAddressTaken || !Use ||
+          (Value->Kind != ExprKind::Var && Value->Kind != ExprKind::Phi))
+        return nullptr;
+      const auto It = Definitions.find(varKey(Value->Var));
+      if (It == Definitions.end() || It->second.size() != 1 ||
+          !dominates(*It->second.front().first, *Use))
+        return nullptr;
+      Use = It->second.front().first;
+      Value = It->second.front().second;
+    }
+    return nullptr;
+  }
+
+  bool supports(const BinaryImage &Image,
+                const AArch64AddressMemoryInstruction &Instruction,
+                const HighExpr &Base, const HighStmt *Use) const {
+    if (const auto *Constant = imageConstant(Base, Use))
+      return bool(aarch64ImmediateMemoryImageSpan(
+          Image, Instruction, Constant->ConstVal, Constant->ConstProvenance,
+          Constant->AddressOwnerVA));
+    using Step = aarch64_memory_base_detail::Step;
+    return aarch64_memory_base_detail::runtimeValue(
+        &Base, [](const HighExpr *Value) { return Value; },
+        [&](const HighExpr *Value, std::vector<const HighExpr *> &Work) {
+          if (!Value)
+            return Step::Unsupported;
+          if (Value->Kind == ExprKind::Const)
+            return Value->ConstProvenance == ConstantAddressProvenance::Scalar
+                       ? Step::Scalar
+                       : Step::Unsupported;
+          if (Value->Kind == ExprKind::Load ||
+              Value->Kind == ExprKind::EntryRegister ||
+              (Value->Kind == ExprKind::Call &&
+               (Value->IntrinsicId == Intrinsic::None ||
+                (isAArch64AddressMemoryIntrinsic(Value->IntrinsicId) &&
+                 !isAArch64AddressStoreIntrinsic(Value->IntrinsicId)) ||
+                isAArch64PAuthLoadIntrinsic(Value->IntrinsicId) ||
+                Value->Operands.empty())))
+            return Step::Runtime;
+          if (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) {
+            const auto It = Definitions.find(varKey(Value->Var));
+            if (It != Definitions.end())
+              for (const auto &Definition : It->second)
+                Work.push_back(Definition.second);
+            const bool Parameter =
+                Value->Var.Kind == MedVar::Param ||
+                (Value->Var.Kind == MedVar::Reg && Value->Var.SSAVer == 0 &&
+                 std::any_of(Function.Params.begin(), Function.Params.end(),
+                             [&](const HighParam &Parameter) {
+                               return Parameter.MedIndex == Value->Var.Id &&
+                                      Parameter.RegOff != kNoParamReg &&
+                                      Parameter.RegOff == Value->Var.RegOff;
+                             }));
+            if (Parameter)
+              return Step::Runtime;
+            return It == Definitions.end() ? Step::Unsupported : Step::Derived;
+          }
+          if (Value->Kind == ExprKind::Undef || Value->Kind == ExprKind::Store)
+            return Step::Unsupported;
+          if (Value->Kind == ExprKind::Addr && Value->Operands.size() == 1 &&
+              Value->Operands.front() &&
+              Value->Operands.front()->Kind == ExprKind::Load) {
+            if (Value->Operands.front()->Operands.empty() ||
+                !Value->Operands.front()->Operands.front())
+              return Step::Unsupported;
+            Work.push_back(Value->Operands.front()->Operands.front().get());
+            return Step::Derived;
+          }
+          const unsigned First = Value->Op == NdOp::SELECT ? 1 : 0;
+          for (unsigned I = First; I < Value->Operands.size(); ++I) {
+            if (!Value->Operands[I])
+              return Step::Unsupported;
+            Work.push_back(Value->Operands[I].get());
+          }
+          return Value->Kind == ExprKind::Call ? Step::Runtime : Step::Derived;
+        });
+  }
+};
+
+} // namespace neverd
+
+#endif // NEVERD_LIB_BACKEND_AARCH64IMMEDIATEMEMORYBASE_H

@@ -24,6 +24,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64SVEVectorState.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCFloatingArguments.h"
@@ -328,9 +329,11 @@ TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
 
 void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
   for (HighFunc &Func : Funcs) {
-    if (TypeRef Declared = declaredFunctionReturnType(Func))
-      Func.ReturnType = std::move(Declared);
-    if (!Func.ReturnType || Func.ReturnType->Kind != NdTypeKind::Void)
+    const TypeRef Declared = declaredFunctionReturnType(Func);
+    if (Declared)
+      Func.ReturnType = Declared;
+    if (Declared ? Declared->Kind != NdTypeKind::Void
+                 : !analyzeVoidReturn(Func))
       continue;
 
     // A discarded result is not a discarded evaluation. Materialize effects
@@ -349,6 +352,14 @@ void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
           Self(Self, Clause);
         if (Stmt.Kind == StmtKind::Return && Stmt.RetVal &&
             Stmt.CxxContinuationReturnTargets.empty()) {
+          // An inferred void tail still carries the machine result width of
+          // its callee. Keep that declaration evidence with the returned call;
+          // the statement writer already emits its effects and a bare return.
+          // A declared void ABI has no such result carrier to preserve.
+          if (!Declared && returnedCall(*Stmt.RetVal)) {
+            Projected.push_back(std::move(Stmt));
+            continue;
+          }
           if (highCExpressionHasEffect(*Stmt.RetVal)) {
             HighStmt Evaluate;
             Evaluate.Kind = StmtKind::ExprStmt;
@@ -364,6 +375,10 @@ void HighCWriter::prepareFunctionReturns(std::vector<HighFunc> &Funcs) const {
       Body = std::move(Projected);
     };
     Prepare(Prepare, Func.Body);
+    // Removing the return observation can make only some definitions of a
+    // reused local dead. Reuse the source graph's per-definition proof before
+    // unknown-value transport gives those dead PHI inputs availability flags.
+    eliminateHighDeadPhiCopies(Func);
   }
 }
 

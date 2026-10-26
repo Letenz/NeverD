@@ -15,6 +15,7 @@
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
 #include <limits>
@@ -318,8 +319,14 @@ void LowToMedConverter::analyzeStack(const LowFunc &Low) {
     if (!Frame.Error.empty())
       throw LowToMedConversionError(Frame.Error);
     for (const auto &Access : Frame.Accesses)
-      if (Access.OriginalWord)
+      if (Access.OriginalWord) {
+        // A nominal frame footprint does not prove the original checked
+        // address or its call-stack ABI. Keep analysis available without an
+        // image, but never silently drop stack arguments in a rebuilt image.
+        if (Image && Image->isArm64e())
+          throw LowToMedConversionError(kAddressMemorySPUnsupported);
         AddSlot(Access.Offset, Access.Bytes);
+      }
   }
 
   std::sort(StackSlots.begin(), StackSlots.end(),

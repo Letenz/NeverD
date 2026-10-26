@@ -534,8 +534,17 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, bool &Started,
               BackendFault{Unsupported ? BackendFaultKind::InvalidInstruction
                                        : BackendFaultKind::UnhandledException,
                            PC};
-          if (Unsupported && Hooks.InvalidInstruction)
-            Hooks.InvalidInstruction();
+          if (Unsupported && Hooks.InvalidInstruction) {
+            try {
+              Hooks.InvalidInstruction();
+            } catch (...) {
+              // Error owns an unchecked payload until returned or consumed.
+              // An observer exception must reach the outer fault-preserving
+              // handler without aborting while this Error is unwound.
+              llvm::consumeError(std::move(E));
+              throw;
+            }
+          }
         }
         return E;
       }

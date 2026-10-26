@@ -2621,8 +2621,19 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
                                 Defined && Expected->Kind != NdTypeKind::Array
                                     ? declaredTypedef(Expected)
                                     : std::nullopt);
-          if (((Header && Typedef) || PointerUnion) && Text != "0" &&
-              !llvm::StringRef(Text).starts_with("(void*)"))
+          // A selected source declaration can spell an integer pointee as
+          // long while the machine carrier and local fields use int32_t.
+          // Equal widths do not make those C pointer types compatible. The
+          // admitted portable declaration owns its qualifiers and spelling;
+          // an object pointer converts through void * to that exact type.
+          const bool PortablePointer =
+              !Defined && Expected->Kind == NdTypeKind::Ptr &&
+              Expected->Pointee && Expected->Pointee->Kind == NdTypeKind::Int &&
+              llvm::StringRef(Expected->Pointee->SourceName)
+                  .starts_with("__typeof__(__builtin_choose_expr(") &&
+              !c_library::portableScalarDeclaration(*Callee, Name).empty();
+          if (((Header && Typedef) || PointerUnion || PortablePointer) &&
+              Text != "0" && !llvm::StringRef(Text).starts_with("(void*)"))
             Text =
                 "(void*)" +
                 std::string(printsAsInteger(*Op, Text) ? "(uintptr_t)" : "") +
@@ -7630,12 +7641,22 @@ std::optional<std::pair<va_t, uint64_t>>
 HighCWriter::indexedObjectAt(va_t Addr) const {
   if (auto Object = sizedObjectAt(Addr))
     return Object;
-  const Section *Sec = Opts.Image ? Opts.Image->getSectionFor(Addr) : nullptr;
-  if (!Sec || !Sec->isReadable() || Sec->isExecutable() || !Sec->Size ||
-      Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+  if (!Opts.Image)
     return std::nullopt;
-  va_t Begin = Sec->VA;
-  va_t End = Sec->VA + Sec->Size;
+  const Section *Sec = Opts.Image->getSectionFor(Addr);
+  const Segment *Seg = Opts.Image->getSegmentFor(Addr);
+  // A layout-authenticated segment with no section table still owns data.
+  // Keep the common symbol/object bounds below; a gap in an existing section
+  // table cannot acquire this route.
+  if ((!Sec && (!Seg || Opts.Image->layoutAddressOwner(Addr) != Seg->VA)) ||
+      (Sec ? !Sec->isReadable() || Sec->isExecutable()
+           : !Seg->isReadable() || Seg->isExecutable()))
+    return std::nullopt;
+  va_t Begin = Sec ? Sec->VA : Seg->VA;
+  const uint64_t Size = Sec ? Sec->Size : Seg->Size;
+  if (!Size || Size > std::numeric_limits<va_t>::max() - Begin)
+    return std::nullopt;
+  va_t End = Begin + Size;
   const auto &SizedObjects = DataObjects->SizedObjects;
   const auto &SizedObjectReach = DataObjects->SizedObjectReach;
   const auto &DataSymbolStarts = DataObjects->DataSymbolStarts;

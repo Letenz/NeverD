@@ -22,6 +22,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedCallTarget.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -1059,9 +1060,16 @@ static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
 
 std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
                                      const TargetRegInfo &TRI, const MedVar &V,
-                                     int Depth, MedDefSiteIndex *Defs) {
+                                     int Depth, MedDefSiteIndex *Defs,
+                                     BinaryFormat Format) {
   StackDeltaMemo Memo;
-  return stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo).Delta;
+  const auto Delta = stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo).Delta;
+  if (Delta || Depth)
+    return Delta;
+  // Reuse the entry-offset owner's complete loop proof when the local ABI
+  // walk cannot resolve mutually dependent stack PHIs. Calls and outgoing
+  // stores must share that origin instead of losing later stack arguments.
+  return entryStackOffset(Func, V, TRI.TheArch, Format, Func.EntryKind);
 }
 
 static StackDeltaWalk stackPtrDeltaUncached(const MedFunc &Func,

@@ -4383,6 +4383,7 @@ void computeCallRegisterEffects(
   // pointer's contract, whatever its name.
   std::set<va_t> DispatchThunks;
   std::map<va_t, GPRReadWidths> FixedEntryReads;
+  std::map<va_t, int> FixedEntryStackArgs;
   if (Win64) {
     DispatchThunks = GuardForwarders;
     auto Classify = [&](va_t Entry, llvm::StringRef Name) {
@@ -4402,6 +4403,8 @@ void computeCallRegisterEffects(
       for (unsigned I = 0; I < 4 && I < Proto->ArgCount; ++I)
         Widths[Win64Args[I] / 8] = Proto->ArgWidths[I];
       FixedEntryReads[Entry] = Widths;
+      FixedEntryStackArgs[Entry] =
+          Proto->ArgCount > std::size(Win64Args) ? Proto->ArgCount : 0;
     };
     std::set<va_t> Callees;
     for (const auto &[Entry, Effect] : Effects)
@@ -4424,7 +4427,6 @@ void computeCallRegisterEffects(
   }
   // A libc import with a fixed prototype reads its parameters however the
   // code reaches it; a documented contract above decides first.
-  std::map<va_t, int> FixedEntryStackArgs;
   if (const CallArgumentConvention *Convention =
           callArgumentConvention(Img.Arch, Img.abiFormat());
       Convention && Convention->ImportArgumentsFromPrototype) {
