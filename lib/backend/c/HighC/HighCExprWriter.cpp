@@ -5812,7 +5812,33 @@ TypeRef HighCWriter::indirectCallFunctionType(const HighExpr &Call) const {
       Call.IntrinsicId != Intrinsic::None)
     return nullptr;
   const auto Callee = debugCallee(Call);
-  if (!Callee || Callee->Params.size() != Call.Operands.size())
+  if (!Callee)
+    return nullptr;
+  // The checked record adapter reassembles flat machine operands into source
+  // parameters and unpacks its source result. A captured target must use that
+  // same signature, including when an HFA occupies several machine operands.
+  if (!calledDefinition(Call) && Call.FloatingCallSignature) {
+    const auto Floating =
+        libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
+    const auto Record = libc::recordCallArguments(
+        *Callee, Opts.TheArch, Opts.Format, Opts.libcVariant());
+    if (Floating && *Floating == *Call.FloatingCallSignature && Record &&
+        Record->Positions == Call.Operands.size()) {
+      const auto SourceType = [&](const TypeRef &Type) {
+        if (Type->Kind != NdTypeKind::Struct || Type->IsEnum)
+          return cDisplayType(Type);
+        auto Named = std::make_shared<NdType>(*Type);
+        Named->SourceName = c_detail::recordCallType(Type, Opts);
+        return Named;
+      };
+      std::vector<TypeRef> Parameters;
+      for (const auto &[Name, Type] : Callee->Params)
+        Parameters.push_back(SourceType(Type));
+      return NdType::makeFunc(SourceType(Callee->ReturnType),
+                              std::move(Parameters));
+    }
+  }
+  if (Callee->Params.size() != Call.Operands.size())
     return nullptr;
   return fixedCalleeFunctionType(*Callee);
 }
