@@ -50,15 +50,22 @@ caller-context query and retains `output.callx-contexts.json` for every sample.
 It uses the same loader, execution profile, process isolation and request
 budgets. This query is not added to the default export kinds. Target evidence
 is conditional on the recorded summary/caller and recognized entry model;
-every site retains dynamic fallback. Schema 3 covers complete function CFGs,
+every site retains dynamic fallback. Schema 4 covers complete function CFGs,
 nested parameters, return values and typed scratch effects. It retains prior
 entry-prefix evidence under a separate scope and records generalized inputs,
 summary dependencies and resource/recursion barriers. It also records projected
 inputs, complete bounded value alternatives, parameter-relative write intervals,
-return expressions, and reclaimed solver-only summaries. A finite list of
-remaining CALLX values is not counted as a unique target proof. Unknown targets
-include the first
-missing incoming register or load fact when available. A successful query with
+return expressions, and reclaimed solver-only summaries. Complete sets of two
+to four literal raw targets now apply every alternative's call summary and join
+all returning outcomes. `proven_target_set` rows and their site/context counters
+stay separate from singleton proofs; `conditional_target_sets` preserve the
+complete address alternatives. Summary edges record `callx_target_address`,
+including distinct unaligned addresses mapping to one slot. Unknown, symbolic,
+overflowed and unsupported alternatives retain conservative effects and explicit
+barriers. A finite list of remaining CALLX values is not counted as a unique
+target proof, and reclassifying addresses present in an older report is not
+new address recovery. Unknown targets include the first missing incoming
+register or load fact when available. A successful query with
 zero targets is an analysis pass, not a devirtualization pass. Neither these
 conditional facts nor the global unresolved CALLX count can stand in for the
 other.

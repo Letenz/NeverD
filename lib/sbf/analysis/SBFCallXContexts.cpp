@@ -16,11 +16,13 @@
 
 #include "llvm/Support/FormatVariadic.h"
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace neverd::sbf {
 namespace {
@@ -35,6 +37,8 @@ llvm::StringRef resultName(CallXContextResult Result) {
     return "target_outside_raw_text_slots";
   case CallXContextResult::LegacyRuntimeMayMutateArguments:
     return "registered_legacy_runtime_may_mutate_arguments";
+  case CallXContextResult::ProvenTargetSet:
+    return "proven_target_set";
   }
   llvm_unreachable("unhandled CALLX context result");
 }
@@ -126,7 +130,7 @@ llvm::StringRef missingFactName(CallXMissingFactKind Kind) {
   case CallXMissingFactKind::SymbolicTarget:
     return "symbolic_target_without_literal_code_address";
   case CallXMissingFactKind::MultipleTargetValues:
-    return "bounded_target_values_require_multi_target_summary";
+    return "bounded_targets_include_symbolic_or_outside_raw_text_values";
   }
   llvm_unreachable("unhandled CALLX missing fact");
 }
@@ -139,10 +143,24 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
   std::set<size_t> ProvenSites;
   std::map<size_t, size_t> ContextCounts;
   std::map<size_t, std::set<size_t>> Targets;
+  std::map<size_t, std::set<std::vector<va_t>>> TargetSets;
   size_t ProvenContexts = 0;
+  size_t ProvenTargetSetContexts = 0;
+  size_t ProvenTargetSetCallerContexts = 0;
   size_t CallerContexts = 0;
   size_t ProvenCallerContexts = 0;
   std::set<size_t> BeyondEntrySites;
+  std::set<size_t> TargetSetSites;
+  std::set<size_t> BeyondEntryTargetSetSites;
+  // Set evidence already guarantees literal in-range addresses. Serialize the
+  // raw slot mapping without strengthening it to successful call execution.
+  const auto TargetJSON = [&](va_t Target) {
+    const size_t Slot = (Target - Program.Low.TextAddress) / kInstructionSize;
+    return llvm::json::Object{{"target_address", addressText(Target)},
+                              {"target_slot", static_cast<int64_t>(Slot)},
+                              {"target_is_continuation",
+                               Program.Low.Instructions[Slot].IsContinuation}};
+  };
   for (const CallXContextEvidence &Evidence : Report.Contexts) {
     ++ContextCounts[Evidence.CallXSlot];
     const auto Address = [&](size_t Slot) {
@@ -193,6 +211,23 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       if (Evidence.BeyondEntryBlock)
         BeyondEntrySites.insert(Evidence.CallXSlot);
     }
+    if (Evidence.Result == CallXContextResult::ProvenTargetSet) {
+      llvm::json::Array Candidates;
+      std::vector<va_t> Addresses;
+      for (const auto &Value : Evidence.TargetValueAlternatives.values()) {
+        Candidates.push_back(TargetJSON(Value.Value));
+        Addresses.push_back(Value.Value);
+      }
+      Row["target_set"] = std::move(Candidates);
+      std::sort(Addresses.begin(), Addresses.end());
+      TargetSets[Evidence.CallXSlot].insert(std::move(Addresses));
+      TargetSetSites.insert(Evidence.CallXSlot);
+      ++ProvenTargetSetContexts;
+      if (!Evidence.IsRootContext)
+        ++ProvenTargetSetCallerContexts;
+      if (Evidence.BeyondEntryBlock)
+        BeyondEntryTargetSetSites.insert(Evidence.CallXSlot);
+    }
     if (Evidence.Missing.Kind != CallXMissingFactKind::None) {
       llvm::json::Object Missing{
           {"reason", missingFactName(Evidence.Missing.Kind)}};
@@ -219,16 +254,25 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
     llvm::json::Array CandidateSlots;
     for (size_t Target : Targets[Slot])
       CandidateSlots.push_back(static_cast<int64_t>(Target));
+    llvm::json::Array CandidateSets;
+    for (const auto &Addresses : TargetSets[Slot]) {
+      llvm::json::Array Candidates;
+      for (va_t Address : Addresses)
+        Candidates.push_back(TargetJSON(Address));
+      CandidateSets.push_back(std::move(Candidates));
+    }
     Sites.push_back(llvm::json::Object{
         {"callx_slot", static_cast<int64_t>(Slot)},
         {"callx_address",
          addressText(Program.Low.TextAddress + Slot * kInstructionSize)},
         {"analyzed_contexts", static_cast<int64_t>(ContextCounts[Slot])},
-        {"coverage", ProvenSites.contains(Slot) ? "conditional_targets_only"
-                     : ContextCounts[Slot]
-                         ? "analyzed_contexts_unproven"
-                         : "not_reached_from_recognized_entries"},
+        {"coverage",
+         ProvenSites.contains(Slot)      ? "conditional_targets_only"
+         : TargetSetSites.contains(Slot) ? "conditional_target_sets_only"
+         : ContextCounts[Slot] ? "analyzed_contexts_unproven"
+                               : "not_reached_from_recognized_entries"},
         {"conditional_target_slots", std::move(CandidateSlots)},
+        {"conditional_target_sets", std::move(CandidateSets)},
         {"unknown_other_contexts", true},
         {"dynamic_fallback_required", true}});
   }
@@ -321,10 +365,12 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       Row["callee_summary_id"] = static_cast<int64_t>(*Edge.CalleeSummaryID);
     if (Edge.CalleeEntrySlot)
       Row["callee_entry_slot"] = static_cast<int64_t>(*Edge.CalleeEntrySlot);
+    if (Edge.CallXTargetAddress)
+      Row["callx_target_address"] = addressText(*Edge.CallXTargetAddress);
     Edges.push_back(std::move(Row));
   }
   return llvm::json::Object{
-      {"schema", 3},
+      {"schema", 4},
       {"scope", "context_keyed_whole_function_cfg_summaries"},
       {"caller_entry_assumption", "recognized_cfg_and_function_roots"},
       {"unknown_indirect_entries_are_not_closed", true},
@@ -344,6 +390,14 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(BeyondEntrySites.size())},
       {"callx_sites_with_proven_context",
        static_cast<int64_t>(ProvenSites.size())},
+      {"proven_target_set_contexts",
+       static_cast<int64_t>(ProvenTargetSetContexts)},
+      {"proven_target_set_caller_contexts",
+       static_cast<int64_t>(ProvenTargetSetCallerContexts)},
+      {"callx_sites_with_proven_target_set_context",
+       static_cast<int64_t>(TargetSetSites.size())},
+      {"callx_sites_beyond_entry_with_proven_target_set_context",
+       static_cast<int64_t>(BeyondEntryTargetSetSites.size())},
       {"caller_scratch_precision",
        "bounded_complete_value_sets_with_explicit_input_generalization"},
       {"specializations_per_entry",

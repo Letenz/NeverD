@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
 #include <utility>
@@ -53,6 +54,503 @@ callerContexts(const CallXContextReport &Report) {
         Result.push_back(Context);
     }
   return Result;
+}
+
+struct AlternativeCallFixture {
+  std::vector<test::EncodedInstruction> Text;
+  std::vector<size_t> Literals;
+  std::vector<size_t> Callees;
+  std::vector<size_t> Targets;
+  size_t FirstCall;
+  size_t LastCall;
+};
+
+AlternativeCallFixture makeAlternativeCallees(size_t Count,
+                                              unsigned CallRegister,
+                                              bool Stores, bool Distinct,
+                                              bool OmitsLastStore = false) {
+  AlternativeCallFixture Fixture;
+  auto &Text = Fixture.Text;
+  const auto AppendLiteral = [&](unsigned Register, uint64_t Value) {
+    const size_t Slot = Text.size();
+    const auto Literal = test::loadImm64(Register, Value);
+    Text.insert(Text.end(), Literal.begin(), Literal.end());
+    return Slot;
+  };
+  AppendLiteral(4, kInputStart);
+  Text.push_back(encode(Opcode::LD_DW_REG, 5, 4));
+  if (Stores) {
+    Text.push_back(encode(Opcode::MOV64_REG, 6, 10));
+    Text.push_back(encode(Opcode::ADD64_IMM, 6, 0, 0, -16));
+    Text.push_back(encode(Opcode::MOV64_REG, 1, 6));
+  }
+  std::vector<size_t> Branches, Joins;
+  for (size_t I = 0; I + 1 < Count; ++I) {
+    Branches.push_back(Text.size());
+    Text.push_back({});
+  }
+  Fixture.Literals.resize(Count);
+  // The fallthrough selects the last alternative; preceding comparisons select
+  // every other one. The runtime input remains unknown to static analysis.
+  for (size_t N = 0; N < Count; ++N) {
+    const size_t I = (N + Count - 1) % Count;
+    Fixture.Literals[I] = AppendLiteral(CallRegister, 0);
+    Joins.push_back(Text.size());
+    Text.push_back({});
+  }
+  Fixture.FirstCall = Text.size();
+  Text.push_back(encode(Opcode::CALL_REG, CallRegister));
+  Text.push_back(Stores ? encode(Opcode::LD_DW_REG, 2, 6)
+                        : encode(Opcode::MOV64_REG, 2, 0));
+  Fixture.LastCall = Text.size();
+  Text.push_back(encode(Opcode::CALL_REG, 2));
+  Text.push_back(encode(Opcode::EXIT));
+  std::vector<std::optional<size_t>> ReturnLiterals;
+  for (size_t I = 0; I < Count; ++I) {
+    Fixture.Callees.push_back(Text.size());
+    if (Stores && OmitsLastStore && I + 1 == Count) {
+      ReturnLiterals.push_back(std::nullopt);
+    } else {
+      ReturnLiterals.push_back(AppendLiteral(Stores ? 2 : 0, 0));
+      if (Stores)
+        Text.push_back(encode(Opcode::ST_DW_REG, 1, 2));
+    }
+    if (Stores)
+      Text.push_back(encode(Opcode::MOV64_IMM, 0));
+    Text.push_back(encode(Opcode::EXIT));
+  }
+  for (size_t I = 0; I < (Distinct ? Count : 1); ++I) {
+    Fixture.Targets.push_back(Text.size());
+    Text.push_back(encode(Opcode::MOV64_IMM, 0, 0, 0, 77 + I));
+    Text.push_back(encode(Opcode::EXIT));
+  }
+  for (size_t I = 0; I < Branches.size(); ++I)
+    Text[Branches[I]] = encode(Opcode::JEQ64_IMM, 5, 0,
+                               Fixture.Literals[I] - Branches[I] - 1, I);
+  for (size_t Join : Joins)
+    Text[Join] = encode(Opcode::JA, 0, 0, Fixture.FirstCall - Join - 1);
+  for (size_t I = 0; I < Count; ++I) {
+    const auto Literal = test::loadImm64(
+        CallRegister, kBytecodeStart + Fixture.Callees[I] * kInstructionSize);
+    std::copy(Literal.begin(), Literal.end(),
+              Text.begin() + Fixture.Literals[I]);
+    if (ReturnLiterals[I]) {
+      const auto Return = test::loadImm64(
+          Stores ? 2 : 0, kBytecodeStart + Fixture.Targets[Distinct ? I : 0] *
+                                               kInstructionSize);
+      std::copy(Return.begin(), Return.end(),
+                Text.begin() + *ReturnLiterals[I]);
+    }
+  }
+  return Fixture;
+}
+
+llvm::Expected<ExecutionResult>
+executeSelector(const SBFProgram &Program, size_t Selector,
+                InterpreterOptions Options = {}) {
+  ExecutionEnvironment Environment;
+  std::vector<uint8_t> Input(sizeof(uint64_t));
+  llvm::support::endian::write64le(Input.data(), Selector);
+  Environment.Memory.push_back({kInputStart, Input, false, "selector"});
+  return executeRaw(Program, std::move(Environment), Options);
+}
+
+void checkSummaryReferences(const CallXContextReport &Report) {
+  std::map<size_t, size_t> Variants;
+  std::set<size_t> IDs;
+  for (const auto &Summary : Report.Summaries) {
+    EXPECT_TRUE(IDs.insert(Summary.ID).second);
+    if (!Summary.GeneralizedInputs)
+      EXPECT_LE(++Variants[Summary.EntrySlot],
+                kCallXContextSpecializationsPerEntry);
+  }
+  for (const auto &Edge : Report.SummaryEdges) {
+    EXPECT_TRUE(IDs.contains(Edge.CallerSummaryID));
+    if (Edge.CalleeSummaryID)
+      EXPECT_TRUE(IDs.contains(*Edge.CalleeSummaryID));
+  }
+}
+
+TEST(SBFCallXContexts, JoinsEveryFiniteCalleeReturnAndMemoryOutcome) {
+  for (size_t Count : {2u, 4u})
+    for (unsigned Register : {0u, 7u})
+      for (bool Stores : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "count=" << Count << ", register="
+                                          << Register << ", stores=" << Stores);
+        const auto Fixture =
+            makeAlternativeCallees(Count, Register, Stores, false);
+        auto Program = analyze(test::makeImage(Fixture.Text, {}));
+        ASSERT_TRUE(static_cast<bool>(Program))
+            << llvm::toString(Program.takeError());
+        auto Report = recoverCallXContexts(*Program);
+        ASSERT_TRUE(static_cast<bool>(Report))
+            << llvm::toString(Report.takeError());
+        EXPECT_TRUE(std::any_of(Report->Contexts.begin(),
+                                Report->Contexts.end(), [&](const auto &Site) {
+                                  return Site.CallXSlot == Fixture.LastCall &&
+                                         Site.TargetSlot == Fixture.Targets[0];
+                                }));
+        std::set<size_t> Callees;
+        for (const auto &Edge : Report->SummaryEdges)
+          if (Edge.CallerSlot == Fixture.FirstCall && Edge.CalleeEntrySlot) {
+            Callees.insert(*Edge.CalleeEntrySlot);
+            EXPECT_EQ(Edge.CallXTargetAddress,
+                      kBytecodeStart +
+                          *Edge.CalleeEntrySlot * kInstructionSize);
+          }
+        EXPECT_EQ(Callees, std::set<size_t>(Fixture.Callees.begin(),
+                                            Fixture.Callees.end()));
+        checkSummaryReferences(*Report);
+        bool CompleteSet = false;
+        for (const auto &Site : Report->Contexts)
+          if (Site.CallXSlot == Fixture.FirstCall) {
+            EXPECT_EQ(Site.Result, CallXContextResult::ProvenTargetSet);
+            EXPECT_EQ(Site.TargetValueAlternatives.values().size(), Count);
+            EXPECT_FALSE(Site.TargetSlot);
+            EXPECT_EQ(Site.Missing.Kind, CallXMissingFactKind::None);
+            CompleteSet = true;
+          }
+        EXPECT_TRUE(CompleteSet);
+        const auto JSON = callXContextReportJSON(*Program, *Report);
+        EXPECT_EQ(JSON.getInteger("schema"), 4);
+        EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_context"), 1);
+        EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_target_set_context"),
+                  1);
+        for (size_t Selector = 0; Selector < Count; ++Selector) {
+          auto Raw = executeSelector(*Program, Selector);
+          ASSERT_TRUE(static_cast<bool>(Raw))
+              << llvm::toString(Raw.takeError());
+          EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+          EXPECT_EQ(Raw->ReturnValue, 77u);
+          if (Register >= kFirstCalleeSavedRegister)
+            EXPECT_EQ(Raw->Registers[Register],
+                      kBytecodeStart +
+                          Fixture.Callees[Selector] * kInstructionSize);
+          bool SawFirst = false, SawLast = false;
+          for (size_t I = 0; I + 1 < Raw->Trace.size(); ++I) {
+            if (Raw->Trace[I].Slot == Fixture.FirstCall) {
+              EXPECT_EQ(Raw->Trace[I + 1].Slot, Fixture.Callees[Selector]);
+              SawFirst = true;
+            }
+            if (Raw->Trace[I].Slot == Fixture.LastCall) {
+              EXPECT_EQ(Raw->Trace[I + 1].Slot, Fixture.Targets[0]);
+              SawLast = true;
+            }
+          }
+          EXPECT_TRUE(SawFirst);
+          EXPECT_TRUE(SawLast);
+        }
+      }
+}
+
+TEST(SBFCallXContexts, DistinctFiniteReturnsAndStoresRemainCompleteSets) {
+  for (size_t Count : {2u, 4u})
+    for (bool Stores : {false, true}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "count=" << Count << ", stores=" << Stores);
+      const auto Fixture = makeAlternativeCallees(Count, 7, Stores, true);
+      auto Program = analyze(test::makeImage(Fixture.Text, {}));
+      ASSERT_TRUE(static_cast<bool>(Program))
+          << llvm::toString(Program.takeError());
+      auto Report = recoverCallXContexts(*Program);
+      ASSERT_TRUE(static_cast<bool>(Report))
+          << llvm::toString(Report.takeError());
+      bool SawLast = false;
+      for (const auto &Site : Report->Contexts) {
+        EXPECT_FALSE(Site.TargetSlot);
+        if (Site.CallXSlot == Fixture.LastCall) {
+          EXPECT_EQ(Site.Result, CallXContextResult::ProvenTargetSet);
+          EXPECT_EQ(Site.TargetValueAlternatives.values().size(), Count);
+          SawLast = true;
+        }
+      }
+      EXPECT_TRUE(SawLast);
+      const auto JSON = callXContextReportJSON(*Program, *Report);
+      EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_context"), 0);
+      EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_target_set_context"),
+                2);
+      EXPECT_TRUE(*JSON.getBoolean("dynamic_fallback_required"));
+      checkSummaryReferences(*Report);
+      for (size_t Selector = 0; Selector < Count; ++Selector) {
+        auto Raw = executeSelector(*Program, Selector);
+        ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+        EXPECT_EQ(Raw->ReturnValue, 77u + Selector);
+      }
+    }
+}
+
+TEST(SBFCallXContexts, MissingStoreInOneAlternativeDoesNotInventAMustValue) {
+  const auto Fixture = makeAlternativeCallees(2, 7, true, false, true);
+  auto Program = analyze(test::makeImage(Fixture.Text, {}));
+  ASSERT_TRUE(static_cast<bool>(Program))
+      << llvm::toString(Program.takeError());
+  auto Report = recoverCallXContexts(*Program);
+  ASSERT_TRUE(static_cast<bool>(Report)) << llvm::toString(Report.takeError());
+  bool SawLast = false;
+  for (const auto &Site : Report->Contexts)
+    if (Site.CallXSlot == Fixture.LastCall) {
+      EXPECT_EQ(Site.Result, CallXContextResult::UnknownTarget);
+      EXPECT_FALSE(Site.TargetSlot);
+      SawLast = true;
+    }
+  EXPECT_TRUE(SawLast);
+  checkSummaryReferences(*Report);
+  for (size_t Selector : {0u, 1u}) {
+    auto Raw = executeSelector(*Program, Selector);
+    ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+    if (Selector == 0) {
+      EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+      EXPECT_EQ(Raw->ReturnValue, 77u);
+    } else {
+      EXPECT_EQ(Raw->Status, ExecutionStatus::Faulted);
+      EXPECT_EQ(Raw->Fault, FaultCode::UnknownIndirectCall);
+    }
+  }
+}
+
+TEST(SBFCallXContexts, UnknownAndOverflowTargetsNeverSelectAKnownSubset) {
+  for (bool Unknown : {false, true}) {
+    const size_t Count = Unknown ? 2 : kCallXContextValueAlternatives + 1;
+    auto Fixture = makeAlternativeCallees(Count, 7, false, false);
+    if (Unknown) {
+      Fixture.Text[Fixture.Literals.back()] = encode(Opcode::MOV64_REG, 7, 3);
+      Fixture.Text[Fixture.Literals.back() + 1] =
+          encode(Opcode::MOV64_REG, 7, 7);
+    }
+    auto Program = analyze(test::makeImage(Fixture.Text, {}));
+    ASSERT_TRUE(static_cast<bool>(Program))
+        << llvm::toString(Program.takeError());
+    auto Report = recoverCallXContexts(*Program);
+    ASSERT_TRUE(static_cast<bool>(Report))
+        << llvm::toString(Report.takeError());
+    for (const auto &Site : Report->Contexts) {
+      EXPECT_EQ(Site.Result, CallXContextResult::UnknownTarget);
+      EXPECT_TRUE(Site.TargetValueAlternatives.unknown());
+    }
+    for (const auto &Edge : Report->SummaryEdges)
+      if (Edge.CallerSlot == Fixture.FirstCall) {
+        EXPECT_EQ(Edge.Barrier, CallXSummaryBarrier::UnknownTarget);
+        EXPECT_FALSE(Edge.CalleeSummaryID);
+        EXPECT_FALSE(Edge.CallXTargetAddress);
+      }
+    checkSummaryReferences(*Report);
+    for (size_t Selector = 0; Selector < Count; ++Selector) {
+      auto Raw = executeSelector(*Program, Selector);
+      ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+      if (Unknown && Selector + 1 == Count) {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Faulted);
+        EXPECT_EQ(Raw->Fault, FaultCode::UnknownIndirectCall);
+      } else {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+        EXPECT_EQ(Raw->ReturnValue, 77u);
+      }
+    }
+  }
+}
+
+TEST(SBFCallXContexts, UnusableRawAlternativesRetainConservativeEffects) {
+  for (unsigned Kind : {0u, 1u, 2u}) {
+    auto Fixture = makeAlternativeCallees(2, 0, false, false);
+    const va_t Address =
+        Kind == 0 ? UINT64_MAX
+                  : kBytecodeStart +
+                        (Fixture.Callees.back() + Kind) * kInstructionSize;
+    const auto Literal = test::loadImm64(0, Address);
+    std::copy(Literal.begin(), Literal.end(),
+              Fixture.Text.begin() + Fixture.Literals.back());
+    auto Program = analyze(test::makeImage(Fixture.Text, {}));
+    ASSERT_TRUE(static_cast<bool>(Program))
+        << llvm::toString(Program.takeError());
+    auto Report = recoverCallXContexts(*Program);
+    ASSERT_TRUE(static_cast<bool>(Report))
+        << llvm::toString(Report.takeError());
+    bool SawBarrier = false;
+    for (const auto &Edge : Report->SummaryEdges)
+      if (Edge.CallerSlot == Fixture.FirstCall &&
+          Edge.CallXTargetAddress == Address) {
+        EXPECT_FALSE(Edge.CalleeSummaryID);
+        EXPECT_EQ(Edge.Barrier, Kind == 0
+                                    ? CallXSummaryBarrier::UnknownTarget
+                                    : CallXSummaryBarrier::UnsupportedRawEntry);
+        SawBarrier = true;
+      }
+    EXPECT_TRUE(SawBarrier);
+    for (const auto &Site : Report->Contexts) {
+      EXPECT_FALSE(Site.TargetSlot);
+      if (Site.CallXSlot == Fixture.FirstCall)
+        EXPECT_EQ(Site.Result, Kind == 0 ? CallXContextResult::UnknownTarget
+                                         : CallXContextResult::ProvenTargetSet);
+      else
+        EXPECT_EQ(Site.Result, CallXContextResult::UnknownTarget);
+    }
+    checkSummaryReferences(*Report);
+    for (size_t Selector : {0u, 1u}) {
+      auto Raw = executeSelector(*Program, Selector);
+      ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+      if (Selector == 0 || Kind == 2) {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+        EXPECT_EQ(Raw->ReturnValue, Selector == 0 ? 77u : Address);
+      } else {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Faulted);
+        EXPECT_EQ(Raw->Fault, Kind == 0 ? FaultCode::UnknownIndirectCall
+                                        : FaultCode::InvalidInstruction);
+      }
+    }
+  }
+}
+
+TEST(SBFCallXContexts, UnalignedAlternativesKeepTheirActualRegisterInputs) {
+  auto Fixture = makeAlternativeCallees(2, 7, false, false);
+  const size_t Callee = Fixture.Callees[0];
+  const va_t Address = kBytecodeStart + Callee * kInstructionSize;
+  const auto Unaligned = test::loadImm64(7, Address + 1);
+  std::copy(Unaligned.begin(), Unaligned.end(),
+            Fixture.Text.begin() + Fixture.Literals[1]);
+  // Returning r7 distinguishes the original addresses even though both raw
+  // calls floor to the same entry. Refining only the PC would lose this fact.
+  Fixture.Text[Callee] = encode(Opcode::MOV64_REG, 0, 7);
+  Fixture.Text[Callee + 1] = encode(Opcode::MOV64_REG, 0, 0);
+  auto Program = analyze(test::makeImage(Fixture.Text, {}));
+  ASSERT_TRUE(static_cast<bool>(Program))
+      << llvm::toString(Program.takeError());
+  auto Report = recoverCallXContexts(*Program);
+  ASSERT_TRUE(static_cast<bool>(Report)) << llvm::toString(Report.takeError());
+  std::set<va_t> Inputs;
+  for (const auto &Edge : Report->SummaryEdges)
+    if (Edge.CallerSlot == Fixture.FirstCall && Edge.CalleeSummaryID) {
+      EXPECT_EQ(Edge.CalleeEntrySlot, Callee);
+      ASSERT_TRUE(Edge.CallXTargetAddress);
+      Inputs.insert(*Edge.CallXTargetAddress);
+      const auto It =
+          std::find_if(Report->Summaries.begin(), Report->Summaries.end(),
+                       [&](const auto &Summary) {
+                         return Summary.ID == *Edge.CalleeSummaryID;
+                       });
+      ASSERT_NE(It, Report->Summaries.end());
+      if (!It->GeneralizedInputs) {
+        EXPECT_EQ(It->Inputs[7].ValueKind, RegisterValue::Kind::Constant);
+        EXPECT_EQ(It->Inputs[7].Value, *Edge.CallXTargetAddress);
+      }
+    }
+  EXPECT_EQ(Inputs, (std::set<va_t>{Address, Address + 1}));
+  bool SawLast = false;
+  for (const auto &Site : Report->Contexts) {
+    EXPECT_FALSE(Site.TargetSlot);
+    if (Site.CallXSlot == Fixture.LastCall) {
+      EXPECT_EQ(Site.Result, CallXContextResult::ProvenTargetSet);
+      EXPECT_EQ(Site.TargetValueAlternatives.values().size(), 2u);
+      SawLast = true;
+    }
+  }
+  EXPECT_TRUE(SawLast);
+  const auto JSON = callXContextReportJSON(*Program, *Report);
+  EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_context"), 0);
+  EXPECT_EQ(JSON.getInteger("callx_sites_with_proven_target_set_context"), 2);
+  for (const auto &Site : *JSON.getArray("callx_sites")) {
+    const auto &Row = *Site.getAsObject();
+    EXPECT_TRUE(Row.getArray("conditional_target_slots")->empty());
+    for (const auto &Set : *Row.getArray("conditional_target_sets")) {
+      ASSERT_EQ(Set.getAsArray()->size(), 2u);
+      EXPECT_EQ((*Set.getAsArray())[0].getAsObject()->getInteger("target_slot"),
+                Callee);
+      EXPECT_EQ((*Set.getAsArray())[1].getAsObject()->getInteger("target_slot"),
+                Callee);
+      EXPECT_NE(
+          (*Set.getAsArray())[0].getAsObject()->getString("target_address"),
+          (*Set.getAsArray())[1].getAsObject()->getString("target_address"));
+    }
+  }
+  checkSummaryReferences(*Report);
+  for (size_t Selector : {0u, 1u}) {
+    auto Raw = executeSelector(*Program, Selector);
+    ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+    EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+    EXPECT_EQ(Raw->ReturnValue, Address + Selector);
+  }
+}
+
+TEST(SBFCallXContexts, JoinsOnlyReturningAlternativesWithoutInventingAReturn) {
+  for (bool AllLoop : {false, true}) {
+    auto Fixture = makeAlternativeCallees(2, 7, false, false);
+    for (size_t I = AllLoop ? 0 : 1; I < Fixture.Callees.size(); ++I) {
+      Fixture.Text[Fixture.Callees[I]] = encode(Opcode::JA, 0, 0, -1);
+      Fixture.Text[Fixture.Callees[I] + 1] = encode(Opcode::MOV64_REG, 0, 0);
+    }
+    auto Program = analyze(test::makeImage(Fixture.Text, {}));
+    ASSERT_TRUE(static_cast<bool>(Program))
+        << llvm::toString(Program.takeError());
+    auto Report = recoverCallXContexts(*Program);
+    ASSERT_TRUE(static_cast<bool>(Report))
+        << llvm::toString(Report.takeError());
+    bool SawLast = false;
+    for (const auto &Site : Report->Contexts)
+      if (Site.CallXSlot == Fixture.LastCall) {
+        EXPECT_EQ(Site.TargetSlot, Fixture.Targets[0]);
+        SawLast = true;
+      }
+    EXPECT_EQ(SawLast, !AllLoop);
+    checkSummaryReferences(*Report);
+    for (size_t Selector : {0u, 1u}) {
+      InterpreterOptions Options;
+      Options.MaxSteps = 100;
+      auto Raw = executeSelector(*Program, Selector, Options);
+      ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+      if (AllLoop || Selector == 1) {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::StepLimit);
+        EXPECT_FALSE(std::any_of(
+            Raw->Trace.begin(), Raw->Trace.end(),
+            [&](const auto &Step) { return Step.Slot == Fixture.LastCall; }));
+      } else {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+        EXPECT_EQ(Raw->ReturnValue, 77u);
+      }
+    }
+  }
+}
+
+TEST(SBFCallXContexts, FiniteAlternativesRetainRecursiveAndDepthBarriers) {
+  for (bool Recursive : {false, true}) {
+    auto Fixture = makeAlternativeCallees(2, 7, false, false);
+    if (Recursive) {
+      const auto Literal = test::loadImm64(7, kBytecodeStart);
+      std::copy(Literal.begin(), Literal.end(),
+                Fixture.Text.begin() + Fixture.Literals.back());
+    }
+    auto Program = analyze(test::makeImage(Fixture.Text, {}));
+    ASSERT_TRUE(static_cast<bool>(Program))
+        << llvm::toString(Program.takeError());
+    if (!Recursive)
+      Program->Config.MaxCallDepth = 2;
+    auto Report = recoverCallXContexts(*Program);
+    ASSERT_TRUE(static_cast<bool>(Report))
+        << llvm::toString(Report.takeError());
+    bool SawBarrier = false;
+    for (const auto &Edge : Report->SummaryEdges)
+      if (Edge.CallerSlot == Fixture.FirstCall &&
+          (!Recursive || Edge.CallXTargetAddress == kBytecodeStart)) {
+        EXPECT_EQ(Edge.Barrier, Recursive ? CallXSummaryBarrier::RecursiveCall
+                                          : CallXSummaryBarrier::CallDepth);
+        EXPECT_FALSE(Edge.CalleeSummaryID);
+        SawBarrier = true;
+      }
+    EXPECT_TRUE(SawBarrier);
+    for (const auto &Site : Report->Contexts)
+      if (Site.CallXSlot == Fixture.LastCall)
+        EXPECT_EQ(Site.Result, CallXContextResult::UnknownTarget);
+    checkSummaryReferences(*Report);
+    for (size_t Selector : {0u, 1u}) {
+      auto Raw = executeSelector(*Program, Selector);
+      ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+      if (Recursive && Selector == 1) {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Faulted);
+        EXPECT_EQ(Raw->Fault, FaultCode::CallDepth);
+      } else {
+        EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+        EXPECT_EQ(Raw->ReturnValue, 77u);
+      }
+    }
+  }
 }
 
 llvm::Expected<SBFProgram> makeTableProgram(unsigned CallerCount = 1) {

@@ -331,9 +331,17 @@ Contextual joins retain complete sets of up to four register/stored-word
 alternatives. Transfers lift the canonical scalar operation over those sets;
 for example two immutable table bases can load the same target. Unknown is
 absorbing and set overflow widens to unknown, never a truncated list. Multiple
-remaining CALLX values are reported separately and do not count as a unique
-proven target or authorize a single-callee effect summary. Ordinary block and
-Solana recovery retain the singleton must-analysis policy.
+remaining literal CALLX values are analyzed by refining the actual call-register
+input for each alternative and reusing the same caller ABI and memory-effect
+transfer as a singleton call. All returning register and memory outcomes are
+joined, while every alternative contributes conservative effects and a separate
+summary dependency. Unknown, symbolic and overflowed target sets never select a
+known subset. Unsupported entries, recursion, depth and resource barriers remain
+explicit; a nonreturning callee does not invent a return. Retained alternative
+and joined states share the existing memory budget. Callee outputs are consumed
+before requesting another specialization, so cache reclamation cannot invalidate
+a pending output pointer. Ordinary block and Solana recovery retain the
+singleton must-analysis policy.
 
 The scalar transfer and raw interpreter share width-normalized wrapping ALU
 evaluation, including bitwise operations, masked shifts and multiplication.
@@ -406,10 +414,23 @@ when the static CFG/direct-call graph cannot reach an unresolved CALLX; actual
 callers can still demand return/memory specializations. Remaining roots retain
 ascending entry-slot order: eagerly specializing small unknown-input wrappers
 can consume all four cached variants before their concrete callers are analyzed.
-Completed cache hits remain usable after specialization work is exhausted. Schema 3 records input
-projection, bounded alternatives, return expressions, memory footprints,
+Completed cache hits remain usable after specialization work is exhausted.
+Schema 4 records input projection, bounded alternatives, return expressions, memory footprints,
 summary dependencies, barriers, cache reclamation and instruction work. Prior
 independent entry-prefix proofs keep a distinct `evidence_scope`.
+
+`proven_target_set` evidence records complete sets of two to four literal
+in-range raw addresses separately from `proven_target`. Existing singleton
+`proven_contexts`, `callx_sites_with_proven_context` and
+`conditional_target_slots` keep their meaning. The additional
+`proven_target_set_contexts`, `callx_sites_with_proven_target_set_context` and
+`conditional_target_sets` preserve each complete address set; a summary edge's
+`callx_target_address` identifies the actual refined input. Different unaligned
+addresses remain different alternatives even when they floor to one raw slot.
+Set evidence proves addresses under recorded inputs, not successful execution
+or closure over unknown callers. Older reports may already contain those
+addresses in `target_value_alternatives` without applying their callee summaries;
+reclassifying those rows alone is not newly recovered address knowledge.
 
 Full-width stored values retain pointer provenance independently of descriptor
 bytes. Frame-relative coordinates and absolute VM addresses occupy separate

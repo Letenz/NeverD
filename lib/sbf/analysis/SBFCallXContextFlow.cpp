@@ -235,6 +235,18 @@ private:
   llvm::Expected<bool> call(FunctionContext &Context,
                             const MedInstruction &Instruction,
                             ContextState &State, bool Collect);
+  llvm::Expected<bool> callTarget(FunctionContext &Context,
+                                  const MedInstruction &Instruction,
+                                  ContextState &State, bool Collect);
+  std::optional<size_t> rawTargetSlot(va_t Address) const {
+    // Raw CALLX subtracts in uint64_t and floors to a slot. An unaligned
+    // address or an LDDW continuation is not rejected by address resolution.
+    const uint64_t Slot =
+        (Address - Program.Low.TextAddress) / kInstructionSize;
+    if (Slot < Program.Low.Instructions.size())
+      return static_cast<size_t>(Slot);
+    return std::nullopt;
+  }
   void transfer(const MedInstruction &Instruction, ContextState &State,
                 MissingRegisters *Missing);
   void transferValues(const MedInstruction &Instruction, ContextState &State);
@@ -979,13 +991,11 @@ CallXContextEvidence ContextFlow::evidence(const FunctionContext &Context,
       State.Registers[Instruction.CallRegister].singleton();
   if (Target.ValueKind == RegisterValue::Kind::Constant) {
     Evidence.TargetAddress = Target.Value;
-    const uint64_t Slot =
-        (Target.Value - Program.Low.TextAddress) / kInstructionSize;
-    if (Slot < Program.Low.Instructions.size()) {
+    if (const auto Slot = rawTargetSlot(Target.Value)) {
       Evidence.Result = CallXContextResult::ProvenTarget;
-      Evidence.TargetSlot = static_cast<size_t>(Slot);
+      Evidence.TargetSlot = Slot;
       Evidence.TargetIsContinuation =
-          Program.Low.Instructions[Slot].IsContinuation;
+          Program.Low.Instructions[*Slot].IsContinuation;
     } else {
       Evidence.Result = CallXContextResult::InvalidTarget;
     }
@@ -994,7 +1004,19 @@ CallXContextEvidence ContextFlow::evidence(const FunctionContext &Context,
     if (State.Registers[Instruction.CallRegister].values().size() > 1) {
       Evidence.TargetValueAlternatives =
           State.Registers[Instruction.CallRegister];
-      Evidence.Missing.Kind = CallXMissingFactKind::MultipleTargetValues;
+      const bool KnownRawTargets = std::all_of(
+          Evidence.TargetValueAlternatives.values().begin(),
+          Evidence.TargetValueAlternatives.values().end(),
+          [&](const auto &Value) {
+            return Value.ValueKind == RegisterValue::Kind::Constant &&
+                   rawTargetSlot(Value.Value).has_value();
+          });
+      if (KnownRawTargets) {
+        Evidence.Result = CallXContextResult::ProvenTargetSet;
+        Evidence.Missing = {};
+      } else {
+        Evidence.Missing.Kind = CallXMissingFactKind::MultipleTargetValues;
+      }
     } else if (Evidence.Missing.Kind == CallXMissingFactKind::None)
       Evidence.Missing.Kind = CallXMissingFactKind::SymbolicTarget;
   }
@@ -1004,6 +1026,56 @@ CallXContextEvidence ContextFlow::evidence(const FunctionContext &Context,
 llvm::Expected<bool> ContextFlow::call(FunctionContext &Context,
                                        const MedInstruction &Instruction,
                                        ContextState &State, bool Collect) {
+  if (Instruction.Call != CallKind::Indirect)
+    return callTarget(Context, Instruction, State, Collect);
+  const auto Targets = State.Registers[Instruction.CallRegister].values();
+  if (Targets.size() < 2 ||
+      !std::all_of(Targets.begin(), Targets.end(), [](const auto &Value) {
+        return Value.ValueKind == RegisterValue::Kind::Constant;
+      }))
+    return callTarget(Context, Instruction, State, Collect);
+
+  std::optional<ContextState> Joined;
+  uint64_t JoinedBytes = 0;
+  const auto Release = llvm::scope_exit([&] { RetainedBytes -= JoinedBytes; });
+  for (const auto &Target : Targets) {
+    ContextState Alternative = State;
+    Alternative.Registers[Instruction.CallRegister] = Target;
+    const uint64_t AlternativeBytes = stateBytes(Alternative);
+    if (auto Error = retain(AlternativeBytes))
+      return std::move(Error);
+    const auto ReleaseAlternative =
+        llvm::scope_exit([&] { RetainedBytes -= AlternativeBytes; });
+    // Apply each output and record its dependency before requesting another
+    // specialization: an unreferenced callee cache node may be reclaimed.
+    auto Continues = callTarget(Context, Instruction, Alternative, Collect);
+    if (!Continues)
+      return Continues.takeError();
+    if (!*Continues)
+      continue;
+    if (Joined)
+      Joined->join(Alternative);
+    else
+      Joined = std::move(Alternative);
+    const uint64_t Bytes = stateBytes(*Joined);
+    if (Bytes > JoinedBytes) {
+      if (auto Error = retain(Bytes - JoinedBytes))
+        return std::move(Error);
+    } else {
+      RetainedBytes -= JoinedBytes - Bytes;
+    }
+    JoinedBytes = Bytes;
+  }
+  if (!Joined)
+    return false;
+  State = std::move(*Joined);
+  return true;
+}
+
+llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
+                                             const MedInstruction &Instruction,
+                                             ContextState &State,
+                                             bool Collect) {
   // Resolved runtime calls keep the one canonical memory-effect owner.
   if (Instruction.Call == CallKind::Syscall) {
     if (!Instruction.Syscall) {
@@ -1028,10 +1100,8 @@ llvm::Expected<bool> ContextFlow::call(FunctionContext &Context,
     const RegisterValue Target =
         State.Registers[Instruction.CallRegister].singleton();
     if (Target.ValueKind == RegisterValue::Kind::Constant) {
-      const uint64_t Slot =
-          (Target.Value - Program.Low.TextAddress) / kInstructionSize;
-      if (Slot < Program.Low.Instructions.size())
-        Edge.CalleeEntrySlot = static_cast<size_t>(Slot);
+      Edge.CallXTargetAddress = Target.Value;
+      Edge.CalleeEntrySlot = rawTargetSlot(Target.Value);
     }
   }
   Edge.LegacyRuntime =

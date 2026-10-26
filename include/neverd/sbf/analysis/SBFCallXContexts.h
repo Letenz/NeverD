@@ -33,6 +33,7 @@ enum class CallXContextResult : uint8_t {
   UnknownTarget,
   InvalidTarget,
   LegacyRuntimeMayMutateArguments,
+  ProvenTargetSet,
 };
 
 enum class CallXMissingFactKind : uint8_t {
@@ -97,6 +98,7 @@ enum class CallXSummaryBarrier : uint8_t {
 struct CallXSummaryEdge {
   size_t CallerSummaryID = 0;
   size_t CallerSlot = 0;
+  std::optional<va_t> CallXTargetAddress;
   std::optional<size_t> CalleeSummaryID;
   std::optional<size_t> CalleeEntrySlot;
   CallXSummaryBarrier Barrier = CallXSummaryBarrier::None;
