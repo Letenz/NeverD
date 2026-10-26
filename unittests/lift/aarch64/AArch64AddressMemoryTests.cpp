@@ -5128,6 +5128,59 @@ TEST(AArch64VectorWritebackMemory,
         compileMemoryC(Source, false);
 #endif
       }
+      if (Load)
+        for (bool EarlyCopy : {false, true}) {
+          auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+          ExprPtr Loaded, Follow;
+          auto At = std::find_if(
+              High.Body.begin(), High.Body.end(),
+              [&](const HighStmt &Statement) {
+                bool Defines = false;
+                forEachExpr(Statement, [&](const ExprPtr &E) {
+                  if (E &&
+                      E->IntrinsicId == Intrinsic::A64_VectorLoadWriteback) {
+                    Loaded = E;
+                    Defines = true;
+                  }
+                });
+                return Defines;
+              });
+          ASSERT_NE(At, High.Body.end());
+          walkStmts(High.Body, [&](const HighStmt &Statement) {
+            forEachExpr(Statement, [&](const ExprPtr &E) {
+              if (E && E->IntrinsicId == Intrinsic::A64_LoadImmediate)
+                Follow = E;
+            });
+          });
+          ASSERT_TRUE(Loaded && Follow);
+          if (EarlyCopy) {
+            auto Copy = Loaded->IntrinsicOutputs[kWritebackBaseIndex];
+            ++Copy.SSAVer;
+            HighStmt Assign;
+            Assign.Kind = StmtKind::Assign;
+            Assign.Dst = HighExpr::makeVar(Copy);
+            Assign.Val = HighExpr::makeVar(
+                Loaded->IntrinsicOutputs[kWritebackBaseIndex]);
+            High.Body.insert(At, std::move(Assign));
+            Follow->Operands[kAddressMemoryBaseOperand] =
+                HighExpr::makeVar(Copy);
+          } else {
+            auto Definition = std::move(*At);
+            *At = HighStmt{};
+            At->Kind = StmtKind::If;
+            At->Cond = HighExpr::makeConst(0, 1);
+            At->Body.push_back(std::move(Definition));
+          }
+          CEmitterOptions Options;
+          Options.TheArch = Arch::AArch64;
+          Options.Format = BinaryFormat::MachO;
+          Options.Image = &Image;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                       std::invalid_argument);
+          EXPECT_TRUE(Source.empty());
+        }
       auto Unknown = Function;
       auto &UnknownOps = Unknown.Blocks.front().Ops;
       const auto Memory = std::find_if(UnknownOps.begin(), UnknownOps.end(),

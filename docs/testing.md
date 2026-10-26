@@ -14339,7 +14339,8 @@ LLVM object output. Native C executes at O0/O2. Additional checks cover
 image-owned and runtime bases, legal one-past results, truncated storage,
 ADRP/ADD machine-code lifting, X16/V16 and V31 roles, x1 admission, dead
 results, malformed LowIR/MedIR/HighIR and LLVM calls before body filtering,
-and complete tracer commit/refusal.
+complete tracer commit/refusal, and skipped or copied-before-definition
+auxiliary bases that must fail before source emission.
 
 `NEVERD_ARM64E_VECTOR_WRITEBACK_ARTIFACT_DIR` exports the actual `high.c`,
 `llvm.c`, `llvm.o` and `harness.c`, recording

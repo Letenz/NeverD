@@ -298,9 +298,14 @@ public:
           Image, Instruction, Constant->ConstVal, Constant->ConstProvenance,
           Constant->AddressOwnerVA));
     using Step = aarch64_memory_base_detail::Step;
+    using Occurrence = std::pair<const HighExpr *, const HighStmt *>;
     return aarch64_memory_base_detail::runtimeValue(
-        &Base, [](const HighExpr *Value) { return Value; },
-        [&](const HighExpr *Value, std::vector<const HighExpr *> &Work) {
+        Occurrence{&Base, Use}, [](const Occurrence &Value) { return Value; },
+        [&](const Occurrence &Current, std::vector<Occurrence> &Work) {
+          const auto *Value = Current.first;
+          const auto Add = [&](const HighExpr *Child) {
+            Work.emplace_back(Child, Current.second);
+          };
           if (!Value)
             return Step::Unsupported;
           if (Value->Kind == ExprKind::Const)
@@ -320,8 +325,14 @@ public:
           if (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) {
             const auto It = Definitions.find(varKey(Value->Var));
             if (It != Definitions.end())
-              for (const auto &Definition : It->second)
-                Work.push_back(Definition.second);
+              for (const auto &Definition : It->second) {
+                if (Definition.second->IntrinsicId ==
+                        Intrinsic::A64_VectorLoadWriteback &&
+                    (!Current.second ||
+                     !dominates(*Definition.first, *Current.second)))
+                  return Step::Unsupported;
+                Work.emplace_back(Definition.second, Definition.first);
+              }
             const bool Parameter =
                 Value->Var.Kind == MedVar::Param ||
                 (Value->Var.Kind == MedVar::Reg && Value->Var.SSAVer == 0 &&
@@ -343,14 +354,14 @@ public:
             if (Value->Operands.front()->Operands.empty() ||
                 !Value->Operands.front()->Operands.front())
               return Step::Unsupported;
-            Work.push_back(Value->Operands.front()->Operands.front().get());
+            Add(Value->Operands.front()->Operands.front().get());
             return Step::Derived;
           }
           const unsigned First = Value->Op == NdOp::SELECT ? 1 : 0;
           for (unsigned I = First; I < Value->Operands.size(); ++I) {
             if (!Value->Operands[I])
               return Step::Unsupported;
-            Work.push_back(Value->Operands[I].get());
+            Add(Value->Operands[I].get());
           }
           return Value->Kind == ExprKind::Call ? Step::Runtime : Step::Derived;
         });

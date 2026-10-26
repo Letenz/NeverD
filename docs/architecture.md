@@ -687,8 +687,11 @@ original-instruction owner. A load defines two typed auxiliary SSA results:
 the complete zero-extended V register and completed X base. A store consumes
 the complete V value and returns the base. Xn/Vn numeric overlap is legal;
 V31 remains a vector register. LowIR binding collection, SSA conversion and
-finite tracing share the original result-transport query. Missing, shortened
-or duplicate bindings fail before conversion or memory effects. HighC and
+finite tracing share the original result-transport query. LowIR validation and finite tracing reject
+missing, shortened or duplicate bindings before publishing memory effects.
+A source use of an auxiliary base must be dominated by its defining instruction,
+including copies that carry it; skipped definitions cannot grant runtime-base
+admission. HighC and
 LLVMC retain the original instruction even when both load results are unused;
 the vector tuple remains internal and grants no native vector entry/return ABI.
 The x1-only automatic policy, exact image occurrences and complete storage
