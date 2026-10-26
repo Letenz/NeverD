@@ -12213,3 +12213,10 @@ VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
 this authority. Discard replaces each target page through AddressSpace while
 retaining permissions and VMA policy; old physical aliases and pinned views
 keep their bytes. Device/GPU admission remains in the shared service dispatch.
+
+`HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
+redundant writebacks and complete-overwrite proofs within independent regions
+and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
+and exceptional/ordered observations retain their memory effects. Prologue
+cleanup preserves saved register values still observed as data. Word zero-test
+normalization retains operand widths, signedness, effects and source truth.

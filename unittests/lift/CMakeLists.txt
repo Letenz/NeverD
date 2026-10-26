@@ -4773,3 +4773,10 @@ add_neverd_unittest(NeverDX86StateAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86StateAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDWindowsEHSourceTests
+  eh/COFFExceptionIRTests.cpp LINK_COMPONENTS Pipeline BackendC)
+target_include_directories(NeverDWindowsEHSourceTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDWindowsEHSourceTests PRIVATE
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}")

@@ -13974,3 +13974,11 @@ SDK/CLI report pairs with independently expected guarded bytes, across ordinary
 and RELR callers, four service routes, permission changes, holes and a closed
 dynamic provider. Named input RAM and unmap/replacement regressions verify that
 VMA names and address reuse cannot manufacture anonymous allocation provenance.
+
+Run `NeverDHighControlFlowTests` and `NeverDWindowsEHSourceTests` after changing
+frame forwarding or source expression cleanup. The frame fixtures execute C
+before/after optimization at O0/O2, including slot reuse and calls mutating
+saved cells. They retain stores around structured/unstructured EH, atomic and
+trapping operations, uncertain aliases, alternate entries and incomplete paths.
+The zero-test fixtures cover all byte pairs and integer-width boundaries with
+preserved call counts and undefined-behavior traps.
