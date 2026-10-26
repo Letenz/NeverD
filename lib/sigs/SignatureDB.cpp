@@ -1130,17 +1130,17 @@ void SignatureDB::applyCallerContext(
       return;
   }
   std::unordered_map<uint64_t, std::string> Names;
-  std::vector<size_t> FrozenCandidates;
+  std::vector<std::pair<uint64_t, size_t>> FrozenCandidates;
   if (Data) {
     // A few data parents should not settle and copy every existing name.
     // Index the frozen rows once; each visited address still considers all
     // competing claims through the same settlement owner.
     FrozenCandidates.reserve(Matches.size());
     for (size_t I = 0; I < Matches.size(); ++I)
-      FrozenCandidates.push_back(I);
-    llvm::sort(FrozenCandidates, [&](size_t A, size_t B) {
-      return Matches[A].Address < Matches[B].Address;
-    });
+      FrozenCandidates.emplace_back(Matches[I].Address, I);
+    // Keep sort keys contiguous instead of repeatedly loading addresses from
+    // the much larger candidate records during comparison and binary search.
+    llvm::sort(FrozenCandidates);
   } else {
     Names = buildCandidateNameMap();
   }
@@ -1180,8 +1180,8 @@ void SignatureDB::applyCallerContext(
 void SignatureDB::applyCallerContextRound(
     const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
     std::unordered_map<uint64_t, std::string> &Names,
-    llvm::ArrayRef<size_t> FrozenCandidates, size_t FrozenMatches,
-    size_t FirstParent, const DataBindings *Data,
+    llvm::ArrayRef<std::pair<uint64_t, size_t>> FrozenCandidates,
+    size_t FrozenMatches, size_t FirstParent, const DataBindings *Data,
     llvm::ArrayRef<uint64_t> Revisit,
     std::vector<DeferredCaller> *DeferredCallers) {
   const auto &Idx = index();
@@ -1191,11 +1191,11 @@ void SignatureDB::applyCallerContextRound(
       return Found;
     const auto Begin = llvm::lower_bound(
         FrozenCandidates, Address,
-        [&](size_t I, uint64_t VA) { return Matches[I].Address < VA; });
+        [](const auto &Row, uint64_t VA) { return Row.first < VA; });
     llvm::SmallVector<const SigMatch *, 4> Claims;
-    for (auto I = Begin;
-         I != FrozenCandidates.end() && Matches[*I].Address == Address; ++I)
-      Claims.push_back(&Matches[*I]);
+    for (auto I = Begin; I != FrozenCandidates.end() && I->first == Address;
+         ++I)
+      Claims.push_back(&Matches[I->second]);
     if (const auto Settled = settle(Claims))
       return Names.emplace(Address, Settled->Name).first;
     return Names.end();
@@ -1219,10 +1219,10 @@ void SignatureDB::applyCallerContextRound(
   for (uint64_t Address : Revisit) {
     auto I = llvm::lower_bound(
         FrozenCandidates, Address,
-        [&](size_t Index, uint64_t VA) { return Matches[Index].Address < VA; });
-    for (; I != FrozenCandidates.end() && Matches[*I].Address == Address; ++I)
-      if (*I < FirstParent)
-        AddParent(*I);
+        [](const auto &Row, uint64_t VA) { return Row.first < VA; });
+    for (; I != FrozenCandidates.end() && I->first == Address; ++I)
+      if (I->second < FirstParent)
+        AddParent(I->second);
   }
   for (size_t I = FirstParent; I < OriginalMatches; ++I)
     AddParent(I);
