@@ -2129,9 +2129,10 @@ source declarations, including incomplete records used as offline counterclaims.
 `SignatureDataContext` also owns frozen source-local data relations. The producer
 proves that two canonical zero-addend operands refer to one static address within
 the same COFF object. Their shared key names the exact operand of a uniquely
-defined external function; no local variable spelling escapes its object. Only
-that independently settled ordinary function can bind the relation, after all
-matching source refinements agree. The existing single data pass checks consumers
+defined typed function, external or static; no local variable spelling escapes
+its object. Static function names remain query keys rather than byte identities.
+Only that independently settled ordinary function can bind the relation, after
+all matching source refinements agree. The existing single data pass checks consumers
 without changing anchors or restarting inference. The parser/cache preserve a
 separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 Native `!loadcfg` metadata pairs a source configuration field's external pointer

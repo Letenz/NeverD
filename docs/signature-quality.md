@@ -148,20 +148,26 @@ For source-local data, `%offset anchor_offset:anchor_name` states an exact
 same-object relation. The anchor offset is eight uppercase hexadecimal digits;
 for example, `%0003 00000013:anchor` refers to the data operand at offset `0x13`
 in `anchor`. `neverd-sigmaker --data-references --local-data-anchor NAME`
-emits these relations only when the object uniquely defines that external
-function and both canonical, zero-addend operands refer to the same defined
-static data address. Source bounds, opcode overlaps, symbol types and relocation
-biases must agree. Unsupported or duplicate anchor definitions leave their raw
-bodies without that relation, preserving offline counterclaims. Static variable
-spellings never become cross-object identities.
+emits these relations only when the object uniquely defines that typed
+external or static function and both canonical, zero-addend operands refer to
+the same defined static data address. Source bounds, opcode overlaps, symbol
+types and relocation biases must agree. Unsupported or duplicate anchor
+definitions leave their raw bodies without that relation, preserving offline
+counterclaims. Static variable
+spellings never become cross-object identities. A static function's name is
+only a query key: its independently matched complete body and exact operand
+must still establish the binding. Multiple locations for one key remain
+ambiguous.
 
 Only the named independent ordinary anchor can establish this binding, at its
 stated operand. Every matching source variant must agree, including variants
 missing the relation. Other functions using the same storage cannot create the
 binding or feed it back into the anchor. External and local data kinds remain
 distinct in parsing, caches, raw collision audits and runtime settlement.
-`refine_pattern_metadata.py --local-data` can add unanimously supported local
-fields to existing complete contextual bodies without duplicating those bodies;
+`refine_pattern_metadata.py --local-data` can add source-owned local fields to
+existing complete contextual bodies without duplicating those bodies. Every
+raw variant must state the field, and all alternative anchor operands are
+retained. Alternatives can constrain a consumer but cannot establish an anchor;
 ordinary byte records retain their existing admission rule. The cache wire
 version is 7; older cache entries are rebuilt from source patterns.
 
