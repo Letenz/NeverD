@@ -859,7 +859,8 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 13: iterative DCE (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");
   const auto TIter = Clock::now();
-  forwardPrivateFrameLoads(Func, TargetArch);
+  const bool ForwardedAcrossJoins =
+      forwardPrivateFrameLoads(Func, TargetArch, /*AcrossJoins=*/true);
   iterativeDCE(Func, Entries);
   const auto TPost = Clock::now();
 
@@ -889,7 +890,11 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 15: semantic simplify ("
                           << Func.Name << ", " << Func.Body.size()
                           << " stmts)\n");
-  forwardPrivateFrameLoads(Func, TargetArch);
+  // The proof across joins builds a flow graph per function. Repeat it only
+  // to follow up on rewrites its phase-13 run made: DCE and renaming alone
+  // rarely give it anything new.
+  forwardPrivateFrameLoads(Func, TargetArch,
+                           /*AcrossJoins=*/ForwardedAcrossJoins);
   const bool Simplified = simplifyAllExprs(Func.Body);
   if (SymbolicSimplification)
     simplifyExprSemantics(Func.Body, SemanticThreadLimit);

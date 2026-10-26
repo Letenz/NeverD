@@ -31,6 +31,8 @@
 
 namespace neverd {
 void forwardPrivateFrameLoads(HighFunc &Function, Arch Architecture);
+bool forwardPrivateFrameLoads(HighFunc &Function, Arch Architecture,
+                              bool AcrossJoins);
 bool forwardBoundPrivateFrameCopies(HighFunc &Function, Arch Architecture);
 void simplifyExprSemantics(std::vector<HighStmt> &Statements);
 bool simplifyAllExprs(std::vector<HighStmt> &Statements);
@@ -1571,6 +1573,28 @@ TEST(HighFrameStoreForwarding, CapturedWritebackCrossesAnOrdinaryBranch) {
     EXPECT_EQ(F.Body[1].Body[0].Kind, StmtKind::Block);
     EXPECT_EQ(F.Body[1].Body[0].Addr, 0x1040u);
     EXPECT_TRUE(hasLoad(F.Body[0].Val));
+  }
+}
+
+TEST(HighFrameStoreForwarding, JoinProofRunsOnlyWhenRequested) {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  for (const bool AcrossJoins : {false, true}) {
+    auto F = roundTrip(A, T);
+    auto Saved = temporary(1, T, A);
+    HighStmt Branch;
+    Branch.Kind = StmtKind::If;
+    Branch.Cond = parameter(0, T, A);
+    Branch.Body = {store(frameSlot(A), Saved)};
+    F.Body = {assign(Saved, HighExpr::makeLoad(frameSlot(A), T)), Branch,
+              returning(frameSlot(A))};
+    EXPECT_EQ(forwardPrivateFrameLoads(F, A, AcrossJoins), AcrossJoins);
+    EXPECT_EQ(F.Body[1].Body[0].Kind,
+              AcrossJoins ? StmtKind::Block : StmtKind::Store);
+    // The proof removes the writeback once.
+    EXPECT_EQ(forwardPrivateFrameLoads(F, A, /*AcrossJoins=*/true),
+              !AcrossJoins);
+    EXPECT_EQ(F.Body[1].Body[0].Kind, StmtKind::Block);
   }
 }
 

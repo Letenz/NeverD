@@ -1196,11 +1196,12 @@ public:
   FrameWritebacks(HighFunc &F, Arch A, size_t &B, const std::set<va_t> &L)
       : Function(F), Architecture(A), Budget(B), Labels(L) {}
 
-  void run() {
+  /// \returns whether a proven rewrite changed the function.
+  bool run() {
     // Nothing commits without budget or a frame address; learn both before
     // building the flow graph, which none of the checks below needs.
     if (!Budget)
-      return;
+      return false;
     State Entry;
     HighExprSet Seen;
     walkStmts(Function.Body, [&](const HighStmt &T) {
@@ -1249,14 +1250,14 @@ public:
       });
     });
     if (!Complete || !EntryStack)
-      return;
+      return false;
     // A cyclic graph never commits below: do not build one.
     if (entersCycle(Function.Body, Labels))
-      return;
+      return false;
     const auto Graph = buildHighSourceFlowGraph(Function);
     if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
         Graph.Nodes.empty())
-      return;
+      return false;
     std::vector<bool> Reachable(Graph.Nodes.size());
     std::vector<size_t> Degree(Graph.Nodes.size()), Work{Graph.Entry};
     size_t Total = 0;
@@ -1273,7 +1274,7 @@ public:
       }
     }
     if (!Complete || Degree[Graph.Entry])
-      return;
+      return false;
     std::vector<std::optional<State>> Incoming(Graph.Nodes.size());
     Incoming[Graph.Entry] = std::move(Entry);
     Work = {Graph.Entry};
@@ -1283,7 +1284,7 @@ public:
       const size_t I = Work.back();
       Work.pop_back();
       if (!Incoming[I] || !spend(1 + Incoming[I]->size()))
-        return;
+        return false;
       State S = std::move(*Incoming[I]);
       Incoming[I].reset();
       ++Visited;
@@ -1291,7 +1292,7 @@ public:
       transfer(Graph.Nodes[I], S);
       for (size_t Next : Graph.Nodes[I].Successors) {
         if (!spend(1 + S.size()))
-          return;
+          return false;
         if (Incoming[Next]) {
           intersect(Incoming[Next]->Locals, S.Locals);
           intersect(Incoming[Next]->Addresses, S.Addresses);
@@ -1305,23 +1306,27 @@ public:
     }
     // A cycle, unresolved edge or exhausted proof cannot commit partial edits.
     if (!Complete || Visited != Total)
-      return;
+      return false;
     std::map<const HighStmt *, HighStmt> Rewritten;
     for (const auto &[Statement, S] : Before) {
       HighStmt Copy = *Statement;
       forEachRhsExpr(Copy, [&](ExprPtr &E) { E = replaceCapturedReads(E, S); });
       Rewritten.emplace(Statement, std::move(Copy));
       if (!Complete)
-        return;
+        return false;
     }
     std::map<const HighStmt *, bool> Overwritten;
     findOverwrittenStores(Graph, Order, Rewritten, Overwritten);
     if (!Complete)
-      return;
+      return false;
+    bool Changed = false;
     walkStmts(Function.Body, [&](HighStmt &T) {
       if (const auto Rewrite = Rewritten.find(&T); Rewrite != Rewritten.end()) {
         // Keep child vectors in place: graph statement identities borrow them.
         auto &R = Rewrite->second;
+        Changed |= T.Val != R.Val || T.Cond != R.Cond || T.RetVal != R.RetVal ||
+                   T.StoreAddr != R.StoreAddr || T.StoreVal != R.StoreVal ||
+                   T.CallExpr != R.CallExpr || T.SwitchExpr != R.SwitchExpr;
         T.Val = std::move(R.Val);
         T.Cond = std::move(R.Cond);
         T.RetVal = std::move(R.RetVal);
@@ -1339,15 +1344,22 @@ public:
       T = HighStmt{};
       T.Kind = StmtKind::Block;
       T.Addr = Address;
+      Changed = true;
     });
+    return Changed;
   }
 };
 } // namespace
 
 void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
+  forwardPrivateFrameLoads(Func, Architecture, /*AcrossJoins=*/true);
+}
+
+bool forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture,
+                              bool AcrossJoins) {
   if (Architecture == Arch::Unknown || Func.FrameSize <= 0 ||
       Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
-    return;
+    return false;
   // Keep the existing exact, straight-line proof. A call or source join ends
   // its facts; it need not disable unrelated regions of the entire function.
   // In particular, no memory fact is carried into or out of a loop.
@@ -1392,7 +1404,7 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
     });
   });
   if (UnsupportedFrame || !Remaining)
-    return;
+    return false;
   FrameAliases DominatingAliases;
   const auto Alias = [&](const MedVar &V) -> ExprPtr {
     const auto I = DominatingAliases.find(highSourceLocalIdentity(V));
@@ -1540,6 +1552,7 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
     Flush(Body.size());
   };
   Forward(Forward, Func.Body, 0);
-  FrameWritebacks(Func, Architecture, Remaining, Entries).run();
+  return AcrossJoins &&
+         FrameWritebacks(Func, Architecture, Remaining, Entries).run();
 }
 } // namespace neverd
