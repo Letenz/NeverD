@@ -2310,6 +2310,9 @@ The retry reuses the
 ordinary admission and source-agreement checks; it cannot establish bindings or
 restart the data pass. Missing alternative bodies or unresolved constraints
 remain unknown. The deferred parent list belongs to one application only.
+The anchor-name index contains only complete source bodies meeting the ordinary
+fixed-byte floor. Once an anchor name is queried, every matching source variant,
+including weaker counterclaims, still participates in binding validation.
 The parser/cache preserve a separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 An explicit source-layout mode also proves signed coordinate differences within
 one non-COMDAT data section. Only a canonical zero-addend static operand can

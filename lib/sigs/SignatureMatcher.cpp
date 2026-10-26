@@ -785,6 +785,7 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
     if ((Modules[I].RequireCaller || Modules[I].RequireReferences) &&
         SignatureMatcher::isFullyVerified(Modules[I])) {
       if (DataAnchors && Modules[I].RequireCaller &&
+          SignatureMatcher::fixedByteCount(Modules[I]) >= MinStatedBytes &&
           llvm::any_of(Modules[I].references(),
                        [](const StoredName &Ref) { return Ref.IsData; }))
         DataAnchors->push_back(I);
