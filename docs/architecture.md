@@ -7648,10 +7648,15 @@ MedIR owns bounded invariant-constant propagation across same-width SSA copies a
 
 The constant worklist indexes complete nonconstant SSA identities. Node
 addresses become stable only after all definitions have been collected;
-ordered visitation and the existing work charges remain unchanged. HighIR's
-call-clobber index is local to each converter invocation and retains the first
-record for each full SSA identity, including its variable kind. Reusing a
-converter rebuilds that index before following any preserved-prefix chain.
+the value solver retains its ordered visitation and work charges. Width-view
+origins then propagate through the same use graph, charging each reached node
+and outgoing use edge once instead of rescanning all inputs to convergence.
+Both analyses finish within the shared budget before any operand changes.
+
+HighIR's call-clobber index is local to each converter invocation and retains
+the first record for each full SSA identity, including its variable kind.
+Reusing a converter rebuilds that index before following any preserved-prefix
+chain.
 
 | User route | Representation path | Exit |
 |------------|---------------------|------|
@@ -8254,6 +8259,12 @@ NUL without padding and return the destination. API 28 ARM64 uses the C
 NUL-inclusive length to the destination object size. Scan faults and budgets
 precede that fortify check; the destination and overlap checks follow it.
 Undefined overlap and unsupported abort paths refuse without partial writes.
+`memchr` and `__memchr_chk` share the character-search loop, unsigned-byte
+comparison and guest read owner. Memory searches pass embedded NUL bytes and
+return null only after exhausting the requested count; scan-budget exhaustion
+remains a failure. The checked entry admits the whole count against the object
+extent before pointer or deadline checks. Zero-count searches need no pointer
+access, and a first match does not require the unread suffix to be mapped.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.

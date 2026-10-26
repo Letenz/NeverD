@@ -8989,7 +8989,10 @@ cover nested recurrences, shared expression DAGs, role-neutral address leaves
 and independently materialized SELECT arms. Both suites retain ambiguous
 relocatable comparisons and distinguish adjacent objects' one-past addresses.
 `MedConstantPropagation` also checks full SSA identities at maximum integer
-IDs/versions and atomic budget refusal on reverse-ordered width chains.
+IDs/versions, linear-budget propagation along reverse-ordered width chains,
+and width origins through seeded cycles and independent values. A complete
+PHI fanout exhausts the shared work budget during width-origin propagation;
+the refusal leaves every operand unchanged.
 `DefaultWordAbsorptionRequiresTheSameSSAValueAndWidth` checks default MedIR
 absorption on x86, x64, ARM and AArch64 in PE/COFF, ELF and Mach-O. Both operand
 orders simplify `x | (x & y)` and `x & (x | y)`, while a changed SSA version or
@@ -11517,6 +11520,13 @@ guest bytes and errno, and dynamic provider lifetime. Direct model checks
 separate object bounds from memory and deadline limits. C API/CLI and Python
 cover successful named calls and non-returning Fortify failures. Pinned API 28
 source defines the contract; these checks do not establish device equivalence.
+`MemorySearch*` covers `memchr` and `__memchr_chk` with embedded NULs, first
+matches, exact and full-width counts, unsigned-byte conversion, unchanged
+backing and errno, zero counts, read-only page tails and provider lifetime.
+The direct memory cases distinguish a complete no-match from an exhausted
+memory/deadline budget, including fortify-before-access ordering. The public
+`AndroidMemorySearchReportsMatchSDKAndCLI` test compares complete reports on
+success, zero-count invalid pointers, pointer faults and fortify refusal.
 
 `AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
 APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and
