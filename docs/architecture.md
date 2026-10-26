@@ -141,6 +141,14 @@ validators retain VEX/XOP addressing rules; TBM owns its opcode/group, width and
 operand roles. Its arithmetic LowIR is shared by LLVM and both C routes.
 Undefined-output coverage is separate from an opaque machine-state bank audit.
 
+`X86LiftBEXTR` owns bit-field extraction across XOP immediate-control, VEX
+register-control and APX forms. It authenticates the encoding and decoded
+operands before reading the source, clamps shift operands before emitting
+LowIR, and records SF/AF/PF as undefined while defining CF/OF/ZF. APX NF
+preserves all flags. The shared prefix and APX validators retain address
+ownership. Decoder flag metadata is checked separately from architectural
+effects: legacy BEXTR metadata currently over-reports control-flag resets.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR
