@@ -1198,17 +1198,7 @@ struct Session {
       // not keep, and what each function-pointer variable starts at.
       PipelineResult Recovery;
       Recovery.MedFuncs = PipeResult.MedFuncs;
-      Recovery.CallMayWriteGPRs = PipeResult.CallMayWriteGPRs;
-      Recovery.CallExitConstants = PipeResult.CallExitConstants;
-      Recovery.CallEntryReadGPRs = PipeResult.CallEntryReadGPRs;
-      Recovery.CallEntryStackArgs = PipeResult.CallEntryStackArgs;
-      Recovery.CallEntryStackSlots = PipeResult.CallEntryStackSlots;
-      Recovery.CallEntryArgumentCounts = PipeResult.CallEntryArgumentCounts;
-      Recovery.OmittedCalleeArgumentCounts =
-          PipeResult.OmittedCalleeArgumentCounts;
-      Recovery.CallPrototypeArguments = PipeResult.CallPrototypeArguments;
-      Recovery.CallUserPrototypes = PipeResult.CallUserPrototypes;
-      Recovery.CallArgumentSources = PipeResult.CallArgumentSources;
+      copyCallSignatureFacts(PipeResult, Recovery);
       Recovery.OmittedCallees = PipeResult.OmittedCallees;
       // The pipeline's callee memo keeps the forwarder probes of those
       // callees, which serve where this recovery reads the same.

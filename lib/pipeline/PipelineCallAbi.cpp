@@ -55,6 +55,31 @@ bool needsCallSignatureRecovery(const CallArgumentConvention *Convention) {
                         Convention->StackArgumentSummary);
 }
 
+void copyCallSignatureFacts(const PipelineResult &Source,
+                            PipelineResult &Destination) {
+#define COPY_SIGNATURE_FACT(Field) Destination.Field = Source.Field
+  COPY_SIGNATURE_FACT(CallArgumentSources);
+  COPY_SIGNATURE_FACT(CallMayWriteGPRs);
+  COPY_SIGNATURE_FACT(CallExitConstants);
+  COPY_SIGNATURE_FACT(CallEntryReadGPRs);
+  COPY_SIGNATURE_FACT(CallUnreadGPRs);
+  COPY_SIGNATURE_FACT(CallEntryStackArgs);
+  COPY_SIGNATURE_FACT(CallEntryStackSlots);
+  COPY_SIGNATURE_FACT(CallEntryArgumentCounts);
+  COPY_SIGNATURE_FACT(CallEntryIntegerArguments);
+  COPY_SIGNATURE_FACT(CallEntryFloatingArguments);
+  COPY_SIGNATURE_FACT(CallEntryVariadicArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeArgumentCounts);
+  COPY_SIGNATURE_FACT(OmittedCalleeIntegerArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeFloatingArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeVariadicArguments);
+  COPY_SIGNATURE_FACT(OmittedCalleeStackArgs);
+  COPY_SIGNATURE_FACT(OmittedCalleeStackSlots);
+  COPY_SIGNATURE_FACT(CallPrototypeArguments);
+  COPY_SIGNATURE_FACT(CallUserPrototypes);
+#undef COPY_SIGNATURE_FACT
+}
+
 namespace {
 /// The entries callee lifts know: the function symbols of \p Img that are
 /// not boundary guesses.

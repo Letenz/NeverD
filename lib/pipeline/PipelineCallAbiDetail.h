@@ -304,6 +304,11 @@ private:
   uint64_t Clock = 0;
 };
 
+/// Carry the complete input facts read by call-signature recovery into a new
+/// projection. Derived bodies and memo ownership remain the caller's choice.
+void copyCallSignatureFacts(const PipelineResult &Source,
+                            PipelineResult &Destination);
+
 /// Recover every call's arguments in \p Result, and the parameters each
 /// forwarder passes straight through, from the setup its caller writes
 /// before the call (recoverCallAbi).  Each callee's recovered signature

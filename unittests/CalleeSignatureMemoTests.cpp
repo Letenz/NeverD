@@ -114,6 +114,50 @@ TEST(CalleeSignatureMemo, ACalleeKeepsTheConversionOfEachSummaryItReads) {
   EXPECT_EQ(Callee.Conversions.size(), 2u);
 }
 
+TEST(CalleeSignatureMemo, ASourceProjectionKeepsTheCompleteReadSet) {
+  using namespace neverd;
+  PipelineResult Source;
+  Source.CallEntryReadGPRs[0x1000][0] = 8;
+  Source.CallUnreadGPRs[0x1000] = 0x10;
+  Source.CallEntryIntegerArguments[0x1000].Parameters = {
+      {SourceABICarrierKind::IntegerRegister, 8, 0, 8}};
+  Source.OmittedCalleeIntegerArguments =
+      std::make_shared<const decltype(Source.CallEntryIntegerArguments)>(
+          Source.CallEntryIntegerArguments);
+  Source.CallEntryIntegerArguments.clear();
+  Source.CallEntryFloatingArguments[0x2000].ParameterBytes = {8, 4};
+  Source.CallEntryFloatingArguments[0x2000].ReturnBytes = 8;
+  Source.OmittedCalleeFloatingArguments =
+      std::make_shared<const decltype(Source.CallEntryFloatingArguments)>(
+          Source.CallEntryFloatingArguments);
+  Source.CallEntryFloatingArguments.clear();
+  Source.CallEntryVariadicArguments[0x2000] = {8, 4};
+  Source.CallEntryStackArgs[0x2000] = 2;
+  Source.CallEntryStackSlots.insert(0x2000);
+
+  OmittedCalleeMemo::Callee Callee;
+  auto &Conversion = Callee.Conversions.emplace_back();
+  Conversion.Body = std::make_shared<const MedFunc>();
+  for (va_t Entry : {0x1000, 0x2000})
+    Conversion.Reads.push_back(OmittedCalleeMemo::readAt(Source, Entry));
+  const auto Body = Conversion.Body;
+  PipelineResult Projection;
+  copyCallSignatureFacts(Source, Projection);
+  const auto *Hit = Callee.conversionFor(Projection);
+  ASSERT_TRUE(Hit);
+  EXPECT_EQ(Hit->Body, Body);
+  // Losing either the unread fact or the image-wide typed declarations must
+  // invalidate the conversion. The SDK used to omit all three from its copy.
+  Projection.CallUnreadGPRs.clear();
+  EXPECT_EQ(Callee.conversionFor(Projection), nullptr);
+  copyCallSignatureFacts(Source, Projection);
+  Projection.OmittedCalleeIntegerArguments.reset();
+  EXPECT_EQ(Callee.conversionFor(Projection), nullptr);
+  copyCallSignatureFacts(Source, Projection);
+  Projection.OmittedCalleeFloatingArguments.reset();
+  EXPECT_EQ(Callee.conversionFor(Projection), nullptr);
+}
+
 TEST(CalleeSignatureMemo, WideOperandsCountAgainstTheBodyBudget) {
   using Memo = neverd::OmittedCalleeMemo;
   const auto HeldBytes = [](unsigned Count, bool Shrink = false) {
