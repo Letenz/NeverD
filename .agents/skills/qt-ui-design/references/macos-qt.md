@@ -135,6 +135,14 @@ as well as the unbundled build. The normal package contains Cocoa's platform
 plugin; offscreen tests run against the build tree, unless that plugin is
 explicitly deployed for a separate test package.
 
+Collect engine frameworks' transitive dependencies before `macdeployqt` changes
+their original paths. It can rewrite a Python extension's reference to a
+bundle-relative path without copying a keg-only library such as SQLite. Finish
+dependency repair before signing: changing Mach-O load commands invalidates
+signatures and can produce a macOS `CODESIGNING / Invalid Page` launch crash.
+Assemble under a staging path and publish the final `.app` path only after
+signing and a native startup/exit check succeed.
+
 References: [Qt 6.7.3 menu-default change](https://code.qt.io/cgit/qt/qtreleasenotes.git/about/qt/6.7.3/release-note.md),
 [QAction icon visibility](https://doc.qt.io/qt-6/qaction.html#iconVisibleInMenu-prop),
 [QWheelEvent deltas and phases](https://doc.qt.io/qt-6/qwheelevent.html),
