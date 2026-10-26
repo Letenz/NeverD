@@ -6758,7 +6758,8 @@ TEST(AArch64OrderedMemory, TracerUsesExactOriginalMemoryShapes) {
   writeLE<uint64_t>(Seed.data() + kScalarBytes, kVectorStoreHigh);
   for (const auto &Case : OrderedMemoryCases)
     for (bool Strict : {false, true}) {
-      const va_t Base = kEntry + kImmediateBasePosition + kVectorBytes;
+      const va_t Base = kEntry + kImmediateBasePosition + kVectorBytes +
+                        (-uint64_t(Case.Offset) & (Case.Access - 1));
       const va_t Address = Base + uint64_t(Case.Offset);
       NdOpEmulator Emulator(Image);
       Emulator.setStrictMode(Strict);
@@ -6798,6 +6799,32 @@ TEST(AArch64OrderedMemory, TracerUsesExactOriginalMemoryShapes) {
                           : Data.Data[Byte - kEntry]);
           }
         }
+      }
+      if (Case.Access > 1) {
+        const auto ReadGuard = [&](va_t Start) {
+          LowOp Read;
+          Read.Opcode = NdOp::LOAD;
+          Read.Output = NdVar::reg(a64reg::V1, kVectorBytes);
+          Read.addInput(NdVar::dataAddress(Start, kScalarBytes));
+          if (!Emulator.step(Read))
+            return std::optional<std::vector<uint8_t>>{};
+          return Emulator.getRegisterBytes(a64reg::V1);
+        };
+        const auto Before = ReadGuard(Address);
+        const auto Tail = ReadGuard(Address + kVectorBytes);
+        ASSERT_TRUE(Before);
+        ASSERT_TRUE(Tail);
+        const auto Value = Emulator.getRegisterBytes(a64reg::V0);
+        const auto LoadCount = Emulator.getLoadRecords().size();
+        Emulator.setRegister(a64reg::X1, Base + 1);
+        EXPECT_TRUE(aarch64AddressMemoryInstruction(Case.Word)
+                        ->controlIndependentAddress(Base + 1, 0));
+        EXPECT_FALSE(Emulator.step(Memory));
+        EXPECT_EQ(Emulator.getRegisterBytes(a64reg::V0), Value);
+        EXPECT_EQ(Emulator.getLoadRecords().size(), LoadCount);
+        EXPECT_EQ(ReadGuard(Address), Before);
+        EXPECT_EQ(ReadGuard(Address + kVectorBytes), Tail);
+        Emulator.setRegister(a64reg::X1, Base);
       }
       Memory.Inputs[kAddressMemoryIndexOperand + 1] =
           NdVar::scalar(1, kScalarBytes);

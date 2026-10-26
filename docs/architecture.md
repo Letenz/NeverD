@@ -620,6 +620,9 @@ and memory clobbers remain through LLVM and both C routes, including discarded
 reads. Unallocated neighboring size/opcode combinations fail at the lifter
 boundary even when supplied operand details claim a valid mnemonic. Existing
 immediate intrinsic identities and SP/image admission rules remain unchanged.
+The finite tracer requires naturally aligned ordered accesses when the original
+alignment controls are unavailable. An unaligned request refuses before any
+result or memory write; address-span evidence alone grants no alignment proof.
 Execution still requires the corresponding host CPU feature; emitting the word
 does not establish that feature or qualify concurrent-memory behavior.
 Image configuration automatically selects these single-access immediate
