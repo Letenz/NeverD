@@ -497,6 +497,21 @@ model. It does not qualify automatic lifting, image relocation, original SP,
 writeback/pairs, EL0 instruction execution, native half/whole-vector ABI,
 Apple hardware, other translation/tagging contexts or overflowing memory and
 every CPACHECK choice. Remote GitHub CI results require separate observation.
+The same pinned model also executes the image-context runtime-parameter export
+at EL1 with `--profile image`. This covers the explicit parameters, not
+image-derived address rebasing. Its separate EL0 environment enters EL0t using
+ERET and checks the exact returning SVC site, immediate and hardware-saved
+`SPSR_EL1.M`. The 82-check environment and live wrong-mode, wrong-immediate and
+wrong-site controls verify this boundary. `--profile el0-immediate` executes
+all 177 immediate samples at EL0; `--profile el0-register` executes all 184
+GPR/SIMD register-offset samples. Both generated-output profiles require 83
+checks on each of five C/object routes, under all four effective controls.
+This adds nonoverflow EL0 instruction execution for those explicit GPR-base
+fixtures. Literal SP access at EL0, overflowing memory, tagging, automatic
+immediate lifting, image-derived relocation and Apple CPA2 hardware remain
+unqualified. The companion
+[controlled environment](https://github.com/gmh5225/test_mac_intel/pull/3)
+owns the guest, profiles and independent evidence gates.
 `AArch64StackAddressMemory` separately checks no-image, explicit raw-SP
 parameters with all 177 immediate samples and 184 GPR/SIMD register-offset
 samples. Both C routes and linked LLVM objects execute at O0/O2, retaining
@@ -508,7 +523,7 @@ bases and malformed assembly/clobber contracts retain their refusal.
 the `cpta_stack_memory_artifacts` property, the register-offset SP matrix under
 `cpta_stack_register_memory_artifacts` and its matching GPR controls under
 `cpta_register_memory_artifacts`. The native exception verifier
-consumes successful complete seven-test SP and seven-test immediate reports:
+consumes successful complete seven-test SP and eight-test immediate reports:
 
 ```sh
 python3 scripts/verify_arm64e_sp_memory.py \
