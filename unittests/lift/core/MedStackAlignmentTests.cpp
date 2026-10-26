@@ -70,6 +70,74 @@ MedFunc frameWithEntrySP(Arch Architecture = Arch::ARM) {
   return Func;
 }
 
+TEST(MedStackAlignment, BoundedDynamicOffsetsAreNotExactOffsets) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      auto Func = frameWithEntrySP(Architecture);
+      const auto Initial = reg(1, Architecture);
+      const auto Allocated = reg(2, Architecture);
+      const auto Amount = temp(10, Architecture);
+      const auto Rounded = temp(11, Architecture);
+      const auto Aligned = temp(12, Architecture);
+      const auto Small = MedVar::makeUnspecified(4, Architecture);
+      auto &Ops = Func.Blocks.front().Ops;
+      Ops.push_back(op(NdOp::INT_SUB, Initial, reg(0, Architecture),
+                       MedVar::makeConst(64, 8)));
+      Ops.push_back(op(NdOp::INT_ZEXT, Amount, Small));
+      Ops.push_back(
+          op(NdOp::INT_ADD, Rounded, Amount, MedVar::makeConst(15, 8)));
+      Ops.push_back(op(NdOp::INT_AND, Aligned, Rounded,
+                       MedVar::makeConst(~uint64_t{15}, 8)));
+      Ops.push_back(op(NdOp::INT_SUB, Allocated, Initial, Aligned));
+      auto Bounds =
+          entryStackOffsetRanges(Func, {Allocated}, Architecture, Format);
+      ASSERT_TRUE(Bounds[0]);
+      EXPECT_LE(Bounds[0]->Min, -64 - int64_t{0x100000000});
+      EXPECT_GE(Bounds[0]->Min, -64 - int64_t{0x10000000E});
+      EXPECT_EQ(Bounds[0]->Max, -64);
+      EXPECT_FALSE(entryStackOffset(Func, Allocated, Architecture, Format));
+      // An unconstrained 64-bit amount can wrap to either side of the frame.
+      Ops[2] = op(NdOp::COPY, Amount, MedVar::makeUnspecified(8, Architecture));
+      EXPECT_FALSE(
+          entryStackOffsetRanges(Func, {Allocated}, Architecture, Format)[0]);
+    }
+}
+
+TEST(MedStackAlignment, EveryPhiComponentNeedsItsOwnOutsideOrigin) {
+  for (bool Dynamic : {false, true})
+    for (bool Unseeded : {false, true}) {
+      auto Func = frameWithEntrySP(Arch::X64);
+      const auto Initial = reg(1, Arch::X64);
+      const auto A = reg(2, Arch::X64);
+      const auto B = reg(3, Arch::X64);
+      const auto C = reg(4, Arch::X64);
+      auto &Ops = Func.Blocks.front().Ops;
+      const auto Amount = temp(20, Arch::X64);
+      Ops.push_back(
+          op(NdOp::INT_ZEXT, Amount, MedVar::makeUnspecified(1, Arch::X64)));
+      Ops.push_back(op(NdOp::INT_SUB, Initial, reg(0, Arch::X64),
+                       Dynamic ? Amount : MedVar::makeConst(64, 8)));
+      MedBlock Loop;
+      Loop.Id = 1;
+      Loop.Phis = {{A, {{0, Initial}, {1, B}}},
+                   {B, {{1, C}}},
+                   {C, {{1, Unseeded ? B : A}}}};
+      Func.Blocks.push_back(std::move(Loop));
+      const auto Bounds =
+          entryStackOffsetRanges(Func, {A, B, C}, Arch::X64, BinaryFormat::ELF);
+      for (const auto &Range : Bounds) {
+        EXPECT_EQ(Range.has_value(), !Unseeded);
+        if (Range) {
+          EXPECT_EQ(Range->Min, Dynamic ? -255 : -64);
+          EXPECT_EQ(Range->Max, Dynamic ? 0 : -64);
+        }
+      }
+      if (Unseeded)
+        EXPECT_FALSE(entryStackOffset(Func, A, Arch::X64, BinaryFormat::ELF));
+    }
+}
+
 TEST(MedStackAlignment, ProvenDefinitionsComposeOnlyWithinTheirQuery) {
   auto Func = frameWithEntrySP(Arch::X86);
   const auto Loaded = temp(2, Arch::X86);

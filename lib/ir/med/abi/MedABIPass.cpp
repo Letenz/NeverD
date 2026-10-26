@@ -460,18 +460,20 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
   std::vector<std::vector<const MedOp *>> InheritedCalls(Count);
   for (size_t I = 0; I < Count; ++I) {
     const auto &Block = Func.Blocks[I];
-    for (size_t Work : {size_t{1}, Block.Ops.size(), Block.Phis.size(),
-                        Block.Preds.size(), Block.ExceptionalPreds.size()})
+    for (size_t Work : {size_t{1}, Block.Ops.size()})
       if (!Charge(Work))
         return {};
     if (!Index.emplace(Block.Id, I).second)
       return {};
-    for (const auto &Phi : Block.Phis)
+    for (const auto &Phi : Block.Phis) {
+      if (!Charge(1))
+        return {};
       if (StackDefinition(Phi.Output)) {
         Entries[I] = {Basis::Exact, Phi.Output};
         EntryBoundary[I] = true;
         break;
       }
+    }
     std::optional<MedVar> LocalStack;
     if (EntryBoundary[I])
       LocalStack = Entries[I].Value;
@@ -495,6 +497,9 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
   for (size_t I = 0; I < Count; ++I) {
     const auto &Block = Func.Blocks[I];
     if (!EntryBoundary[I]) {
+      if (!Charge(Block.Preds.empty() ? Block.ExceptionalPreds.size()
+                                      : Block.Preds.size()))
+        return {};
       const auto Predecessor = [&](int Id) {
         const auto Found = Index.find(Id);
         if (Found == Index.end())

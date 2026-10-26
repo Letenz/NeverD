@@ -594,6 +594,12 @@ conditional memory, invocation lifetime and both C routes remain open.
   join. The LLVM fixture executes PHI and memory effects at O0/O2; a native
   four-case recovery fixture exercises the same structure through both C routes.
 
+- Source frame admission shares bounded dynamic stack ranges across both C
+  routes. Proven disjoint CALL writes no longer block fixed-frame observations;
+  unknown displacements and unseeded PHI components still require an explicit
+  machine-state contract. Byte histories reuse memory-event prefixes without
+  raising the work limit.
+
 ## Established rules
 
 - Integer record calls in LLVMC bind physical ABI pieces through the shared

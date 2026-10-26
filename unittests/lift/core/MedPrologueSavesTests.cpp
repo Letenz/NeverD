@@ -856,6 +856,24 @@ TEST(SourceCallReturnReads, NonMemoryOperationsDoNotMultiplyByteHistories) {
   }
 }
 
+TEST(SourceCallReturnReads, BoundedAllocationsSeparateTheFixedFrame) {
+  for (bool Bounded : {false, true})
+    for (bool Overlap : {false, true}) {
+      auto Func = observedCallSlot();
+      auto &Ops = Func.Blocks.front().Ops;
+      if (!Overlap)
+        Ops[2].Opcode = NdOp::INT_ADD;
+      Ops.insert(Ops.begin() + 4,
+                 {op(Bounded ? NdOp::INT_ZEXT : NdOp::COPY, temp(30),
+                     {MedVar::makeUnspecified(Bounded ? 4 : 8, Arch::X64)}),
+                  op(NdOp::INT_SUB, sp(2), {sp(1), temp(30)})});
+      std::string Error;
+      EXPECT_EQ(validateSourceCallReturnReads(Func, callSlotImage(), Error),
+                Bounded && !Overlap)
+          << Error;
+    }
+}
+
 TEST(SourceCallReturnReads, SparseStackWritesNeedOnlyOneOperationScan) {
   auto Func = observedCallSlot();
   auto &Ops = Func.Blocks.front().Ops;

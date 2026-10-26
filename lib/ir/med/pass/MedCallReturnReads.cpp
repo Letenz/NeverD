@@ -289,11 +289,7 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   std::vector<const MedOp *> Memory;
   std::map<const MedOp *, std::pair<int, size_t>> Positions;
   for (const MedBlock &Block : Func.Blocks) {
-    if (!charge(Remaining, 1) || !charge(Remaining, Block.Ops.size()) ||
-        !charge(Remaining, Block.Preds.size()) ||
-        !charge(Remaining, Block.Succs.size()) ||
-        !charge(Remaining, Block.ExceptionalPreds.size()) ||
-        !charge(Remaining, Block.ExceptionalSuccs.size()))
+    if (!charge(Remaining, 1) || !charge(Remaining, Block.Ops.size()))
       return Exhausted();
     for (size_t I = 0; I < Block.Ops.size(); ++I) {
       const auto &Op = Block.Ops[I];
@@ -352,9 +348,12 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
              Op->MemoryAddressSpace == NdMemoryAddressSpace::Default)
       Stores.emplace(Op, A);
   }
-  std::map<const MedOp *, std::optional<int64_t>> CallEnds;
+  std::map<const MedOp *, std::optional<EntryStackOffsetRange>> CallEnds;
   for (size_t I = 0; I < Calls.size(); ++I)
-    CallEnds.emplace(Calls[I], Offsets[Memory.size() + I]);
+    if (const auto Offset = Offsets[Memory.size() + I])
+      CallEnds.emplace(Calls[I], EntryStackOffsetRange{*Offset, *Offset});
+    else
+      CallEnds.emplace(Calls[I], std::nullopt);
   if (llvm::any_of(CallEnds, [](const auto &Entry) { return !Entry.second; })) {
     const auto Registration =
         registrationCalls(Func, FreshSource, Image, StackPointers, Remaining);
@@ -364,20 +363,35 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       if (!End)
         if (const auto Found = Registration.Offsets.find(Call);
             Found != Registration.Offsets.end())
-          End = Found->second;
+          End = EntryStackOffsetRange{Found->second, Found->second};
     for (const MedOp *Call : Registration.Unreached)
       CallEnds.erase(Call);
     for (const MedOp *Call : Registration.PrivateCallbacks)
       CallEnds.erase(Call);
   }
+  std::vector<const MedOp *> UnboundedCalls;
+  std::vector<MedVar> UnboundedStacks;
+  for (const auto &[Call, End] : CallEnds)
+    if (!End)
+      if (const auto Found = StackPointers.find(Call);
+          Found != StackPointers.end()) {
+        UnboundedCalls.push_back(Call);
+        UnboundedStacks.push_back(Found->second);
+      }
+  if (!UnboundedCalls.empty()) {
+    const auto Bounds = entryStackOffsetRanges(
+        Func, UnboundedStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
+    for (size_t I = 0; I < Bounds.size(); ++I)
+      CallEnds.at(UnboundedCalls[I]) = Bounds[I];
+  }
   std::vector<std::pair<int64_t, int64_t>> Ranges;
   bool UnknownLocation = false;
   for (const auto &[Call, End] : CallEnds) {
-    if (!End || *End < std::numeric_limits<int64_t>::min() + Width) {
+    if (!End || End->Min < std::numeric_limits<int64_t>::min() + Width) {
       UnknownLocation = true;
       continue;
     }
-    Ranges.emplace_back(*End - Width, *End);
+    Ranges.emplace_back(End->Min - Width, End->Max);
   }
   llvm::sort(Ranges);
   std::vector<std::pair<int64_t, int64_t>> Merged;
@@ -397,6 +411,12 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   };
   if (llvm::none_of(Loads, OverlapsCall))
     return true;
+  for (const MedBlock &Block : Func.Blocks)
+    if (!charge(Remaining, Block.Preds.size()) ||
+        !charge(Remaining, Block.Succs.size()) ||
+        !charge(Remaining, Block.ExceptionalPreds.size()) ||
+        !charge(Remaining, Block.ExceptionalSuccs.size()))
+      return Exhausted();
   const MedBlockIdIndex Blocks(Func);
   const safety::detail::ExactPhiGraph Graph(Func);
   for (const MedBlock &Block : Func.Blocks)
@@ -467,8 +487,9 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
           const auto Call = CallEnds.find(&Op);
           if (Call != CallEnds.end() &&
               (!Call->second ||
-               *Call->second < std::numeric_limits<int64_t>::min() + Width ||
-               (Byte < *Call->second && Byte >= *Call->second - Width)))
+               Call->second->Min <
+                   std::numeric_limits<int64_t>::min() + Width ||
+               (Byte < Call->second->Max && Byte >= Call->second->Min - Width)))
             return Refuse("load at 0x" + llvm::utohexstr(Load.Op->Addr) +
                           " observes a physical CALL return slot from 0x" +
                           llvm::utohexstr(Op.Addr) +

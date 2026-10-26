@@ -66,6 +66,14 @@ Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
 
+`NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
+AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
+and separate unseeded cycles. `NeverDMedPrologueSavesTests` checks that only
+disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
+and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,
+loop backedges and exceptional prefixes retain their negative controls. Run both
+C route contract suites after changing this proof.
+
 # Testing NeverD
 
 `*LookupFailures*` and `ProcessReport.AndroidLoaderFailures*` cover strict
