@@ -3175,11 +3175,18 @@ caches prepay their bucket growth. Immutable word views avoid repeated copies
 and are discarded when the assumption changes; polynomial views remain valid
 throughout reconstruction.
 A dominant exact low prefix may be proved separately from unmatched product
-factors. A majority vote only nominates the prefix; complete decision equality
-and the exact factor count must prove that its even branch vanishes. Every
+factors. A majority vote, weighted by exact projected-word multiplicities,
+only nominates the prefix; complete decision equality and the exact factor
+count must prove that its even branch vanishes. Every
 unmatched factor remains a complete original word. Under the selected branch,
-proved trailing zeros in those factors can reduce the precision needed for the
-group. The complete group result may reuse a representative word only after all
+proved trailing zeros in those factors and their joint product can reduce the
+precision needed for the group. The joint proof stops at the first possibly
+nonzero bit. Large products project their observed words before counting the
+input domain, so invisible high subtrees do not consume a second traversal.
+Neutral low-word constants bypass reconstruction of identity operations.
+Small products retain their cheap single-residual admission after affine
+synthesis, and unaffordable mandatory scans decline before consuming their work.
+The complete group result may reuse a representative word only after all
 observed decision bits agree. Reconstruction restores both the selector and
 every retained factor. This avoids expanding an independent multiplication into
 Boolean carries, including at unit-period neighbors and with low-bit disturbances.

@@ -607,16 +607,34 @@ class LowWordDecisions {
         return R;
       llvm::SmallVector<SymRef, 8> Operands(Ctx.operands(R));
       bool Changed = false;
-      size_t Expanded = 0;
-      for (auto &Child : Operands) {
+      size_t Expanded = 0, Out = 0;
+      for (auto Child : Operands) {
+        if (Ctx.isConst(Child) && Op != SymOp::Not) {
+          const auto Value = literal(Child);
+          if (!Value)
+            return R;
+          const auto Low = Value->getLoBits(Count).getZExtValue();
+          // Remove neutral residues before allocating their projected nodes
+          // and reconstructing an operation that would return its sole child.
+          if (((Op == SymOp::Add || Op == SymOp::Or || Op == SymOp::Xor) &&
+               Low == 0) ||
+              (Op == SymOp::Mul && Low == 1) ||
+              (Op == SymOp::And && Low == (uint64_t(1) << Count) - 1)) {
+            Changed = true;
+            continue;
+          }
+        }
         const auto Projected = projectLowWord(Child, Count, Cache, Depth + 1);
         if (Failed)
           return R;
         Changed |= Child != Projected;
-        Child = Projected;
-        Expanded += Ctx.op(Child) == Op ? Ctx.numOperands(Child) : 1;
+        Operands[Out++] = Projected;
+        Expanded += Ctx.op(Projected) == Op ? Ctx.numOperands(Projected) : 1;
       }
-      if (Changed) {
+      Operands.resize(Out);
+      if (Changed && Operands.size() == 1 && Op != SymOp::Not) {
+        Result = Operands.front();
+      } else if (Changed) {
         // Construction can flatten associative children and fold wide
         // constants. Charge that complete input before changing the arena.
         const size_t Limbs = (size_t(Ctx.width(R)) - 1) / 64 + 1;
@@ -1776,10 +1794,39 @@ public:
                   bool OddProductOnly, bool *Complete) {
     const auto Width = Ctx.width(Root);
     RootWidth = Width;
+    const bool ProjectFactors =
+        Ctx.numOperands(Root) > limits::kMaxResidueProductFactors;
+    llvm::SmallVector<SymRef, 16> Factors;
+    if (ProjectFactors) {
+      // Fund both retained operand vectors before projecting. Domain admission
+      // needs only the exact observed views, not a second traversal of high
+      // subtrees whose values are already proved invisible to this product.
+      if (!charge(Ctx.numOperands(Root),
+                  2 * Ctx.numOperands(Root) * sizeof(SymRef)))
+        return Root;
+      Factors.assign(Ctx.operands(Root).begin(), Ctx.operands(Root).end());
+      std::unordered_map<uint32_t, SymRef> Projections;
+      for (auto &Factor : Factors) {
+        if (Ctx.isConst(Factor))
+          continue;
+        const auto Projected = projectLowWord(Factor, Observed, Projections);
+        if (Failed)
+          return Root;
+        // Only the original leading scalar belongs to Scale. A constant
+        // residue of another factor must still be multiplied, so retain its
+        // source word instead of introducing a second scalar in this view.
+        if (!Ctx.isConst(Projected))
+          Factor = Projected;
+      }
+    }
     // Refuse broad domains before constructing decisions. This is only a
     // search admission rule; opaque words still retain all their possible bits.
     std::unordered_set<uint32_t> Seen, Inputs;
-    llvm::SmallVector<SymRef, 16> Pending{Root};
+    llvm::SmallVector<SymRef, 16> Pending;
+    if (ProjectFactors)
+      Pending.append(Factors.begin(), Factors.end());
+    else
+      Pending.push_back(Root);
     while (!Pending.empty()) {
       const auto R = Pending.pop_back_val();
       if (!charge(1, sizeof(uint32_t) + 6 * sizeof(void *)))
@@ -1797,24 +1844,10 @@ public:
         return Root;
       Pending.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
     }
+    if (!ProjectFactors)
+      Factors.assign(Ctx.operands(Root).begin(), Ctx.operands(Root).end());
     Bits Product(Observed, 0);
     Product.front() = 1;
-    llvm::SmallVector<SymRef, 16> Factors(Ctx.operands(Root));
-    if (Factors.size() > limits::kMaxResidueProductFactors) {
-      std::unordered_map<uint32_t, SymRef> Projections;
-      for (auto &Factor : Factors) {
-        if (Ctx.isConst(Factor))
-          continue;
-        const auto Projected = projectLowWord(Factor, Observed, Projections);
-        if (Failed)
-          return Root;
-        // Only the original leading scalar belongs to Scale. A constant
-        // residue of another factor must still be multiplied, so retain its
-        // source word instead of introducing a second scalar in this view.
-        if (!Ctx.isConst(Projected))
-          Factor = Projected;
-      }
-    }
     llvm::SmallVector<SymRef, 8> RetainedFactors;
     uint32_t Parity = 1;
     size_t Nonconstant = Factors.size() - Ctx.isConst(Factors.front());
@@ -1856,22 +1889,82 @@ public:
         // the other branch. Keep every unmatched factor as a complete word;
         // bit-blasting their product can dwarf the proof of the group itself.
         const unsigned Split = (Observed + 2) / 3;
-        if (!charge(1, sizeof(Bits) + Split * sizeof(uint32_t)))
+        // Both complete scans are mandatory. Decline before starting them
+        // when even their minimum work cannot fit, preserving the allowance
+        // for simpler expressions elsewhere in the same region.
+        const size_t ScanUnit = ProjectFactors ? 2 : 2 * (1 + Split);
+        if (Nonconstant > (MaxWork - Work) / ScanUnit ||
+            !Budget.canConsume(Nonconstant * ScanUnit))
+          return Root;
+        if (!charge(1, 2 * (sizeof(Bits) + Split * sizeof(uint32_t))))
           return Root;
         Bits Prefix;
-        size_t Votes = 0;
-        for (auto Factor : Factors) {
-          if (Ctx.isConst(Factor))
-            continue;
-          const auto &Low = word(Factor, Split);
-          if (Failed || !charge(1 + Split))
-            return Root;
-          if (!Votes)
-            Prefix = Low;
-          if (Prefix == Low)
-            ++Votes;
-          else
-            --Votes;
+        struct PrefixCopies {
+          size_t Count = 0;
+          bool Matches = false;
+        };
+        std::unordered_map<uint32_t, PrefixCopies> Copies;
+        if (ProjectFactors) {
+          // Projection often gives hundreds of factors the same exact word.
+          // Count them once, then weight the vote and compare each word once.
+          for (auto Factor : Factors) {
+            if (Ctx.isConst(Factor))
+              continue;
+            if (!charge())
+              return Root;
+            auto It = Copies.find(Factor.index());
+            if (It == Copies.end()) {
+              if (!charge(1, sizeof(decltype(Copies)::value_type) +
+                                 4 * sizeof(void *)))
+                return Root;
+              It = Copies.emplace(Factor.index(), PrefixCopies{}).first;
+            }
+            ++It->second.Count;
+          }
+          size_t Votes = 0;
+          for (const auto &[Id, Entry] : Copies) {
+            const auto &Low = word(SymRef(Id), Split);
+            if (Failed || !charge(1 + Split))
+              return Root;
+            if (!Votes)
+              Prefix = Low;
+            if (Prefix == Low) {
+              Votes += Entry.Count;
+            } else if (Votes > Entry.Count) {
+              Votes -= Entry.Count;
+            } else {
+              Votes = Entry.Count - Votes;
+              Prefix = Low;
+            }
+          }
+          for (auto &[Id, Entry] : Copies) {
+            const auto &Low = word(SymRef(Id), Split);
+            if (Failed || !charge(1 + Split))
+              return Root;
+            Entry.Matches = Low == Prefix;
+          }
+        } else {
+          // Small products already visited affine synthesis. Preserve its
+          // cheap one-residual admission instead of spending the last work
+          // allowance scanning a new multi-residual domain.
+          std::array<Bits, 2> Prefixes;
+          std::array<size_t, 2> Counts{};
+          for (auto Factor : Factors) {
+            if (Ctx.isConst(Factor))
+              continue;
+            const auto &Low = word(Factor, Split);
+            if (Failed || !charge(1 + 2 * Split))
+              return Root;
+            const size_t Group = !Counts[0] || Low == Prefixes[0] ? 0 : 1;
+            if (Counts[Group] && Low != Prefixes[Group])
+              return Root;
+            if (!Counts[Group])
+              Prefixes[Group] = Low;
+            ++Counts[Group];
+            if (Counts[0] > 1 && Counts[1] > 1)
+              return Root;
+          }
+          Prefix = Prefixes[Counts[1] > Counts[0]];
         }
         if (Prefix.front() <= 1)
           return Root;
@@ -1886,10 +1979,18 @@ public:
             Factors[Out++] = Factor;
             continue;
           }
-          const auto &Low = word(Factor, Split);
-          if (Failed || !charge(1 + Split))
-            return Root;
-          if (Low == Prefix) {
+          bool Matches;
+          if (ProjectFactors) {
+            if (!charge())
+              return Root;
+            Matches = Copies.at(Factor.index()).Matches;
+          } else {
+            const auto &Low = word(Factor, Split);
+            if (Failed || !charge(1 + Split))
+              return Root;
+            Matches = Low == Prefix;
+          }
+          if (Matches) {
             Factors[Out++] = Factor;
             ++Count;
           } else {
@@ -1926,6 +2027,7 @@ public:
     if (OddProductOnly && !Assumption)
       return Root;
 
+    const unsigned ProductBits = Observed;
     // Residual factors stay complete, but their proved zeros can hide high
     // bits of the group. Establish every zero under the same assumption;
     // independent or merely sampled parity supplies no precision reduction.
@@ -1940,6 +2042,35 @@ public:
         ++Zeros;
       }
       Observed -= Zeros;
+      if (!Observed) {
+        if (!charge(1, sizeof(SymNode) + sizeof(llvm::APInt) +
+                           ((size_t(Width) - 1) / 64 + 1) * sizeof(uint64_t)))
+          return Root;
+        return Ctx.mkZero(Width);
+      }
+    }
+    // Individually variable low bits can still annihilate each other. Prove
+    // only the next unknown product bit, stopping as soon as it can be one;
+    // all residual words remain intact in the emitted full-width product.
+    if (RetainedFactors.size() > 1) {
+      while (Observed) {
+        const unsigned Precision = ProductBits - Observed + 1;
+        if (!charge(Precision, Precision * sizeof(uint32_t)))
+          return Root;
+        Bits Low(Precision, 0);
+        Low.front() = 1;
+        for (auto Factor : RetainedFactors) {
+          Low = calculate(SymOp::Mul, Low, word(Factor, Precision));
+          if (Failed || !charge(Precision))
+            return Root;
+          if (std::all_of(Low.begin(), Low.end(),
+                          [](uint32_t Bit) { return Bit == 0; }))
+            break;
+        }
+        if (Low.back())
+          break;
+        --Observed;
+      }
       if (!Observed) {
         if (!charge(1, sizeof(SymNode) + sizeof(llvm::APInt) +
                            ((size_t(Width) - 1) / 64 + 1) * sizeof(uint64_t)))

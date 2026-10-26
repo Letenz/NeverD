@@ -17,6 +17,7 @@
 #include "neverd/solver/Z3Solver.h"
 #include "neverd/symbolic/SymMBA.h"
 
+#include <algorithm>
 #include <array>
 #include <random>
 #include <utility>
@@ -284,6 +285,85 @@ TEST(SymMBAResiduePowers, ConstantResiduesRemainProductFactors) {
                           llvm::APInt(Width, 0)};
         Values[2] = llvm::APInt(Width, Residue) + Values[0].shl(8);
         EXPECT_EQ(Reduced.eval(Values), F.oracle(Values));
+      }
+    }
+}
+
+TEST(SymMBAResiduePowers, JointResidualZerosReduceGroupPrecision) {
+  for (unsigned Width : {8u, 32u, 65u, 257u})
+    for (unsigned Offset : {2u, 3u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Offset);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, 8, 511);
+      const auto Input =
+          Ctx.mkMul(F.Input, Ctx.mkAdd(Ctx.mkVar("z", Width),
+                                       Ctx.mkConst(Width, Offset)));
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, Input, Options);
+      // Neither residual is always even. Their product has a guaranteed zero
+      // bit only for the odd offset; a nearby even offset is a negative
+      // control.
+      if (Offset == 3) {
+        EXPECT_TRUE(Result.Changed);
+        EXPECT_LT(Result.Work, Options.MaxWork);
+        EXPECT_LT(Result.SizeAfter, Result.SizeBefore);
+      }
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned X = 0; X < 256; ++X)
+        for (unsigned Z : {0u, 1u, 2u, 3u, 254u, 255u}) {
+          const std::array Values{llvm::APInt(Width, X),
+                                  llvm::APInt(Width, X * 17),
+                                  llvm::APInt(Width, Z)};
+          EXPECT_EQ(Reduced.eval(Values),
+                    F.oracle(Values) *
+                        (Values[2] + llvm::APInt(Width, Offset)));
+        }
+    }
+}
+
+TEST(SymMBAResiduePowers, ProjectedDomainsKeepEveryVisibleInputBit) {
+  for (unsigned Width : {16u, 32u, 65u, 257u})
+    for (unsigned Shift : {7u, 8u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << Shift);
+      SymContext Ctx;
+      const auto F = fixture(Ctx, Width, 8, 513);
+      const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      const auto U = Ctx.mkVar("u", Width), V = Ctx.mkVar("v", Width);
+      const auto First = Ctx.mkXor(X, Ctx.mkShl(Y, Ctx.mkConst(Width, 3)));
+      const auto High = Ctx.mkConst(llvm::APInt(Width, 1).shl(Shift));
+      const auto Changed =
+          Ctx.mkXor(Ctx.mkAdd(First, Ctx.mkMul(High, U)), Ctx.mkMul(High, V));
+      llvm::SmallVector<SymRef, 16> Factors(Ctx.operands(F.Input));
+      const auto It = std::find(Factors.begin(), Factors.end(), First);
+      ASSERT_NE(It, Factors.end());
+      *It = Changed;
+      const auto Input = Ctx.mkMul(Factors);
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      Options.VerifySamples = 0;
+      const auto Result = simplifyMBADeep(Ctx, Input, Options);
+      if (Shift == 8) {
+        EXPECT_TRUE(Result.Changed);
+        EXPECT_LT(Result.Work, Options.MaxWork);
+        EXPECT_LT(Result.SizeAfter, F.Count);
+      }
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 256; ++Trial) {
+        const std::array Values{
+            llvm::APInt(Width, Trial), llvm::APInt(Width, Trial * 17),
+            llvm::APInt(Width, Trial / 4), llvm::APInt(Width, Trial * 53),
+            llvm::APInt(Width, Trial / 8)};
+        auto Expected = llvm::APInt(Width, 3).shl(Width - 8) * Values[2];
+        for (unsigned I = 0; I < F.Count; ++I) {
+          auto Factor =
+              (Values[0] + llvm::APInt(Width, I).shl(3)) ^ Values[1].shl(3);
+          if (I == 0)
+            Factor = (Factor + Values[3].shl(Shift)) ^ Values[4].shl(Shift);
+          Expected *= Factor;
+        }
+        EXPECT_EQ(Reduced.eval(Values), Expected);
       }
     }
 }

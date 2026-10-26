@@ -1911,6 +1911,9 @@ routes at O0/O2. `--family residue-subgroup --count 54` adds 216 degree-511–10
 cases with off-period counts, two low disturbances, complemented inputs, nested
 high offsets and multiple residual factors. Keep all preceding families frozen
 as output-cost and performance controls; incomplete proofs remain refusals.
+Joint-residual tests distinguish odd and even offsets, while projected-domain
+tests move additional inputs across the first invisible bit. Both retain
+independent complete-word multiplication, including non-native word widths.
 
 Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
