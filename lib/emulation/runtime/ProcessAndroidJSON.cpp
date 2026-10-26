@@ -430,7 +430,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
             if (Member.first != "blocked" &&
                 Member.first != field::ApplicationQueueNativeCallbacksEmpty)
               return invalid(Key);
-          auto &State = Snapshot.initial_main_queue.emplace();
+          auto &State = Snapshot.initial_main_queue.emplace(
+              mobile::dalvik::AndroidApplicationSnapshot::EmptyMessageQueue{});
           State.blocked = *Queue->getBoolean("blocked");
           if (const auto *Callbacks =
                   Queue->get(field::ApplicationQueueNativeCallbacksEmpty)) {
@@ -567,8 +568,11 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
           for (const auto &Entry : *Failures) {
             const auto *Failure = Entry.getAsObject();
             if (!Failure || Failure->size() != 3 ||
-                !Failure->getString("loader") ||
-                !Failure->getString("binary_name") || !Failure->get("message"))
+                !Failure->getString("loader") || !Failure->get("message"))
+              return invalid(Key);
+            auto BinaryName = Failure->getString("binary_name");
+            auto ExactQuery = Failure->getString("exact_query");
+            if (bool(BinaryName) == bool(ExactQuery))
               return invalid(Key);
             using Outcome =
                 mobile::dalvik::AndroidApplicationSnapshot::ClassLookupFailure;
@@ -582,7 +586,10 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
               Result.loader = Outcome::Loader::Application;
             else
               return invalid(Key);
-            Result.binary_name = Failure->getString("binary_name")->str();
+            if (ExactQuery)
+              Result.exact_query = ExactQuery->str();
+            else
+              Result.binary_name = BinaryName->str();
             const auto &Message = *Failure->get("message");
             if (auto Text = Message.getAsString())
               Result.message = Text->str();
@@ -868,6 +875,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       Out.JavaLibrary = std::move(*S);
     } else if (Name == field::ObserveJavaState ||
                Name == field::ObserveCPUState ||
+               Name == field::ObserveThreadCPUStates ||
+               Name == field::ObserveMemoryAtStop ||
                Name == field::ObserveMemoryOnFailure) {
       auto B = V.getAsBoolean();
       if (!B)
@@ -876,6 +885,10 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
         Out.ObserveJavaState = *B;
       else if (Name == field::ObserveCPUState)
         Out.ObserveCPUState = *B;
+      else if (Name == field::ObserveThreadCPUStates)
+        Out.ObserveThreadCPUStates = *B;
+      else if (Name == field::ObserveMemoryAtStop)
+        Out.ObserveMemoryAtStop = *B;
       else
         Out.ObserveMemoryOnFailure = *B;
     } else if (Name == field::ReadMemory) {
@@ -973,8 +986,7 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                          {field::Trace, std::move(Trace)},
                          {field::TraceTruncated, Result.TraceTruncated},
                          {field::Memory, std::move(Memory)}};
-  if (Result.CPUState) {
-    const auto &State = *Result.CPUState;
+  auto CPUStateJSON = [](const NativeCPUState &State) {
     llvm::json::Value Registers = nullptr;
     if (State.Registers) {
       llvm::json::Object Values;
@@ -983,10 +995,21 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
             llvm::json::Array{bits(R.Value[0]), bits(R.Value[1])};
       Registers = std::move(Values);
     }
-    Out[field::CPUState] =
-        llvm::json::Object{{field::ThreadID, State.ThreadID},
-                           {field::ObservationRegisters, std::move(Registers)},
-                           {field::Diagnostic, State.Diagnostic}};
+    return llvm::json::Object{
+        {field::ThreadID, State.ThreadID},
+        {field::ObservationRegisters, std::move(Registers)},
+        {field::Diagnostic, State.Diagnostic}};
+  };
+  if (Result.CPUState)
+    Out[field::CPUState] = CPUStateJSON(*Result.CPUState);
+  if (Result.ThreadCPUStates) {
+    llvm::json::Array States;
+    for (const auto &Thread : *Result.ThreadCPUStates) {
+      auto State = CPUStateJSON(Thread.State);
+      State[field::CurrentCPU] = Thread.Current;
+      States.push_back(std::move(State));
+    }
+    Out[field::ThreadCPUStates] = std::move(States);
   }
   if (!Result.JNIRegistrations.empty()) {
     llvm::json::Array Bindings;

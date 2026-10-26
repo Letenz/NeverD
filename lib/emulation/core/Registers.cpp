@@ -7,6 +7,8 @@
 
 #include "neverd/emulation/CPU.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 #include <limits>
 
 namespace neverd::emulation {
@@ -57,15 +59,17 @@ const char *registerName(CPURegister R) {
   }
   return nullptr;
 }
-llvm::Expected<std::vector<RegisterSnapshot>>
-ExecutionBackend::readRegisters() {
-  const auto Registers = architectureRegisters(architecture());
+namespace {
+llvm::Expected<std::vector<RegisterSnapshot>> readRegisterSet(
+    GuestArchitecture Architecture,
+    llvm::function_ref<llvm::Expected<RegisterValue>(CPURegister)> Read) {
+  const auto Registers = architectureRegisters(Architecture);
   if (Registers.empty())
     return diagnostic::error(diagnostic::Register);
   std::vector<RegisterSnapshot> Out;
   Out.reserve(Registers.size());
   for (CPURegister R : Registers) {
-    auto Value = readRegister(R);
+    auto Value = Read(R);
     if (!Value)
       return Value.takeError();
     if (!registerValueFits(R, *Value))
@@ -73,6 +77,23 @@ ExecutionBackend::readRegisters() {
     Out.push_back({R, *Value});
   }
   return Out;
+}
+} // namespace
+llvm::Expected<std::vector<RegisterSnapshot>>
+ExecutionBackend::readRegisters() {
+  return readRegisterSet(architecture(),
+                         [&](CPURegister R) { return readRegister(R); });
+}
+llvm::Expected<std::vector<RegisterSnapshot>>
+ExecutionBackend::readRegisters(const BackendContext &Context) const {
+  return readRegisterSet(architecture(), [&](CPURegister R) {
+    return readContextRegister(Context, R);
+  });
+}
+llvm::Expected<RegisterValue>
+ExecutionBackend::readContextRegister(const BackendContext &,
+                                      CPURegister) const {
+  return diagnostic::error(diagnostic::ContextObservationUnsupported);
 }
 llvm::Expected<RegisterValue>
 ExecutionBackend::supportedControlBits(CPURegister) const {

@@ -88,6 +88,30 @@ TEST_P(AndroidJNI,
   auto Unknown = run("jni_loader_failure");
   EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService);
 }
+TEST_P(AndroidJNI, ExactQueryLookupFailuresPreserveSpacesAcrossDetach) {
+  using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
+  using Loader = Snapshot::ClassLookupFailure::Loader;
+  Options.Android->Application = Snapshot{Snapshot::Phase::Attached};
+  Options.Android->Application->class_lookup_failures = {
+      {Loader::Boot, {}, "declared missing", "fixture.Optional "}};
+  auto R = run("jni_loader_exact_query");
+  EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+  EXPECT_EQ(R.ReturnValue, 0u);
+  for (unsigned Mode : {1u, 2u, 3u}) {
+    Options.Android->Arguments = {Mode};
+    auto Unknown = run("jni_loader_exact_query");
+    EXPECT_EQ(Unknown.Stop, Mode == 2 ? ProcessStopReason::RuntimeFailure
+                                      : ProcessStopReason::UnsupportedService)
+        << Unknown.Diagnostic;
+    if (Mode == 2)
+      EXPECT_NE(Unknown.Diagnostic.find("unmodeled class: fixture/Optional "),
+                std::string::npos);
+  }
+  Options.Android->Arguments.clear();
+  Options.Android->Application->class_lookup_failures.clear();
+  auto Unknown = run("jni_loader_exact_query");
+  EXPECT_EQ(Unknown.Stop, ProcessStopReason::UnsupportedService);
+}
 TEST_P(AndroidJNI, InstrumentationFieldAndGetterShareLifetimeAndWrites) {
   using Snapshot = mobile::dalvik::AndroidApplicationSnapshot;
   for (unsigned Mode : {1u, 2u, 3u}) {
@@ -524,7 +548,7 @@ TEST_P(AndroidJNI, HandlerPostSharesQueueClockAndThreadLifetime) {
   Options.Android->Application = Snapshot{};
   auto &input = *Options.Android->Application;
   input.main_looper_prepared = true;
-  input.initial_main_queue.emplace();
+  input.initial_main_queue.emplace(Snapshot::EmptyMessageQueue{});
   Options.Android->ObserveJavaState = true;
   auto unknown = run("jni_handler_post");
   EXPECT_EQ(unknown.Stop, ProcessStopReason::UnsupportedService);

@@ -31,7 +31,7 @@ struct AndroidApplicationSnapshot {
   // first, including a custom subclass. Absence is unknown, not null/default.
   enum class Instrumentation { Uninitialized, Platform };
   std::optional<Instrumentation> instrumentation;
-  // Explicit negative observations for exactly one loader and binary name.
+  // Explicit negative observations for exactly one loader and query string.
   // They neither close a classpath nor apply to JNI FindClass. A null message
   // declares a null Throwable message, rather than an inferred path string.
   struct ClassLookupFailure {
@@ -43,6 +43,9 @@ struct AndroidApplicationSnapshot {
     } loader = Loader::Unspecified;
     std::string binary_name;
     std::optional<std::string> message;
+    // Alternative to a strict binary name. Preserve the raw printable ASCII
+    // query, including whitespace; binary_name must be empty when supplied.
+    std::optional<std::string> exact_query;
   };
   std::vector<ClassLookupFailure> class_lookup_failures;
   // A LoadedApk can establish its application loader before constructing the

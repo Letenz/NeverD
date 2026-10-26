@@ -47,7 +47,8 @@ const LibraryMethod &handlerConstructor() {
 AndroidApplicationSnapshot messageInput() {
   AndroidApplicationSnapshot input;
   input.main_looper_prepared = true;
-  input.initial_main_queue.emplace();
+  input.initial_main_queue.emplace(
+      AndroidApplicationSnapshot::EmptyMessageQueue{});
   input.initial_message_pool_empty = true;
   return input;
 }
@@ -959,13 +960,122 @@ TEST_F(AndroidFrameworkTest, ExplicitLookupFailuresAreScopedAndRetainMessages) {
   }
 }
 TEST_F(AndroidFrameworkTest,
+       ExactQueryLookupFailuresPreserveWhitespaceAndLoaderScope) {
+  for (auto selected : {Loader::Boot, Loader::System, Loader::Application}) {
+    for (const char *query : {"test.Absent ", " test.Absent", "test. Absent",
+                              "java.lang.String "}) {
+      for (auto message :
+           {std::optional<std::string>{}, std::optional<std::string>{""},
+            std::optional<std::string>{"declared missing"}}) {
+        AndroidApplicationSnapshot snapshot{Phase::Application};
+        snapshot.class_lookup_failures = {{selected, {}, message, query}};
+        Runtime state(program, heap, snapshot);
+        auto sys =
+            state.library(operation(SystemClassLoader), 0, {}, Admit).value;
+        auto boot =
+            state.library(operation(LoaderParent), sys, {}, Admit).value;
+        auto app =
+            state.library(operation(CurrentApplication), 0, {}, Admit).value;
+        auto loader =
+            selected == Loader::Boot ? boot
+            : selected == Loader::System
+                ? sys
+                : state.library(operation(ContextClassLoader), app, {}, Admit)
+                      .value;
+        const uint64_t args[]{heap->literal(query)->Identity};
+        uint64_t previous = 0;
+        for (unsigned i = 0; i != 2; ++i) {
+          auto result =
+              state.library(operation(LoadClass), loader, args, Admit);
+          ASSERT_EQ(result.stop, ExecutionStop::Thrown) << result.diagnostic;
+          EXPECT_EQ(result.exception, "java/lang/ClassNotFoundException");
+          ASSERT_NE(result.throwable, 0u);
+          EXPECT_NE(result.throwable, previous);
+          previous = result.throwable;
+          auto value = state.library(operation(ThrowableMessage),
+                                     result.throwable, {}, Admit);
+          ASSERT_EQ(value.stop, ExecutionStop::Returned);
+          if (message) {
+            ASSERT_NE(value.value, 0u);
+            EXPECT_EQ(heap->get(value.value)->Bytes, javaStringBytes(*message));
+          } else {
+            EXPECT_EQ(value.value, 0u);
+          }
+        }
+        const uint64_t known[]{heap->literal("java.lang.String")->Identity};
+        EXPECT_EQ(
+            state.library(operation(LoadClass), loader, known, Admit).stop,
+            ExecutionStop::Returned);
+        auto other = loader == boot ? sys : boot;
+        EXPECT_EQ(state.library(operation(LoadClass), other, args, Admit).stop,
+                  ExecutionStop::Unsupported);
+      }
+    }
+  }
+  for (const char *unlisted : {"test.Absent", "test.Absent  ", "test.Other"}) {
+    AndroidApplicationSnapshot snapshot{Phase::Attached};
+    snapshot.class_lookup_failures = {{Loader::System, {}, {}, "test.Absent "}};
+    Runtime state(program, heap, snapshot);
+    auto loader =
+        state.library(operation(SystemClassLoader), 0, {}, Admit).value;
+    const uint64_t args[]{heap->literal(unlisted)->Identity};
+    EXPECT_EQ(state.library(operation(LoadClass), loader, args, Admit).stop,
+              ExecutionStop::Unsupported);
+  }
+}
+TEST_F(AndroidFrameworkTest, ExactQueryLookupFailuresRejectAmbiguousInputs) {
+  AndroidApplicationSnapshot snapshot{Phase::Application};
+  for (const auto &query :
+       {std::string{}, std::string("[I"), std::string("test/Absent"),
+        std::string("a\0b", 3), std::string("a\tb"), std::string("a\nb"),
+        std::string("a\x7f"), std::string("a\xc3\xa9"),
+        std::string(::neverd::limits::dalvik::kMaxAndroidClassNameBytes + 1,
+                    'x')}) {
+    snapshot.class_lookup_failures = {{Loader::Boot, {}, {}, query}};
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  }
+  snapshot.class_lookup_failures = {
+      {Loader::Boot, "test.Absent", {}, "test.Absent "}};
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.class_lookup_failures = {{Loader::Boot, "test.Absent", {}},
+                                    {Loader::Boot, {}, {}, "test.Absent"}};
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.class_lookup_failures[0] = snapshot.class_lookup_failures[1];
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  for (auto loader : {Loader::Boot, Loader::System, Loader::Application}) {
+    snapshot.class_lookup_failures = {{loader, {}, {}, "java.lang.String"}};
+    EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  }
+  snapshot.class_lookup_failures = {
+      {Loader::Boot,
+       {},
+       {},
+       std::string(::neverd::limits::dalvik::kMaxAndroidClassNameBytes, 'x')}};
+  EXPECT_NO_THROW(Runtime(program, heap, snapshot));
+  snapshot.class_lookup_failures = {
+      {Loader::Application, {}, {}, "test.Absent "}};
+  snapshot.phase = Phase::Attached;
+  EXPECT_THROW(Runtime(program, heap, snapshot), Error);
+  snapshot.application_loader_established = true;
+  EXPECT_NO_THROW(Runtime(program, heap, snapshot));
+  Class type;
+  type.name = "Ltest/Visible;";
+  type.superclass = "Ljava/lang/Object;";
+  Program code({type}, Properties{});
+  snapshot.class_lookup_failures = {
+      {Loader::Application, {}, {}, "test.Visible"}};
+  EXPECT_THROW(Runtime(code, heap, snapshot), Error);
+  snapshot.class_lookup_failures[0].loader = Loader::Boot;
+  EXPECT_NO_THROW(Runtime(code, heap, snapshot));
+}
+TEST_F(AndroidFrameworkTest,
        LookupFailuresRejectInvalidAndVisibleDeclarations) {
   AndroidApplicationSnapshot snapshot{Phase::Application};
   snapshot.class_lookup_failures = {LookupFailure{}};
   snapshot.class_lookup_failures[0].binary_name = "test.Absent";
   EXPECT_THROW(Runtime(program, heap, snapshot), Error);
-  for (auto name :
-       {"", ".a", "a.", "a..b", "a/b", "[I", "La;", "a.1B", "a.\xc3\xa9"}) {
+  for (auto name : {"", ".a", "a.", "a..b", "a/b", "[I", "La;", "a.1B",
+                    "a.\xc3\xa9", "a ", " a", "a. b"}) {
     snapshot.class_lookup_failures = {{Loader::Boot, name, {}}};
     EXPECT_THROW(Runtime(program, heap, snapshot), Error) << name;
   }
@@ -979,11 +1089,19 @@ TEST_F(AndroidFrameworkTest,
   snapshot.class_lookup_failures.push_back(snapshot.class_lookup_failures[0]);
   EXPECT_THROW(Runtime(program, heap, snapshot), Error);
   snapshot.class_lookup_failures = {
-      {Loader::Boot, "test.Absent", std::string(4097, 'x')}};
+      {Loader::Boot, "test.Absent",
+       std::string(::neverd::limits::dalvik::kMaxAndroidLookupMessageBytes + 1,
+                   'x')}};
   EXPECT_THROW(Runtime(program, heap, snapshot), Error);
-  snapshot.class_lookup_failures = {{Loader::Boot, std::string(1025, 'x'), {}}};
+  snapshot.class_lookup_failures = {
+      {Loader::Boot,
+       std::string(::neverd::limits::dalvik::kMaxAndroidClassNameBytes + 1,
+                   'x'),
+       {}}};
   EXPECT_THROW(Runtime(program, heap, snapshot), Error);
-  snapshot.class_lookup_failures.assign(257, {Loader::Boot, "test.Absent", {}});
+  snapshot.class_lookup_failures.assign(
+      ::neverd::limits::dalvik::kMaxAndroidApplicationClassLookupFailures + 1,
+      {Loader::Boot, "test.Absent", {}});
   EXPECT_THROW(Runtime(program, heap, snapshot), Error);
   snapshot.class_lookup_failures = {{Loader::Application, "test.Absent", {}}};
   snapshot.phase = Phase::Attached;
@@ -1000,27 +1118,32 @@ TEST_F(AndroidFrameworkTest,
   EXPECT_NO_THROW(Runtime(code, heap, snapshot));
 }
 TEST_F(AndroidFrameworkTest, LookupFailuresRespectHeapAndInstructionLimits) {
-  for (bool exhaustion : {false, true}) {
-    auto storage = std::make_shared<Heap>(1024, exhaustion ? 4 : 128);
-    AndroidApplicationSnapshot snapshot{Phase::Attached};
-    snapshot.class_lookup_failures = {{Loader::System, "test.Absent", {}}};
-    Runtime state(program, storage, snapshot);
-    auto loader =
-        state.library(operation(SystemClassLoader), 0, {}, Admit).value;
-    const uint64_t args[]{storage->literal("test.Absent")->Identity};
-    if (exhaustion) {
-      while (storage->allocate(Object::Instance, "java/lang/Object", 0)) {
+  for (bool exact : {false, true}) {
+    for (bool exhaustion : {false, true}) {
+      auto storage = std::make_shared<Heap>(1024, exhaustion ? 4 : 128);
+      AndroidApplicationSnapshot snapshot{Phase::Attached};
+      snapshot.class_lookup_failures = {{Loader::System, "test.Absent", {}}};
+      const char *query = exact ? "test.Absent " : "test.Absent";
+      if (exact)
+        snapshot.class_lookup_failures = {{Loader::System, {}, {}, query}};
+      Runtime state(program, storage, snapshot);
+      auto loader =
+          state.library(operation(SystemClassLoader), 0, {}, Admit).value;
+      const uint64_t args[]{storage->literal(query)->Identity};
+      if (exhaustion) {
+        while (storage->allocate(Object::Instance, "java/lang/Object", 0)) {
+        }
       }
+      unsigned ticks = 0;
+      auto result = state.library(operation(LoadClass), loader, args, [&] {
+        return !exhaustion && ++ticks > 3 ? ExecutionStop::InstructionLimit
+                                          : ExecutionStop::Returned;
+      });
+      EXPECT_EQ(result.stop, exhaustion ? ExecutionStop::HeapLimit
+                                        : ExecutionStop::InstructionLimit);
+      EXPECT_EQ(state.library(operation(LoadClass), loader, args, Admit).stop,
+                result.stop);
     }
-    unsigned ticks = 0;
-    auto result = state.library(operation(LoadClass), loader, args, [&] {
-      return !exhaustion && ++ticks > 3 ? ExecutionStop::InstructionLimit
-                                        : ExecutionStop::Returned;
-    });
-    EXPECT_EQ(result.stop, exhaustion ? ExecutionStop::HeapLimit
-                                      : ExecutionStop::InstructionLimit);
-    EXPECT_EQ(state.library(operation(LoadClass), loader, args, Admit).stop,
-              result.stop);
   }
 }
 TEST_F(AndroidFrameworkTest, DexCatchObservesTheSameLookupThrowableAndMessage) {
@@ -1060,29 +1183,36 @@ TEST_F(AndroidFrameworkTest, DexCatchObservesTheSameLookupThrowableAndMessage) {
   method.tries = {{0, 3, {{"Ljava/lang/ClassNotFoundException;", 5}}}};
   reader.methods = {method};
   Program code({reader}, Properties{});
-  AndroidApplicationSnapshot snapshot{Phase::Attached};
-  snapshot.class_lookup_failures = {
-      {Loader::System, "test.Absent", "explicit result"}};
-  Runtime state(code, heap, snapshot);
-  auto loader = state.library(operation(SystemClassLoader), 0, {}, Admit).value;
-  const uint64_t args[]{loader, heap->literal("test.Absent")->Identity};
-  auto result =
-      state.execute(*code.findStatic(method.reference), args, Admit, 65536);
-  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
-  ASSERT_NE(result.value, 0u);
-  EXPECT_EQ(heap->get(result.value)->ClassName,
-            "java/lang/ClassNotFoundException");
-  auto message =
-      state.library(operation(ThrowableMessage), result.value, {}, Admit);
-  ASSERT_EQ(message.stop, ExecutionStop::Returned);
-  ASSERT_NE(message.value, 0u);
-  EXPECT_EQ(heap->get(message.value)->Bytes,
-            javaStringBytes("explicit result"));
-  const uint64_t missing[]{loader, heap->literal("test.Other")->Identity};
-  EXPECT_EQ(
-      state.execute(*code.findStatic(method.reference), missing, Admit, 65536)
-          .stop,
-      ExecutionStop::Unsupported);
+  for (bool exact : {false, true}) {
+    AndroidApplicationSnapshot snapshot{Phase::Attached};
+    snapshot.class_lookup_failures = {
+        {Loader::System, "test.Absent", "explicit result"}};
+    const char *query = exact ? "test.Absent " : "test.Absent";
+    if (exact)
+      snapshot.class_lookup_failures = {
+          {Loader::System, {}, "explicit result", query}};
+    Runtime state(code, heap, snapshot);
+    auto loader =
+        state.library(operation(SystemClassLoader), 0, {}, Admit).value;
+    const uint64_t args[]{loader, heap->literal(query)->Identity};
+    auto result =
+        state.execute(*code.findStatic(method.reference), args, Admit, 65536);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    ASSERT_NE(result.value, 0u);
+    EXPECT_EQ(heap->get(result.value)->ClassName,
+              "java/lang/ClassNotFoundException");
+    auto message =
+        state.library(operation(ThrowableMessage), result.value, {}, Admit);
+    ASSERT_EQ(message.stop, ExecutionStop::Returned);
+    ASSERT_NE(message.value, 0u);
+    EXPECT_EQ(heap->get(message.value)->Bytes,
+              javaStringBytes("explicit result"));
+    const uint64_t missing[]{loader, heap->literal("test.Other")->Identity};
+    EXPECT_EQ(
+        state.execute(*code.findStatic(method.reference), missing, Admit, 65536)
+            .stop,
+        ExecutionStop::Unsupported);
+  }
 }
 const FieldRef InstrumentationField{"Landroid/app/ActivityThread;",
                                     "mInstrumentation",
@@ -2035,6 +2165,58 @@ TEST_F(AndroidFrameworkTest, PackageApplicationInfoHonorsTerminalBudgets) {
   EXPECT_EQ(result.stop, ExecutionStop::HeapLimit);
   EXPECT_EQ(state.library(operation(CurrentApplication), 0, {}, Admit).stop,
             ExecutionStop::HeapLimit);
+}
+TEST_F(AndroidFrameworkTest, PackageQueriesAdmitOneResultAllocation) {
+  AndroidApplicationSnapshot input{Phase::Application};
+  input.package_manager_available = true;
+  input.application_info_queries = {{"test.app", 0, {"/query"}}};
+  input.package_info_queries = {{"test.app", 0, {}}};
+  unsigned query_work = 0;
+  for (auto op : {PackageInfoQuery, PackageApplicationInfo}) {
+    SCOPED_TRACE(op);
+    for (bool complete : {true, false}) {
+      SCOPED_TRACE(complete);
+      auto storage = std::make_shared<Heap>();
+      Runtime state(program, storage, input);
+      auto app = state.library(operation(CurrentApplication), 0, {}, Admit);
+      ASSERT_EQ(app.stop, ExecutionStop::Returned);
+      auto manager =
+          state.library(operation(ContextPackageManager), app.value, {}, Admit);
+      ASSERT_EQ(manager.stop, ExecutionStop::Returned);
+      auto name = storage->literal("test.app");
+      ASSERT_TRUE(name);
+      auto before = storage->allocate(Object::Instance, "java/lang/Object", 0);
+      ASSERT_TRUE(before);
+      const uint64_t args[]{name->Identity, 0};
+      unsigned work = 0;
+      auto result = state.library(operation(op), manager.value, args, [&] {
+        ++work;
+        return query_work && work > query_work - unsigned(!complete)
+                   ? ExecutionStop::InstructionLimit
+                   : ExecutionStop::Returned;
+      });
+      if (!query_work) {
+        ASSERT_EQ(result.stop, ExecutionStop::Returned);
+        query_work = work;
+      }
+      // The same name and query row require one fresh result in either API.
+      EXPECT_EQ(work, query_work);
+      if (complete) {
+        ASSERT_EQ(result.stop, ExecutionStop::Returned);
+        EXPECT_EQ(result.value, before->Identity + 1u);
+        EXPECT_EQ(storage->get(result.value)->ClassName,
+                  op == PackageInfoQuery
+                      ? "android/content/pm/PackageInfo"
+                      : "android/content/pm/ApplicationInfo");
+      } else {
+        EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+        EXPECT_TRUE(state.snapshot().terminal);
+      }
+      auto after = storage->allocate(Object::Instance, "java/lang/Object", 0);
+      ASSERT_TRUE(after);
+      EXPECT_EQ(after->Identity, before->Identity + (complete ? 2u : 1u));
+    }
+  }
 }
 TEST_F(AndroidFrameworkTest,
        PackageApplicationInfoDexAndLibraryShareFieldOwnership) {

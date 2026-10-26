@@ -350,12 +350,13 @@ classpath searches or successful placeholder objects.
 
 An optional `application_snapshot.class_lookup_failures` array declares exact
 negative `loadClass` observations. Each entry requires `loader` (`boot`,
-`system` or `application`), `binary_name` and `message` (a string or explicit
-null). For example:
+`system` or `application`), exactly one of `binary_name` or `exact_query`,
+and `message` (a string or explicit null). For example:
 
 ```json
 {"phase":"attached","class_lookup_failures":[
-  {"loader":"boot","binary_name":"example.Optional","message":null}
+  {"loader":"boot","binary_name":"example.Optional","message":null},
+  {"loader":"boot","exact_query":"example.Other ","message":null}
 ]}
 ```
 
@@ -365,9 +366,16 @@ DEX inventory. Only the selected loader's exact lookup throws a fresh shared
 it and continue; known loads still avoid initialization. Failure in a parent
 does not declare failure in a child, nor does it alter JNI `FindClass` outcomes.
 Unknown names and foreign loader instances still stop explicitly. The array is
-limited to 256 unique loader/name pairs, binary names to 1024 ASCII bytes with
-nonempty Java identifier components, and messages to 4096 UTF-8 bytes. Empty
-messages and null messages remain distinct. Application loader outcomes require
+limited to 256 unique loader/query pairs and messages to 4096 UTF-8 bytes.
+`binary_name` accepts up to 1024 ASCII bytes with nonempty Java identifier
+components. `exact_query` instead accepts a nonempty string of at most 1024
+printable ASCII bytes, including spaces. It preserves every byte without
+trimming or normalization; a query with a trailing space is distinct from the
+name without that space. Slash spellings, array prefixes, controls and non-ASCII
+queries remain unsupported. Duplicate loader/query pairs are rejected across
+both input forms. In C++, supplying `exact_query` requires an empty
+`binary_name`. Empty messages and null messages remain distinct. Application
+loader outcomes require
 an established application loader: the application phase or an explicit `true`
 loader input in the attached phase. A failure cannot shadow a declaration visible
 to that loader. Custom delegation, exception causes and a closed complete

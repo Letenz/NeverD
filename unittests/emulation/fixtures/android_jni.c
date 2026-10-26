@@ -463,7 +463,8 @@ int jni_string_builder(int unknown) {
   }
   return C(vm, int, 5);
 }
-int jni_loader_failure(int unknown) {
+static int loader_failure(const char *query, const char *jni_name,
+                          int unknown) {
   Handle e = attach();
   CHECK(e);
   Ref type = C(e, Ref, 6, "java/lang/ClassLoader");
@@ -474,7 +475,7 @@ int jni_loader_failure(int unknown) {
   Ref boot = C(e, Ref, 34, system, parent_id);
   Ref load_id =
       C(e, Ref, 33, type, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
-  Ref name = C(e, Ref, 167, "fixture.Optional");
+  Ref name = C(e, Ref, 167, query);
   Ref global_loader = C(e, Ref, 21, boot);
   for (int i = 0; i < 2; ++i) {
     CHECK(!C(e, Ref, 34, global_loader, load_id, name));
@@ -498,7 +499,7 @@ int jni_loader_failure(int unknown) {
     CHECK(!C(vm, int, 5));
     e = attach();
     CHECK(e);
-    name = C(e, Ref, 167, "fixture.Optional");
+    name = C(e, Ref, 167, query);
   }
   if (unknown) {
     // Boot failure must not close the system namespace or affect FindClass.
@@ -506,8 +507,12 @@ int jni_loader_failure(int unknown) {
       type = C(e, Ref, 6, "java/lang/ClassLoader");
       system = C(e, Ref, 114, type, system_id);
       C(e, Ref, 34, system, load_id, name);
-    } else
-      C(e, Ref, 6, "fixture/Optional");
+    } else if (unknown == 2) {
+      C(e, Ref, 6, jni_name);
+    } else {
+      Ref trimmed = C(e, Ref, 167, "fixture.Optional");
+      C(e, Ref, 34, global_loader, load_id, trimmed);
+    }
     return 1;
   }
   Ref known = C(e, Ref, 167, "java.lang.String");
@@ -515,6 +520,13 @@ int jni_loader_failure(int unknown) {
   CHECK(!C(e, int, 228));
   C(e, void, 22, global_loader);
   return C(vm, int, 5);
+}
+
+int jni_loader_failure(int unknown) {
+  return loader_failure("fixture.Optional", "fixture/Optional", unknown);
+}
+int jni_loader_exact_query(int unknown) {
+  return loader_failure("fixture.Optional ", "fixture/Optional ", unknown);
 }
 
 int jni_instrumentation(int mode) {

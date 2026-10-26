@@ -33,9 +33,15 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
   // from a loaded image remains restricted to its supported Mach-O path.
   const bool ExplicitSites =
       SourceCallSiteHints && !SourceCallSiteHints->empty();
-  const bool RuntimeHints = Image && Fmt == BinaryFormat::MachO;
+  const bool RuntimeHints =
+      SourceCallRuntimeHintsEnabled && Image && Fmt == BinaryFormat::MachO;
+  // Standalone clients historically supplied one shared map. The pipeline
+  // keeps entry declarations separate from call-only thunk declarations.
+  const auto *EntryHints =
+      SourceEntryTypeHints ? SourceEntryTypeHints : SourceCalleeTypeHints;
+  const bool ExplicitEntry = EntryHints && EntryHints->count(Low.Entry);
   if (!SourceCallHintsEnabled ||
-      (Image && Fmt != BinaryFormat::MachO && !ExplicitSites) ||
+      (Image && !RuntimeHints && !ExplicitSites && !ExplicitEntry) ||
       (Image && (Image->IsRelocatable || Image->Arch != TargetArch)) ||
       (TargetArch != Arch::AArch64 && TargetArch != Arch::X64))
     return;
@@ -81,11 +87,6 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     }
   }
   const SourceFunctionTypeHint *EntrySignature = nullptr;
-  // Standalone clients historically supplied one shared map. The pipeline
-  // supplies a distinct entry map so call-only thunk overrides cannot rewrite
-  // the machine body's return and live-in contract.
-  const auto *EntryHints =
-      SourceEntryTypeHints ? SourceEntryTypeHints : SourceCalleeTypeHints;
   if (EntryHints)
     if (auto It = EntryHints->find(Low.Entry); It != EntryHints->end()) {
       std::string Diagnostic;

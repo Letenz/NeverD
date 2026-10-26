@@ -60,6 +60,17 @@ TEST_P(AArch64CompleteState, PublishesAllScalarsAndVectorsAtOneBoundary) {
             "");
   expectCaptured();
 }
+TEST_P(AArch64CompleteState, CompletePacketsNormalizeWithoutChangingPrivilege) {
+  for (unsigned Index = 0; Index < State.Registers.size(); ++Index)
+    State.Registers[Index] = captured(AArch64Register(Index));
+  for (unsigned Index = 0; Index < State.Vectors.size(); ++Index)
+    State.Vectors[Index] = llvm::cantFail(readVector(Index));
+  normalizeAArch64State(State);
+  expectCaptured();
+  const auto Normalized = State;
+  normalizeAArch64State(State);
+  expectPreserved(Normalized);
+}
 TEST_P(AArch64CompleteState, ReadersCannotObservePartialPublication) {
   const auto Before = State;
   unsigned Reads = 0;

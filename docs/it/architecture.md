@@ -4,6 +4,8 @@
 
 # Architettura di NeverD
 
+Per i PE x64 collegati, il rilevamento raccoglie gli indirizzi di codice delle LEA canoniche relative a RIP durante la scansione delle chiamate esistente. Ogni destinazione richiede ancora un ingresso indipendente e una prova limitata di uscita richiamabile; etichette interne, continuazioni e corpi non supportati restano esclusi. Rilevamento e firme condividono il riconoscimento della codifica. I riferimenti rel32 condizionali COFF richiedono inoltre simboli di funzione espliciti e rilocazioni senza addendo. Offline, `--single-reference-context` verifica ogni condizione con un solo sito rispetto a tutte le dichiarazioni originali sovrapposte, mantenendo tutte le alternative del sito.
+
 Il loader COFF separa le posizioni degli epiloghi V2 dalle operazioni del prologo. V2 ripristina i registri salvati del frame principale in base alla posizione esatta nell’epilogo dichiarato; il rilascio dello stack precede tale regione. Intervalli, dimensioni e sequenze non validi vengono rifiutati prima delle letture dello stack. V1 mantiene il riconoscimento tramite istruzioni. Tutti i backend condividono i controlli dello stack e la gestione delle eccezioni.
 
 Solo la sequenza iniziale di `UWOP_EPILOG` definisce gli epiloghi V2. I marcatori successivi occupano due slot senza ripristinare lo stato né influire sull’ordine degli offset del prologo; le coppie troncate restano non valide.

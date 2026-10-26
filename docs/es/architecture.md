@@ -4,6 +4,8 @@
 
 # Arquitectura de NeverD
 
+En un PE x64 enlazado, el descubrimiento recoge las direcciones de código de LEA relativas a RIP canónicas durante el barrido de llamadas existente. Cada destino sigue necesitando una entrada independiente y una prueba acotada de salida invocable; se excluyen etiquetas internas, continuaciones y cuerpos no admitidos. El descubrimiento y las firmas comparten el reconocimiento de esta codificación. Las referencias rel32 condicionales COFF también exigen símbolos de función explícitos y reubicaciones sin sumando. Sin conexión, `--single-reference-context` verifica cada condición de un solo sitio frente a todas las declaraciones originales superpuestas y conserva todas las alternativas del sitio.
+
 El cargador COFF separa las posiciones de epílogos V2 de las operaciones del prólogo. V2 restaura los registros guardados del marco principal según la posición exacta del epílogo declarado; la liberación de la pila queda fuera de esa región. Los rangos, tamaños y secuencias inválidos se rechazan antes de leer la pila. V1 conserva el reconocimiento por instrucciones. Todos los motores comparten las comprobaciones de pila y el manejo de excepciones.
 
 Solo la secuencia inicial de `UWOP_EPILOG` define los epílogos V2. Los marcadores posteriores consumen dos posiciones sin restaurar estado ni afectar al orden de los desplazamientos del prólogo; los pares truncados siguen siendo inválidos.

@@ -360,6 +360,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCPropertyTests.cpp
   core/ReturnContractTests.cpp
   core/RegisterPairReturnTests.cpp
+  core/IncomingHomeSourceTests.cpp
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
   core/MedConstantPropagationTests.cpp
@@ -444,6 +445,7 @@ add_neverd_unittest(NeverDLiftTests
   format/MachOI386RelocationScatteredTests.cpp
   format/MachOFunctionListingTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/PEFunctionAddressTests.cpp
   format/FunctionDiscoveryCancellationTests.cpp
   format/ELFFunctionListingTests.cpp
   format/ELFWithoutSectionsTests.cpp
@@ -680,6 +682,14 @@ add_neverd_unittest(NeverDX86SystemStateTests
 add_neverd_unittest(NeverDX86NonlocalControlTests
   x86/X86NonlocalControlTests.cpp
   LINK_COMPONENTS Pipeline BackendC)
+
+add_neverd_unittest(NeverDX86TBMTests
+  x86/X86TBMTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86LegacyAdmissionTests
+  x86/X86LegacyAdmissionTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86VirtualizationTests
   x86_64/X86VirtualizationTests.cpp
@@ -1541,6 +1551,19 @@ add_neverd_unittest(NeverDWin64CallContractTests
 target_include_directories(NeverDWin64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
+add_neverd_unittest(NeverDSourceEntryBindingTests
+  core/IncomingHomeSourceTests.cpp
+  core/SourceABITests.cpp
+  core/ObjCSourceTypeHintTests.cpp
+  core/HighCSourceCallTests.cpp
+  core/NativeSourceHintsTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDSourceEntryBindingTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDSourceEntryBindingTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+
 add_neverd_unittest(NeverDI386CallContractTests
   core/I386CallContractTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
@@ -1892,6 +1915,7 @@ add_neverd_unittest(NeverDImageAnalysisBoundaryTests
   core/MedConstantPropagationTests.cpp
   core/MedImmutableTableScanTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
+  format/PEFunctionAddressTests.cpp
   format/FunctionDiscoveryCancellationTests.cpp
   LINK_COMPONENTS IR Loader
 )
@@ -4524,6 +4548,16 @@ if(TARGET neverd-worker AND Python3_Interpreter_FOUND)
 endif()
 
 if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND
+     NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME NeverDX86TBMPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/tbm_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86TBMPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+  endif()
   add_test(NAME NeverDLibraryFeatureCLI
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/library_cli_test.py"
