@@ -156,10 +156,6 @@
         <translation>Comentar la dirección actual</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>Introducir comentario re&amp;petible...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>Marcar &amp;posición...</translation>
     </message>
