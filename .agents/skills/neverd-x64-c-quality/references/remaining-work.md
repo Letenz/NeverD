@@ -618,6 +618,12 @@ conditional memory, invocation lifetime and both C routes remain open.
   counter recurrences bound repeated stack adjustments; unbounded loops and
   unknown interprocedural frame observations still require further proof.
 
+- Fixed scalar import contracts now split wide outgoing stores on i386 in
+  shared ABI recovery, including later overwrites of either word. Both C
+  routes execute against an independent 32-bit provider. Captured ARM64
+  Windows imports retain scalar function-pointer types without rereading a
+  changed import slot; native ARM64 execution remains separate coverage.
+
 ## Established rules
 
 - Integer record calls in LLVMC bind physical ABI pieces through the shared

@@ -9,13 +9,19 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/lift/X86/X86Regs.h"
+#include "neverd/loader/BinaryImage.h"
+
+#include "llvm/Support/raw_ostream.h"
 
 namespace {
 using namespace neverd;
@@ -251,5 +257,115 @@ TEST(MedCachedCallTarget, MachineSummaryAdapterKeepsTheOriginalCallOperand) {
     B.Ops.insert(B.Ops.begin() + 3, Clobber);
     EXPECT_TRUE(resolveLowBlockCallTargets(B, Arch::X64).empty());
   }
+}
+
+TEST(MedCachedCallTarget, CapturedScalarImportsKeepTheirDeclaredPointerType) {
+  class Header : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x3000 && Address != 0x2000)
+        return std::nullopt;
+      FunctionSym F;
+      F.Addr = Address;
+      F.Name = Address == 0x3000 ? "Observed" : "replace_pointer";
+      F.ReturnType =
+          Address == 0x3000 ? NdType::makeInt(4) : NdType::makeVoid();
+      if (Address == 0x3000)
+        F.Params = {{"code", NdType::makeInt(4, false)}};
+      F.PlatformConvention = true;
+      F.PrototypeFromHeader = true;
+      F.CallConv = DebugCallConv::Cdecl;
+      return F;
+    }
+  } Debug;
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (bool Replace : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Replace);
+      BinaryImage Image;
+      Image.Arch = Architecture;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::COFF;
+      Segment Data;
+      Data.VA = 0x3000;
+      Data.Size = Data.FileSz = 8;
+      Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Data.Data.resize(8);
+      Image.Segments.push_back(std::move(Data));
+      Import Imported;
+      Imported.Name = "Observed";
+      Imported.IATAddr = 0x3000;
+      Image.Imports.push_back(std::move(Imported));
+      ASSERT_TRUE(Image.recordImportStorageSlot(
+          0x3000, "Observed", 0, ImportStorageEvidence::LoaderBind));
+      const auto Word = NdType::makeInt(8, false);
+      const auto Code = NdType::makeInt(4, false);
+      HighFunc F;
+      F.Entry = 0x1000;
+      F.Name = "captured_scalar";
+      F.ReturnType = NdType::makeInt(4);
+      F.Params = {{"code", Code}};
+      auto Target = HighExpr::makeLoad(HighExpr::makeConst(0x3000, 8), Word);
+      if (Replace) {
+        auto Saved = value(17);
+        Saved.TheArch = Architecture;
+        HighStmt Capture;
+        Capture.Kind = StmtKind::Assign;
+        Capture.Dst = HighExpr::makeVar(Saved, Word);
+        Capture.Val = Target;
+        F.Body.push_back(Capture);
+        Target = Capture.Dst;
+        HighStmt Change;
+        Change.Kind = StmtKind::Call;
+        Change.CallExpr = HighExpr::makeCall("replace_pointer", 0x2000, {});
+        Change.CallExpr->Type = NdType::makeVoid();
+        F.Body.push_back(Change);
+      }
+      auto Parameter = value(0, 4);
+      Parameter.Kind = MedVar::Param;
+      Parameter.TheArch = Architecture;
+      auto Call = HighExpr::makeCall("indirect", 0x3000,
+                                     {HighExpr::makeVar(Parameter, Code)});
+      Call->IsIndirectCall = true;
+      Call->IndirectTarget = Target;
+      Call->Type = F.ReturnType;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = Call;
+      F.Body.push_back(Return);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      Options.Format = BinaryFormat::COFF;
+      Options.Image = &Image;
+      Options.EmitIncludes = false;
+      std::string Source;
+      llvm::raw_string_ostream Output(Source);
+      ASSERT_TRUE(HighCEmitter().emit({F}, Output, Options, &Debug));
+      Source = "#include <stdint.h>\n" + Source;
+      EXPECT_NE(Source.find("(*__imp_Observed)(uint32_t)"), std::string::npos)
+          << Source;
+      source_call_execution_test::checkSyntax(
+          Source,
+          {Architecture == Arch::X64 ? "--target=x86_64-pc-windows-msvc"
+                                     : "--target=aarch64-pc-windows-msvc",
+           "-ffreestanding"});
+      const std::string Oracle = R"c(
+static int old_calls, new_calls;
+static int32_t original(uint32_t code) {
+  ++old_calls;
+  return code == UINT32_MAX ? -37 : -41;
+}
+static int32_t replacement(uint32_t code) { ++new_calls; return 53; }
+int32_t (*__imp_Observed)(uint32_t) = original;
+void replace_pointer(void) { __imp_Observed = replacement; }
+int main(void) {
+  return captured_scalar(UINT32_MAX) != -37 || old_calls != 1 || new_calls;
+}
+)c";
+      for (llvm::StringRef Level : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Source + Oracle,
+            {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+    }
 }
 } // namespace

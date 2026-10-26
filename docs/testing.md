@@ -14232,3 +14232,13 @@ including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
 
 `BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.
+
+`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` checks both C
+routes with optimization enabled and disabled. An independent 32-bit provider
+observes both words of a wide outgoing store and later overwrites of either
+word at O0/O2 with undefined-behavior traps. The fixed import ABI, rather than
+the store's vector transport, determines its scalar argument positions.
+`MedCachedCallTarget.CapturedScalarImportsKeepTheirDeclaredPointerType`
+checks x64 and ARM64 Windows pointer declarations and executes their scalar
+source projection on the host, including replacement of the import slot after
+the pointer was captured. These host checks do not execute ARM64 machine code.

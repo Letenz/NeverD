@@ -5819,7 +5819,8 @@ TypeRef HighCWriter::fixedCalleeFunctionType(const FunctionSym &Callee) const {
   // Reuse the same scalar ABI projection that owns argument rendering. A
   // recovered name alone does not justify a prototype. Other conventions
   // retain their existing call representation.
-  if (Opts.TheArch != Arch::X64 || Opts.Format != BinaryFormat::COFF ||
+  if ((Opts.TheArch != Arch::X64 && Opts.TheArch != Arch::AArch64) ||
+      Opts.Format != BinaryFormat::COFF ||
       (Callee.CallConv != DebugCallConv::Unknown &&
        Callee.CallConv != DebugCallConv::Cdecl))
     return nullptr;
