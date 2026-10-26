@@ -93,8 +93,6 @@ WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
   // being created again.
   window.overrideWindowFlags(window.windowFlags() | Qt::FramelessWindowHint |
                              Qt::NoDropShadowWindowHint);
-  if (QWindow *handle = window.windowHandle())
-    handle->setFlags(window.windowFlags());
   // Qt then paints no background of the window's own; the frame paints it
   // inside the shadow.
   window.setAttribute(Qt::WA_TranslucentBackground);
@@ -105,6 +103,9 @@ WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
     QSurfaceFormat format = handle->requestedFormat();
     format.setAlphaBufferSize(8);
     handle->setFormat(format);
+    // Windows chooses layered composition when the native flags change.
+    // Set the alpha format first, including for dialogs with an early HWND.
+    handle->setFlags(window.windowFlags());
   }
   // The native window exists from here, so its margins can be set before
   // the compositor first sizes it.  A dialog's parent keeps its children
