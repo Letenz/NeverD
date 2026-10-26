@@ -14,6 +14,7 @@
 #include "../../AArch64OriginalMemory.h"
 #include "AArch64SVEPredicate.h"
 
+#include "neverd/backend/llvm/AArch64StructureMemoryAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/AArch64MemoryImage.h"
@@ -227,6 +228,49 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       Base = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
     if (!Base->getType()->isIntegerTy(kAddressMemoryPointerBits))
       llvm::report_fatal_error(kWritebackMalformed);
+    if (Instruction.isStructure()) {
+      const auto Structure = Instruction.structure();
+      const auto Plan = aarch64StructureMemoryAsm(Structure);
+      auto *VectorType = llvm::FixedVectorType::get(
+          Builder.getInt64Ty(),
+          kAddressMemoryVectorBytes / kAddressMemoryPointerBytes);
+      std::vector<llvm::Type *> InputTypes{Builder.getInt64Ty(),
+                                           Builder.getInt64Ty()};
+      auto *Index = getVar(Op.Inputs[kStructureIndexOperand + 1], Builder);
+      std::vector<llvm::Value *> Inputs{
+          Base, Index->getType()->isPointerTy()
+                    ? Builder.CreatePtrToInt(Index, Builder.getInt64Ty())
+                    : Index};
+      if (!Structure.isLoad() || Structure.laneLoad())
+        for (unsigned I = 0; I != Structure.vectors(); ++I) {
+          InputTypes.push_back(VectorType);
+          Inputs.push_back(Builder.CreateBitCast(
+              getVar(Op.Inputs[kStructureDataOperand + I + 1], Builder),
+              VectorType));
+        }
+      InputTypes.push_back(Builder.getInt32Ty());
+      Inputs.push_back(Builder.getInt32(Structure.scratchWord()));
+      llvm::Type *ResultType = Builder.getInt64Ty();
+      if (Structure.isLoad()) {
+        std::vector<llvm::Type *> Outputs(Structure.vectors(), VectorType);
+        Outputs.push_back(Builder.getInt64Ty());
+        ResultType = llvm::StructType::get(*Ctx, Outputs);
+      }
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(ResultType, InputTypes, false), Plan.Text,
+          Plan.Constraints, true);
+      auto *Result = Builder.CreateCall(Asm, Inputs, kWritebackResult);
+      if (!Structure.isLoad())
+        return Result;
+      for (unsigned I = 0; I != Structure.vectors(); ++I)
+        PendingIntrinsicOutputs[I] =
+            Builder.CreateBitCast(Builder.CreateExtractValue(Result, {I}),
+                                  Builder.getIntNTy(kAddressMemoryVectorBits));
+      auto *Updated = Builder.CreateExtractValue(Result, {Structure.vectors()});
+      PendingIntrinsicOutputs[Structure.vectors()] = Updated;
+      PendingIntrinsicCount = intrinsicOutputCount(IC);
+      return Updated;
+    }
     if (Instruction.isPair()) {
       llvm::Type *ValueType = Builder.getInt64Ty();
       if (Instruction.isVector())

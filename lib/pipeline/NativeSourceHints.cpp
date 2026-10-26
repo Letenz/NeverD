@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <array>
 #include <deque>
+#include <iterator>
 #include <map>
 #include <set>
 #include <tuple>
@@ -790,7 +791,7 @@ nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
   std::set<uint64_t> WrittenPreserved;
   for (const auto &Block : Low->Blocks)
     for (const auto &Op : Block.Ops) {
-      if (!Remaining-- || Op.NumInputs > 6)
+      if (!Remaining-- || Op.NumInputs > std::size(Op.Inputs))
         return {};
       if (const auto Site = sourceCallOccurrenceKey(Op); Site) {
         const auto Copy = Med.RegisterCopyProjections.find(*Site);
@@ -1415,7 +1416,7 @@ bool hasNativeSourceStateContract(
   std::set<NativeSourceCallKey> NativeCalls;
   for (const auto &Block : Low->Blocks)
     for (const auto &Op : Block.Ops) {
-      if (!Remaining-- || Op.NumInputs > 6)
+      if (!Remaining-- || Op.NumInputs > std::size(Op.Inputs))
         return false;
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
@@ -1867,7 +1868,7 @@ std::set<va_t> observedNativePairReturns(const LowFunc &Function,
   for (const auto &Block : Function.Blocks) {
     std::optional<va_t> Pending;
     for (const auto &Op : Block.Ops) {
-      if (!Remaining-- || Op.NumInputs > 6)
+      if (!Remaining-- || Op.NumInputs > std::size(Op.Inputs))
         return {};
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
           Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
@@ -1946,7 +1947,7 @@ observedNativeFourDoubleReturns(const LowFunc &Function,
     std::optional<va_t> Target;
     unsigned Available = 0;
     for (const auto &Op : Block.Ops) {
-      if (!Budget-- || Op.NumInputs > 6)
+      if (!Budget-- || Op.NumInputs > std::size(Op.Inputs))
         return {};
       if (Op.Opcode == NdOp::RETURN) {
         if (Target && Available == 15 && Block.Succs.empty())
@@ -1993,7 +1994,7 @@ std::set<va_t> observedNativeFourWordReturns(const LowFunc &Function,
     std::optional<va_t> Target;
     unsigned Available = 0, Observed = 0;
     for (const auto &Op : Block.Ops) {
-      if (!Budget-- || Op.NumInputs > 6)
+      if (!Budget-- || Op.NumInputs > std::size(Op.Inputs))
         return {};
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
           Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR) {
@@ -2501,8 +2502,9 @@ refineNativeFourWordReturnHint(const BinaryImage &Image, const LowFunc &Low,
       kNativeSourceHintsRefineNativeFourWordReturnHintBudget;
   for (const auto &Block : Low.Blocks)
     for (const auto &Op : Block.Ops) {
-      if (!Budget-- || Op.NumInputs > 6 || Op.Opcode == NdOp::CALL ||
-          Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INDIR_BR ||
+      if (!Budget-- || Op.NumInputs > std::size(Op.Inputs) ||
+          Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INDIR_BR ||
           (Op.Opcode == NdOp::INTRINSIC &&
            !isArchitecturalNoReturn(Op, Image.Arch)))
         return std::nullopt;

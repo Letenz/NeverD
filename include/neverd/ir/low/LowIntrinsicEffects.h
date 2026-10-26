@@ -19,6 +19,8 @@
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/low/LowIR.h"
 
+#include <iterator>
+
 namespace neverd {
 
 inline bool lowAArch64VectorShapeIsValid(const LowOp &Op) {
@@ -119,6 +121,16 @@ inline bool lowAArch64WritebackMemoryShapeIsValid(const LowOp &Op) {
     if (!Input.isConst() && !Input.isReg() && !Input.isTemp())
       return false;
   }
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (aarch64StructureOperation(Id))
+    return aarch64StructureShapeIsValid(
+        Id, Op.NumInputs - 1, Op.Output.Size,
+        [&](unsigned I) { return Op.Inputs[I + 1].Size; },
+        [&](unsigned I) -> std::optional<uint64_t> {
+          return Op.Inputs[I + 1].isConst()
+                     ? std::optional<uint64_t>(Op.Inputs[I + 1].Offset)
+                     : std::nullopt;
+        });
   const bool Store = isAArch64WritebackStoreIntrinsic(
       static_cast<Intrinsic>(Op.Inputs[0].Offset));
   return aarch64WritebackMemoryShapeIsValid(
@@ -238,8 +250,9 @@ inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
 /// One shared effect classification for LowIR consumers. A malformed or
 /// unknown intrinsic cannot grant address-suppression or call-barrier proofs.
 inline bool lowIntrinsicHasOnlyValueEffects(const LowOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 || Op.NumInputs > 6 ||
-      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 ||
+      Op.NumInputs > std::size(Op.Inputs) || !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != 2 ||
       Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
       (!Op.Output.isReg() && !Op.Output.isTemp()) || Op.Output.Size == 0 ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
@@ -292,8 +305,9 @@ inline bool lowIntrinsicIsUnconditionalTrap(const LowOp &Op) {
 /// intrinsic keeps conservative effect handling.
 inline LowMemoryOperandView lowIntrinsicMemoryOperands(const LowOp &Op) {
   LowMemoryOperandView View;
-  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 || Op.NumInputs > 6 ||
-      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 ||
+      Op.NumInputs > std::size(Op.Inputs) || !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != 2 ||
       Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
       (!Op.Output.isReg() && !Op.Output.isTemp()) || Op.Output.Size == 0 ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)

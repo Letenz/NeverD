@@ -52,6 +52,21 @@ inline bool aarch64WritebackMemoryHighShapeIsValid(const HighExpr &Expression) {
   const auto &Word = *Expression.Operands[kWritebackWordOperand];
   if (!Integer(Word.Type) || Word.Kind != ExprKind::Const)
     return false;
+  if (aarch64StructureOperation(Expression.IntrinsicId)) {
+    for (unsigned I = kStructureDataOperand; I < Expression.Operands.size();
+         ++I)
+      if (!Integer(Expression.Operands[I]->Type))
+        return false;
+    return aarch64StructureShapeIsValid(
+        Expression.IntrinsicId, Expression.Operands.size(),
+        Expression.Type->Size,
+        [&](unsigned I) { return Expression.Operands[I]->Type->Size; },
+        [&](unsigned I) -> std::optional<uint64_t> {
+          return Expression.Operands[I]->Kind == ExprKind::Const
+                     ? std::optional<uint64_t>(Expression.Operands[I]->ConstVal)
+                     : std::nullopt;
+        });
+  }
   const bool PairStore =
       Store && isAArch64PairMemoryIntrinsic(Expression.IntrinsicId);
   const auto &Data =
