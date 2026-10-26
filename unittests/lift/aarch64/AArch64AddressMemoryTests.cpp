@@ -4156,7 +4156,8 @@ TEST(AArch64WritebackMemory,
       Extract.Output.Size = kScalarBytes;
       Extract.Output.Id = 1;
       Extract.addInput(Base);
-      Extract.addInput(MedVar::makeConst(kScalarBytes, kWordBytes));
+      Extract.addInput(MedVar::makeConst(kScalarBytes, kWordBytes,
+                                         ConstantAddressProvenance::Scalar));
       Ops.insert(Ops.begin() + 1, Extract);
       Base = Extract.Output;
     }
