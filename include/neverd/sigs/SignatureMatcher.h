@@ -134,6 +134,10 @@ public:
       return VTableStorage ? llvm::ArrayRef(*VTableStorage)
                            : llvm::ArrayRef<size_t>();
     }
+    llvm::ArrayRef<size_t> loadConfigModules() const {
+      return LoadConfigStorage ? llvm::ArrayRef(*LoadConfigStorage)
+                               : llvm::ArrayRef<size_t>();
+    }
     bool hasDataContext() const { return DataContext; }
     llvm::ArrayRef<size_t> dataAnchorModules() const {
       return DataAnchorStorage ? llvm::ArrayRef(*DataAnchorStorage)
@@ -145,6 +149,7 @@ public:
 
   private:
     std::shared_ptr<const std::vector<size_t>> VTableStorage;
+    std::shared_ptr<const std::vector<size_t>> LoadConfigStorage;
     bool DataContext = false;
     std::shared_ptr<const std::vector<size_t>> DataAnchorStorage;
     std::shared_ptr<const std::vector<CallerEntry>> CallerStorage;

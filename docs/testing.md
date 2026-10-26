@@ -3041,6 +3041,13 @@ saves multiple generated panes and checks their restoration and retirement when
 reopening or changing projects. Run these in `neverd-gui-tests`; native Cocoa
 runs also exercise focus delivery and floating-window ownership.
 
+`automaticLayoutsPreserveMainWindow` restores a maximized desktop into both a
+normal and a maximized workbench. Startup restoration must keep the workbench
+hidden until it is ready, and opening a project with its own desktop must not
+move, resize or change the state of the visible main window. Run this case on
+Cocoa as well as offscreen, alongside the Quick Start and generated-pane
+restoration cases.
+
 `NeverDGuiWheelInput` replays precision wheel and trackpad events through the
 production disassembly, source and hex views. It compares small-event batches
 with their combined movement, checks pixel-only and horizontal source scrolling,
@@ -6198,6 +6205,16 @@ weak search policies and incomplete source counterclaims. Parser/cache cases
 reject malformed table records and preserve the kind through reversed cache
 pieces. `scripts.tests.test_vtable_context` checks unpruned evidence, missing
 inputs, exact deduplication and isolation from function folding/refinement.
+
+`SignatureRuntimePointerContext.*` checks requested entries, complete operand
+coverage, immutable pointer ownership, conflicting roles/defaults, source
+conflicts and candidate-only naming. `RuntimePointerEvidence.*` exercises source
+configuration/storage/function separation and incomplete declarations. Cache
+round trips preserve the metadata kind with reversed pieces and reject malformed
+pairs. `scripts.tests.test_runtime_pointer_context` covers unpruned counterclaims,
+missing explicit function definitions and reference-only refinement without
+body duplication. Canonical indirect data operands share generator/runtime tests
+with ordinary data references; import references retain their separate kind.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
