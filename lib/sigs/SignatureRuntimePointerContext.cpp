@@ -37,7 +37,8 @@ bool isValidRuntimePointerContext(const StoredModule &Mod) {
       uint64_t(Mod.LeadingCount) + Mod.TailCount != Mod.TotalLen)
     return false;
   const auto &Public = Mod.publicNames().front();
-  if (Public.Offset || Public.IsData || Public.Name != "_load_config_used")
+  if (Public.Offset || Public.IsData || Public.IsLocalData ||
+      Public.Name != "_load_config_used")
     return false;
   for (size_t I = 0; I < Mod.TotalLen; ++I)
     if (Mod.isStated(I))
@@ -45,7 +46,7 @@ bool isValidRuntimePointerContext(const StoredModule &Mod) {
   const auto Fields = coff_loader::loadConfigCallableFields(Bitness::Bits64);
   std::map<uint32_t, std::pair<unsigned, unsigned>> Counts;
   for (const auto &Ref : Mod.references()) {
-    if (Ref.Name.empty() || Ref.Offset > Mod.TotalLen ||
+    if (Ref.IsLocalData || Ref.Name.empty() || Ref.Offset > Mod.TotalLen ||
         Mod.TotalLen - Ref.Offset < sizeof(uint64_t) ||
         llvm::none_of(
             Fields, [&](const auto &F) { return F.Offset == Ref.Offset; }))
@@ -188,7 +189,7 @@ void SignatureDB::applyRuntimePointerContext(const BinaryImage &Img,
       llvm::SmallVector<bool> Bound(Mod.TotalLen, false);
       bool Complete = true;
       for (const auto &Ref : Mod.references()) {
-        if (!Ref.IsData) {
+        if (!Ref.IsData || Ref.IsLocalData) {
           Complete = false;
           break;
         }
