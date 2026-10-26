@@ -1004,6 +1004,8 @@ publication so the snapshot and its serialized representation cannot diverge.
 
 History publication encodes the target state once and composes the history and
 recovery journal from serializer-produced JSON and retained committed text.
+Loading a snapshot defers its journal-state encoding until a save needs it;
+merely opening history does not pay that serialization cost.
 It retains owning before/after snapshots until all writes finish, constructing a
 full in-memory journal only after an interrupted write for same-session retry.
 This avoids a second whole-state tree and repeated state encoding on successful

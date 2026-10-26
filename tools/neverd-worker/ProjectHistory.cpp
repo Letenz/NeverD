@@ -21,6 +21,8 @@ namespace fs = std::filesystem;
 using FileContents = std::map<fs::path, std::shared_ptr<const std::string>>;
 struct ProjectHistory::Snapshot {
   Json state;
+  // Loaded snapshots need this encoding only if a later save uses them as
+  // the journal's before state. Committed snapshots already own the encoding.
   std::string stateText;
   std::shared_ptr<const std::string> document;
   FileContents contents;
@@ -548,7 +550,6 @@ std::shared_ptr<const ProjectHistory::Snapshot>
 ProjectHistory::readSnapshot(Json *document) const {
   auto snapshot = std::make_shared<Snapshot>();
   snapshot->state = readStateFiles(binary_, &snapshot->contents);
-  snapshot->stateText = compactText(snapshot->state);
   auto previous = read(historyPath_,
                        ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes,
                        &snapshot->contents);
@@ -740,7 +741,10 @@ void ProjectHistory::persist(Json state) {
   auto journalText = compactText(journal);
   journalText.pop_back();
   journalText += ",\"before\":";
-  journalText += snapshot_->stateText;
+  if (snapshot_->stateText.empty())
+    journalText += compactText(snapshot_->state);
+  else
+    journalText += snapshot_->stateText;
   journalText += ",\"before_history\":";
   journalText += *snapshot_->document;
   journalText += ",\"after\":";
