@@ -7632,10 +7632,15 @@ MedIR owns bounded invariant-constant propagation across same-width SSA copies a
 
 The constant worklist indexes complete nonconstant SSA identities. Node
 addresses become stable only after all definitions have been collected;
-ordered visitation and the existing work charges remain unchanged. HighIR's
-call-clobber index is local to each converter invocation and retains the first
-record for each full SSA identity, including its variable kind. Reusing a
-converter rebuilds that index before following any preserved-prefix chain.
+the value solver retains its ordered visitation and work charges. Width-view
+origins then propagate through the same use graph, charging each reached node
+and outgoing use edge once instead of rescanning all inputs to convergence.
+Both analyses finish within the shared budget before any operand changes.
+
+HighIR's call-clobber index is local to each converter invocation and retains
+the first record for each full SSA identity, including its variable kind.
+Reusing a converter rebuilds that index before following any preserved-prefix
+chain.
 
 | User route | Representation path | Exit |
 |------------|---------------------|------|
