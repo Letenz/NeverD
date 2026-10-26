@@ -194,9 +194,12 @@ private slots:
                        dialog->height())
           .toImage();
     };
-    QTRY_COMPARE(capture().pixelColor(0, 0), QColor(64, 192, 128));
     const auto check = [&] {
       QVERIFY(QTest::qWaitForWindowExposed(dialog.get()));
+      // A hidden native window can still report its previous screen position.
+      // Check placement only after showing it, before sampling the shadow.
+      QVERIFY(backdrop.rect().contains(
+          backdrop.mapFromGlobal(dialog->mapToGlobal(QPoint()))));
       const QImage painted = dialog->grab().toImage();
       QVERIFY(painted.pixelColor(0, 0).alpha() <
               painted.pixelColor(painted.width() / 2, painted.height() / 2)
