@@ -278,6 +278,10 @@ overlapping scalar fields, pointer cells and original address differences.
 an original-image source view, not a relocated reconstruction: native emission,
 relocatable objects and escaped address fragments retain their separate guards.
 The SDK includes this choice in its per-function LLVM cache key.
+Analyst global types follow the loaded address through LLVMC's image-address
+resolver, independently of whether C declares that address as a separate object.
+Only the loaded scalar acquires the checked display type; the backing array,
+overlapping accesses and native LLVM remain unchanged.
 
 Source unknown entry values use distinct opaque SSA seeds. A copy or PHI may
 transport an unavailable value without observing it; a real observation still
@@ -1169,6 +1173,52 @@ Source previews retain the live session’s load options, analysis policy, user 
 
 ## Structural comparison ownership
 
+The loader's batch function naming owner returns both the selected name and its
+producer origin. Native discovery and pipeline publication consume that same
+owner: finding an entry does not promote an address-generated label into name
+evidence. Session name resolution retains the origin alongside `OriginalNames`
+before applying analyst renames, including accepted recognition names. Native
+comparison snapshots consume that unannotated pair and undo only display
+numbering recorded by the loader. Equal local symbol names stay equal evidence
+after link-order changes; a producer's literal numeric suffix remains intact.
+The SDK adapter separately owns presentation names under the extraction memory
+allowance. Bounded function projections use them for display, search and sort;
+the matcher, snapshot hash and saved evidence consume only the original name.
+The `sdk-native-decode-v2`
+extraction identity distinguishes this evidence contract from older snapshots;
+saved historical reports remain readable without rewriting their evidence.
+
+`programAnalysisIdentity` in `Program` supplies a versioned, length-delimited identity
+encoding shared by binding and offline lineage. Only the caller's path is
+excluded; the historical analyst-review digest format remains unchanged.
+`Lineage` owns immutable source retention, snapshot inventories, association
+edges, grouped contradictions and iterative witness traversal. `ComparisonJSON`
+is its sole saved-evidence reader. `LineageJSON` owns revision-bound bounded
+projections; C ABI handles own transactional publication and one trace cache.
+`LineageService` performs local file I/O through the worker's atomic writer;
+whole reports never use the bounded backend-reply parser or cross IPC. Qt owns
+navigation and presentation only. See [lineage contracts](binary-diff-lineage.md)
+for accounting, cooperative checkpoints and report-only provenance.
+
+`Lineage` also owns analyst-declared release aliases, parent validation and
+timeline ordering in the v2 envelope. Releases reference existing snapshots;
+they never add correspondence edges. Iterative topological admission propagates
+the latest known ancestor timestamp through undated releases. The same core
+release editor applies record and parent deltas through the same release reader
+and revision owner used by initial admission. It copies the admitted immutable
+association graph and shares the original evidence; metadata edits do not
+serialize, hash or parse the retained reports again. Current allowances still
+cover the old and candidate graphs and metadata. Source evidence retains its
+encoded string size from the shared JSON writer, so candidate persistence bounds
+can be checked without materializing another complete document. The C ABI alone
+publishes the result and invalidates trace caches. Bounded
+release pages expose relation counts; parent/child pages carry the individual
+records. Core focus-by-ID locates a page after timeline edits, so Qt need not
+scan the inventory or select a different release at an old offset. Optional
+symbol discovery gates worker advertisement and desktop editing while preserving
+older graph operations. V1 document revisions and source report bytes remain
+unchanged; projection schema versions are independent of the v2 document.
+
 `lib/diff` owns the immutable comparison model, normalization-independent matching,
 block/instruction deltas, correspondence overrides and versioned persistence.
 It depends on neutral decoded snapshots rather than Session, Qt or GUI objects.
@@ -1506,6 +1556,18 @@ forwards actual per-side stages and preserves the old comparison on stop.
 `InstructionFlow` traversal; it must not introduce a second sized/unsized or
 exception-chunk traversal. The adapter preserves original bytes/operands and
 binds the snapshot to input content, ABI, settings and normalization revisions.
+The same owner binds active byte overlays by canonical file offsets and current
+bytes, including data outside the decoded inventory. Edit kinds and adjacent
+row partitioning do not affect this component; an empty overlay retains the
+historical identity. The original file hash and packed-project state keep their
+separate meanings. Overlay admission bounds this indivisible identity digest by
+the shared patch byte/run ceilings, before the normal snapshot stop checkpoint.
+Materialized analysis sections contribute a separate versioned digest of their
+canonical declarations, mappings, permissions and full owned bytes. Section and
+function declaration insertion order do not affect it. The SDK section owner
+supplies validated, bounded records; comparison does not duplicate admission.
+Data outside the selected function inventory still changes identity, and
+removing every addition restores the historical analysis identity.
 Incomplete decoding and unresolved control flow remain explicit coverage gaps.
 Profile selection and ISA/bitness admission belong to this adapter, with the
 default in `diff/Limits.h`; consumers do not guess an input's architecture.
@@ -2314,6 +2376,18 @@ create bindings or alter the proof of their parents. A source/name-index gate
 avoids constructing another settlement map when no new parent has a query.
 Otherwise, the continuation settles only visited addresses from a sorted
 frozen-row index, retaining all competing claims at those addresses.
+The initial caller pass also retains ordinary parents whose complete incoming
+alternatives remain ambiguous and carry explicit data operands. These parents
+are revisited once through that same frozen-row index after bindings exist,
+including when no globally scanned data consumer matched. Recorded operand
+addresses exclude retries when all available bindings concern unrelated data.
+The retry reuses the
+ordinary admission and source-agreement checks; it cannot establish bindings or
+restart the data pass. Missing alternative bodies or unresolved constraints
+remain unknown. The deferred parent list belongs to one application only.
+The anchor-name index contains only complete source bodies meeting the ordinary
+fixed-byte floor. Once an anchor name is queried, every matching source variant,
+including weaker counterclaims, still participates in binding validation.
 The parser/cache preserve a separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 An explicit source-layout mode also proves signed coordinate differences within
 one non-COMDAT data section. Only a canonical zero-addend static operand can
@@ -3560,6 +3634,31 @@ its fixed parameters as the program's C library does
 (`NEVERD_LIBC_VARIANT_FORWARD_FIXED`: bionic's and musl's ptrace and ioctl
 requests are ints, glibc's an enumeration and an unsigned long). The GUI offers a separate C choice for non-C
 images and omits it when only C is offered.
+
+The reader also recognizes the portable prototype-integer type queries emitted
+by `CTypeRender`: `__typeof__(__builtin_choose_expr(sizeof(T) == N, (T)0,
+(Fixed)0))`. It selects the operand's integer type using the target data model's
+`sizeof`, preserves the original C spelling, and applies no conditional-operator
+arithmetic conversion. An unknown condition, size or operand remains an explicit
+C fallback; it is not guessed from a function name or the host compiler's ABI.
+
+Dialect readers obtain referenced header declarations from the target type
+library, including program types the C emitter proved come from matching
+system headers (`EmbeddedC::HeaderTypes`, carried through `CSourceMap`). These
+declarations supply typedefs, record members and `offsetof` checks without
+inserting duplicate definitions into the displayed source. Definitions in the
+emitted unit override the external declarations. No host header or hard-coded
+pthread layout supplies this information.
+
+The reader also accepts the emitters' anonymous record compound literals,
+trailing field attributes, LLVM scalar spellings and GNU `__auto_type`
+initializers. A member `__typeof__` cast obtains its exact type from the
+unevaluated expression; that expression contributes no runtime operation in
+Rust or Go. Unknown inferred types and invalid bit-field queries stay explicit
+C fallbacks. Floating formats those languages do not support likewise remain
+C rather than acquiring a different format with the same storage width.
+C++ names an anonymous literal's type through an unevaluated `decltype`
+lambda, keeping its initializer outside the lambda and evaluated once.
 
 The reader reads the definitions a unit holds of the program's local types:
 unions, anonymous structures and unions, bit-fields, enumerations,
@@ -5636,6 +5735,11 @@ linked image's segment name. Writable slots retain
 addressable storage and a symbolic initializer. Undefined data uses an opaque
 assembly-name alias in C, avoiding invented types and system-header conflicts.
 Defined data uses its existing image backing. TLS and IFUNC records are excluded.
+ELF string-table reads share `getLinkedStringTable` for original and reconstructed
+headers. Missing or malformed dynamic strings are diagnosed without invoking
+LLVM diagnostics that require an original section index. Relocation symbol
+snapshots retain their numeric fields with an absent name, so unavailable names
+cannot erase the symbol values needed to relocate the mapped bytes.
 This contract also works without section headers. In sectionless ARM ELF,
 immutable executable bytes can supply scalar literal reads without classifying
 unreached bytes as instructions; overlapping relocations prevent folding.
@@ -12284,6 +12388,20 @@ second version cache. Nonempty property strings and interned defaults retain
 their distinct allocation rules. This projection does not execute the enclosing
 framework initializer or infer application state.
 
+`SystemProperties.getInt(String, int)` is a read-only API 28 projection over
+the existing Bionic property record owner. JNI and DEX use the same Runtime
+service; reads validate the guest record before conversion, so changed or
+unmapped property pages cannot fall back to the original input dictionary.
+Missing, empty, invalid and out-of-int32-range values use the caller's default;
+an absent Runtime service remains unsupported. `AndroidProperties.cpp` owns
+the integer parser shared with Build.VERSION. Heap's ART JNI encoder preserves
+NUL and surrogate key units for both JNI string APIs and property lookups.
+This projection does not expose property writes, callback lists, tracking or
+framework initializer bodies. Its contract follows API 28
+[SystemProperties](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/SystemProperties.java),
+the [native getter](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_SystemProperties.cpp)
+and [integer conversion](https://android.googlesource.com/platform/system/core/+/android-9.0.0_r1/base/include/android-base/parseint.h).
+
 `dalvik::Heap` is the single retained Java object/array owner for JNI and DEX.
 Its bounded identities are separate from native reference handles and guest
 addresses. JNI borrows, object arrays and DEX array instructions all refer to the
@@ -12330,6 +12448,21 @@ arrays or capacity, and other overloads remain unsupported.
 The contract follows the public API 28
 [StringBuilder](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/lang/StringBuilder.java)
 and its abstract base; no implementation bodies are incorporated.
+
+The same Library/Heap owners provide HashMap's default constructor, `size`,
+`isEmpty`, `get`, `put`, `containsKey`, `remove` and `clear`, including calls
+through the Map interface. Each constructed object retains independent entries
+with exact UTF-16 String or null keys and arbitrary reference/null values.
+Equal Strings replace a value without replacing its key; HashMap hash collisions
+do not merge different Strings. The bounded projection uses a linear entry
+search, charges traversal/copy work and retained storage before mutation, and
+does not expose bucket layout or iteration order. Raw AllocObject storage,
+subclass behavior and custom key hashCode/equals execution are unsupported;
+Map equality, hashing and rendering do not fall back to Object identity.
+The public contract follows API 28
+[HashMap](https://android.googlesource.com/platform/libcore/+/android-9.0.0_r1/ojluni/src/main/java/java/util/HashMap.java).
+These prerequisites do not establish ServiceManager's process cache or Binder
+state; its unmodeled-initializer guard remains in force.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
@@ -12747,7 +12880,10 @@ lowering or pipeline code.
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions
 and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
-and exceptional/ordered observations retain their memory effects. Prologue
+and exceptional/ordered observations retain their memory effects. Forwarding
+retains an unchanged call expression's instruction-navigation identity.
+Changed call inputs rebuild the shared expression without rebinding
+old observations by address. Prologue
 cleanup preserves saved register values still observed as data. Word zero-test
 normalization retains operand widths, signedness, effects and source truth.
 

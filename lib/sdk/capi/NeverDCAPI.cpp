@@ -172,6 +172,12 @@ bool Session::synchronizeFunctions() {
     FunctionIndices.reserve(Functions.size() + PipeResult.LowFuncs.size());
     for (size_t Index = 0; Index < Functions.size(); ++Index)
       FunctionIndices.try_emplace(Functions[Index].Entry, Index);
+    std::map<va_t, llvm::StringRef> NewNames;
+    for (const LowFunc &Function : PipeResult.LowFuncs)
+      if (!isDeletedFunction(Function.Entry) &&
+          !FunctionIndices.contains(Function.Entry))
+        NewNames.try_emplace(Function.Entry, Function.Name);
+    const auto Origins = recoveredFunctionNameOrigins(Img, NewNames);
     for (const LowFunc &Function : PipeResult.LowFuncs) {
       if (isDeletedFunction(Function.Entry))
         continue;
@@ -185,9 +191,7 @@ bool Session::synchronizeFunctions() {
       // saved rename can precede discovery when reopening a stripped image.
       OriginalNames.try_emplace(Function.Entry, Function.Name);
       const auto Rename = Renames.find(Function.Entry);
-      // This entry was absent from the image inventory. Its recovered name
-      // is analysis evidence, regardless of its spelling.
-      const NameOrigin Origin = NameOrigin::Analysis;
+      const NameOrigin Origin = Origins.at(Function.Entry);
       Functions.push_back(
           {Function.Entry, Function.OriginalSize,
            Rename == Renames.end() ? Function.Name : Rename->second,

@@ -78,7 +78,15 @@ enum LibraryOperation {
   StringGetBytes,
   UptimeMillis,
   ElapsedRealtime,
-  ElapsedRealtimeNanos
+  ElapsedRealtimeNanos,
+  PropertyInt,
+  MapSize,
+  MapIsEmpty,
+  MapGet,
+  MapPut,
+  MapContainsKey,
+  MapRemove,
+  MapClear
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

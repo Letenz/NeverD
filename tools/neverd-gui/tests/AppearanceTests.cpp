@@ -56,6 +56,7 @@
 #include <QToolButton>
 #include <QWheelEvent>
 #include <QWindow>
+#include <algorithm>
 #include <kddockwidgets/qtwidgets/views/DockWidget.h>
 #include <kddockwidgets/qtwidgets/views/MainWindow.h>
 #include <memory>
@@ -382,59 +383,47 @@ private slots:
     }
     // Measure painted columns: Qt adds its icon column after item padding,
     // so checking the style-sheet literal alone misses a double reservation.
-    const auto bounds = [&](QAction *action, const QColor &color, int fromX) {
+    const auto bounds = [&](QAction *action, auto matches, int fromX) {
       const QRect row = menu.actionGeometry(action);
       QRect ink;
       for (int y = qRound(row.top() * dpr);
            y < qRound((row.bottom() + 1) * dpr); ++y)
         for (int x = fromX; x < capture.width(); ++x) {
           const auto pixel = capture.pixelColor(x, y);
-          const auto background = Theme::instance().chrome("Menu");
-          const auto distance = [&](const QColor &reference) {
-            return qAbs(pixel.red() - reference.red()) +
-                   qAbs(pixel.green() - reference.green()) +
-                   qAbs(pixel.blue() - reference.blue());
-          };
-          // Antialiased glyphs need not contain the exact text color. Accept
-          // foreground/background blends with at least half ink coverage;
-          // other colors, such as a checked icon's border, are not text.
-          const auto textInk = [&] {
-            const int dr = color.red() - background.red();
-            const int dg = color.green() - background.green();
-            const int db = color.blue() - background.blue();
-            const int pr = pixel.red() - background.red();
-            const int pg = pixel.green() - background.green();
-            const int pb = pixel.blue() - background.blue();
-            const double coverage = double(pr * dr + pg * dg + pb * db) /
-                                    (dr * dr + dg * dg + db * db);
-            return coverage >= 0.5 && coverage <= 1.05 &&
-                   qAbs(pr - coverage * dr) < 12 &&
-                   qAbs(pg - coverage * dg) < 12 &&
-                   qAbs(pb - coverage * db) < 12;
-          };
-          const bool matches =
-              color == QColor(Qt::magenta) ? distance(color) < 12 : textInk();
-          if (matches)
+          if (matches(pixel))
             ink |= QRect(x, y, 1, 1);
         }
       return ink;
     };
-    const QRect iconInk = bounds(withIcon, Qt::magenta, 0);
+    const auto magenta = [](const QColor &pixel) {
+      return pixel.red() > 243 && pixel.green() < 12 && pixel.blue() > 243;
+    };
+    const QRect iconInk = bounds(withIcon, magenta, 0);
     QVERIFY(!iconInk.isEmpty());
-    const auto foreground = Theme::instance().chrome("MenuText");
-    const QRect labelInk = bounds(withIcon, foreground, iconInk.right() + 1);
+    // Subpixel antialiasing need not paint any glyph pixel in the exact
+    // foreground color. Measure contrast against the menu background.
+    const auto background = Theme::instance().chrome("Menu");
+    const auto textInk = [&](const QColor &pixel) {
+      return std::max({qAbs(pixel.red() - background.red()),
+                       qAbs(pixel.green() - background.green()),
+                       qAbs(pixel.blue() - background.blue())}) > 24;
+    };
+    const QRect labelInk = bounds(withIcon, textInk, iconInk.right() + 1);
     QVERIFY(!labelInk.isEmpty());
     const qreal gap = (labelInk.left() - iconInk.right() - 1) / dpr;
     qInfo() << "Menu icon-to-label gap" << gap << "DPR" << dpr
             << "icon physical bounds" << iconInk << "label bounds" << labelInk;
     QVERIFY(gap >= 6 && gap <= 10);
     for (auto *action : {plain, checked, checkedIcon, submenu->menuAction()}) {
-      const QRect label = bounds(action, foreground, iconInk.right() + 1);
+      // The checked icon has an additional border outside its painted square.
+      // The ordinary row above already measures the complete icon/text gap.
+      const QRect label =
+          bounds(action, textInk, iconInk.right() + qRound(3 * dpr));
       QVERIFY(!label.isEmpty());
       QCOMPARE(label.left(), labelInk.left());
     }
     // Checking an icon must not move it when the active border appears.
-    QCOMPARE(bounds(checkedIcon, Qt::magenta, 0).left(), iconInk.left());
+    QCOMPARE(bounds(checkedIcon, magenta, 0).left(), iconInk.left());
     if (!captures.isEmpty()) {
       ActionRegistry registry;
       QMenuBar bar;

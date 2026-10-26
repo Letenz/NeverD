@@ -1511,10 +1511,12 @@ bool forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture,
           *Root = Region.Body[Count].Val;
           return;
         }
-        bool Changed = false;
-        for (size_t I = 0; I < Inputs.size(); ++I)
-          Changed |= *Inputs[I] != Region.Body[Count + I].Val;
-        if (!Changed)
+        // A no-op must retain the call's instruction navigation identity.
+        if (std::equal(Inputs.begin(), Inputs.end(),
+                       Region.Body.begin() + Count,
+                       [](const ExprPtr *Input, const HighStmt &Read) {
+                         return *Input == Read.Val;
+                       }))
           return;
         // Expressions can be shared by source-map observations or other
         // statements. Rebuild only changed calls instead of mutating their

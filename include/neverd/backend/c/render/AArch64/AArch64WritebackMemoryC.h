@@ -92,13 +92,17 @@ aarch64PairStoreMemoryC(const AArch64WritebackMemoryInstruction &Instruction,
   const auto SecondInput = aarch64PAuthTemporary(
       kPairCSecondInput,
       {Base, FirstData, SecondData, First, Second, Updated, Input, FirstInput});
-  return llvm::formatv(
-             Instruction.isVector() ? kPairVectorStoreCExpression
-                                    : kPairStoreCExpression,
-             First, Second, Updated, Input, FirstInput, SecondInput, Base,
-             FirstData, SecondData, Instruction.scratchWord(),
-             llvm::formatv(kAddressVectorFromBitsC, FirstInput).str(),
-             llvm::formatv(kAddressVectorFromBitsC, SecondInput).str())
+  if (Instruction.isVector())
+    return llvm::formatv(
+               kPairVectorStoreCExpression, First, Second, Updated, Input,
+               FirstInput, SecondInput, Base, FirstData, SecondData,
+               Instruction.scratchWord(),
+               llvm::formatv(kAddressVectorFromBitsC, FirstInput).str(),
+               llvm::formatv(kAddressVectorFromBitsC, SecondInput).str())
+        .str();
+  return llvm::formatv(kPairStoreCExpression, First, Second, Updated, Input,
+                       FirstInput, SecondInput, Base, FirstData, SecondData,
+                       Instruction.scratchWord())
       .str();
 }
 

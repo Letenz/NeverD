@@ -14,11 +14,15 @@ from enum import Enum, IntEnum, IntFlag
 
 SessionHandle = ctypes.c_void_p
 ComparisonHandle = ctypes.c_void_p
+LineageHandle = ctypes.c_void_p
 ModuleSetHandle = ctypes.c_uint64
 ExecutionHandle = ctypes.c_uint64
 VirtualAddress = ctypes.c_ulonglong
 CancelProbeCallback = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
 ComparisonProgressCallback = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_char_p, VirtualAddress, VirtualAddress,
+)
+LineageProgressCallback = ctypes.CFUNCTYPE(
     None, ctypes.c_void_p, ctypes.c_char_p, VirtualAddress, VirtualAddress,
 )
 LoadProgressCallback = ctypes.CFUNCTYPE(
@@ -914,6 +918,8 @@ _C_TYPES: dict[str, object] = {
     "neverd_session_t": SessionHandle,
     "neverd_session_t *": ctypes.POINTER(SessionHandle),
     "neverd_comparison_t": ComparisonHandle,
+    "neverd_lineage_t": LineageHandle,
+    "neverd_lineage_progress_t": LineageProgressCallback,
     "neverd_cancel_probe_fn": CancelProbeCallback,
     "neverd_comparison_progress_t": ComparisonProgressCallback,
     "neverd_module_set_t": ModuleSetHandle,
@@ -1164,7 +1170,11 @@ _declare(
     "int",
     ["neverd_session_t", "const char *", "const unsigned char *", "size_t"],
 )
-_declare("neverd_analysis_section_remove", "int", ["neverd_session_t", "const char *"])
+_declare(
+    "neverd_analysis_section_remove",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
 _declare(
     "neverd_analysis_sections_json",
     "const char *",
@@ -2470,6 +2480,26 @@ for _comparison_history in ("undo", "redo"):
     _declare(f"neverd_comparison_{_comparison_history}", "int", ["neverd_comparison_t"])
 _declare("neverd_comparison_validate_inputs", "int",
          ["neverd_comparison_t", "neverd_session_t", "neverd_session_t"])
+
+_declare("neverd_lineage_create", "neverd_lineage_t", [])
+for _lineage_action in ("destroy", "cancel"):
+    _declare(f"neverd_lineage_{_lineage_action}", "void", ["neverd_lineage_t"])
+for _lineage_read in ("status_json", "last_error", "summary_json"):
+    _declare(f"neverd_lineage_{_lineage_read}", "const char *",
+             ["neverd_lineage_t"], ownership=Ownership.OWNED_STRING)
+_declare("neverd_lineage_load_json", "int",
+         ["neverd_lineage_t", "const char *", "const char *",
+          "neverd_lineage_progress_t", "void *"])
+_declare("neverd_lineage_edit_releases_json", "int",
+         ["neverd_lineage_t", "const char *", "const char *",
+          "neverd_lineage_progress_t", "void *"])
+for _lineage_query in ("query_json", "report_json"):
+    _declare(f"neverd_lineage_{_lineage_query}", "const char *",
+             ["neverd_lineage_t", "const char *", "neverd_lineage_progress_t", "void *"],
+             ownership=Ownership.OWNED_STRING)
+_declare("neverd_lineage_export_json", "const char *",
+         ["neverd_lineage_t", "neverd_lineage_progress_t", "void *"],
+         ownership=Ownership.OWNED_STRING)
 
 _declare("neverd_version", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_project_name", "const char *", [], ownership=Ownership.OWNED_STRING)

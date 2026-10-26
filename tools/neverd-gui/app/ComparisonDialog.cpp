@@ -42,6 +42,7 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScreen>
@@ -52,6 +53,7 @@
 #include <QTableView>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <utility>
 
 namespace neverd::gui {
@@ -457,6 +459,11 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   FunctionTable->setColumnWidth(4, 85);
   FunctionTable->setColumnWidth(5, 95);
   auto *Columns = FunctionTable->horizontalHeader();
+  for (int Column = 0; Column < Functions->columnCount(); ++Column)
+    if (!Columns->isSectionHidden(Column))
+      Columns->resizeSection(Column,
+                             std::max(Columns->sectionSize(Column),
+                                      Columns->sectionSizeHint(Column)));
   Columns->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(Columns, &QHeaderView::customContextMenuRequested, this,
           [this, Columns](const QPoint &Position) {
@@ -611,10 +618,14 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
     connect(G, &ComparisonGraph::statusChanged, GraphStatus, &QLabel::setText);
   auto *EvidencePane = new QWidget(Tabs);
   auto *EvidenceLayout = new QVBoxLayout(EvidencePane);
-  Evidence = label(EvidencePane, tr("Matching evidence appears here."));
-  Evidence->setAlignment(Qt::AlignTop);
+  Evidence = new QPlainTextEdit(EvidencePane);
+  Evidence->setObjectName("comparisonEvidence");
+  Evidence->setAccessibleName(tr("Evidence"));
+  Evidence->setReadOnly(true);
+  Evidence->setFont(font());
+  Evidence->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+  Evidence->setPlainText(tr("Matching evidence appears here."));
   EvidenceLayout->addWidget(Evidence);
-  EvidenceLayout->addStretch();
   Tabs->addTab(EvidencePane, tr("Evidence"));
   Source = new ComparisonSourceView(Session, Tabs);
   Tabs->addTab(Source, tr("Pseudocode"));
@@ -932,6 +943,12 @@ void ComparisonDialog::showPage(const QJsonObject &Page) {
                      : E["analysis_complete"].toBool()
                          ? tr("decoded bodies complete")
                          : tr("incomplete"));
+  const auto PrimaryNames = ComparisonModel::functionNamesText(A);
+  const auto SecondaryNames = ComparisonModel::functionNamesText(B);
+  if (PrimaryNames != A["name"].toString() ||
+      SecondaryNames != B["name"].toString())
+    Text += tr("\n\nPrimary name: %1\nSecondary name: %2")
+                .arg(PrimaryNames, SecondaryNames);
   Text += tr("\n\nPrimary identity: %1\nSecondary identity: %2\n\nStructural "
              "correspondence does not establish semantic equivalence or patch "
              "presence.")
@@ -941,7 +958,7 @@ void ComparisonDialog::showPage(const QJsonObject &Page) {
         tr("Function difference %1. No completed instruction comparison is "
            "available. Use Retry difference to recompute.\n\n")
             .arg(Page["state"].toString().replace('_', ' ')));
-  Evidence->setText(Text);
+  Evidence->setPlainText(Text);
   Source->setFunctions(A, B);
   update();
 }

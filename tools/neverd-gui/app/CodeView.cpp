@@ -543,7 +543,8 @@ void CodeText::cancel() {
   ++serial_;
   refreshPages_.reset();
   pendingAddress_.reset();
-  selectedAddress_.reset();
+  // Cancelling hidden-pane work leaves the displayed document and its exact
+  // instruction selection intact. A replacement document clears it below.
   statusNote_.clear();
   session_.cancelAnalysisReads(this);
   if (loading_) {
@@ -559,6 +560,7 @@ void CodeText::clear() {
   ++DocumentVersion;
   complete_ = false;
   cancel();
+  selectedAddress_.reset();
   placeAfterLoad_.reset();
   source_.clear();
   sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
@@ -626,6 +628,7 @@ void CodeText::load(Address function, const QString &representation,
                                       int(lines_.size()) - 1)]
                         .sourceLine};
   cancel();
+  selectedAddress_.reset();
   if (nameRefresh)
     refreshPages_.emplace();
   function_ = function;

@@ -5,6 +5,7 @@
 #include "Contributions.h"
 #include "EngineSymbols.h"
 #include "GraphSnapshot.h"
+#include "LineageService.h"
 #include "Listing.h"
 #include "OperandFormat.h"
 #include "ProjectHistory.h"
@@ -640,7 +641,8 @@ void sortItems(Json &items, const Json &payload) {
 // Replace one sidecar atomically with \p body. Each sidecar is a separate
 // durable file; this is intentionally not advertised as a transaction
 // spanning both files.
-void atomicWrite(const fs::path &path, const std::string &body) {
+void atomicWriteControlled(const fs::path &path, const std::string &body,
+                           const std::function<void()> &beforePublish) {
   static std::atomic<std::uint64_t> sequence{0};
   // A project file's folder, which its first write creates.
   std::error_code folder;
@@ -651,6 +653,16 @@ void atomicWrite(const fs::path &path, const std::string &body) {
       std::to_string(
           std::chrono::steady_clock::now().time_since_epoch().count()) +
       "-" + std::to_string(sequence++);
+  const auto preparePublication = [&] {
+    try {
+      if (beforePublish)
+        beforePublish();
+    } catch (...) {
+      std::error_code ignored;
+      fs::remove(temporary, ignored);
+      throw;
+    }
+  };
 #ifdef _WIN32
   const auto fail = [&](const char *operation, DWORD code) {
     DeleteFileW(temporary.c_str());
@@ -681,8 +693,11 @@ void atomicWrite(const fs::path &path, const std::string &body) {
       std::chrono::steady_clock::now() +
       std::chrono::seconds(
           ::neverd::limits::worker::kEngineAtomicWriteDeadlineSeconds);
-  while (!MoveFileExW(temporary.c_str(), path.c_str(),
-                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+  for (;;) {
+    preparePublication();
+    if (MoveFileExW(temporary.c_str(), path.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+      break;
     const auto code = GetLastError();
     if ((code != ERROR_SHARING_VIOLATION && code != ERROR_LOCK_VIOLATION &&
          code != ERROR_ACCESS_DENIED) ||
@@ -713,6 +728,8 @@ void atomicWrite(const fs::path &path, const std::string &body) {
     success = false;
   if (::close(descriptor) != 0)
     success = false;
+  if (success)
+    preparePublication();
   if (!success || ::rename(temporary.c_str(), path.c_str()) != 0) {
     ::unlink(temporary.c_str());
     throw Error("save_failed", "Cannot atomically replace sidecar");
@@ -723,6 +740,9 @@ void atomicWrite(const fs::path &path, const std::string &body) {
     ::close(directory);
   }
 #endif
+}
+void atomicWrite(const fs::path &path, const std::string &body) {
+  atomicWriteControlled(path, body, {});
 }
 } // namespace
 
@@ -2314,6 +2334,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!comparison_)
       comparison_ = std::make_unique<ComparisonService>(atomicWrite);
     return comparison_->execute(operation, p, loadProgress_, cancelled_);
+  }
+  if (operation.starts_with("lineage_")) {
+    if (!lineage_)
+      lineage_ = std::make_unique<LineageService>(atomicWriteControlled);
+    return lineage_->execute(operation, p, loadProgress_, cancelled_);
   }
   if (operation == "analysis_snapshot")
     return analysisSnapshot();

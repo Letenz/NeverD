@@ -55,6 +55,17 @@ inline constexpr int kComparisonInitialHeight = 800;
 inline constexpr int kComparisonMinimumWidth = 760;
 /// Keep source code readable below the comparison and paging controls.
 inline constexpr int kComparisonMinimumHeight = 640;
+/// Digest display prefix; full identities remain in row evidence and tooltips.
+inline constexpr int kLineageDigestDisplayCharacters = 12;
+inline constexpr int kLineageInitialWidth = 1180;
+inline constexpr int kLineageInitialHeight = 780;
+inline constexpr int kLineageMinimumWidth = 760;
+inline constexpr int kLineageMinimumHeight = 560;
+inline constexpr int kLineageGraphMinimumHeight = 180;
+inline constexpr int kLineageGraphInitialHeight = 300;
+inline constexpr int kLineageSourceInitialHeight = 220;
+inline constexpr int kLineageReleaseChooserWidth = 760;
+inline constexpr int kLineageReleaseChooserHeight = 520;
 inline constexpr int kComparisonSourceMinimumVisibleLines = 6;
 inline constexpr int kComparisonCounterpartInitialWidth = 940;
 inline constexpr int kComparisonCounterpartInitialHeight = 620;

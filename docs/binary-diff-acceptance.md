@@ -16,9 +16,9 @@ were understood.
 | A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
 | B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
-| D: version and branch lineage | Pairwise reports and analyst history are reusable inputs | Version graph, conflicting direct/indirect paths, uncertainty, content-addressed reuse, timeline/assessment projections and CLI/GUI persistence; annotation application remains #99 |
+| D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, and a reproducible synthetic scale harness | Exact-source integration qualification of the release increment, package-wide graphs, automated patch/backport/revert evidence and large real-corpus quality/latency; annotation application remains #99 |
 | E: software/game packages | Native loaders, module resources and a separate qualified offline web-package behavior comparison exist | One package manifest workflow routing native/managed/metadata/script/config/resource changes, repacking distinctions, qualified Unity/Unreal/Godot adapters and unknown/encrypted coverage |
-| F: competitive qualification | Owned native/compiler regressions and reproducible local receipts | Pinned BinDiff, Diaphora and Ghidra Version Tracking baselines; licensed ground truth, common-input and end-to-end tracks, held-out corpora, per-category quality/resource metrics, frozen numeric gates and statistical evidence |
+| F: competitive qualification | Owned native/compiler regressions, pinned local diagnostic runs, and a [reusable fixture generator and mapping evaluator](binary-diff-benchmarks.md) for NeverD, BinDiff, Diaphora and Ghidra exports | Automated competitor invocation/export, licensed real-world ground truth, qualified common-input and end-to-end tracks, held-out corpora, per-category quality/resource metrics, frozen numeric gates and statistical evidence |
 
 Each advanced area remains required. An absent native finding is not evidence
 that a patch is absent, and an analyst's patch-present assessment is not a
@@ -61,3 +61,200 @@ See [the comparison profiles](binary-diff.md) for exact evidence meanings and
 [the test guide](testing.md#structural-binary-comparison) for owning checks.
 No comparative performance or “best in class” claim is established by the
 current regressions.
+
+The preceding fixed integration `183c8acd77b6cbece352b8c7b2dbb70fc97064b7`
+selected 5,439 CTests: 5,376 passed and 63 skipped, with no failures. Its compiler,
+historical-report, Python and Qt checks passed. The normal push delivered
+`32a3acca81cd4850b0fbb50f5ae5f2369bbbfb5c` after additional concurrent upstream
+merges; those later deltas need their own integration coverage.
+
+The first complete lineage integration at
+`f9b2ab69915218c25624262056141fcf43ac3665` selected 5,744 CTests: 5,638 passed,
+four failed and 102 skipped. The failures exposed a source global-type lookup
+that overlooked shared original-image storage, an appearance-test oracle that
+misidentified antialiased text, and two growing x86 compilation/execution
+matrices exceeding their 120-second per-test deadlines. The global-type repair
+is covered by ELF/COFF/Mach-O unit cases and worker tests that compile both C
+routes at O0/O2, change the pointer cell between calls, and preserve native IR.
+The appearance oracle retains the actual layout tolerances. System-instruction
+and descriptor matrices retain all original cases in separate tests.
+
+The source-frozen rerun at `a90cd50056338b67938332b453c5b0b73a68ea1b`
+selected 5,843 CTests: 5,734 passed, two failed and 107 skipped. All four earlier
+failures were repaired; the remaining failures were two aggregate AMX matrices
+exceeding the unchanged 120-second deadline. This run also passed the
+527-comparison compiler fixture, 89 byte-exact historical report reopens,
+native-backed Python checks, desktop comparison/appearance/lineage checks at
+150% scaling, and lineage checks in private GNOME Wayland sessions at both
+100% and 150%. Matrix splitting increases the CTest count without adding
+semantic coverage; optional NeverC cases account for the additional skips.
+Original failure and diagnostic receipts remain separate from subsequent
+qualification. The AMX matrices were subsequently split by encoding, preserving
+their original cases and the 120-second per-case deadline.
+
+The preliminary delivery merge `4155ff7a180ff069918f48b431b0093047829f40`
+also exposed a stale test caller of the shared stack-projection interface during
+the full build. The fixture now supplies its matching LowIR source; the original
+stack-operation assertions remain intact. Inspection of the newly integrated
+byte-patch workflow then reproduced a data-only overlay reusing the unpatched
+DIFF identity and collapsing two states into one lineage snapshot. SDK and
+Python regressions first failed against that source. Repair
+`5a9b57dffa5f2ce9455e4ead210671b4adc85e85` binds effective overlay bytes in the
+shared native snapshot adapter, including bytes outside decoded functions.
+Focused tests passed for data-only identity, refusal of an older saved binding,
+sidecar replay, revert, and identical bytes with different edit kinds/row splits.
+The source-frozen qualification of this repaired source selected 5,777 CTests:
+5,707 passed, 70 skipped and none failed. A separate, disjoint selection of all
+126 split AMX cases passed without skips. The compiler fixture's 527 comparisons
+are included in the selected CTests, not additional CTest cases. All 89 historical
+report reopens remained byte-exact, and the five Python groups passed 111 tests.
+Comparison, appearance and lineage checks passed at 150% offscreen scaling;
+native compositor gestures are explicitly skipped on that platform. Private
+GNOME Wayland sessions at both 100% and 150% each passed all ten lineage cases,
+including real resizing, restored geometry, replacement navigation and bounded
+long-label rendering. Source hashes remained unchanged throughout qualification.
+
+The same source passed three fresh-process scale samples at each of 1,000 and
+10,000 functions per snapshot, with 16 snapshots and 19 source comparisons.
+The larger workload retains 160,000 function nodes and 190,000 association edges.
+The reusable harness verifies authored identities, complete graph counts,
+first/middle/last-function paths and original edges, current cache budgets,
+cancelled replacement and exact report export. Hashed inputs, native library,
+bindings and harness, original failures, per-sample timings and process RSS are
+retained in local qualification artifacts. These are synthetic scale checks;
+they do not qualify real-corpus matching quality, desktop latency or competitive
+superiority.
+
+This qualification uses Release, LLVM 23r6, Capstone
+`88f3e3966565fb9383cd4fbb20c051c9aa22f309` and signature export
+`fe9a373c020fd48f68802353497bf8e315f7e178`. Z3, emulation and embedded Python
+are disabled; native Python bindings are qualified separately. Skips include
+optional NeverC, Windows/PDB and exception corpora, platform-specific native
+execution and newer LLVM intrinsics. Subsequent upstream integration and the
+delivered commit require separately identified coverage.
+
+Integration `3dc5881e6dcc1f9607965adf83995db8ae0bc68a` includes upstream
+`62c40a36f5c4dbe5dd7d8e1f50738566728ba58d`. Its complete build initially
+refused a missing libc++ fixture archive; installing the exact upstream signature
+gitlink `39c99bbade0bf21c00cc0d70df7c577d98e34a7c` supplied the retained
+compiler artifacts. The subsequent frozen-source selection passed 6,429 CTests,
+skipped 76 and failed none, out of 6,505 selected. The disjoint 126 AMX cases,
+both three-sample scale workloads, 89 historical reopens, five Python groups,
+150% Qt checks and both ten-case native Wayland runs passed. Seventy-three
+signature-generation/metadata script tests also passed against unchanged script
+contents. This uses the same Release/LLVM/Capstone profile and disabled optional
+backends described above; it does not imply emulation qualification.
+
+Desktop recovery was subsequently qualified at
+`833507adcd4130db7da6b838687be27514048a79`. A saved collection with 200
+snapshots and 48 KiB labels reproduces valid admission followed by oversized
+default pages. User-adjustable page rows recover the complete inventory without
+changing labels, collection identity or budgets. A separate 200-report diagram
+reproduces Fit shrinking below the manual zoom range; Zoom in now recovers a
+readable scale. Both regressions failed on the original desktop code and passed
+after repair. All twelve lineage cases passed in each native Wayland scale;
+offscreen runs passed eleven and explicitly skipped the compositor gesture.
+CLI, worker and shared-library hashes remained identical to the qualified
+integration. Later layout and upstream changes still need their own coverage.
+
+The frozen integration `9db401cc32e2872d3e6ce0af96084a9f005a6a25`
+includes upstream `e4bac38ad97853d86c75cd67d8a107c86c1f1357` and signature
+gitlink `4ad4e052e78666a1ac20541535878133e3a3ca8d`. Its complete selected
+build succeeded. Of 6,565 selected CTests, 6,486 passed, 79 skipped and none
+failed. The three additional skips require an unconfigured Windows exception
+corpus; they are not successful executions. All 126 disjoint AMX cases, both
+three-sample synthetic scale workloads, 89 byte-exact historical reopens,
+111 native-backed Python checks and 73 signature-script checks passed.
+Comparison, appearance and lineage checks passed at 150% offscreen scaling,
+with compositor gestures explicitly skipped there. Each private Wayland run
+at 100% and 150% passed all twelve lineage cases without skips. Source hashes
+remained unchanged throughout this qualification. The Release/LLVM/Capstone
+profile and disabled optional backends remain as described above. Subsequent
+localization, right-to-left navigation and upstream integration have separate
+qualification records.
+
+The localized integration `5aaa254c7524c21c98ef9a4f27060cda505cc4f9`
+selected 6,764 CTests: 6,684 passed, 79 skipped and one failed. The failure
+was the complete workbench group: its private runtime path exceeded the Unix
+socket limit, reference fixtures tried to focus hidden code tabs, and hiding a
+completed code document discarded its exact secondary instruction selection.
+The latter was a product defect; cancellation now preserves that selection
+until the document is replaced. Original failures remain in separate receipts.
+The 126 disjoint AMX cases, both synthetic scale workloads, 89 historical
+reopens and 111 Python checks passed. The localized lineage suite passed all
+23 cases in each private Wayland scale; the offscreen gesture remained skipped.
+
+Repair `9987eccaa4692d98826e730d4ac41a163176c070` passed all 16 selected
+worker/desktop CTests, including the complete workbench group. Its 14-case
+focused workbench run passed offscreen and in private Wayland sessions at
+100% and 150%. The compositor explicitly supplies native focus; Qt's ordinary
+activation request alone cannot provide that contract on Wayland. All 23
+lineage cases passed at each native scale; offscreen passed 22 and skipped the
+native gesture. Eleven locales also exercise invalid-file messages and retention
+of the previous selection and collection. CLI and shared-core bytes remained
+identical to the preceding integration. This is a composite repair qualification,
+not a clean rerun of all 6,764 CTests. Later row-visibility checks have their own
+qualification below.
+
+Integration `a005079b26e26f2ac467a3ebc1af41054c7a6182` includes upstream
+`0e24efef94a1e8c51188d3c7233066545733c070`. All 418 selected CTests passed
+without skips, covering the new BEXTR owner, shared prefix/undefined-effect
+boundaries, source pipelines and DIFF owners, including the compiler comparison
+fixture. The 89 historical reopens and 111 Python checks passed again. Desktop
+binaries remained identical to the qualified repair. The public-interface ledger
+now accounts for the lineage C, Python, CLI and JSON surfaces; its 116 script
+tests and source validation passed. The unchanged Release profile still disables
+Z3, emulation and embedded Python. Merged Android changes therefore have no
+runtime qualification in this profile.
+
+Native layout qualification at `f902f29464b4bb18ca113ab794122b651919239c`
+adds visible-row and non-overlap checks for narrow localized windows. Arabic
+font metrics first reproduced a clipped function row, and a growing error
+message partly hid the selected snapshot. Font-derived table minima, retained
+selection visibility and the dialog's content minimum fix those cases. Screenshot
+review also caught paging status overlapping a table despite valid viewport
+coordinates; the stronger checks cover containment and separation. Multi-line
+metadata is rendered on one table line while original tooltips and evidence
+remain complete. All 23 lineage cases passed at each native scale. The three
+selected desktop CTests passed; the 150% offscreen run passed 22 and skipped
+the compositor gesture. CLI, worker and shared-core bytes remained identical
+to integration `a005079b26e26f2ac467a3ebc1af41054c7a6182`.
+
+Naming-provenance and declared-release integration at
+`bc4931f92d9ed6fcd1847668fe5baa5d37ec3f28` selected 14,163 CTests:
+13,971 passed, 21 failed and 171 skipped. All 326 selected DIFF cases passed
+without skips, including the shared reader and release contracts. The overall
+integration remains failed; those broader failures are retained separately from
+successful DIFF qualification. Fifteen failing CLI cases also fail with the
+earlier frozen `4e02ca99499cf10c4f654c8fbbed10c6df97e0cc` CLI. That comparison
+does not classify the remaining direct-component failures or establish that all
+failure causes are identical.
+
+The same frozen integration passed 116 native-backed Python checks, real legacy
+worker/library compatibility, and both three-sample 10,000-release workloads.
+At each native Wayland scale, lineage passed 27 cases, the selected workbench
+workflows passed 19, and layout passed eight. All 89 historical reports remained
+byte-exact through the offline workflow. Fresh live binding intentionally refused
+38 reports from older native naming profiles: `sdk-native-decode-v2` excludes
+generated address names and display-only duplicate numbering from name anchors.
+This is a profile boundary, not 89 successful old-report live authentications.
+
+This local Release profile uses the frozen LLVM
+`03270359c2ed8f6806533d3832a947bf883a6f69` SDK, including its separately built
+JIT/driver archives, Capstone `88f3e3966565fb9383cd4fbb20c051c9aa22f309`, and
+retained dependency fixture overrides. Z3, emulation and embedded Python plugins
+remain disabled. Native Windows/ARM64 and CI coverage are separate. Subsequent
+GUI name presentation, header sizing, test-fixture repairs and upstream merges
+require their own receipts; none converts this failed aggregate into a clean run.
+
+Name-presentation integration at
+`b6612fe61e1d4299d450c8540034141180a253ce` selected 15,367 CTests:
+15,079 passed, 31 failed and 257 skipped. All 333 selected DIFF-related tests
+passed without skips. Its separate capability-manifest check failed on duplicate
+byte-overlay claims and exclusions; the aggregate remains failed. The frozen
+source and dependency hashes were checked after all independent checks finished.
+The same 116 Python checks, real legacy worker/library compatibility, 89
+byte-exact historical reopens and 38 intentional old-profile live-binding
+refusals passed. At both native Wayland scales, lineage passed 27 cases, saved
+comparison passed three, the selected workbench workflows passed 19, and layout
+passed eight, all without skips. Later fixes require their own qualification.

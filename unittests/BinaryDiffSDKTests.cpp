@@ -14,6 +14,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -21,10 +22,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <initializer_list>
+#include <map>
 #include <set>
 #include <string>
 #include <thread>
@@ -168,6 +171,421 @@ protected:
     return Bytes;
   }
 };
+
+TEST_F(BinaryDiffSDK, ByteOverlaysBindDataOnlyChangesAndReopenedReports) {
+  const std::array<uint8_t, 24> Bytes{0xb8, 7, 0, 0, 0, 0xc3};
+  auto A = input(Bytes);
+  auto B = input(Bytes);
+  const auto Before = take(neverd_comparison_export_json(compare(A, B)));
+  auto Original = llvm::json::parse(Before);
+  ASSERT_TRUE(bool(Original));
+  const auto *OriginalIdentity = Original->getAsObject()->getObject("primary");
+  ASSERT_TRUE(OriginalIdentity);
+  neverd_byte_patch_options_v1 Patch{};
+  Patch.struct_size = sizeof(Patch);
+  Patch.address = 0x1010;
+  Patch.kind = "bytes";
+  Patch.bytes = "2a";
+  ASSERT_FALSE(take(neverd_byte_patch_apply(A, &Patch)).empty())
+      << take(neverd_last_error(A));
+  const auto ChangedComparison = compare(A, B);
+  const auto After = take(neverd_comparison_export_json(ChangedComparison));
+  auto Changed = llvm::json::parse(After);
+  ASSERT_TRUE(bool(Changed));
+  const auto *ChangedIdentity = Changed->getAsObject()->getObject("primary");
+  ASSERT_TRUE(ChangedIdentity);
+  EXPECT_EQ(OriginalIdentity->getString("sha256"),
+            ChangedIdentity->getString("sha256"));
+  EXPECT_NE(OriginalIdentity->getString("analysis"),
+            ChangedIdentity->getString("analysis"));
+  EXPECT_NE(OriginalIdentity->getString("revision"),
+            ChangedIdentity->getString("revision"));
+  EXPECT_EQ(render(*Original->getAsObject()->get("functions")),
+            render(*Changed->getAsObject()->get("functions")));
+  EXPECT_EQ(neverd_comparison_restore_json(ChangedComparison, Before.c_str()),
+            0);
+  EXPECT_FALSE(take(neverd_comparison_last_error(ChangedComparison)).empty());
+  EXPECT_EQ(take(neverd_comparison_export_json(ChangedComparison)), After);
+
+  // An unpacked sidecar must bind the same effective bytes after reload.
+  ASSERT_EQ(neverd_byte_patches_save(A), 0) << take(neverd_last_error(A));
+  auto Replayed = neverd_session_create();
+  Sessions.push_back(Replayed);
+  ASSERT_EQ(
+      neverd_session_set_load_options(
+          Replayed,
+          R"({"loader":"binary","processor":"x86_64","platform":"sysv","base":4096})"),
+      0);
+  ASSERT_EQ(
+      neverd_session_load(Replayed, (Directory / "0.raw").string().c_str()), 1)
+      << take(neverd_last_error(Replayed));
+  const auto Reopened = compare(Replayed, B);
+  EXPECT_EQ(neverd_comparison_restore_json(Reopened, After.c_str()), 1)
+      << take(neverd_comparison_last_error(Reopened));
+
+  ASSERT_EQ(neverd_byte_patch_revert(A, Patch.address, 1), 0);
+  const auto Restored = compare(A, B);
+  EXPECT_EQ(neverd_comparison_restore_json(Restored, Before.c_str()), 1)
+      << take(neverd_comparison_last_error(Restored));
+}
+
+TEST_F(BinaryDiffSDK, FunctionNameProvenanceSurvivesReorderingAndRenames) {
+  for (const bool AArch64 : {false, true})
+    for (const unsigned Symbols : {0u, 1u, 2u}) {
+      SCOPED_TRACE(AArch64);
+      SCOPED_TRACE(Symbols);
+      const auto Image = [&](bool Reordered) {
+        auto Bytes = AArch64 ? words({Reordered ? 0x94000008u : 0x94000004u,
+                                      Reordered ? 0x94000003u : 0x94000007u,
+                                      0xd65f03c0, 0xd503201f})
+                             : std::vector<uint8_t>{
+                                   0xe8, uint8_t(Reordered ? 27 : 11), 0, 0, 0,
+                                   0xe8, uint8_t(Reordered ? 6 : 22),  0, 0, 0,
+                                   0xc3};
+        Bytes.resize(48, AArch64 ? 0 : 0xcc);
+        for (unsigned I = 0; I < 2; ++I) {
+          const auto Which = Reordered ? 1 - I : I;
+          const auto Code =
+              AArch64 ? words({Which ? 0x52800260u : 0x528000e0u, 0xd65f03c0})
+                      : body(Which ? 19 : 7);
+          std::copy(Code.begin(), Code.end(), Bytes.begin() + 16 * (I + 1));
+        }
+        // In the stripped variant, only the entry and direct call targets
+        // identify starts. Other variants retain duplicate local symbols or
+        // genuine symbols whose spelling happens to resemble generated labels.
+        using ELF = llvm::object::ELF64LE;
+        using namespace llvm::ELF;
+        constexpr size_t CodeOffset = 0x100;
+        std::vector<uint8_t> File(CodeOffset + Bytes.size(), 0);
+        ELF::Ehdr Header{};
+        std::memcpy(Header.e_ident, ElfMagic, sizeof(ElfMagic) - 1);
+        Header.e_ident[EI_CLASS] = ELFCLASS64;
+        Header.e_ident[EI_DATA] = ELFDATA2LSB;
+        Header.e_ident[EI_VERSION] = EV_CURRENT;
+        Header.e_type = ET_EXEC;
+        Header.e_machine = AArch64 ? EM_AARCH64 : EM_X86_64;
+        Header.e_version = EV_CURRENT;
+        Header.e_entry = 0x400000 + CodeOffset;
+        Header.e_phoff = sizeof(ELF::Ehdr);
+        Header.e_ehsize = sizeof(ELF::Ehdr);
+        Header.e_phentsize = sizeof(ELF::Phdr);
+        Header.e_phnum = 1;
+        Header.e_shentsize = sizeof(ELF::Shdr);
+        ELF::Phdr Segment{};
+        Segment.p_type = PT_LOAD;
+        Segment.p_flags = PF_R | PF_X;
+        Segment.p_vaddr = 0x400000;
+        Segment.p_paddr = 0x400000;
+        Segment.p_filesz = File.size();
+        Segment.p_memsz = File.size();
+        Segment.p_align = 0x1000;
+        std::memcpy(File.data(), &Header, sizeof(Header));
+        std::memcpy(File.data() + sizeof(Header), &Segment, sizeof(Segment));
+        std::copy(Bytes.begin(), Bytes.end(), File.begin() + CodeOffset);
+        if (Symbols) {
+          std::array<ELF::Sym, 4> Names{};
+          std::string Strings(1, '\0');
+          const auto AddName = [&](llvm::StringRef Name) {
+            const auto Offset = Strings.size();
+            Strings.append(Name.data(), Name.size());
+            Strings.push_back('\0');
+            return Offset;
+          };
+          for (unsigned I = 0; I < 2; ++I) {
+            const auto Which = Reordered ? 1 - I : I;
+            auto &Sym = Names[I + 1];
+            Sym.st_name = AddName(Symbols == 1 ? "helper"
+                                  : Which      ? "sub_400120"
+                                               : "sub_400110");
+            Sym.setBindingAndType(STB_LOCAL, STT_FUNC);
+            Sym.st_shndx = 1;
+            Sym.st_value = 0x400110 + 16 * I;
+            Sym.st_size = AArch64 ? 8 : 6;
+          }
+          Names[3].st_name = AddName("entry");
+          Names[3].setBindingAndType(STB_GLOBAL, STT_FUNC);
+          Names[3].st_shndx = 1;
+          Names[3].st_value = Header.e_entry;
+          Names[3].st_size = AArch64 ? 12 : 11;
+          std::array<ELF::Shdr, 4> Sections{};
+          Sections[1].sh_type = SHT_PROGBITS;
+          Sections[1].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+          Sections[1].sh_addr = Header.e_entry;
+          Sections[1].sh_offset = CodeOffset;
+          Sections[1].sh_size = Bytes.size();
+          Sections[1].sh_addralign = 16;
+          Sections[2].sh_type = SHT_SYMTAB;
+          Sections[2].sh_offset = File.size();
+          Sections[2].sh_size = sizeof(Names);
+          Sections[2].sh_link = 3;
+          Sections[2].sh_info = 3;
+          Sections[2].sh_addralign = 8;
+          Sections[2].sh_entsize = sizeof(ELF::Sym);
+          const auto Append = [&](const void *Data, size_t Size) {
+            const auto *Begin = static_cast<const uint8_t *>(Data);
+            File.insert(File.end(), Begin, Begin + Size);
+          };
+          Append(Names.data(), sizeof(Names));
+          Sections[3].sh_type = SHT_STRTAB;
+          Sections[3].sh_offset = File.size();
+          Sections[3].sh_size = Strings.size();
+          Sections[3].sh_addralign = 1;
+          Append(Strings.data(), Strings.size());
+          File.resize((File.size() + 7) & ~size_t(7), 0);
+          Header.e_shoff = File.size();
+          Header.e_shnum = Sections.size();
+          Append(Sections.data(), sizeof(Sections));
+          std::memcpy(File.data(), &Header, sizeof(Header));
+        }
+        return File;
+      };
+      const auto Load = [&](bool Reordered) {
+        const auto Bytes = Image(Reordered);
+        const auto Path =
+            Directory / (std::to_string(Sessions.size()) + ".elf");
+        std::ofstream File(Path, std::ios::binary);
+        File.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+        File.close();
+        auto S = neverd_session_create();
+        Sessions.push_back(S);
+        EXPECT_EQ(neverd_session_load(S, Path.string().c_str()), 1)
+            << take(neverd_last_error(S));
+        return S;
+      };
+      const auto A = Load(false), B = Load(true);
+      const auto Before = parsed(
+          neverd_comparison_export_json(compare(A, B, R"({"discover":true})")));
+      ASSERT_TRUE(Before.getAsObject());
+      const auto *Matches = Before.getAsObject()->getArray("matches");
+      ASSERT_TRUE(Matches);
+      ASSERT_EQ(Matches->size(), 3u) << render(Before);
+      const std::map<std::string, std::string> Expected{
+          {"0x400100", "0x400100"},
+          {"0x400110", "0x400120"},
+          {"0x400120", "0x400110"}};
+      for (const auto &Value : *Matches) {
+        const auto *Row = Value.getAsObject();
+        ASSERT_TRUE(Row && Row->getString("primary"));
+        const auto Found = Expected.find(Row->getString("primary")->str());
+        ASSERT_NE(Found, Expected.end());
+        EXPECT_EQ(Row->getString("secondary"), Found->second);
+        if (!Symbols || (Symbols == 1 && Found->first != "0x400100"))
+          EXPECT_NE(Row->getString("step"), "symbol_name");
+        else
+          EXPECT_EQ(Row->getString("step"), "symbol_name");
+      }
+      // An analyst can give different functions the same display annotation;
+      // that must not replace the extraction's names or manufacture an anchor.
+      ASSERT_EQ(neverd_rename_addr(A, 0x400110, "analyst_label"), 0);
+      ASSERT_EQ(neverd_rename_addr(B, 0x400110, "analyst_label"), 0);
+      const auto Renamed = compare(A, B, R"({"discover":true})");
+      const auto After = parsed(neverd_comparison_export_json(Renamed));
+      ASSERT_TRUE(After.getAsObject());
+      for (const auto *Key : {"primary", "secondary", "functions", "matches"}) {
+        ASSERT_TRUE(Before.getAsObject()->get(Key));
+        ASSERT_TRUE(After.getAsObject()->get(Key));
+        EXPECT_EQ(*Before.getAsObject()->get(Key),
+                  *After.getAsObject()->get(Key))
+            << Key;
+      }
+      ASSERT_EQ(neverd_comparison_restore_json(Renamed, render(Before).c_str()),
+                1)
+          << take(neverd_comparison_last_error(Renamed));
+      for (const auto *Side : {"primary", "secondary"}) {
+        const auto Query = render(
+            llvm::json::Object{{"side", Side}, {"search", "analyst_label"}});
+        const auto Page =
+            parsed(neverd_comparison_functions_json(Renamed, Query.c_str()));
+        const auto *Rows = Page.getAsObject()->getArray("items");
+        ASSERT_TRUE(Rows);
+        ASSERT_EQ(Rows->size(), 1u);
+        const auto *Row = Rows->front().getAsObject();
+        EXPECT_EQ(Row->getString("address"), "0x400110");
+        EXPECT_EQ(Row->getString("name"), "analyst_label");
+        EXPECT_EQ(Row->getString("evidence_name"),
+                  Symbols == 1 ? "helper"
+                  : Symbols == 2 && llvm::StringRef(Side) == "secondary"
+                      ? "sub_400120"
+                      : "sub_400110");
+      }
+    }
+}
+
+TEST_F(BinaryDiffSDK, AnalysisSectionsBindDataOutsideTheFunctionInventory) {
+  auto A = input(body());
+  auto B = input(body());
+  const auto Before = take(neverd_comparison_export_json(compare(A, B)));
+  auto Original = llvm::json::parse(Before);
+  ASSERT_TRUE(bool(Original));
+  const uint8_t Data[] = {42, 3, 4};
+  ASSERT_EQ(neverd_analysis_section_add(
+                A, R"({"schema":"neverd.analysis-section.v1","name":".extra",
+                       "address":"0x2000","permissions":"rw"})",
+                Data, sizeof(Data)),
+            1)
+      << take(neverd_last_error(A));
+  auto C = compare(A, B);
+  const auto After = take(neverd_comparison_export_json(C));
+  auto Changed = llvm::json::parse(After);
+  ASSERT_TRUE(bool(Changed));
+  const auto &Old = *Original->getAsObject()->getObject("primary");
+  const auto &New = *Changed->getAsObject()->getObject("primary");
+  EXPECT_EQ(Old.getString("sha256"), New.getString("sha256"));
+  EXPECT_NE(Old.getString("analysis"), New.getString("analysis"));
+  EXPECT_NE(Old.getString("revision"), New.getString("revision"));
+  EXPECT_EQ(render(*Original->getAsObject()->get("functions")),
+            render(*Changed->getAsObject()->get("functions")));
+  EXPECT_EQ(neverd_comparison_restore_json(C, Before.c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), After);
+
+  auto L = neverd_lineage_create();
+  ASSERT_TRUE(L);
+  const auto Document =
+      render(llvm::json::Object{{"schema", "neverd.bindiff.lineage"},
+                                {"schema_version", 1},
+                                {"reports", llvm::json::Array{Before, After}}});
+  EXPECT_EQ(
+      neverd_lineage_load_json(L, Document.c_str(), nullptr, nullptr, nullptr),
+      1)
+      << take(neverd_lineage_last_error(L));
+  const auto Summary = parsed(neverd_lineage_summary_json(L));
+  ASSERT_TRUE(Summary.getAsObject());
+  EXPECT_EQ(Summary.getAsObject()->getInteger("versions"), 2);
+  neverd_lineage_destroy(L);
+
+  const auto Sections = take(neverd_analysis_sections_json(A, 1));
+  auto Replayed = input(body());
+  ASSERT_EQ(neverd_analysis_sections_import_json(Replayed, Sections.c_str()), 1)
+      << take(neverd_last_error(Replayed));
+  C = compare(Replayed, B);
+  EXPECT_EQ(neverd_comparison_restore_json(C, After.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+
+  ASSERT_EQ(neverd_analysis_section_remove(A, ".extra"), 1);
+  C = compare(A, B);
+  EXPECT_EQ(neverd_comparison_restore_json(C, Before.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+}
+
+TEST_F(BinaryDiffSDK, AnalysisSectionIdentityIgnoresInsertionOrder) {
+  auto A = input(body());
+  auto B = input(body());
+  const uint8_t Data[] = {42, 3, 4};
+  const char *Descriptions[] = {
+      R"({"schema":"neverd.analysis-section.v1","name":".first",
+          "address":"0x2000","permissions":"r"})",
+      R"({"schema":"neverd.analysis-section.v1","name":".second",
+          "address":"0x3000","permissions":"rw"})"};
+  for (unsigned I = 0; I < 2; ++I) {
+    ASSERT_EQ(
+        neverd_analysis_section_add(A, Descriptions[I], Data, sizeof(Data)), 1);
+    ASSERT_EQ(
+        neverd_analysis_section_add(B, Descriptions[1 - I], Data, sizeof(Data)),
+        1);
+  }
+  const auto Equal = parsed(neverd_comparison_export_json(compare(A, B)));
+  const auto *Left = Equal.getAsObject()->getObject("primary");
+  const auto *Right = Equal.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_EQ(Left->getString("analysis"), Right->getString("analysis"));
+  EXPECT_EQ(Left->getString("revision"), Right->getString("revision"));
+  const uint8_t Changed[] = {42, 3, 5};
+  ASSERT_EQ(neverd_analysis_section_remove(B, ".first"), 1);
+  ASSERT_EQ(
+      neverd_analysis_section_add(B, Descriptions[0], Changed, sizeof(Changed)),
+      1);
+  const auto Different = parsed(neverd_comparison_export_json(compare(A, B)));
+  Left = Different.getAsObject()->getObject("primary");
+  Right = Different.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_NE(Left->getString("analysis"), Right->getString("analysis"));
+  EXPECT_NE(Left->getString("revision"), Right->getString("revision"));
+}
+
+TEST_F(BinaryDiffSDK, AnalysisSectionDeclarationsHaveCanonicalIdentity) {
+  auto A = input(body());
+  auto B = input(body());
+  const auto First = body(7), Second = body(9);
+  auto Bytes = First;
+  Bytes.insert(Bytes.end(), Second.begin(), Second.end());
+  const auto Description = [&](bool Reverse) {
+    llvm::json::Array Functions{llvm::json::Object{{"name", "added_first"},
+                                                   {"offset", "0x0"},
+                                                   {"size", First.size()}},
+                                llvm::json::Object{{"name", "added_second"},
+                                                   {"offset", "0x9"},
+                                                   {"size", Second.size()}}};
+    if (Reverse)
+      std::reverse(Functions.begin(), Functions.end());
+    return render(llvm::json::Object{{"schema", "neverd.analysis-section.v1"},
+                                     {"name", ".code"},
+                                     {"address", "0x3000"},
+                                     {"permissions", "rx"},
+                                     {"functions", std::move(Functions)}});
+  };
+  ASSERT_EQ(neverd_analysis_section_add(A, Description(false).c_str(),
+                                        Bytes.data(), Bytes.size()),
+            1);
+  ASSERT_EQ(neverd_analysis_section_add(B, Description(true).c_str(),
+                                        Bytes.data(), Bytes.size()),
+            1);
+  const auto Equal = parsed(neverd_comparison_export_json(compare(A, B)));
+  auto *Left = Equal.getAsObject()->getObject("primary");
+  auto *Right = Equal.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_EQ(Left->getString("analysis"), Right->getString("analysis"));
+  EXPECT_EQ(Left->getString("revision"), Right->getString("revision"));
+  ASSERT_EQ(neverd_analysis_section_remove(B, ".code"), 1);
+  const auto DataOnly =
+      R"({"schema":"neverd.analysis-section.v1","name":".code",
+                           "address":"0x3000","permissions":"rw"})";
+  ASSERT_EQ(
+      neverd_analysis_section_add(B, DataOnly, Bytes.data(), Bytes.size()), 1);
+  // Filtering out added functions must still bind declaration and mapping
+  // changes in the rest of the input.
+  const auto Different =
+      parsed(neverd_comparison_export_json(compare(A, B, R"({"discover":false,
+                "primary":{"begin":"0x1000","end":"0x1009"},
+                "secondary":{"begin":"0x1000","end":"0x1009"}})")));
+  Left = Different.getAsObject()->getObject("primary");
+  Right = Different.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_NE(Left->getString("analysis"), Right->getString("analysis"));
+}
+
+TEST_F(BinaryDiffSDK, ByteOverlayIdentityIgnoresEditKindsAndGrouping) {
+  const std::array<uint8_t, 24> Bytes{0xb8, 7, 0, 0, 0, 0xc3};
+  auto A = input(Bytes);
+  auto B = input(Bytes);
+  neverd_byte_patch_options_v1 Patch{};
+  Patch.struct_size = sizeof(Patch);
+  Patch.address = 0x1000;
+  Patch.kind = "constant";
+  Patch.value = 0x2211;
+  ASSERT_FALSE(take(neverd_byte_patch_apply(A, &Patch)).empty())
+      << take(neverd_last_error(A));
+  Patch.value = 0x11;
+  ASSERT_FALSE(take(neverd_byte_patch_apply(B, &Patch)).empty())
+      << take(neverd_last_error(B));
+  Patch.address = 0x1002;
+  Patch.kind = "bytes";
+  Patch.bytes = "22";
+  ASSERT_FALSE(take(neverd_byte_patch_apply(B, &Patch)).empty())
+      << take(neverd_last_error(B));
+  const auto ARows = parsed(neverd_byte_patches_json(A));
+  const auto BRows = parsed(neverd_byte_patches_json(B));
+  ASSERT_TRUE(ARows.getAsArray());
+  ASSERT_TRUE(BRows.getAsArray());
+  ASSERT_EQ(ARows.getAsArray()->size(), 1u);
+  ASSERT_EQ(BRows.getAsArray()->size(), 2u);
+  const auto Report = parsed(neverd_comparison_export_json(compare(A, B)));
+  const auto *Primary = Report.getAsObject()->getObject("primary");
+  const auto *Secondary = Report.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Primary);
+  ASSERT_TRUE(Secondary);
+  EXPECT_EQ(Primary->getString("analysis"), Secondary->getString("analysis"));
+  EXPECT_EQ(Primary->getString("revision"), Secondary->getString("revision"));
+}
 
 TEST_F(BinaryDiffSDK, AArch64ProfilesPreservePlacementAndOriginalInstructions) {
   const auto EvidenceSnapshot = [](neverd_comparison_t C) {

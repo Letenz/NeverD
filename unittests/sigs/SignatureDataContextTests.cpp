@@ -119,6 +119,118 @@ TEST(SignatureDataContext, CompleteIndependentAnchorSupportsCandidateOnly) {
   EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
 }
 
+TEST(SignatureDataContext, FrozenBindingsResolveDeferredCallerAlternatives) {
+  const std::string Parent = ParentBody + " 00 0000 001F :0000 parent\n";
+  const std::string Source = dataParent(true, " ^001A child ^001A rival");
+  const std::string Children =
+      "488D05........C3 00 0000 0008 !caller :0000 child &0003 global\n"
+      "488D05........C3 00 0000 0008 !caller :0000 rival &0003 other\n";
+  for (bool Reverse : {false, true}) {
+    SignatureDB DB;
+    const auto Anchor = root() + root("anchor", true);
+    const auto Context = Parent + Source + Children;
+    add(DB, Reverse ? Context + Anchor : Anchor + Context);
+    const auto Entries = Reverse
+                             ? std::vector<uint64_t>{0x1100, 0x1080, 0x1000}
+                             : std::vector<uint64_t>{0x1000, 0x1080, 0x1100};
+    DB.apply(callerImage(), Entries);
+    const auto Names = DB.buildCandidateNameMap();
+    ASSERT_TRUE(Names.contains(0x1100));
+    EXPECT_EQ(Names.at(0x1100), "child");
+    EXPECT_EQ(Names.at(0x1080), "parent");
+    EXPECT_EQ(Names.at(0x1000), "anchor");
+    EXPECT_TRUE(DB.findMatch(0x1100)->CallerConfirmed);
+    EXPECT_TRUE(DB.findMatch(0x1100)->Confirmed);
+    EXPECT_TRUE(DB.buildNameMap().empty());
+    auto Changed = callerImage();
+    displacement(Changed, 0x1103, 0x1107, 0x2040);
+    DB.apply(Changed, Entries);
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+    DB.apply(callerImage(), Entries);
+    EXPECT_EQ(DB.buildCandidateNameMap().at(0x1100), "child");
+  }
+}
+
+TEST(SignatureDataContext, DeferredCallersRetainUnknownAndConflictingEvidence) {
+  for (unsigned Case = 0; Case < 11; ++Case) {
+    auto Img = callerImage();
+    std::string Anchor = root() + root("anchor", true);
+    std::string Parent = ParentBody + " 00 0000 001F :0000 parent\n";
+    std::string Source = dataParent(true, " ^001A child ^001A rival");
+    std::string Children =
+        "488D05........C3 00 0000 0008 !caller :0000 child &0003 global\n"
+        "488D05........C3 00 0000 0008 !caller :0000 rival &0003 other\n";
+    std::vector<uint64_t> Entries{0x1000, 0x1080, 0x1100};
+    switch (Case) {
+    case 0:
+      Anchor = root("anchor", true);
+      break;
+    case 1:
+      Anchor = root();
+      break;
+    case 2:
+      Anchor += root("anchor", true, "");
+      break;
+    case 3:
+      Children += "488D05........C3 00 0000 0008 !caller :0000 rival\n";
+      break;
+    case 4:
+      Children =
+          "488D05........C3 00 0000 0008 !caller :0000 child &0003 global\n";
+      break;
+    case 5:
+      Parent += ParentBody + " 00 0000 001F :0000 unknown_parent\n";
+      break;
+    case 6:
+      Source += dataParent(true, "");
+      break;
+    case 7:
+      Entries.pop_back();
+      break;
+    case 8: {
+      const std::string Weak = std::string(32, '.') + ParentBody.substr(32);
+      Parent = Weak + " 00 0000 001F :0000 parent\n";
+      Source = dataParent(true, " ^001A child ^001A rival", Weak);
+      break;
+    }
+    case 9:
+      Img.Segments.back().Flags = SegmentFlags::Writable;
+      break;
+    case 10:
+      Anchor += root("anchor", true, " &0013 other");
+      break;
+    }
+    SignatureDB DB;
+    add(DB, Anchor + Parent + Source + Children);
+    DB.apply(Img, Entries);
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100)) << Case;
+    EXPECT_TRUE(DB.buildNameMap().empty());
+  }
+}
+
+TEST(SignatureDataContext,
+     DeferredCallerAlternativesNeedIndependentDataStorage) {
+  for (bool Local : {false, true}) {
+    const std::string Field = Local ? "%" : "&";
+    const std::string First = Local ? "00000013:anchor" : "global";
+    const std::string Second = Local ? "00000013:another" : "other";
+    SignatureDB DB;
+    add(DB, root() + root("anchor", true, " " + Field + "0013 " + Second) +
+                ParentBody + " 00 0000 001F :0000 parent\n" +
+                dataParent(true, " ^001A child ^001A rival") +
+                "488D05........C3 00 0000 0008 !caller :0000 child " + Field +
+                "0003 " + First + "\n" +
+                "488D05........C3 00 0000 0008 !caller :0000 rival " + Field +
+                "0003 " + Second + "\n");
+    DB.apply(callerImage(), {0x1000, 0x1080, 0x1100});
+    if (Local)
+      EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+    else
+      EXPECT_EQ(DB.buildCandidateNameMap().at(0x1100), "rival");
+    EXPECT_TRUE(DB.buildNameMap().empty());
+  }
+}
+
 TEST(SignatureDataContext, LocalDataUsesTheExactIndependentAnchorOperand) {
   const std::string Relation = "00000013:anchor";
   SignatureDB DB;

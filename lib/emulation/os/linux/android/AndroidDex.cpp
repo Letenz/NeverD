@@ -9,6 +9,7 @@
 #include "../kernel/LinuxTime.h"
 #include "AndroidInternal.h"
 
+#include "neverd/dalvik/AndroidProperties.h"
 #include "neverd/dalvik/Runtime.h"
 #include "neverd/emulation/Limits.h"
 
@@ -126,6 +127,23 @@ llvm::Error Bionic::initializeDex() {
     Services.elapsed_realtime_nanoseconds = [ReadClock] {
       return ReadClock(linux_model::ClockBootTime, 1,
                        "Android boot time exceeds its range");
+    };
+    Services.property_integer = [this](std::string_view Key, int32_t Default) {
+      using mobile::dalvik::ExecutionResult;
+      using mobile::dalvik::ExecutionStop;
+      // Use the native record owner, including its guest mapping/integrity
+      // checks. A changed record must not fall back to the input dictionary.
+      auto Property = propertyNamed(llvm::StringRef(Key.data(), Key.size()));
+      if (!Property)
+        return ExecutionResult{ExecutionStop::Invalid,
+                               0,
+                               {},
+                               llvm::toString(Property.takeError())};
+      return ExecutionResult{ExecutionStop::Returned,
+                             uint32_t(*Property
+                                          ? mobile::dalvik::androidPropertyInt(
+                                                (*Property)->Value, Default)
+                                          : Default)};
     };
     JNI.DexRuntime = std::make_shared<mobile::dalvik::Runtime>(
         *JNI.Dex, JNI.Heap, Native.Application, std::move(Services));

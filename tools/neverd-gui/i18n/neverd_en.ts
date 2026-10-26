@@ -1256,12 +1256,24 @@
         <translation>Take the conditional branch unconditionally</translation>
     </message>
     <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>Trace functions and inspect conflicting evidence across saved comparisons</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>Version comparison &amp;graph…</translation>
+    </message>
+    <message>
         <source>Add analysis section...</source>
         <translation>Add analysis section...</translation>
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
         <translation>Map new code or data into this analysis</translation>
+    </message>
+    <message>
+        <source>Enter &amp;comment...</source>
+        <translation>Enter &amp;comment...</translation>
     </message>
 </context>
 <context>
@@ -3253,10 +3265,6 @@ After:
         <translation>Browse…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
         <translation>Define a function covering these bytes</translation>
     </message>
@@ -3287,6 +3295,10 @@ After:
     <message>
         <source>Virtual address:</source>
         <translation>Virtual address:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</translation>
     </message>
 </context>
 <context>
@@ -3482,10 +3494,6 @@ After:
         <translation>Reloaded the input file</translation>
     </message>
     <message>
-        <source>Project changes saved</source>
-        <translation>Project changes saved</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>The edit was prepared for a session that is no longer open and was not applied.</translation>
     </message>
@@ -3671,6 +3679,10 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>Rewritten function at %1 saved to %2</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>Project changes saved</translation>
     </message>
 </context>
 <context>
@@ -6755,6 +6767,16 @@ Coverage: %7</translation>
         <source>Optimized SSA with expression-bound loop analysis</source>
         <translation>Optimized SSA with expression-bound loop analysis</translation>
     </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+Primary name: %1
+Secondary name: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7738,6 +7760,14 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
     <message>
         <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
         <translation>Every use of this parameter reads the same low bits; the original width and native site are retained.</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1 (analyzed name: %2)</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>Counterpart: %1</translation>
     </message>
 </context>
 <context>
@@ -8873,6 +8903,913 @@ Secondary SHA-256: %3
     <message>
         <source>The analysis changed. Reopen this editor before compiling.</source>
         <translation>The analysis changed. Reopen this editor before compiling.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · unsaved</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>&amp;Add comparisons…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Branch</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Label</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>&amp;Open graph…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>&amp;Save graph…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>&amp;Trace selected function</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>Add saved comparisons</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Address</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>Ambiguous</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>Ambiguous candidates</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>Analyzed snapshots</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>Anchor</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>Anchors</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>Assessment</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>Assessment history</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>Assessments</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>Associations come from saved reports. Release order and patch presence are not inferred.</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>Author</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Branch</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>Candidates are not accepted associations. Both sides retain every listed candidate.</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>Case</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>Changes</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>Checking saved evidence…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>Conflict</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>Conflicting function associations</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Conflicts</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>Deadline (milliseconds, 0: none)</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>Decision</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>Decision history</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>Diagram of the current source-report page; layout does not indicate release order.</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>Direct evidence</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>Distance</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>Edge</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>Edit &amp;label / branch…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>Enter a value from %1 to %2 for the highlighted field.</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>Event</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>Explanation</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>Export original comparison</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>Export original report…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>Find a function by name or address</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>Fit</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Function</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>Function filter</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Functions</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>Functions &amp; witnesses</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>Functions in %1</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>Graph / sources</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>Group</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>Hypothesis</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>Incomplete</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>Inspect conflict &amp;members…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>Inspect source &amp;evidence…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>Instructions</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Kind</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Label</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>Latest</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>Matches</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>Members</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>Method</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>Native regions</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD comparison (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>NeverD comparisons (*.nddiff);;All files (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>NeverD version graphs (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>NeverD version graphs (*.ndlineage);;All files (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>Node</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>Note</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>Open control frontier</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>Open version comparison graph</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>Original assessment note and reference</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>Original comparison evidence</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>Original region anchors</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>Pair active</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>Predecessor</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Primary</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>Primary candidates</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>Primary function</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>Primary function index</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>Primary instructions</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>Primary node</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>Primary snapshot</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>Processing work allowance</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>Reading saved evidence…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Ready</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>Report</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>Report and history warnings</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>Report text and labels (bytes)</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>Resource settings will apply to subsequent loads and queries.</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>Resource settings…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>SSA nodes</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>SSA regions</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>Save current graph?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>Save the current graph and snapshot labels before closing?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>Save the current graph and snapshot labels before opening another graph?</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>Save version comparison graph</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>Save version graph?</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>Saving evidence…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Secondary</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>Secondary candidates</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>Secondary function</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>Secondary function index</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>Secondary instructions</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>Secondary node</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>Secondary snapshot</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>Select a snapshot to browse all retained functions.</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Size</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Snapshot</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>Snapshot label and branch</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>Source report</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>Starting version graph worker…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>State</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Stopping…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>These labels describe your analysis. They do not assert release ancestry.</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>Trace</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>Trace a function to see every reachable association and its shortest-path witness.</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>Trace from %1 in %2</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>Tracing function associations…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>Unresolved candidates</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>Version comparison graph</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>Version graph resource settings</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>Warnings</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>Witness edge</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>Zoom in</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>Zoom out</translation>
+    </message>
+    <message>
+        <source>Association and parent link records</source>
+        <translation>Association and parent link records</translation>
+    </message>
+    <message>
+        <source>Function and release records</source>
+        <translation>Function and release records</translation>
+    </message>
+    <message>
+        <source>Releases</source>
+        <translation>Releases</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>Source report: %1
+Comparison direction: %2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>Version comparison diagram for the current report page</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> Try fewer rows or adjust Resource settings.</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — previous page retained</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>%1–%2 of %3</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Cancelled</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>Candidate fix</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>Choose a collection to begin.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>Complete</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>Confirm</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>Conflicting counterparts</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>Copy full value</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>Copy row evidence</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>Deadline reached</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>Inconclusive</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>Investigating</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>Loading evidence…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>Match</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>Next page</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>No</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>Partial patch</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>Patch absent</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>Patch present</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>Previous page</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>Refresh page</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>Rejected pair connected</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>Relevant change</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>Resource limit reached</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>Reverted patch</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>Rows per page</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>Rows per page. Reduce this value if a page exceeds its byte allowance.</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>Rows: </translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>Select evidence to view.</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>The graph changed. Refresh this page.</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>Unmatch</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>Unrelated change</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Yes</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source>
+Your previous graph is still available.</source>
+        <translation>
+Your previous graph is still available.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>Loading stopped. You can retry.</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>Saved %1</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>The worker could not acknowledge cancellation.</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>This worker does not support version comparison graphs.</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>Version graph loaded.</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>Version graph worker is unavailable or stopping.</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>Version graph worker: %1</translation>
+    </message>
+    <message>
+        <source>The version graph file is not valid UTF-8 JSON. Check the file and try again.</source>
+        <translation>The version graph file is not valid UTF-8 JSON. Check the file and try again.</translation>
+    </message>
+    <message>
+        <source>Release metadata saved in the current graph.</source>
+        <translation>Release metadata saved in the current graph.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageReleaseView</name>
+    <message>
+        <source>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</source>
+        <translation>%1 releases · %2 declared parent links. Dates and ancestry are your declarations; patch presence is not inferred.</translation>
+    </message>
+    <message>
+        <source>&amp;Add release…</source>
+        <translation>&amp;Add release…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Branch</translation>
+    </message>
+    <message>
+        <source>&amp;Edit release…</source>
+        <translation>&amp;Edit release…</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Label</translation>
+    </message>
+    <message>
+        <source>Add parent…</source>
+        <translation>Add parent…</translation>
+    </message>
+    <message>
+        <source>Add release</source>
+        <translation>Add release</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Branch</translation>
+    </message>
+    <message>
+        <source>Children</source>
+        <translation>Children</translation>
+    </message>
+    <message>
+        <source>Choose analyzed snapshot</source>
+        <translation>Choose analyzed snapshot</translation>
+    </message>
+    <message>
+        <source>Choose parent release</source>
+        <translation>Choose parent release</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>Choose…</translation>
+    </message>
+    <message>
+        <source>Declared children</source>
+        <translation>Declared children</translation>
+    </message>
+    <message>
+        <source>Declared parents</source>
+        <translation>Declared parents</translation>
+    </message>
+    <message>
+        <source>Edit release</source>
+        <translation>Edit release</translation>
+    </message>
+    <message>
+        <source>Find a release or branch</source>
+        <translation>Find a release or branch</translation>
+    </message>
+    <message>
+        <source>ID</source>
+        <translation>ID</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Label</translation>
+    </message>
+    <message>
+        <source>Open snapshot</source>
+        <translation>Open snapshot</translation>
+    </message>
+    <message>
+        <source>Parents</source>
+        <translation>Parents</translation>
+    </message>
+    <message>
+        <source>Publication time is known (UTC)</source>
+        <translation>Publication time is known (UTC)</translation>
+    </message>
+    <message>
+        <source>Published (UTC)</source>
+        <translation>Published (UTC)</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>Release</translation>
+    </message>
+    <message>
+        <source>Release ID</source>
+        <translation>Release ID</translation>
+    </message>
+    <message>
+        <source>Release filter</source>
+        <translation>Release filter</translation>
+    </message>
+    <message>
+        <source>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</source>
+        <translation>Remove %1 from this graph? Its snapshot and saved comparisons remain available.</translation>
+    </message>
+    <message>
+        <source>Remove parent link</source>
+        <translation>Remove parent link</translation>
+    </message>
+    <message>
+        <source>Remove release?</source>
+        <translation>Remove release?</translation>
+    </message>
+    <message>
+        <source>Remove release…</source>
+        <translation>Remove release…</translation>
+    </message>
+    <message>
+        <source>Remove this release's parent links from its children before deleting it.</source>
+        <translation>Remove this release's parent links from its children before deleting it.</translation>
+    </message>
+    <message>
+        <source>Select a release to inspect its declared parents and children.</source>
+        <translation>Select a release to inspect its declared parents and children.</translation>
+    </message>
+    <message>
+        <source>Selected release: %1 · %2</source>
+        <translation>Selected release: %1 · %2</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Snapshot</translation>
+    </message>
+    <message>
+        <source>This engine does not support release timelines.</source>
+        <translation>This engine does not support release timelines.</translation>
+    </message>
+    <message>
+        <source>Timeline</source>
+        <translation>Timeline</translation>
     </message>
 </context>
 </TS>

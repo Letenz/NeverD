@@ -1,5 +1,6 @@
 #include "ComparisonService.h"
 #include "Engine.h"
+#include "LineageService.h"
 #include "Protocol.h"
 #include "ResourceLimits.h"
 #include "UnwindQuery.h"
@@ -307,6 +308,21 @@ Json hello() {
         result["comparison_cancellable_operations"].push_back(
             std::string(Operation));
   }
+  if (LineageService::supported()) {
+    for (const char *Operation :
+         {"lineage_load", "lineage_summary", "lineage_status", "lineage_query",
+          "lineage_save", "lineage_save_report", "lineage_close"})
+      result["capabilities"].push_back(Operation);
+    if (LineageService::releaseEditingSupported())
+      result["capabilities"].push_back("lineage_edit_releases");
+    result["lineage_cancellation"] =
+        "cooperative; previous collection retained on stop";
+    result["lineage_cancellable_operations"] = Json::array();
+    for (const auto Operation : LineageService::CancellableOperations)
+      if (LineageService::cancellable(Operation))
+        result["lineage_cancellable_operations"].push_back(
+            std::string(Operation));
+  }
   // Function edits, data items and operand formats need an engine that keeps
   // them.
   if (Engine::keepsFunctionEdits())
@@ -532,6 +548,7 @@ void executeLoop(State &state, Transport &transport) {
           result["cancellation_requested"] = true;
           result["calculation_stopped"] = true;
           const bool ComparisonOperation = ComparisonService::cancellable(op);
+          const bool LineageOperation = LineageService::cancellable(op);
           const bool ComparisonPartial =
               ComparisonOperation && result.contains("payload") &&
               !result["payload"].value("restore_completed", false) &&
@@ -543,6 +560,8 @@ void executeLoop(State &state, Transport &transport) {
           result["completed_before_cancellation"] = !ComparisonStopped;
           if (ComparisonOperation)
             result["partial_result_retained"] = ComparisonPartial;
+          if (LineageOperation)
+            result["partial_result_retained"] = false;
         }
         state.revision = engine.revision();
         state.projectId = engine.projectId();
@@ -680,9 +699,12 @@ int main(int argc, char **argv) {
                                      : "pending"},
                  {"requires_restart",
                   accepted && !stopped &&
-                      (!state.active || !ComparisonService::cancellable(
-                                            state.active->value["operation"]
-                                                .get<std::string>()))}}));
+                      (!state.active || (!ComparisonService::cancellable(
+                                             state.active->value["operation"]
+                                                 .get<std::string>()) &&
+                                         !LineageService::cancellable(
+                                             state.active->value["operation"]
+                                                 .get<std::string>())))}}));
           } else if (op == "shutdown") {
             state.stopping = true;
             cancelQueued(state, transport);

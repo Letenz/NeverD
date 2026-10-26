@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cassert>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -363,14 +364,14 @@ ReadInstruction readInstruction(const BinaryImage &Image,
 }
 
 void appendFunction(ProgramBuilder &Builder, const FuncInfo &F,
-                    std::vector<ReadInstruction> &Rows,
+                    llvm::StringRef Name, std::vector<ReadInstruction> &Rows,
                     const FunctionDecodeStatus &Status, const AddressKeys &Keys,
                     uint16_t Traits) {
   const NameSource Source =
-      F.LinkageOrigin == NameOrigin::Synthesized ? NameSource::Generated
-      : F.LinkageOrigin == NameOrigin::Analysis  ? NameSource::Signature
-                                                 : NameSource::Symbol;
-  Builder.beginFunction(F.Entry, F.Size, F.Name, Source, Traits);
+      F.ResolvedOrigin == NameOrigin::Synthesized ? NameSource::Generated
+      : F.ResolvedOrigin == NameOrigin::Analysis  ? NameSource::Signature
+                                                  : NameSource::Symbol;
+  Builder.beginFunction(F.Entry, F.Size, Name.str(), Source, Traits);
   llvm::sort(
       Rows, [](const auto &L, const auto &R) { return L.Address < R.Address; });
   Rows.erase(std::unique(Rows.begin(), Rows.end(),
@@ -452,14 +453,72 @@ void appendFunction(ProgramBuilder &Builder, const FuncInfo &F,
     Builder.addTraits(TraitIncomplete);
 }
 
+void hashWord(llvm::SHA256 &Hash, uint64_t Value) {
+  uint8_t Bytes[sizeof(Value)];
+  for (unsigned I = 0; I < sizeof(Value); ++I)
+    Bytes[I] = static_cast<uint8_t>(Value >> (I * kBitsPerByte));
+  Hash.update(Bytes);
+}
+
+std::string byteOverlayIdentity(const patch::PatchOverlay &Overlay) {
+  // The patch owner bounds both retained bytes and rows. Hash the effective
+  // file bytes independently of edit kinds, history and row partitioning.
+  // Data outside the selected function inventory still belongs to the input.
+  llvm::SHA256 Hash;
+  Hash.update("neverd.bindiff.byte-overlay-v1");
+  const auto &Rows = Overlay.rows();
+  for (auto Begin = Rows.begin(); Begin != Rows.end();) {
+    auto End = Begin;
+    uint64_t Next = Begin->first;
+    do {
+      Next += End->second.Current.size();
+      ++End;
+    } while (End != Rows.end() && End->first == Next);
+    hashWord(Hash, Begin->first);
+    hashWord(Hash, Next - Begin->first);
+    for (auto It = Begin; It != End; ++It)
+      Hash.update(It->second.Current);
+    Begin = End;
+  }
+  return llvm::toHex(Hash.final(), true);
+}
+
+std::string analysisSectionIdentity(const Session &S) {
+  // Section admission owns the byte/record bounds and guarantees the named
+  // materialized section. Retain every addition, including data outside the
+  // selected function inventory. Creation order is not part of that state.
+  std::map<llvm::StringRef, const llvm::json::Object *> Records;
+  for (const auto &Value : S.AnalysisSections) {
+    const auto &Record = *Value.getAsObject();
+    Records.emplace(*Record.getString("name"), &Record);
+  }
+  llvm::SHA256 Hash;
+  Hash.update("neverd.bindiff.analysis-sections-v1");
+  hashWord(Hash, Records.size());
+  for (const auto &[Name, Record] : Records) {
+    auto Canonical = *Record;
+    auto &Functions = *Canonical.getArray("functions");
+    std::sort(Functions.begin(), Functions.end(),
+              [](const auto &A, const auto &B) {
+                // The owner canonicalizes offsets and refuses overlapping
+                // declarations.
+                return *A.getAsObject()->getString("offset") <
+                       *B.getAsObject()->getString("offset");
+              });
+    const auto Metadata = jsonToString(std::move(Canonical));
+    hashWord(Hash, Metadata.size());
+    Hash.update(Metadata);
+    const auto *Section = S.Img.getSectionByName(Name);
+    assert(Section && "owned analysis section must remain materialized");
+    hashWord(Hash, Section->Data.size());
+    Hash.update(Section->Data);
+  }
+  return llvm::toHex(Hash.final(), true);
+}
+
 std::string revision(const Program &P) {
   llvm::SHA256 Hash;
-  const auto Word = [&](uint64_t V) {
-    uint8_t Bytes[sizeof(V)];
-    for (unsigned I = 0; I < sizeof(V); ++I)
-      Bytes[I] = static_cast<uint8_t>(V >> (I * kBitsPerByte));
-    Hash.update(Bytes);
-  };
+  const auto Word = [&](uint64_t V) { hashWord(Hash, V); };
   const auto Text = [&](llvm::StringRef T) {
     Word(T.size());
     Hash.update(T);
@@ -570,7 +629,7 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     Identity.ABI += ":macho-subtype:" + llvm::utohexstr(S.Img.MachOCPUSubtype);
   Identity.Normalization =
       AArch64 ? "native-aarch64-operands-v1" : "native-x86-operands-v1";
-  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v1:" +
+  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v2:" +
                       (Options.Discover ? "discover" : "known-functions");
   if (S.PackedProject)
     Identity.Analysis += ":nddb-v1:" + S.PackedProject->StateSHA256;
@@ -581,6 +640,11 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   }
   if (S.Img.MachOSharedCache)
     Identity.Analysis += ":" + jsonToString(sharedCacheIdentity(S.Img));
+  if (!S.BytePatches.empty())
+    Identity.Analysis +=
+        ":byte-overlay-v1:" + byteOverlayIdentity(S.BytePatches);
+  if (!S.AnalysisSections.empty())
+    Identity.Analysis += ":analysis-sections-v1:" + analysisSectionIdentity(S);
   Identity.ImageBase = S.Img.Base;
   Identity.EntryPoint = S.Img.Entry;
   Identity.DiscoveryComplete = S.DiscoveredFunctions.has_value() &&
@@ -683,7 +747,19 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
           A != S.FunctionAttributeEdits.end() &&
           A->second.Library.value_or(false))
         Traits |= TraitLibrary;
-      appendFunction(Builder, F, Slots[I], Status[I], Keys, Traits);
+      llvm::StringRef Name = S.OriginalNames.at(F.Entry);
+      if (Name == F.LinkageName)
+        Name = functionNameBeforeNumbering(S.Img, F.Entry, Name);
+      if (F.Name != Name) {
+        const uint64_t Charge =
+            sizeof(decltype(Result.DisplayNames)::value_type) + F.Name.size();
+        if (Memory.fetch_add(Charge) + Charge > Options.MaxMemoryBytes) {
+          Exhausted = true;
+          break;
+        }
+        Result.DisplayNames.emplace(F.Entry, F.Name);
+      }
+      appendFunction(Builder, F, Name, Slots[I], Status[I], Keys, Traits);
     }
     Done += Page.Functions.size();
     if (Control.Progress)
