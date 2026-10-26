@@ -946,6 +946,13 @@ sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
 
+History publication composes the recovery journal from serializer-produced JSON
+and reuses the already encoded target history. It retains the owning before/after
+states until all writes finish, constructing a full in-memory journal only after
+an interrupted write for same-session retry. This avoids a second whole-state
+tree and repeated target-history encoding on successful saves. Read comparisons,
+byte budgets, atomic write order and recovery validation remain authoritative.
+
 Find in view is a GUI text operation. Its modeless dialog captures the originating
 pane before taking keyboard focus; pseudocode/IR supplies its complete source
 and fold projection, while assembly supplies its bounded loaded rows and visible
