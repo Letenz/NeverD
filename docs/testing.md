@@ -14097,3 +14097,11 @@ saved cells. They retain stores around structured/unstructured EH, atomic and
 trapping operations, uncertain aliases, alternate entries and incomplete paths.
 The zero-test fixtures cover all byte pairs and integer-width boundaries with
 preserved call counts and undefined-behavior traps.
+
+`NeverDHighPointerTypeInferenceTests` covers x86/x64/ARM/AArch64 frame aliases,
+slot reuse, joins, loops, escaped locals, clobbers, integer views and late source
+binding. `NeverDCDisplayFrameRecordTests` executes both C writers at O0/O2 with
+alignment/undefined-behavior checks. Run `NeverDHighCStoreForwardingTests` and
+`NeverDHighControlFlowTests` for captured pointer and callback display changes.
+`NeverDWorkerParameterTypePropagation` edits a generated PE parameter between
+record types and checks aliases, arrays, undo/redo, reopening and unchanged LowIR.

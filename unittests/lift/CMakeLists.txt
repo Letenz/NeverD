@@ -4788,3 +4788,10 @@ target_include_directories(NeverDWindowsEHSourceTests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(NeverDWindowsEHSourceTests PRIVATE
   NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}")
+
+add_neverd_unittest(NeverDHighPointerTypeInferenceTests
+  core/HighPointerTypeInferenceTests.cpp LINK_COMPONENTS BackendC)
+target_compile_definitions(NeverDHighPointerTypeInferenceTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+add_neverd_unittest(NeverDCDisplayFrameRecordTests
+  core/CDisplayFrameRecordTests.cpp LINK_COMPONENTS BackendC)

@@ -12322,3 +12322,10 @@ and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
 and exceptional/ordered observations retain their memory effects. Prologue
 cleanup preserves saved register values still observed as data. Word zero-test
 normalization retains operand widths, signedness, effects and source truth.
+
+HighIR pointer type facts follow exact private scalar copies and memory cells,
+joining only agreed predecessor facts and revoking clobbered or escaped cells.
+Source parameter binding can supply display types without mutating machine IR.
+C frame records use validated display alignment and bounded member layouts;
+these declarations grant no ABI, nonalias or lifetime facts. Both C writers
+share record/member-path validation and preserve captured callable values.

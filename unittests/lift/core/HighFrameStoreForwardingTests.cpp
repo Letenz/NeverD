@@ -2103,4 +2103,160 @@ TEST(HighFrameStoreForwarding, RemovedWritebacksCannotKillTheirProducer) {
   }
 }
 
+TEST(HighFrameStoreForwarding, PointerBitViewsKeepCapturedParameterValues) {
+  const auto A = Arch::X64;
+  const auto Integer = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(Integer);
+  for (bool Reassigned : {false, true}) {
+    auto F = roundTrip(A, Integer);
+    F.Name = "captured_parameter";
+    F.FrameSize = 0;
+    F.Params = {{"arg0", Pointer}, {"arg1", Pointer}};
+    auto Alias = temporary(20, Integer, A);
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = Integer;
+    View->Operands = {parameter(0, Pointer, A)};
+    F.Body = {assign(Alias, View)};
+    if (Reassigned)
+      F.Body.push_back(
+          assign(parameter(0, Pointer, A), parameter(1, Pointer, A)));
+    F.Body.push_back(store(Alias, HighExpr::makeConst(42, 8)));
+    F.Body.push_back(returning(HighExpr::makeConst(0, 8)));
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    CEmitterOptions Options;
+    Options.TheArch = A;
+    ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+    Source += R"(
+int main(void) {
+  uint64_t first=11,second=23;
+  captured_parameter(&first,&second);
+  return first!=42 || second!=23;
+})";
+    compileAndRun(Source);
+  }
+}
+TEST(HighSourceExpressions, PointerBitViewsKeepTheCapturedLocal) {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  const auto P = NdType::makePtr(T);
+  for (bool Reassigned : {false, true}) {
+    HighFunc F;
+    F.Name = "pointer_view";
+    F.ReturnType = T;
+    F.Params = {{"arg0", P}, {"arg1", P}};
+    auto Captured = temporary(20, P, A);
+    auto View = integerView(parameter(0, P, A), T);
+    View = integerView(View, NdType::makeInt(8, true));
+    F.Body = {assign(Captured, View)};
+    if (Reassigned)
+      F.Body.push_back(assign(parameter(0, P, A), parameter(1, P, A)));
+    F.Body.push_back(store(Captured, HighExpr::makeConst(42, 8)));
+    F.Body.push_back(returning(HighExpr::makeConst(0, 8)));
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    CEmitterOptions Options;
+    Options.TheArch = A;
+    ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+    if (Reassigned)
+      EXPECT_NE(Source.find(" = arg0;"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("(uintptr_t)((int64_t)"), std::string::npos)
+        << Source;
+    Source += R"(
+int main(void) {
+  uint64_t first=11,second=23;
+  pointer_view(&first,&second);
+  return first!=42 || second!=23;
+}
+)";
+    compileAndRun(Source);
+  }
+}
+TEST(HighSourceExpressions,
+     PointerBitViewsKeepNarrowingAndExplicitTypeChanges) {
+  const auto T = NdType::makeInt(8, false);
+  const auto P = NdType::makePtr(T);
+  for (unsigned Case = 0; Case != 3; ++Case) {
+    HighFunc F;
+    F.Name = "pointer_view_boundary";
+    F.ReturnType = T;
+    F.Params = {{"arg0", P}};
+    const auto Intermediate = Case == 0   ? NdType::makeInt(4, false)
+                              : Case == 1 ? NdType::makeFloat(8)
+                                          : NdType::makePtr(NdType::makeInt(1));
+    auto View = integerView(parameter(0, P, Arch::X64), Intermediate);
+    auto Captured = temporary(20, P, Arch::X64);
+    F.Body = {assign(Captured, integerView(View, T)),
+              returning(integerView(Captured, T))};
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+    EXPECT_EQ(Source.find(" = arg0;"), std::string::npos) << Source;
+  }
+}
+TEST(HighSourceExpressions, CallbackDeclaratorsBorrowIncompleteRecords) {
+  const auto Record = NdType::makeNamedRecord("Context", 24);
+  const auto Pointer = NdType::makePtr(Record);
+  const auto Callback =
+      NdType::makePtr(NdType::makeFunc(NdType::makeVoid(), {Pointer}));
+  EXPECT_EQ(declarationToC(Callback, "visit"), "void (*visit)(Context*)");
+  EXPECT_THROW((void)declarationToC(NdType::makePtr(NdType::makeFunc(
+                                        NdType::makeVoid(), {Record})),
+                                    "visit"),
+               std::invalid_argument);
+  compileAndRun("typedef struct Context Context;\n" +
+                declarationToC(Callback, "visit") +
+                ";\nint main(void) { return visit!=0; }\n");
+}
+TEST(HighSourceExpressions, TypedIndirectCallUsesTheCapturedRuntimeTarget) {
+  class CalleeTypes : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x2000)
+        return std::nullopt;
+      FunctionSym F;
+      F.Name = "signature_only";
+      F.Addr = Address;
+      F.ReturnType = NdType::makeInt(4, true);
+      F.Params = {{"value", NdType::makeInt(8, false)}};
+      return F;
+    }
+  } Debug;
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  const auto Result = NdType::makeInt(4, true);
+  HighFunc F;
+  F.Name = "captured_callback";
+  F.ReturnType = Result;
+  F.Params = {{"arg0", T}, {"arg1", T}};
+  auto Captured = temporary(20, T, A);
+  auto Call = HighExpr::makeCall("indirect", 0x2000, {parameter(1, T, A)});
+  Call->Type = Result;
+  Call->IsIndirectCall = true;
+  Call->IndirectTarget = integerView(Captured, NdType::makeInt(8, true));
+  F.Body = {assign(Captured, parameter(0, T, A)),
+            assign(parameter(0, T, A), HighExpr::makeConst(0, 8)),
+            returning(Call)};
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = A;
+  Options.Format = BinaryFormat::COFF;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options, &Debug));
+  EXPECT_NE(Source.find("int32_t (*t20)(uint64_t)"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("t20(arg1)"), std::string::npos) << Source;
+  Source += R"(
+static int32_t actual(uint64_t x) { return (int32_t)x+7; }
+int32_t signature_only(uint64_t x) { return -99; }
+int main(void) {
+  return captured_callback((uint64_t)(uintptr_t)&actual,5)!=12;
+}
+)";
+  compileAndRun(Source);
+}
 } // namespace

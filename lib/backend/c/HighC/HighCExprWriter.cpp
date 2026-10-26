@@ -10,6 +10,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../CDisplayFieldPath.h"
+#include "../CDisplayFrameRecord.h"
 #include "../CRecordCall.h"
 #include "../HeaderPrototype.h"
 #include "../LibraryPrototype.h"
@@ -443,6 +445,84 @@ bool HighCWriter::sameDeclaredLocal(const HighExpr &Value,
          typeToC(It->second) == typeToC(Type);
 }
 
+std::optional<std::string>
+HighCWriter::implicitPointerConversion(const HighExpr &Value,
+                                       const TypeRef &To) {
+  const auto PointerSize = getTargetRegInfo(Opts.TheArch).PointerSize;
+  if (!To || To->Kind != NdTypeKind::Ptr || To->Size != PointerSize)
+    return std::nullopt;
+  const auto Carrier = [&](const TypeRef &T) {
+    return T && T->Size == PointerSize &&
+           (T->Kind == NdTypeKind::Int || T->Kind == NdTypeKind::Ptr);
+  };
+  const auto SamePointer = [&](const TypeRef &T) {
+    return Carrier(T) && T->Kind == NdTypeKind::Ptr && T->Pointee &&
+           To->Pointee &&
+           typeToC(NdType::makePtr(cDisplayType(T->Pointee))) ==
+               typeToC(NdType::makePtr(cDisplayType(To->Pointee)));
+  };
+  const HighExpr *Current = &Value;
+  for (unsigned Depth = 0; Depth != limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (!Carrier(Current->Type) || Current->IndirectTarget ||
+        Current->SourceCallHint || Current->IntrinsicId != Intrinsic::None ||
+        !Current->IntrinsicOutputs.empty() ||
+        Current->MemoryOrdering != NdMemoryOrdering::None ||
+        Current->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    if (Current->Kind == ExprKind::Var && Current->Operands.empty() &&
+        Current->Var.Size == PointerSize) {
+      const std::string Name = varName(Current->Var);
+      TypeRef Declared = declaredParamType(Current->Var);
+      if (!Declared)
+        if (const auto It = DeclaredCTypes.find(Name);
+            It != DeclaredCTypes.end())
+          Declared = It->second;
+      if (!SamePointer(Declared) || copyForwardName(Name) != Name ||
+          ValueForward.count(Name))
+        return std::nullopt;
+      return SourceRecorder && CurrentFunc
+                 ? SourceRecorder->expression(CurrentFunc->Entry, *Current,
+                                              Name)
+                 : Name;
+    }
+    if (Current->Kind == ExprKind::Load && Current->Operands.size() == 1 &&
+        Current->Operands[0]) {
+      const auto Slot = constAddress(*Current->Operands[0]);
+      if (!Slot)
+        return std::nullopt;
+      const auto Type = ImportDataSlotTypes.find(*Slot);
+      const auto Name = ImportDataSlotNames.find(*Slot);
+      if (Type == ImportDataSlotTypes.end() ||
+          Name == ImportDataSlotNames.end() || !SamePointer(Type->second))
+        return std::nullopt;
+      // This is the original load at its original evaluation point. Never
+      // substitute a later read of the mutable import for a captured local.
+      return SourceRecorder && CurrentFunc
+                 ? SourceRecorder->expression(CurrentFunc->Entry, *Current,
+                                              Name->second)
+                 : Name->second;
+    }
+    if ((Current->Kind != ExprKind::Cast &&
+         Current->Kind != ExprKind::BitCast) ||
+        Current->Operands.size() != 1 || !Current->Operands[0] ||
+        !Carrier(Current->Operands[0]->Type) ||
+        (Current->Kind == ExprKind::Cast &&
+         (!Carrier(Current->CastTo) ||
+          Current->Type->Kind != Current->CastTo->Kind ||
+          Current->Type->IsSigned != Current->CastTo->IsSigned ||
+          (Current->Type->Kind == NdTypeKind::Ptr &&
+           !SamePointer(Current->CastTo)))))
+      return std::nullopt;
+    // An explicit conversion to a different pointer type is a source typing
+    // boundary even when it preserves the address bits.
+    if (Current->Type->Kind == NdTypeKind::Ptr && !SamePointer(Current->Type))
+      return std::nullopt;
+    Current = Current->Operands[0].get();
+  }
+  return std::nullopt;
+}
+
 bool HighCWriter::declaredLocalInteger(const HighExpr &E, uint16_t Width,
                                        bool Signed) {
   if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
@@ -772,7 +852,21 @@ void HighCWriter::collectFrameRecordMembers(const HighFunc &Func,
     const int64_t End = Following == Bounds.end() ? High : *Following;
     if (End <= Disp || Raw(Disp, End))
       continue;
-    Claim(Disp, nullptr, static_cast<uint64_t>(End - Disp));
+    TypeRef Record;
+    if (const auto Slot = FrameStorageSlots.find(Disp);
+        Slot != FrameStorageSlots.end()) {
+      Record = cDisplayType(Slot->second.CallType ? Slot->second.CallType
+                                                  : Slot->second.Type);
+      if (!isCDisplayFrameRecord(Record) ||
+          Record->Size > static_cast<uint64_t>(End - Disp) ||
+          !definesRecord(Record) ||
+          (FrameBaseOffset + Disp) % cDisplayFrameRecordAlignment(Record))
+        Record.reset();
+    }
+    // This changes only the declaration of the exact same bytes. A call's
+    // pointee type grants no escape, lifetime or dead-store permission.
+    const uint64_t Bytes = Record ? Record->Size : End - Disp;
+    Claim(Disp, std::move(Record), Bytes);
   }
 }
 
@@ -2316,8 +2410,12 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   // callable in C when it is typed as a function pointer.
   if (E.IsIndirectCall && E.IndirectTarget &&
       (Name.empty() || Name == "indirect" || Name == "indirect_call" ||
-       E.IndirectParamIdx >= 0))
-    Name = indirectCalleeStr(*E.IndirectTarget, E.Type);
+       E.IndirectParamIdx >= 0)) {
+    const TypeRef ReturnType = callResultType(E);
+    Name =
+        indirectCalleeStr(*E.IndirectTarget, ReturnType ? ReturnType : E.Type,
+                          indirectCallFunctionType(E));
+  }
 
   // A callee defined in this file has a prototype: convert between pointer
   // and integer arguments the way the machine passed them, in the register.
@@ -4767,7 +4865,6 @@ bool readsWholeRecord(const NdType &Record, uint64_t Offset,
                                    /*ArrayElements=*/true, Class);
 }
 
-std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field);
 } // namespace
 
 TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
@@ -5106,38 +5203,6 @@ HighCWriter::typedIndexAccess(const HighExpr &Addr, uint16_t AccessSize,
 }
 
 namespace {
-std::optional<std::string> canonicalizeDisplayPath(llvm::StringRef Field) {
-  std::string Path;
-  llvm::StringRef Rest(Field);
-  while (!Rest.empty()) {
-    const auto Split = Rest.split('.');
-    // A member, then the elements of an array it indexes: Reserved[1].
-    llvm::StringRef Indexes = Split.first;
-    const std::string Comp =
-        Indexes.take_until([](char C) { return C == '['; }).str();
-    Indexes = Indexes.drop_front(Comp.size());
-    const std::string Name = canonicalizeCProjectionIdentifier(Comp, "");
-    if (Name.empty() || Name != Comp)
-      return std::nullopt;
-    if (!Path.empty())
-      Path += '.';
-    Path += Name;
-    while (!Indexes.empty()) {
-      const size_t Close = Indexes.find(']');
-      uint64_t Index = 0;
-      if (!Indexes.starts_with("[") || Close == llvm::StringRef::npos ||
-          Indexes.slice(1, Close).getAsInteger(10, Index))
-        return std::nullopt;
-      Path += "[" + std::to_string(Index) + "]";
-      Indexes = Indexes.drop_front(Close + 1);
-    }
-    Rest = Split.second;
-  }
-  if (Path.empty())
-    return std::nullopt;
-  return Path;
-}
-
 bool canHaveInteriorFields(const TypeRef &Ty) {
   return Ty && Ty->Kind == NdTypeKind::Struct && !Ty->IsEnum;
 }
@@ -5736,16 +5801,69 @@ std::string HighCWriter::pointerObjectStr(const HighExpr &E) {
   return exprStr(*Inner);
 }
 
+TypeRef HighCWriter::indirectCallFunctionType(const HighExpr &Call) const {
+  if (!Call.IsIndirectCall || !Call.IndirectTarget ||
+      Call.IntrinsicId != Intrinsic::None)
+    return nullptr;
+  const auto Callee = debugCallee(Call);
+  if (!Callee || Callee->Params.size() != Call.Operands.size())
+    return nullptr;
+  return fixedCalleeFunctionType(*Callee);
+}
+
+TypeRef HighCWriter::fixedCalleeFunctionType(const FunctionSym &Callee) const {
+  if (!Callee.PlatformConvention || Callee.IsVariadic ||
+      !positionalDebugSignature(Callee) || !Callee.ReturnType ||
+      isMsvcIndirectReturn(Callee.ReturnType, Opts.TheArch, Opts.Format))
+    return nullptr;
+  // Reuse the same scalar ABI projection that owns argument rendering. A
+  // recovered name alone does not justify a prototype. Other conventions
+  // retain their existing call representation.
+  if (Opts.TheArch != Arch::X64 || Opts.Format != BinaryFormat::COFF ||
+      (Callee.CallConv != DebugCallConv::Unknown &&
+       Callee.CallConv != DebugCallConv::Cdecl))
+    return nullptr;
+  const auto Scalar = [&](const TypeRef &Type) {
+    if (!Type)
+      return false;
+    if (Type->Kind == NdTypeKind::Ptr)
+      return Type->Size == getTargetRegInfo(Opts.TheArch).PointerSize;
+    if (Type->Kind == NdTypeKind::Float)
+      return Type->Size == 4 || Type->Size == 8;
+    return Type->Kind == NdTypeKind::Int &&
+           (Type->Size == 1 || Type->Size == 2 || Type->Size == 4 ||
+            Type->Size == 8);
+  };
+  if (Callee.ReturnType->Kind != NdTypeKind::Void && !Scalar(Callee.ReturnType))
+    return nullptr;
+  std::vector<TypeRef> Parameters;
+  for (size_t I = 0; I < Callee.Params.size(); ++I) {
+    const auto Type = expectedDebugCallArgType(Callee, I);
+    if (!Scalar(Type))
+      return nullptr;
+    Parameters.push_back(cDisplayType(Type));
+  }
+  return NdType::makeFunc(cDisplayType(Callee.ReturnType),
+                          std::move(Parameters));
+}
+
 std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
-                                           const TypeRef &ReturnType) {
+                                           const TypeRef &ReturnType,
+                                           const TypeRef &FunctionType) {
   // C calls only function pointers. A code address loaded as `void *` or held
   // in an integer is called through an unprototyped pointer to a function
   // returning what the call yields.
   const std::string CalleeType =
       "(" +
-      declarationToC(ReturnType ? cDisplayType(ReturnType) : NdType::makeVoid(),
-                     "(*)()") +
+      (FunctionType ? declarationToC(NdType::makePtr(FunctionType), "")
+                    : declarationToC(ReturnType ? cDisplayType(ReturnType)
+                                                : NdType::makeVoid(),
+                                     "(*)()")) +
       ")";
+  if (FunctionType)
+    if (auto Pointer =
+            implicitPointerConversion(E, NdType::makePtr(FunctionType)))
+      return *Pointer;
   auto UntypedCallee = [&](const std::string &Code) {
     return "(" + CalleeType + Code + ")";
   };
@@ -7047,6 +7165,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (const HighExpr *Call = typedCallResult(&E))
       return exprStr(*Call, ParentPrec);
     const TypeRef &To = E.CastTo ? E.CastTo : E.Type;
+    if (auto Pointer = implicitPointerConversion(E, To))
+      return *Pointer;
     if (isPlainInteger(To) && isPlainInteger(E.Operands[0]->Type))
       return typedText(E, integerView(*E.Operands[0], To, ParentPrec), To->Size,
                        To->IsSigned);

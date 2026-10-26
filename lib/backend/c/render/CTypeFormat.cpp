@@ -610,6 +610,13 @@ bool spellsAsDeclarator(const TypeRef &Type, unsigned Depth,
   --Remaining;
   switch (Type->Kind) {
   case NdTypeKind::Ptr:
+    // A callback may borrow a named, incomplete record. Its declaration
+    // needs the tag, not a by-value ABI layout of that record; in particular
+    // recursive SDK structures must not recurse through their members here.
+    if ((Type->Size == 4 || Type->Size == 8) && Type->Pointee &&
+        Type->Pointee->Kind == NdTypeKind::Struct && !Type->Pointee->IsEnum &&
+        !Type->Pointee->SourceName.empty())
+      return true;
     return (Type->Size == 4 || Type->Size == 8) &&
            spellsAsDeclarator(Type->Pointee, Depth + 1, Remaining);
   case NdTypeKind::Func:
