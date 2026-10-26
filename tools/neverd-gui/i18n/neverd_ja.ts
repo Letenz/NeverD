@@ -1273,7 +1273,7 @@
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>新しいコードまたはデータをこの解析にマッピング</translation>
+        <translation>新しいコードまたはデータをこの解析にマップします</translation>
     </message>
 </context>
 <context>
@@ -3248,7 +3248,7 @@ After:
     </message>
     <message>
         <source>Add analysis section</source>
-        <translation>解析セクションを追加</translation>
+        <translation>解析セクションの追加</translation>
     </message>
     <message>
         <source>Binary bytes:</source>
@@ -3259,12 +3259,8 @@ After:
         <translation>参照…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>1 バイト～64 MiB のファイルを選択し、16 進数のアドレスとセクション名を指定してください。関数には名前と実行権限が必要です。</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
-        <translation>これらのバイト全体を関数として定義</translation>
+        <translation>これらのバイトを覆う関数を定義する</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3272,11 +3268,11 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>現在のイメージ内の仮想アドレスにバイナリファイルをマッピングします。保持するにはプロジェクトを保存してください。入力バイナリは変更されません。</translation>
+        <translation>バイナリファイルを現在のイメージの仮想アドレスにマップします。保持するにはプロジェクトを保存してください。入力バイナリは変更されません。</translation>
     </message>
     <message>
         <source>Permissions:</source>
-        <translation>権限:</translation>
+        <translation>アクセス権:</translation>
     </message>
     <message>
         <source>Section name:</source>
@@ -3288,11 +3284,15 @@ After:
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>プロジェクトが変更されました。このダイアログを開き直してください。</translation>
+        <translation>プロジェクトが変更されました。このダイアログをもう一度開いてください。</translation>
     </message>
     <message>
         <source>Virtual address:</source>
         <translation>仮想アドレス:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>1 バイトから %1 までのファイル、16 進数のアドレス、セクション名を指定してください。関数には名前と実行権限が必要です。</translation>
     </message>
 </context>
 <context>

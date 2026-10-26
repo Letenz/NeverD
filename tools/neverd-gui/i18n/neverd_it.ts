@@ -1273,7 +1273,7 @@
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>Mappa nuovo codice o dati in questa analisi</translation>
+        <translation>Mappa nuovo codice o nuovi dati in questa analisi</translation>
     </message>
 </context>
 <context>
@@ -3265,12 +3265,8 @@ Dopo:
         <translation>Sfoglia…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Scegli un file da 1 byte a 64 MiB, un indirizzo esadecimale e un nome di sezione. Una funzione richiede un nome e i permessi di esecuzione.</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
-        <translation>Definisci una funzione che copra questi byte</translation>
+        <translation>Definisci una funzione che copre questi byte</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3278,7 +3274,7 @@ Dopo:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>Mappa un file binario a un indirizzo virtuale nell’immagine corrente. Salva il progetto per conservarlo. Il binario di input rimane invariato.</translation>
+        <translation>Mappa un file binario a un indirizzo virtuale nell&apos;immagine corrente. Salva il progetto per conservarlo. Il binario di input resta invariato.</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3290,7 +3286,7 @@ Dopo:
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>Seleziona byte binari</translation>
+        <translation>Seleziona i byte binari</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
@@ -3299,6 +3295,10 @@ Dopo:
     <message>
         <source>Virtual address:</source>
         <translation>Indirizzo virtuale:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Scegli un file da 1 byte a %1, un indirizzo esadecimale e un nome di sezione. Una funzione richiede un nome e permessi di esecuzione.</translation>
     </message>
 </context>
 <context>

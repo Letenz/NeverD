@@ -1273,7 +1273,7 @@
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>將新程式碼或資料映射至目前的分析</translation>
+        <translation>將新的程式碼或資料對應到此分析中</translation>
     </message>
 </context>
 <context>
@@ -3259,12 +3259,8 @@ After:
         <translation>瀏覽…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>請選擇大小為 1 位元組至 64 MiB 的檔案，並填寫十六進位位址與區段名稱。定義函式還需填寫函式名稱並授予執行權限。</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
-        <translation>將這些位元組定義為一個函式</translation>
+        <translation>定義涵蓋這些位元組的函式</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3272,7 +3268,7 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>將二進位檔案映射至目前映像的虛擬位址。儲存專案以保留此映射。原始二進位檔案不會變更。</translation>
+        <translation>將二進位檔案對應到目前映像中的虛擬位址。儲存專案即可保留。輸入的二進位檔案保持不變。</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3284,7 +3280,7 @@ After:
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>選擇二進位位元組檔案</translation>
+        <translation>選擇二進位位元組</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
@@ -3293,6 +3289,10 @@ After:
     <message>
         <source>Virtual address:</source>
         <translation>虛擬位址：</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>請選擇大小為 1 位元組到 %1 的檔案、十六進位位址和區段名稱。函式需要名稱和可執行權限。</translation>
     </message>
 </context>
 <context>

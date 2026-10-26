@@ -5,6 +5,20 @@ analysis and comparison output belong outside the repository.
 
 ## Open
 
+Shared MedIR flag folding preserves both subtraction operands even when they
+are equal. Treating `A-A` as `A-0` changes branch results and invents incoming
+register dependencies. `NeverDSelfCompareFlagTests` compares original machine
+code against lifted code, HighC and LLVMC on x86, x64, ARM32 and AArch64;
+logical tests and shifted operands remain input-dependent controls. This does
+not resolve genuine hidden machine-state inputs at VM continuation boundaries.
+The same SSA identity rule now serves compound-condition rewriting and direct
+boolean flag propagation. Unknown operands disappear only when the result is
+independent of their bits; unspecified occurrences stay distinct.
+
+Captured HFA callees retain their checked source record signature, matching
+argument reassembly and result unpacking. The saved function pointer remains
+the call target, including when the current import slot can no longer name it.
+
 Whole-image audits must reconcile the detector's final catalog with the input
 inventory and retain every failure record. A loader boundary guess refuted by
 completed discovery is different from a real function rejected by lifting;
@@ -159,11 +173,13 @@ when its argument count stays the same. Apple ARM64 packed stack placement,
 x86/ARM32 adapters, nonordinary conventions and general incoming machine-state
 projection remain separate gaps. Explicit x64/ARM64 source stack declarations
 now initialize their exact entry bytes in the shared MedIR frame, including
-floating bit transport. Bounded complete PE/ELF leaves can derive full-word
-integer stack inputs automatically, including restored RBP or x29/x30 frames
+floating bit transport. Bounded complete PE/ELF leaves can derive aligned
+1/2/4/8-byte integer stack inputs automatically, including restored RBP or x29/x30 frames
 and explicit local stack allocation. The shared byte proof checks original
 restoration against the current format's preserved bank; saved state, frame
-escape, external memory and partial words cannot become such inputs. Every
+escape, external memory and unaligned carriers cannot become such inputs.
+The memo retains each input width, signed/unsigned loads preserve their bits,
+and narrow declarations do not initialize adjacent bytes. Every
 selected caller must completely write the same outgoing bytes. Selected-only
 LLVM exports retain fixed declarations rather than falling back to varargs.
 These rules do not supply an arbitrary VM dispatcher with a missing bytecode

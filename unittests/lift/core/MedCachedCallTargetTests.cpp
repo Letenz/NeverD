@@ -17,6 +17,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -96,6 +97,8 @@ TEST(MedCachedCallTarget, ProvesMovingStackWithoutChangingRuntimeOperands) {
     ASSERT_TRUE(Target);
     EXPECT_EQ(Target->ThroughSlot, Import);
     EXPECT_EQ(Target->Address, Import ? 0x3000u : 0x1000u);
+    if (Import)
+      EXPECT_EQ(Target->LoadIndex, 1u);
     EXPECT_EQ(B.Ops.back().Opcode, NdOp::LOAD);
     EXPECT_EQ(B.Ops.back().Inputs[0], Original);
   }
@@ -152,6 +155,73 @@ TEST(MedCachedCallTarget, ExhaustionPublishesNoPartialTarget) {
   EXPECT_LT(Budget, 10000u);
 }
 
+TEST(MedCachedCallTarget, IncrementalQueriesMatchWholePrefixProofs) {
+  // A second captured callable follows the first call. The call retires the
+  // registers and ends the earlier frame cell's chain; a new store starts one.
+  const auto SP = reg(1, x86reg::RSP);
+  auto Full = cached();
+  Full.Ops.push_back(op(NdOp::INDIR_CALL, reg(6, x86reg::RAX), {value(5)}));
+  Full.Ops.push_back(
+      op(NdOp::INT_SUB, value(7), {SP, MedVar::makeConst(32, 8)}));
+  Full.Ops.push_back(
+      op(NdOp::STORE, {}, {value(7), MedVar::makeConst(0x1000, 8)}));
+  Full.Ops.push_back(op(NdOp::LOAD, value(8), {value(7)}));
+  Full.Ops.push_back(op(NdOp::LOAD, value(9), {value(4)}));
+  PreSSAMedCallTargets Incremental(Arch::X64);
+  size_t Work = 100000;
+  MedBlock Growing;
+  for (const auto &Op : Full.Ops) {
+    Growing.Ops.push_back(Op);
+    for (int Id : {5, 8, 9}) {
+      const auto Whole =
+          resolvePreSSAMedCallTarget(Growing, value(Id), Arch::X64);
+      const auto Shared = Incremental.resolve(Growing, value(Id), &Work);
+      ASSERT_EQ(Whole.has_value(), Shared.has_value())
+          << Growing.Ops.size() << " " << Id;
+      if (Whole) {
+        EXPECT_EQ(Whole->Address, Shared->Address);
+        EXPECT_EQ(Whole->ThroughSlot, Shared->ThroughSlot);
+      }
+    }
+  }
+  EXPECT_FALSE(resolvePreSSAMedCallTarget(Growing, value(9), Arch::X64));
+  const auto Second = resolvePreSSAMedCallTarget(Growing, value(8), Arch::X64);
+  ASSERT_TRUE(Second);
+  EXPECT_EQ(Second->Address, 0x1000u);
+  EXPECT_FALSE(Second->ThroughSlot);
+  // The incremental proof versions each operation once, where whole-prefix
+  // queries version the prefix again for every call.
+  size_t WholeWork = 100000;
+  MedBlock Prefix;
+  for (const auto &Op : Full.Ops) {
+    Prefix.Ops.push_back(Op);
+    for (int Id : {5, 8, 9})
+      resolvePreSSAMedCallTarget(Prefix, value(Id), Arch::X64, &WholeWork);
+  }
+  EXPECT_GT(Work, WholeWork);
+}
+
+TEST(MedCachedCallTarget, Win64ConventionOwnsWdkOperandsAndSingleResults) {
+  const auto *Win64 = callArgumentConvention(Arch::X64, BinaryFormat::COFF);
+  const auto *SysV = callArgumentConvention(Arch::X64, BinaryFormat::ELF);
+  ASSERT_TRUE(Win64 && SysV && Win64->PrototypeIntegerArguments);
+  EXPECT_TRUE(Win64->SingleRegisterReturns);
+  EXPECT_FALSE(SysV->SingleRegisterReturns);
+  EXPECT_FALSE(SysV->PrototypeIntegerArguments);
+  const auto Arguments = Win64->PrototypeIntegerArguments("IoCreateDevice");
+  ASSERT_TRUE(Arguments);
+  ASSERT_EQ(Arguments->Parameters.size(), 7u);
+  for (size_t I = 0; I < 7; ++I)
+    EXPECT_EQ(Arguments->Parameters[I].Kind,
+              I < 4 ? SourceABICarrierKind::IntegerRegister
+                    : SourceABICarrierKind::Stack)
+        << I;
+  EXPECT_EQ(Arguments->Parameters[4].Bytes, 4u);
+  EXPECT_EQ(Arguments->Parameters[5].Bytes, 1u);
+  EXPECT_EQ(Arguments->Parameters[6].Bytes, 8u);
+  EXPECT_FALSE(Win64->PrototypeIntegerArguments("NotAKernelRoutine"));
+}
+
 TEST(MedCachedCallTarget, RetainsTheOriginalMutableImportObservation) {
   auto B = cached();
   // Updating the IAT does not change the already captured callable. This
@@ -203,47 +273,50 @@ TEST(MedCachedCallTarget, WindowsVolatileTransportIsNotAnAggregateResult) {
 }
 
 TEST(MedCachedCallTarget, HighIRCallsTheCapturedValueAfterTheSlotChanges) {
-  MedFunc F;
-  F.Entry = 0x1000;
-  F.Name = "captured_call";
-  F.FrameSize = 64;
-  MedBlock B;
-  B.Id = 0;
-  B.StartAddr = F.Entry;
-  const auto SP = reg(1, x86reg::RSP);
-  B.Ops = {op(NdOp::INT_SUB, value(2), {SP, MedVar::makeConst(16, 8)}),
-           op(NdOp::LOAD, value(3), {MedVar::makeConst(0x3000, 8)}),
-           op(NdOp::STORE, {},
-              {MedVar::makeConst(0x3000, 8), MedVar::makeConst(0x4000, 8)}),
-           op(NdOp::STORE, {}, {value(2), value(3)}),
-           op(NdOp::LOAD, value(5), {value(2)}),
-           op(NdOp::INDIR_CALL, value(6), {value(5)}),
-           op(NdOp::RETURN, {}, {value(6)})};
-  for (size_t I = 0; I < B.Ops.size(); ++I)
-    B.Ops[I].Addr = F.Entry + I;
-  F.Blocks = {B};
-  const std::map<va_t, std::string> Names{{0x3000, "observed_import"}};
-  MedToHighConverter Converter;
-  Converter.setFuncNames(&Names);
-  auto High = Converter.convert(F, Arch::X64);
-  bool Found = false;
-  walkStmts(High.Body, [&](const HighStmt &S) {
-    forEachRhsExpr(S, [&](const ExprPtr &Root) {
-      const auto Find = [&](auto &&Self, const ExprPtr &E) -> void {
-        if (!E)
-          return;
-        if (E->Kind == ExprKind::Call) {
-          Found = true;
-          EXPECT_TRUE(E->IsIndirectCall);
-          EXPECT_TRUE(E->IndirectTarget);
-          EXPECT_EQ(E->CallAddr, 0x3000u);
-        }
-        E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
-      };
-      Find(Find, Root);
+  for (bool Spilled : {false, true}) {
+    SCOPED_TRACE(Spilled);
+    MedFunc F;
+    F.Entry = 0x1000;
+    F.Name = "captured_call";
+    F.FrameSize = 64;
+    MedBlock B;
+    B.Id = 0;
+    B.StartAddr = F.Entry;
+    const auto SP = reg(1, x86reg::RSP);
+    B.Ops = {op(NdOp::INT_SUB, value(2), {SP, MedVar::makeConst(16, 8)}),
+             op(NdOp::LOAD, value(3), {MedVar::makeConst(0x3000, 8)}),
+             op(NdOp::STORE, {},
+                {MedVar::makeConst(0x3000, 8), MedVar::makeConst(0x4000, 8)}),
+             op(NdOp::STORE, {}, {value(2), value(3)}),
+             op(NdOp::LOAD, value(5), {value(2)}),
+             op(NdOp::INDIR_CALL, value(6), {Spilled ? value(5) : value(3)}),
+             op(NdOp::RETURN, {}, {value(6)})};
+    for (size_t I = 0; I < B.Ops.size(); ++I)
+      B.Ops[I].Addr = F.Entry + I;
+    F.Blocks = {B};
+    const std::map<va_t, std::string> Names{{0x3000, "observed_import"}};
+    MedToHighConverter Converter;
+    Converter.setFuncNames(&Names);
+    auto High = Converter.convert(F, Arch::X64);
+    bool Found = false;
+    walkStmts(High.Body, [&](const HighStmt &S) {
+      forEachRhsExpr(S, [&](const ExprPtr &Root) {
+        const auto Find = [&](auto &&Self, const ExprPtr &E) -> void {
+          if (!E)
+            return;
+          if (E->Kind == ExprKind::Call) {
+            Found = true;
+            EXPECT_TRUE(E->IsIndirectCall);
+            EXPECT_TRUE(E->IndirectTarget);
+            EXPECT_EQ(E->CallAddr, 0x3000u);
+          }
+          E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+        };
+        Find(Find, Root);
+      });
     });
-  });
-  EXPECT_TRUE(Found);
+    EXPECT_TRUE(Found);
+  }
 }
 
 TEST(MedCachedCallTarget, HighIRNamesOnlyImportsWhoseReadStillReachesTheCall) {

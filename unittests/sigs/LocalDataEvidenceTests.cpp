@@ -182,7 +182,7 @@ TEST(LocalDataEvidence, MissingAmbiguousOrUnsupportedOwnersLeaveRawBodies) {
     case 0:
       break; // No opt-in.
     case 1:
-      Source.AnchorClass = COFF::IMAGE_SYM_CLASS_STATIC;
+      Source.AnchorClass = COFF::IMAGE_SYM_CLASS_WEAK_EXTERNAL;
       break;
     case 2:
       Source.DuplicateAnchor = true;
@@ -231,7 +231,7 @@ TEST(LocalDataEvidence, MissingAmbiguousOrUnsupportedOwnersLeaveRawBodies) {
       break;
     }
     const auto Modules = generateLocal(Source, Case != 0);
-    ASSERT_GE(Modules.size(), Case == 15 ? 1u : 2u) << Case;
+    ASSERT_GE(Modules.size(), Case == 1 || Case == 15 ? 1u : 2u) << Case;
     for (const auto &Module : Modules)
       if (std::any_of(
               Module.PublicNames.begin(), Module.PublicNames.end(),
@@ -241,4 +241,24 @@ TEST(LocalDataEvidence, MissingAmbiguousOrUnsupportedOwnersLeaveRawBodies) {
                          [](const FuncRef &Ref) { return Ref.IsLocalData; }))
             << Case;
   }
+}
+
+TEST(LocalDataEvidence, StaticFunctionAnchorsStillRequireUniqueDefinitions) {
+  LocalObject Source;
+  Source.AnchorClass = COFF::IMAGE_SYM_CLASS_STATIC;
+  auto Modules = generateLocal(Source);
+  ASSERT_EQ(Modules.size(), 2u);
+  for (const auto &Module : Modules) {
+    ASSERT_EQ(Module.References.size(), 1u);
+    EXPECT_TRUE(Module.References[0].IsLocalData);
+    EXPECT_EQ(Module.References[0].Name, "00000013:anchor");
+  }
+
+  Source.DuplicateAnchor = true;
+  Modules = generateLocal(Source);
+  ASSERT_EQ(Modules.size(), 2u);
+  for (const auto &Module : Modules)
+    EXPECT_TRUE(
+        std::none_of(Module.References.begin(), Module.References.end(),
+                     [](const FuncRef &Ref) { return Ref.IsLocalData; }));
 }

@@ -1269,7 +1269,7 @@
     </message>
     <message>
         <source>Add analysis section...</source>
-        <translation>إضافة قسم للتحليل...</translation>
+        <translation>إضافة قسم تحليل...</translation>
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
@@ -3278,7 +3278,7 @@ After:
     </message>
     <message>
         <source>Add analysis section</source>
-        <translation>إضافة قسم للتحليل</translation>
+        <translation>إضافة قسم تحليل</translation>
     </message>
     <message>
         <source>Binary bytes:</source>
@@ -3289,12 +3289,8 @@ After:
         <translation>استعراض…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>اختر ملفًا بحجم من بايت واحد إلى 64 MiB، وحدد عنوانًا ست عشريًا واسمًا للقسم. تحتاج الدالة إلى اسم وصلاحية التنفيذ.</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
-        <translation>تعريف دالة تشمل هذه البايتات</translation>
+        <translation>تعريف دالة تغطي هذه البايتات</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3302,11 +3298,11 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>عيّن ملفًا ثنائيًا إلى عنوان افتراضي في الصورة الحالية. احفظ المشروع للاحتفاظ بالتعيين. يبقى الملف الثنائي المدخل دون تغيير.</translation>
+        <translation>تعيين ملف ثنائي عند عنوان ظاهري في الصورة الحالية. احفظ المشروع للاحتفاظ به. يبقى الملف الثنائي المُدخَل دون تغيير.</translation>
     </message>
     <message>
         <source>Permissions:</source>
-        <translation>الصلاحيات:</translation>
+        <translation>الأذونات:</translation>
     </message>
     <message>
         <source>Section name:</source>
@@ -3314,15 +3310,19 @@ After:
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>اختيار البايتات الثنائية</translation>
+        <translation>تحديد البايتات الثنائية</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>تغيّر المشروع. افتح مربع الحوار هذا من جديد.</translation>
+        <translation>تغيَّر المشروع. افتح مربع الحوار هذا مرة أخرى.</translation>
     </message>
     <message>
         <source>Virtual address:</source>
-        <translation>العنوان الافتراضي:</translation>
+        <translation>العنوان الظاهري:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>اختر ملفًا بحجم من بايت واحد إلى ‎%1، وعنوانًا ست عشريًا، واسم قسم. تحتاج الدالة إلى اسم وأذونات تنفيذ.</translation>
     </message>
 </context>
 <context>
@@ -3710,7 +3710,7 @@ After:
     </message>
     <message>
         <source>Project changes saved</source>
-        <translation>حُفظت تغييرات المشروع</translation>
+        <translation>تم حفظ تغييرات المشروع</translation>
     </message>
 </context>
 <context>

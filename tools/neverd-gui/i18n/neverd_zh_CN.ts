@@ -1269,11 +1269,11 @@
     </message>
     <message>
         <source>Add analysis section...</source>
-        <translation>添加分析区段...</translation>
+        <translation>添加分析段...</translation>
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>将新代码或数据映射到当前分析中</translation>
+        <translation>将新的代码或数据映射到此分析中</translation>
     </message>
 </context>
 <context>
@@ -3248,7 +3248,7 @@ After:
     </message>
     <message>
         <source>Add analysis section</source>
-        <translation>添加分析区段</translation>
+        <translation>添加分析段</translation>
     </message>
     <message>
         <source>Binary bytes:</source>
@@ -3259,12 +3259,8 @@ After:
         <translation>浏览…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>请选择大小为 1 字节至 64 MiB 的文件，并填写十六进制地址和区段名称。定义函数还需填写函数名称并授予执行权限。</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
-        <translation>将这些字节定义为一个函数</translation>
+        <translation>定义覆盖这些字节的函数</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3272,7 +3268,7 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>将二进制文件映射到当前映像的虚拟地址。保存项目以保留此映射。原始二进制文件不会改变。</translation>
+        <translation>将二进制文件映射到当前映像中的虚拟地址。保存项目即可保留它。输入的二进制文件保持不变。</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3280,19 +3276,23 @@ After:
     </message>
     <message>
         <source>Section name:</source>
-        <translation>区段名称：</translation>
+        <translation>段名称：</translation>
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>选择二进制字节文件</translation>
+        <translation>选择二进制字节</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>项目已发生变化。请重新打开此对话框。</translation>
+        <translation>项目已更改。请重新打开此对话框。</translation>
     </message>
     <message>
         <source>Virtual address:</source>
         <translation>虚拟地址：</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>请选择大小为 1 字节到 %1 的文件、十六进制地址和段名称。函数需要名称和可执行权限。</translation>
     </message>
 </context>
 <context>

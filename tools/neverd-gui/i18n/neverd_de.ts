@@ -1273,7 +1273,7 @@
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>Neuen Code oder neue Daten in diese Analyse einbinden</translation>
+        <translation>Neuen Code oder neue Daten in diese Analyse abbilden</translation>
     </message>
 </context>
 <context>
@@ -3258,19 +3258,15 @@ Nachher:
     </message>
     <message>
         <source>Binary bytes:</source>
-        <translation>Binärdaten:</translation>
+        <translation>Binärbytes:</translation>
     </message>
     <message>
         <source>Browse…</source>
         <translation>Durchsuchen…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Wählen Sie eine Datei von 1 Byte bis 64 MiB und geben Sie eine Hexadezimaladresse und einen Abschnittsnamen an. Eine Funktion benötigt einen Namen und Ausführungsrechte.</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
-        <translation>Eine Funktion für diese Bytes definieren</translation>
+        <translation>Eine Funktion über diese Bytes definieren</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3278,7 +3274,7 @@ Nachher:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>Binden Sie eine Binärdatei an einer virtuellen Adresse im aktuellen Abbild ein. Speichern Sie das Projekt, um die Zuordnung zu behalten. Die Eingabedatei bleibt unverändert.</translation>
+        <translation>Eine Binärdatei an einer virtuellen Adresse im aktuellen Image abbilden. Speichern Sie das Projekt, um sie zu behalten. Die Eingabebinärdatei bleibt unverändert.</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3290,15 +3286,19 @@ Nachher:
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>Binärdaten auswählen</translation>
+        <translation>Binärbytes auswählen</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>Das Projekt wurde geändert. Öffnen Sie diesen Dialog erneut.</translation>
+        <translation>Das Projekt hat sich geändert. Öffnen Sie diesen Dialog erneut.</translation>
     </message>
     <message>
         <source>Virtual address:</source>
         <translation>Virtuelle Adresse:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Wählen Sie eine Datei von 1 Byte bis %1, eine hexadezimale Adresse und einen Abschnittsnamen. Eine Funktion benötigt einen Namen und Ausführungsrechte.</translation>
     </message>
 </context>
 <context>

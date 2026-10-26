@@ -1993,8 +1993,21 @@ Json Engine::analysisSnapshot() {
   options["read_only"] = true;
   Json analysisSections = nullptr;
   if (const auto query =
-          engineSymbol<AnalysisSections>("neverd_analysis_sections_json"))
+          engineSymbol<AnalysisSections>("neverd_analysis_sections_json")) {
+    // The replica takes the additions' bytes from this reply, two hexadecimal
+    // digits a byte: refuse what one frame cannot carry before encoding it.
+    std::uint64_t bytes = 0;
+    for (const auto &section :
+         backendJson(query(session_, 0), true).at("sections"))
+      bytes += section.at("size").get<std::uint64_t>();
+    if (bytes > MaxFrameBytes / 2)
+      throw Error("budget_exceeded", "Background analysis cannot carry " +
+                                         std::to_string(bytes) +
+                                         " bytes of analysis sections in one " +
+                                         std::to_string(MaxFrameBytes >> 20) +
+                                         " MiB worker frame");
     analysisSections = backendJson(query(session_, 1), true);
+  }
   return {{"schema", 1},
           {"open", options},
           {"input_sha256", inputHash()},
@@ -2040,11 +2053,25 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
       !sections.is_null()) {
     const auto import = engineSymbol<ImportAnalysisSections>(
         "neverd_analysis_sections_import_json");
-    if (!import || !import(session_, sections.dump().c_str()))
+    const auto query =
+        engineSymbol<AnalysisSections>("neverd_analysis_sections_json");
+    if (!import || !query)
       throw Error("invalid_analysis_section",
                   "Cannot restore the owner's analysis image additions");
-    newListing();
-    invalidate();
+    // An owner without additions, over a replica its open gave none, leaves
+    // nothing to import: importing copies the image and retires the
+    // replica's analysis, which every background start would pay.
+    const auto carried = sections.find("sections");
+    const bool none =
+        carried != sections.end() && carried->is_array() && carried->empty() &&
+        backendJson(query(session_, 0), true).at("sections").empty();
+    if (!none) {
+      if (!import(session_, sections.dump().c_str()))
+        throw Error("invalid_analysis_section",
+                    "Cannot restore the owner's analysis image additions");
+      newListing();
+      invalidate();
+    }
   }
   auto actual = userState();
   auto expected = snapshot.at("state");
@@ -2244,6 +2271,7 @@ void Engine::changedAnalysisSections() {
   analyzed_ = false;
   preparedFunction_.reset();
   dirty_ = true;
+  sectionsDirty_ = true;
   ++revision_;
   newListing();
   invalidate();
@@ -2717,6 +2745,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     warmFunctions_ = backgroundAnalysis_ && p.value("warm", false);
     restartWarming();
     dirty_ = false;
+    sectionsDirty_ = false;
     analyzed_ = false;
     loadedSize_ = fileSize;
     loadedTime_ = fileTime;
@@ -2816,7 +2845,10 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!add)
       throw Error("unsupported",
                   "The engine does not support analysis sections");
-    const auto path = stringField(p, "path", {}, 32768);
+    const auto path =
+        stringField(p, "path", {},
+                    ::neverd::limits::worker::
+                        kEngineExecuteImplAnalysisSectionAddPathStringFieldMax);
     std::vector<unsigned char> bytes;
     if (!path.empty()) {
       if (p.contains("data_hex"))
@@ -2826,7 +2858,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       const auto size = fs::file_size(file);
       if (!size || size > MaxAnalysisSectionBytes)
         throw Error("budget_exceeded",
-                    "Analysis section file must contain 1 byte to 64 MiB");
+                    "Analysis section file must contain 1 byte to " +
+                        std::to_string(MaxAnalysisSectionBytes >> 20) + " MiB");
       std::ifstream input(file, std::ios::binary);
       bytes.resize(static_cast<std::size_t>(size));
       if (!input.read(reinterpret_cast<char *>(bytes.data()),
@@ -2852,7 +2885,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!remove)
       throw Error("unsupported",
                   "The engine does not support analysis sections");
-    const auto name = stringField(p, "name", {}, 512);
+    const auto name =
+        stringField(p, "name", {}, ::neverd::sdk::kMaxAnalysisSectionNameBytes);
     if (!remove(session_, name.c_str()))
       throw Error("invalid_analysis_section", error());
     changedAnalysisSections();
@@ -3155,7 +3189,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
         neverd_annotation_set(session_, address, text.c_str());
         ++kept;
       }
-      dirty_ = kept != 0;
+      dirty_ = kept != 0 || sectionsDirty_;
     }
     // The history holds the declarations too: a change of them is a change
     // of its tables, which reloadUserState read.
@@ -4241,6 +4275,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     auto state = store.committedState();
     state["annotations"] = backendJson(neverd_annotations_json(session_));
     saveAnalysisSections();
+    sectionsDirty_ = false;
     store.persist(state);
     dirty_ = false;
     return {{"saved", true}, {"dirty", false}};
@@ -4254,11 +4289,44 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
              utf8Path(ownedString(neverd_session_file_path(session_))))))) {
       // Reload all saved image additions transactionally too. Reusing the
       // current image would retain unsaved section edits after "Discard".
+      // Open the input as it is open now: with its options, and the debug
+      // files and signatures chosen for it, which load over the saved
+      // sections again.
+      auto options = openOptions_;
+      options["path"] = ownedString(neverd_session_file_path(session_));
+      options["read_only"] = readOnly_;
+      const std::pair<const char *, const Json *> inputs[] = {
+          {"pdb", &pdbInput_},
+          {"dwarf", &dwarfInput_},
+          {"map", &mapInput_},
+          {"symbols", &symbolsInput_}};
+      for (const auto &[input, chosen] : inputs)
+        if (!chosen->is_null())
+          options[input] = *chosen;
+      const auto signatures = signatureInputs_;
       const auto identity = projectId_;
-      auto result = execute(
-          "open", {{"path", ownedString(neverd_session_file_path(session_))},
-                   {"read_only", readOnly_}});
+      auto result = execute("open", options);
       projectId_ = identity;
+      if (signatures.empty())
+        return result;
+      auto warnings = result.value("warnings", Json::array());
+      for (const auto &input : signatures) {
+        const auto path = input.at("path").get<std::string>();
+        // A file that changed since it loaded is the user's to load again.
+        if (signatureStamp(utf8Path(path)) != input.at("stamp")) {
+          warnings.push_back("Signatures changed and were not loaded again: " +
+                             path);
+          continue;
+        }
+        try {
+          execute("signatures_load", input);
+        } catch (const std::exception &failure) {
+          warnings.push_back("Signatures were not loaded again: " + path +
+                             ": " + failure.what());
+        }
+      }
+      result = metadata();
+      result["warnings"] = std::move(warnings);
       return result;
     }
     reloadCodeEdits();
@@ -4284,6 +4352,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
                    {"operands_loaded", operandsLoaded},
                    {"state_changed", true}});
     dirty_ = false;
+    sectionsDirty_ = false;
     return metadata();
   }
   if (operation == "call_paths" || operation == "call_tree") {

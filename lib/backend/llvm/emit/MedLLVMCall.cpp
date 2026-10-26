@@ -1049,7 +1049,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       // A source-bound stack call already has a complete scalar signature.
       // Omitting its body from a selected export does not make its declaration
       // an unknown variadic external. Other native carriers keep their own
-      // machine ABI adapters; this projection only transports full stack words.
+      // machine ABI adapters; this projection transports exact stack scalars.
       if (PreserveUnknownSourceValues && CI && CI->SourceCallHint &&
           Op.SourceCallHint == CI->SourceCallHint && !CI->IsIndirect &&
           Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
@@ -1057,7 +1057,7 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         const auto &Hint = *CI->SourceCallHint;
         const auto &Signature = Hint.Signature;
         const auto &Registers = getTargetRegInfo(TargetArch);
-        const bool StackWords =
+        const bool StackScalars =
             Signature.HasExplicitABI && Signature.ReturnType &&
             Signature.ReturnType->Kind == NdTypeKind::Int &&
             Signature.ReturnType->Size == Registers.PointerSize &&
@@ -1067,14 +1067,19 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
             !Signature.Parameters.empty() &&
             llvm::all_of(Signature.Parameters, [&](const auto &Parameter) {
               return Parameter.Location.Kind == SourceABICarrierKind::Stack &&
-                     Parameter.Location.ValueBytes == Registers.PointerSize &&
+                     Parameter.Type &&
+                     Parameter.Location.ValueBytes == Parameter.Type->Size &&
+                     (Parameter.Location.ValueBytes == Registers.PointerSize ||
+                      (Parameter.Type->Kind == NdTypeKind::Int &&
+                       Parameter.Location.ValueBytes <
+                           Registers.PointerSize)) &&
                      Parameter.Components.empty() &&
                      !Parameter.IndirectByValue &&
                      Parameter.TheRole ==
                          SourceParameterTypeHint::Role::Ordinary;
             });
         const bool NativeSource =
-            StackWords && Hint.CallKind == SourceCallTypeHint::Kind::Native &&
+            StackScalars && Hint.CallKind == SourceCallTypeHint::Kind::Native &&
             Hint.TargetAddress == Op.Inputs[0].ConstVal &&
             (Signature.Origin ==
                  SourceFunctionTypeHint::OriginKind::NativeAnalysis ||

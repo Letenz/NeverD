@@ -3265,10 +3265,6 @@ After:
         <translation>Browse…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
         <translation>Define a function covering these bytes</translation>
     </message>
@@ -3299,6 +3295,10 @@ After:
     <message>
         <source>Virtual address:</source>
         <translation>Virtual address:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</translation>
     </message>
 </context>
 <context>

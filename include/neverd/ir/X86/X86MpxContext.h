@@ -5,12 +5,15 @@
 //===----------------------------------------------------------------------===//
 /// \file
 /// MPX enable checks, bounds-bank transitions and bounds-table translation.
-/// Memory access and instruction completion remain the execution provider's
-/// responsibility. In particular, address calculation is not a memory probe.
+/// Memory providers own access validity and partial memory effects; this owner
+/// sequences their completion with bounds-bank updates. Address calculation is
+/// not a memory probe.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_IR_X86_X86MPXCONTEXT_H
 #define NEVERD_IR_X86_X86MPXCONTEXT_H
+
+#include "neverd/ir/intrinsics/X86/X86SegmentRegisters.h"
 
 #include <array>
 #include <cstdint>
@@ -35,7 +38,9 @@ enum class X86MpxResult : uint8_t {
   UnsupportedTransaction,
   InvalidInput,
   BoundsFault,
-  PartialStateUnknown
+  PartialStateUnknown,
+  MemoryFault,
+  UnknownMemory
 };
 
 /// Unknown fields are not implicitly zero. A known disabled prerequisite is
@@ -80,6 +85,8 @@ struct X86MpxStoreValue {
   uint64_t Upper = 0;
   unsigned WordBytes = 0;
 };
+
+class X86MpxMemoryProvider;
 
 class X86MpxContext {
 public:
@@ -140,6 +147,34 @@ public:
   /// implementation-dependent order. Forget the destination, not other banks
   /// or BNDSTATUS. Do not call this for a BDE access fault or invalid BDE.
   X86MpxResult tableReadFault(X86MpxMode Mode, unsigned Destination);
+
+  /// Execute complete BNDMOV or bounds-table memory transactions. The provider
+  /// owns segmentation, canonicality, permissions, LOCK and partial memory
+  /// effects. Disabled/unknown contexts and unknown required operands do not
+  /// call it. A provider fault is distinct from unavailable memory semantics.
+  /// BNDMOV addresses are offsets in the original operand's segment; table
+  /// operations take the already segmented pointer address, never dereference
+  /// that pointer, and send only the resulting BDE/BTE addresses to memory.
+  /// DefaultStack retains the original SP/BP base independently of segment
+  /// overrides: long mode ignores CS/DS/ES/SS prefixes for fault provenance.
+  X86MpxResult load(X86MpxMode Mode, unsigned Destination,
+                    std::optional<uint64_t> Address,
+                    X86MpxMemoryProvider &Memory,
+                    X86SegmentRegister Segment = X86SegmentRegister::DS,
+                    bool DefaultStack = false);
+  X86MpxResult store(X86MpxMode Mode, unsigned Source,
+                     std::optional<uint64_t> Address, bool Locked,
+                     X86MpxMemoryProvider &Memory,
+                     X86SegmentRegister Segment = X86SegmentRegister::DS,
+                     bool DefaultStack = false);
+  X86MpxResult loadTable(X86MpxMode Mode, unsigned Destination,
+                         std::optional<uint64_t> LinearPointerAddress,
+                         std::optional<uint64_t> PointerValue,
+                         X86MpxMemoryProvider &Memory);
+  X86MpxResult storeTable(X86MpxMode Mode, unsigned Source,
+                          std::optional<uint64_t> LinearPointerAddress,
+                          std::optional<uint64_t> PointerValue,
+                          X86MpxMemoryProvider &Memory);
 
   /// Apply an original transfer's effect at its completed instruction boundary,
   /// never before a faulting target/stack access. Initialize means the native

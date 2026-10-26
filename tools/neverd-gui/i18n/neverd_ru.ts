@@ -1269,11 +1269,11 @@
     </message>
     <message>
         <source>Add analysis section...</source>
-        <translation>Добавить раздел анализа...</translation>
+        <translation>Добавить секцию анализа...</translation>
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>Отобразить новый код или данные в этом анализе</translation>
+        <translation>Отобразить новый код или данные в адресное пространство анализа</translation>
     </message>
 </context>
 <context>
@@ -3260,19 +3260,15 @@ After:
     </message>
     <message>
         <source>Add analysis section</source>
-        <translation>Добавить раздел анализа</translation>
+        <translation>Добавить секцию анализа</translation>
     </message>
     <message>
         <source>Binary bytes:</source>
-        <translation>Двоичные данные:</translation>
+        <translation>Двоичные байты:</translation>
     </message>
     <message>
         <source>Browse…</source>
         <translation>Обзор…</translation>
-    </message>
-    <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Выберите файл размером от 1 байта до 64 MiB, укажите шестнадцатеричный адрес и имя раздела. Для функции нужны имя и право выполнения.</translation>
     </message>
     <message>
         <source>Define a function covering these bytes</source>
@@ -3284,7 +3280,7 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>Отобразите двоичный файл по виртуальному адресу в текущем образе. Сохраните проект, чтобы сохранить отображение. Исходный двоичный файл не изменится.</translation>
+        <translation>Отобразить двоичный файл по виртуальному адресу в текущем образе. Чтобы сохранить его, сохраните проект. Входной двоичный файл не изменяется.</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3292,11 +3288,11 @@ After:
     </message>
     <message>
         <source>Section name:</source>
-        <translation>Имя раздела:</translation>
+        <translation>Имя секции:</translation>
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>Выбрать двоичные данные</translation>
+        <translation>Выберите двоичные байты</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
@@ -3305,6 +3301,10 @@ After:
     <message>
         <source>Virtual address:</source>
         <translation>Виртуальный адрес:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Выберите файл размером от 1 байта до %1, шестнадцатеричный адрес и имя секции. Функции нужны имя и права на выполнение.</translation>
     </message>
 </context>
 <context>

@@ -1136,6 +1136,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
     MB.ExceptionalSuccs = LB.ExceptionalSuccs;
     MB.ExceptionalPreds = LB.ExceptionalPreds;
 
+    // MB only grows while its operations are converted.
+    PreSSAMedCallTargets CallTargets(TheArch);
     size_t BoundaryIndex = 0;
     for (size_t LowOpIndex = 0; LowOpIndex < LB.Ops.size(); ++LowOpIndex) {
       // A call through a slot that always holds one of the image's own
@@ -1145,8 +1147,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       if (const LowOp &Call = LB.Ops[LowOpIndex];
           Image && Call.Opcode == NdOp::INDIR_CALL && Call.NumInputs == 1 &&
           !Call.Inputs[0].isConst()) {
-        CachedTarget = resolvePreSSAMedCallTarget(
-            MB, ndVarToMedVar(Call.Inputs[0]), TheArch, &CallTargetWork);
+        CachedTarget = CallTargets.resolve(MB, ndVarToMedVar(Call.Inputs[0]),
+                                           &CallTargetWork);
         const auto OriginalSite = sourceCallOccurrenceKey(Call);
         const bool AnalystSite = OriginalSite && SourceCallSiteHints &&
                                  SourceCallSiteHints->count(*OriginalSite);

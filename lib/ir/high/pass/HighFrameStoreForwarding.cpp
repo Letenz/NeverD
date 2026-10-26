@@ -18,6 +18,9 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <map>
 #include <optional>
@@ -216,16 +219,162 @@ const HighExpr *statementCall(const HighStmt &Stmt) {
   return Root && Root->Kind == ExprKind::Call ? Root : nullptr;
 }
 
+// The source flow graph's reading of a test: a missing loop test is true,
+// and only an integer constant decides one.
+std::optional<bool> testTruth(const ExprPtr &Test) {
+  if (!Test)
+    return true;
+  if (Test->Kind != ExprKind::Const || !Test->Type ||
+      Test->Type->Kind != NdTypeKind::Int)
+    return std::nullopt;
+  return Test->ConstVal != 0;
+}
+
+// Whether \p Body has a `break` or `continue` (\p Kind) for the statement
+// that encloses it. A nested loop owns both, and a nested switch its breaks.
+bool hasOwnJump(const std::vector<HighStmt> &Body, StmtKind Kind) {
+  for (const HighStmt &S : Body) {
+    if (S.Kind == Kind)
+      return true;
+    if (S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+        S.Kind == StmtKind::For ||
+        (Kind == StmtKind::Break && S.Kind == StmtKind::Switch))
+      continue;
+    if (hasOwnJump(S.Body, Kind) || hasOwnJump(S.ElseBody, Kind) ||
+        hasOwnJump(S.DefaultBody, Kind) ||
+        llvm::any_of(S.Cases, [&](const SwitchCase &Case) {
+          return hasOwnJump(Case.Body, Kind);
+        }))
+      return true;
+  }
+  return false;
+}
+
+bool mayComplete(const HighStmt &S);
+
+// Whether control entering \p Body can leave its end, taking either way of
+// every test that is not constant, as the source flow graph does.
+bool mayFallThrough(const std::vector<HighStmt> &Body) {
+  return llvm::all_of(Body, mayComplete);
+}
+
+// Whether control entering \p S can continue after it.
+bool mayComplete(const HighStmt &S) {
+  switch (S.Kind) {
+  case StmtKind::Return:
+  case StmtKind::Goto:
+  case StmtKind::Break:
+  case StmtKind::Continue:
+    return false;
+  case StmtKind::Assign:
+  case StmtKind::ExprStmt:
+    return !isTerminatingHighCall(S.Val);
+  case StmtKind::Call:
+    return !isTerminatingHighCall(S.CallExpr);
+  case StmtKind::Block:
+    return mayFallThrough(S.Body);
+  case StmtKind::If:
+  case StmtKind::IfElse: {
+    const auto Truth = testTruth(S.Cond);
+    return ((!Truth || *Truth) && mayFallThrough(S.Body)) ||
+           ((!Truth || !*Truth) && mayFallThrough(S.ElseBody));
+  }
+  case StmtKind::While:
+  case StmtKind::For: {
+    const auto Truth = testTruth(S.Cond);
+    return !Truth || !*Truth || hasOwnJump(S.Body, StmtKind::Break);
+  }
+  case StmtKind::DoWhile: {
+    const auto Truth = testTruth(S.Cond);
+    return ((!Truth || !*Truth) && (mayFallThrough(S.Body) ||
+                                    hasOwnJump(S.Body, StmtKind::Continue))) ||
+           hasOwnJump(S.Body, StmtKind::Break);
+  }
+  case StmtKind::Switch:
+    return mayFallThrough(S.DefaultBody) ||
+           hasOwnJump(S.DefaultBody, StmtKind::Break) ||
+           llvm::any_of(S.Cases, [](const SwitchCase &Case) {
+             return (!Case.FallsThrough && mayFallThrough(Case.Body)) ||
+                    hasOwnJump(Case.Body, StmtKind::Break);
+           });
+  default:
+    return true;
+  }
+}
+
+// Whether control from the entry certainly enters a cycle, taking either way
+// of every test that is not constant: a loop whose body can return to its
+// test, or a goto to a label that reaches it. FrameWritebacks commits nothing
+// across a cycle, and refining the graph's tests could remove one only where
+// its back edge can never run. \p Labels are the function's goto targets.
+bool entersCycle(const std::vector<HighStmt> &Body,
+                 const std::set<va_t> &Labels) {
+  // Labels that fall through to the visited statement, and the labels that a
+  // goto reached from the entry jumps to.
+  std::vector<va_t> Reaching;
+  std::set<va_t> Entered;
+  bool Cyclic = false;
+  const auto Visit = [&](auto &&Self, const std::vector<HighStmt> &List,
+                         size_t From, bool Live) -> void {
+    const size_t Mark = Reaching.size();
+    for (const HighStmt &S : List) {
+      if (Cyclic)
+        return;
+      if (S.Addr && S.Addr != InvalidVA && Labels.count(S.Addr)) {
+        Reaching.push_back(S.Addr);
+        Live |= Entered.count(S.Addr) != 0;
+      }
+      const auto Truth = testTruth(S.Cond);
+      if (Live && S.Kind == StmtKind::Goto) {
+        Cyclic |= std::find(Reaching.begin() + From, Reaching.end(),
+                            S.GotoTarget) != Reaching.end();
+        Entered.insert(S.GotoTarget);
+      }
+      if (Live &&
+          (S.Kind == StmtKind::While || S.Kind == StmtKind::For ||
+           S.Kind == StmtKind::DoWhile) &&
+          (!Truth || *Truth) &&
+          (mayFallThrough(S.Body) || hasOwnJump(S.Body, StmtKind::Continue)))
+        Cyclic = true;
+      const bool Conditional =
+          S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+          S.Kind == StmtKind::While || S.Kind == StmtKind::For;
+      Self(Self, S.Body, From, Live && (!Conditional || !Truth || *Truth));
+      Self(Self, S.ElseBody, From, Live && (!Truth || !*Truth));
+      // A constant selector enters one arm; a falling case may enter more,
+      // which this conservative walk does not follow.
+      const bool Selected =
+          S.SwitchExpr && S.SwitchExpr->Kind == ExprKind::Const;
+      bool Matched = false;
+      for (const SwitchCase &Case : S.Cases) {
+        const bool Taken = !Selected || Case.Value == S.SwitchExpr->ConstVal;
+        Matched |= Selected && Taken;
+        Self(Self, Case.Body, From, Live && Taken);
+      }
+      Self(Self, S.DefaultBody, From, Live && !Matched);
+      if (!mayComplete(S)) {
+        From = Reaching.size();
+        Live = false;
+      }
+    }
+    Reaching.resize(Mark);
+  };
+  Visit(Visit, Body, 0, true);
+  return Cyclic;
+}
+
 // Prove the effect boundary once, with an acyclic, bounded graph walk. An
 // outermost call consumes its arguments before invalidating memory facts;
 // nested effects, atomic operations and address escapes remain unsupported.
-bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
+// \p Body is a statement list of \p Func, which owns the frame they access.
+bool isStraightLinePrivateFrameFunction(llvm::ArrayRef<HighStmt> Body,
+                                        const HighFunc &Func, Arch Architecture,
                                         size_t &Budget) {
   if (Func.FrameSize <= 0 || Func.StructuredExceptionRegions ||
       Func.UnstructuredExceptionRegions)
     return false;
   HighExprSet Seen, Active;
-  for (const HighStmt &Stmt : Func.Body) {
+  for (const HighStmt &Stmt : Body) {
     if (!Budget || !Stmt.Body.empty() || !Stmt.ElseBody.empty() ||
         !Stmt.Cases.empty() || !Stmt.DefaultBody.empty() ||
         !Stmt.EHClauseBodies.empty() || !Stmt.EHClauses.empty() ||
@@ -296,6 +445,12 @@ bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
       return false;
   }
   return true;
+}
+
+bool isStraightLinePrivateFrameFunction(const HighFunc &Func, Arch Architecture,
+                                        size_t &Budget) {
+  return isStraightLinePrivateFrameFunction(Func.Body, Func, Architecture,
+                                            Budget);
 }
 
 std::optional<int64_t> privateFrameOffset(const ExprPtr &Address,
@@ -455,6 +610,24 @@ bool recordFrameStore(const ExprPtr &Address, const ExprPtr &Value,
   return false;
 }
 
+// A Stack variable names a frame home, so reading it observes the frame
+// bytes a pending store may still provide.
+bool readsStackHome(const ExprPtr &Root) {
+  std::vector<const HighExpr *> Pending{Root.get()};
+  HighExprSet Seen;
+  while (!Pending.empty()) {
+    const HighExpr *E = Pending.back();
+    Pending.pop_back();
+    if (!E || !Seen.insert(E).second)
+      continue;
+    if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Stack)
+      return true;
+    E->forEachChildExpr(
+        [&](const ExprPtr &Child) { Pending.push_back(Child.get()); });
+  }
+  return false;
+}
+
 void invalidateWrittenVariable(std::map<int64_t, StoredFrameValue> &Stores,
                                const MedVar &Variable) {
   const auto Key = highSourceLocalIdentity(Variable);
@@ -467,13 +640,16 @@ void invalidateWrittenVariable(std::map<int64_t, StoredFrameValue> &Stores,
 }
 } // namespace
 
+// \p Validated says the caller has just proven \p Func straight-line.
 static void forwardLinearPrivateFrameLoads(HighFunc &Func, Arch Architecture,
-                                           size_t &Budget) {
+                                           size_t &Budget,
+                                           bool Validated = false) {
   if (Architecture == Arch::Unknown)
     return;
   const uint16_t PointerBytes = getTargetRegInfo(Architecture).PointerSize;
   if ((PointerBytes != 4 && PointerBytes != 8) ||
-      !isStraightLinePrivateFrameFunction(Func, Architecture, Budget))
+      (!Validated &&
+       !isStraightLinePrivateFrameFunction(Func, Architecture, Budget)))
     return;
   std::map<LocalIdentity, unsigned> DefinitionCounts;
   for (const HighStmt &Stmt : Func.Body)
@@ -518,7 +694,8 @@ static void forwardLinearPrivateFrameLoads(HighFunc &Func, Arch Architecture,
     // unobserved write dead, even if another region lets an object escape.
     // Never carry this proof across a call, join or unknown memory read.
     forEachRhsExpr(Stmt, [&](const ExprPtr &Root) {
-      if (!PendingStores.empty() && !discardableIntegerValue(Root, Budget))
+      if (!PendingStores.empty() &&
+          (!discardableIntegerValue(Root, Budget) || readsStackHome(Root)))
         PendingStores.clear();
     });
     if (Stmt.Kind == StmtKind::Store) {
@@ -611,6 +788,7 @@ class FrameWritebacks {
   HighFunc &Function;
   Arch Architecture;
   size_t &Budget;
+  const std::set<va_t> &Labels;
   bool Complete = true;
   size_t NextValue = 1;
   ExprPtr EntryStack;
@@ -1014,14 +1192,17 @@ class FrameWritebacks {
   }
 
 public:
-  FrameWritebacks(HighFunc &F, Arch A, size_t &B)
-      : Function(F), Architecture(A), Budget(B) {}
+  /// \p L are the goto targets in \p F.
+  FrameWritebacks(HighFunc &F, Arch A, size_t &B, const std::set<va_t> &L)
+      : Function(F), Architecture(A), Budget(B), Labels(L) {}
 
-  void run() {
-    const auto Graph = buildHighSourceFlowGraph(Function);
-    if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
-        Graph.Nodes.empty())
-      return;
+  /// \returns whether a proven rewrite changed the function.
+  bool run() {
+    // Nothing commits without budget or a frame address; learn both before
+    // building the flow graph, which none of the checks below needs. A cyclic
+    // graph never commits below: decide that from statements alone first.
+    if (!Budget || entersCycle(Function.Body, Labels))
+      return false;
     State Entry;
     HighExprSet Seen;
     walkStmts(Function.Body, [&](const HighStmt &T) {
@@ -1070,7 +1251,11 @@ public:
       });
     });
     if (!Complete || !EntryStack)
-      return;
+      return false;
+    const auto Graph = buildHighSourceFlowGraph(Function);
+    if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
+        Graph.Nodes.empty())
+      return false;
     std::vector<bool> Reachable(Graph.Nodes.size());
     std::vector<size_t> Degree(Graph.Nodes.size()), Work{Graph.Entry};
     size_t Total = 0;
@@ -1087,7 +1272,7 @@ public:
       }
     }
     if (!Complete || Degree[Graph.Entry])
-      return;
+      return false;
     std::vector<std::optional<State>> Incoming(Graph.Nodes.size());
     Incoming[Graph.Entry] = std::move(Entry);
     Work = {Graph.Entry};
@@ -1097,7 +1282,7 @@ public:
       const size_t I = Work.back();
       Work.pop_back();
       if (!Incoming[I] || !spend(1 + Incoming[I]->size()))
-        return;
+        return false;
       State S = std::move(*Incoming[I]);
       Incoming[I].reset();
       ++Visited;
@@ -1105,7 +1290,7 @@ public:
       transfer(Graph.Nodes[I], S);
       for (size_t Next : Graph.Nodes[I].Successors) {
         if (!spend(1 + S.size()))
-          return;
+          return false;
         if (Incoming[Next]) {
           intersect(Incoming[Next]->Locals, S.Locals);
           intersect(Incoming[Next]->Addresses, S.Addresses);
@@ -1119,23 +1304,31 @@ public:
     }
     // A cycle, unresolved edge or exhausted proof cannot commit partial edits.
     if (!Complete || Visited != Total)
-      return;
+      return false;
     std::map<const HighStmt *, HighStmt> Rewritten;
     for (const auto &[Statement, S] : Before) {
       HighStmt Copy = *Statement;
-      forEachRhsExpr(Copy, [&](ExprPtr &E) { E = replaceCapturedReads(E, S); });
+      forEachRhsExpr(Copy, [&](ExprPtr &E) {
+        // A do-while test runs after the body, not in the state at its entry.
+        if (Copy.Kind != StmtKind::DoWhile || &E != &Copy.Cond)
+          E = replaceCapturedReads(E, S);
+      });
       Rewritten.emplace(Statement, std::move(Copy));
       if (!Complete)
-        return;
+        return false;
     }
     std::map<const HighStmt *, bool> Overwritten;
     findOverwrittenStores(Graph, Order, Rewritten, Overwritten);
     if (!Complete)
-      return;
+      return false;
+    bool Changed = false;
     walkStmts(Function.Body, [&](HighStmt &T) {
       if (const auto Rewrite = Rewritten.find(&T); Rewrite != Rewritten.end()) {
         // Keep child vectors in place: graph statement identities borrow them.
         auto &R = Rewrite->second;
+        Changed |= T.Val != R.Val || T.Cond != R.Cond || T.RetVal != R.RetVal ||
+                   T.StoreAddr != R.StoreAddr || T.StoreVal != R.StoreVal ||
+                   T.CallExpr != R.CallExpr || T.SwitchExpr != R.SwitchExpr;
         T.Val = std::move(R.Val);
         T.Cond = std::move(R.Cond);
         T.RetVal = std::move(R.RetVal);
@@ -1153,15 +1346,22 @@ public:
       T = HighStmt{};
       T.Kind = StmtKind::Block;
       T.Addr = Address;
+      Changed = true;
     });
+    return Changed;
   }
 };
 } // namespace
 
 void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
+  forwardPrivateFrameLoads(Func, Architecture, /*AcrossJoins=*/true);
+}
+
+bool forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture,
+                              bool AcrossJoins) {
   if (Architecture == Arch::Unknown || Func.FrameSize <= 0 ||
       Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
-    return;
+    return false;
   // Keep the existing exact, straight-line proof. A call or source join ends
   // its facts; it need not disable unrelated regions of the entire function.
   // In particular, no memory fact is carried into or out of a loop.
@@ -1206,7 +1406,7 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
     });
   });
   if (UnsupportedFrame || !Remaining)
-    return;
+    return false;
   FrameAliases DominatingAliases;
   const auto Alias = [&](const MedVar &V) -> ExprPtr {
     const auto I = DominatingAliases.find(highSourceLocalIdentity(V));
@@ -1226,6 +1426,14 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
       break;
     DominatingAliases.emplace(highSourceLocalIdentity(S.Dst->Var), S.Val);
     Prefix.push_back(S);
+  }
+  // Every region below starts with this prefix: prove it once.
+  bool PrefixValid = Prefix.empty();
+  if (!PrefixValid) {
+    size_t Budget = Remaining;
+    PrefixValid = isStraightLinePrivateFrameFunction(Prefix, Context,
+                                                     Architecture, Budget);
+    Remaining = Budget;
   }
   const auto Forward = [&](auto &&Self, std::vector<HighStmt> &Body,
                            unsigned Depth) -> void {
@@ -1281,13 +1489,21 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
       }
       // If a call input contains an effect, still optimize the preceding
       // region, but never speculate about argument evaluation order.
+      // Each statement of the region already passed this proof alone, and the
+      // prefix passed it above: only the exposed call inputs remain.
       size_t Budget = Remaining;
-      if (!isStraightLinePrivateFrameFunction(Region, Architecture, Budget)) {
+      const bool Valid =
+          (AtEntry || PrefixValid) &&
+          isStraightLinePrivateFrameFunction(
+              llvm::ArrayRef<HighStmt>(Region.Body).drop_front(Count), Region,
+              Architecture, Budget);
+      if (!Valid) {
         Region.Body.resize(Count);
         Inputs.clear();
       }
       Remaining = Budget;
-      forwardLinearPrivateFrameLoads(Region, Architecture, Remaining);
+      // A region the proof above accepted is not proven again.
+      forwardLinearPrivateFrameLoads(Region, Architecture, Remaining, Valid);
       for (size_t I = PrefixCount; I < Count; ++I)
         Body[First + I - PrefixCount] = std::move(Region.Body[I]);
       if (Root && !Inputs.empty()) {
@@ -1320,12 +1536,12 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
         First = I;
       }
       // Reuse the original shape/effect validator on this individual
-      // statement. A failed proof is a boundary, never permission to forward.
-      HighFunc One = Context;
-      One.Body = {S};
+      // statement, in place: a compound statement fails without its children
+      // being copied. A failed proof is a boundary, never permission to
+      // forward.
       size_t Budget = Remaining;
-      const bool Plain =
-          isStraightLinePrivateFrameFunction(One, Architecture, Budget);
+      const bool Plain = isStraightLinePrivateFrameFunction(
+          llvm::ArrayRef<HighStmt>(S), Context, Architecture, Budget);
       Remaining = Budget;
       if (Plain && S.Kind == StmtKind::Return) {
         Flush(I + 1);
@@ -1345,6 +1561,7 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
     Flush(Body.size());
   };
   Forward(Forward, Func.Body, 0);
-  FrameWritebacks(Func, Architecture, Remaining).run();
+  return AcrossJoins &&
+         FrameWritebacks(Func, Architecture, Remaining, Entries).run();
 }
 } // namespace neverd

@@ -254,7 +254,7 @@ class PreservationProof {
 public:
   PreservationProof(Arch Architecture, const NativeSourceCalls &Calls,
                     bool TerminalOnly = false,
-                    std::set<int64_t> IncomingStackSlots = {},
+                    std::map<int64_t, uint16_t> IncomingStackSlots = {},
                     bool RequirePrivateFrame = false,
                     bool ExternalMemoryDisjoint = false,
                     const SourceFunctionTypeHint *EntrySignature = nullptr,
@@ -1300,9 +1300,13 @@ public:
             if (Read(*Memory.Address, I).MayBeFrame)
               return false;
         const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
-        const bool IncomingRead = Address && Op.Opcode == NdOp::LOAD &&
-                                  Memory.AccessSize == 8 &&
-                                  IncomingStackSlots.count(*Address);
+        // The declared carrier must agree with the original load, including
+        // for native ABI inference that compares independently recovered IRs.
+        // A narrower load cannot authenticate the declaration's extra bytes.
+        const bool IncomingRead =
+            Address && Op.Opcode == NdOp::LOAD &&
+            IncomingStackSlots.count(*Address) &&
+            Memory.AccessSize == IncomingStackSlots.at(*Address);
         if (IncomingRead && (!SP || *SP > 0))
           return false;
         if (Address && !IncomingRead) {
@@ -1569,7 +1573,7 @@ private:
   RegisterFacts RequiredExitRegisters;
   bool TerminalOnly;
   bool TrackStackArguments;
-  std::set<int64_t> IncomingStackSlots;
+  std::map<int64_t, uint16_t> IncomingStackSlots;
   bool RequirePrivateFrame;
   bool ExternalMemoryDisjoint;
   const SourceFunctionTypeHint *EntrySignature;
@@ -1793,7 +1797,7 @@ static bool restoresNativeSourceStateImpl(
   bool HasStackStore = false;
   if (!validateFrameCalls(Function, Architecture, Calls, HasStackStore))
     return false;
-  std::set<int64_t> IncomingStackSlots;
+  std::map<int64_t, uint16_t> IncomingStackSlots;
   if (EntrySignature) {
     // Copy queries consume a separately authenticated fixed source declaration.
     // They do not infer an entry ABI from frame use; preserve the narrower
@@ -1816,14 +1820,19 @@ static bool restoresNativeSourceStateImpl(
           X64Stack ? getTargetRegInfo(Architecture).PointerSize : 0;
       if ((Architecture != Arch::AArch64 && !X64Stack) ||
           !Parameter.Components.empty() || !Parameter.Type ||
-          Parameter.Type->Size != 8 ||
+          (Parameter.Type->Size != 1 && Parameter.Type->Size != 2 &&
+           Parameter.Type->Size != 4 && Parameter.Type->Size != 8) ||
           (Parameter.Type->Kind != NdTypeKind::Int &&
            Parameter.Type->Kind != NdTypeKind::Ptr) ||
-          Location.ValueBytes != 8 || Location.EntryStackOffset < Minimum ||
+          Location.ValueBytes != Parameter.Type->Size ||
+          Location.EntryStackOffset < Minimum ||
           Location.EntryStackOffset >
-              ::neverd::limits::ir::kSourceFrameAnalysisMaxFrame - 8 ||
+              ::neverd::limits::ir::kSourceFrameAnalysisMaxFrame -
+                  Location.ValueBytes ||
           Location.EntryStackOffset % 8 != 0 ||
-          !IncomingStackSlots.insert(Location.EntryStackOffset).second)
+          !IncomingStackSlots
+               .emplace(Location.EntryStackOffset, Location.ValueBytes)
+               .second)
         return false;
     }
   }

@@ -1269,11 +1269,11 @@
     </message>
     <message>
         <source>Add analysis section...</source>
-        <translation>Ajouter une section d’analyse...</translation>
+        <translation>Ajouter une section d&apos;analyse...</translation>
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>Mapper de nouveaux codes ou données dans cette analyse</translation>
+        <translation>Mapper du nouveau code ou de nouvelles données dans cette analyse</translation>
     </message>
 </context>
 <context>
@@ -3254,7 +3254,7 @@ Après :
     </message>
     <message>
         <source>Add analysis section</source>
-        <translation>Ajouter une section d’analyse</translation>
+        <translation>Ajouter une section d&apos;analyse</translation>
     </message>
     <message>
         <source>Binary bytes:</source>
@@ -3263,10 +3263,6 @@ Après :
     <message>
         <source>Browse…</source>
         <translation>Parcourir…</translation>
-    </message>
-    <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Choisissez un fichier de 1 octet à 64 MiB, une adresse hexadécimale et un nom de section. Une fonction nécessite un nom et des droits d’exécution.</translation>
     </message>
     <message>
         <source>Define a function covering these bytes</source>
@@ -3278,11 +3274,11 @@ Après :
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>Mappez un fichier binaire à une adresse virtuelle de l’image actuelle. Enregistrez le projet pour conserver ce mappage. Le binaire d’entrée reste inchangé.</translation>
+        <translation>Mapper un fichier binaire à une adresse virtuelle de l&apos;image actuelle. Enregistrez le projet pour le conserver. Le binaire d&apos;entrée reste inchangé.</translation>
     </message>
     <message>
         <source>Permissions:</source>
-        <translation>Droits :</translation>
+        <translation>Droits d&apos;accès :</translation>
     </message>
     <message>
         <source>Section name:</source>
@@ -3299,6 +3295,10 @@ Après :
     <message>
         <source>Virtual address:</source>
         <translation>Adresse virtuelle :</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Choisissez un fichier de 1 octet à %1, une adresse hexadécimale et un nom de section. Une fonction nécessite un nom et des droits d&apos;exécution.</translation>
     </message>
 </context>
 <context>

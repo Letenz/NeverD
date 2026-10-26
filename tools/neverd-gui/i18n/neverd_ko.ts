@@ -1273,7 +1273,7 @@
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>새 코드나 데이터를 이 분석에 매핑</translation>
+        <translation>새 코드나 데이터를 이 분석에 매핑합니다</translation>
     </message>
 </context>
 <context>
@@ -3259,12 +3259,8 @@ After:
         <translation>찾아보기…</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>1바이트에서 64 MiB 사이의 파일을 선택하고 16진수 주소와 섹션 이름을 입력하세요. 함수에는 이름과 실행 권한이 필요합니다.</translation>
-    </message>
-    <message>
         <source>Define a function covering these bytes</source>
-        <translation>이 바이트 전체를 함수로 정의</translation>
+        <translation>이 바이트를 포함하는 함수 정의</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3272,7 +3268,7 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>현재 이미지의 가상 주소에 바이너리 파일을 매핑합니다. 유지하려면 프로젝트를 저장하세요. 입력 바이너리는 변경되지 않습니다.</translation>
+        <translation>바이너리 파일을 현재 이미지의 가상 주소에 매핑합니다. 유지하려면 프로젝트를 저장하세요. 입력 바이너리는 변경되지 않습니다.</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3293,6 +3289,10 @@ After:
     <message>
         <source>Virtual address:</source>
         <translation>가상 주소:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>1바이트에서 %1 사이의 파일, 16진수 주소와 섹션 이름을 지정하세요. 함수에는 이름과 실행 권한이 필요합니다.</translation>
     </message>
 </context>
 <context>
@@ -3675,7 +3675,7 @@ After:
     </message>
     <message>
         <source>Project changes saved</source>
-        <translation>프로젝트 변경 사항 저장됨</translation>
+        <translation>프로젝트 변경 사항을 저장했습니다</translation>
     </message>
 </context>
 <context>

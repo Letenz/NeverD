@@ -537,6 +537,7 @@ add_neverd_unittest(NeverDSemanticTests
   allplatform/scalar/AllPlatform_RevBitfieldRTTests.cpp
   allplatform/scalar/AllPlatform_ScalarMixRTTests.cpp
   allplatform/scalar/AllPlatform_ShiftedRegOperandRTTests.cpp
+  allplatform/scalar/AllPlatform_SelfCompareFlagsRTTests.cpp
   allplatform/scalar/AllPlatform_SignedFlagFoldRTTests.cpp
   allplatform/scalar/AllPlatform_SubRegMixRTTests.cpp
   allplatform/vector/AllPlatform_ComplexArithRTTests.cpp
@@ -984,6 +985,42 @@ endif()
 
 if(TARGET neverd)
   add_dependencies(NeverDPatchFullTests neverd)
+endif()
+
+# --- Shared comparison and flag folding across integer architectures ---
+add_neverd_unittest(NeverDSelfCompareFlagTests
+  allplatform/scalar/AllPlatform_SelfCompareFlagsRTTests.cpp
+  allplatform/scalar/AllPlatform_SignedFlagFoldRTTests.cpp
+  TIMEOUT 600
+)
+
+target_compile_definitions(NeverDSelfCompareFlagTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_include_directories(NeverDSelfCompareFlagTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+  ${CMAKE_SOURCE_DIR}/third_party/unicorn/include
+)
+
+target_link_libraries(NeverDSelfCompareFlagTests PRIVATE
+  unicorn
+  neverd_shared
+  NeverDPassMIR
+  LLVMMC
+  LLVMMCParser
+  LLVMObject
+  LLVMX86AsmParser LLVMX86Desc LLVMX86Info
+  LLVMAArch64AsmParser LLVMAArch64Desc LLVMAArch64Info
+  LLVMARMAsmParser LLVMARMDesc LLVMARMInfo
+  LLVMSupport
+)
+
+if(TARGET neverd)
+  add_dependencies(NeverDSelfCompareFlagTests neverd)
 endif()
 
 # --- Computed-goto / local label-table probing suite ---

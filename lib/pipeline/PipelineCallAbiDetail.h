@@ -30,6 +30,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -195,8 +196,9 @@ struct OmittedCalleeMemo {
     std::vector<va_t> CalleesRead;
     std::vector<va_t> DirectCallTargets;
     /// Complete read-only leaf inputs proved from this conversion's original
-    /// LowIR. These locations do not alter Body's machine calling convention.
-    std::vector<int64_t> SourceStackInputs;
+    /// LowIR, as entry-SP offset and observed byte width. These inputs do not
+    /// alter Body's machine calling convention.
+    std::vector<std::pair<int64_t, uint16_t>> SourceStackInputs;
     /// Whether \p Result's summaries read as they did for the conversion.
     bool readsHold(const PipelineResult &Result) const;
   };
