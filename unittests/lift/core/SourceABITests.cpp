@@ -8,6 +8,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
@@ -2556,6 +2557,101 @@ TEST(SourceABI, SourceStackExpressionsPreserveExactEntryOffsets) {
       EXPECT_EQ(Func.Params[Index].RegOff, kNoParamReg);
     }
   }
+}
+
+TEST(SourceABI, StoredParametersCannotAliasCallResultIdentities) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (auto Opcode : {NdOp::CALL, NdOp::INDIR_CALL, NdOp::INTRINSIC}) {
+      if (Opcode == NdOp::INTRINSIC && Architecture != Arch::X64)
+        continue;
+      SCOPED_TRACE(testing::Message() << static_cast<int>(Architecture) << ":"
+                                      << static_cast<int>(Opcode));
+      auto Hint = declaration(NdType::makeVoid());
+      for (unsigned I = 0; I != 9; ++I)
+        Hint.Parameters.push_back(
+            {"value" + std::to_string(I), NdType::makeFloat(8)});
+      std::string Error;
+      ASSERT_TRUE(assignDarwinObjCSourceABI(Hint, Architecture, Error))
+          << Error;
+      MedFunc Func;
+      Func.Entry = 0x1000;
+      Func.Name = "stored_parameter";
+      Func.SourceTypeHint = Hint;
+      Func.SourceParametersBound = true;
+      Func.ReturnType = Hint.ReturnType;
+      for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
+        const auto &Binding = Hint.Parameters[I];
+        MedVar Parameter;
+        Parameter.Kind = MedVar::Param;
+        Parameter.TheArch = Architecture;
+        Parameter.Id = static_cast<int>(I);
+        Parameter.Size = Binding.Type->Size;
+        Parameter.RegOff = Binding.Location.Kind == SourceABICarrierKind::Stack
+                               ? kNoParamReg
+                               : Binding.Location.RegisterOffset;
+        Func.Params.push_back(Parameter);
+        Func.TypedParams.push_back({Binding.Name, Binding.Type});
+      }
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.Addr = Func.Entry;
+      Store.addInput(Func.Params[0]);
+      Store.addInput(Func.Params.back());
+      MedOp Call;
+      Call.Opcode = Opcode;
+      Call.Addr = Func.Entry + 4;
+      Call.Output = Func.Params.back();
+      Call.Output.Kind = MedVar::Temp;
+      Call.Output.RegOff = 0;
+      Call.Output.Size = 4;
+      Call.addInput(Opcode == NdOp::INTRINSIC
+                        ? MedVar::makeConst(
+                              static_cast<uint64_t>(Intrinsic::X86ReadMXCSR), 4)
+                    : Opcode == NdOp::INDIR_CALL
+                        ? Func.Params[1]
+                        : MedVar::makeConst(0x2000, 8));
+      MedOp StoreResult = Store;
+      StoreResult.Addr = Func.Entry + 8;
+      StoreResult.Inputs[0] = Func.Params[1];
+      StoreResult.Inputs[1] = Call.Output;
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.Addr = Func.Entry + 12;
+      MedBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Func.Entry;
+      Block.Ops = {Store, Call, StoreResult, Return};
+      Func.Blocks.push_back(std::move(Block));
+      const auto High = MedToHighConverter().convert(Func, Architecture);
+      unsigned ParameterStores = 0, ResultStores = 0;
+      walkStmts(High.Body, [&](const HighStmt &Statement) {
+        if (Statement.Kind != StmtKind::Store)
+          return;
+        if (Statement.Addr == Store.Addr) {
+          ++ParameterStores;
+          const auto &Bits = Statement.StoreVal;
+          ASSERT_TRUE(Bits);
+          ASSERT_EQ(Bits->Kind, ExprKind::BitCast);
+          ASSERT_EQ(Bits->Operands.size(), 1U);
+          const auto &Parameter = Bits->Operands[0];
+          ASSERT_EQ(Parameter->Kind, ExprKind::Var);
+          EXPECT_EQ(Parameter->Var.Kind, MedVar::Param);
+          EXPECT_EQ(Parameter->Var.Id, int(Hint.Parameters.size() - 1));
+          EXPECT_EQ(Parameter->Var.StackOff,
+                    Hint.Parameters.back().Location.EntryStackOffset);
+          EXPECT_TRUE(equalSourceTypes(Parameter->Type, NdType::makeFloat(8)));
+        } else if (Statement.Addr == StoreResult.Addr) {
+          ++ResultStores;
+          ASSERT_TRUE(Statement.StoreVal);
+          EXPECT_EQ(Statement.StoreVal->Kind, ExprKind::Var);
+          EXPECT_EQ(Statement.StoreVal->Var.Kind, MedVar::Temp);
+          EXPECT_EQ(Statement.StoreVal->Var.Id, Call.Output.Id);
+          EXPECT_EQ(Statement.StoreVal->Var.Size, Call.Output.Size);
+        }
+      });
+      EXPECT_EQ(ParameterStores, 1U);
+      EXPECT_EQ(ResultStores, 1U);
+    }
 }
 
 TEST(SourceABI, BitCastRejectsMismatchedWidthsAndDistinguishesTargetTypes) {

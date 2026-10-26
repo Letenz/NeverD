@@ -168,8 +168,22 @@ distinct in parsing, caches, raw collision audits and runtime settlement.
 existing complete contextual bodies without duplicating those bodies. Every
 raw variant must state the field, and all alternative anchor operands are
 retained. Alternatives can constrain a consumer but cannot establish an anchor;
-ordinary byte records retain their existing admission rule. The cache wire
-version is 7; older cache entries are rebuilt from source patterns.
+ordinary byte records retain their existing admission rule.
+
+`--local-data-layout` additionally admits a checked signed address delta within
+one non-COMDAT source data section. For example,
+`%000A 00000013-00000070:anchor` describes an address `0x70` bytes before the
+anchor's exact operand. The delta is eight uppercase hexadecimal digits with
+an explicit sign; zero uses the original syntax. Both source addresses and
+complete operands must fit that section. Defined static or external consumer
+symbols and signed relocation addends are supported; undefined, weak,
+auxiliary, executable, split-section and out-of-bounds targets are refused.
+The anchor still requires its canonical zero-addend static-data operand.
+Runtime inverts the delta against frozen exact bindings with checked arithmetic
+and corresponding mapped-region bounds. Relative consumers never become
+bindings or authorize further inference. Raw counterclaims with missing or
+different reference kinds remain unresolved. The cache wire version is 8;
+older cache entries are rebuilt from source patterns.
 
 Only complete ordinary candidates meeting the existing fixed-byte floor can
 anchor data bindings. Every matching complete source refinement must agree;

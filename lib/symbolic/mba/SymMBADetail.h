@@ -643,6 +643,12 @@ SymRef foldProjectedProductResidues(SymContext &Ctx, SymRef Root,
 SymRef foldResidualProductResidues(SymContext &Ctx, SymRef Root,
                                    WorkBudget &Budget, size_t &Storage);
 
+/// Multiplicative period of odd words. Width is in [1, 8], as established by
+/// the bounded residue readers before constructing or reducing a low word.
+inline size_t residueUnitPeriod(unsigned Width) {
+  return size_t(1) << (Width > 2 ? Width - 2 : Width - 1);
+}
+
 /// Complete bounded bit decisions over a product's observed low word.
 /// Complete, when supplied, records a finished search over free variables;
 /// it does not certify global minimality or an equivalence on its own.

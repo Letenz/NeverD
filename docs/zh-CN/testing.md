@@ -8,7 +8,9 @@
 
 ## 入口栈值的源码恢复
 
-`NeverDSourceEntryBindingTests` 编译并执行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口栈参数矩阵，覆盖完整模块、单独调用者、显式浮点位传递、缓存复用和重置。负向测试拒绝不完整写入、窄读取、栈地址逃逸和未定义输入；独立被调函数定义检查固定参数声明。主机执行不等于原生 Windows ARM64 驱动验证。 矩阵还覆盖 RBP、x29/x30 栈帧的恢复；覆盖保存字节、SP 恢复但 RBP 改变、把返回地址当参数等反例，并检查 ELF 与 Windows 保留寄存器的差异。
+`NeverDSourceEntryBindingTests` 编译并执行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口栈参数矩阵，覆盖完整模块、单独调用者、显式浮点位传递、缓存复用和重置。负向测试拒绝不完整写入、未对齐参数、栈地址逃逸和未定义输入；独立被调函数定义检查固定参数声明。主机执行不等于原生 Windows ARM64 驱动验证。 矩阵还覆盖 RBP、x29/x30 栈帧的恢复；覆盖保存字节、SP 恢复但 RBP 改变、把返回地址当参数等反例，并检查 ELF 与 Windows 保留寄存器的差异。
+
+新增矩阵以 O0/O2 和 UBSan 执行有符号与无符号的 1/2/4 字节读取，覆盖两条 C 路径、完整输出及仅选调用者；调用者只写入实际读取的字节，并拒绝超出声明宽度的读取。
 
 已知寄存器调用覆盖 x64/ARM64 PE/ELF、完整模块和仅选调用者的两条 C 路径，并检查原始 LowIR 仍是间接调用。负例覆盖部分写入旧值、不透明副作用、指令临时变量复用、内存调用槽及工作预算耗尽。
 
@@ -1100,6 +1102,10 @@ python3 scripts/benchmark_mobile_references.py \
 
 `SymExpr.*` 用四位输入与掩码的穷举检查非低位常量窗口，并覆盖宽承载、嵌套结构操作、已知与未知字节混合重组及算术进位反例。预算回归把宽节点放在递归边界，并拒绝复制超出预算的宽常量。未知窗口必须保持符号形式，且不能扩展表达式 DAG。 `SymState.*` 还在两种端序下区分标量推导常量和区域字面常量，确保不增加 DAG 节点、不改变完整存储值。
 
+`SymMBAWitness.*` 在不变的工作预算下检查取反输入的 96/128 次乘积，穷举低六位进位输入，并覆盖直到 257 位的字、相邻奇偶扰动和预算拒绝。具体非零反例只停止无效的零化搜索，不能授权替换。使用 `--family complemented-carry-product --count 108` 生成 432 个 48–256 次样本，包含取反输入、因子倒序和相邻奇偶扰动。保留所有旧样本，作为性能与输出成本对照。CLI 与 GUI worker 的源码测试通过全部六条源码路径，在 O0/O2 下执行两份 96 次反例样本。
+
+`SymMBAResiduePowers.*` 检查模幂周期、偶数输入、小指数、乘数的独立奇偶性，以及精确和少一的资源预算。测试使用直到 257 位的完整字乘积，并对原生位宽进行独立求解器证明。`--family residue-power --count 81` 增加 324 个 16–512 次样本，包含周期边界的相邻值和单因子扰动；受预算或规模限制的拒绝仍保留为结果。CLI 与真实 worker 还通过全部六条源码路径，在 O0/O2 下执行带独立乘数的 16/64 次乘积组。
+
 `SymReadability.*` 覆盖减法与补码的打印形式、结合律运算的代价、单比特和宽字面量、共享树大小饱和、有预算的候选选择，以及关闭采样时三比特的穷举等价性。`SymMBASample.*` 将窄值和任意精度验证与 AP 求值器比较，覆盖全部运算符、确定性赋值和未使用的宽输入。比较不同评分版本的候选质量时，必须用同一指标重算两边输出；SDK 随版本变化的大小计数仅供诊断。
 
 ## ARM32 与栈帧转发测试矩阵
@@ -2151,8 +2157,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` 检查 Windows ARM64 的混合寄存器、位宽、寄存器耗尽、栈偏移和变参拒绝。`NeverDWorkerCallSiteTypes` 从 ARM64 PE 恢复整数、double 和指针调用，在 O0/O2 下通过两条 C 路径与独立 C 被调用函数执行验证，并检查拒绝变参编辑后分析快照不变。这不是 Windows ARM64 原生执行验证。
+`NeverDSourceCallABITests` 检查 Windows ARM64 固定和变参载体、位宽、寄存器耗尽及栈偏移。`NeverDWorkerCallSiteTypes` 在 O0/O2 下将两条 C 路径与独立被调函数执行对照，覆盖命名 float、寄存器及栈上的 double、整数和浮点返回值；未提升的变参或不完整栈写入被拒绝，分析快照保持不变。这不是 Windows ARM64 原生执行验证。
 
 该 worker 回归还覆盖十八个混合寄存器／栈参数、浮点返回，以及栈参数只写入一半时的拒绝。
 
+`SourceCallABI` 与 `CallRegisterConstant` 回归检查过期临时值、不透明效果、字节范围、调用位置歧义和精确预算边界。worker 还通过两条 C 路径执行原调用者用减法计算变参向量计数的用例。
+
+`LowScalarConstant.SelfDifference*` 将未知输入的恢复与一至八字节的具体字节模式执行对照，并拒绝不同值、内存操作数及错误形状。`ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` 覆盖 ELF、COFF、Mach-O 下的 x86、x64、AArch64。worker 在 O0/O2 下通过 HighC 与 LLVMC 执行恢复的分支及自减得到的 System V 向量计数。
+
+`X86CarryArithmeticFlags.SelfSubtract*` 和 `APXSelfSubtract*` 检查结果位、算术标志位及未修改的寄存器状态。worker 标量分支测试将原生执行与 O0/O2 下的 HighC/LLVMC 比较，包含依赖自减和自身比较标志位的分支。
+
 `BinaryRewriteRelocationTest` 在 NeverSight LLVM fork 中检查 x64 PLT、i386 GOT、Mach-O GOTPCREL 和 AArch64 PAGE/PAGEOFF 的最终字节。NeverD 集成构建直接编译所记录的 fork。这些 MC 检查不代表原生异常执行已获验证。
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` 覆盖寄存器直接保存和私有栈保存。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` 在 Linux x86 上以两个不同的标量参数执行 HighC 和 LLVMC 的 O0/O2 结果，覆盖内存和寄存器调用目标。Python ABI 清单与 GUI 源字符串检查包含分析节接口及提示。
+
+`NeverDSelfCompareFlagTests` 执行并对比 x86、x64、ARM32 和 AArch64 的原始及重建函数。分别运行默认机器码路线、`NEVERD_SEMANTIC_HIGHC=1` 和 `NEVERD_SEMANTIC_LLVMC=1`。矩阵覆盖自身 CMP/SUB 的标志位、分支和条件值，以逻辑测试及移位操作数为对照，并运行既有的有符号溢出回归。
+
+自身比较矩阵还执行无参数的相等及减法溢出案例。这些案例不需要任何传入寄存器值，两条 C 路线都不能额外生成未知状态陷阱。
+
+HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声明执行完整参数及返回值验证。两条 C 路线覆盖 float、double 结构体、连续调用和 AArch64 执行。

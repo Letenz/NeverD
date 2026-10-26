@@ -148,10 +148,6 @@
         <translation>현재 주소의 이름을 바꿉니다</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>주석 입력(&amp;C)...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>현재 주소에 주석을 추가합니다</translation>
     </message>

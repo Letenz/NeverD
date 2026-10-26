@@ -8,7 +8,9 @@
 
 ## 진입 스택 값의 소스 복원
 
-`NeverDSourceEntryBindingTests`는 x64/ARM64, PE/ELF, HighC/LLVMC의 진입 스택 인수를 컴파일하고 실행합니다. 전체 모듈, 호출자만 선택, 명시적 부동소수점 비트 전달, 캐시 재사용과 초기화를 검증합니다. 부분 쓰기, 좁은 읽기, 프레임 주소 유출 및 정의되지 않은 입력을 거부하는 대조군과 독립 피호출 함수 정의를 통한 고정 선언 검증을 포함합니다. 호스트 실행은 네이티브 Windows ARM64 드라이버 검증이 아닙니다. RBP와 x29/x30 프레임 복원도 검증합니다. 저장 바이트 덮어쓰기, SP만 복원하고 RBP를 변경한 경우, 반환 주소를 매개변수로 사용하는 경우를 거부하며 ELF와 Windows의 보존 레지스터 차이도 확인합니다.
+`NeverDSourceEntryBindingTests`는 x64/ARM64, PE/ELF, HighC/LLVMC의 진입 스택 인수를 컴파일하고 실행합니다. 전체 모듈, 호출자만 선택, 명시적 부동소수점 비트 전달, 캐시 재사용과 초기화를 검증합니다. 부분 쓰기, 정렬되지 않은 인수, 프레임 주소 유출 및 정의되지 않은 입력을 거부하는 대조군과 독립 피호출 함수 정의를 통한 고정 선언 검증을 포함합니다. 호스트 실행은 네이티브 Windows ARM64 드라이버 검증이 아닙니다. RBP와 x29/x30 프레임 복원도 검증합니다. 저장 바이트 덮어쓰기, SP만 복원하고 RBP를 변경한 경우, 반환 주소를 매개변수로 사용하는 경우를 거부하며 ELF와 Windows의 보존 레지스터 차이도 확인합니다.
+
+추가 행렬은 부호 있는 값과 없는 값의 1/2/4바이트 읽기를 두 C 경로, 전체 출력과 호출자만 선택한 출력에서 O0/O2 및 UBSan으로 실행합니다. 호출자는 읽는 바이트만 쓰며 선언 폭을 넘는 읽기는 거부합니다.
 
 알려진 레지스터 호출은 x64/ARM64 PE/ELF의 두 C 경로에서 전체 모듈과 호출자 선택으로 실행합니다. 원래 LowIR 간접 호출은 유지합니다. 부분 쓰기, 불투명 효과, 임시 값 재사용, 메모리 슬롯, 작업 한도 초과를 거부하는 검사도 포함합니다.
 
@@ -1166,6 +1168,10 @@ CPU 선호도, 새 프로세스, 따뜻한 캐시 및 RSS 조건이 적용됩니
 
 `SymExpr.*`는 4비트 입력과 마스크를 전수 검사하여 최하위 위치가 아닌 상수 구간을 확인하고, 넓은 값, 중첩 구조 연산, 알려진 바이트와 미지 바이트의 재조합, 산술 올림 반례를 다룹니다. 예산 회귀는 넓은 노드를 재귀 경계에 배치하고 예산을 초과하는 상수 복사를 거부합니다. 미지 구간은 표현식 DAG를 확장하지 않고 기호 형태로 남아야 합니다. `SymState.*`는 두 바이트 순서 모두에서 도출된 스칼라 상수와 영역의 리터럴 상수를 구분하고, DAG 노드나 저장된 전체 워드가 바뀌지 않는지도 확인합니다.
 
+`SymMBAWitness.*`는 기존 작업 예산에서 반전 입력을 가진 96/128차 곱을 검사하며, 하위 6비트의 자리올림 입력을 전수 검사합니다. 최대 257비트 워드, 인접한 홀짝 변경 및 예산 부족에 따른 거부도 포함합니다. 구체적인 비영 반례는 불필요한 영식 탐색만 중단하며 재작성을 허용하지 않습니다. `--family complemented-carry-product --count 108`은 반전 입력, 역순 인수 및 홀짝 근접 사례를 포함하는 48–256차 사례 432개를 생성합니다. 이전의 모든 코퍼스를 성능과 출력 비용의 대조군으로 유지하세요. CLI와 GUI worker 소스 테스트는 두 96차 반례 픽스처를 여섯 소스 경로 모두에서 O0/O2로 실행합니다.
+
+`SymMBAResiduePowers.*`는 모듈러 거듭제곱의 주기, 짝수 입력, 작은 지수, 곱셈 인자의 독립적인 홀짝성, 정확한 자원 예산과 한 단위 부족한 예산을 검사합니다. 최대 257비트의 전체 워드 곱과 네이티브 비트 폭의 독립적인 솔버 증명을 사용합니다. `--family residue-power --count 81`은 주기 경계의 바로 이웃한 값과 단일 인자 교란을 포함하는 16–512차 사례 324개를 추가합니다. 한도에 따른 거부도 결과에 유지합니다. CLI와 실제 worker는 독립적인 곱셈 인자가 있는 16/64차 그룹을 여섯 소스 경로 모두에서 O0/O2로 실행합니다.
+
 `SymReadability.*`는 뺄셈과 보수 표기, 결합 연산 비용, 1비트 및 넓은 리터럴, 공유 트리 포화, 예산 제한 후보 선택, 표본 검증을 끈 상태의 3비트 완전 동치성을 검사합니다. `SymMBASample.*`는 모든 연산자, 결정적 대입, 사용하지 않는 넓은 입력에 대해 좁은 값과 임의 정밀도 검증을 AP 평가기와 비교합니다. 점수 버전이 다를 때 후보 품질을 비교하려면 두 출력을 같은 척도로 다시 세어야 합니다. SDK의 버전별 크기 카운터는 진단용입니다.
 
 ## ARM32 및 프레임 전달 테스트 행렬
@@ -2176,8 +2182,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests`는 Windows ARM64의 혼합 레지스터, 폭, 레지스터 소진, 스택 오프셋과 가변 인자 거부를 검사한다. `NeverDWorkerCallSiteTypes`는 ARM64 PE의 정수·double·포인터 호출을 두 C 경로로 복원하여 별도 C 함수와 O0/O2로 실행하고 거부된 편집 후 분석 스냅샷이 같은지 확인한다. Windows ARM64 네이티브 실행 검증은 아니다.
+`NeverDSourceCallABITests`는 Windows ARM64 고정·가변 인자의 전달 위치, 폭, 레지스터 소진과 스택 오프셋을 검사한다. `NeverDWorkerCallSiteTypes`는 이름 있는 float, 레지스터·스택 double, 정수와 부동소수점 반환을 두 C 경로에서 독립된 C 함수와 O0/O2로 실행한다. 승격되지 않은 가변 인자와 불완전한 스택 쓰기는 거부하고 분석 스냅샷을 유지한다. Windows ARM64 네이티브 실행 검증은 아니다.
 
 worker 회귀에는 레지스터와 스택에 나뉜 인자 18개, 부동소수점 반환값, 절반만 기록된 스택 인자의 거부도 포함한다.
 
+`SourceCallABI`와 `CallRegisterConstant`는 만료된 임시 값, 불투명 효과, 바이트 범위, 호출 위치 모호성과 정확한 예산 경계를 검사한다. worker는 뺄셈으로 가변 인자 벡터 개수를 계산하는 호출자를 두 C 경로에서 실행한다.
+
+`LowScalarConstant.SelfDifference*`는 알 수 없는 입력의 복구를 1~8바이트의 구체적인 바이트 패턴 실행과 비교하고 서로 다른 값, 메모리 피연산자 및 잘못된 형태를 거부합니다. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary`는 ELF, COFF, Mach-O의 x86, x64, AArch64를 다룹니다. worker는 복구한 분기와 자기 뺄셈으로 얻은 System V 벡터 수를 HighC와 LLVMC의 O0/O2에서 실행합니다.
+
+`X86CarryArithmeticFlags.SelfSubtract*`와 `APXSelfSubtract*`는 결과 비트, 산술 플래그와 보존된 레지스터 상태를 확인합니다. worker 스칼라 분기 테스트는 자기 뺄셈 및 비교 플래그 분기를 포함하여 네이티브 실행과 O0/O2 HighC/LLVMC를 비교합니다.
+
 NeverSight LLVM fork의 `BinaryRewriteRelocationTest`는 x64 PLT, i386 GOT, Mach-O GOTPCREL 및 AArch64 PAGE/PAGEOFF의 최종 바이트를 확인합니다. NeverD 통합 빌드는 기록된 fork를 직접 컴파일합니다. 이 MC 검사는 네이티브 예외 실행을 검증하지 않습니다.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges`는 레지스터 캡처와 비공개 스택 저장을 확인합니다. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers`는 Linux x86에서 서로 다른 두 스칼라 인수로 메모리 및 레지스터 대상의 HighC/LLVMC를 O0/O2로 실행합니다. Python ABI 목록과 GUI 소스 문자열 검사는 분석 섹션 인터페이스와 메시지를 포함합니다.
+
+`NeverDSelfCompareFlagTests`는 x86, x64, ARM32, AArch64의 원본 함수와 재구성한 함수를 실행하여 비교합니다. 기본 기계어 경로, `NEVERD_SEMANTIC_HIGHC=1`, `NEVERD_SEMANTIC_LLVMC=1`을 각각 실행합니다. 자기 CMP/SUB의 플래그, 분기, 조건 값을 논리 테스트 및 시프트된 피연산자 대조군과 검증하고 기존 부호 있는 오버플로 회귀도 실행합니다.
+
+자기 비교 행렬은 인수가 없는 동등 비교 및 뺄셈 오버플로 사례도 실행합니다. 입력 레지스터 값이 필요하지 않으므로 두 C 경로 모두 알 수 없는 상태의 트랩을 추가하면 안 됩니다.
+
+HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고 헤더 및 로컬 선언의 완전한 인수와 반환값을 실행 검증합니다. 두 C 경로 모두 float 및 double 구조체, 연속 호출, AArch64 실행을 다룹니다.

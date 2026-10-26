@@ -8,7 +8,9 @@
 
 ## Recuperación de valores de pila de entrada
 
-`NeverDSourceEntryBindingTests` compila y ejecuta la matriz x64/ARM64, PE/ELF, HighC/LLVMC: módulos completos, llamadores seleccionados, transferencia explícita de bits flotantes y reutilización y reinicio de caché. Los controles negativos rechazan escrituras parciales, lecturas estrechas, escape de direcciones de marco y entradas indefinidas. Las definiciones independientes de los destinos comprueban las declaraciones fijas. Estas ejecuciones en el anfitrión no certifican controladores nativos de Windows ARM64. La matriz incluye marcos RBP y x29/x30 equilibrados. Rechaza bytes guardados sobrescritos, RBP alterado aunque SP se restaure y el uso de la dirección de retorno como parámetro; comprueba por separado los registros preservados de ELF y Windows.
+`NeverDSourceEntryBindingTests` compila y ejecuta la matriz x64/ARM64, PE/ELF, HighC/LLVMC: módulos completos, llamadores seleccionados, transferencia explícita de bits flotantes y reutilización y reinicio de caché. Los controles negativos rechazan escrituras parciales, parámetros desalineados, escape de direcciones de marco y entradas indefinidas. Las definiciones independientes de los destinos comprueban las declaraciones fijas. Estas ejecuciones en el anfitrión no certifican controladores nativos de Windows ARM64. La matriz incluye marcos RBP y x29/x30 equilibrados. Rechaza bytes guardados sobrescritos, RBP alterado aunque SP se restaure y el uso de la dirección de retorno como parámetro; comprueba por separado los registros preservados de ELF y Windows.
+
+La nueva matriz ejecuta lecturas con y sin signo de 1/2/4 bytes por ambas rutas C en O0/O2 con UBSan, para la salida completa o solo el llamador. Los llamadores escriben únicamente los bytes leídos; se rechazan lecturas que superen la anchura declarada.
 
 Las llamadas por registro conocidas se ejecutan en ambas rutas C para x64/ARM64 PE/ELF, con módulo completo y llamador seleccionado. El LowIR original sigue siendo indirecto. Los controles rechazan escrituras parciales obsoletas, efectos opacos, temporales reutilizados, celdas de memoria y presupuestos agotados.
 
@@ -1277,6 +1279,10 @@ Las pruebas de dos valores añaden máscaras de conjunciones anidadas de 8–512
 
 `SymExpr.*` comprueba ventanas constantes sobre el bit inferior con todas las entradas y máscaras de cuatro bits, valores anchos, estructuras anidadas, recomposición de bytes conocidos y desconocidos y contraejemplos de acarreo. Las regresiones de presupuesto sitúan un nodo ancho en el límite recursivo y rechazan copiar constantes demasiado grandes. Las ventanas desconocidas deben permanecer simbólicas sin ampliar el DAG. `SymState.*` también distingue constantes escalares deducidas de hechos literales de regiones en ambos órdenes de bytes, sin ampliar el DAG ni cambiar las palabras almacenadas completas.
 
+`SymMBAWitness.*` comprueba productos de grado 96/128 con entradas complementadas sin cambiar el presupuesto, enumera las entradas de acarreo de los seis bits bajos y cubre palabras de hasta 257 bits, variaciones cercanas de paridad y rechazos por presupuesto. Los testigos concretos no nulos solo detienen búsquedas de cero inútiles; nunca autorizan una reescritura. `--family complemented-carry-product --count 108` genera 432 casos de grado 48–256 con entradas complementadas, factores invertidos y variantes de paridad. Conserve todos los corpus anteriores como controles de rendimiento y coste de salida. Las pruebas de código de CLI y GUI worker ejecutan ambas fixtures de grado 96 mediante las seis rutas en O0/O2.
+
+`SymMBAResiduePowers.*` comprueba períodos de potencias modulares, entradas pares, exponentes pequeños, paridad independiente del multiplicador y presupuestos exactos o una unidad insuficientes. Contrasta productos de palabra completa hasta 257 bits y pruebas independientes del solucionador para los anchos nativos. `--family residue-power --count 81` añade 324 casos de grado 16–512, incluidos vecinos inmediatos de los períodos y la perturbación de un solo factor. Los rechazos por límites siguen formando parte de los resultados. CLI y el worker real ejecutan grupos de grado 16/64 con un multiplicador independiente por las seis rutas de código fuente con O0/O2.
+
 `SymReadability.*` comprueba la escritura de restas y complementos, el coste de operadores asociativos, literales de un bit y anchos, saturación de árboles compartidos, selección de candidatos con presupuesto y equivalencia exhaustiva de tres bits sin muestreo. `SymMBASample.*` compara la verificación estrecha y de precisión arbitraria con el evaluador AP para todos los operadores, asignaciones deterministas y entradas anchas no usadas. Para comparar la calidad entre versiones de la puntuación, vuelva a contar ambas salidas con la misma métrica; los contadores de tamaño del SDK son solo diagnósticos.
 
 ## Matriz de pruebas de ARM32 y reenvío de marco
@@ -2287,8 +2293,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` comprueba bancos mixtos, anchuras, agotamiento de registros, desplazamientos de pila y rechazo variádico en Windows ARM64. `NeverDWorkerCallSiteTypes` recupera una llamada entero/double/puntero de un PE ARM64 y ejecuta ambas salidas C con una función C independiente en O0/O2; el rechazo conserva la instantánea del análisis. Esto no valida ejecución nativa en Windows ARM64.
+`NeverDSourceCallABITests` comprueba portadores fijos y variádicos Windows ARM64, anchuras, agotamiento de registros y posiciones de pila. `NeverDWorkerCallSiteTypes` ejecuta ambas salidas C con funciones independientes en O0/O2, cubriendo float con nombre, double en registros y pila, enteros y resultado flotante. Los argumentos sin promoción y las escrituras parciales se rechazan sin cambiar la instantánea de análisis. No valida ejecución nativa Windows ARM64.
 
 La regresión del worker también cubre dieciocho parámetros mixtos de registro/pila, un retorno flotante y el rechazo de un argumento de pila escrito solo a la mitad.
 
+`SourceCallABI` y `CallRegisterConstant` comprueban temporales caducados, efectos opacos, rangos de bytes, llamadas ambiguas y límites exactos del presupuesto. El worker ejecuta ambas salidas C de un llamador que calcula el contador variádico mediante resta.
+
+`LowScalarConstant.SelfDifference*` compara la recuperación de entradas desconocidas con la ejecución concreta de patrones de bytes de uno a ocho bytes y rechaza ocurrencias distintas, memoria y formas incorrectas. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` cubre x86, x64 y AArch64 en ELF, COFF y Mach-O. Las pruebas del worker ejecutan el salto recuperado y el contador vectorial System V obtenido por autorresta mediante HighC y LLVMC en O0/O2.
+
+`X86CarryArithmeticFlags.SelfSubtract*` y `APXSelfSubtract*` comprueban resultados, indicadores aritméticos y registros conservados. Las pruebas de ramas escalares del worker comparan la ejecución nativa con HighC/LLVMC en O0/O2, incluidas las ramas tras SUB/CMP del mismo registro.
+
 `BinaryRewriteRelocationTest`, en el fork LLVM NeverSight, comprueba los bytes finales de PLT x64, GOT i386, GOTPCREL Mach-O y PAGE/PAGEOFF AArch64. La compilación integrada de NeverD compila directamente el fork registrado. Estas comprobaciones MC no validan la ejecución nativa de excepciones.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` cubre capturas en registros y guardados privados. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` ejecuta HighC y LLVMC con dos argumentos escalares distintos en O0/O2 sobre Linux x86, con destinos en memoria y registros. El inventario ABI de Python y la comprobación de catálogos GUI incluyen las interfaces y mensajes de las secciones de análisis.
+
+`NeverDSelfCompareFlagTests` ejecuta funciones originales y reconstruidas para x86, x64, ARM32 y AArch64. Ejecutar por separado la ruta de código máquina predeterminada, `NEVERD_SEMANTIC_HIGHC=1` y `NEVERD_SEMANTIC_LLVMC=1`. La matriz cubre indicadores CMP/SUB con operandos iguales, saltos y valores condicionales, con pruebas lógicas y operandos desplazados como controles, además de las regresiones existentes de desbordamiento con signo.
+
+La matriz también ejecuta casos sin argumentos de igualdad y desbordamiento de resta. No necesitan valores de registros entrantes y ninguna de las dos rutas C debe añadir una trampa de estado desconocido.
+
+Las pruebas de entradas de importación HFA compilan prototipos C estrictos y ejecutan argumentos y resultados completos para declaraciones de cabecera y locales. Ambas rutas C cubren estructuras float y double, llamadas encadenadas y ejecución en AArch64.

@@ -97,6 +97,8 @@ TEST(MedCachedCallTarget, ProvesMovingStackWithoutChangingRuntimeOperands) {
     ASSERT_TRUE(Target);
     EXPECT_EQ(Target->ThroughSlot, Import);
     EXPECT_EQ(Target->Address, Import ? 0x3000u : 0x1000u);
+    if (Import)
+      EXPECT_EQ(Target->LoadIndex, 1u);
     EXPECT_EQ(B.Ops.back().Opcode, NdOp::LOAD);
     EXPECT_EQ(B.Ops.back().Inputs[0], Original);
   }
@@ -271,47 +273,107 @@ TEST(MedCachedCallTarget, WindowsVolatileTransportIsNotAnAggregateResult) {
 }
 
 TEST(MedCachedCallTarget, HighIRCallsTheCapturedValueAfterTheSlotChanges) {
-  MedFunc F;
-  F.Entry = 0x1000;
-  F.Name = "captured_call";
-  F.FrameSize = 64;
-  MedBlock B;
-  B.Id = 0;
-  B.StartAddr = F.Entry;
-  const auto SP = reg(1, x86reg::RSP);
-  B.Ops = {op(NdOp::INT_SUB, value(2), {SP, MedVar::makeConst(16, 8)}),
-           op(NdOp::LOAD, value(3), {MedVar::makeConst(0x3000, 8)}),
-           op(NdOp::STORE, {},
-              {MedVar::makeConst(0x3000, 8), MedVar::makeConst(0x4000, 8)}),
-           op(NdOp::STORE, {}, {value(2), value(3)}),
-           op(NdOp::LOAD, value(5), {value(2)}),
-           op(NdOp::INDIR_CALL, value(6), {value(5)}),
-           op(NdOp::RETURN, {}, {value(6)})};
-  for (size_t I = 0; I < B.Ops.size(); ++I)
-    B.Ops[I].Addr = F.Entry + I;
-  F.Blocks = {B};
-  const std::map<va_t, std::string> Names{{0x3000, "observed_import"}};
-  MedToHighConverter Converter;
-  Converter.setFuncNames(&Names);
-  auto High = Converter.convert(F, Arch::X64);
-  bool Found = false;
-  walkStmts(High.Body, [&](const HighStmt &S) {
-    forEachRhsExpr(S, [&](const ExprPtr &Root) {
-      const auto Find = [&](auto &&Self, const ExprPtr &E) -> void {
-        if (!E)
-          return;
-        if (E->Kind == ExprKind::Call) {
-          Found = true;
-          EXPECT_TRUE(E->IsIndirectCall);
-          EXPECT_TRUE(E->IndirectTarget);
-          EXPECT_EQ(E->CallAddr, 0x3000u);
-        }
-        E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
-      };
-      Find(Find, Root);
+  for (bool Spilled : {false, true}) {
+    SCOPED_TRACE(Spilled);
+    MedFunc F;
+    F.Entry = 0x1000;
+    F.Name = "captured_call";
+    F.FrameSize = 64;
+    MedBlock B;
+    B.Id = 0;
+    B.StartAddr = F.Entry;
+    const auto SP = reg(1, x86reg::RSP);
+    B.Ops = {op(NdOp::INT_SUB, value(2), {SP, MedVar::makeConst(16, 8)}),
+             op(NdOp::LOAD, value(3), {MedVar::makeConst(0x3000, 8)}),
+             op(NdOp::STORE, {},
+                {MedVar::makeConst(0x3000, 8), MedVar::makeConst(0x4000, 8)}),
+             op(NdOp::STORE, {}, {value(2), value(3)}),
+             op(NdOp::LOAD, value(5), {value(2)}),
+             op(NdOp::INDIR_CALL, value(6), {Spilled ? value(5) : value(3)}),
+             op(NdOp::RETURN, {}, {value(6)})};
+    for (size_t I = 0; I < B.Ops.size(); ++I)
+      B.Ops[I].Addr = F.Entry + I;
+    F.Blocks = {B};
+    const std::map<va_t, std::string> Names{{0x3000, "observed_import"}};
+    MedToHighConverter Converter;
+    Converter.setFuncNames(&Names);
+    auto High = Converter.convert(F, Arch::X64);
+    bool Found = false;
+    walkStmts(High.Body, [&](const HighStmt &S) {
+      forEachRhsExpr(S, [&](const ExprPtr &Root) {
+        const auto Find = [&](auto &&Self, const ExprPtr &E) -> void {
+          if (!E)
+            return;
+          if (E->Kind == ExprKind::Call) {
+            Found = true;
+            EXPECT_TRUE(E->IsIndirectCall);
+            EXPECT_TRUE(E->IndirectTarget);
+            EXPECT_EQ(E->CallAddr, 0x3000u);
+          }
+          E->forEachChildExpr([&](const ExprPtr &Child) { Self(Self, Child); });
+        };
+        Find(Find, Root);
+      });
     });
-  });
-  EXPECT_TRUE(Found);
+    EXPECT_TRUE(Found);
+  }
+}
+
+TEST(MedCachedCallTarget,
+     LiveImportLoadsThroughConstantAddressCopiesKeepNames) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64})
+    for (unsigned Boundary = 0; Boundary < 3; ++Boundary) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Boundary);
+      MedFunc F;
+      F.Entry = 0x1000;
+      F.Name = "live_import";
+      MedBlock B;
+      B.Id = 0;
+      B.StartAddr = F.Entry;
+      B.Ops = {op(NdOp::COPY, value(2), {MedVar::makeConst(0x3000, 8)}),
+               op(NdOp::LOAD, value(3), {value(2)})};
+      if (Boundary == 1)
+        B.Ops.push_back(
+            op(NdOp::STORE, {},
+               {MedVar::makeConst(0x3000, 8), MedVar::makeConst(0x4000, 8)}));
+      else if (Boundary == 2)
+        B.Ops.push_back(
+            op(NdOp::CALL, value(4), {MedVar::makeConst(0x2000, 8)}));
+      B.Ops.push_back(op(NdOp::INDIR_CALL, value(6), {value(3)}));
+      B.Ops.push_back(op(NdOp::RETURN, {}, {value(6)}));
+      for (size_t I = 0; I < B.Ops.size(); ++I) {
+        B.Ops[I].Addr = F.Entry + I;
+        B.Ops[I].Output.TheArch = Architecture;
+        for (unsigned K = 0; K < B.Ops[I].NumInputs; ++K)
+          B.Ops[I].Inputs[K].TheArch = Architecture;
+      }
+      F.Blocks = {B};
+      const std::map<va_t, std::string> Names{{0x3000, "observed_import"}};
+      MedToHighConverter Converter;
+      Converter.setFuncNames(&Names);
+      const auto High = Converter.convert(F, Architecture);
+      bool Found = false;
+      walkStmts(High.Body, [&](const HighStmt &S) {
+        forEachRhsExpr(S, [&](const ExprPtr &Root) {
+          const auto Find = [&](auto &&Self, const ExprPtr &E) -> void {
+            if (!E)
+              return;
+            if (E->Kind == ExprKind::Call && E->CallAddr == 0x3000) {
+              Found = true;
+              EXPECT_EQ(E->IsIndirectCall, Boundary != 0);
+              EXPECT_EQ(bool(E->IndirectTarget), Boundary != 0);
+              if (!Boundary)
+                EXPECT_EQ(E->CallTarget, "observed_import");
+            }
+            E->forEachChildExpr(
+                [&](const ExprPtr &Child) { Self(Self, Child); });
+          };
+          Find(Find, Root);
+        });
+      });
+      EXPECT_TRUE(Found);
+    }
 }
 
 TEST(MedCachedCallTarget, HighIRNamesOnlyImportsWhoseReadStillReachesTheCall) {

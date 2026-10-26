@@ -8,7 +8,9 @@
 
 ## 入口堆疊值的原始碼恢復
 
-`NeverDSourceEntryBindingTests` 編譯並執行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口堆疊參數矩陣，涵蓋完整模組、單獨呼叫者、顯式浮點位元傳遞、快取重用與重設。負向測試拒絕不完整寫入、窄讀取、堆疊位址逃逸及未定義輸入；獨立被呼叫函式定義檢查固定參數宣告。主機執行不等於原生 Windows ARM64 驅動程式驗證。 矩陣也涵蓋 RBP、x29/x30 框架的還原；檢查儲存位元組被覆寫、SP 還原但 RBP 改變、把返回位址當參數等反例，以及 ELF 與 Windows 保留暫存器的差異。
+`NeverDSourceEntryBindingTests` 編譯並執行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口堆疊參數矩陣，涵蓋完整模組、單獨呼叫者、顯式浮點位元傳遞、快取重用與重設。負向測試拒絕不完整寫入、未對齊參數、堆疊位址逃逸及未定義輸入；獨立被呼叫函式定義檢查固定參數宣告。主機執行不等於原生 Windows ARM64 驅動程式驗證。 矩陣也涵蓋 RBP、x29/x30 框架的還原；檢查儲存位元組被覆寫、SP 還原但 RBP 改變、把返回位址當參數等反例，以及 ELF 與 Windows 保留暫存器的差異。
+
+新增矩陣以 O0/O2 和 UBSan 執行有號與無號的 1/2/4 位元組讀取，涵蓋兩條 C 路徑、完整輸出與僅選呼叫者；呼叫者只寫入實際讀取的位元組，並拒絕超出宣告寬度的讀取。
 
 已知暫存器呼叫涵蓋 x64/ARM64 PE/ELF、完整模組及僅選呼叫者的兩條 C 路徑，並保留原始間接 LowIR。負例涵蓋部分寫入、不透明副作用、暫存值重用、記憶體呼叫槽和預算耗盡。
 
@@ -1122,6 +1124,10 @@ python3 scripts/benchmark_mobile_references.py \
 
 `SymExpr.*` 以四位元輸入與遮罩的窮舉檢查非低位常數窗口，並涵蓋寬承載、巢狀結構操作、已知與未知位元組混合重組及算術進位反例。預算回歸將寬節點放在遞迴邊界，並拒絕複製超出預算的寬常數。未知窗口必須維持符號形式，且不得擴展運算式 DAG。 `SymState.*` 也在兩種位元組序下區分純量推導常數與區域字面常數，確保不增加 DAG 節點、不改變完整儲存值。
 
+`SymMBAWitness.*` 在不變的工作預算下檢查反相輸入的 96/128 次乘積，窮舉低六位進位輸入，並涵蓋直到 257 位元的字、相鄰奇偶擾動和預算拒絕。具體非零反例只停止無效的零化搜尋，不能授權替換。使用 `--family complemented-carry-product --count 108` 產生 432 個 48–256 次樣本，包含反相輸入、因子倒序和相鄰奇偶擾動。保留所有舊樣本，作為效能與輸出成本對照。CLI 與 GUI worker 的原始碼測試透過全部六條原始碼路徑，在 O0/O2 下執行兩份 96 次反例樣本。
+
+`SymMBAResiduePowers.*` 檢查模冪週期、偶數輸入、小指數、乘數的獨立奇偶性，以及精確和少一的資源預算。測試使用直到 257 位元的完整字乘積，並對原生位元寬度進行獨立求解器證明。`--family residue-power --count 81` 增加 324 個 16–512 次樣本，包含週期邊界的相鄰值和單因子擾動；受預算或規模限制的拒絕仍保留為結果。CLI 與真實 worker 還透過全部六條原始碼路徑，在 O0/O2 下執行帶獨立乘數的 16/64 次乘積組。
+
 `SymReadability.*` 涵蓋減法與補數的表示、結合律運算成本、單位元及寬字面值、共用樹飽和、有預算的候選選擇，以及關閉取樣後的三位元窮舉等價性。`SymMBASample.*` 對照 AP 求值器檢查窄值與任意精度驗證，涵蓋所有運算子、確定性賦值及未使用的寬輸入。跨評分版本比較候選品質時，須用相同指標重算兩側輸出；SDK 的版本化大小計數僅供診斷。
 
 ## ARM32 與堆疊框架轉送測試矩陣
@@ -2132,8 +2138,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` 檢查 Windows ARM64 的混合暫存器、位寬、暫存器耗盡、堆疊偏移及變參拒絕。`NeverDWorkerCallSiteTypes` 從 ARM64 PE 還原整數、double 與指標呼叫，在 O0/O2 下經兩條 C 路徑與獨立 C 被呼叫函式執行驗證，並檢查拒絕變參編輯後分析快照不變。這不是 Windows ARM64 原生執行驗證。
+`NeverDSourceCallABITests` 檢查 Windows ARM64 固定與變參載體、位寬、暫存器耗盡及堆疊偏移。`NeverDWorkerCallSiteTypes` 在 O0/O2 下將兩條 C 路徑與獨立被呼叫函式執行對照，涵蓋具名 float、暫存器及堆疊上的 double、整數與浮點傳回值；未提升的變參或不完整堆疊寫入會被拒絕，分析快照不變。這不是 Windows ARM64 原生執行驗證。
 
 該 worker 迴歸另涵蓋十八個混合暫存器／堆疊參數、浮點回傳，以及堆疊參數僅寫入一半時的拒絕。
 
+`SourceCallABI` 與 `CallRegisterConstant` 迴歸檢查過期暫存值、不透明效果、位元組範圍、呼叫位置歧義及精確預算邊界。worker 另經兩條 C 路徑執行呼叫者以減法計算變參向量計數的案例。
+
+`LowScalarConstant.SelfDifference*` 將未知輸入的恢復與一至八位元組的具體位元組模式執行比對，並拒絕不同值、記憶體運算元及錯誤形狀。`ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` 涵蓋 ELF、COFF、Mach-O 下的 x86、x64、AArch64。worker 在 O0/O2 下透過 HighC 與 LLVMC 執行恢復的分支及自減得到的 System V 向量計數。
+
+`X86CarryArithmeticFlags.SelfSubtract*` 和 `APXSelfSubtract*` 檢查結果位元、算術旗標及未修改的暫存器狀態。worker 純量分支測試將原生執行與 O0/O2 下的 HighC/LLVMC 比較，包含依賴自減和自身比較旗標的分支。
+
 `BinaryRewriteRelocationTest` 在 NeverSight LLVM fork 中檢查 x64 PLT、i386 GOT、Mach-O GOTPCREL 與 AArch64 PAGE/PAGEOFF 的最終位元組。NeverD 整合建置直接編譯所記錄的 fork。這些 MC 檢查不代表原生例外執行已獲驗證。
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` 涵蓋暫存器直接保存和私有堆疊保存。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` 在 Linux x86 上以兩個不同的純量參數執行 HighC 和 LLVMC 的 O0/O2 結果，涵蓋記憶體和暫存器呼叫目標。Python ABI 清單與 GUI 來源字串檢查包含分析區段介面及提示。
+
+`NeverDSelfCompareFlagTests` 執行並比對 x86、x64、ARM32 和 AArch64 的原始及重建函式。分別執行預設機器碼路線、`NEVERD_SEMANTIC_HIGHC=1` 和 `NEVERD_SEMANTIC_LLVMC=1`。矩陣涵蓋自身 CMP/SUB 的旗標、分支與條件值，以邏輯測試及移位運算元為對照，並執行既有的有號溢位迴歸。
+
+自身比較矩陣也執行無參數的相等及減法溢位案例。這些案例不需要任何傳入暫存器值，兩條 C 路線都不能額外產生未知狀態陷阱。
+
+HFA 匯入槽測試編譯嚴格的 C 原型，並對標頭宣告及本機宣告執行完整參數與傳回值驗證。兩條 C 路徑涵蓋 float、double 結構體、連續呼叫與 AArch64 執行。

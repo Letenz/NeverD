@@ -15,7 +15,6 @@
 #include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
-#include "neverd/Limits.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/debug/UserPrototype.h"
@@ -4257,7 +4256,7 @@ int main(void) {
 )");
 }
 
-TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
+TEST(HighCSourceCalls, PointerTempsPreserveTheirBitsOnIntegerReturn) {
   const auto I64 = NdType::makeInt(8);
   const auto BytePointer = NdType::makePtr(NdType::makeInt(1, false));
   MedVar Bits;
@@ -4280,18 +4279,22 @@ TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)((uintptr_t)value);"),
-            std::string::npos)
-      << Source;
-  compileAndRun(Source + R"(
+  // Pointer inference may retain the pointer in the copied local. Its bits
+  // must pass through uintptr_t at the integer boundary, wherever the copy
+  // is converted; the temporary's declaration is not that contract.
+  EXPECT_NE(Source.find("(int64_t)(uintptr_t)"), std::string::npos) << Source;
+  for (const auto Optimization : {"-O0", "-O2"})
+    compileAndRun(Source + R"(
 int main(void) {
-    int object = 0;
-    return (uintptr_t)pointer_temp_bits((uint8_t *)&object) ==
-                   (uintptr_t)&object
-               ? 0
-               : 1;
+    uint8_t objects[17];
+    if (pointer_temp_bits((uint8_t *)0) != 0) return 1;
+    for (unsigned i = 0; i <= sizeof(objects); ++i)
+        if ((uintptr_t)pointer_temp_bits(objects + i) !=
+                (uintptr_t)(objects + i)) return 2;
+    return 0;
 }
-)");
+)",
+                  {Optimization});
 }
 
 TEST(HighCSourceCalls, PartialIntegerCarriersPreserveWideValuesAndShiftBounds) {
@@ -4354,11 +4357,8 @@ int main(void) {
 }
 
 TEST(HighCSourceCalls, PartialIntegerAtomicsRejectWidenedMemoryAccess) {
-  EXPECT_EQ(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes)),
-            "_BitInt(" + std::to_string(limits::kMaxCSourceIntegerBytes * 8) +
-                ")");
-  EXPECT_THROW(typeToC(NdType::makeInt(limits::kMaxCSourceIntegerBytes + 1)),
-               std::invalid_argument);
+  EXPECT_EQ(typeToC(NdType::makeInt(256)), "_BitInt(2048)");
+  EXPECT_THROW(typeToC(NdType::makeInt(257)), std::invalid_argument);
   const auto Partial = NdType::makeInt(3, false);
   const auto Pointer = NdType::makePtr(NdType::makeInt(1, false));
   auto Load = HighExpr::makeLoad(parameter(0, Pointer), Partial);

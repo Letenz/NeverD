@@ -136,9 +136,14 @@ SymRef SymContext::intern(SymOp Op, uint32_t Width, llvm::ArrayRef<SymRef> Ops,
   for (SymRef R : Ops)
     H = mixHash(H, R.index());
 
-  // Split the full hash across both fields. A constant second field biases
-  // DenseMap's pair mixer; the upper half also cannot equal a 64-bit sentinel.
-  auto &Head = InternTable[{H >> 32, uint32_t(H)}];
+  // Keep both halves of the hash without padding the upper half to 64 bits.
+  // Reserved keys still use the same complete identity checks and owned links.
+  const InternKey Key{uint32_t(H >> 32), uint32_t(H)};
+  auto &Head = Key == llvm::DenseMapInfo<InternKey>::getEmptyKey()
+                   ? ReservedInternHeads[0]
+               : Key == llvm::DenseMapInfo<InternKey>::getTombstoneKey()
+                   ? ReservedInternHeads[1]
+                   : InternTable[Key];
   for (auto Cand = Head; Cand; Cand = InternNext[Cand.index()]) {
     const SymNode &N = Nodes[Cand.index()];
     if (N.Op != Op || N.Width != Width || N.Aux != Aux ||

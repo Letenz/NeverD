@@ -148,10 +148,6 @@
         <translation>Aktuelle Adresse umbenennen</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>&amp;Kommentar eingeben...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>Aktuelle Adresse kommentieren</translation>
     </message>

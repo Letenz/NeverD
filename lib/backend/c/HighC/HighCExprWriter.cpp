@@ -5813,7 +5813,42 @@ TypeRef HighCWriter::indirectCallFunctionType(const HighExpr &Call) const {
       Call.IntrinsicId != Intrinsic::None)
     return nullptr;
   const auto Callee = debugCallee(Call);
-  if (!Callee || Callee->Params.size() != Call.Operands.size())
+  if (!Callee)
+    return nullptr;
+  // The checked record adapter reassembles flat machine operands into source
+  // parameters and unpacks its source result. A captured target must use that
+  // same signature, including when an HFA occupies several machine operands.
+  if (!calledDefinition(Call) && Call.FloatingCallSignature) {
+    const auto Floating =
+        libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
+    const auto Record = libc::recordCallArguments(
+        *Callee, Opts.TheArch, Opts.Format, Opts.libcVariant());
+    if (Floating && *Floating == *Call.FloatingCallSignature && Record &&
+        Record->Positions == Call.Operands.size()) {
+      const auto Types =
+          floatingCallTypes(Opts.TheArch, Opts.Format, *Floating);
+      if (!Types)
+        throw std::runtime_error(
+            "A record callback lost its checked source layout");
+      const auto SourceType = [&](const TypeRef &Type, const TypeRef &Layout) {
+        if (Type->Kind != NdTypeKind::Struct || Type->IsEnum)
+          return cDisplayType(Type);
+        // Header records carry classified scalar leaves, not the natural
+        // field layout a C callback declarator validates. Reuse the checked
+        // descriptor's complete HFA layout and the header's owned spelling.
+        auto Named = std::make_shared<NdType>(*Layout);
+        Named->SourceName = c_detail::recordCallType(Type, Opts);
+        return Named;
+      };
+      std::vector<TypeRef> Parameters;
+      for (size_t I = 0; I < Callee->Params.size(); ++I)
+        Parameters.push_back(
+            SourceType(Callee->Params[I].second, Types->Parameters[I]));
+      return NdType::makeFunc(SourceType(Callee->ReturnType, Types->Result),
+                              std::move(Parameters));
+    }
+  }
+  if (Callee->Params.size() != Call.Operands.size())
     return nullptr;
   return fixedCalleeFunctionType(*Callee);
 }

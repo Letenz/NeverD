@@ -481,6 +481,29 @@ TEST(PatternParserReferences, LocalDataHasACanonicalDistinctContextualKind) {
   }
 }
 
+TEST(PatternParserReferences, LocalLayoutDeltasHaveOneCanonicalSpelling) {
+  const std::string Head =
+      "488D05........C3 00 0000 0008 !refs :0000 getter %0003 ";
+  for (const auto *Key :
+       {"00000013+00000008:anchor", "00000013-00000008:anchor",
+        "00000013+FFFFFFFF:anchor", "00000013-FFFFFFFF:anchor"}) {
+    auto Good = PatternParser::parseLine(Head + Key);
+    ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+    EXPECT_EQ(Good->References.front().Name, Key);
+    EXPECT_TRUE(Good->References.front().IsLocalData);
+  }
+  for (const auto *Key :
+       {"00000013+00000000:anchor", "00000013-00000000:anchor",
+        "00000013+0000000a:anchor", "00000013+100000000:anchor",
+        "00000013+8:anchor", "00000013+-00000008:anchor", "00000013+00000008",
+        "00000013+00000008:"}) {
+    auto Bad = PatternParser::parseLine(Head + Key);
+    EXPECT_FALSE(bool(Bad)) << Key;
+    if (!Bad)
+      llvm::consumeError(Bad.takeError());
+  }
+}
+
 TEST(PatternParserVTable, PrimaryTableMetadataHasItsOwnRecordKind) {
   const std::string Line =
       "................................ 00 0000 0010 !vtable "

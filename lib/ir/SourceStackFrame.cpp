@@ -237,14 +237,15 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
           if (Record && Base &&
               !llvm::AddOverflow(
                   *Base,
-                  Instruction.preIndex()
+                  Instruction.offsetAccess()
                       ? static_cast<int64_t>(Instruction.displacement())
                       : 0,
                   At) &&
-              !llvm::AddOverflow(At, int64_t(Instruction.accessBytes()), End) &&
+              !llvm::AddOverflow(At, int64_t(Instruction.totalAccessBytes()),
+                                 End) &&
               bounded(At) && bounded(End))
             Out.Accesses.push_back({PC, Op.Seq, At,
-                                    uint16_t(Instruction.accessBytes()),
+                                    uint16_t(Instruction.totalAccessBytes()),
                                     !Instruction.isLoad(), Instruction.Word});
         }
         transfer(S, Op, Width);

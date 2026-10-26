@@ -140,12 +140,13 @@ TEST(X86InstructionCoverage, PinnedDecoderCorpusHasExplicitLiftResults) {
                               [&](const auto &E) { return E.Id == I.Id; }) ||
           std::ranges::any_of(test::X86ThreeDNowEncodings,
                               [&](const auto &E) { return E.Id == I.Id; });
-      if (I.Id == X86_INS_RETF || I.Id == X86_INS_RETFQ ||
-          I.Id == X86_INS_IRET || I.Id == X86_INS_IRETD ||
-          I.Id == X86_INS_IRETQ || I.Id == X86_INS_SYSENTER ||
-          I.Id == X86_INS_SYSEXIT || I.Id == X86_INS_SYSEXITQ ||
-          I.Id == X86_INS_SYSRET || I.Id == X86_INS_SYSRETQ ||
-          I.Id == X86_INS_RSM || LegacyGap) {
+      // Far and interrupt returns (RETF/RETFQ/IRET/IRETD/IRETQ) now lift to a
+      // faithful terminal state-transfer intrinsic, so they take the ordinary
+      // lift path below.  The remaining domain-leaving instructions still have
+      // no faithful ordinary-C projection and are refused.
+      if (I.Id == X86_INS_SYSENTER || I.Id == X86_INS_SYSEXIT ||
+          I.Id == X86_INS_SYSEXITQ || I.Id == X86_INS_SYSRET ||
+          I.Id == X86_INS_SYSRETQ || I.Id == X86_INS_RSM || LegacyGap) {
         EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
         EXPECT_TRUE(Ops.empty());
         ++Refused;

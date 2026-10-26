@@ -13,6 +13,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/high/X86/X86RegistrationFrame.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/loader/BinaryImage.h"
@@ -400,7 +401,7 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     Expr->MemoryAddressSpace = Op.MemoryAddressSpace;
     if (Op.Output.Size > 0)
       Expr->Type = NdType::makeInt(Op.Output.Size, false);
-    else if (IID == Intrinsic::A64_VectorLoadWriteback)
+    else if (isAArch64WritebackAuxiliaryLoad(IID))
       Expr->Type = NdType::makeVoid();
     return Expr;
   }

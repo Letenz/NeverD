@@ -8,7 +8,9 @@
 
 ## Quelltextrekonstruktion von Eingangswerten auf dem Stack
 
-`NeverDSourceEntryBindingTests` kompiliert und führt die Matrix x64/ARM64, PE/ELF, HighC/LLVMC aus: vollständige Module, einzelne Aufrufer, explizite Übertragung von Gleitkommabits sowie Cache-Wiederverwendung und -Zurücksetzung. Negativkontrollen lehnen Teilzugriffe, entweichende Rahmenadressen und undefinierte Eingaben ab. Unabhängige Definitionen der Aufgerufenen prüfen feste Deklarationen. Host-Ausführungen qualifizieren keine nativen Windows-ARM64-Treiber. Die Matrix umfasst ausgeglichene RBP- und x29/x30-Rahmen. Überschriebene Sicherungen, ein verändertes RBP trotz wiederhergestelltem SP und die Rücksprungadresse als Parameter werden abgelehnt; ELF- und Windows-Erhaltungsregeln werden getrennt geprüft.
+`NeverDSourceEntryBindingTests` kompiliert und führt die Matrix x64/ARM64, PE/ELF, HighC/LLVMC aus: vollständige Module, einzelne Aufrufer, explizite Übertragung von Gleitkommabits sowie Cache-Wiederverwendung und -Zurücksetzung. Negativkontrollen lehnen unvollständige Schreibzugriffe und nicht ausgerichtete Parameter, entweichende Rahmenadressen und undefinierte Eingaben ab. Unabhängige Definitionen der Aufgerufenen prüfen feste Deklarationen. Host-Ausführungen qualifizieren keine nativen Windows-ARM64-Treiber. Die Matrix umfasst ausgeglichene RBP- und x29/x30-Rahmen. Überschriebene Sicherungen, ein verändertes RBP trotz wiederhergestelltem SP und die Rücksprungadresse als Parameter werden abgelehnt; ELF- und Windows-Erhaltungsregeln werden getrennt geprüft.
+
+Die zusätzliche Matrix führt vorzeichenbehaftete und vorzeichenlose Zugriffe von 1/2/4 Byte über beide C-Pfade bei O0/O2 mit UBSan aus, für vollständige Ausgaben und einzelne Aufrufer. Aufrufer schreiben nur die gelesenen Bytes; Zugriffe über die deklarierte Breite hinaus werden abgelehnt.
 
 Bekannte Registeraufrufe werden über beide C-Ausgaben für x64/ARM64 PE/ELF als vollständiges Modul und ausgewählter Aufrufer ausgeführt. Das ursprüngliche LowIR bleibt indirekt. Gegenproben prüfen Teilüberschreibungen, unbekannte Effekte, wiederverwendete temporäre Werte, Speicherzellen und erschöpfte Budgets.
 
@@ -1292,6 +1294,10 @@ Die Zweiwerttests prüfen zusätzlich verschachtelte Konjunktionsmasken mit 8–
 
 `SymExpr.*` prüft konstante Ausschnitte oberhalb des niedrigsten Bits mit sämtlichen Vierbit-Eingaben und Masken sowie breiten Werten, verschachtelten Strukturen, gemischter Byte-Rekonstruktion und Übertragsgegenbeispielen. Budgettests platzieren einen breiten Knoten an der Rekursionsgrenze und verweigern das Kopieren übergroßer Konstanten. Unbekannte Ausschnitte müssen symbolisch bleiben, ohne den Ausdrucks-DAG zu vergrößern. `SymState.*` unterscheidet außerdem für beide Byte-Reihenfolgen abgeleitete skalare Konstanten von literalen Regionskonstanten, ohne den DAG zu vergrößern oder gespeicherte ganze Wörter zu verändern.
 
+`SymMBAWitness.*` prüft Produkte vom Grad 96/128 mit komplementierten Eingaben bei unverändertem Arbeitsbudget, erschöpft die Übertragseingaben der unteren sechs Bits und deckt Wörter bis 257 Bit, benachbarte Paritätsänderungen und Budgetablehnungen ab. Konkrete Nichtnull-Zeugen beenden nur aussichtslose Nullsuchen; sie erlauben keine Umschreibung. `--family complemented-carry-product --count 108` erzeugt 432 Fälle vom Grad 48–256 mit komplementierten Eingaben, umgekehrten Faktoren und Paritätsvarianten. Alle früheren Korpora bleiben Kontrollen für Leistung und Ausgabekosten. CLI- und GUI-worker-Quelltests führen beide Grad-96-Fixtures über alle sechs Quellpfade bei O0/O2 aus.
+
+`SymMBAResiduePowers.*` prüft modulare Potenzperioden, gerade Eingaben, kleine Exponenten, die unabhängige Parität eines Multiplikators sowie exakte und um eins zu kleine Ressourcenbudgets. Vollständige Wortprodukte bis 257 Bit und unabhängige Solver-Beweise für native Breiten sichern die Semantik. `--family residue-power --count 81` ergänzt 324 Fälle vom Grad 16–512, einschließlich direkter Periodennachbarn und einer Störung eines einzelnen Faktors. Begrenzte Ablehnungen bleiben Teil der Ergebnisse. CLI und echter Worker führen Gruppen vom Grad 16/64 mit unabhängigem Multiplikator über alle sechs Quellcodepfade bei O0/O2 aus.
+
 `SymReadability.*` prüft die Darstellung von Subtraktion und Komplement, Kosten assoziativer Operatoren, Ein-Bit- und breite Literale, Sättigung gemeinsamer Bäume, budgetierte Kandidatenwahl sowie vollständige Drei-Bit-Äquivalenz ohne Stichproben. `SymMBASample.*` vergleicht schmale und beliebig genaue Prüfung mit dem AP-Auswerter, einschließlich aller Operatoren, deterministischer Belegungen und ungenutzter breiter Eingaben. Für Qualitätsvergleiche über Wertungsversionen hinweg müssen beide Ausgaben mit demselben Maß neu gezählt werden; die versionsabhängigen SDK-Größenzähler dienen nur der Diagnose.
 
 ## ARM32- und Frame-Weitergabe-Testmatrix
@@ -2302,8 +2308,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` prüft gemischte Register, Breiten, erschöpfte Register, Stapeloffsets und die Ablehnung variadischer Windows-ARM64-Aufrufe. `NeverDWorkerCallSiteTypes` gewinnt einen Ganzzahl-/double-/Zeigeraufruf aus einer ARM64-PE-Datei zurück und führt beide C-Ausgaben mit einer separaten C-Funktion bei O0/O2 aus. Abgewiesene Änderungen müssen den Analysezustand erhalten. Dies validiert keine native Windows-ARM64-Ausführung.
+`NeverDSourceCallABITests` prüft feste und variadische Windows-ARM64-Träger, Breiten, Registerüberlauf und Stapeloffsets. `NeverDWorkerCallSiteTypes` führt beide C-Ausgaben mit separaten C-Funktionen bei O0/O2 aus: benanntes float, double in Registern und auf dem Stapel, Ganzzahlen und Gleitkommaergebnis. Nicht promovierte Varargs und unvollständige Stapelwerte werden ohne Änderung des Analysezustands abgewiesen. Dies validiert keine native Windows-ARM64-Ausführung.
 
 Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparameter, eine Gleitkommarückgabe und die Ablehnung eines nur halb geschriebenen Stapelarguments ab.
 
+`SourceCallABI` und `CallRegisterConstant` prüfen abgelaufene temporäre Werte, opake Effekte, Bytebereiche, mehrdeutige Aufrufstellen und genaue Budgetgrenzen. Der Worker führt außerdem beide C-Ausgaben eines Aufrufers aus, der den variadischen Vektorzähler durch Subtraktion berechnet.
+
+`LowScalarConstant.SelfDifference*` vergleicht die Rekonstruktion unbekannter Eingaben mit konkreten Bytemustern für Breiten von einem bis acht Byte und verwirft verschiedene Vorkommen, Speicheroperanden und fehlerhafte Formen. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` deckt x86, x64 und AArch64 unter ELF, COFF und Mach-O ab. Worker-Tests führen den rekonstruierten Sprung und den durch Selbstsubtraktion ermittelten System-V-Vektorzähler mit HighC und LLVMC bei O0/O2 aus.
+
+`X86CarryArithmeticFlags.SelfSubtract*` und `APXSelfSubtract*` prüfen Ergebnisbits, arithmetische Flags und erhaltene Register. Die skalaren Worker-Verzweigungstests vergleichen native Ausführung mit HighC/LLVMC unter O0/O2, einschließlich Verzweigungen nach SUB/CMP desselben Registers.
+
 `BinaryRewriteRelocationTest` im NeverSight-LLVM-Fork prüft die endgültigen Bytes für x64 PLT, i386 GOT, Mach-O GOTPCREL und AArch64 PAGE/PAGEOFF. Integrierte NeverD-Builds kompilieren die erfasste Fork-Revision direkt. Diese MC-Prüfungen qualifizieren keine native Ausnahmeausführung.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` prüft Registerwerte und private Stack-Sicherungen. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` führt HighC und LLVMC unter Linux x86 mit zwei verschiedenen skalaren Argumenten und O0/O2 für Speicher- und Registerziele aus. Python-ABI-Inventar und GUI-Katalogprüfung enthalten Schnittstellen und Texte der Analysesektionen.
+
+`NeverDSelfCompareFlagTests` führt ursprüngliche und rekonstruierte Funktionen für x86, x64, ARM32 und AArch64 aus. Der Standardpfad für Maschinencode sowie `NEVERD_SEMANTIC_HIGHC=1` und `NEVERD_SEMANTIC_LLVMC=1` werden getrennt ausgeführt. Die Matrix prüft Selbst-CMP/SUB-Flags, Verzweigungen und bedingte Werte mit logischen Tests und verschobenen Operanden als Kontrollen sowie die bestehenden Regressionen für vorzeichenbehafteten Überlauf.
+
+Die Selbstvergleichsmatrix führt auch parameterlose Gleichheits- und Subtraktionsüberlauffälle aus. Sie benötigen keinen eingehenden Registerwert und dürfen in keinem C-Pfad einen Trap für unbekannten Zustand erhalten.
+
+Die HFA-Importslot-Tests kompilieren strenge C-Prototypen und führen vollständige Argumente und Ergebnisse für Header- und lokale Deklarationen aus. Beide C-Pfade decken float- und double-Strukturen, verkettete Aufrufe und die Ausführung auf AArch64 ab.

@@ -312,7 +312,8 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
         (Converted.CalleesRead.size() + Converted.DirectCallTargets.size()) *
         sizeof(va_t);
   }
-  Converted.Bytes += Converted.SourceStackInputs.capacity() * sizeof(int64_t);
+  Converted.Bytes += Converted.SourceStackInputs.capacity() *
+                     sizeof(std::pair<int64_t, uint16_t>);
   if (Holder.Conversions.size() == MaxConversions) {
     Bytes -= Holder.Conversions.back().Bytes;
     Holder.Conversions.pop_back();
@@ -572,8 +573,9 @@ public:
         inferMedTypes(Bound, Img.Arch);
         if (Bound.SourceParametersBound && Bound.SourceTypeHint)
           for (const auto &Parameter : Hint->Parameters)
-            Converted.SourceStackInputs.push_back(
-                Parameter.Location.EntryStackOffset);
+            Converted.SourceStackInputs.emplace_back(
+                Parameter.Location.EntryStackOffset,
+                Parameter.Location.ValueBytes);
       }
     }
     for (const va_t Key : Keys)

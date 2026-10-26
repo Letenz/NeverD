@@ -123,6 +123,34 @@ TEST(ConstantBranch, ArithmeticTargetSkipsUnreachableOpcode) {
     }
 }
 
+TEST(ConstantBranch, SelfDifferenceRecoversTheActualInstructionBoundary) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(::testing::Message()
+                   << unsigned(Architecture) << ':' << unsigned(Format));
+      const bool ARM64 = Architecture == Arch::AArch64;
+      const auto Function = build(
+          ARM64
+              ? std::vector<uint8_t>{0x20, 0x00, 0x01, 0xcb, // sub x0,x1,x1
+                                     0x90, 0x02, 0x82, 0xd2, // mov x16,0x1014
+                                     0x00, 0x00, 0x10, 0x8b, // add x0,x0,x16
+                                     0x00, 0x00, 0x1f, 0xd6, // br x0
+                                     0x00, 0x00, 0x20, 0xd4, // unreachable brk
+                                     0xc0, 0x03, 0x5f, 0xd6} // ret
+              : std::vector<uint8_t>{0x29, 0xc0,             // sub eax,eax
+                                     0x05, 0x0a, 0x10, 0x00,
+                                     0x00, // add eax,0x100a
+                                     0xff, 0xe0, 0xe9,
+                                     0xc3}, // jmp eax/rax; db E9; ret
+          Architecture, Format);
+      EXPECT_TRUE(addresses(Function).count(ARM64 ? 0x1014 : 0x100a));
+      EXPECT_FALSE(addresses(Function).count(ARM64 ? 0x1010 : 0x1009));
+      ASSERT_EQ(Function.Blocks.size(), 2u);
+      EXPECT_EQ(Function.Blocks.front().Succs.size(), 1u);
+    }
+}
+
 TEST(ConstantBranch, UnaryArithmeticReachesTheActualInstructionBoundary) {
   for (auto Architecture : {Arch::X86, Arch::X64})
     for (auto Format :

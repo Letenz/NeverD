@@ -1045,6 +1045,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
   DenseMap<int32_t, COFFCodeSection> Sections;
   using SourceAddress = std::pair<int32_t, uint32_t>;
   std::map<StringRef, std::optional<SourceAddress>> LocalAnchors;
+  std::vector<uint32_t> SymbolStarts;
   bool LocalSymbolsComplete = true;
   for (uint32_t I = 0, N = Obj.getNumberOfSymbols(); I < N; ++I) {
     Expected<COFFSymbolRef> SymOrErr = Obj.getSymbol(I);
@@ -1058,6 +1059,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       LocalSymbolsComplete = false;
       break;
     }
+    if (Opts.EmitDataReferences && !Opts.LocalDataAnchors.empty())
+      SymbolStarts.push_back(I);
     I += Sym.getNumberOfAuxSymbols();
     if (Opts.EmitDataReferences && !Opts.LocalDataAnchors.empty()) {
       auto Name = Obj.getSymbolName(Sym);
@@ -1138,16 +1141,18 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
   // Keep all other raw bodies so a missing or malformed anchor remains a
   // counterclaim in offline auditing.
   auto LocalTarget = [&](const COFFCodeSection &Sec, uint64_t Begin,
-                         uint64_t End, const COFFCodeSection::Relocation &Rel)
-      -> std::optional<SourceAddress> {
+                         uint64_t End, const COFFCodeSection::Relocation &Rel,
+                         bool Layout = false) -> std::optional<SourceAddress> {
     if (Machine != COFF::IMAGE_FILE_MACHINE_AMD64 || Rel.Offset < Begin ||
         Rel.Offset >= End || Rel.Width != sizeof(uint32_t))
       return std::nullopt;
     const uint64_t Offset = Rel.Offset - Begin;
     const auto Field =
         x64DataReferenceField(Sec.Contents.slice(Begin, End - Begin), Offset);
-    if (!Field || Rel.Type != COFF::IMAGE_REL_AMD64_REL32 + Field->Bias ||
-        readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) != 0)
+    if (!Field || Rel.Type != COFF::IMAGE_REL_AMD64_REL32 + Field->Bias)
+      return std::nullopt;
+    const int32_t Addend = readLE<int32_t>(Sec.Contents.data() + Rel.Offset);
+    if (!Layout && Addend != 0)
       return std::nullopt;
     uint64_t Instruction = Rel.Offset - 2;
     if (Instruction > Begin && (Sec.Contents[Instruction - 1] == 0x48 ||
@@ -1161,12 +1166,16 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       if (!Other.Width || Other.Offset + *Other.Width > Instruction)
         return std::nullopt;
     }
+    if (!llvm::binary_search(SymbolStarts, Rel.Symbol))
+      return std::nullopt;
     auto Symbol = Obj.getSymbol(Rel.Symbol);
     if (!Symbol) {
       consumeError(Symbol.takeError());
       return std::nullopt;
     }
-    if (Symbol->getStorageClass() != COFF::IMAGE_SYM_CLASS_STATIC ||
+    if ((Symbol->getStorageClass() != COFF::IMAGE_SYM_CLASS_STATIC &&
+         (!Layout ||
+          Symbol->getStorageClass() != COFF::IMAGE_SYM_CLASS_EXTERNAL)) ||
         Symbol->getComplexType() != COFF::IMAGE_SYM_DTYPE_NULL ||
         Symbol->getNumberOfAuxSymbols() ||
         COFF::isReservedSectionNumber(Symbol->getSectionNumber()))
@@ -1177,13 +1186,16 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       return std::nullopt;
     }
     const auto &Target = **Section;
+    const int64_t Value = int64_t(Symbol->getValue()) + Addend;
     if (!(Target.Characteristics & COFF::IMAGE_SCN_MEM_READ) ||
         (Target.Characteristics &
          (COFF::IMAGE_SCN_MEM_EXECUTE | COFF::IMAGE_SCN_CNT_CODE)) ||
-        Symbol->getValue() > Target.SizeOfRawData ||
-        Field->Width > Target.SizeOfRawData - Symbol->getValue())
+        (Layout && (Target.Characteristics & COFF::IMAGE_SCN_LNK_COMDAT)) ||
+        Symbol->getValue() > Target.SizeOfRawData || Value < 0 ||
+        Value > Target.SizeOfRawData ||
+        Field->Width > Target.SizeOfRawData - Value)
       return std::nullopt;
-    return SourceAddress{Symbol->getSectionNumber(), Symbol->getValue()};
+    return SourceAddress{Symbol->getSectionNumber(), uint32_t(Value)};
   };
   std::map<SourceAddress, std::string> LocalRelations;
   if (LocalSymbolsComplete)
@@ -1277,7 +1289,10 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
           DataField &&
           Rel.Type == COFF::IMAGE_REL_AMD64_REL32 + DataField->Bias &&
           readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) == 0;
-      if (!At && !AddressReference && !DataReference)
+      const bool LayoutReference =
+          Opts.EmitLocalDataLayout && DataField &&
+          Rel.Type == COFF::IMAGE_REL_AMD64_REL32 + DataField->Bias;
+      if (!At && !AddressReference && !DataReference && !LayoutReference)
         continue;
       Expected<COFFSymbolRef> TargetOrErr = Obj.getSymbol(Rel.Symbol);
       if (!TargetOrErr) {
@@ -1301,14 +1316,42 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       bool IsData = false;
       bool IsLocalData = false;
       std::string LocalName;
-      if (DataReference && !LocalRelations.empty())
-        if (const auto Target = LocalTarget(Sec, Fn.Offset, End, Rel))
+      if ((DataReference || LayoutReference) && !LocalRelations.empty()) {
+        // Preserve exact relations first, including the anchor's own key.
+        // A layout relation is permitted only inside one indivisible source
+        // data section. Defined external names are source coordinates here,
+        // never identities exported from one object to another.
+        if (const auto Target = LocalTarget(Sec, Fn.Offset, End, Rel)) {
           if (const auto Local = LocalRelations.find(*Target);
-              Local != LocalRelations.end()) {
-            IsData = IsLocalData = true;
+              Local != LocalRelations.end())
             LocalName = Local->second;
-            At = Field;
+        }
+        if (LocalName.empty() && LayoutReference)
+          if (const auto Target = LocalTarget(Sec, Fn.Offset, End, Rel, true)) {
+            auto Local = LocalRelations.lower_bound({Target->first, 0});
+            for (; Local != LocalRelations.end() &&
+                   Local->first.first == Target->first;
+                 ++Local) {
+              const int64_t Delta =
+                  int64_t(Target->second) - Local->first.second;
+              std::string Relation;
+              raw_string_ostream Text(Relation);
+              const StringRef Base(Local->second);
+              Text << Base.take_front(LocalDataAnchorOffsetDigits);
+              if (Delta)
+                Text << (Delta < 0 ? '-' : '+')
+                     << format_hex_no_prefix(Delta < 0 ? -Delta : Delta,
+                                             LocalDataDeltaDigits, true);
+              Text << Base.drop_front(LocalDataAnchorOffsetDigits);
+              if (LocalName.empty() || Relation < LocalName)
+                LocalName = std::move(Relation);
+            }
           }
+        if (!LocalName.empty()) {
+          IsData = IsLocalData = true;
+          At = Field;
+        }
+      }
       if (DataReference && !coff_loader::primaryVTableTypeName(*TargetName) &&
           !TargetName->starts_with(COFFImportPointerPrefix) &&
           TargetOrErr->getComplexType() == COFF::IMAGE_SYM_DTYPE_NULL &&
