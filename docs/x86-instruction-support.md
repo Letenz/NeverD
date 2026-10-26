@@ -27,6 +27,10 @@ back the current
 instruction's partial LowIR and clears its semantic evidence; it cannot append
 a synthetic NOP. The caller's earlier LowIR remains intact. Disabling strict
 mode still disables complete semantic-audit certification for supported forms.
+Standalone DATA16/LOCK/REP/REPNE/REX64 pseudo-instruction IDs are refused;
+prefix bytes have semantics only as part of a complete instruction. Truncated
+prefix sequences cannot become successful NOPs. Genuine operand/address-size
+prefixed NOPs retain their existing support.
 
 The audit baseline has 1,652 instruction IDs; the MSRLIST decoder follow-up
 appended two; the bounded-system follow-up adds eight more, bringing the

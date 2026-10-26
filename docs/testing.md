@@ -1052,6 +1052,10 @@ LowIR and retract the failed instruction's partial
 address/load effects. Missing detail fails explicitly; real architectural NOPs
 remain supported. Pair it with `NeverDX86UndefinedEffectsTests` to check stale
 undefined-output and preserved-state certificates after refusal.
+`StandalonePrefixesCannotBecomeNops` checks all five prefix pseudo IDs across
+both modes, lift policies and three decode routes. It also checks truncated
+prefix bytes (with `0x48` correctly remaining DEC in i386); genuine prefixed
+NOPs stay covered by the adjacent positive test.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and both `X86AmxSource.*` and `AmxEncodings/*` in

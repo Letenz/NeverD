@@ -108,8 +108,10 @@ TEST(X86InstructionCoverage, MissingDetailIsAnExplicitFailureInBothPolicies) {
 TEST(X86InstructionCoverage, ArchitecturalNopsRemainSupportedInBothPolicies) {
   for (Arch A : {Arch::X86, Arch::X64})
     for (bool Strict : {false, true})
-      for (const std::vector<uint8_t> &Bytes :
-           {std::vector<uint8_t>{0x90}, {0x66, 0x90}, {0x0f, 0x1f, 0x00}}) {
+      for (const std::vector<uint8_t> &Bytes : {std::vector<uint8_t>{0x90},
+                                                {0x66, 0x90},
+                                                {0x67, 0x90},
+                                                {0x0f, 0x1f, 0x00}}) {
         Decoder D;
         ASSERT_TRUE(D.init(A));
         D.setStrict(Strict);
@@ -121,6 +123,54 @@ TEST(X86InstructionCoverage, ArchitecturalNopsRemainSupportedInBothPolicies) {
         ASSERT_EQ(Ops.size(), 1u);
         EXPECT_EQ(Ops.front().Opcode, NdOp::NOP);
       }
+}
+
+TEST(X86InstructionCoverage, StandalonePrefixesCannotBecomeNops) {
+  struct Prefix {
+    uint8_t Byte;
+    unsigned Id;
+  };
+  for (Arch A : {Arch::X86, Arch::X64})
+    for (bool Strict : {false, true})
+      for (unsigned Route = 0; Route != 3; ++Route)
+        for (const auto &P :
+             {Prefix{0x66, X86_INS_DATA16}, Prefix{0xf0, X86_INS_LOCK},
+              Prefix{0xf3, X86_INS_REP}, Prefix{0xf2, X86_INS_REPNE},
+              Prefix{0x48, X86_INS_REX64}}) {
+          SCOPED_TRACE(unsigned(A));
+          SCOPED_TRACE(Strict);
+          SCOPED_TRACE(Route);
+          SCOPED_TRACE(P.Id);
+          Decoder D;
+          ASSERT_TRUE(D.init(A));
+          D.setStrict(Strict);
+          const auto Decode = [&](const uint8_t *Bytes, size_t Size,
+                                  DecodedInsn &I) {
+            return Route == 0   ? D.decodeOne(Bytes, Size, 0x1000, I)
+                   : Route == 1 ? D.decodeOneLight(Bytes, Size, 0x1000, I)
+                                : D.decodeOneForLift(Bytes, Size, 0x1000, I);
+          };
+          if (A == Arch::X64 || P.Id != X86_INS_REX64) {
+            DecodedInsn Truncated{};
+            EXPECT_EQ(Decode(&P.Byte, 1, Truncated), 0u);
+          }
+          // Check the lifter boundary independently of decoder rejection.
+          // Even a stale or forged prefix ID must not acquire NOP semantics.
+          const uint8_t Nop = 0x90;
+          DecodedInsn I{};
+          ASSERT_EQ(Decode(&Nop, 1, I), 1u);
+          I.Raw->id = P.Id;
+          LowInstructionUndefinedEffects Undefined;
+          Undefined.Coverage = LowUndefinedCoverage::Complete;
+          LowInstructionPreservedState Preserved;
+          Preserved.Audit = LowPreservedStateAudit::LegacyIntegerV1;
+          std::vector<LowOp> Ops;
+          EXPECT_THROW(D.liftToLow(I, Ops, {}, {}, &Undefined, &Preserved),
+                       UnliftedInstruction);
+          EXPECT_TRUE(Ops.empty());
+          EXPECT_EQ(Undefined.Coverage, LowUndefinedCoverage::Unsupported);
+          EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+        }
 }
 
 TEST(X86InstructionCoverage, RexRDoesNotCreateExtraDebugRegisters) {

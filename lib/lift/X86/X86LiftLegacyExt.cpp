@@ -776,15 +776,15 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   // in some Capstone builds. Already covered via VPCLMULQDQ above.
 
   // ========================================================================
-  // Prefixes — not standalone instructions; emit NOP.
+  // Prefixes belong to their complete instruction. A standalone prefix ID
+  // cannot certify an instruction boundary or invent a successful NOP.
   // ========================================================================
   case X86_INS_DATA16:
   case X86_INS_LOCK:
   case X86_INS_REP:
   case X86_INS_REPNE:
   case X86_INS_REX64:
-    S.emit(NdOp::NOP, {}, {});
-    break;
+    return false;
 
   // ========================================================================
   // SSE/MMX data moves — treat as COPY to preserve dataflow.
