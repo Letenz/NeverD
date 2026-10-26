@@ -1267,6 +1267,14 @@
         <source>Version comparison &amp;graph…</source>
         <translation>版本对比图(&amp;G)…</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>添加分析区段...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>将新代码或数据映射到当前分析中</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3238,6 +3246,54 @@ After:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>无符号值（十进制或 0x 十六进制）：</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>添加分析区段</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>二进制字节：</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>浏览…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>请选择大小为 1 字节至 64 MiB 的文件，并填写十六进制地址和区段名称。定义函数还需填写函数名称并授予执行权限。</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>将这些字节定义为一个函数</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>函数名称：</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>将二进制文件映射到当前映像的虚拟地址。保存项目以保留此映射。原始二进制文件不会改变。</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>权限：</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>区段名称：</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>选择二进制字节文件</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>项目已发生变化。请重新打开此对话框。</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>虚拟地址：</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3432,10 +3488,6 @@ After:
         <translation>已重新加载输入文件</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>注释与历史记录已保存</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>此编辑针对的会话已不再打开，因此未被应用。</translation>
     </message>
@@ -3620,6 +3672,10 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>%1 处的重写函数已保存至 %2</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>项目更改已保存</translation>
     </message>
 </context>
 <context>
