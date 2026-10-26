@@ -308,9 +308,12 @@ private:
     std::string_view Name;
     uint64_t Parent;
     bool MultipleParents = false;
+    bool IsLocalData = false;
   };
   using DataBindings = std::unordered_map<uint64_t, DataBinding>;
   void appendModuleMatches(uint64_t Address, size_t Module);
+  void applyRuntimePointerContext(const BinaryImage &Img,
+                                  llvm::ArrayRef<uint64_t> Entries);
   void applyVTableContext(const BinaryImage &Img,
                           llvm::ArrayRef<uint64_t> Entries);
   void applyDataContext(const BinaryImage &Img,

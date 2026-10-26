@@ -855,7 +855,7 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   }
 
   default:
-    return liftExtBMI(*this, S, Insn, X86);
+    return liftExtBMI(*this, S, Insn);
   }
   return true;
 }

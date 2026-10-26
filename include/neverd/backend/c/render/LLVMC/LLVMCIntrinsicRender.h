@@ -115,6 +115,10 @@ renderAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call,
                                const std::string &ResultName, bool ResultLive,
                                const std::vector<std::string> &Args);
 std::optional<InlineAsmRender>
+renderAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call,
+                                 const std::string &ResultName, bool ResultLive,
+                                 const std::vector<std::string> &Args);
+std::optional<InlineAsmRender>
 renderAArch64PAuthLoadCall(Arch TheArch, const llvm::CallInst &Call,
                            const std::string &ResultName, bool ResultLive,
                            const std::vector<std::string> &Args);

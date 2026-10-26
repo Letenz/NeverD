@@ -9,8 +9,10 @@
 
 #include "X86LiftBitCount.h"
 
+#include "X86LegacyScalarPrefixes.h"
 #include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
+#include "X86UndefinedFlagAudit.h"
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/support/ISAEncoding.h"
@@ -83,42 +85,14 @@ std::optional<Encoding> encoding(const cs_insn *Insn, Arch Target) {
   }
 
   // F3 selects the instruction; 66 independently selects its 16-bit operand.
-  // An intervening legacy prefix cancels a REX, and the last adjacent REX wins.
   const bool Mode64 = Target == Arch::X64;
-  size_t Cursor = 0;
-  uint8_t Segment = 0, Rex = 0, Rex2 = 0;
-  bool Address = false, Operand16 = false, F3 = false;
-  while (Cursor < Insn->size) {
-    const uint8_t B = Insn->bytes[Cursor];
-    if (Mode64 && (B & 0xf0) == 0x40) {
-      Rex = B;
-      ++Cursor;
-      continue;
-    }
-    if (apxvalidation::isSegmentPrefix(B)) {
-      if (Segment)
-        return std::nullopt;
-      Segment = B;
-    } else if (B == 0x67) {
-      if (Address)
-        return std::nullopt;
-      Address = true;
-    } else if (B == 0x66) {
-      if (Operand16)
-        return std::nullopt;
-      Operand16 = true;
-    } else if (B == 0xf3) {
-      if (F3)
-        return std::nullopt;
-      F3 = true;
-    } else {
-      break;
-    }
-    Rex = 0;
-    ++Cursor;
-  }
-  if (!F3 || Cursor >= Insn->size)
+  legacyvalidation::ScalarPrefixes P;
+  if (!legacyvalidation::scalarPrefixes(Insn, Mode64, P) || !P.F3)
     return std::nullopt;
+  size_t Cursor = P.OpcodeOffset;
+  const uint8_t Segment = P.Segment, Rex = P.Rex;
+  const bool Address = P.Address, Operand16 = P.Operand16;
+  uint8_t Rex2 = 0;
   std::array<uint8_t, 4> OpcodeDetail{};
   uint8_t Extension = Rex;
   unsigned RegExtension = 0, BaseExtension = 0, IndexExtension = 0;
@@ -190,22 +164,7 @@ bool matches(const cs_insn *Insn, llvm::ArrayRef<LowOp> Ops,
              const LowInstructionUndefinedEffects &Effects) {
   if (Insn->id == X86_INS_POPCNT || Insn->detail->x86.eflags == 0)
     return Effects.Effects.empty();
-  if (Effects.Effects.size() != UndefinedFlags.size())
-    return false;
-  for (size_t I = 0; I != UndefinedFlags.size(); ++I) {
-    const auto &E = Effects.Effects[I];
-    if (E.Output != NdVar::reg(UndefinedFlags[I], 1) || E.BitOffset ||
-        E.BitCount != 1 || E.When || !E.AfterOp || E.AfterOp > Ops.size())
-      return false;
-    for (const auto &Later : Ops.drop_front(E.AfterOp)) {
-      if (Later.Output == E.Output)
-        return false;
-      for (unsigned J = 0; J != Later.NumInputs; ++J)
-        if (Later.Inputs[J] == E.Output)
-          return false;
-    }
-  }
-  return true;
+  return undefinedflags::matches(UndefinedFlags, Ops, Effects);
 }
 
 bool lift(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn) {

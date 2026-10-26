@@ -65,6 +65,11 @@ bool recoverI386RegistrationCookieCall(const MedFunc &Func,
 std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
                                                         Arch Architecture,
                                                         size_t &Remaining);
+/// Also publishes each block's incoming physical SP under the same fixed
+/// point; absent entries have no unique reaching definition.
+std::map<const MedOp *, MedVar>
+sourceCallStackPointers(const MedFunc &Func, Arch Architecture,
+                        size_t &Remaining, std::map<int, MedVar> &BlockEntries);
 
 struct AbiSpillContext {
   const MedFunc &Func;

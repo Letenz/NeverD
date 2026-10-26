@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/PatternParser.h"
 
+#include "LocalDataReference.h"
+#include "RuntimePointerContext.h"
 #include "VTableContext.h"
 
 #include "neverd/support/Parallel.h"
@@ -203,6 +205,7 @@ struct DraftModule {
   bool RequireReferences = false;
   bool RequireCaller = false;
   bool IsVTable = false;
+  bool IsLoadConfig = false;
 };
 
 /// Where the modules of a chunk are written: each module's bytes, then its
@@ -408,9 +411,10 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   auto CannotBeName = [](llvm::StringRef Field) {
     return Field.starts_with(PublicNamePrefix) ||
            Field.starts_with(DataReferencePrefix) ||
+           Field.starts_with(LocalDataReferencePrefix) ||
            Field.starts_with(ReferencePrefix) || Field == RequiredReferences ||
            Field == RequiredCaller || Field == VTableContext ||
-           Field.starts_with(UnstatedByte);
+           Field == LoadConfigContext || Field.starts_with(UnstatedByte);
   };
 
   // Remaining tokens form :offset/name pairs, then ^offset/name references,
@@ -421,20 +425,23 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
     if (Tokens[I] == CollisionEvidenceOnly)
       return patternError("collision evidence is not a matchable signature");
     if (Tokens[I] == RequiredReferences || Tokens[I] == RequiredCaller ||
-        Tokens[I] == VTableContext) {
+        Tokens[I] == VTableContext || Tokens[I] == LoadConfigContext) {
       if (I != OpeningFields)
         return patternError(
             "context requirement must immediately follow total length");
       Mod.RequireReferences = Tokens[I] == RequiredReferences;
       Mod.RequireCaller = Tokens[I] == RequiredCaller;
       Mod.IsVTable = Tokens[I] == VTableContext;
+      Mod.IsLoadConfig = Tokens[I] == LoadConfigContext;
       continue;
     }
     if (Tokens[I].starts_with(ReferencePrefix) ||
-        Tokens[I].starts_with(DataReferencePrefix)) {
+        Tokens[I].starts_with(DataReferencePrefix) ||
+        Tokens[I].starts_with(LocalDataReferencePrefix)) {
       if (SawTail)
         return patternError("reference follows the tail pattern");
-      const bool IsData = Tokens[I].starts_with(DataReferencePrefix);
+      const bool IsLocal = Tokens[I].starts_with(LocalDataReferencePrefix);
+      const bool IsData = IsLocal || Tokens[I].starts_with(DataReferencePrefix);
       auto OffStr = Tokens[I].drop_front(IsData ? DataReferencePrefix.size()
                                                 : ReferencePrefix.size());
       unsigned Off;
@@ -446,10 +453,13 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
         return patternError("reference name is missing after offset: " +
                             Tokens[I]);
 
-      if (IsData && !Mod.RequireReferences && !Mod.RequireCaller)
+      if (IsData && !Mod.RequireReferences && !Mod.RequireCaller &&
+          !Mod.IsLoadConfig)
         return patternError("data references require a contextual record");
+      if (IsLocal && (Mod.IsLoadConfig || !localDataAnchor(Tokens[I + 1])))
+        return patternError("invalid source-local data anchor");
       SawDataReference |= IsData;
-      Writer.Names.Names.push_back({Off, Tokens[++I], IsData});
+      Writer.Names.Names.push_back({Off, Tokens[++I], IsData, IsLocal});
       ++Mod.ReferenceCount;
       continue;
     }
@@ -486,12 +496,12 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
 
   if (Mod.PublicNameCount == 0)
     return patternError("no public names found");
-  if (SawDataReference) {
-    llvm::SmallVector<std::pair<uint32_t, bool>, 8> Sites;
+  if (SawDataReference && !Mod.IsLoadConfig) {
+    llvm::SmallVector<std::pair<uint32_t, unsigned>, 8> Sites;
     for (const StoredName &Ref :
          llvm::ArrayRef(Writer.Names.Names)
              .slice(Mod.Names + Mod.PublicNameCount, Mod.ReferenceCount))
-      Sites.emplace_back(Ref.Offset, Ref.IsData);
+      Sites.emplace_back(Ref.Offset, unsigned(Ref.IsData) + Ref.IsLocalData);
     llvm::sort(Sites);
     for (size_t I = 1; I < Sites.size(); ++I)
       if (Sites[I].first == Sites[I - 1].first &&
@@ -529,6 +539,10 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
       !isValidVTableContext(storedModule(Mod, Writer.Bytes, Writer.Names)))
     return patternError("!vtable requires one primary table name and complete "
                         "wildcard code-pointer slots");
+  if (Mod.IsLoadConfig && !isValidRuntimePointerContext(
+                              storedModule(Mod, Writer.Bytes, Writer.Names)))
+    return patternError(
+        "!loadcfg requires source-owned pointer/default pairs at known fields");
   return Mod;
 }
 
@@ -564,6 +578,7 @@ StoredModule storedModule(const DraftModule &Draft, const uint8_t *Bytes,
   Module.RequireReferences = Draft.RequireReferences;
   Module.RequireCaller = Draft.RequireCaller;
   Module.IsVTable = Draft.IsVTable;
+  Module.IsLoadConfig = Draft.IsLoadConfig;
   return Module;
 }
 
@@ -585,12 +600,13 @@ PatternModule PatternParser::toPatternModule(const StoredModule &Module) {
   Result.RequireReferences = Module.RequireReferences;
   Result.RequireCaller = Module.RequireCaller;
   Result.IsVTable = Module.IsVTable;
+  Result.IsLoadConfig = Module.IsLoadConfig;
   Result.TotalLen = Module.TotalLen;
   for (const StoredName &Name : Module.publicNames())
     Result.PublicNames.push_back({Name.Offset, std::string(Name.Name)});
   for (const StoredName &Name : Module.references())
     Result.References.push_back(
-        {Name.Offset, std::string(Name.Name), Name.IsData});
+        {Name.Offset, std::string(Name.Name), Name.IsData, Name.IsLocalData});
   Result.TailBytes = Pattern(Module.LeadingCount, Module.TailCount);
   return Result;
 }

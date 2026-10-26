@@ -125,6 +125,7 @@ void expectSameModules(llvm::ArrayRef<StoredModule> Expected,
     EXPECT_EQ(E.CRCLen, A.CRCLen) << "module " << I;
     EXPECT_EQ(E.RequireReferences, A.RequireReferences) << "module " << I;
     EXPECT_EQ(E.IsVTable, A.IsVTable) << "module " << I;
+    EXPECT_EQ(E.IsLoadConfig, A.IsLoadConfig) << "module " << I;
     EXPECT_EQ(E.RequireCaller, A.RequireCaller) << "module " << I;
     const size_t Count = E.LeadingCount + E.TailCount;
     for (size_t B = 0; B < Count; ++B) {
@@ -139,6 +140,8 @@ void expectSameModules(llvm::ArrayRef<StoredModule> Expected,
       EXPECT_EQ(E.Names[N].Offset, A.Names[N].Offset) << "module " << I;
       EXPECT_EQ(E.Names[N].Name, A.Names[N].Name) << "module " << I;
       EXPECT_EQ(E.Names[N].IsData, A.Names[N].IsData) << "module " << I;
+      EXPECT_EQ(E.Names[N].IsLocalData, A.Names[N].IsLocalData)
+          << "module " << I;
     }
   }
 }
@@ -162,6 +165,38 @@ TEST_F(SignatureCacheTest, AnEntryMapsTheModulesItsSourceParsesTo) {
   // Moving the entry, as a load does, keeps what its modules point into.
   const SignatureCache::Entry Moved = std::move(*Entry);
   expectSameModules(Expected.Modules, Moved.Modules);
+}
+
+TEST_F(SignatureCacheTest, LocalDataKindsAndAnchorSyntaxSurviveReversePieces) {
+  write(Source, "488D05........C3 00 0000 0008 !refs :0000 getter "
+                "%0003 00000013:anchor\n");
+  const auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  const auto Cache = cache();
+  const Parsed Expected = parse();
+  Cache.store(Source, *Identity, Expected.Modules);
+  auto Pending = Cache.open(Source, *Identity);
+  ASSERT_TRUE(Pending);
+  for (size_t I = Pending->pieces(); I; --I)
+    ASSERT_TRUE(Pending->run(I - 1));
+  const auto Entry = std::move(*Pending).take();
+  expectSameModules(Expected.Modules, Entry.Modules);
+  EXPECT_TRUE(Entry.Modules.front().references().front().IsLocalData);
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    auto Broken = parse();
+    auto &Mod = Broken.Modules.front();
+    auto *Names = const_cast<StoredName *>(Mod.Names);
+    if (Case == 0)
+      Names[1].IsData = false;
+    else if (Case == 1)
+      Names[1].Name = "13:anchor";
+    else if (Case == 2)
+      Names[0].IsLocalData = true;
+    else
+      Mod.RequireReferences = false;
+    Cache.store(Source, *Identity, Broken.Modules);
+    EXPECT_FALSE(Cache.load(Source, *Identity)) << Case;
+  }
 }
 
 TEST_F(SignatureCacheTest, MalformedDataKindsCannotBypassTheTextContract) {
@@ -487,6 +522,52 @@ TEST_F(SignatureCacheTest, InvalidTableRecordsCannotBypassTheTextContract) {
     }
     const auto Cache = cache();
     Cache.store(Source, *Identity, ParsedSource.Modules);
+    EXPECT_FALSE(Cache.load(Source, *Identity)) << Case;
+  }
+}
+
+TEST_F(SignatureCacheTest,
+       RuntimePointerMetadataSurvivesReversePiecesAndRejectsBadKinds) {
+  write(Source, std::string(0x80 * 2, '.') +
+                    " 00 0000 0080 !loadcfg :0000 _load_config_used &0078 "
+                    "storage ^0078 target\n");
+  const auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  const auto Cache = cache();
+  const Parsed Expected = parse();
+  Cache.store(Source, *Identity, Expected.Modules);
+  auto Pending = Cache.open(Source, *Identity);
+  ASSERT_TRUE(Pending);
+  for (size_t I = Pending->pieces(); I; --I)
+    ASSERT_TRUE(Pending->run(I - 1));
+  auto Entry = std::move(*Pending).take();
+  expectSameModules(Expected.Modules, Entry.Modules);
+  EXPECT_TRUE(Entry.Modules.front().IsLoadConfig);
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    auto Broken = parse();
+    auto &Mod = Broken.Modules.front();
+    auto *Names = const_cast<StoredName *>(Mod.Names);
+    switch (Case) {
+    case 0:
+      Names[1].IsData = false;
+      break;
+    case 1:
+      Names[2].Offset = 8;
+      break;
+    case 2:
+      Mod.ReferenceCount = 1;
+      break;
+    case 3:
+      Mod.TotalLen = 0x78;
+      break;
+    case 4:
+      Names[0].Name = "made_up";
+      break;
+    case 5:
+      Mod.CRC16 = 1;
+      break;
+    }
+    Cache.store(Source, *Identity, Broken.Modules);
     EXPECT_FALSE(Cache.load(Source, *Identity)) << Case;
   }
 }

@@ -199,42 +199,72 @@ llvm::Expected<std::optional<uint64_t>> Bionic::decimalValue(
 
 BionicResult Bionic::findSubstring(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
-  auto Needle = string(A[1]);
-  if (!Needle)
-    return Needle.takeError();
-  if (Needle->empty())
+  const bool Bounded = Call.Name == symbol::Memmem;
+  const bool IgnoreCase = Call.Name == symbol::Strcasestr;
+  auto Fold = [IgnoreCase](uint8_t C) -> uint8_t {
+    // The guest starts in the C locale; locale changes are not admitted.
+    // Keep non-ASCII bytes unchanged, independent of the host locale.
+    return IgnoreCase && C >= 'A' && C <= 'Z' ? C + ('a' - 'A') : C;
+  };
+  auto Equal = [&](uint8_t Left, uint8_t Right) {
+    return Fold(Left) == Fold(Right);
+  };
+  std::string Needle;
+  if (!Bounded) {
+    auto Text = string(A[1]);
+    if (!Text)
+      return Text.takeError();
+    Needle = std::move(*Text);
+  }
+  const uint64_t Length = Bounded ? A[3] : Needle.size();
+  if (!Length)
     return value(A[0]);
+  if (Bounded && A[1] < Length)
+    return value(0);
   // A prefix table keeps repetitive inputs linear. Only the needed haystack
-  // prefix is read: neither a match nor NUL permits a later guest read.
-  if (Needle->size() > Options.MemoryLimit / sizeof(size_t))
+  // prefix is read: a match (or strstr's NUL) permits no later guest read.
+  if (Length > Options.MemoryLimit / sizeof(size_t))
     return failure(diagnostic::StringScanLimit);
-  std::vector<size_t> Prefix(Needle->size());
-  for (size_t I = 1, J = 0; I < Needle->size(); ++I) {
+  if (Bounded) {
+    if (auto E = access(A[2], Length, Read))
+      return std::move(E);
+    Needle.resize(Length);
+    if (auto E = CPU.read(A[2], llvm::MutableArrayRef(
+                                    reinterpret_cast<uint8_t *>(Needle.data()),
+                                    Needle.size())))
+      return std::move(E);
+  }
+  std::vector<size_t> Prefix(Needle.size());
+  for (size_t I = 1, J = 0; I < Needle.size(); ++I) {
     if (!Budget.remainingMicroseconds()) {
       Expired = true;
       return failure(diagnostic::CallTimeout);
     }
-    while (J && (*Needle)[I] != (*Needle)[J])
+    while (J && !Equal(Needle[I], Needle[J]))
       J = Prefix[J - 1];
-    if ((*Needle)[I] == (*Needle)[J])
+    if (Equal(Needle[I], Needle[J]))
       ++J;
     Prefix[I] = J;
   }
-  for (uint64_t I = 0, J = 0; I < Options.MemoryLimit; ++I) {
+  const uint64_t Limit =
+      Bounded ? std::min(A[1], Options.MemoryLimit) : Options.MemoryLimit;
+  for (uint64_t I = 0, J = 0; I < Limit; ++I) {
     if (A[0] > UINT64_MAX - I)
       return failure(diagnostic::StringAddressOverflow);
     auto C = byte(A[0] + I);
     if (!C)
       return C.takeError();
-    if (!*C)
+    if (!Bounded && !*C)
       return value(0);
-    while (J && *C != static_cast<uint8_t>((*Needle)[J]))
+    while (J && !Equal(*C, Needle[J]))
       J = Prefix[J - 1];
-    if (*C == static_cast<uint8_t>((*Needle)[J]))
+    if (Equal(*C, Needle[J]))
       ++J;
-    if (J == Needle->size())
+    if (J == Needle.size())
       return value(A[0] + I - (J - 1));
   }
+  if (Bounded && Limit == A[1])
+    return value(0);
   return failure(diagnostic::StringScanLimit);
 }
 

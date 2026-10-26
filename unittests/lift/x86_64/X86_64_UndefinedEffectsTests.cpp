@@ -110,6 +110,7 @@ TEST_F(X86UndefinedEffects, DefinedAndPreservedFlagsCreateNoArbitraryProducer) {
       {"sbb eax, ecx", {0x19, 0xc8}},
       {"cmp eax, ecx", {0x39, 0xc8}},
       {"mov eax, ecx", {0x89, 0xc8}},
+      {"BMI2 SHLX", {0xc4, 0xe2, 0x71, 0xf7, 0xc0}},
       {"nop", {0x90}},
   };
   for (const auto &Case : Cases) {
@@ -227,7 +228,6 @@ TEST_F(X86UndefinedEffects, ShiftUnauditedPrefixesClearAllPartialEvidence) {
       {"REP shift", {0xf3, 0xd3, 0xe0}},
       {"REPNZ shift", {0xf2, 0xd3, 0xe0}},
       {"unused REX.R opcode extension", {0x44, 0xd3, 0xe0}},
-      {"BMI2 SHLX", {0xc4, 0xe2, 0x71, 0xf7, 0xc0}},
   };
   for (const auto &Case : Cases) {
     SCOPED_TRACE(Case.Name);

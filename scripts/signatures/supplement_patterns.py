@@ -87,7 +87,7 @@ def context_covers(older: builder.PatternLine, newer: builder.PatternLine) -> bo
     new_sites = builder.ref_table(newer.refs)
     return bool(old_sites) and all(
         offset in new_sites and new_sites[offset] <= names and
-        (offset in older.data_sites) == (offset in newer.data_sites)
+        older.reference_kind(offset) == newer.reference_kind(offset)
         for offset, names in old_sites.items())
 
 
@@ -128,12 +128,11 @@ def select(candidates: dict[str, builder.FoldResult],
         if len(parts) < 5 or parts[0].startswith(("#", ";")):
             return None
         rest = parts[4].split(maxsplit=1)
-        if rest[0] == "!vtable":
+        if rest[0] in ("!vtable", "!loadcfg"):
             return None
         if rest[0] == "!evidence":
             if not allow_evidence or len(rest) != 2:
                 raise builder.BuildError("collision evidence belongs only in --evidence inputs")
-            raw = " ".join([*parts[:4], rest[1]])
         nearby = by_crc.get((int(parts[1], 16), parts[2]), []) + by_prefix.get(
             parts[0][:2 * builder.MIN_PREFIX_BYTES], [])
         for prefix, shapes in short_prefixes.items():
@@ -141,7 +140,7 @@ def select(candidates: dict[str, builder.FoldResult],
                 nearby += shapes
         if not nearby and " ".join(parts[:4]) not in heads:
             return None
-        line = builder.parse_line(raw)
+        line = builder.parse_line(raw, evidence=allow_evidence)
         if line is None:
             return None
         shape = builder.Shape.of(line.key)
@@ -166,7 +165,7 @@ def select(candidates: dict[str, builder.FoldResult],
 
     results = {}
     for name, lines in grouped.items():
-        result = builder.fold(list(lines))
+        result = builder.fold(list(lines), evidence=True)
         result.lines = [line for line in result.lines if line.key in keys]
         results[Path(name + ".pat")] = result
     old = []
@@ -192,7 +191,9 @@ def select(candidates: dict[str, builder.FoldResult],
             if not line.require_references and not line.require_caller:
                 wanted[line.key].update(line.names)
         selected[name] = [
-            line for line in results.get(Path(name + ".pat"), builder.FoldResult(lines=[])).lines
+            line.with_refs(tuple(ref for ref in line.refs if ref[0] not in line.data_sites))
+            if line.data_sites and not line.require_references and not line.require_caller else line
+            for line in results.get(Path(name + ".pat"), builder.FoldResult(lines=[])).lines
             if set(line.names) & wanted[line.key]
             and not set(line.names) & owned[line.key]]
 
@@ -205,7 +206,7 @@ def select(candidates: dict[str, builder.FoldResult],
     claims = {}
     for lines in grouped.values():
         for text in lines:
-            line = builder.parse_line(text)
+            line = builder.parse_line(text, evidence=True)
             claims[line.text] = line
     source_by_key = defaultdict(list)
     for line in claims.values():
@@ -256,9 +257,9 @@ def select(candidates: dict[str, builder.FoldResult],
             line = builder.common_refs([line, *variants])
             previous = [other for other in old_by_key[name, line.key]
                         if set(line.names) & set(other.names)]
-            old_fields = {(offset, offset in other.data_sites)
+            old_fields = {(offset, other.reference_kind(offset))
                           for other in previous for offset, _ in other.refs}
-            adds_reference = any(len(names) == 1 and (offset, offset in line.data_sites) not in old_fields
+            adds_reference = any(len(names) == 1 and (offset, line.reference_kind(offset)) not in old_fields
                                  for offset, names in builder.ref_table(line.refs).items())
             # An ordinary byte claim does not cover an incoming query when
             # raw sources give the same body another nominal identity. Keep

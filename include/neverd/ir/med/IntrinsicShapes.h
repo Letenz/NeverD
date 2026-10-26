@@ -25,6 +25,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEPredicate.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEVector.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86AmxState.h"
 #include "neverd/ir/intrinsics/X86/X86BoundedLeaf.h"
@@ -131,6 +132,47 @@ inline bool aarch64AddressMemoryMedShapeIsValid(const MedOp &Op) {
 
 inline bool aarch64AddressLoadMedShapeIsValid(const MedOp &Op) {
   return Op.Output.Size && aarch64AddressMemoryMedShapeIsValid(Op);
+}
+
+inline bool aarch64WritebackMemoryMedShapeIsValid(const MedOp &Op) {
+  if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+      !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != kAddressMemoryIdentifierBytes ||
+      Op.Inputs[0].ConstVal >= static_cast<uint64_t>(Intrinsic::_Count) ||
+      Op.NumInputs != aarch64WritebackMemoryOperandCount(
+                          static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) +
+                          1 ||
+      !Op.IntrinsicOutputs.empty() ||
+      (Op.Output.TheArch != Arch::Unknown &&
+       Op.Output.TheArch != Arch::AArch64) ||
+      (Op.Output.Kind != MedVar::Reg && Op.Output.Kind != MedVar::Temp) ||
+      Op.MemoryOrdering != NdMemoryOrdering::None ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  for (unsigned I = 1; I != Op.NumInputs; ++I) {
+    const auto &Input = Op.Inputs[I];
+    if (!Input.isConst() && Input.Kind != MedVar::Reg &&
+        Input.Kind != MedVar::Temp && Input.Kind != MedVar::Param)
+      return false;
+    if (!Input.isConst() && Input.TheArch != Arch::Unknown &&
+        Input.TheArch != Arch::AArch64)
+      return false;
+  }
+  const bool Store = static_cast<Intrinsic>(Op.Inputs[0].ConstVal) ==
+                     Intrinsic::A64_StoreWriteback;
+  return aarch64WritebackMemoryShapeIsValid(
+      static_cast<Intrinsic>(Op.Inputs[0].ConstVal), Op.NumInputs,
+      Op.Output.Size, Op.Inputs[kWritebackBaseOperand + 1].Size,
+      Op.Inputs[kWritebackWordOperand + 1].Size,
+      Op.Inputs[kWritebackWordOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kWritebackWordOperand + 1].ConstVal)
+          : std::nullopt,
+      Store ? Op.Inputs[kWritebackDataOperand + 1].Size : 0,
+      Store && Op.Inputs[kWritebackDataOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kWritebackDataOperand + 1].ConstVal)
+          : std::nullopt);
 }
 
 inline bool aarch64PAuthLoadMedShapeIsValid(const MedOp &Op) {
@@ -619,6 +661,7 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
   return !preservesCallSetup(Id) && !onlyChecksForAFault(Id) &&
          !aarch64PAuthMedShapeIsValid(Op) &&
          !aarch64PAuthLoadMedShapeIsValid(Op) &&
+         !aarch64WritebackMemoryMedShapeIsValid(Op) &&
          !aarch64AddressLoadMedShapeIsValid(Op) &&
          !aarch64CPAMedShapeIsValid(Op) && !aarch64SVECPAMedShapeIsValid(Op) &&
          !aarch64SVEPrefixMedShapeIsValid(Op) &&

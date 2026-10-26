@@ -325,7 +325,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   instances_.setLinkHandler(
       [this](const DeepLink &link, std::function<void(const QString &)> done) {
         if (isMinimized())
-          showNormal();
+          setWindowState(windowState() & ~Qt::WindowMinimized);
         raise();
         activateWindow();
         openLink(link, std::move(done));
@@ -2603,6 +2603,10 @@ void MainWindow::setAsksForDebugInfo(bool asks) {
 }
 
 void MainWindow::openNow(const QString &path, const LoadOptions &options) {
+  // A cached project restores its debug choices. Missing symbols in an old
+  // project are loaded explicitly through File -> Load file, not offered again.
+  microsoftSymbols_->setOffers(asksForDebugInfo_ &&
+                               !ProjectDatabase::hasState(path));
   // The workbench shows as the file starts to load, after any question
   // asked before the load.
   showWorkbench();

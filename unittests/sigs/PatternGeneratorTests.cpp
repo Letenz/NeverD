@@ -1631,6 +1631,9 @@ TEST(PatternGeneratorCOFF,
     uint16_t Relocation;
   };
   const Form Forms[] = {
+      {{0xff, 0x15, 0, 0, 0, 0}, 2, COFF::IMAGE_REL_AMD64_REL32},
+      {{0xff, 0x25, 0, 0, 0, 0}, 2, COFF::IMAGE_REL_AMD64_REL32},
+      {{0x48, 0xff, 0x25, 0, 0, 0, 0}, 3, COFF::IMAGE_REL_AMD64_REL32},
       {{0x48, 0x8b, 0x05, 0, 0, 0, 0}, 3, COFF::IMAGE_REL_AMD64_REL32},
       {{0x48, 0x8d, 0x0d, 0, 0, 0, 0}, 3, COFF::IMAGE_REL_AMD64_REL32},
       {{0x8b, 0x05, 0, 0, 0, 0}, 2, COFF::IMAGE_REL_AMD64_REL32},

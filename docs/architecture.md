@@ -198,6 +198,36 @@ Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
 the architectural carry calculation. Completeness of this flag audit does not
 certify runtime CPU-feature selection or a complete opaque machine-state bank.
 
+`X86LiftBMILogic` owns ANDN, BLSI/BLSMSK/BLSR and BZHI VEX/APX/NF forms.
+Its raw encoding, operand and implicit-effect admission precedes every load
+and architectural write. Source-dependent carry is captured before aliased
+destinations, BZHI masks only the low eight index bits and bounds every shift,
+and ordinary forms record AF/PF as undefined. VEX BLSR decoder metadata reports
+RESET_ZF; the owner still computes the architectural result-zero ZF.
+`X86UndefinedFlagAudit` shares the effect-shape and later-use checks across
+BMI logic, bit counts, BEXTR and TBM; each family owns its admitted forms and
+the actual set of undefined flags.
+
+`X86LiftBMI2` owns flag-preserving MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX.
+VEX and APX forms share canonical prefix and memory-tail validators; raw bytes,
+implicit EDX/RDX and every public operand must agree before lifting. Both MULX
+halves are computed before either destination changes, with the high half
+winning when destinations alias. Shift counts are masked before LLVM shifts,
+and RORX immediates are scalar values. Their complete undefined-output audit
+has no new arbitrary bits; existing flag producers pass through unchanged.
+PDEP/PEXT retain the shared scalar intrinsic contract and native BMI2 lowering.
+`X86LiftADX` owns ADCX/ADOX admission and their independent unsigned CF/OF
+carry chains. It admits legacy map-2 and APX/NDD forms; ADX has no REX2 or NF
+form. It checks raw bytes, all public operands and implicit flags before a
+memory access. ADOX's legacy decoder detail omits TEST_OF and destination read
+access; the architectural inputs remain explicit in LowIR. Both sources and
+carry are consumed before any destination write, including aliases. Its empty
+undefined-output audit preserves earlier arbitrary flags, while the selected
+carry flag is defined by the addition. `X86LegacyScalarPrefixes` shares 66/F3,
+segment, address-size and REX cancellation scanning with bit counts; each
+family owns instruction selection and widths. The old BMI/ADX file is a small
+dispatcher delegating to the family owners.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR
@@ -263,6 +293,12 @@ HighIR consumes a direct call's recovered argument list as a whole, including
 empty lists and unavailable interior slots. Its local setup scan cannot append
 adjacent frame variables or replace those unknown operands with stale stores.
 Module call recovery finalizes this boundary for both C routes.
+For fragmented Windows SEH ranges, LLVM C follows the begin/end markers along
+the CFG and retains each block's complete ordered unwind chain. Independent
+handlers and a handler nested within a finally keep their own clauses. Normal
+edges assign PHIs before leaving the generated compounds; a block's finally
+executes the recovered cleanup only on unwind. Closed lexical ranges retain
+their compact rendering.
 HighIR adds this recovery for positional register/stack conventions. Independent
 register banks retain their source variadic and floating-return preparation.
 
@@ -640,11 +676,43 @@ layout also observes original reads through unique local definitions.
 Private-copy source replay recomputes stack-access annotations from the current
 MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
+GPR single pre/post-index accesses use `AArch64WritebackMemory.def` and its
+validated original-word descriptor. Loads return the completed X value below
+the completed base in one 128-bit result; stores return the completed base.
+The lifter publishes the W view before its zero-extended X view, then commits
+the base. The native instruction owns both the access and writeback, preserving
+pre/post ordering and access-EL `AddressAdd` behavior. No ordinary integer ADD
+reconstructs the base. Constrained-unpredictable base/data overlap is refused;
+XZR and SP have distinct encoded roles. Automatic image admission follows the
+same x1-only policy as single immediates; original-SP writeback execution still
+requires an unavailable SP alignment/tagging contract.
+
+Both source routes and LLVM validate the complete contract before source-only
+filtering. A discarded result retains the memory instruction. Exact image-base
+witnesses authenticate the incoming occurrence; only the original instruction's
+completed-base extraction may follow it without invalidating that witness.
+Image materialization includes the incoming base, accessed bytes and outgoing
+base in one complete owner. It does not require a post-index instruction to
+access bytes at its outgoing base. Returned bases are runtime coordinates and
+can feed another retained memory operation without reinterpreting them as image
+VAs. The software tracer commits only complete finite reads/writes for which the
+shared address owner proves control-independent access and writeback bits.
+
+The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
+11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
+LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
+selected regression results (including original-owner failures) and model records are pinned in
+[evidence](evidence/arm64e-writeback-memory-2026-10-26.json). This is Normal WB,
+nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
+automatically lifted whole images.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
-rebasing have the bounded qualification above. Pre/post-index, pair and other
-ordinary-memory families, original-SP stack/call projection and Apple native
+rebasing have the bounded qualification above. GPR single pre/post-index
+writeback has separate explicit-IR, automatic-lifting and image regression
+coverage; SIMD pre/post-index, pair and other ordinary-memory families,
+original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
 lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
@@ -950,6 +1018,8 @@ window used to route branch arrows. Revision and navigation fences still apply.
 ## Interactive patch ownership
 
 `lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
+
+Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
@@ -2072,6 +2142,26 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+`SignatureDataContext` also owns frozen source-local data relations. The producer
+proves that two canonical zero-addend operands refer to one static address within
+the same COFF object. Their shared key names the exact operand of a uniquely
+defined external function; no local variable spelling escapes its object. Only
+that independently settled ordinary function can bind the relation, after all
+matching source refinements agree. The existing single data pass checks consumers
+without changing anchors or restarting inference. The parser/cache preserve a
+separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+Native `!loadcfg` metadata pairs a source configuration field's external pointer
+variable with its default function. The COFF loader owns the role/field mapping;
+`SignatureRuntimePointerContext` queries only its recorded slots after the data
+pass. Immutable, relocation-backed storage and requested executable entries must
+agree with existing complete `!caller` bodies. This independent metadata gate
+can accept a short body only when all wildcards are bound canonical data operands
+and every reference names independently established storage. It does not lower
+the ordinary caller floor, restart incoming inference, or create data anchors.
+The resulting names remain candidates. `RuntimePointerEvidence` emits source
+configuration, pointer and explicitly typed function definitions, retaining
+incomplete counterclaims; the offline selector refines existing body references
+and publishes only missing metadata.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
@@ -2314,7 +2404,12 @@ exports, whose name binds a prototype, is called with at least what the
 prototype declares, as its export fixes the convention for the callers within
 the image too: the declared parameters join what its body reads in its own
 summary, so that a system call stub's callers pass the stack arguments its
-dispatcher reads, and a body that reads past them keeps those. Where every
+dispatcher reads, and a body that reads past them keeps those.
+`CallPrototypeArguments` carries that declaration provenance through final
+call recovery for both selected and omitted callees. A narrower recovered
+gate body cannot truncate arguments already established by its entry summary;
+documented WDK entries use the same boundary.
+Where every
 argument is on the stack (i386), each argument takes the slots it fills, a
 record's by value too (a `LONGLONG`, a `double` and a `POINT` take two), and
 a fastcall or thiscall prototype, which passes leading arguments in
@@ -4666,6 +4761,10 @@ declarations before SSA and reconvert only affected definitions and callers.
 Every caller in a request must supply all outgoing bytes through the shared
 `SourceCallABI` write proof; otherwise the declaration is withdrawn as a unit.
 Ordinary signature bounds cannot truncate an already bound source call.
+HighIR also keeps every validated explicit source ABI operand unchanged:
+ordinary register and outgoing-stack scans cannot replace its values or append
+arguments, even when its stack-only declaration uses fewer parameters than the
+platform's positional calling convention.
 LLVM source exports retain the fixed declaration of such a call even when the
 selected output omits its callee, instead of falling back to unknown extern
 varargs. Explicit native stack-word source calls use the same declaration path.
@@ -8395,6 +8494,17 @@ return null only after exhausting the requested count; scan-budget exhaustion
 remains a failure. The checked entry admits the whole count against the object
 extent before pointer or deadline checks. Zero-count searches need no pointer
 access, and a first match does not require the unread suffix to be mapped.
+`memmem` reuses `strstr`'s linear prefix-table search with explicit 64-bit
+lengths and ordinary embedded NUL bytes. An empty needle returns the haystack;
+a shorter haystack returns null, both without reading either input. Otherwise
+the needle and prefix table must fit the model budget, and the haystack is
+read only through the first match or the declared count. Budget exhaustion
+is a failure rather than a guessed no-match. Both searches preserve errno
+and guest bytes and retain the common dynamic-provider lifetime boundary.
+`strcasestr` uses this same prefix table and scan with C-locale ASCII case
+folding. It retains NUL termination, first-match and empty-needle semantics;
+bytes above ASCII remain unchanged. Guest locale changes are not modeled,
+and host locale settings do not affect the search.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
@@ -11350,6 +11460,29 @@ Source frame checks also follow resolved switches only when every published
 target agrees with the CFG; absent, duplicate and unsafe dispatch records
 refuse. The saved-memory interpreter retains its independent stricter domain.
 
+A source-only SEH handler may also receive several protected or ordinary SP
+positions when a certified frame register survives and every handler path
+restores SP before explicitly reading it. That result retains an unresolved
+entry; it grants neither a native frame nor a single offset. The physical CALL
+return-slot reader separately unions every current protected SP and ordinary
+PHI input through query-local definition ranges. Missing sources, exceptional
+cycles without a seed and unbounded offsets retain refusal. The range proof
+can establish that a CALL write is disjoint, but cannot initialize storage or
+replace the exceptional-entry value. Ordinary exact-offset queries reject PHIs
+with an unproved exceptional input. Entry-register declarations survive
+MedIR dead-code cleanup when a renamed copy's incoming value still has readers.
+This preserves the existing callee-save proof for both C routes after copy
+propagation removes uses of the copy's renamed result.
+
+Changing stack PHIs can also receive a range from a companion unsigned loop
+counter. The current header must guard every iteration, its counter must not
+wrap, and every backedge must cross both the counter update and stack update
+exactly once. Single-entry CFG evidence excludes bypasses and independent or
+exceptional entries. Machine-width copies and zero-extension slices preserve
+the counter bits; signed guards and unbounded recurrences supply no bound.
+The range includes the final header visit and remains separate from exact
+offsets and executable stack values.
+
 `low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
 for this memory proof. Positional syntax, foreign length/flag extensions, dynamic
@@ -12386,9 +12519,15 @@ keep their bytes. Device/GPU admission remains in the shared service dispatch.
 `MedCallTarget` observes cached callable values through the Med ABI owner's
 exact address, width and overlap proof. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
-An observed import identifies the captured callable's signature and never
-authorizes a new target load. Call barriers, partial writes, uncertain aliases
-and exhausted work retain the unresolved call.
+An observation retains the original LOAD index, including through private SSA
+versions. HighIR names an imported call only when the same memory-reachability
+proof used for callee-read inlining proves that original observation can reach
+the call unchanged. Copies and private spills share this decision. The same
+proof follows a bounded single-predecessor chain and checks every intervening
+operation. Joins, exceptional entries and cycles retain the captured callable's
+signature and runtime value without authorizing a new slot read. Barriers,
+partial writes and uncertain aliases stop spill/reload
+proofs; exhausted work publishes no partial observation.
 
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions

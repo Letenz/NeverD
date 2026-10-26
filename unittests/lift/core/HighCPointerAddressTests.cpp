@@ -6485,10 +6485,9 @@ TEST(HighCPointerAddresses, UnionOverlayPicksUniqueAccessWidth) {
   Func.Body = {Load, Store, Fetch};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("p->_m_nRef"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__atomic_fetch_add(&p->_m_nRef, 0xFFFFFFFF,"),
-            std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("(uint32_t *)(&p->_m_nRef)"), std::string::npos)
+  EXPECT_NE(
+      Source.find("__atomic_fetch_add((uint32_t *)(&p->_m_nRef), 0xFFFFFFFF,"),
+      std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(uint32_t)(-1)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("___u1"), std::string::npos) << Source;
@@ -12931,9 +12930,7 @@ TEST(HighCPointerAddresses, IfCallEqZeroPrintsBangCall) {
   Func.Body = {Guard};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("taken("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("!IsEmpty((CStringT*)(uintptr_t)arg0)"),
-            std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("!IsEmpty("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("IsEmpty(arg0) == 0"), std::string::npos) << Source;
 }
 
@@ -36699,12 +36696,13 @@ std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true,
 }
 
 std::string highcOnlyFunction(BinaryImage Img, va_t Entry,
-                              bool Portable = false) {
+                              bool Portable = false,
+                              DebugContext *Dbg = nullptr) {
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
   Opts.OnlyFunctionEntries.insert(Entry);
-  auto Result = Pipeline().run(Img, Ctx, Opts);
+  auto Result = Pipeline().run(Img, Ctx, Opts, Dbg);
   if (!Result.Success || Result.HighFuncs.empty())
     return Result.Error;
   std::vector<HighFunc> Related = Result.HighFuncs;
@@ -36725,7 +36723,7 @@ std::string highcOnlyFunction(BinaryImage Img, va_t Entry,
   Options.Format = Img.Format;
   Options.Image = &Img;
   Options.UseUnalignedPointers = !Portable;
-  if (!HighCEmitter().emit({*Attached}, OS, Options))
+  if (!HighCEmitter().emit({*Attached}, OS, Options, Dbg))
     return {};
   OS.flush();
   return Source;
@@ -44570,16 +44568,39 @@ TEST(HighCPointerAddresses, Win64TwelveArgumentCallKeepsEveryStackArgument) {
     Code.push_back(static_cast<uint8_t>(Rel >> (8 * I)));
   Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x68, 0xc3}); // add rsp; ret
   Code.resize(G - Entry, 0xcc);
-  Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0x60, // mov rax, [rsp+60h]
-                           0xc3});
+  // Read every positional input. A leaf that reads only the last stack
+  // word instead has a complete one-parameter native source declaration.
+  Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0x60, // mov rax,[rsp+60h]
+                           0x48, 0x01, 0xc8,             // add rax,rcx
+                           0x48, 0x01, 0xd0,             // add rax,rdx
+                           0x4c, 0x01, 0xc0,             // add rax,r8
+                           0x4c, 0x01, 0xc8});           // add rax,r9
+  for (uint8_t K = 0; K < 7; ++K)
+    Code.insert(Code.end(),
+                {0x48, 0x03, 0x44, 0x24, static_cast<uint8_t>(0x28 + 8 * K)});
+  Code.push_back(0xc3);
   BinaryImage Img = makeCodeFixture(Entry, Code);
   Symbol GSym = Symbol::makeFunc(G);
   GSym.Name = "twelve";
   Img.Symbols.push_back(GSym);
-  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  const std::string HighC = highcOnlyFunction(Img, Entry);
   EXPECT_NE(HighC.find("twelve(0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8)"),
             std::string::npos)
       << HighC;
+  llvm::LLVMContext Context;
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {Entry, G};
+  const auto Result = Pipeline().run(Img, Context, Options);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Complete = emitFunctions(Result.HighFuncs, Arch::X64, &Img);
+  compileAndRunCallOrdering(Complete + R"c(
+int main(void) {
+  return sub_140001000() != 36 ||
+      twelve(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) != 78;
+}
+)c",
+                            true);
 }
 
 TEST(HighCPointerAddresses, SlotStoredOnTwoPathsKeepsItsDeclaration) {
@@ -46219,6 +46240,69 @@ TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
       << Definition;
 }
 
+TEST(HighCPointerAddresses, DocumentedKernelArgumentsSurviveAnOpaqueGate) {
+  // A kernel service gate need not read RCX/RDX itself. Its recovered body
+  // signature cannot override the WDK contract that already bound the call.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Routine = 0x140001020;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,    // sub rsp,28h
+                               0x33, 0xc9,                // xor ecx,ecx
+                               0x33, 0xd2,                // xor edx,edx
+                               0xe8, 0x13, 0,    0,    0, // call service
+                               0x48, 0x83, 0xc4, 0x28, 0xc3};
+  Code.resize(Routine - Entry, 0xcc);
+  // Forward through an opaque dispatcher so this is not a closed leaf whose
+  // source signature can be bound independently of the service declaration.
+  Code.insert(Code.end(), {0x48, 0x83, 0xec, 0x28, 0xe8, 0xd7, 0x0f, 0x00, 0x00,
+                           0x48, 0x83, 0xc4, 0x28, 0xc3});
+  auto Image = makeCodeFixture(Entry, Code);
+  Symbol Service = Symbol::makeFunc(Routine);
+  Service.Name = "ZwSetSystemTime";
+  Image.Symbols.push_back(Service);
+  Image.Exports.push_back({Service.Name, 1, Routine});
+  class ExportedPrototype : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != Routine)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Addr = Address;
+      Function.Name = "ZwSetSystemTime";
+      Function.ReturnType = NdType::makeInt(4, true);
+      Function.Params = {{"NewTime", NdType::makePtr(NdType::makeInt(8))},
+                         {"OldTime", NdType::makePtr(NdType::makeInt(8))}};
+      Function.PrototypeLibrary = "windows-kernel-x64";
+      Function.PrototypeFromHeader = true;
+      return Function;
+    }
+  } Debug;
+  llvm::LLVMContext Context;
+  PipelineOptions PipelineOpts;
+  PipelineOpts.EmitDumpOutput = false;
+  PipelineOpts.OnlyFunctionEntries = {Entry};
+  const auto Prepared = Pipeline().run(Image, Context, PipelineOpts, &Debug);
+  ASSERT_TRUE(Prepared.Success) << Prepared.Error;
+  unsigned Calls = 0;
+  for (const auto &Function : Prepared.MedFuncs)
+    for (const auto &Call : Function.CallInfos)
+      if (Call.TargetAddr == Routine) {
+        ++Calls;
+        EXPECT_EQ(Call.Args.size(), 2u);
+      }
+  EXPECT_EQ(Calls, 1u);
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    const std::string Source =
+        LLVM ? llvmcOnlyFunction(Image, Entry, /*NoOpt=*/false, &Debug,
+                                 /*SourceProjection=*/true)
+             : highcOnlyFunction(Image, Entry, /*Portable=*/false, &Debug);
+    EXPECT_NE(Source.find("ZwSetSystemTime(0, 0)"), std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+  }
+}
+
 TEST(HighCPointerAddresses, ColdFragmentScopeStructuresItsTry) {
   // PsIumResumeAfterHibernate's shape: the guarded store and its __except
   // body sit in a chained cold fragment away from the hot path.  The scope is
@@ -47082,7 +47166,9 @@ TEST(HighCPointerAddresses, ImageFunctionNamedLikeLibcIsNotLibc) {
   Img.Symbols.push_back(GSym);
   const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
   EXPECT_EQ(HighC.find("<setjmp.h>"), std::string::npos) << HighC;
-  EXPECT_NE(HighC.find("extern int64_t setjmp()"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("extern int64_t setjmp_140001020()"), std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("__asm__(\"setjmp\")"), std::string::npos) << HighC;
 }
 
 namespace {

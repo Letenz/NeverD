@@ -123,3 +123,6 @@ SIDEEFFECT(Intrinsic::A64_PACMPending);
 // Pointer-check controls are observable even when the result is discarded.
 #define NEVERD_A64_SVE_CPA_OPERATION(Id, ...) SIDEEFFECT(Intrinsic::Id);
 #include "neverd/ir/intrinsics/AArch64/AArch64SVECPA.def"
+
+#define NEVERD_A64_WRITEBACK_OPERATION(Id, Mnemonic) SIDEEFFECT(Intrinsic::Id);
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"

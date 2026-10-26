@@ -67,6 +67,10 @@ struct PatternGeneratorOptions {
   /// Opt in to typed external-data references in complete contextual/evidence
   /// records. Ordinary FLIRT-compatible output never acquires this extension.
   bool EmitDataReferences = false;
+  /// For source-local operands, opt in to exact same-object relations with
+  /// these independently matchable external functions. The anchor's canonical
+  /// data operand, not a static symbol's spelling, identifies the relation.
+  std::vector<std::string> LocalDataAnchors;
   /// Emit referenced functions with the NeverD `!refs` constraint and full
   /// byte coverage, including functions below the ordinary fixed-byte floor.
   /// Unreferenced functions retain the ordinary floor and output format.
@@ -286,6 +290,17 @@ struct VTableEvidenceStats {
 llvm::Expected<VTableEvidenceStats>
 generateVTableEvidence(const llvm::object::ObjectFile &Obj,
                        llvm::raw_ostream &OS);
+
+/// Source configuration, requested pointer definitions and actual function
+/// definitions. Missing or unsupported declarations remain explicit evidence.
+struct RuntimePointerEvidenceStats {
+  unsigned Complete = 0;
+  unsigned Incomplete = 0;
+};
+llvm::Expected<RuntimePointerEvidenceStats>
+generateRuntimePointerEvidence(const llvm::object::ObjectFile &Obj,
+                               llvm::ArrayRef<std::string> Names,
+                               llvm::raw_ostream &OS);
 
 /// Writes one .pat line per function \p Obj defines.
 ///

@@ -690,6 +690,18 @@ add_neverd_unittest(NeverDX86BEXTRTests
   x86/X86BEXTRTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
+add_neverd_unittest(NeverDX86ADXTests
+  x86/X86ADXTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BMI2Tests
+  x86/X86BMI2Tests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
+add_neverd_unittest(NeverDX86BMILogicTests
+  x86/X86BMILogicTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
 add_neverd_unittest(NeverDX86BitCountTests
   x86/X86BitCountTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
@@ -1560,6 +1572,7 @@ target_include_directories(NeverDAAPCS64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
 add_neverd_unittest(NeverDWin64CallContractTests
+  core/FloatingCallLeftoversTests.cpp
   x86_64/Win64CallContractTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline
 )
@@ -4574,6 +4587,24 @@ if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
         "${CMAKE_CURRENT_SOURCE_DIR}/x86/tbm_pipeline_test.py"
         "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
     set_tests_properties(NeverDX86TBMPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86ADXPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/adx_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86ADXPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BMI2Pipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bmi2_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BMI2Pipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BMILogicPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bmi_logic_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BMILogicPipeline PROPERTIES
       TIMEOUT 600 LABELS "unit;x86;source;cli")
     add_test(NAME NeverDX86BitCountPipeline
       COMMAND "${Python3_EXECUTABLE}"

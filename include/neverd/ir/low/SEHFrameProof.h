@@ -36,6 +36,9 @@ struct LowSEHEstablisherFrame {
   bool DynamicSP = false;
   bool HasIndependentEntries = false;
   bool HasRelevantLocalUnwind = false;
+  /// Source-only frame: ordinary and protected entries can have different SPs,
+  /// but the handler never explicitly reads that SP before restoring it.
+  bool HasVaryingEntrySP = false;
   std::vector<bool> RelevantBlocks;
   std::vector<bool> ProtectedBlocks;
   std::vector<va_t> CheckedEnd;

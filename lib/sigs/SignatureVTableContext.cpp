@@ -39,7 +39,7 @@ bool isValidVTableContext(const StoredModule &Mod) {
       Mod.ReferenceCount < Mod.TotalLen / VTablePointerBytes)
     return false;
   const auto &Public = Mod.publicNames().front();
-  if (Public.Offset || Public.IsData ||
+  if (Public.Offset || Public.IsData || Public.IsLocalData ||
       !coff_loader::primaryVTableTypeName(Public.Name))
     return false;
   for (size_t I = 0; I < Mod.TotalLen; ++I)
@@ -47,8 +47,8 @@ bool isValidVTableContext(const StoredModule &Mod) {
       return false;
   llvm::SmallVector<uint32_t, 8> Slots;
   for (const StoredName &Ref : Mod.references()) {
-    if (Ref.IsData || Ref.Name.empty() || Ref.Offset >= Mod.TotalLen ||
-        Ref.Offset % VTablePointerBytes)
+    if (Ref.IsData || Ref.IsLocalData || Ref.Name.empty() ||
+        Ref.Offset >= Mod.TotalLen || Ref.Offset % VTablePointerBytes)
       return false;
     Slots.push_back(Ref.Offset);
   }

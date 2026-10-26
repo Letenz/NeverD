@@ -7,8 +7,10 @@
 - Method: Codex skill-installer, Git sparse checkout
 
 The upstream skill files were originally installed without modification. NeverD
-now adds a desktop design profile in `references/neverd-desktop.md` and routes to
-it from `SKILL.md`. Section 1.6 of `SKILL.md` and the crispness item in its
+now adds a desktop design profile in `references/neverd-desktop.md` and Windows
+native-frame notes in `references/windows.md`, and routes to them from
+`SKILL.md`. The Windows notes were added on 2026-10-26 from NeverD PR #1805.
+Section 1.6 of `SKILL.md` and the crispness item in its
 audit checklist are also NeverD additions, drawn from an audit of NeverD's
 icons. The upstream copyright, license, and general guidance are retained. This
 file records installation provenance and those local additions. The local

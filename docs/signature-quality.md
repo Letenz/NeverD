@@ -140,9 +140,30 @@ a complete `!refs` or `!caller` record. `neverd-sigmaker --data-references`
 opts into its generation alongside `--contextual`, `--caller-context` or
 `--collision-evidence`. Generation requires canonical x64 COFF RIP-relative
 MOV/LEA or immediate CMP/MOV operands, zero addends, the exact REL32_N bias,
-and external non-function symbols. Object-local/static spellings cannot bind
-across functions. Code, import and primary-vftable references keep their
+and external non-function symbols. Bare object-local/static spellings cannot
+bind across functions. Code, import and primary-vftable references keep their
 existing kinds. A reference site cannot mix data and function kinds.
+
+For source-local data, `%offset anchor_offset:anchor_name` states an exact
+same-object relation. The anchor offset is eight uppercase hexadecimal digits;
+for example, `%0003 00000013:anchor` refers to the data operand at offset `0x13`
+in `anchor`. `neverd-sigmaker --data-references --local-data-anchor NAME`
+emits these relations only when the object uniquely defines that external
+function and both canonical, zero-addend operands refer to the same defined
+static data address. Source bounds, opcode overlaps, symbol types and relocation
+biases must agree. Unsupported or duplicate anchor definitions leave their raw
+bodies without that relation, preserving offline counterclaims. Static variable
+spellings never become cross-object identities.
+
+Only the named independent ordinary anchor can establish this binding, at its
+stated operand. Every matching source variant must agree, including variants
+missing the relation. Other functions using the same storage cannot create the
+binding or feed it back into the anchor. External and local data kinds remain
+distinct in parsing, caches, raw collision audits and runtime settlement.
+`refine_pattern_metadata.py --local-data` can add unanimously supported local
+fields to existing complete contextual bodies without duplicating those bodies;
+ordinary byte records retain their existing admission rule. The cache wire
+version is 7; older cache entries are rebuilt from source patterns.
 
 Only complete ordinary candidates meeting the existing fixed-byte floor can
 anchor data bindings. Every matching complete source refinement must agree;
@@ -443,3 +464,12 @@ not reproduce that increase. The record retains every trial, the extra JSON
 cost and the phase controls. Concurrent builds prevent an end-to-end latency
 guarantee; an idle-host qualification remains necessary. No pattern was removed
 or verification weakened to obtain these timings.
+
+Source runtime pointer metadata (`!loadcfg`) is a separate candidate context.
+Loader-owned configuration roles establish pointer storage; source declarations
+establish the proposed default and an explicitly typed function body. A short
+body is eligible only with complete bytes and every wildcard covered by a
+canonical operand whose storage is independently bound. No ordinary strength
+threshold is reduced. Source conflicts, mutable or unrelocated slots, unresolved
+operands and contradictory known defaults remain unknown. Source metadata and
+matching bytes do not by themselves grant automatic naming authority.

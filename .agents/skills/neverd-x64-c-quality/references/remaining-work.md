@@ -197,6 +197,15 @@ deferred ABI recovery. Residual XMM writes and unknown vector PHIs cannot add
 an argument when the complete read summary excludes that bank. Unknown demand,
 real floating inputs and overlapping register-bank reads stay distinct; this
 does not recover genuinely observed clobbers or partially preserved lanes.
+Speculative floating arguments now share the integer call-leftover proof:
+a PHI containing only whole call clobbers supplies no argument setup. Known
+FP demand, mixed joins, partial preservation and possible return fields stay
+visible, including before a result-producing block is visited. Both C routes
+remove the phantom callback parameter in ntos `vDbgPrintExWithPrefixInternal`.
+The original `StDmpSinglePageAdd` still needs the separate byte-observation
+proof above. `KiDispatchException` also retains independent LLVMC unknown
+machine-state operations; count both unknown-value and unknown-machine-state
+markers when reporting residuals.
 Bounded call-free x64 callees now publish scalar constants agreed at every
 return, before SSA, through the shared register-effect summary. Ordinary ABI
 result registers, addresses, exceptional roots and unknown paths remain outside
@@ -609,6 +618,20 @@ conditional memory, invocation lifetime and both C routes remain open.
   unknown displacements and unseeded PHI components still require an explicit
   machine-state contract. Byte histories reuse memory-event prefixes without
   raising the work limit.
+
+- Source-only SEH handlers with a stable frame register may carry several
+  protected SP positions without choosing one exceptional-entry value. The
+  CALL return-slot check retains every protected and ordinary alternative.
+  Live entry-register declarations survive DCE after copy propagation so both
+  C routes can still prove unobserved callee-save stores. Guarded unsigned
+  counter recurrences bound repeated stack adjustments; unbounded loops and
+  unknown interprocedural frame observations still require further proof.
+
+- Fixed scalar import contracts now split wide outgoing stores on i386 in
+  shared ABI recovery, including later overwrites of either word. Both C
+  routes execute against an independent 32-bit provider. Captured ARM64
+  Windows imports retain scalar function-pointer types without rereading a
+  changed import slot; native ARM64 execution remains separate coverage.
 
 ## Established rules
 

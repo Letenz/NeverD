@@ -945,6 +945,43 @@ void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img,
 
 namespace {
 template <typename LoadCfgT>
+llvm::ArrayRef<LoadConfigCallableField> callableFields() {
+  static constexpr LoadConfigCallableField Fields[] = {
+      {offsetof(LoadCfgT, GuardCFCheckFunction),
+       RuntimeCallablePointerSlotKind::GuardCFCheck},
+      {offsetof(LoadCfgT, GuardCFCheckDispatch),
+       RuntimeCallablePointerSlotKind::GuardCFDispatch},
+      {offsetof(LoadCfgT, GuardRFFailureRoutineFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardRFFailureRoutine},
+      {offsetof(LoadCfgT, GuardRFVerifyStackPointerFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardRFVerifyStackPointer},
+      {offsetof(LoadCfgT, GuardXFGCheckFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardXFGCheck},
+      {offsetof(LoadCfgT, GuardXFGDispatchFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardXFGDispatch},
+      {offsetof(LoadCfgT, GuardXFGTableDispatchFunctionPointer),
+       RuntimeCallablePointerSlotKind::GuardXFGTableDispatch},
+      {offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode),
+       RuntimeCallablePointerSlotKind::CastGuardOsDeterminedFailureMode},
+      // The append-only ABI places GuardMemcpy after CastGuard. LLVM's
+      // older typed structures stop at CastGuard; don't change their sizeof.
+      {offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode) +
+           sizeof(LoadCfgT::CastGuardOsDeterminedFailureMode),
+       RuntimeCallablePointerSlotKind::GuardMemcpy}};
+  return Fields;
+}
+} // namespace
+
+llvm::ArrayRef<LoadConfigCallableField> loadConfigCallableFields(Bitness Bits) {
+  if (Bits == Bitness::Bits64)
+    return callableFields<coff_load_configuration64>();
+  if (Bits == Bitness::Bits32)
+    return callableFields<coff_load_configuration32>();
+  return {};
+}
+
+namespace {
+template <typename LoadCfgT>
 void extractLoadCfgFields(uintptr_t CfgPtr, size_t AvailableSize,
                           uint64_t ImageBase, BinaryImage &Img) {
   if (AvailableSize < sizeof(uint32_t))
@@ -997,61 +1034,15 @@ void extractLoadCfgFields(uintptr_t CfgPtr, size_t AvailableSize,
           sizeof(Cfg.GuardEHContinuationCount)))
     Img.DynInfo.GuardEHContinuationCount = Cfg.GuardEHContinuationCount;
 
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardCFCheckFunction),
-                            sizeof(Cfg.GuardCFCheckFunction),
-                            Cfg.GuardCFCheckFunction,
-                            RuntimeCallablePointerSlotKind::GuardCFCheck);
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardCFCheckDispatch),
-                            sizeof(Cfg.GuardCFCheckDispatch),
-                            Cfg.GuardCFCheckDispatch,
-                            RuntimeCallablePointerSlotKind::GuardCFDispatch);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, GuardRFFailureRoutineFunctionPointer),
-      sizeof(Cfg.GuardRFFailureRoutineFunctionPointer),
-      Cfg.GuardRFFailureRoutineFunctionPointer,
-      RuntimeCallablePointerSlotKind::GuardRFFailureRoutine);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, GuardRFVerifyStackPointerFunctionPointer),
-      sizeof(Cfg.GuardRFVerifyStackPointerFunctionPointer),
-      Cfg.GuardRFVerifyStackPointerFunctionPointer,
-      RuntimeCallablePointerSlotKind::GuardRFVerifyStackPointer);
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardXFGCheckFunctionPointer),
-                            sizeof(Cfg.GuardXFGCheckFunctionPointer),
-                            Cfg.GuardXFGCheckFunctionPointer,
-                            RuntimeCallablePointerSlotKind::GuardXFGCheck);
-  RecordRuntimeCallableSlot(offsetof(LoadCfgT, GuardXFGDispatchFunctionPointer),
-                            sizeof(Cfg.GuardXFGDispatchFunctionPointer),
-                            Cfg.GuardXFGDispatchFunctionPointer,
-                            RuntimeCallablePointerSlotKind::GuardXFGDispatch);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, GuardXFGTableDispatchFunctionPointer),
-      sizeof(Cfg.GuardXFGTableDispatchFunctionPointer),
-      Cfg.GuardXFGTableDispatchFunctionPointer,
-      RuntimeCallablePointerSlotKind::GuardXFGTableDispatch);
-  RecordRuntimeCallableSlot(
-      offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode),
-      sizeof(Cfg.CastGuardOsDeterminedFailureMode),
-      Cfg.CastGuardOsDeterminedFailureMode,
-      RuntimeCallablePointerSlotKind::CastGuardOsDeterminedFailureMode);
-
-  // GuardMemcpyFunctionPointer immediately follows CastGuard in the
-  // append-only IMAGE_LOAD_CONFIG_DIRECTORY ABI.  LLVM releases predating the
-  // SDK field intentionally end their typed structure at CastGuard, so decode
-  // this tail by its versioned byte offset instead of changing LLVM's sizeof
-  // contract locally.  The structure's declared Size has already bounded
-  // AvailableSize above.
-  constexpr size_t GuardMemcpyOffset =
-      offsetof(LoadCfgT, CastGuardOsDeterminedFailureMode) +
-      sizeof(Cfg.CastGuardOsDeterminedFailureMode);
-  constexpr size_t PointerWidth = sizeof(Cfg.CastGuardOsDeterminedFailureMode);
-  if (Has(GuardMemcpyOffset, PointerWidth)) {
-    const auto *Field =
-        reinterpret_cast<const uint8_t *>(CfgPtr) + GuardMemcpyOffset;
-    const uint64_t SlotVA = PointerWidth == sizeof(uint64_t)
-                                ? readLE<uint64_t>(Field)
-                                : readLE<uint32_t>(Field);
-    RecordRuntimeCallableSlot(GuardMemcpyOffset, PointerWidth, SlotVA,
-                              RuntimeCallablePointerSlotKind::GuardMemcpy);
+  const size_t PointerWidth = sizeof(Cfg.CastGuardOsDeterminedFailureMode);
+  for (const auto &Field : loadConfigCallableFields(Img.Bits)) {
+    if (!Has(Field.Offset, PointerWidth))
+      continue;
+    const auto *Bytes =
+        reinterpret_cast<const uint8_t *>(CfgPtr) + Field.Offset;
+    RecordRuntimeCallableSlot(Field.Offset, PointerWidth,
+                              readPtr(Bytes, PointerWidth == sizeof(uint64_t)),
+                              Field.Kind);
   }
 }
 } // anonymous namespace

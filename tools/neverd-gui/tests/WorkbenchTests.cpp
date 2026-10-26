@@ -8197,6 +8197,58 @@ private slots:
              QStringLiteral("none"));
   }
 
+  void pdbQuestionOnlyForNewProjects_data() {
+    QTest::addColumn<QString>("state");
+    QTest::newRow("new") << QStringLiteral("new");
+    QTest::newRow("project-folder") << QStringLiteral("folder");
+    QTest::newRow("packed-database") << QStringLiteral("database");
+    QTest::newRow("legacy-sidecar") << QStringLiteral("legacy");
+  }
+
+  void pdbQuestionOnlyForNewProjects() {
+    QFETCH(QString, state);
+    QTemporaryDir directory;
+    const auto input =
+        writeFixture(directory, QStringLiteral("symbols-missing.bin"));
+    auto path = input;
+    if (state == QLatin1String("folder")) {
+      QCOMPARE(ProjectDatabase::writeProjectFile(
+                   input, ProjectDatabase::BookmarksSuffix,
+                   QJsonDocument(QJsonArray())),
+               QString());
+    } else if (state == QLatin1String("database")) {
+      path = ProjectDatabase::pathFor(input);
+      QCOMPARE(ProjectDatabase::save(path, input, {}), QString());
+    } else if (state == QLatin1String("legacy")) {
+      QFile sidecar(input + QStringLiteral(".neverd-annotations.json"));
+      QVERIFY(sidecar.open(QIODevice::WriteOnly));
+      QCOMPARE(sidecar.write("[]"), qint64(2));
+    }
+    Workbench bench;
+    int questions = 0;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<PdbPromptDialog *>(QApplication::activeModalWidget());
+      if (dialog) {
+        ++questions;
+        dialog->reject();
+      }
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTest::qWait(OfferWaitMs);
+    const int expected = state == QLatin1String("new") ? 1 : 0;
+    QCOMPARE(questions, expected);
+    bench.session.closeFile();
+    QTRY_VERIFY(!bench.session.loaded());
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTest::qWait(OfferWaitMs);
+    QCOMPARE(questions, expected);
+  }
+
   void unattendedRunsAskNoPdbQuestion() {
     // A run nobody answers, such as a capture, loads as discovery finds.
     QTemporaryDir directory;
@@ -10171,6 +10223,55 @@ private slots:
     open(QStringLiteral("neverd:///bookmarks?rva=0x40"));
     QTRY_VERIFY(error.startsWith(QStringLiteral("No bookmark is at")));
     QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
+  }
+
+  void externalLinksPreserveWindowState_data() {
+    QTest::addColumn<bool>("maximized");
+    QTest::addColumn<bool>("minimized");
+    QTest::newRow("normal") << false << false;
+    QTest::newRow("maximized") << true << false;
+    QTest::newRow("normal-minimized") << false << true;
+    QTest::newRow("maximized-minimized") << true << true;
+  }
+
+  void externalLinksPreserveWindowState() {
+    QFETCH(bool, maximized);
+    QFETCH(bool, minimized);
+    Theme::instance().apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    if (maximized)
+      bench.window->showMaximized();
+    bench.window->openFile(writeFixture(directory, "window-link.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    const auto state = maximized ? Qt::WindowMaximized : Qt::WindowNoState;
+    QTRY_COMPARE(bench.window->windowHandle()->windowState(), state);
+    const auto geometry = bench.window->geometry();
+    if (minimized) {
+      bench.window->showMinimized();
+      QTRY_VERIFY(bench.window->isMinimized());
+    }
+
+    QLocalSocket socket;
+    socket.connectToServer(bench.window->instanceServer().serverName());
+    QVERIFY(socket.waitForConnected(1000));
+    socket.write("{\"cmd\":\"open_link\",\"uri\":\"neverd:///"
+                 "window-link.bin/addresses?rva=0x52\"}\n");
+    QByteArray reply;
+    QTRY_VERIFY_WITH_TIMEOUT((reply += socket.readAll()).contains('\n'),
+                             OpenTimeoutMs);
+    const auto result =
+        QJsonDocument::fromJson(reply.left(reply.indexOf('\n'))).object();
+    QCOMPARE(result.value("status").toString(), QStringLiteral("ok"));
+    QTRY_VERIFY(!bench.window->isMinimized());
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    QCOMPARE(bench.window->isMaximized(), maximized);
+    QTRY_COMPARE(bench.window->windowHandle()->windowState(), state);
+    QCOMPARE(bench.window->geometry(), geometry);
+    QTRY_COMPARE(bench.window->disassembly()->currentItem(),
+                 std::optional<Address>(Base + 0x52));
   }
 
   void otherProgramsFindTheWorkbenchAndOpenLinksInIt() {

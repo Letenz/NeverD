@@ -542,6 +542,7 @@ void SignatureDB::apply(const BinaryImage &Img,
   applyCallerContext(Img, FuncEntries);
   applyVTableContext(Img, FuncEntries);
   applyDataContext(Img, FuncEntries, DataHits);
+  applyRuntimePointerContext(Img, FuncEntries);
   admitStatedNames(Img);
 }
 
@@ -1504,7 +1505,9 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
                                          Bound->second.MultipleParents)) {
               if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
                                [&](const StoredName &Ref) {
-                                 return Ref.Name == Bound->second.Name;
+                                 return Ref.Name == Bound->second.Name &&
+                                        Ref.IsLocalData ==
+                                            Bound->second.IsLocalData;
                                })) {
                 if (ConfirmedMetadata.empty())
                   ConfirmedMetadata.resize(Matches.size(), 0);
@@ -1679,7 +1682,8 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
     // Required hits support callers only after settlement. Do not sort or
     // search them again as raw evidence that PatternAt cannot use.
     if (!Modules[Hit.Module].RequireReferences &&
-        !Modules[Hit.Module].RequireCaller && !Modules[Hit.Module].IsVTable)
+        !Modules[Hit.Module].RequireCaller && !Modules[Hit.Module].IsVTable &&
+        !Modules[Hit.Module].IsLoadConfig)
       PatternsAt.emplace_back(Hit.Address, Hit.Module);
   llvm::sort(PatternsAt);
   auto PatternAt = [&](std::string_view Name, uint64_t Address) {

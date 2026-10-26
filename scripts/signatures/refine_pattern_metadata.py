@@ -33,6 +33,8 @@ class Evidence:
     line: builder.PatternLine
     names: set[str] = field(default_factory=set)
     refs: dict[int, set[str]] | None = None
+    local_data: bool = False
+    local_refs: dict[int, set[str]] | None = None
 
     def add(self, source: builder.PatternLine) -> None:
         shared = set(self.line.names) & set(source.names)
@@ -49,6 +51,16 @@ class Evidence:
         else:
             self.refs = {offset: names | current[offset]
                          for offset, names in self.refs.items() if offset in current}
+        if self.local_data:
+            current = builder.ref_table(tuple(
+                (offset, name) for offset, name in source.refs
+                if offset in source.local_sites))
+            if self.local_refs is None:
+                self.local_refs = current
+            else:
+                self.local_refs = {offset: names | current[offset]
+                                   for offset, names in self.local_refs.items()
+                                   if offset in current}
 
     def refined(self) -> builder.PatternLine:
         if not set(self.line.names) <= self.names or self.refs is None:
@@ -57,12 +69,20 @@ class Evidence:
         added = {(offset, name) for offset, names in self.refs.items()
                  if offset not in existing and all(map(immutable_reference, names))
                  for name in names}
-        return self.line.with_refs(tuple(sorted(set(self.line.refs) | added))) \
-            if added else self.line
+        local = {(offset, next(iter(names))) for offset, names in (self.local_refs or {}).items()
+                 if offset not in existing and len(names) == 1 and
+                 (self.line.require_caller or self.line.require_references)}
+        if not added and not local:
+            return self.line
+        sites = frozenset(offset for offset, _ in local)
+        return self.line.with_refs(tuple(sorted(set(self.line.refs) | added | local)),
+                                   data_sites=self.line.data_sites | sites,
+                                   local_sites=self.line.local_sites | sites)
 
 
 def refine(existing: list[Path], evidence: list[Path],
-           names: set[str] | None = None) -> dict[Path, str]:
+           names: set[str] | None = None, *,
+           local_data: bool = False) -> dict[Path, str]:
     records = {}
     by_key = defaultdict(list)
     for path in existing:
@@ -72,10 +92,10 @@ def refine(existing: list[Path], evidence: list[Path],
             state = None
             selected = line is not None and (names is None or any(
                 name.partition(" ")[2] in names for name in line.names))
-            if selected and not line.require_caller and not line.is_vtable:
+            if selected and (local_data or not line.require_caller) and not line.is_vtable and not line.is_load_config:
                 shape = builder.Shape.of(line.key)
                 if shape.fully_verified():
-                    state = Evidence(line)
+                    state = Evidence(line, local_data=local_data)
                     by_key[line.key].append(state)
             rows.append((raw, state))
         records[path] = rows
@@ -88,7 +108,7 @@ def refine(existing: list[Path], evidence: list[Path],
                     continue
                 if parts[4] != "!evidence":
                     raise builder.BuildError("metadata refinement requires raw !evidence records")
-                line = builder.parse_line(" ".join([*parts[:4], parts[5]]))
+                line = builder.parse_line(raw, evidence=True)
                 if line is not None:
                     for state in by_key.get(line.key, []):
                         state.add(line)
@@ -120,11 +140,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--name", action="append",
                         help="refine only this linkage name; repeat for a reviewed subset")
+    parser.add_argument("--local-data", action="store_true",
+                        help="also add unanimous same-object data relations to contextual records")
     args = parser.parse_args(argv)
     try:
         if len({path.name for path in args.existing}) != len(args.existing):
             raise builder.BuildError("existing files need distinct output basenames")
-        changed = refine(args.existing, args.evidence, set(args.name) if args.name else None)
+        changed = refine(args.existing, args.evidence, set(args.name) if args.name else None,
+                         local_data=args.local_data)
         args.output.mkdir(parents=True, exist_ok=True)
         written = []
         for source, text in changed.items():
@@ -135,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         describe = lambda paths: [{"file": path.name, "sha256": digest(path)} for path in paths]
         report = {"existing": describe(args.existing), "evidence": describe(args.evidence),
                   "names": args.name or [],
+                  "local_data": args.local_data,
                   "output": written}
         with (args.output / "metadata.sources.json").open("x", encoding="utf-8") as output:
             output.write(json.dumps(report, indent=2) + "\n")

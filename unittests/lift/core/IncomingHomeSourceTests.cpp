@@ -389,6 +389,69 @@ TEST(IncomingHomeSource, SelectedCallerRetainsIncomingStackArguments) {
   runHomeSourceMatrix(false, true);
 }
 
+TEST(IncomingHomeSource, CompleteStackBindingIgnoresOtherCallSetup) {
+  constexpr va_t LastWordCallee = Caller + 0x100;
+  auto Image = homeImage(Arch::X64, BinaryFormat::COFF);
+  auto &Text = Image.Segments.front();
+  Text.Data = {0x48, 0x83, 0xec, 0x68}; // sub rsp,68h
+  for (uint8_t K = 0; K < 8; ++K)
+    Text.Data.insert(Text.Data.end(), {0x48, 0xc7, 0x44, 0x24,
+                                       static_cast<uint8_t>(0x20 + 8 * K),
+                                       static_cast<uint8_t>(K + 1), 0, 0, 0});
+  Text.Data.insert(Text.Data.end(), {0xb9, 21,   0,  0, 0,    // mov ecx,21
+                                     0xba, 22,   0,  0, 0,    // mov edx,22
+                                     0x41, 0xb8, 23, 0, 0, 0, // mov r8d,23
+                                     0x41, 0xb9, 24, 0, 0, 0, // mov r9d,24
+                                     0xe8});                  // call read_home
+  const auto Relative =
+      static_cast<uint32_t>(LastWordCallee - (Caller + Text.Data.size() + 4));
+  for (unsigned I = 0; I < 4; ++I)
+    Text.Data.push_back(static_cast<uint8_t>(Relative >> (8 * I)));
+  Text.Data.insert(Text.Data.end(), {0x48, 0x83, 0xc4, 0x68, 0xc3});
+  Text.Data.resize(LastWordCallee - Caller, 0xcc);
+  Text.Data.insert(Text.Data.end(), {0x48, 0x8b, 0x44, 0x24, 0x60, 0xc3});
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Symbols.back().Addr = LastWordCallee;
+  for (bool Selected : {false, true})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(Selected);
+        SCOPED_TRACE(LLVM);
+        SCOPED_TRACE(NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.SourceProjection = LLVM;
+        Options.LiftMode = LLVM;
+        Options.NoOpt = NoOpt;
+        Options.OnlyFunctionEntries =
+            Selected ? std::set<va_t>{Caller}
+                     : std::set<va_t>{Caller, LastWordCallee};
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        if (LLVM) {
+          ASSERT_TRUE(Result.LlvmModule);
+          ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule));
+          ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions));
+        } else
+          ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, COptions));
+        const std::string Oracle =
+            (Selected ? "\nuint64_t read_home(uint64_t value) { return value; }"
+                      : "") +
+            std::string("\nint main(void) { return caller_home() != 8; }\n");
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+}
+
 TEST(IncomingHomeSource, SelectedCallerRetainsExplicitScalarDeclarations) {
   runHomeSourceMatrix(true, true);
 }

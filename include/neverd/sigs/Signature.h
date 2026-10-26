@@ -56,11 +56,14 @@ struct PatternByte {
 struct FuncRef {
   uint32_t Offset = 0;
   bool IsData = false;
+  bool IsLocalData = false;
   std::string Name;
 
   FuncRef() = default;
-  FuncRef(uint32_t Offset, std::string Name, bool IsData = false)
-      : Offset(Offset), IsData(IsData), Name(std::move(Name)) {}
+  FuncRef(uint32_t Offset, std::string Name, bool IsData = false,
+          bool IsLocalData = false)
+      : Offset(Offset), IsData(IsData), IsLocalData(IsLocalData),
+        Name(std::move(Name)) {}
 };
 
 struct PatternModule {
@@ -82,6 +85,9 @@ struct PatternModule {
   /// function-byte claim. PublicNames names the table; References names its
   /// absolute code-pointer slots. Every pointer is a complete wildcard.
   bool IsVTable : 1 = false;
+  /// `!loadcfg`: source configuration fields pairing external pointer storage
+  /// (&) with its default function (^). Metadata, never a byte-index claim.
+  bool IsLoadConfig : 1 = false;
 
   uint32_t TotalLen = 0;
 
@@ -122,11 +128,13 @@ struct PatternModule {
 struct StoredName {
   uint32_t Offset = 0;
   bool IsData = false;
+  bool IsLocalData = false;
   std::string_view Name;
 
   StoredName() = default;
-  StoredName(uint32_t Offset, std::string_view Name, bool IsData = false)
-      : Offset(Offset), IsData(IsData), Name(Name) {}
+  StoredName(uint32_t Offset, std::string_view Name, bool IsData = false,
+             bool IsLocalData = false)
+      : Offset(Offset), IsData(IsData), IsLocalData(IsLocalData), Name(Name) {}
 };
 
 /// A PatternModule packed for a large signature set.
@@ -163,6 +171,9 @@ struct StoredModule {
   /// function-byte claim. PublicNames names the table; References names its
   /// absolute code-pointer slots. Every pointer is a complete wildcard.
   bool IsVTable : 1 = false;
+  /// `!loadcfg`: source configuration fields pairing external pointer storage
+  /// (&) with its default function (^). Metadata, never a byte-index claim.
+  bool IsLoadConfig : 1 = false;
 
   bool isStated(size_t Byte) const {
     return (Stated[Byte / CHAR_BIT] >> (Byte % CHAR_BIT)) & 1;
@@ -218,10 +229,11 @@ struct SigMatch {
   /// see SignatureDB::apply. This can settle a candidate disputed by other
   /// patterns, but does not prove its original name or nominal source types.
   bool Confirmed = false;
-  /// A frozen, complete caller unanimously references this exact name at
-  /// this address. Its outgoing constraints have no known contradiction.
-  /// Multiple such incoming names are candidate aliases at the same target;
-  /// they cannot prove source identity or confirm an ancestor's references.
+  /// A frozen caller or independently validated source metadata requests this
+  /// exact name at this address. Its outgoing constraints have no known
+  /// contradiction. Multiple such incoming names are candidate aliases at the
+  /// same target; they cannot prove source identity or confirm an ancestor's
+  /// references.
   bool CallerConfirmed = false;
 };
 

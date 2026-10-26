@@ -1043,14 +1043,37 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
   std::vector<FunctionSymbol> Functions;
   DenseMap<std::pair<int32_t, uint32_t>, size_t> ByStart;
   DenseMap<int32_t, COFFCodeSection> Sections;
+  using SourceAddress = std::pair<int32_t, uint32_t>;
+  std::map<StringRef, std::optional<SourceAddress>> LocalAnchors;
+  bool LocalSymbolsComplete = true;
   for (uint32_t I = 0, N = Obj.getNumberOfSymbols(); I < N; ++I) {
     Expected<COFFSymbolRef> SymOrErr = Obj.getSymbol(I);
     if (!SymOrErr) {
       consumeError(SymOrErr.takeError());
+      LocalSymbolsComplete = false;
       break;
     }
     COFFSymbolRef Sym = *SymOrErr;
+    if (Sym.getNumberOfAuxSymbols() >= N - I) {
+      LocalSymbolsComplete = false;
+      break;
+    }
     I += Sym.getNumberOfAuxSymbols();
+    if (Opts.EmitDataReferences && !Opts.LocalDataAnchors.empty()) {
+      auto Name = Obj.getSymbolName(Sym);
+      if (!Name) {
+        consumeError(Name.takeError());
+        LocalSymbolsComplete = false;
+      } else if (llvm::is_contained(Opts.LocalDataAnchors, *Name) &&
+                 (Sym.getSectionNumber() != COFF::IMAGE_SYM_UNDEFINED ||
+                  Sym.getValue() != 0)) {
+        const SourceAddress Address{Sym.getSectionNumber(), Sym.getValue()};
+        auto [At, Fresh] = LocalAnchors.try_emplace(*Name, Address);
+        if (!Fresh || !isCOFFFunctionSymbol(Sym) ||
+            Sym.getStorageClass() != COFF::IMAGE_SYM_CLASS_EXTERNAL)
+          At->second.reset();
+      }
+    }
     if (!isCOFFFunctionSymbol(Sym))
       continue;
 
@@ -1109,6 +1132,96 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
     Starts.erase(std::unique(Starts.begin(), Starts.end()), Starts.end());
   }
 
+  // A local relation is between two exact operands in this object. Only a
+  // unique external function can be its anchor; a bare static spelling never
+  // identifies anything in another object. Keep all other raw bodies so a
+  // missing or malformed anchor remains a counterclaim in offline auditing.
+  auto LocalTarget = [&](const COFFCodeSection &Sec, uint64_t Begin,
+                         uint64_t End, const COFFCodeSection::Relocation &Rel)
+      -> std::optional<SourceAddress> {
+    if (Machine != COFF::IMAGE_FILE_MACHINE_AMD64 || Rel.Offset < Begin ||
+        Rel.Offset >= End || Rel.Width != sizeof(uint32_t))
+      return std::nullopt;
+    const uint64_t Offset = Rel.Offset - Begin;
+    const auto Field =
+        x64DataReferenceField(Sec.Contents.slice(Begin, End - Begin), Offset);
+    if (!Field || Rel.Type != COFF::IMAGE_REL_AMD64_REL32 + Field->Bias ||
+        readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) != 0)
+      return std::nullopt;
+    uint64_t Instruction = Rel.Offset - 2;
+    if (Instruction > Begin && (Sec.Contents[Instruction - 1] == 0x48 ||
+                                Sec.Contents[Instruction - 1] == 0x4c))
+      --Instruction;
+    for (const auto &Other : Sec.Relocations) {
+      if (&Other == &Rel || Other.Offset >= Begin + Field->End)
+        continue;
+      // A relocation beginning in the preceding function can still overlap
+      // this operand. An unknown earlier width cannot prove separation.
+      if (!Other.Width || Other.Offset + *Other.Width > Instruction)
+        return std::nullopt;
+    }
+    auto Symbol = Obj.getSymbol(Rel.Symbol);
+    if (!Symbol) {
+      consumeError(Symbol.takeError());
+      return std::nullopt;
+    }
+    if (Symbol->getStorageClass() != COFF::IMAGE_SYM_CLASS_STATIC ||
+        Symbol->getComplexType() != COFF::IMAGE_SYM_DTYPE_NULL ||
+        Symbol->getNumberOfAuxSymbols() ||
+        COFF::isReservedSectionNumber(Symbol->getSectionNumber()))
+      return std::nullopt;
+    auto Section = Obj.getSection(Symbol->getSectionNumber());
+    if (!Section) {
+      consumeError(Section.takeError());
+      return std::nullopt;
+    }
+    const auto &Target = **Section;
+    if (!(Target.Characteristics & COFF::IMAGE_SCN_MEM_READ) ||
+        (Target.Characteristics &
+         (COFF::IMAGE_SCN_MEM_EXECUTE | COFF::IMAGE_SCN_CNT_CODE)) ||
+        Symbol->getValue() > Target.SizeOfRawData ||
+        Field->Width > Target.SizeOfRawData - Symbol->getValue())
+      return std::nullopt;
+    return SourceAddress{Symbol->getSectionNumber(), Symbol->getValue()};
+  };
+  std::map<SourceAddress, std::string> LocalRelations;
+  if (LocalSymbolsComplete)
+    for (const auto &[Name, Address] : LocalAnchors) {
+      if (!Address || !isReferenceName(Name))
+        continue;
+      const auto At = Sections.find(Address->first);
+      if (At == Sections.end() || At->second.Contents.empty())
+        continue;
+      auto Section = Obj.getSection(Address->first);
+      if (!Section) {
+        consumeError(Section.takeError());
+        continue;
+      }
+      constexpr uint32_t CodeFlags =
+          COFF::IMAGE_SCN_CNT_CODE | COFF::IMAGE_SCN_MEM_EXECUTE;
+      if (((*Section)->Characteristics & CodeFlags) != CodeFlags)
+        continue;
+      const auto &Sec = At->second;
+      const uint64_t Begin = Address->second;
+      if (!llvm::is_contained(Sec.FunctionStarts, Begin))
+        continue;
+      const auto Next = llvm::upper_bound(Sec.FunctionStarts, Begin);
+      const uint64_t End =
+          Next == Sec.FunctionStarts.end() ? Sec.Contents.size() : *Next;
+      for (const auto &Rel : Sec.Relocations)
+        if (const auto Target = LocalTarget(Sec, Begin, End, Rel)) {
+          std::string Relation;
+          raw_string_ostream Text(Relation);
+          Text << format_hex_no_prefix(Rel.Offset - Begin,
+                                       LocalDataAnchorOffsetDigits, true)
+               << LocalDataAnchorSeparator << Name;
+          auto [Existing, Fresh] =
+              LocalRelations.try_emplace(*Target, Relation);
+          if (!Fresh && Relation < Existing->second)
+            Existing->second = std::move(Relation);
+        }
+    }
+
   // Pass 2: symbols at the same section and offset are aliases, as with
   // memcpy/memmove in the x64 runtime. Keep the object's alias evidence in
   // one line, rather than turning it into competing byte-identical claims.
@@ -1152,7 +1265,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
                                      Field) &&
           readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) == 0;
       const auto DataField =
-          !At && Opts.EmitDataReferences &&
+          Opts.EmitDataReferences &&
                   (Opts.RequireReferences || Opts.RequireCaller ||
                    Opts.CollisionEvidence) &&
                   Machine == COFF::IMAGE_FILE_MACHINE_AMD64
@@ -1185,13 +1298,23 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
            TargetOrErr->getSectionNumber() < COFF::IMAGE_SYM_UNDEFINED))
         continue;
       bool IsData = false;
+      bool IsLocalData = false;
+      std::string LocalName;
+      if (DataReference && !LocalRelations.empty())
+        if (const auto Target = LocalTarget(Sec, Fn.Offset, End, Rel))
+          if (const auto Local = LocalRelations.find(*Target);
+              Local != LocalRelations.end()) {
+            IsData = IsLocalData = true;
+            LocalName = Local->second;
+            At = Field;
+          }
       if (DataReference && !coff_loader::primaryVTableTypeName(*TargetName) &&
           !TargetName->starts_with(COFFImportPointerPrefix) &&
           TargetOrErr->getComplexType() == COFF::IMAGE_SYM_DTYPE_NULL &&
           TargetOrErr->getStorageClass() == COFF::IMAGE_SYM_CLASS_EXTERNAL &&
           TargetOrErr->getSectionNumber() >= COFF::IMAGE_SYM_UNDEFINED) {
-        // Defined data must belong to a readable non-code section. Static
-        // spellings have object-local scope and cannot bind across functions.
+        // External names and explicit same-object relations have separate
+        // kinds. A bare static spelling cannot bind across functions.
         if (TargetOrErr->getSectionNumber() != COFF::IMAGE_SYM_UNDEFINED) {
           auto TargetSection = Obj.getSection(TargetOrErr->getSectionNumber());
           if (!TargetSection) {
@@ -1205,7 +1328,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
         }
         IsData = true;
         At = Field;
-      } else if (AddressReference) {
+      } else if (AddressReference && !IsLocalData) {
         if (!coff_loader::primaryVTableTypeName(*TargetName) &&
             !(hasCOFFFunctionType(*TargetOrErr) &&
               TargetOrErr->getSectionNumber() >= COFF::IMAGE_SYM_UNDEFINED))
@@ -1217,7 +1340,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       // Only a pointer symbol supplied by a COFF import can name the slot
       // of a memory-indirect call. A global function pointer is not an
       // import merely because its instruction has the same encoding.
-      if ((Machine == COFF::IMAGE_FILE_MACHINE_I386 ||
+      if (!IsData &&
+          (Machine == COFF::IMAGE_FILE_MACHINE_I386 ||
            Machine == COFF::IMAGE_FILE_MACHINE_AMD64) &&
           isX86ImportReferenceField(Sec.Contents.slice(Fn.Offset, Size), *At,
                                     Machine ==
@@ -1231,12 +1355,13 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
           (!Opts.CollisionEvidence &&
            llvm::is_contained(Fn.Names, *TargetName)))
         continue;
-      References.push_back(
-          {static_cast<uint32_t>(*At), TargetName->str(), IsData});
+      References.push_back({static_cast<uint32_t>(*At),
+                            IsLocalData ? LocalName : TargetName->str(), IsData,
+                            IsLocalData});
       // Where no object defines the symbol, the link resolves it to its
       // alternate name, which the branch then reaches instead.
       if (const auto It = Opts.AlternateNames.find(*TargetName);
-          It != Opts.AlternateNames.end())
+          !IsLocalData && It != Opts.AlternateNames.end())
         for (const std::string &Alternate : It->second)
           if (isReferenceName(Alternate) &&
               (Opts.CollisionEvidence ||
@@ -1254,7 +1379,9 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
     References.erase(std::unique(References.begin(), References.end(),
                                  [](const FuncRef &A, const FuncRef &B) {
                                    return A.Offset == B.Offset &&
-                                          A.Name == B.Name;
+                                          A.Name == B.Name &&
+                                          A.IsData == B.IsData &&
+                                          A.IsLocalData == B.IsLocalData;
                                  }),
                      References.end());
 
@@ -1373,7 +1500,10 @@ bool emitPatternLine(raw_ostream &OS, ArrayRef<StringRef> Names,
     OS << FieldSeparator << PublicNamePrefix << format(OffsetFormat, 0u)
        << FieldSeparator << Name;
   for (const FuncRef &Ref : References)
-    OS << FieldSeparator << (Ref.IsData ? DataReferencePrefix : ReferencePrefix)
+    OS << FieldSeparator
+       << (Ref.IsLocalData ? LocalDataReferencePrefix
+           : Ref.IsData    ? DataReferencePrefix
+                           : ReferencePrefix)
        << format(OffsetFormat, static_cast<unsigned>(Ref.Offset))
        << FieldSeparator << Ref.Name;
 

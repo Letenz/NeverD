@@ -632,7 +632,8 @@ programs, and `neverd-gui neverd://…` (or `--link URL`) sends the link to the
 workbench that has its program, matching the SHA-256 when supplied, otherwise
 the input's name, or the only workbench with a program open when neither is
 supplied. A mismatched hash does not fall back to a matching name. The selected
-workbench comes to the front.
+workbench comes to the front, leaving minimization if necessary while keeping
+its size and maximized/full-screen state.
 When none has it, a recently opened file the link names opens in a new
 workbench at the link, `neverd-gui FILE LINK` names the file, and
 `--no-launch` only sends. `neverd-gui --register-link-handler` makes a
@@ -943,9 +944,13 @@ The command line searches the same stores, takes the search path as
 `--symbol-path`, and with `--download-symbols` downloads a missing PDB the same
 way before it loads the file, through the system's libcurl or WinHTTP.
 
-A project whose PDB no longer loads, and a file opened before anyone was asked,
-offer the same dialog once the file is open; a copy that has reached a store
-since then loads without asking.
+The question is shown only for a newly opened input. Existing project folders,
+packed databases and legacy sidecar projects reopen without another automatic
+PDB offer, including older projects that did not record an answer. **No**,
+Escape and closing the question keep the declined choice with the project's
+debug settings; reopening or reloading preserves it. To load symbols later,
+use **File → Load file → PDB file...**. A manually selected PDB replaces the
+declined choice.
 
 Opening an ELF or Mach-O image with DWARF asks **DWARF info found** — *Load
 DWARF debug information?* — as IDA does, before the file loads. When the DWARF
