@@ -465,8 +465,10 @@ void MainWindow::rewriteFunction() {
   auto *dialog = new RewriteFunctionDialog(session_, *function, commandView());
   dialog->setCursor(Qt::ArrowCursor);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
+  // A produced binary is a new input: openNow decides its PDB offer as for
+  // any other, not from the previously opened file.
   connect(dialog, &RewriteFunctionDialog::openProduced, this,
-          [this](const QString &path) { session_.open(path); });
+          [this](const QString &path) { openNow(path, {}); });
   connect(dialog, &RewriteFunctionDialog::compareProduced, this,
           [this](const QString &path) {
             if (!comparison_)

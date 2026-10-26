@@ -14,6 +14,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -84,11 +85,13 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
   // pointer or the wide-int register pair (handled by modelCallWideIntReturn).
   if (TRI.PointerSize != 8)
     return;
-  // Windows x64 returns scalar values and small records in one register;
-  // larger records use caller-owned storage. Reading volatile RDX after a
-  // call does not establish a second source result. Explicit source contracts
-  // are already bound separately, before this heuristic inference.
-  if (TargetArch == Arch::X64 && TargetFormat == BinaryFormat::COFF)
+  // Where a call returns one register value at most, reading another
+  // volatile result register after it does not establish a second source
+  // result. Explicit source contracts are already bound separately, before
+  // this heuristic inference.
+  if (const CallArgumentConvention *Convention =
+          callArgumentConvention(TargetArch, TargetFormat);
+      Convention && Convention->SingleRegisterReturns)
     return;
   if (TRI.IntReturnRegs.empty() && TRI.FPReturnRegs.empty())
     return;

@@ -1479,14 +1479,22 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       // indirect call its stack arguments.
       const bool SetupConvention =
           Convention && Convention->ArgumentsFromCallSetup;
-      // A loader-bound import retains its fixed contract through a captured
-      // runtime pointer. Direct Win64 calls also retain their final stack list;
-      // an independent setup scan must not append adjacent frame locals.
-      const bool KnownImport =
-          Image && !importCalleeName(*Image, CI->TargetAddr).empty();
+      // A direct call's final recovered list also owns Win64 stack slots.
+      // Appending this block's adjacent locals can revive parameters removed
+      // by the shared callee bound, or turn a required unknown into a stale
+      // value from the emitter's independent setup scan.
       const bool CompleteSetup =
-          (!CI->IsIndirect || KnownImport) &&
+          !CI->IsIndirect &&
           (SetupConvention || (Convention && Convention->StackArgumentSummary));
+      // A loader-bound import retains its fixed contract through a captured
+      // runtime pointer: an independent setup scan must not append adjacent
+      // frame locals to its recovered list. Like any indirect call's, a value
+      // recovery left unknown within that list still comes from the scan.
+      // Where only internal calls take register arguments, the scan alone
+      // gives an indirect call its stack arguments, an import's included.
+      const bool KnownImport =
+          Image && Convention && !Convention->RegparmOnlyForInternalCalls &&
+          !importCalleeName(*Image, CI->TargetAddr).empty();
       size_t Recovered = CI->Args.size();
       if (SetupConvention && CI->IsIndirect && !KnownImport) {
         // The scan gives such a call its stack arguments, though not the
@@ -1550,8 +1558,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
                  Source->SSAVer == Target.SSAVer;
         };
         size_t End = FromABI.size();
-        while (!CompleteSetup && End < TargetLimit && Found[End] &&
-               Found[End]->Kind != ExprKind::Undef && !HoldsTarget(End))
+        while (!CompleteSetup && !KnownImport && End < TargetLimit &&
+               Found[End] && Found[End]->Kind != ExprKind::Undef &&
+               !HoldsTarget(End))
           ++End;
         for (size_t I = FromABI.size(); I < End; ++I)
           FromABI.push_back(Found[I]);

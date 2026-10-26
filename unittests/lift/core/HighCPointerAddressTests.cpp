@@ -12930,7 +12930,9 @@ TEST(HighCPointerAddresses, IfCallEqZeroPrintsBangCall) {
   Func.Body = {Guard};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("taken("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("!IsEmpty("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("!IsEmpty((CStringT*)(uintptr_t)arg0)"),
+            std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("IsEmpty(arg0) == 0"), std::string::npos) << Source;
 }
 

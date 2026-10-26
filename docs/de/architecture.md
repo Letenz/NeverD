@@ -2008,4 +2008,18 @@ Vor ursprünglichen Aufrufen kann `SourceFrameAnalysis` nachgewiesene private By
 
 Quelltextvorschauen behalten Ladeoptionen, Analyseregeln, Benutzermetadaten und eine eigenständige Kopie der Signaturbelege der aktuellen Sitzung bei. Anzeigegrenzen begrenzen niemals die Prüfung des gesamten Bereichs; gekürzte Vorschauen weisen ausdrücklich darauf hin. Thumb-Änderungen müssen beim Entfernen des Prädikats den gesamten IT-Block abdecken.
 
-Windows-ARM64-Aufruftypen mit festen Skalar- und Zeigerparametern verwenden `placeAAPCS64` über `SourceCallABI`: getrennte Ganzzahl- und Gleitkommaregister sowie Acht-Byte-Stapelplätze bei Registerüberlauf. Variadische Aufrufe bleiben abgewiesen, da auch benannte Gleitkommaparameter Ganzzahlträger verwenden. ARM64EC, Aggregate und native Treiberausführung werden dadurch nicht unterstützt.
+Windows-ARM64-Aufruftypen verwenden `placeAAPCS64` über `SourceCallABI`: feste Parameter nutzen getrennte Ganzzahl- und Gleitkommaregister. Variadische Skalare verwenden einschließlich benannter Gleitkommaparameter eine gemeinsame Ganzzahlbank und danach Acht-Byte-Stapelplätze. Explizite AArch64-Deklarationen beschreiben Gleitkommabits in Ganzzahlregistern; beide C-Pfade interpretieren die Bits um. Einschränkungen für abgeleitete Signaturen und Gleitkommaergebnisse bleiben erhalten. ARM64EC, Aggregate und native Treiberausführung sind nicht abgedeckt.
+
+`LowScalarConstant` teilt Bytefakten für Registerziele und den variadischen System-V-AL-Zähler: Festbreitenarithmetik, Lebensdauer temporärer Werte, opake Effekte und Arbeitsbudget. Mehrdeutige Aufrufstellen oder erschöpfte Budgets liefern keine Konstante. Der Stapelschreibnachweis verwirft temporäre Adressen an Instruktionsgrenzen und frühere Schreibvorgänge nach opaken Effekten.
+
+`LowScalarConstant` erkennt auch die Ganzzahlsubtraktion eines Registers oder befehlslokalen Temporärwerts von sich selbst bei fester Breite. Sprungrekonstruktion und ABI-Prüfungen an Aufrufstellen teilen diese Identität mit konstanter Laufzeit; auch ein unbekannter Eingangswert liefert damit eine bewiesene Null. Verschiedene Vorkommen, Speicheroperanden und fehlerhafte Breiten bleiben unbewiesen.
+
+Der x86-Lifter behandelt ganzzahlige SUB/CMP mit identischen Registern vor dem Sichern der Flag-Operanden als `0 - 0`. Dies entfernt falsche Abhängigkeiten von Eingangsregistern und erhält Teilregisterschreibzugriffe, die Register bei CMP, APX-NDD-Quellen und die Flag-Erhaltung durch NF.
+
+`MedCallTarget` erhält den ursprünglichen Import-Leseindex über private Stack-Sicherungen hinweg. HighIR verwendet den vorhandenen Nachweis für Speicherlesezugriffe vor dem direkten Importnamen; ein geänderter Slot behält den erfassten Funktionszeiger. `MedABIPass` teilt breite Argumentschreibzugriffe gemäß der nachgewiesenen Import-ABI auch bei indirekten Aufrufen.
+
+Die gemeinsame MedIR-Flag-Vereinfachung erhält beide Subtraktionsoperanden, auch bei `A-A`. Ein Selbstvergleich darf nicht zu einem Vergleich mit null werden; logische Selbsttests behalten ihre eigene eingabeabhängige Regel.
+
+Ganzzahlbedingungen, die denselben SSA-Wert mit sich selbst vergleichen, werden vor der Quellausgabe zu booleschen Konstanten. Dies umfasst Subtraktionsüberlauf; unspezifizierte Operanden bleiben explizit.
+
+Gespeicherte HFA-Aufrufziele verwenden dieselbe geprüfte Quellsignatur wie die Rekonstruktion der Strukturargumente und Ergebnisse. Der Prototyp erhält den ursprünglichen Funktionszeiger und die vollständigen Strukturtypen, einschließlich aufgeteilter Registergruppen und Stackargumente.

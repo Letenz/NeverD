@@ -52,6 +52,7 @@
 #include "neverd/ir/intrinsics/IntrinsicInstructionText.h"
 #include "neverd/ir/intrinsics/X86/X64Syscall.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCFloatingArguments.h"
 #include "neverd/libc/LibCNames.h"
@@ -5812,46 +5813,91 @@ TypeRef HighCWriter::indirectCallFunctionType(const HighExpr &Call) const {
       Call.IntrinsicId != Intrinsic::None)
     return nullptr;
   const auto Callee = debugCallee(Call);
-  if (!Callee || Callee->Params.size() != Call.Operands.size())
+  if (!Callee)
+    return nullptr;
+  // The checked record adapter reassembles flat machine operands into source
+  // parameters and unpacks its source result. A captured target must use that
+  // same signature, including when an HFA occupies several machine operands.
+  if (!calledDefinition(Call) && Call.FloatingCallSignature) {
+    const auto Floating =
+        libc::floatingCallArguments(*Callee, Opts.TheArch, Opts.Format);
+    const auto Record = libc::recordCallArguments(
+        *Callee, Opts.TheArch, Opts.Format, Opts.libcVariant());
+    if (Floating && *Floating == *Call.FloatingCallSignature && Record &&
+        Record->Positions == Call.Operands.size()) {
+      const auto Types =
+          floatingCallTypes(Opts.TheArch, Opts.Format, *Floating);
+      if (!Types)
+        throw std::runtime_error(
+            "A record callback lost its checked source layout");
+      const auto SourceType = [&](const TypeRef &Type, const TypeRef &Layout) {
+        if (Type->Kind != NdTypeKind::Struct || Type->IsEnum)
+          return cDisplayType(Type);
+        // Header records carry classified scalar leaves, not the natural
+        // field layout a C callback declarator validates. Reuse the checked
+        // descriptor's complete HFA layout and the header's owned spelling.
+        auto Named = std::make_shared<NdType>(*Layout);
+        Named->SourceName = c_detail::recordCallType(Type, Opts);
+        return Named;
+      };
+      std::vector<TypeRef> Parameters;
+      for (size_t I = 0; I < Callee->Params.size(); ++I)
+        Parameters.push_back(
+            SourceType(Callee->Params[I].second, Types->Parameters[I]));
+      return NdType::makeFunc(SourceType(Callee->ReturnType, Types->Result),
+                              std::move(Parameters));
+    }
+  }
+  if (Callee->Params.size() != Call.Operands.size())
     return nullptr;
   return fixedCalleeFunctionType(*Callee);
 }
 
+namespace {
+/// The source convention \p Convention declares.
+types::CallingConvention declaredConvention(DebugCallConv Convention) {
+  switch (Convention) {
+  case DebugCallConv::Cdecl:
+    return types::CallingConvention::Cdecl;
+  case DebugCallConv::Stdcall:
+    return types::CallingConvention::Stdcall;
+  case DebugCallConv::Thiscall:
+    return types::CallingConvention::Thiscall;
+  case DebugCallConv::Fastcall:
+    return types::CallingConvention::Fastcall;
+  case DebugCallConv::Unknown:
+    break;
+  }
+  return types::CallingConvention::Unspecified;
+}
+} // namespace
+
 TypeRef HighCWriter::fixedCalleeFunctionType(const FunctionSym &Callee) const {
-  if (!Callee.PlatformConvention || Callee.IsVariadic ||
+  // The convention decides which prototypes an indirect call is written
+  // through; a recovered name alone does not justify one. A hidden result
+  // would shift the carriers expectedDebugCallArgType gives.
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Opts.TheArch, Opts.Format);
+  if (!Convention || !Convention->ScalarPrototypeCall ||
+      !Callee.PlatformConvention || Callee.IsVariadic ||
       !positionalDebugSignature(Callee) || !Callee.ReturnType ||
       isMsvcIndirectReturn(Callee.ReturnType, Opts.TheArch, Opts.Format))
     return nullptr;
-  // Reuse the same scalar ABI projection that owns argument rendering. A
-  // recovered name alone does not justify a prototype. Other conventions
-  // retain their existing call representation.
-  if ((Opts.TheArch != Arch::X64 && Opts.TheArch != Arch::AArch64) ||
-      Opts.Format != BinaryFormat::COFF ||
-      (Callee.CallConv != DebugCallConv::Unknown &&
-       Callee.CallConv != DebugCallConv::Cdecl))
-    return nullptr;
-  const auto Scalar = [&](const TypeRef &Type) {
-    if (!Type)
-      return false;
-    if (Type->Kind == NdTypeKind::Ptr)
-      return Type->Size == getTargetRegInfo(Opts.TheArch).PointerSize;
-    if (Type->Kind == NdTypeKind::Float)
-      return Type->Size == 4 || Type->Size == 8;
-    return Type->Kind == NdTypeKind::Int &&
-           (Type->Size == 1 || Type->Size == 2 || Type->Size == 4 ||
-            Type->Size == 8);
-  };
-  if (Callee.ReturnType->Kind != NdTypeKind::Void && !Scalar(Callee.ReturnType))
+  // Reuse the same scalar ABI projection that owns argument rendering.
+  std::vector<TypeRef> Carriers;
+  for (size_t I = 0; I < Callee.Params.size(); ++I)
+    Carriers.push_back(expectedDebugCallArgType(Callee, I));
+  if (!Convention->ScalarPrototypeCall(*NdType::makeFunc(
+          Callee.ReturnType, Carriers, declaredConvention(Callee.CallConv))))
     return nullptr;
   std::vector<TypeRef> Parameters;
-  for (size_t I = 0; I < Callee.Params.size(); ++I) {
-    const auto Type = expectedDebugCallArgType(Callee, I);
-    if (!Scalar(Type))
-      return nullptr;
-    Parameters.push_back(cDisplayType(Type));
-  }
-  return NdType::makeFunc(cDisplayType(Callee.ReturnType),
-                          std::move(Parameters));
+  for (const TypeRef &Carrier : Carriers)
+    Parameters.push_back(cDisplayType(Carrier));
+  TypeRef Function =
+      NdType::makeFunc(cDisplayType(Callee.ReturnType), std::move(Parameters));
+  // A prototype C cannot spell, as one taking a pointer to an enumeration,
+  // keeps the unprototyped call: every declarator of it would throw.
+  return hasCSpelling(NdType::makePtr(Function)) ? Function : nullptr;
 }
 
 std::string HighCWriter::indirectCalleeStr(const HighExpr &E,

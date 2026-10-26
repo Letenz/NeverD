@@ -430,10 +430,20 @@ llvm::Error CheckedBackend::runImpl(uint64_t PC, bool &Started,
     auto Startup = Memory->beginInstruction();
     if (!Startup)
       return Startup.takeError();
-    if (auto E = Memory->validateMappings(
-            [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
-            supportsDeviceMappings()))
-      return E;
+    const auto Space = Memory->addressSpace();
+    const uint64_t Generation = Space->mappingGeneration();
+    // The startup lease keeps mappings stable through validation and reuse.
+    // External mutations advance the epoch; equal epochs on another address
+    // space do not establish admission for this backend's fixed ISA policy.
+    if (ValidatedMappingSpace.lock() != Space ||
+        ValidatedMappingGeneration != Generation) {
+      if (auto E = Memory->validateMappings(
+              [this](uint64_t A, uint64_t N) { return canonicalRange(A, N); },
+              supportsDeviceMappings()))
+        return E;
+      ValidatedMappingSpace = Space;
+      ValidatedMappingGeneration = Generation;
+    }
     setProgramCounter(PC);
   }
   ResourceResumePC.reset();

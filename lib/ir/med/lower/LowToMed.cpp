@@ -28,10 +28,12 @@
 #include "neverd/ir/intrinsics/X86/X64Syscall.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/ir/low/LowIntrinsicOutputs.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/X86/X86CompactShape.h"
@@ -790,10 +792,16 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
           Op.Inputs[0].isConst() &&
           isAArch64WritebackMemoryIntrinsic(
-              static_cast<Intrinsic>(Op.Inputs[0].Offset)) &&
-          (TheArch != Arch::AArch64 ||
-           !lowAArch64WritebackMemoryShapeIsValid(Op)))
-        throw LowToMedConversionError(kWritebackMalformed);
+              static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
+        if (TheArch != Arch::AArch64 ||
+            !lowAArch64WritebackMemoryShapeIsValid(Op) ||
+            (Op.Inputs[0].Offset ==
+                 static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback) &&
+             !lowAArch64VectorWritebackOutputs(
+                 Op, llvm::ArrayRef(Block.Ops).drop_front(
+                         &Op - Block.Ops.data() + 1))))
+          throw LowToMedConversionError(kWritebackMalformed);
+      }
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");
@@ -1128,6 +1136,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
     MB.ExceptionalSuccs = LB.ExceptionalSuccs;
     MB.ExceptionalPreds = LB.ExceptionalPreds;
 
+    // MB only grows while its operations are converted.
+    PreSSAMedCallTargets CallTargets(TheArch);
     size_t BoundaryIndex = 0;
     for (size_t LowOpIndex = 0; LowOpIndex < LB.Ops.size(); ++LowOpIndex) {
       // A call through a slot that always holds one of the image's own
@@ -1137,8 +1147,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       if (const LowOp &Call = LB.Ops[LowOpIndex];
           Image && Call.Opcode == NdOp::INDIR_CALL && Call.NumInputs == 1 &&
           !Call.Inputs[0].isConst()) {
-        CachedTarget = resolvePreSSAMedCallTarget(
-            MB, ndVarToMedVar(Call.Inputs[0]), TheArch, &CallTargetWork);
+        CachedTarget = CallTargets.resolve(MB, ndVarToMedVar(Call.Inputs[0]),
+                                           &CallTargetWork);
         const auto OriginalSite = sourceCallOccurrenceKey(Call);
         const bool AnalystSite = OriginalSite && SourceCallSiteHints &&
                                  SourceCallSiteHints->count(*OriginalSite);
@@ -1411,25 +1421,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
           LOp.Inputs[0].isConst()) {
         const auto Id = static_cast<Intrinsic>(LOp.Inputs[0].Offset);
         const uint8_t Count = intrinsicOutputCount(Id);
-        for (size_t Next = LowOpIndex + 1;
-             Next < LB.Ops.size() && MOp.IntrinsicOutputs.size() < Count;
-             ++Next) {
-          const LowOp &Write = LB.Ops[Next];
-          if (Write.Addr != LOp.Addr)
-            break;
-          const bool IsTransport =
-              Write.Opcode == NdOp::COPY || Write.Opcode == NdOp::INT_ZEXT ||
-              Write.Opcode == NdOp::INT_SEXT || Write.Opcode == NdOp::SUBBYTES;
-          if (!IsTransport)
-            break;
-          if (Write.NumInputs == 0 || !Write.Inputs[0].isTemp())
-            continue;
-          MedVar Source = ndVarToMedVar(Write.Inputs[0]);
-          if (std::none_of(
-                  MOp.IntrinsicOutputs.begin(), MOp.IntrinsicOutputs.end(),
-                  [&](const MedVar &Existing) { return Existing == Source; }))
-            MOp.IntrinsicOutputs.push_back(Source);
-        }
+        for (const auto &Source : collectLowIntrinsicOutputBindings(
+                 LOp, llvm::ArrayRef(LB.Ops).drop_front(LowOpIndex + 1), Count))
+          MOp.IntrinsicOutputs.push_back(ndVarToMedVar(Source));
       }
 
       const OccurrenceKey MaterializationKey{LOp.Addr, LOp.Seq};

@@ -31,6 +31,8 @@
 
 namespace neverd {
 void forwardPrivateFrameLoads(HighFunc &Function, Arch Architecture);
+bool forwardPrivateFrameLoads(HighFunc &Function, Arch Architecture,
+                              bool AcrossJoins);
 bool forwardBoundPrivateFrameCopies(HighFunc &Function, Arch Architecture);
 void simplifyExprSemantics(std::vector<HighStmt> &Statements);
 bool simplifyAllExprs(std::vector<HighStmt> &Statements);
@@ -1447,6 +1449,25 @@ TEST(HighFrameStoreForwarding, OverwriteProofStopsAtObservableBoundaries) {
   }
 }
 
+TEST(HighFrameStoreForwarding, StackHomeReadObservesAnOverwrittenStore) {
+  for (Arch Architecture : Architectures) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    auto F = roundTrip(Architecture, NdType::makeInt(4, false));
+    // The Stack home names the bytes both stores write, as in
+    // InvalidatesWritesThroughStackVariables. Reading it observes the first.
+    auto Home = temporary(10, F.ReturnType, Architecture);
+    Home->Var.Kind = MedVar::Stack;
+    Home->Var.StackOff = -16;
+    auto Read = temporary(11, F.ReturnType, Architecture);
+    F.Body = {store(frameSlot(Architecture), HighExpr::makeConst(3, 4)),
+              assign(Read, Home),
+              store(frameSlot(Architecture), HighExpr::makeConst(5, 4)),
+              returning(Read)};
+    forwardPrivateFrameLoads(F, Architecture);
+    EXPECT_EQ(F.Body[0].Kind, StmtKind::Store);
+  }
+}
+
 TEST(HighFrameStoreForwarding, UnreachableOverwriteCannotDeleteAReachingStore) {
   const auto A = Arch::X64;
   auto F = roundTrip(A, NdType::makeInt(8, false));
@@ -1552,6 +1573,28 @@ TEST(HighFrameStoreForwarding, CapturedWritebackCrossesAnOrdinaryBranch) {
     EXPECT_EQ(F.Body[1].Body[0].Kind, StmtKind::Block);
     EXPECT_EQ(F.Body[1].Body[0].Addr, 0x1040u);
     EXPECT_TRUE(hasLoad(F.Body[0].Val));
+  }
+}
+
+TEST(HighFrameStoreForwarding, JoinProofRunsOnlyWhenRequested) {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  for (const bool AcrossJoins : {false, true}) {
+    auto F = roundTrip(A, T);
+    auto Saved = temporary(1, T, A);
+    HighStmt Branch;
+    Branch.Kind = StmtKind::If;
+    Branch.Cond = parameter(0, T, A);
+    Branch.Body = {store(frameSlot(A), Saved)};
+    F.Body = {assign(Saved, HighExpr::makeLoad(frameSlot(A), T)), Branch,
+              returning(frameSlot(A))};
+    EXPECT_EQ(forwardPrivateFrameLoads(F, A, AcrossJoins), AcrossJoins);
+    EXPECT_EQ(F.Body[1].Body[0].Kind,
+              AcrossJoins ? StmtKind::Block : StmtKind::Store);
+    // The proof removes the writeback once.
+    EXPECT_EQ(forwardPrivateFrameLoads(F, A, /*AcrossJoins=*/true),
+              !AcrossJoins);
+    EXPECT_EQ(F.Body[1].Body[0].Kind, StmtKind::Block);
   }
 }
 
@@ -1733,6 +1776,63 @@ TEST(HighFrameStoreForwarding, BranchProofDoesNotCommitAcrossCycles) {
   forwardPrivateFrameLoads(F, A);
   EXPECT_EQ(F.Body[1].Body[0].Kind, StmtKind::Store);
   EXPECT_EQ(F.Body[2].GotoTarget, 0x1040u);
+}
+
+TEST(HighFrameStoreForwarding, OnlyLoopsThatRepeatStopTheBranchProof) {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  for (const auto Kind : {StmtKind::While, StmtKind::DoWhile})
+    for (unsigned Shape = 0; Shape != 3; ++Shape) {
+      SCOPED_TRACE(testing::Message()
+                   << (Kind == StmtKind::While ? "while" : "do") << Shape);
+      auto F = roundTrip(A, T);
+      F.Params.push_back({"arg1", T});
+      auto Saved = temporary(1, T, A);
+      HighStmt Branch;
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = parameter(0, T, A);
+      Branch.Body = {store(frameSlot(A), Saved)};
+      // A constant false test and a body that always breaks never repeat;
+      // a body that can fall back to its test does.
+      HighStmt Loop;
+      Loop.Kind = Kind;
+      Loop.Cond = Shape == 0 ? HighExpr::makeConst(0, 4) : parameter(1, T, A);
+      Loop.Body = {assign(temporary(2, T, A), HighExpr::makeConst(7, 8))};
+      if (Shape == 1) {
+        HighStmt Exit;
+        Exit.Kind = StmtKind::Break;
+        Loop.Body.push_back(Exit);
+      }
+      F.Body = {assign(Saved, HighExpr::makeLoad(frameSlot(A), T)), Branch,
+                Loop, returning(frameSlot(A))};
+      forwardPrivateFrameLoads(F, A);
+      EXPECT_EQ(F.Body[1].Body[0].Kind,
+                Shape == 2 ? StmtKind::Store : StmtKind::Block);
+    }
+}
+
+TEST(HighFrameStoreForwarding, DoWhileTestKeepsTheReadAfterItsBody) {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  auto F = roundTrip(A, T);
+  auto Saved = temporary(1, T, A);
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Cond = parameter(0, T, A);
+  Branch.Body = {store(frameSlot(A), Saved)};
+  // The body always leaves, so no cycle stops the proof. The test would read
+  // the slot after the body's store, never the bits captured before the loop.
+  HighStmt Exit;
+  Exit.Kind = StmtKind::Break;
+  HighStmt Once;
+  Once.Kind = StmtKind::DoWhile;
+  Once.Cond = HighExpr::makeLoad(frameSlot(A), T);
+  Once.Body = {store(frameSlot(A), HighExpr::makeConst(7, 8)), Exit};
+  F.Body = {assign(Saved, HighExpr::makeLoad(frameSlot(A), T)), Branch, Once,
+            returning(frameSlot(A))};
+  forwardPrivateFrameLoads(F, A);
+  EXPECT_EQ(F.Body[1].Body[0].Kind, StmtKind::Block);
+  EXPECT_TRUE(hasLoad(F.Body[2].Cond));
 }
 
 TEST(HighFrameStoreForwarding, BranchProofKeepsExtraStatementEffects) {
@@ -2258,5 +2358,50 @@ int main(void) {
 }
 )";
   compileAndRun(Source);
+}
+TEST(HighSourceExpressions, UnspellableCallbackPrototypeKeepsUntypedCall) {
+  // declarationToC spells no callback taking a pointer to an enumeration.
+  // The captured import's call keeps its unprototyped callee instead of
+  // failing the whole rendering.
+  class CalleeTypes : public NullDebugContext {
+  public:
+    bool hasInfo() const override { return true; }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x2000)
+        return std::nullopt;
+      FunctionSym F;
+      F.Name = "signature_only";
+      F.Addr = Address;
+      F.ReturnType = NdType::makeInt(4, true);
+      F.Params = {{"value", NdType::makePtr(NdType::makeNamedRecord(
+                                "STATE", 4, /*Enum=*/true))}};
+      return F;
+    }
+  } Debug;
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  const auto Result = NdType::makeInt(4, true);
+  HighFunc F;
+  F.Name = "captured_callback";
+  F.ReturnType = Result;
+  F.Params = {{"arg0", T}, {"arg1", T}};
+  auto Captured = temporary(20, T, A);
+  auto Call = HighExpr::makeCall("indirect", 0x2000, {parameter(1, T, A)});
+  Call->Type = Result;
+  Call->IsIndirectCall = true;
+  Call->IndirectTarget = integerView(Captured, NdType::makeInt(8, true));
+  F.Body = {assign(Captured, parameter(0, T, A)),
+            assign(parameter(0, T, A), HighExpr::makeConst(0, 8)),
+            returning(Call)};
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  CEmitterOptions Options;
+  Options.TheArch = A;
+  Options.Format = BinaryFormat::COFF;
+  bool Emitted = false;
+  ASSERT_NO_THROW(Emitted = HighCEmitter().emit({F}, Out, Options, &Debug));
+  ASSERT_TRUE(Emitted);
+  EXPECT_EQ(Source.find("(*t20)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(int32_t (*)())"), std::string::npos) << Source;
 }
 } // namespace

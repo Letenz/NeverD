@@ -35,6 +35,29 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
             a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
             kAddressMemoryPointerBytes);
         const NdVar OriginalWord = NdVar::scalar(Word, kAddressMemoryWordBytes);
+        if (Instruction->isVector()) {
+          const NdVar Vector = NdVar::reg(a64reg::V(Instruction->destination()),
+                                          kAddressMemoryVectorBytes);
+          if (!Instruction->isLoad()) {
+            const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+            S.emitIntrinsic(Instruction->id(), Updated,
+                            {Base, OriginalWord, Vector});
+            S.emit(NdOp::COPY, Base, {Updated});
+            return true;
+          }
+          const NdVar Value = S.makeTemp(kAddressMemoryVectorBytes);
+          const NdVar Updated = S.makeTemp(kAddressMemoryPointerBytes);
+          S.emitIntrinsic(Instruction->id(), S.makeTemp(0),
+                          {Base, OriginalWord});
+          const NdVar Narrow =
+              NdVar::reg(Vector.Offset, Instruction->accessBytes());
+          S.emit(NdOp::SUBBYTES, Narrow,
+                 {Value, NdVar::scalar(0, kAddressMemoryWordBytes)});
+          if (Narrow.Size < Vector.Size)
+            S.emit(NdOp::INT_ZEXT, Vector, {Narrow});
+          S.emit(NdOp::COPY, Base, {Updated});
+          return true;
+        }
         if (!Instruction->isLoad()) {
           const NdVar Data =
               Instruction->destination() == kAddressMemoryRegisterMask

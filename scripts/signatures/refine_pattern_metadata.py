@@ -69,9 +69,13 @@ class Evidence:
         added = {(offset, name) for offset, names in self.refs.items()
                  if offset not in existing and all(map(immutable_reference, names))
                  for name in names}
-        local = {(offset, next(iter(names))) for offset, names in (self.local_refs or {}).items()
-                 if offset not in existing and len(names) == 1 and
-                 (self.line.require_caller or self.line.require_references)}
+        # Every source must own the site, but different builds may use
+        # different anchor operands. Preserve their complete alternatives;
+        # runtime binding still requires one exact independent anchor.
+        local = {(offset, name) for offset, names in (self.local_refs or {}).items()
+                 if offset not in existing and
+                 (self.line.require_caller or self.line.require_references)
+                 for name in names}
         if not added and not local:
             return self.line
         sites = frozenset(offset for offset, _ in local)

@@ -4256,7 +4256,7 @@ int main(void) {
 )");
 }
 
-TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
+TEST(HighCSourceCalls, PointerTempsPreserveTheirBitsOnIntegerReturn) {
   const auto I64 = NdType::makeInt(8);
   const auto BytePointer = NdType::makePtr(NdType::makeInt(1, false));
   MedVar Bits;

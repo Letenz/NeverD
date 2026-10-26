@@ -66,6 +66,18 @@ CPL 0–2, applies MAWA only to long-mode table indexing, and retains known-bit
 masks for bounds. It separates successful loads, invalid-directory #BR and
 implementation-dependent partial BNDLDX reads. Memory providers still own
 access validity, segment/canonical checks, ordering and partial stores.
+`ir/X86/X86MpxMemory.h` defines their whole-access completion contract. BNDMOV
+loads publish only after both fields complete; its memory stores retain LOCK
+and the selected segment. The original SP/BP base's default-stack property is
+retained separately: long-mode CS/DS/ES/SS overrides do not choose its fault
+class, and R12/R13 are data-default bases. `support/X86/X86Addressing.h` owns
+that base classification for MPX, AMX and native memory admission. Table
+operations sequence a BDE read before the three-field BTE access without
+probing the MIB pointer.
+An invalid BDE updates BNDSTATUS without changing the bank. A BTE read fault
+forgets only its destination, and store faults retain the provider's partial
+writes. Unavailable memory semantics are distinct from an architectural fault;
+they certify no effects from that request, not rollback of an earlier BDE read.
 Enabled operations require a known nontransactional context; an RTM/HLE
 checkpoint and abort continuation are not supplied by this state component.
 Original branch completion takes an explicit preserve/initialize effect;
@@ -82,6 +94,16 @@ base remain distinct; they do not authorize an ordinary memory operation at
 the displayed expression. Invalid banks, 16-bit memory forms, prohibited
 RIP-relative forms and competing mandatory prefixes do not acquire a qualified
 shape. Decoding a valid stateful instruction does not enable its strict lifter.
+
+`lift/X86/X86MpxExecution.h` connects that byte reader to the shared context and
+memory provider for concrete single-instruction execution. Its explicit GPR
+and segment-base snapshot does not treat unknown inputs as zero. Checks and
+BNDMK use effective values without memory or segment-base reads; BNDMOV passes
+the original offset and segment to memory. BNDLDX/BNDSTX translate base plus
+displacement and the selected segment base, treating an absent base as zero
+and the unscaled index as the comparison value. Their scale is ignored. This
+entry point does not yet provide original CALL/RET completion, RTM/HLE state,
+or bounds-state transport through LowIR, MedIR and native output.
 
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
@@ -698,6 +720,23 @@ can feed another retained memory operation without reinterpreting them as image
 VAs. The software tracer commits only complete finite reads/writes for which the
 shared address owner proves control-independent access and writeback bits.
 
+SIMD single pre/post-index B/H/S/D/Q accesses use the same descriptor and
+original-instruction owner. A load defines two typed auxiliary SSA results:
+the complete zero-extended V register and completed X base. A store consumes
+the complete V value and returns the base. Xn/Vn numeric overlap is legal;
+V31 remains a vector register. LowIR binding collection, SSA conversion and
+finite tracing share the original result-transport query, preserving typed
+temporary identity by position and width. A SIMD LowIR adapter additionally
+requires independently stored value/base carriers. LowIR validation and finite tracing reject
+missing, shortened or duplicate bindings before publishing memory effects.
+A source use of an auxiliary base must be dominated by its defining instruction,
+including copies that carry it; skipped definitions cannot grant runtime-base
+admission. HighC and
+LLVMC retain the original instruction even when both load results are unused;
+the vector tuple remains internal and grants no native vector entry/return ABI.
+The x1-only automatic policy, exact image occurrences and complete storage
+proof also apply to these single SIMD accesses.
+
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
@@ -706,12 +745,20 @@ selected regression results (including original-owner failures) and model record
 nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
 automatically lifted whole images.
 
+The SIMD writeback integer bridge independently passed the same unmodified
+model at EL1 and EL0: 100 samples through five output routes and all four
+CPTA/CPTA0 controls, totaling 4,000 generated sample calls. The ten-test input
+report, exact source/object hashes and environment revision are pinned in
+[SIMD evidence](evidence/arm64e-vector-writeback-memory-2026-10-26.json).
+This remains a bounded Normal WB, nonoverflow explicit-IR qualification.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
 rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
-coverage; SIMD pre/post-index, pair and other ordinary-memory families,
+coverage; SIMD single pre/post-index accesses have separate explicit-IR,
+automatic-lifting and image regressions. Pair and other ordinary-memory families,
 original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
@@ -953,6 +1000,13 @@ history object published. The existing recovery checks validate every current
 sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
+
+History publication composes the recovery journal from serializer-produced JSON
+and reuses the already encoded target history. It retains the owning before/after
+states until all writes finish, constructing a full in-memory journal only after
+an interrupted write for same-session retry. This avoids a second whole-state
+tree and repeated target-history encoding on successful saves. Read comparisons,
+byte budgets, atomic write order and recovery validation remain authoritative.
 
 Find in view is a GUI text operation. Its modeless dialog captures the originating
 pane before taking keyboard focus; pseudocode/IR supplies its complete source
@@ -2145,11 +2199,16 @@ source declarations, including incomplete records used as offline counterclaims.
 `SignatureDataContext` also owns frozen source-local data relations. The producer
 proves that two canonical zero-addend operands refer to one static address within
 the same COFF object. Their shared key names the exact operand of a uniquely
-defined external function; no local variable spelling escapes its object. Only
-that independently settled ordinary function can bind the relation, after all
-matching source refinements agree. The existing single data pass checks consumers
+defined typed function, external or static; no local variable spelling escapes
+its object. Static function names remain query keys rather than byte identities.
+Only that independently settled ordinary function can bind the relation, after
+all matching source refinements agree. The existing single data pass checks consumers
 without changing anchors or restarting inference. The parser/cache preserve a
 separate local-data kind; `LocalDataReference` owns its canonical key syntax.
+Anchor-name lookup compares lengths before text, avoiding hashes of unrelated
+template spellings. Frozen reference checks visit only their new outgoing
+sites, skip entry work when no code target is referenced, and borrow sorted
+entry views. All competing claims at referenced addresses still participate.
 Native `!loadcfg` metadata pairs a source configuration field's external pointer
 variable with its default function. The COFF loader owns the role/field mapping;
 `SignatureRuntimePointerContext` queries only its recorded slots after the data
@@ -8334,6 +8393,14 @@ Both diagnostic options share the stopped-backing reader, bounded errors and
 one per-range output reservation. They do not relax entry mapping requirements;
 ordinary final reads and the failure-only option retain their existing scope.
 
+The shared checked execution owner reuses successful run-entry mapping
+validation only for the same live address space and mapping generation.
+Its architecture and device-admission policy are fixed by the backend's
+execution contract. The startup instruction lease protects both validation
+and reuse; external mapping changes require another check, and a failed
+check never records a successful epoch. Instruction access checks and CPU
+state admission remain independent of this reuse.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage and uses the architecture's shared normalization directly after all
@@ -12282,9 +12349,13 @@ Windows ARM64 fixed scalar/pointer call-site types reuse `placeAAPCS64` through
 `SourceCallABI`: integer and floating register banks advance independently,
 with overflowing values in eight-byte stack slots. This follows the
 [Microsoft ARM64 ABI](https://learn.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions).
-Windows ARM64 variadic call-site edits remain refused because their arguments
-use integer carriers, including named floating arguments. This does not admit
-ARM64EC, aggregate call-site types or a native Windows driver execution contract.
+Windows ARM64 variadic scalar/pointer calls use the same placement owner with
+one integer bank, including named floating arguments, then eight-byte stack
+slots. Explicit AArch64 source parameters can describe complete floating bits
+in integer registers; both C routes reinterpret those bits at the call boundary.
+Inferred signatures and floating result carriers retain their restrictions.
+This does not admit ARM64EC, aggregate call-site types or a native Windows driver
+execution contract.
 
 `SourceCallOccurrenceKey` owns original instruction/sequence/opcode/target
 identity; names and source anchors cannot bind a per-call policy.
@@ -12516,6 +12587,14 @@ this authority. Discard replaces each target page through AddressSpace while
 retaining permissions and VMA policy; old physical aliases and pinned views
 keep their bytes. Device/GPU admission remains in the shared service dispatch.
 
+`LowScalarConstant` owns both exact register-call targets and the System V
+variadic AL count. Their byte facts share fixed-width arithmetic, temporary
+lifetimes, opaque-effect invalidation and one bounded work policy. Ambiguous
+original call occurrences or exhausted work publish no constant. The outgoing
+stack-write proof independently tracks affine addresses, expires temporaries
+at instruction boundaries and discards earlier writes across opaque effects.
+No cross-block values or implicit memory contents are introduced.
+
 `MedCallTarget` observes cached callable values through the Med ABI owner's
 exact address, width and overlap proof. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
@@ -12527,7 +12606,10 @@ proof follows a bounded single-predecessor chain and checks every intervening
 operation. Joins, exceptional entries and cycles retain the captured callable's
 signature and runtime value without authorizing a new slot read. Barriers,
 partial writes and uncertain aliases stop spill/reload
-proofs; exhausted work publishes no partial observation.
+proofs; exhausted work publishes no partial observation. Pre-SSA queries of one
+growing block share its versioned prefix. Win64's single-register results and
+WDK operand widths belong to its `CallArgumentConvention` entry, not to generic
+lowering or pipeline code.
 
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions
@@ -12550,3 +12632,15 @@ and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
 Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
 for the same input. File rewriting retains the original file-backed load.
 See [analysis sections](analysis-sections.md).
+
+`LowScalarConstant` also recognizes fixed-width integer self-subtraction of the same register or instruction-local temporary. Branch recovery and call-site ABI checks share this constant-time identity, so an unknown incoming value can still establish a zero result. Different occurrences, memory operands and malformed widths remain unproved.
+
+The x86 lifter treats integer SUB/CMP with identical register operands as `0 - 0` before taking flag snapshots. This removes false incoming-register dependencies while retaining partial-register writes, CMP preservation, APX NDD sources and NF flag preservation.
+
+`MedCallTarget` retains the original import-load index through private spills. HighIR reuses the source memory-read proof before naming the import directly; a changed slot keeps the captured callable. `MedABIPass` splits wide outgoing stores according to a proven import ABI even when the machine call is indirect.
+
+Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A self-comparison must not become a comparison with zero; logical self-tests retain their separate input-dependent rule.
+
+Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.
+
+Captured HFA call targets use the same checked source signature as record argument and result reconstruction. The prototype keeps the original callable value and the complete record types, including flattened register groups and stack arguments.

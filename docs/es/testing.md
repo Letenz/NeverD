@@ -2291,8 +2291,22 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
   build-gui/bin/neverd-gui-tests nativePatchValueAndLargePreview
 ```
 
-`NeverDSourceCallABITests` comprueba bancos mixtos, anchuras, agotamiento de registros, desplazamientos de pila y rechazo variádico en Windows ARM64. `NeverDWorkerCallSiteTypes` recupera una llamada entero/double/puntero de un PE ARM64 y ejecuta ambas salidas C con una función C independiente en O0/O2; el rechazo conserva la instantánea del análisis. Esto no valida ejecución nativa en Windows ARM64.
+`NeverDSourceCallABITests` comprueba portadores fijos y variádicos Windows ARM64, anchuras, agotamiento de registros y posiciones de pila. `NeverDWorkerCallSiteTypes` ejecuta ambas salidas C con funciones independientes en O0/O2, cubriendo float con nombre, double en registros y pila, enteros y resultado flotante. Los argumentos sin promoción y las escrituras parciales se rechazan sin cambiar la instantánea de análisis. No valida ejecución nativa Windows ARM64.
 
 La regresión del worker también cubre dieciocho parámetros mixtos de registro/pila, un retorno flotante y el rechazo de un argumento de pila escrito solo a la mitad.
 
+`SourceCallABI` y `CallRegisterConstant` comprueban temporales caducados, efectos opacos, rangos de bytes, llamadas ambiguas y límites exactos del presupuesto. El worker ejecuta ambas salidas C de un llamador que calcula el contador variádico mediante resta.
+
+`LowScalarConstant.SelfDifference*` compara la recuperación de entradas desconocidas con la ejecución concreta de patrones de bytes de uno a ocho bytes y rechaza ocurrencias distintas, memoria y formas incorrectas. `ConstantBranch.SelfDifferenceRecoversTheActualInstructionBoundary` cubre x86, x64 y AArch64 en ELF, COFF y Mach-O. Las pruebas del worker ejecutan el salto recuperado y el contador vectorial System V obtenido por autorresta mediante HighC y LLVMC en O0/O2.
+
+`X86CarryArithmeticFlags.SelfSubtract*` y `APXSelfSubtract*` comprueban resultados, indicadores aritméticos y registros conservados. Las pruebas de ramas escalares del worker comparan la ejecución nativa con HighC/LLVMC en O0/O2, incluidas las ramas tras SUB/CMP del mismo registro.
+
 `BinaryRewriteRelocationTest`, en el fork LLVM NeverSight, comprueba los bytes finales de PLT x64, GOT i386, GOTPCREL Mach-O y PAGE/PAGEOFF AArch64. La compilación integrada de NeverD compila directamente el fork registrado. Estas comprobaciones MC no validan la ejecución nativa de excepciones.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` cubre capturas en registros y guardados privados. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` ejecuta HighC y LLVMC con dos argumentos escalares distintos en O0/O2 sobre Linux x86, con destinos en memoria y registros. El inventario ABI de Python y la comprobación de catálogos GUI incluyen las interfaces y mensajes de las secciones de análisis.
+
+`NeverDSelfCompareFlagTests` ejecuta funciones originales y reconstruidas para x86, x64, ARM32 y AArch64. Ejecutar por separado la ruta de código máquina predeterminada, `NEVERD_SEMANTIC_HIGHC=1` y `NEVERD_SEMANTIC_LLVMC=1`. La matriz cubre indicadores CMP/SUB con operandos iguales, saltos y valores condicionales, con pruebas lógicas y operandos desplazados como controles, además de las regresiones existentes de desbordamiento con signo.
+
+La matriz también ejecuta casos sin argumentos de igualdad y desbordamiento de resta. No necesitan valores de registros entrantes y ninguna de las dos rutas C debe añadir una trampa de estado desconocido.
+
+Las pruebas de entradas de importación HFA compilan prototipos C estrictos y ejecutan argumentos y resultados completos para declaraciones de cabecera y locales. Ambas rutas C cubren estructuras float y double, llamadas encadenadas y ejecución en AArch64.
