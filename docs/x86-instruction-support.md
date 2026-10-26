@@ -39,6 +39,7 @@ complete instruction support or semantic test coverage.
 | XTEST | Retains the native transaction query, its actual ZF and the required clearing of CF/PF/AF/SF/OF; no GPR or DF modification. |
 | XABORT | Exact constant imm8 through validated native LLVM, HighC and LLVM-to-C. Missing or inconsistent decoded operands and nonconstant IR fail; enclosing RTM checkpoint recovery remains separate. |
 | BLCFILL, BLCI, BLCIC, BLCMSK, BLCS, BLSFILL, BLSIC, T1MSKC, TZMSK | Validated XOP forms with source-dependent CF, result-dependent ZF/SF, cleared OF and explicit undefined AF/PF. LLVM, HighC and LLVM-to-C consume the same arithmetic semantics; see the TBM qualification below. |
+| BEXTR | Validated XOP immediate, VEX register-control and APX forms, including NF. Bounded shifts avoid out-of-range LLVM shifts; ordinary forms define CF/OF/ZF and record SF/AF/PF as undefined. See the BEXTR qualification below. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
 | CLTS | Ordered processor-state effect with no fabricated register output. |
 | Operand-free WRMSRNS | Distinct nonserializing instruction with explicit ECX/EAX/EDX inputs on x86 and x64. |
@@ -231,6 +232,28 @@ compilation and LLVM/HighC/LLVM-to-C for 32/64-bit operands: 216 profiles and
 31,104 executed value/flag cases. It disables TBM and inspects the assembly
 before linking, so it never executes the original TBM instruction on the host.
 The old CLI fails this regression at BLCFILL(0), where ZF was lost.
+
+The BEXTR follow-up found that the previous lifter admitted inconsistent
+instruction bytes and could not report complete undefined-output coverage.
+`X86LiftBEXTR` now owns XOP immediate-control, VEX register-control and APX
+admission and semantics. Ordinary forms clear CF/OF, derive ZF from the result
+and record SF/AF/PF as undefined; APX NF preserves all flags. The concrete
+zero representative for an undefined flag does not establish architectural
+zero. Pinned decoder metadata incorrectly reports additional control-flag
+resets for legacy BEXTR; the lifter checks that metadata without applying
+those resets. Architectural behavior follows
+[AMD APM volume 3](https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/24594.pdf).
+
+`NeverDX86BEXTRTests` covers 27,456 value/flag cases, 393,216 start/length
+combinations, 36 ignored i386 field cases, 540 memory-tail forms and 792
+malformed/reserved-field refusals, plus source-fault ordering in LowIR.
+The arithmetic oracle scans individual source bits. The source pipeline
+test exercises LLVM, HighC and LLVM-to-C with both pipeline optimization
+settings and O0/O2 compilation: 192 profiles and 18,960 value/flag cases,
+without executing BEXTR on the host.
+Memory-tail admission does not qualify every address at runtime. Hardware
+exception delivery and faulting loads removed by source optimization remain
+unqualified, as does a complete opaque machine-state audit.
 
 NeverC now installs the native `tbmintrin.h` interfaces through `x86intrin.h`:
 20 value interfaces across ten operations and two widths, including BEXTR's

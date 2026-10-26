@@ -669,6 +669,22 @@ Compilation disables TBM and the test inspects the exact assembly before
 linking it, so the original TBM bytes are never executed on the host. This
 checks emitted-code semantics, not physical TBM faults or performance.
 
+`NeverDX86BEXTRTests` covers XOP immediate controls, VEX register controls,
+APX and APX NF with 32/64-bit operands. It checks register aliases, memory
+sources, ignored i386 fields, all three decode routes, malformed byte/detail
+records and source faults before architectural writes. An independent bit
+loop checks every start/length pair for register-control forms; SF/AF/PF
+have explicit undefined effects, and NF preserves incoming flags. Run the
+same prefix, APX BMI and undefined-effect suites listed above for TBM.
+
+`NeverDX86BEXTRPipeline` projects raw fixtures through LLVM, HighC and
+LLVM-to-C with optimization on/off, compiles at O0/O2, and executes the
+generated value/flag projections against a bit-loop oracle. Compilation
+disables BMI/TBM and the exact assembly is checked before linking. The
+original BMI/TBM/APX instruction bytes are never executed. This qualifies
+the value projections; hardware exception delivery and preservation of a
+faulting load after source optimization remain separate work.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
