@@ -333,7 +333,7 @@ private:
   void applyCallerContextRound(
       const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
       std::unordered_map<uint64_t, std::string> &Names,
-      llvm::ArrayRef<std::pair<uint64_t, size_t>> FrozenCandidates,
+      std::vector<std::pair<uint64_t, size_t>> &FrozenCandidates,
       size_t FrozenMatches, size_t FirstParent, const DataBindings *Data,
       llvm::ArrayRef<uint64_t> Revisit,
       std::vector<DeferredCaller> *DeferredCallers,

@@ -1181,7 +1181,7 @@ void SignatureDB::applyCallerContext(
 void SignatureDB::applyCallerContextRound(
     const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
     std::unordered_map<uint64_t, std::string> &Names,
-    llvm::ArrayRef<std::pair<uint64_t, size_t>> FrozenCandidates,
+    std::vector<std::pair<uint64_t, size_t>> &FrozenCandidates,
     size_t FrozenMatches, size_t FirstParent, const DataBindings *Data,
     llvm::ArrayRef<uint64_t> Revisit,
     std::vector<DeferredCaller> *DeferredCallers,
@@ -1367,39 +1367,16 @@ void SignatureDB::applyCallerContextRound(
             return !Idx.callerModules(Modules, Ref.second).empty();
           }))
         continue;
-      // Build once, only when a short caller could use it. Every competing
-      // frozen claim at a settled address must be a complete ordinary body;
-      // context-derived names and later descendants cannot supply this proof.
+      // The address index is shared with frozen settlement. Build it only
+      // when a short caller needs independent evidence; inspect body strength
+      // only at the actual target, rather than for every frozen candidate.
       if (!FrozenBodies) {
         FrozenBodies.emplace();
-        // An incoming round may have resolved an originally ambiguous address.
-        // Its old nominal rows still cannot become independent evidence.
-        for (size_t I = FrozenMatches; I < OriginalMatches; ++I)
-          FrozenBodies->emplace(Matches[I].Address, 0);
-        for (size_t I = 0; I < FrozenMatches; ++I) {
-          const SigMatch &Match = Matches[I];
-          const auto Name = FindName(Match.Address);
-          if (Name == Names.end() ||
-              (Match.Name != Name->second &&
-               !llvm::is_contained(Match.Aliases, Name->second)))
-            continue;
-          uint32_t Length = 0;
-          if (MatchModules[I] != NoModule) {
-            const StoredModule &Mod = Modules[MatchModules[I]];
-            if (!Mod.RequireCaller && !Mod.RequireReferences &&
-                !Match.CallerConfirmed &&
-                SignatureMatcher::isFullyVerified(Mod) &&
-                SignatureMatcher::fixedByteCount(Mod) >=
-                    SignatureMatcher::MinStatedBytes &&
-                llvm::none_of(Mod.publicNames(), [&](const StoredName &N) {
-                  return N.Name == Name->second && N.Offset != 0;
-                }))
-              Length = Mod.TotalLen;
-          }
-          auto [Body, Fresh] = FrozenBodies->try_emplace(Match.Address, Length);
-          if (!Fresh)
-            Body->second =
-                Body->second && Length ? std::max(Body->second, Length) : 0;
+        if (FrozenCandidates.empty()) {
+          FrozenCandidates.reserve(FrozenMatches);
+          for (size_t I = 0; I < FrozenMatches; ++I)
+            FrozenCandidates.emplace_back(Matches[I].Address, I);
+          llvm::sort(FrozenCandidates);
         }
       }
       uint32_t ParentLength = 0;
@@ -1422,17 +1399,55 @@ void SignatureDB::applyCallerContextRound(
         const auto Target = branchTarget(Img, Start, Offset);
         if (!Target || !Img.isCodeAddress(Target->Target))
           continue;
-        const auto Body = FrozenBodies->find(Target->Target);
-        if (Body == FrozenBodies->end() || !Body->second)
+        const auto Name = FindName(Target->Target);
+        if (Name == Names.end() || Name->second != Expected)
+          continue;
+        auto [Body, Fresh] = FrozenBodies->try_emplace(Target->Target, 0);
+        if (Fresh) {
+          const auto Begin = llvm::lower_bound(
+              FrozenCandidates, Target->Target,
+              [](const auto &Row, uint64_t VA) { return Row.first < VA; });
+          llvm::SmallVector<const SigMatch *, 4> Claims;
+          auto End = Begin;
+          while (End != FrozenCandidates.end() && End->first == Target->Target)
+            Claims.push_back(&Matches[(End++)->second]);
+          const auto FrozenName = settle(Claims);
+          // New incoming names cannot disambiguate their old nominal rows
+          // and then reuse those rows as supposedly independent evidence.
+          if (!FrozenName || FrozenName->Name != Expected)
+            continue;
+          for (auto Row = Begin; Row != End; ++Row) {
+            const size_t I = Row->second;
+            const SigMatch &Match = Matches[I];
+            if (Match.Name != Expected &&
+                !llvm::is_contained(Match.Aliases, Expected))
+              continue;
+            if (MatchModules[I] == NoModule) {
+              Body->second = 0;
+              break;
+            }
+            const StoredModule &Mod = Modules[MatchModules[I]];
+            if (Mod.RequireCaller || Mod.RequireReferences ||
+                Match.CallerConfirmed ||
+                !SignatureMatcher::isFullyVerified(Mod) ||
+                SignatureMatcher::fixedByteCount(Mod) <
+                    SignatureMatcher::MinStatedBytes ||
+                llvm::any_of(Mod.publicNames(), [&](const StoredName &N) {
+                  return N.Name == Expected && N.Offset != 0;
+                })) {
+              Body->second = 0;
+              break;
+            }
+            Body->second = std::max(Body->second, Mod.TotalLen);
+          }
+        }
+        if (!Body->second)
           continue;
         if (Target->Target >= Address ? Target->Target - Address < ParentLength
                                       : Address - Target->Target < Body->second)
           continue;
-        const auto Name = FindName(Target->Target);
-        if (Name != Names.end() && Name->second == Expected) {
-          Bound = true;
-          break;
-        }
+        Bound = true;
+        break;
       }
       if (!Bound)
         continue;
