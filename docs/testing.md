@@ -41,6 +41,10 @@ rather than requiring an intermediate call record to survive optimization.
 unsigned 1/2/4-byte reads through both C routes at O0/O2 with UBSan, for x64/ARM64
 PE/ELF and complete or selected-caller output. Callers write only the consumed
 bytes. The frame proof separately rejects reads wider than the declared input.
+`IncomingHomeSource.MixedWidthReadsShareOneCompleteInput` executes mixed prefix
+and complete-slot reads through both C routes at O0/O2 with UBSan. The native
+frame controls cover both read orders and reject narrow-only observations or
+a full-width observation belonging to a different slot.
 `IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
 routes with an incoming last-stack-word declaration and unrelated register and
 stack setup. `HighCPointerAddresses.Win64TwelveArgumentCallKeepsEveryStackArgument`
@@ -102,6 +106,12 @@ parameter, while an earlier definition at entry or before the read kills it.
 Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
+
+`NeverDMedVariadicTests` runs the variadic-prologue proof boundaries directly:
+entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
+fresh queries after edits across x86, x64, ARM and AArch64. The i386 cases
+require a homed incoming pointer plus a reload or an advanced-pointer read;
+Darwin's register-only walk remains independently recognizable without a home.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
@@ -3499,6 +3509,20 @@ checks unchanged sidecars and foreign-edit refusal, and retries newer staged
 edits. It compares complete published journals for first and later saves with
 escaped/Unicode annotation text, then verifies retry and reopening. History and
 journal budget cases must refuse before publishing any transaction file.
+It also checks independent rollback checkpoints, equivalent file reformatting,
+same-size external edits with preserved timestamps, absent/empty sidecars,
+typed row validation and refusal of values that cannot round-trip through JSON.
+Reopened pretty-printed and BOM-prefixed history files must produce complete
+parseable journals and survive an interrupted first save and same-session retry.
+`NeverDWorkerProtocol` compares backend parsing with native JSON values, types,
+encoding and error IDs, while retaining strict external-frame admission.
+`NeverDWorkerProtocolFallback` runs the same cases with SIMD parsing disabled.
+Both include exact sidecar escaping for control characters and literal escapes.
+`NeverDWorkerNativePatch` checks split and merged rows through complete undo,
+redo, batch removal, export and reopening, without modifying the input binary.
+`tools/neverd-bench/patch-paired.py --worker-history` adds durable undo and redo
+to alternating baseline/candidate commit measurements. Fixture setup, byte and
+sidecar comparisons, input preservation and export checks stay outside timers.
 `SearchCAPITest.SearchPagesContinuePast4096AndReverseWithoutRepeating` checks
 the real search matcher beyond its page budget, address zero, exact-limit
 completion, reverse cursors, text case folding and invalid options.
@@ -4923,6 +4947,13 @@ execution of every source architecture.
 (`NeverDWin64CallContractTests`) checks that a routine the image exports,
 whose name binds a prototype, reads the parameters it declares, a system call
 stub's fifth on the stack too, together with any its body reads past them.
+
+`MedCallingConvX86Stack.*` (in `NeverDFPParameterMaskTests`) checks that i386
+incoming stack addresses count as transparent uses only when their output
+definition proves the forwarding. Its cyclic PHIs require independent root
+queries to retain both escaped homes, including distinct SSA versions and
+reversed block order. Run this owner and `NeverDI386CallContractTests` when
+changing CDECL stack-offset query reuse.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
@@ -6449,6 +6480,11 @@ alternative clauses use the same frozen base; missing/conflicting roots,
 cross-region targets and attempts to form a second anchor remain rejected.
 Parser/cache and Python cases reject noncanonical deltas, including signed
 zero, while preserving missing and cross-kind collision counterclaims.
+The data-parent caller cases also cover complete source refinements, reversed
+entry/pattern order, missing or weak roots, source omissions and contradictions,
+ambiguous child names, unrequested targets, all competing frozen target claims,
+rooted chains with back edges, and refusal to create a second data binding
+from an incoming descendant.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -13957,6 +13993,13 @@ APS2 and RELR relocations on available checked AArch64 transports; unavailable
 backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
 failed-admission atomicity, full byte streams and strict JSON. Tests never use
 host networking. Run the complete affected owners before review.
+
+`LinuxNetwork.MismatchOffsetsUseSharedCursorWithoutConsumingPrefix` checks
+first-difference diagnostics after short writes through descriptor aliases,
+including an unmatched suffix beyond the current transfer window and retry
+without consuming a matching prefix. Android's
+`OutgoingMismatchReportsStreamAndBufferOffsets` checks named sends, writes and
+variadic raw sends through the original C fixture on each available backend.
 
 The network fixtures also exercise TCP failure followed by connected UDP,
 IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty

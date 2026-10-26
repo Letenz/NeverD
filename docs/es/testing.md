@@ -12,6 +12,8 @@
 
 La nueva matriz ejecuta lecturas con y sin signo de 1/2/4 bytes por ambas rutas C en O0/O2 con UBSan, para la salida completa o solo el llamador. Los llamadores escriben únicamente los bytes leídos; se rechazan lecturas que superen la anchura declarada.
 
+La matriz de anchos mixtos ejecuta lecturas de prefijo y de ranura completa con O0/O2 y UBSan. Los controles del marco nativo cubren ambos órdenes y rechazan evidencia de solo lecturas estrechas o de una lectura completa en otra ranura.
+
 Las llamadas por registro conocidas se ejecutan en ambas rutas C para x64/ARM64 PE/ELF, con módulo completo y llamador seleccionado. El LowIR original sigue siendo indirecto. Los controles rechazan escrituras parciales obsoletas, efectos opacos, temporales reutilizados, celdas de memoria y presupuestos agotados.
 
 `PEFunctionAddresses.*` verifica hojas PE x64 sin marco, propiedad y límites de instrucciones, prefijos y operandos estrechos rechazados, salidas, cancelación y paridad con 1/2/4/16 trabajadores. Las pruebas de firmas cubren las 16 condiciones rel32 en ambos sentidos, entradas explícitas y restricciones de reubicación. Las pruebas Python conservan alternativas y sitios conjuntamente necesarios, comprueban todos los contraejemplos originales y evitan duplicados.

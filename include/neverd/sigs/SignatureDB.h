@@ -320,11 +320,15 @@ private:
                         llvm::ArrayRef<uint64_t> Entries,
                         llvm::ArrayRef<SignatureMatcher::Hit> Hits);
   void applyCallerContext(const BinaryImage &Img,
-                          llvm::ArrayRef<uint64_t> Entries);
-  void applyCallerContextRound(
-      const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
-      const std::unordered_map<uint64_t, std::string> &Names,
-      size_t FrozenMatches, size_t FirstParent);
+                          llvm::ArrayRef<uint64_t> Entries,
+                          size_t FirstParent = 0,
+                          const DataBindings *Data = nullptr);
+  void applyCallerContextRound(const BinaryImage &Img,
+                               llvm::ArrayRef<uint64_t> Entries,
+                               std::unordered_map<uint64_t, std::string> &Names,
+                               llvm::ArrayRef<size_t> FrozenCandidates,
+                               size_t FrozenMatches, size_t FirstParent,
+                               const DataBindings *Data);
   /// A present FrozenMatches validates only later incoming candidates against
   /// the frozen prefix, including an empty original set. Their outcomes cannot
   /// change anchors or feed another

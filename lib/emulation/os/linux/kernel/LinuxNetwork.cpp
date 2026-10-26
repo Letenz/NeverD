@@ -13,6 +13,7 @@
 #include "neverd/emulation/Limits.h"
 
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <algorithm>
 
@@ -413,9 +414,19 @@ LinuxFiles::transferSocket(OpenSocket &Socket, bool Send, uint64_t Address,
     std::vector<uint8_t> Actual(Transfer);
     if (auto E = CPU.read(Address, Actual))
       return std::move(E);
-    if (llvm::ArrayRef(Actual) != Expected)
-      return unsupported(Result,
-                         "outgoing TCP bytes differ from the offline contract");
+    const auto Difference =
+        std::mismatch(Actual.begin(), Actual.end(), Expected.begin());
+    if (Difference.first != Actual.end()) {
+      const auto Offset = Difference.first - Actual.begin();
+      const auto Reason =
+          llvm::formatv(
+              "outgoing TCP bytes differ from the offline contract at "
+              "stream offset {0} (buffer offset {1}): expected {2:x2}, "
+              "actual {3:x2}",
+              Position + Offset, Offset, *Difference.second, *Difference.first)
+              .str();
+      return unsupported(Result, Reason.c_str());
+    }
   } else if (auto E = CPU.write(Address, Expected))
     return std::move(E);
   Position += Transfer;

@@ -739,6 +739,69 @@ TEST(X86SystemState, FarAndInterruptReturnsLiftToTerminalStateTransfers) {
   }
 }
 
+TEST(X86SystemState, SyscallReturnsLiftToTerminalStateTransfers) {
+  // SYSRET/SYSRETQ and SYSEXIT/SYSEXITQ are terminal syscall returns: they
+  // transfer control to a named register (SYSRET: RCX->RIP, R11->RFLAGS;
+  // SYSEXIT: RDX->RIP, RCX->RSP) and never resume in the lifted function.  Each
+  // lifts to a void, no-return intrinsic naming those two source registers and
+  // never becomes an ordinary RETURN.  SYSENTER and RSM stay refused.
+  struct Case {
+    std::vector<uint8_t> Bytes;
+    Intrinsic Id;
+  };
+  for (auto A : {Arch::X86, Arch::X64}) {
+    Decoder D;
+    ASSERT_TRUE(D.init(A));
+    D.setStrict(true);
+    std::vector<Case> Cases = {
+        {{0x0f, 0x07}, Intrinsic::Sysretq}, // sysret
+        {{0x0f, 0x35}, Intrinsic::Sysexitq}, // sysexit
+    };
+    if (A == Arch::X64) {
+      Cases.push_back({{0x48, 0x0f, 0x07}, Intrinsic::Sysretq}); // sysretq
+      Cases.push_back({{0x48, 0x0f, 0x35}, Intrinsic::Sysexitq}); // sysexitq
+    }
+    for (const auto &C : Cases) {
+      SCOPED_TRACE(static_cast<unsigned>(A));
+      SCOPED_TRACE(testing::PrintToString(C.Bytes));
+      DecodedInsn I{};
+      ASSERT_EQ(D.decodeOneForLift(C.Bytes.data(), C.Bytes.size(), 0x1000, I),
+                static_cast<int>(C.Bytes.size()));
+      std::vector<LowOp> Ops;
+      ASSERT_NO_THROW(D.liftToLow(I, Ops));
+      ASSERT_FALSE(Ops.empty());
+      for (const auto &Op : Ops)
+        EXPECT_NE(Op.Opcode, NdOp::RETURN);
+      const auto &Term = Ops.back();
+      ASSERT_EQ(Term.Opcode, NdOp::INTRINSIC);
+      EXPECT_EQ(Term.Output.Size, 0);
+      // Intrinsic id plus the two named source registers.
+      ASSERT_EQ(Term.NumInputs, 3u);
+      EXPECT_EQ(Term.Inputs[0].Offset, static_cast<uint64_t>(C.Id));
+    }
+  }
+}
+
+TEST(X86SystemState, SysenterAndResumeStayRefused) {
+  // SYSENTER's target and stack come from MSRs and RSM restores state from
+  // SMRAM: neither has a named operand, so both are refused rather than lifted
+  // to a lossy continuation.
+  for (auto A : {Arch::X86, Arch::X64}) {
+    Decoder D;
+    ASSERT_TRUE(D.init(A));
+    D.setStrict(true);
+    for (const auto &Bytes : {std::vector<uint8_t>{0x0f, 0x34},   // sysenter
+                              std::vector<uint8_t>{0x0f, 0xaa}}) { // rsm
+      DecodedInsn I{};
+      ASSERT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I),
+                static_cast<int>(Bytes.size()));
+      std::vector<LowOp> Ops;
+      EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
+      EXPECT_TRUE(Ops.empty());
+    }
+  }
+}
+
 TEST(X86SystemExtensions, InputWidthsAndMalformedShapes) {
   for (auto A : {Arch::X86, Arch::X64})
     for (const auto &E : test::systemExtensionEncodings(A)) {

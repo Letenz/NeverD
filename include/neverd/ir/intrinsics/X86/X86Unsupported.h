@@ -15,14 +15,15 @@
 
 namespace neverd {
 
-/// These legacy IDs do not carry the register banks, flags, stack and
-/// privilege/SMM state their nonlocal continuation observes. Keep their
-/// serialized identities, but admit neither an ABI return nor bare assembly.
+/// These IDs resume at a continuation whose target no named operand carries:
+/// RSM restores the whole processor from SMRAM and XBEGIN's abort path is a
+/// second, non-sequential exit. Keep their serialized identities, but admit
+/// neither an ABI return nor bare assembly.  (The syscall returns SYSRET/
+/// SYSEXIT, like far/interrupt returns, DO name their transfer target in a
+/// register and are lifted to a terminal state-transfer intrinsic instead.)
 inline const char *x86NonlocalControlTransferReason(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::Rsm:
-  case Intrinsic::Sysexitq:
-  case Intrinsic::Sysretq:
     return "x86 nonlocal control transfer requires a complete machine-state "
            "boundary";
   case Intrinsic::Xbegin:
