@@ -131,3 +131,6 @@ A(Intrinsic::A64_FcvtzuFixed,  "fcvtzu");
 #define NEVERD_A64_SVE_PREFIX_OPERATION(Id, Name, ...) \
   A(Intrinsic::Id, Name);
 #include "neverd/ir/intrinsics/AArch64/AArch64SVEPrefix.def"
+
+#define NEVERD_A64_WRITEBACK_OPERATION(Id, Mnemonic) A(Intrinsic::Id, Mnemonic);
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"

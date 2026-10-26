@@ -13,6 +13,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuthLoad.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/loader/AArch64MemoryImage.h"
 
@@ -87,8 +88,8 @@ public:
     }
   }
 
-  bool supports(const BinaryImage &Image,
-                const AArch64AddressMemoryInstruction &Instruction,
+  template <typename InstructionT>
+  bool supports(const BinaryImage &Image, const InstructionT &Instruction,
                 const MedVar &Base) const {
     MedVar Constant = Base;
     std::set<Key> Copies;
@@ -149,7 +150,8 @@ public:
             const auto Id = static_cast<Intrinsic>(Def->Inputs[0].ConstVal);
             if ((isAArch64AddressMemoryIntrinsic(Id) &&
                  !isAArch64AddressStoreIntrinsic(Id)) ||
-                isAArch64PAuthLoadIntrinsic(Id) || Def->NumInputs == 1)
+                isAArch64PAuthLoadIntrinsic(Id) ||
+                isAArch64WritebackMemoryIntrinsic(Id) || Def->NumInputs == 1)
               return Step::Runtime;
           }
           const unsigned First =
@@ -267,8 +269,8 @@ public:
     return nullptr;
   }
 
-  bool supports(const BinaryImage &Image,
-                const AArch64AddressMemoryInstruction &Instruction,
+  template <typename InstructionT>
+  bool supports(const BinaryImage &Image, const InstructionT &Instruction,
                 const HighExpr &Base, const HighStmt *Use) const {
     if (const auto *Constant = imageConstant(Base, Use))
       return bool(aarch64ImmediateMemoryImageSpan(
@@ -291,6 +293,7 @@ public:
                 (isAArch64AddressMemoryIntrinsic(Value->IntrinsicId) &&
                  !isAArch64AddressStoreIntrinsic(Value->IntrinsicId)) ||
                 isAArch64PAuthLoadIntrinsic(Value->IntrinsicId) ||
+                isAArch64WritebackMemoryIntrinsic(Value->IntrinsicId) ||
                 Value->Operands.empty())))
             return Step::Runtime;
           if (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) {

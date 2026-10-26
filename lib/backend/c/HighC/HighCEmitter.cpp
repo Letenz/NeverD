@@ -34,6 +34,7 @@
 #include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthLoadC.h"
+#include "neverd/backend/c/render/AArch64/AArch64WritebackMemoryC.h"
 #include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
@@ -3377,12 +3378,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   };
   std::optional<AArch64ImmediateHighBases> ImageMemoryBases;
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
-    if (Opts.TheArch == Arch::AArch64 &&
-        isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
-        aarch64AddressMemoryHighShapeIsValid(E)) {
-      const auto Instruction = *aarch64AddressMemoryInstruction(
-          E.Operands[kAddressMemoryWordOperand]->ConstVal);
-      const auto &Base = *E.Operands[kAddressMemoryBaseOperand];
+    const auto NoteImmediateStorage = [&](const auto &Instruction,
+                                          const HighExpr &Base) {
       const auto *Constant =
           Instruction.hasRegisterIndex()
               ? nullptr
@@ -3403,6 +3400,19 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           ImageObjects[Object->first].AddressTaken = true;
         }
       }
+    };
+    if (Opts.TheArch == Arch::AArch64) {
+      if (isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+          aarch64AddressMemoryHighShapeIsValid(E))
+        NoteImmediateStorage(
+            *aarch64AddressMemoryInstruction(
+                E.Operands[kAddressMemoryWordOperand]->ConstVal),
+            *E.Operands[kAddressMemoryBaseOperand]);
+      if (isAArch64WritebackMemoryIntrinsic(E.IntrinsicId) &&
+          aarch64WritebackMemoryHighShapeIsValid(E))
+        NoteImmediateStorage(*aarch64WritebackMemoryInstruction(
+                                 E.Operands[kWritebackWordOperand]->ConstVal),
+                             *E.Operands[kWritebackBaseOperand]);
     }
     if (OriginalMemoryBases.count({Reading, &E})) {
       for (size_t I = 0; I < E.Operands.size(); ++I)
@@ -4810,6 +4820,20 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
               Opts.Image != nullptr,
               Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
         throw std::invalid_argument(Reason);
+    }
+    if (isAArch64WritebackMemoryIntrinsic(Expr->IntrinsicId)) {
+      if (Opts.TheArch != Arch::AArch64 ||
+          !aarch64WritebackMemoryHighShapeIsValid(*Expr))
+        throw std::invalid_argument(kWritebackMalformed);
+      const auto Instruction = *aarch64WritebackMemoryInstruction(
+          Expr->Operands[kWritebackWordOperand]->ConstVal);
+      if (Instruction.stackBase())
+        throw std::invalid_argument(kWritebackSPUnsupported);
+      if (Opts.Image &&
+          !MemoryBases->supports(*Opts.Image, Instruction,
+                                 *Expr->Operands[kWritebackBaseOperand],
+                                 RequirementStatement))
+        throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
     }
     if (isAArch64PAuthLoadIntrinsic(Expr->IntrinsicId)) {
       if (Opts.TheArch != Arch::AArch64 ||

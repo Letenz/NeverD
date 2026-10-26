@@ -20,9 +20,9 @@ namespace neverd {
 /// Provenance belongs to the base occurrence, never to a matching image VA.
 /// Include the raw base as well as every accessed byte, so negative offsets
 /// and the maximum unsigned Q offset retain one contiguous relocation owner.
+template <typename InstructionT>
 inline std::optional<AArch64AddressMemorySpan> aarch64ImmediateMemoryImageSpan(
-    const BinaryImage &Image,
-    const AArch64AddressMemoryInstruction &Instruction, va_t Base,
+    const BinaryImage &Image, const InstructionT &Instruction, va_t Base,
     ConstantAddressProvenance Provenance, va_t Owner) {
   if (Instruction.hasRegisterIndex() || Instruction.stackBase() ||
       !isExactAddressProvenance(Provenance) ||

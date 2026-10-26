@@ -654,11 +654,43 @@ layout also observes original reads through unique local definitions.
 Private-copy source replay recomputes stack-access annotations from the current
 MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
+GPR single pre/post-index accesses use `AArch64WritebackMemory.def` and its
+validated original-word descriptor. Loads return the completed X value below
+the completed base in one 128-bit result; stores return the completed base.
+The lifter publishes the W view before its zero-extended X view, then commits
+the base. The native instruction owns both the access and writeback, preserving
+pre/post ordering and access-EL `AddressAdd` behavior. No ordinary integer ADD
+reconstructs the base. Constrained-unpredictable base/data overlap is refused;
+XZR and SP have distinct encoded roles. Automatic image admission follows the
+same x1-only policy as single immediates; original-SP writeback execution still
+requires an unavailable SP alignment/tagging contract.
+
+Both source routes and LLVM validate the complete contract before source-only
+filtering. A discarded result retains the memory instruction. Exact image-base
+witnesses authenticate the incoming occurrence; only the original instruction's
+completed-base extraction may follow it without invalidating that witness.
+Image materialization includes the incoming base, accessed bytes and outgoing
+base in one complete owner. It does not require a post-index instruction to
+access bytes at its outgoing base. Returned bases are runtime coordinates and
+can feed another retained memory operation without reinterpreting them as image
+VAs. The software tracer commits only complete finite reads/writes for which the
+shared address owner proves control-independent access and writeback bits.
+
+The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
+11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
+LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
+selected regression results (including original-owner failures) and model records are pinned in
+[evidence](evidence/arm64e-writeback-memory-2026-10-26.json). This is Normal WB,
+nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
+automatically lifted whole images.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
-rebasing have the bounded qualification above. Pre/post-index, pair and other
-ordinary-memory families, original-SP stack/call projection and Apple native
+rebasing have the bounded qualification above. GPR single pre/post-index
+writeback has separate explicit-IR, automatic-lifting and image regression
+coverage; SIMD pre/post-index, pair and other ordinary-memory families,
+original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
 lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
@@ -12380,9 +12412,15 @@ keep their bytes. Device/GPU admission remains in the shared service dispatch.
 `MedCallTarget` observes cached callable values through the Med ABI owner's
 exact address, width and overlap proof. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
-An observed import identifies the captured callable's signature and never
-authorizes a new target load. Call barriers, partial writes, uncertain aliases
-and exhausted work retain the unresolved call.
+An observation retains the original LOAD index, including through private SSA
+versions. HighIR names an imported call only when the same memory-reachability
+proof used for callee-read inlining proves that original observation can reach
+the call unchanged. Copies and private spills share this decision. The same
+proof follows a bounded single-predecessor chain and checks every intervening
+operation. Joins, exceptional entries and cycles retain the captured callable's
+signature and runtime value without authorizing a new slot read. Barriers,
+partial writes and uncertain aliases stop spill/reload
+proofs; exhausted work publishes no partial observation.
 
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions
