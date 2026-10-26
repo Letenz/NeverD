@@ -210,6 +210,8 @@ public:
     return capabilities_.contains(QStringLiteral("call_paths"));
   }
   void loadPdb(const QJsonObject &selection);
+  /// Remember declining a missing PDB for subsequent opens and reloads.
+  void declinePdb();
   /// Load the MAP file \p selection names ({path,mode,stamp}) into the open
   /// image, after its PDB or DWARF, whose names outrank the MAP's.
   void loadMap(const QJsonObject &selection);
