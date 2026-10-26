@@ -141,8 +141,10 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   Root->addWidget(Table, 1);
   auto *Navigation = new QHBoxLayout;
   Status = new QLabel(tr("Choose a collection to begin."), this);
+  Status->setObjectName("lineagePageStatus");
   Status->setTextFormat(Qt::PlainText);
   makeStatusLine(*Status);
+  Root->addWidget(Status);
   RowsPerPage = new QSpinBox(this);
   RowsPerPage->setObjectName("lineagePageRows");
   RowsPerPage->setAccessibleName(tr("Rows per page"));
@@ -165,8 +167,8 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   Retry->setIcon(icon("refresh"));
   Retry->setAccessibleName(tr("Refresh page"));
   Retry->setToolTip(tr("Refresh page"));
-  Navigation->addWidget(Status, 1);
   Navigation->addWidget(RowsPerPage);
+  Navigation->addStretch();
   Navigation->addWidget(Previous);
   Navigation->addWidget(Next);
   Navigation->addWidget(Retry);

@@ -457,6 +457,10 @@ private slots:
                              Timeout);
     QCOMPARE(Session.summary()["versions"].toInt(), 200);
     QCOMPARE(Errors.size(), 0);
+    const auto *PageStatus = Versions->findChild<QLabel *>("lineagePageStatus");
+    QVERIFY(PageStatus && PageStatus->isVisible());
+    QVERIFY(PageStatus->width() >=
+            PageStatus->fontMetrics().horizontalAdvance(PageStatus->text()));
     if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
         !Output.isEmpty())
       QVERIFY(View.grab().save(Output + "/large-page-recovered.png"));
