@@ -218,17 +218,52 @@ QDialog *visibleDialog(const QString &name = {}) {
   return nullptr;
 }
 
+bool privateWayland() {
+  return QGuiApplication::platformName().startsWith(QLatin1String("wayland")) &&
+         qEnvironmentVariableIsSet("NEVERD_TEST_GNOME_POINTER");
+}
+
+// Only the disposable compositor runner grants this capability. Never ask the
+// user's ordinary desktop to activate windows or create input devices.
+bool privateShell(const QString &script) {
+  QProcess process;
+  process.start(QStringLiteral("gdbus"),
+                {QStringLiteral("call"), QStringLiteral("--session"),
+                 QStringLiteral("--dest"), QStringLiteral("org.gnome.Shell"),
+                 QStringLiteral("--object-path"),
+                 QStringLiteral("/org/gnome/Shell"), QStringLiteral("--method"),
+                 QStringLiteral("org.gnome.Shell.Eval"), script});
+  return process.waitForFinished(OpenTimeoutMs) && process.exitCode() == 0 &&
+         process.readAllStandardOutput().startsWith("(true,");
+}
+
 bool activateTestWindow(QWidget *window) {
   // Qt can report a transient family as active before native keyboard focus
   // reaches this particular window. A dialog's pending activation can also
   // supersede a single request. Keep requesting within the ordinary test
   // deadline, and require both observations before sending keyboard input.
-  const bool active = QTest::qWaitFor([window] {
+  QString nativeActivation;
+  if (privateWayland()) {
+    const auto title = QJsonDocument(QJsonArray{window->windowTitle()})
+                           .toJson(QJsonDocument::Compact);
+    nativeActivation =
+        QStringLiteral(
+            "Main.overview.hide(); const w = global.get_window_actors()"
+            ".map(a => a.meta_window).find(w => w.get_pid() === %1 && "
+            "w.get_title() === %2); if (w) Main.activateWindow(w);")
+            .arg(QCoreApplication::applicationPid())
+            .arg(QString::fromUtf8(title.mid(1, title.size() - 2)));
+  }
+  const bool active = QTest::qWaitFor([window, &nativeActivation] {
     if (window->isActiveWindow() &&
         QGuiApplication::focusWindow() == window->windowHandle())
       return true;
-    window->raise();
-    window->activateWindow();
+    if (!nativeActivation.isEmpty())
+      privateShell(nativeActivation);
+    else {
+      window->raise();
+      window->activateWindow();
+    }
     return false;
   });
   if (!active)
@@ -9060,6 +9095,19 @@ private slots:
                        settingsDirectory_.path());
     configureDocking();
     WindowFrame::frameDialogs(*qApp);
+    if (privateWayland()) {
+      QTRY_VERIFY_WITH_TIMEOUT(
+          privateShell(QStringLiteral("if (Main.layoutManager._startingUp) "
+                                      "throw Error('desktop starting');")),
+          NativeOpenTimeoutMs);
+      QVERIFY(privateShell(QStringLiteral(
+          "global.neverdWorkbenchPointer = "
+          "imports.gi.Clutter.get_default_backend().get_default_seat()"
+          ".create_virtual_device(imports.gi.Clutter.InputDeviceType.POINTER_"
+          "DEVICE); global.neverdWorkbenchPointer.notify_absolute_motion("
+          "imports.gi.GLib.get_monotonic_time(), global.stage.width / 2, "
+          "global.stage.height / 2); Main.overview.hide();")));
+    }
   }
 
   void windowChromeLeavesRoomToType() {
