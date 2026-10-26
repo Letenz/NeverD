@@ -3341,6 +3341,9 @@ Decision identity hits and terminal Boolean operations return before entering
 the allocation and recursive expansion helpers. Cache misses alone need those
 larger stack frames. Lookup, depth admission, charging and insertion keep their
 original order, including failure paths.
+Application keys place their operation tag in the unused high bit of the
+low edge word, so the integer hash distinguishes AND and XOR for identical
+operands. Full edge identity and the existing node bound remain authoritative.
 A dominant exact low prefix may be proved separately from unmatched product
 factors. A majority vote, weighted by exact projected-word multiplicities,
 only nominates the prefix; complete decision equality and the exact factor

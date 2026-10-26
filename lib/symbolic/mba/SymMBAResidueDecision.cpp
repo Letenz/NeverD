@@ -258,10 +258,11 @@ class LowWordDecisions {
       Failed = true;
       return 0;
     }
-    // Edges use twice the bounded node index. The unused top bit distinguishes
-    // AND from XOR, so application keys need no full decision-node tuple.
+    // Edges use twice the bounded node index. Bit 31 of the low word is free
+    // for AND/XOR. Unlike bit 63, it participates in the integer map's hash;
+    // the same operands with different operations need not share a bucket.
     static_assert(limits::kMaxResidueDecisionNodes <= UINT32_MAX / 4);
-    const uint64_t Key = (uint64_t(Op == Xor) << 63) | (uint64_t(A) << 32) | B;
+    const uint64_t Key = (uint64_t(A) << 32) | (uint64_t(Op == Xor) << 31) | B;
     if (auto It = Applied.find(Key); It != Applied.end())
       return It->second ^ Complement;
     return expandApplication(Op, A, B, Depth, Key, Complement);
