@@ -104,6 +104,43 @@ TEST(MedStackAlignment, BoundedDynamicOffsetsAreNotExactOffsets) {
     }
 }
 
+TEST(MedStackAlignment, ScaledDynamicAllocationsRetainMachineWidthBounds) {
+  for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
+    const auto Width = getTargetRegInfo(Architecture).PointerSize;
+    for (uint64_t Factor : {uint64_t{3}, uint64_t{48}}) {
+      auto Func = frameWithEntrySP(Architecture);
+      const auto Amount = temp(10, Architecture);
+      const auto Scaled = temp(11, Architecture);
+      const auto Allocated = reg(1, Architecture);
+      auto &Ops = Func.Blocks.front().Ops;
+      Ops.push_back(
+          op(NdOp::INT_ZEXT, Amount, MedVar::makeUnspecified(1, Architecture)));
+      Ops.push_back(
+          op(NdOp::INT_MULT, Scaled, Amount, MedVar::makeConst(Factor, Width)));
+      Ops.push_back(op(NdOp::INT_SUB, Allocated, reg(0, Architecture), Scaled));
+      const auto Bounds = entryStackOffsetRanges(
+          Func, {Allocated}, Architecture, BinaryFormat::ELF);
+      ASSERT_TRUE(Bounds[0]);
+      // Compare against every possible input byte, independently of the
+      // interval arithmetic used by the proof.
+      for (int64_t Count = 0; Count <= UINT8_MAX; ++Count) {
+        const int64_t Offset = -Count * static_cast<int64_t>(Factor);
+        EXPECT_LE(Bounds[0]->Min, Offset);
+        EXPECT_GE(Bounds[0]->Max, Offset);
+      }
+      EXPECT_LE(Bounds[0]->Max, 0);
+      EXPECT_FALSE(
+          entryStackOffset(Func, Allocated, Architecture, BinaryFormat::ELF));
+      // Multiplication is modular, not an unbounded signed product: an
+      // unconstrained input may wrap to either side of the entry frame.
+      Ops[1] =
+          op(NdOp::COPY, Amount, MedVar::makeUnspecified(Width, Architecture));
+      EXPECT_FALSE(entryStackOffsetRanges(Func, {Allocated}, Architecture,
+                                          BinaryFormat::ELF)[0]);
+    }
+  }
+}
+
 TEST(MedStackAlignment, EveryPhiComponentNeedsItsOwnOutsideOrigin) {
   for (bool Dynamic : {false, true})
     for (bool Unseeded : {false, true}) {

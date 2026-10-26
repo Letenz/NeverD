@@ -256,6 +256,8 @@ private:
         return Left.add(Right);
       case NdOp::INT_SUB:
         return Left.sub(Right);
+      case NdOp::INT_MULT:
+        return Left.multiply(Right);
       case NdOp::INT_AND:
         return Left.binaryAnd(Right);
       case NdOp::INT_LEFT:
