@@ -46,6 +46,18 @@ def arm64_fixed_fixture():
     code = bytes.fromhex("fd7bbfa9 fd030091 e0008052 00106f1e 610180d2 0b000094 fd7bc1a8 c0035fd6")
     return pe(code.ljust(64, b"\0") + bytes.fromhex("c0035fd6"), 0xAA64)
 
+def arm64_stack_fixture(partial=False):
+    # Eight independent integer/FP register pairs, then a ninth pair on the
+    # stack; consume the callee's floating result through FCVTZS X0,D0.
+    code = bytearray(bytes.fromhex(
+        "fd7bbfa9 fd030091 ff4300d1 20008052 00106e1e 41008052 0110601e "
+        "62008052 0210611e 83008052 0310621e a4008052 0490621e c5008052 "
+        "0510631e e6008052 0690631e 07018052 0710641e 28018052 e80300b9 "
+        "1050641e f00700fd 29000094 0000789e ff430091 fd7bc1a8 c0035fd6"))
+    if partial:
+        code[80:84] = bytes.fromhex("e8030079")  # STRH supplies only half of uint32_t.
+    return pe(bytes(code).ljust(256, b"\0") + bytes.fromhex("00106e1e c0035fd6"), 0xAA64)
+
 def request(view, call, declaration, actuals=()):
     return {"address": view["address"], "representation": view["representation"], "kind": "call_type",
         "call_id": call["id"], "snapshot": view["call_snapshot"], "declaration": declaration,
@@ -248,6 +260,43 @@ int main(void) { return start() != 7 || calls != 1 || errors; }
             refused = client.call("code_edit", request(view, view["source_calls"][0], "uint64_t call(uint32_t first, ...);", ["double", "uintptr_t"]))
             assert refused["status"] == "error" and "Windows ARM64 variadic" in refused["error"]["message"], refused
             assert ok(client, "analysis_snapshot") == baseline
+        for partial in (False, True):
+            arm64_stack = root / ("arm64-stack-partial.exe" if partial else "arm64-stack.exe")
+            arm64_stack.write_bytes(arm64_stack_fixture(partial))
+            parameters = ", ".join("uint32_t i%d, double f%d" % (i, i) for i in range(9))
+            with Client(executable) as client:
+                ok(client, "open", {"path": str(arm64_stack), "analysis": False})
+                view = source(client, "c", 0x140001000)
+                baseline = ok(client, "analysis_snapshot")
+                edit = request(view, view["source_calls"][0], "double call(%s);" % parameters)
+                reply = client.call("code_edit", edit)
+                if partial:
+                    assert reply["status"] == "error" and "fully written" in reply["error"]["message"], reply
+                    assert ok(client, "analysis_snapshot") == baseline
+                    continue
+                assert reply["status"] == "ok", reply
+                for route in ("c", "llvmc"):
+                    result = source(client, route, 0x140001000)
+                    assert result["call_type_results"][0]["applied"], result
+                    if compiler:
+                        for optimization in ("O0", "O2"):
+                            harness = """
+#include <stdint.h>
+extern START_RESULT start(void);
+static unsigned calls, errors;
+double sub_140001100(PARAMETERS) {
+  const unsigned integers[] = { i0, i1, i2, i3, i4, i5, i6, i7, i8 };
+  const double floating[] = { f0, f1, f2, f3, f4, f5, f6, f7, f8 };
+  ++calls;
+  for (unsigned i = 0; i < 9; ++i) {
+    errors += integers[i] != i + 1;
+    errors += floating[i] != i + 1;
+  }
+  return 42.75;
+}
+int main(void) { return start() != 42 || calls != 1 || errors; }
+""".replace("PARAMETERS", parameters).replace("START_RESULT", "int64_t" if route == "c" else "uint64_t")
+                            execute_source(root, result["text"], "arm64-stack-" + route + "-" + optimization, compiler, harness, optimization)
         # Real PE / Win64 call: its fifth value is read from the written stack
         # bytes, while a partial write cannot manufacture the missing bytes.
         for partial in (False, True):

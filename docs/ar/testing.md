@@ -2213,3 +2213,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ```
 
 يفحص `NeverDSourceCallABITests` مجموعات السجلات المختلطة والعروض ونفاد السجلات وإزاحات المكدس ورفض المعاملات المتغيرة في Windows ARM64. يستعيد `NeverDWorkerCallSiteTypes` استدعاءً بمعامل صحيح وdouble ومؤشر من PE لـ ARM64، وينفذ مخرجات مساري C مع دالة C مستقلة عند O0/O2؛ ويحافظ الرفض على لقطة التحليل. لا يثبت ذلك التنفيذ الأصلي على Windows ARM64.
+
+يغطي اختبار worker أيضًا ثمانية عشر معاملًا موزعًا على السجلات والمكدس، وقيمة إرجاع عائمة، ورفض معامل مكدس كُتب نصفه فقط.

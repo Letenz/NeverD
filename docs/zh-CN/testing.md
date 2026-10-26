@@ -2152,3 +2152,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ```
 
 `NeverDSourceCallABITests` 检查 Windows ARM64 的混合寄存器、位宽、寄存器耗尽、栈偏移和变参拒绝。`NeverDWorkerCallSiteTypes` 从 ARM64 PE 恢复整数、double 和指针调用，在 O0/O2 下通过两条 C 路径与独立 C 被调用函数执行验证，并检查拒绝变参编辑后分析快照不变。这不是 Windows ARM64 原生执行验证。
+
+该 worker 回归还覆盖十八个混合寄存器／栈参数、浮点返回，以及栈参数只写入一半时的拒绝。
