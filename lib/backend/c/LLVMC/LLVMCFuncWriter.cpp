@@ -3402,6 +3402,11 @@ LLVMCWriter::recordCallArguments(const llvm::CallBase &Call,
 
 TypeRef LLVMCWriter::expectedCallArgType(const llvm::CallBase &Call,
                                          unsigned Index) const {
+  // The source-import table already proved this exact call's complete scalar
+  // signature. Use the same binding for frame objects and call conversions.
+  if (const auto *Source = sourceImportCallee(Call))
+    if (TypeRef Ty = cDisplayType(debugCallArgPointer(*Source, Index, Opts)))
+      return Ty;
   if (auto FS = debugCallee(Call)) {
     if (const auto Layout = recordCallArguments(Call, *FS);
         Layout && !groupedFloatingCall(Call, *FS)) {
@@ -3441,6 +3446,23 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
   AllocaLastValues.clear();
   AllocaImmediates.clear();
 
+  std::vector<std::pair<uint64_t, uint64_t>> FrameMemory;
+  for (const auto &BB : Fn)
+    for (const auto &I : BB) {
+      const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I);
+      const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
+      const auto *Pointer = Load    ? Load->getPointerOperand()
+                            : Store ? Store->getPointerOperand()
+                                    : nullptr;
+      if (!Pointer)
+        continue;
+      const auto At = peelPointerOffset(Pointer);
+      const auto Bytes = llvmAccessSize(
+          Load ? Load->getType() : Store->getValueOperand()->getType());
+      if (At && At->first == SyntheticFrame && Bytes)
+        FrameMemory.emplace_back(At->second, Bytes);
+    }
+
   auto applyCallSlotType = [&](llvm::Value *Arg, const TypeRef &Expected) {
     if (!isNamedPointerDisplay(Expected))
       return;
@@ -3465,6 +3487,20 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         (It->second.Type && It->second.Type->FieldDisplayNames.size() >
                                 Next->FieldDisplayNames.size()))
       return;
+    if (FrameRecord && Next->Kind == NdTypeKind::Struct && !Next->IsEnum &&
+        Next->Size &&
+        (!It->second.MemberType ||
+         (It->second.MemberType->Kind == NdTypeKind::Array &&
+          It->second.MemberType->Size >= Next->Size)) &&
+        !llvm::any_of(FrameMemory,
+                      [&](const auto &Access) {
+                        return Access.first <= Peeled->second
+                                   ? Peeled->second - Access.first <
+                                         Access.second
+                                   : Access.first - Peeled->second < Next->Size;
+                      }) &&
+        frameRecordAdmits(Peeled->second, Next))
+      It->second.MemberType = Next;
     It->second.Type = std::move(Next);
   };
   auto frameSlotOff = [&](const llvm::Value *V) -> std::optional<uint64_t> {

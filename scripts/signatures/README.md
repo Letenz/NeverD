@@ -221,6 +221,24 @@ Verify the output with `neverd-sigmaker --verify`, then evaluate ordinary
 updating the submodule. Source-corpus collision checks do not establish
 universal uniqueness or replace held-out program evaluation.
 
+For primary x64 COFF table context, generate separate unpruned declarations:
+
+```sh
+neverd-sigmaker runtime.lib --machine x64 --vtable-evidence -o runtime.tables.jsonl
+python3 scripts/signatures/supplement_vtable_context.py \
+  --candidate runtime.tables.jsonl --evidence runtime.tables.jsonl \
+  --existing signatures/pe/x86/64/runtime.npat \
+  --name '??_7Widget@@6B@' --output runtime.part2.npat
+```
+
+Repeat `--evidence` for every collected source version and `--existing` for all
+packs in the intended selected profile. Incomplete declarations veto publication
+of their type; raw weak bindings preserve both source names. The selector keeps
+existing metadata, rejects conflicting layouts, requires an existing complete
+strong queried body, and writes input/output hashes. `!vtable` records never
+participate in function folding or metadata refinement. Verify, evaluate and
+measure the supplement under the same identity and performance rules above.
+
 `build_msvc_signatures.py` builds `pe/<x86|arm>/<32|64>/vs<year>.pat` and
 `winsdk.pat` from the library archives that the signatures repository's
 `msvc-libraries.yml` workflow collects on GitHub-hosted Windows images and

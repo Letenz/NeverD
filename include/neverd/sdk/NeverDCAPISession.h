@@ -186,6 +186,40 @@ NEVERD_API const char *neverd_session_load_options_json(neverd_session_t Sess);
 NEVERD_API int neverd_load_options_save(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_loaded(neverd_session_t Sess);
 
+/// Add an analysis-only section, its owned bytes and optional function roots.
+/// Description is UTF-8 JSON: {schema:"neverd.analysis-section.v1",name,
+/// address:"0x...",permissions:"r"|"rw"|"rx"|"rwx",functions?:[
+/// {offset:"0x...",size:positive_integer,name,source_address?:"0x..."}]}.
+/// The mapped extent is exactly DataSize. Bytes are copied before returning.
+/// Native x86, x64 and AArch64 images are supported; executable AArch64
+/// functions require aligned entries. All ranges, names, roots and first
+/// instructions are checked before publication. Failure changes no image data.
+/// Success invalidates image-derived analysis; original input file bytes,
+/// imports and virtual addresses are preserved. New bytes have no file offset.
+/// Returns 1 on success, 0 with neverd_last_error() on failure.
+NEVERD_API int neverd_analysis_section_add(neverd_session_t Sess,
+                                           const char *Description,
+                                           const unsigned char *Data,
+                                           size_t DataSize);
+/// Remove only a previously added analysis section and its declared roots.
+NEVERD_API int neverd_analysis_section_remove(neverd_session_t Sess,
+                                              const char *Name);
+/// Versioned description of analysis sections; IncludeData adds data_hex for
+/// explicit persistence with a root sample_sha256. Returned text uses
+/// neverd_free_string(). Adding a
+/// section never writes a PE/ELF/Mach-O header or an input-file sidecar.
+/// Up to 128 sections, 64 MiB of total data and 4096 declared functions per
+/// session. Serialize calls on the same session, as for other image edits.
+NEVERD_API const char *neverd_analysis_sections_json(neverd_session_t Sess,
+                                                     int IncludeData);
+/// Replace all analysis sections from a source-bound export with data.
+/// IncludeData exports contain sample_sha256. Import validates that identity,
+/// every section and all bytes before publishing any change. Returns 1 on
+/// success, 0 with neverd_last_error() on failure. Does not read/write
+/// sidecars.
+NEVERD_API int neverd_analysis_sections_import_json(neverd_session_t Sess,
+                                                    const char *State);
+
 /// Add the native function entries the function detector finds in the loaded
 /// image alone -- call targets, prologues and format tables, without running
 /// the full analysis pipeline -- to the function list.  An added function has

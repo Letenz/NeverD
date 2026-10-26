@@ -103,6 +103,12 @@ static cl::opt<bool> CollisionEvidence(
              "unreferenced functions; !evidence records cannot be loaded as "
              "signatures and imply --references"),
     cl::init(false));
+static cl::opt<bool> VTableEvidence(
+    "vtable-evidence",
+    cl::desc(
+        "Emit offline JSONL primary x64 COFF table declarations, including "
+        "incomplete counterclaims; this is not a signature pack"),
+    cl::init(false));
 static cl::opt<bool> DataReferences(
     "data-references",
     cl::desc("Include typed external-data operands in contextual or collision "
@@ -201,11 +207,17 @@ int main(int Argc, char *Argv[]) {
                               "  Generate .pat files from static libraries.\n");
 
   if (unsigned(Contextual) + unsigned(CallerContext) +
-          unsigned(CollisionEvidence) >
+          unsigned(CollisionEvidence) + unsigned(VTableEvidence) >
       1) {
     WithColor::error()
-        << "--contextual, --caller-context and --collision-evidence "
+        << "--contextual, --caller-context, --collision-evidence and "
+           "--vtable-evidence "
            "are separate outputs\n";
+    return 1;
+  }
+  if (VTableEvidence && (References || DataReferences || Verify)) {
+    WithColor::error()
+        << "--vtable-evidence is a separate offline output mode\n";
     return 1;
   }
   if (Verify)
@@ -266,6 +278,8 @@ int main(int Argc, char *Argv[]) {
   }
 
   InputStats Stats;
+  VTableEvidenceStats Tables;
+  bool EvidenceFailed = false;
   for (const std::string &Path : Inputs)
     if (!forEachObject(Path, Stats, [&](const ObjectFile &Obj) {
           if (!ForMachine(Obj)) {
@@ -273,9 +287,23 @@ int main(int Argc, char *Argv[]) {
             return;
           }
           ++Stats.Objects;
-          Stats.Patterns += generatePatterns(Obj, Opts, OS);
+          if (VTableEvidence) {
+            auto Result = generateVTableEvidence(Obj, OS);
+            if (!Result) {
+              WithColor::error() << toString(Result.takeError()) << "\n";
+              EvidenceFailed = true;
+            } else {
+              Tables.Complete += Result->Complete;
+              Tables.Incomplete += Result->Incomplete;
+            }
+          } else {
+            Stats.Patterns += generatePatterns(Obj, Opts, OS);
+          }
         }))
       return 1;
+
+  if (EvidenceFailed)
+    return 1;
 
   for (const auto &[Mach, Type] : Stats.Patterns.UnsupportedCOFFRelocations)
     WithColor::warning() << "functions with COFF relocation type "
@@ -304,8 +332,12 @@ int main(int Argc, char *Argv[]) {
                          << " Mach-O objects were left out: their linker "
                             "optimization hints cannot be read\n";
 
-  outs() << "Generated " << Stats.Patterns.Functions << " signatures → "
-         << OutputFile << " (" << Stats.Objects << " objects";
+  if (VTableEvidence)
+    outs() << "Generated " << Tables.Complete << " complete and "
+           << Tables.Incomplete << " incomplete table declarations → ";
+  else
+    outs() << "Generated " << Stats.Patterns.Functions << " signatures → ";
+  outs() << OutputFile << " (" << Stats.Objects << " objects";
   if (Stats.OtherMachine)
     outs() << ", " << Stats.OtherMachine << " for another machine skipped";
   if (Stats.NotObjects)

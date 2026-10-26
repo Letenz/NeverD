@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/SignatureCache.h"
 
+#include "VTableContext.h"
+
 #include "neverd/Common.h"
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/Parallel.h"
@@ -65,7 +67,7 @@ struct Header {
 /// A StoredModule, with offsets for its pointers: its bytes and the bits
 /// saying which are stated start at \c BlobOffset of the pattern bytes, its
 /// names at \c FirstName of the name records.
-enum class ContextRequirement : uint8_t { None, References, Caller };
+enum class ContextRequirement : uint8_t { None, References, Caller, VTable };
 
 struct ModuleRecord {
   uint64_t BlobOffset;
@@ -222,7 +224,7 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     if (R.BlobOffset > BlobBytes ||
         Count + statedBytes(Count) > BlobBytes - R.BlobOffset ||
         R.FirstName > NameCount || Names > NameCount - R.FirstName ||
-        R.Context > uint8_t(ContextRequirement::Caller) ||
+        R.Context > uint8_t(ContextRequirement::VTable) ||
         (R.Context == uint8_t(ContextRequirement::References) &&
          R.ReferenceCount == 0) ||
         (R.Context == uint8_t(ContextRequirement::Caller) &&
@@ -275,6 +277,26 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     M.CRCLen = R.CRCLen;
     M.RequireReferences = R.Context == uint8_t(ContextRequirement::References);
     M.RequireCaller = R.Context == uint8_t(ContextRequirement::Caller);
+    M.IsVTable = R.Context == uint8_t(ContextRequirement::VTable);
+    if (M.IsVTable) {
+      // Module and name pieces may be decoded in either order. Validate a
+      // temporary view of immutable wire names, never another piece's output.
+      llvm::SmallVector<StoredName, 8> TableNames;
+      for (uint64_t N = R.FirstName; N < R.FirstName + Names; ++N) {
+        const NameRecord Name =
+            readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord));
+        const uint64_t Offset = Name.TextOffset & ~DataReferenceBit;
+        if (Offset > TextBytes || Name.Length > TextBytes - Offset)
+          return false;
+        TableNames.emplace_back(
+            Name.Offset, std::string_view(Data + Text + Offset, Name.Length),
+            (Name.TextOffset & DataReferenceBit) != 0);
+      }
+      StoredModule Table = M;
+      Table.Names = TableNames.data();
+      if (!isValidVTableContext(Table))
+        return false;
+    }
     if (R.Context != uint8_t(ContextRequirement::None) &&
         !SignatureMatcher::isFullyVerified(M))
       return false;
@@ -444,6 +466,7 @@ void SignatureCache::store(const std::filesystem::path &Source,
                     M.PublicNameCount, M.ReferenceCount, M.CRC16, M.CRCLen,
                     uint8_t(M.RequireReferences ? ContextRequirement::References
                             : M.RequireCaller   ? ContextRequirement::Caller
+                            : M.IsVTable        ? ContextRequirement::VTable
                                                 : ContextRequirement::None)});
     if (Count != 0) {
       std::memcpy(Written.data() + L->Blob + Blob, M.Bytes, Count);

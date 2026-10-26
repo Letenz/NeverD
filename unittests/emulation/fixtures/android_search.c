@@ -155,6 +155,31 @@ u64 substring_dynamic(const char *text, const char *needle, u64 closed) {
 }
 
 extern u64 strspn(const char *, const char *);
+extern char *strpbrk(const char *, const char *);
+__asm__(".type strpbrk, %function");
+u64 member_search(const char *text, const char *accept, u64 route, u64 *error) {
+  char *(*find)(const char *, const char *) = strpbrk;
+  if (route) {
+    void *library = dlopen("libsearch.so", 2);
+    if (!library)
+      return 97;
+    find = dlsym(library, "strpbrk");
+    if (!find)
+      return 96;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  char *result = find(text, accept);
+  *error = (u64)*__errno();
+  return (u64)result;
+}
+u64 member_search_readonly(void *page, const char *text, const char *accept) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return (u64)strpbrk(text, accept);
+}
+
 u64 span_supplied(const char *text, const char *accept, unsigned *error) {
   *__errno() = 733;
   u64 result = strspn(text, accept);

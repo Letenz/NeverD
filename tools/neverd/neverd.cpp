@@ -20,6 +20,7 @@
 #include "neverd/loader/ARM/ARMModeCLIStrings.h"
 #include "neverd/loader/MachO/DyldCacheLoad.h"
 #include "neverd/support/FilePath.h"
+#include "neverd/support/ProjectWriteLock.h"
 #include "neverd/support/StackSizeMain.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -35,6 +36,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -150,6 +152,18 @@ static int realMain(int Argc, char *Argv[]) {
     return 1;
   }
 
+  // Protect the complete sidecar read/modify/write transaction, including
+  // restoration before the edit. The GUI holds the same project lock.
+  std::unique_ptr<ProjectWriteLock> SectionWriter;
+  if (AnalysisSectionsCmd &&
+      (!AnalysisSectionAdd.empty() || !AnalysisSectionRemove.empty())) {
+    SectionWriter = std::make_unique<ProjectWriteLock>(Path);
+    if (!*SectionWriter) {
+      WithColor::error() << "cannot acquire project writer lock: "
+                         << SectionWriter->error() << "\n";
+      return 1;
+    }
+  }
   if (ListCacheImages) {
     const char *Reply =
         neverd_dyld_cache_images_json(InputFile.getValue().c_str());
@@ -363,6 +377,11 @@ static int realMain(int Argc, char *Argv[]) {
       }
     }
   }
+  // Analysis sections are database overlays, never implicit input to binary
+  // rewriting or runtime execution. Shared native read commands see them.
+  if (!PatchCmd && !AnnotateCmd && !RenameCmd && !SigsCmd &&
+      !loadAnalysisSections(Sess))
+    return 1;
   if ((LiftCmd || DecompileCmd || DisasmCmd || CfgCmd || SymbolicCmd ||
        AuditCmd || HuntCmd) &&
       !configureAnalysisSession(Sess))
@@ -431,6 +450,8 @@ static int realMain(int Argc, char *Argv[]) {
     return runSegments(Sess);
   if (SectionsCmd)
     return runSections(Sess);
+  if (AnalysisSectionsCmd)
+    return runAnalysisSections(Sess);
   if (SymbolsCmd)
     return runSymbols(Sess);
   if (RelocsCmd)

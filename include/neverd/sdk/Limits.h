@@ -24,6 +24,15 @@
 
 namespace neverd::sdk {
 
+// Session-owned analysis image additions.
+inline constexpr size_t kMaxAnalysisSectionBytes = 64u << 20;
+inline constexpr size_t kMaxAnalysisSections = 128;
+inline constexpr size_t kMaxAnalysisSectionStateBytes = 144u << 20;
+inline constexpr size_t kMaxAnalysisSectionDescriptionBytes = 1u << 20;
+inline constexpr unsigned kMaxAnalysisSectionJsonDepth = 64;
+inline constexpr size_t kMaxAnalysisSectionNameBytes = 512;
+inline constexpr size_t kMaxAnalysisSectionFunctions = 4096;
+
 /// Lines admitted by one C/IR view page, shared with transport adapters.
 inline constexpr int kMaxCodeViewPageLines = 2048;
 inline constexpr int kDecodeBenchmarkMaxRepetitions = 100;
