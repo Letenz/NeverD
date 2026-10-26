@@ -4,7 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Loads return the completed X value below the completed base. Stores return
+/// GPR loads pack the completed X value below the base. SIMD loads publish
+/// a complete V value and base through typed auxiliary results; stores return
 /// the base. No output is published before the original instruction succeeds.
 //===----------------------------------------------------------------------===//
 
@@ -28,18 +29,28 @@ namespace neverd {
 
 inline bool isAArch64WritebackMemoryIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::A64_LoadWriteback ||
-         Id == Intrinsic::A64_StoreWriteback;
+         Id == Intrinsic::A64_StoreWriteback ||
+         Id == Intrinsic::A64_VectorLoadWriteback ||
+         Id == Intrinsic::A64_VectorStoreWriteback;
+}
+
+inline bool isAArch64WritebackStoreIntrinsic(Intrinsic Id) {
+  return Id == Intrinsic::A64_StoreWriteback ||
+         Id == Intrinsic::A64_VectorStoreWriteback;
 }
 
 inline unsigned aarch64WritebackMemoryOperandCount(Intrinsic Id) {
-  return Id == Intrinsic::A64_StoreWriteback ? kWritebackStoreOperands
-                                             : kWritebackLoadOperands;
+  return Id == Intrinsic::A64_StoreWriteback ||
+                 Id == Intrinsic::A64_VectorStoreWriteback
+             ? kWritebackStoreOperands
+             : kWritebackLoadOperands;
 }
 
 struct AArch64WritebackMemoryOperation {
   bool Load;
   unsigned AccessBytes;
   unsigned ResultBytes;
+  bool Vector = false;
 };
 
 inline std::optional<AArch64WritebackMemoryOperation>
@@ -50,6 +61,10 @@ aarch64WritebackMemoryOperation(uint64_t Word) {
 #define NEVERD_A64_WRITEBACK_ENCODING(Encoding, Load, Access, Result)          \
   case Encoding:                                                               \
     return AArch64WritebackMemoryOperation{Load, Access, Result};
+#define NEVERD_A64_WRITEBACK_VECTOR_ENCODING(Encoding, Load, Access)           \
+  case Encoding:                                                               \
+    return AArch64WritebackMemoryOperation{                                    \
+        Load, Access, Load ? kAddressMemoryVectorBytes : 0, true};
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"
   default:
     return std::nullopt;
@@ -61,7 +76,11 @@ struct AArch64WritebackMemoryInstruction {
 
   auto operation() const { return *aarch64WritebackMemoryOperation(Word); }
   bool isLoad() const { return operation().Load; }
+  bool isVector() const { return operation().Vector; }
   Intrinsic id() const {
+    if (isVector())
+      return isLoad() ? Intrinsic::A64_VectorLoadWriteback
+                      : Intrinsic::A64_VectorStoreWriteback;
     return isLoad() ? Intrinsic::A64_LoadWriteback
                     : Intrinsic::A64_StoreWriteback;
   }
@@ -113,7 +132,7 @@ aarch64WritebackMemoryInstruction(uint64_t Word) {
   AArch64WritebackMemoryInstruction Instruction{static_cast<uint32_t>(Word)};
   // Both loads and stores have constrained-unpredictable writeback overlap.
   // Choosing different scratch registers cannot resolve that ambiguity.
-  if (!Instruction.stackBase() &&
+  if (!Instruction.isVector() && !Instruction.stackBase() &&
       Instruction.destination() == Instruction.base())
     return std::nullopt;
   return Instruction;
@@ -132,11 +151,39 @@ inline bool aarch64WritebackMemoryShapeIsValid(
   if (!Instruction || Instruction->id() != Id)
     return false;
   if (Instruction->isLoad())
-    return OutputBytes == kWritebackPairBytes && !DataBytes;
+    return OutputBytes == (Instruction->isVector() ? 0 : kWritebackPairBytes) &&
+           !DataBytes;
+  if (Instruction->isVector())
+    return OutputBytes == kAddressMemoryPointerBytes &&
+           DataBytes == kAddressMemoryVectorBytes;
   return OutputBytes == kAddressMemoryPointerBytes &&
          DataBytes == kAddressMemoryPointerBytes &&
          (Instruction->destination() != kAddressMemoryRegisterMask ||
           (Data && !*Data));
+}
+
+inline constexpr uint8_t aarch64WritebackMemoryOutputCount(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_A64_WRITEBACK_MULTI_OUTPUT(Operation, Count)                    \
+  case Intrinsic::Operation:                                                   \
+    return Count;
+#include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"
+  default:
+    return 0;
+  }
+}
+
+/// The primary value/input shape is shared with LowIR; these typed auxiliary
+/// values become explicit SSA definitions in MedIR and HighIR.
+template <typename Outputs, typename Size>
+inline bool aarch64WritebackMemoryOutputsAreValid(Intrinsic Id,
+                                                  const Outputs &Values,
+                                                  Size size) {
+  if (Values.size() != aarch64WritebackMemoryOutputCount(Id))
+    return false;
+  return Id != Intrinsic::A64_VectorLoadWriteback ||
+         (size(Values[kWritebackValueIndex]) == kAddressMemoryVectorBytes &&
+          size(Values[kWritebackBaseIndex]) == kAddressMemoryPointerBytes);
 }
 
 } // namespace neverd

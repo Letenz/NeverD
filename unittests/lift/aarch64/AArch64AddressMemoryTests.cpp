@@ -22,6 +22,7 @@
 #include "neverd/ir/SourceStackFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/NdOpEmulator.h"
@@ -4363,5 +4364,1029 @@ TEST(AArch64WritebackMemory,
     EXPECT_EQ(std::any_of(Ops.begin(), Ops.end(),
                           lowAArch64WritebackMemoryShapeIsValid),
               Subtype == macho_loader::arm64e::kCPUSubtypeX1);
+  }
+}
+
+TEST(AArch64VectorWritebackMemory, IndependentWordsRetainSingleInstructions) {
+  struct Case {
+    uint32_t Word;
+    uint32_t Scratch;
+    unsigned Access;
+    bool Load;
+    bool Pre;
+    int Offset;
+  };
+  constexpr Case Cases[] = {
+#define VECTOR_WRITEBACK_CASE(Word, Scratch, Access, Load, Pre, Offset)        \
+  {Word, Scratch, Access, Load, Pre, Offset},
+#include "AArch64VectorWritebackMemoryFixtures.def"
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(llvm::utohexstr(Case.Word));
+    const auto Instruction = aarch64WritebackMemoryInstruction(Case.Word);
+    ASSERT_TRUE(Instruction);
+    EXPECT_EQ(Instruction->scratchWord(), Case.Scratch);
+    EXPECT_EQ(Instruction->accessBytes(), Case.Access);
+    EXPECT_EQ(Instruction->isLoad(), Case.Load);
+    EXPECT_EQ(Instruction->preIndex(), Case.Pre);
+    EXPECT_EQ(static_cast<int64_t>(Instruction->displacement()), Case.Offset);
+    for (bool Fast : {false, true}) {
+      const auto Ops = liftMemory(Case.Word, Fast);
+      const auto Memory = std::find_if(Ops.begin(), Ops.end(),
+                                       lowAArch64WritebackMemoryShapeIsValid);
+      ASSERT_NE(Memory, Ops.end());
+      EXPECT_EQ(Memory->Inputs[kWritebackWordOperand + 1].Offset, Case.Word);
+      EXPECT_FALSE(lowIntrinsicHasOnlyValueEffects(*Memory));
+      EXPECT_FALSE(std::any_of(Ops.begin(), Ops.end(), [](const LowOp &Op) {
+        return Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
+               Op.Opcode == NdOp::INT_ADD;
+      }));
+    }
+  }
+}
+
+namespace {
+#define VECTOR_WRITEBACK_VALUE(Type, Name, Value)                              \
+  inline constexpr Type Name = Value;
+#define VECTOR_WRITEBACK_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "AArch64VectorWritebackMemoryFixtures.def"
+
+struct VectorWritebackCase {
+  uint32_t Word;
+  uint32_t Scratch;
+  unsigned Access;
+  bool Load;
+  bool Pre;
+  int Offset;
+};
+constexpr VectorWritebackCase VectorWritebackCases[] = {
+#define VECTOR_WRITEBACK_CASE(Word, Scratch, Access, Load, Pre, Offset)        \
+  {Word, Scratch, Access, Load, Pre, Offset},
+#include "AArch64VectorWritebackMemoryFixtures.def"
+};
+
+MedFunc vectorWritebackFunction(const VectorWritebackCase &Case, size_t Index) {
+  MedFunc Function;
+  Function.Name = kVectorWritebackNamePrefix + llvm::utohexstr(Case.Word);
+  Function.Entry = kEntry + Index * kVectorFunctionStride;
+  Function.ReturnType = NdType::makeInt(kScalarBytes, false);
+  Function.ReturnValueEvidence = MedReturnValueEvidence::ReturnsInteger;
+  for (unsigned I = 0; I != (Case.Load ? kVectorWritebackLoadParameters
+                                       : kVectorWritebackStoreParameters);
+       ++I) {
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.TheArch = Arch::AArch64;
+    Parameter.Id = I;
+    Parameter.RegOff = a64reg::X0 + I * kScalarBytes;
+    Parameter.Size = kScalarBytes;
+    Function.Params.push_back(Parameter);
+    Function.TypedParams.push_back({{}, NdType::makeInt(kScalarBytes, false)});
+  }
+  Function.Blocks.emplace_back();
+  auto &Block = Function.Blocks.front();
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  int Next = Function.Params.size() + 1;
+  const auto Temp = [&](unsigned Bytes) {
+    MedVar Value;
+    Value.Kind = MedVar::Temp;
+    Value.TheArch = Arch::AArch64;
+    Value.Id = Next++;
+    Value.SSAVer = 1;
+    Value.Size = Bytes;
+    return Value;
+  };
+  const auto Emit = [&](NdOp Opcode, MedVar Output,
+                        std::initializer_list<MedVar> Inputs) {
+    MedOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    Op.Addr = Function.Entry;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    Block.Ops.push_back(Op);
+  };
+  const auto Value = Temp(kAddressMemoryVectorBytes);
+  const auto Updated = Temp(kScalarBytes);
+  MedVar Data;
+  if (!Case.Load) {
+    const auto Low = Temp(kAddressMemoryVectorBytes);
+    const auto High = Temp(kAddressMemoryVectorBytes);
+    const auto Shifted = Temp(kAddressMemoryVectorBytes);
+    Data = Temp(kAddressMemoryVectorBytes);
+    Emit(NdOp::INT_ZEXT, Low, {Function.Params[1]});
+    Emit(NdOp::INT_ZEXT, High, {Function.Params[2]});
+    Emit(NdOp::INT_LEFT, Shifted,
+         {High, MedVar::makeConst(kAddressMemoryPointerBits, kWordBytes)});
+    Emit(NdOp::INT_OR, Data, {Low, Shifted});
+  }
+  MedVar Primary = Updated;
+  if (Case.Load) {
+    Primary = MedVar{};
+    Primary.Id = -1;
+  }
+  Emit(NdOp::INTRINSIC, Primary,
+       {MedVar::makeConst(static_cast<uint64_t>(
+                              Case.Load ? Intrinsic::A64_VectorLoadWriteback
+                                        : Intrinsic::A64_VectorStoreWriteback),
+                          kIdBytes),
+        Function.Params.front(), MedVar::makeConst(Case.Word, kWordBytes)});
+  if (Case.Load)
+    Block.Ops.back().IntrinsicOutputs = {Value, Updated};
+  else
+    Block.Ops.back().addInput(Data);
+  const auto Bits = Case.Load ? Value : Data;
+  const auto Low = Temp(kScalarBytes);
+  const auto High = Temp(kScalarBytes);
+  const auto OutHigh = Temp(kScalarBytes);
+  Emit(NdOp::SUBBYTES, Low, {Bits, MedVar::makeConst(0, kWordBytes)});
+  Emit(NdOp::SUBBYTES, High,
+       {Bits, MedVar::makeConst(kScalarBytes, kWordBytes)});
+  Emit(NdOp::INT_ADD, OutHigh,
+       {Function.Params.back(), MedVar::makeConst(kScalarBytes, kScalarBytes)});
+  Emit(NdOp::STORE, {}, {Function.Params.back(), Low});
+  Emit(NdOp::STORE, {}, {OutHigh, High});
+  MedVar Return;
+  Return.Kind = MedVar::Reg;
+  Return.TheArch = Arch::AArch64;
+  Return.RegOff = a64reg::X0;
+  Return.Id = 0;
+  Return.SSAVer = 1;
+  Return.Size = kScalarBytes;
+  Emit(NdOp::COPY, Return, {Updated});
+  Emit(NdOp::RETURN, {}, {Return});
+  return Function;
+}
+
+void executeVectorWritebackFamilies(const BinaryImage *Image) {
+  std::vector<MedFunc> Functions;
+  std::string Declarations, Replays, Entries;
+  for (size_t I = 0; I != std::size(VectorWritebackCases); ++I) {
+    const auto &Case = VectorWritebackCases[I];
+    auto Function = vectorWritebackFunction(Case, I);
+    ASSERT_TRUE(verifyMedFunc(Function, Function.Name.c_str()));
+    Declarations += llvm::formatv(Case.Load ? kVectorWritebackLoadDeclaration
+                                            : kVectorWritebackStoreDeclaration,
+                                  Function.Name)
+                        .str();
+    const auto Native = llvm::formatv(Case.Load ? kVectorWritebackNativeLoad
+                                                : kVectorWritebackNativeStore,
+                                      I, Case.Word)
+                            .str();
+    const auto Call = llvm::formatv(Case.Load ? kVectorWritebackLoadCall
+                                              : kVectorWritebackStoreCall,
+                                    Function.Name)
+                          .str();
+    Replays +=
+        Native + llvm::formatv(kVectorWritebackNativeCase, I, Case.Offset,
+                               int(Case.Pre), Case.Access, int(Case.Load), Call)
+                     .str();
+    Entries += llvm::formatv(kVectorWritebackHarnessEntry, I).str();
+    Functions.push_back(std::move(Function));
+  }
+  const auto Harness =
+      std::string(kVectorWritebackHarnessPrelude) + Declarations + Replays +
+      llvm::formatv(kVectorWritebackHarnessTail, Entries).str();
+  llvm::LLVMContext Context;
+  auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64,
+                                      {}, Image);
+  ASSERT_TRUE(Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module));
+  optimizeMemory(*Module);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.Format = BinaryFormat::MachO;
+  Options.Image = Image;
+  std::string ArtifactDirectory;
+  if (!Image)
+    if (const char *Directory =
+            std::getenv(kVectorWritebackArtifactEnvironment)) {
+      ArtifactDirectory = Directory;
+      ::testing::Test::RecordProperty(kVectorWritebackArtifactProperty,
+                                      ArtifactDirectory);
+      ASSERT_FALSE(llvm::sys::fs::create_directories(ArtifactDirectory));
+    }
+  const auto Save = [&](llvm::StringRef Name, llvm::StringRef Data) {
+    if (ArtifactDirectory.empty())
+      return;
+    llvm::SmallString<kVectorPathStorage> Path(ArtifactDirectory);
+    llvm::sys::path::append(Path, Name);
+    std::error_code Error;
+    llvm::raw_fd_ostream Out(Path, Error);
+    ASSERT_FALSE(Error);
+    Out << Data;
+  };
+  Save(kWritebackHarnessArtifact, Harness);
+  for (bool LLVMRoute : {false, true}) {
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    if (LLVMRoute)
+      ASSERT_TRUE(LLVMCEmitter().emit(*Module, Output, Options));
+    else {
+      std::vector<HighFunc> High;
+      for (const auto &Function : Functions) {
+        auto Body = MedToHighConverter().convert(Function, Arch::AArch64);
+        for (auto &Parameter : Body.Params)
+          Parameter.Type = NdType::makeInt(kScalarBytes, false);
+        High.push_back(std::move(Body));
+      }
+      ASSERT_TRUE(HighCEmitter().emit(High, Output, Options));
+    }
+    Save(LLVMRoute ? kWritebackLLVMArtifact : kWritebackHighArtifact, Source);
+#if defined(__APPLE__) && defined(__aarch64__)
+    compileMemoryC(Source + Harness, true);
+#else
+    compileMemoryC(Source, false);
+#endif
+  }
+  const auto Object =
+      Codegen().compile(*Module, Arch::AArch64, BinaryFormat::MachO);
+  ASSERT_TRUE(Object.Success);
+  const llvm::MemoryBufferRef Buffer(
+      llvm::StringRef(reinterpret_cast<const char *>(Object.ObjectData.data()),
+                      Object.ObjectData.size()),
+      kObject);
+  for (const auto &Case : VectorWritebackCases)
+    inspectMemoryObject(Buffer, Case.Scratch);
+#if defined(__APPLE__) && defined(__aarch64__)
+  llvm::SmallString<kVectorPathStorage> ObjectPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile(kTempPrefix, kOutputExtension,
+                                                  ObjectPath));
+  llvm::FileRemover Remove(ObjectPath);
+  std::error_code Error;
+  llvm::raw_fd_ostream Output(ObjectPath, Error);
+  ASSERT_FALSE(Error);
+  Output.write(reinterpret_cast<const char *>(Object.ObjectData.data()),
+               Object.ObjectData.size());
+  Output.close();
+  compileMemoryC(Harness, true, {}, ObjectPath);
+#endif
+  if (!ArtifactDirectory.empty()) {
+    const auto ELF =
+        Codegen().compile(*Module, Arch::AArch64, BinaryFormat::ELF);
+    ASSERT_TRUE(ELF.Success);
+    Save(kWritebackObjectArtifact,
+         llvm::StringRef(reinterpret_cast<const char *>(ELF.ObjectData.data()),
+                         ELF.ObjectData.size()));
+  }
+}
+} // namespace
+
+TEST(AArch64VectorWritebackMemory, BothCProjectionsAndLLVMExecuteEveryFamily) {
+  executeVectorWritebackFamilies(nullptr);
+}
+
+TEST(AArch64VectorWritebackMemory,
+     EveryImmediateKeepsTheIndependentOperandDetail) {
+  for (const auto &Case : VectorWritebackCases) {
+    if (Case.Offset)
+      continue;
+    for (unsigned Immediate = kWritebackFirstOffset;
+         Immediate != kWritebackLastImmediate; ++Immediate) {
+      const auto Word = (Case.Word & ~kWritebackFixtureOffsetMask) |
+                        (Immediate << kWritebackFixtureOffsetShift);
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Arch::AArch64));
+      std::array<uint8_t, kWordBytes> Bytes;
+      writeLE<uint32_t>(Bytes.data(), Word);
+      DecodedInsn Decoded;
+      ASSERT_EQ(Decode.decodeOne(Bytes.data(), Bytes.size(), kEntry, Decoded),
+                kWordBytes);
+      ASSERT_TRUE(Decoded.Raw && Decoded.Raw->detail);
+      const auto &Detail = Decoded.Raw->detail->aarch64;
+      ASSERT_TRUE(Decoded.Raw->detail->writeback);
+      EXPECT_EQ(Detail.post_index, !Case.Pre);
+      ASSERT_GE(Detail.op_count, 2);
+      ASSERT_EQ(Detail.operands[1].type, AARCH64_OP_MEM);
+      const auto Offset = !Case.Pre && Detail.op_count >= 3 &&
+                                  Detail.operands[2].type == AARCH64_OP_IMM
+                              ? Detail.operands[2].imm
+                              : Detail.operands[1].mem.disp;
+      const auto Instruction = aarch64WritebackMemoryInstruction(Word);
+      ASSERT_TRUE(Instruction);
+      EXPECT_TRUE(Instruction->isVector());
+      EXPECT_EQ(Instruction->base(), Instruction->destination());
+      EXPECT_EQ(static_cast<int64_t>(Instruction->displacement()), Offset);
+      for (bool Fast : {false, true}) {
+        const auto Ops = liftMemory(Word, Fast);
+        const auto At = std::find_if(Ops.begin(), Ops.end(),
+                                     lowAArch64WritebackMemoryShapeIsValid);
+        ASSERT_NE(At, Ops.end());
+        auto Function = lowFunction(*At);
+        auto &Block = Function.Blocks.front();
+        Block.Ops = Ops;
+        Block.InstructionBoundaries.front().OpCount = Ops.size();
+        auto Error = validateLowInstructionBoundaries(Function);
+        EXPECT_FALSE(bool(Error));
+        llvm::consumeError(std::move(Error));
+      }
+    }
+  }
+}
+
+TEST(AArch64VectorWritebackMemory, ImageContextKeepsTheCompleteRuntimeResults) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::MachO;
+  Segment Data;
+  Data.VA = kStorageBase;
+  Data.Size = Data.FileSz = kVectorWritebackStorageBytes;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  Image.Segments.push_back(std::move(Data));
+  executeVectorWritebackFamilies(&Image);
+}
+
+TEST(AArch64VectorWritebackMemory, MalformedTuplesFailBeforeBodyFiltering) {
+  for (bool Load : {false, true}) {
+    const auto At = std::find_if(std::begin(VectorWritebackCases),
+                                 std::end(VectorWritebackCases),
+                                 [&](const auto &C) { return C.Load == Load; });
+    ASSERT_NE(At, std::end(VectorWritebackCases));
+    const auto Function = vectorWritebackFunction(*At, 0);
+    const auto &Ops = Function.Blocks.front().Ops;
+    const auto Memory = std::find_if(Ops.begin(), Ops.end(),
+                                     aarch64WritebackMemoryMedShapeIsValid);
+    ASSERT_NE(Memory, Ops.end());
+    const auto Index = Memory - Ops.begin();
+    std::vector<std::function<void(MedOp &)>> Mutations = {
+        [](MedOp &Op) { Op.Output.Size = kAddressMemoryVectorBytes; },
+        [](MedOp &Op) {
+          Op.Inputs[kWritebackBaseOperand + 1].Size = kWordBytes;
+        },
+        [](MedOp &Op) {
+          Op.Inputs[kWritebackWordOperand + 1].Size = kScalarBytes;
+        },
+        [](MedOp &Op) { Op.Inputs[kWritebackWordOperand + 1] = Op.Inputs[1]; },
+        [](MedOp &Op) { Op.Output.TheArch = Arch::X64; },
+        [](MedOp &Op) { Op.MemoryOrdering = NdMemoryOrdering::Acquire; },
+        [](MedOp &Op) { Op.MemoryAddressSpace = NdMemoryAddressSpace::X86FS; },
+    };
+    if (Load) {
+      Mutations.push_back([](MedOp &Op) { Op.IntrinsicOutputs.pop_back(); });
+      Mutations.push_back(
+          [](MedOp &Op) { Op.IntrinsicOutputs.front().Size = kScalarBytes; });
+      Mutations.push_back([](MedOp &Op) {
+        Op.IntrinsicOutputs.back().Size = kAddressMemoryVectorBytes;
+      });
+      Mutations.push_back([](MedOp &Op) {
+        Op.IntrinsicOutputs.back() = Op.IntrinsicOutputs.front();
+      });
+      Mutations.push_back(
+          [](MedOp &Op) { Op.IntrinsicOutputs.front().Kind = MedVar::Const; });
+      Mutations.push_back(
+          [](MedOp &Op) { Op.IntrinsicOutputs.back().TheArch = Arch::X64; });
+    } else {
+      Mutations.push_back([](MedOp &Op) {
+        Op.Inputs[kWritebackDataOperand + 1].Size = kScalarBytes;
+      });
+    }
+    for (const auto &Mutate : Mutations) {
+      auto Invalid = Function;
+      auto &Bad = Invalid.Blocks.front().Ops[Index];
+      Mutate(Bad);
+      EXPECT_FALSE(aarch64WritebackMemoryMedShapeIsValid(Bad));
+      for (bool Hidden : {false, true}) {
+        llvm::LLVMContext Context;
+        const std::vector<char> Mask{0};
+        EXPECT_THROW(MedLLVMEmitter().emit(
+                         {Invalid}, Context, kName, Arch::AArch64, {}, nullptr,
+                         BinaryFormat::ELF, false, Hidden ? &Mask : nullptr),
+                     std::runtime_error);
+      }
+    }
+    const auto OriginalHigh =
+        MedToHighConverter().convert(Function, Arch::AArch64);
+    for (bool Hidden : {false, true}) {
+      auto High = OriginalHigh;
+      const auto Damage = [&](const ExprPtr &E) {
+        if (E && isAArch64WritebackMemoryIntrinsic(E->IntrinsicId))
+          E->Operands[kWritebackWordOperand] =
+              HighExpr::makeConst(At->Word, kScalarBytes);
+      };
+      walkStmts(High.Body, [&](const HighStmt &S) { forEachExpr(S, Damage); });
+      if (Hidden) {
+        HighStmt If;
+        If.Kind = StmtKind::If;
+        If.Cond = HighExpr::makeConst(0, 1);
+        If.Body = std::move(High.Body);
+        High.Body = {std::move(If)};
+      }
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                   std::invalid_argument);
+      EXPECT_TRUE(Source.empty());
+    }
+    auto Stack = Function;
+    Stack.Blocks.front().Ops[Index].Inputs[kWritebackWordOperand + 1].ConstVal =
+        (At->Word & ~kVectorWritebackBaseMask) | kVectorWritebackSPBase;
+    ASSERT_TRUE(
+        aarch64WritebackMemoryMedShapeIsValid(Stack.Blocks.front().Ops[Index]));
+    llvm::LLVMContext StackContext;
+    EXPECT_THROW(
+        MedLLVMEmitter().emit({Stack}, StackContext, kName, Arch::AArch64),
+        std::runtime_error);
+    if (Load) {
+      const auto Operations = liftMemory(At->Word, false);
+      const auto Memory = std::find_if(Operations.begin(), Operations.end(),
+                                       lowAArch64WritebackMemoryShapeIsValid);
+      ASSERT_NE(Memory, Operations.end());
+      auto Low = lowFunction(*Memory);
+      auto &Block = Low.Blocks.front();
+      for (unsigned Mutation = 0; Mutation != kVectorWritebackLowMutations;
+           ++Mutation) {
+        Block.Ops = Operations;
+        if (Mutation == 0)
+          Block.Ops.pop_back();
+        else if (Mutation == 1) {
+          auto &Output = Block.Ops[Memory - Operations.begin() + 1];
+          Output.Inputs[0].Size = kScalarBytes;
+        } else
+          Block.Ops.back().Inputs[0].Offset =
+              Block.Ops[Memory - Operations.begin() + 1].Inputs[0].Offset;
+        Block.InstructionBoundaries.front().OpCount = Block.Ops.size();
+        auto Error = validateLowInstructionBoundaries(Low);
+        EXPECT_TRUE(bool(Error));
+        llvm::consumeError(std::move(Error));
+        EXPECT_THROW(LowToMedConverter().convert(Low, Arch::AArch64),
+                     LowToMedConversionError);
+        if (Mutation == kVectorWritebackLowMutations - 1) {
+          const auto Generic = collectLowIntrinsicOutputBindings(
+              Block.Ops[Memory - Operations.begin()],
+              llvm::ArrayRef(Block.Ops).drop_front(Memory - Operations.begin() +
+                                                   1),
+              aarch64WritebackMemoryOutputCount(
+                  Intrinsic::A64_VectorLoadWriteback));
+          ASSERT_EQ(Generic.size(), 2u);
+          EXPECT_EQ(Generic.front().Offset, Generic.back().Offset);
+          EXPECT_NE(Generic.front().Size, Generic.back().Size);
+        }
+      }
+    }
+  }
+}
+
+TEST(AArch64VectorWritebackMemory,
+     TracerCommitsCompleteResultsAndRefusesMissingBindings) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Segment Data;
+  Data.VA = kEntry;
+  Data.Size = Data.FileSz = kVectorWritebackStorageBytes;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  for (size_t I = 0; I != Data.Data.size(); ++I)
+    Data.Data[I] = static_cast<uint8_t>(I * kVectorWritebackSeedMultiplier +
+                                        kVectorWritebackSeedBias);
+  Image.Segments.push_back(Data);
+  for (const auto &Case : VectorWritebackCases)
+    for (bool Strict : {false, true}) {
+      const auto Instruction = *aarch64WritebackMemoryInstruction(Case.Word);
+      const auto Ops = liftMemory(Case.Word, false);
+      const auto BaseRegister = a64reg::X0 + Instruction.base() * kScalarBytes;
+      const auto VectorRegister = a64reg::V(Instruction.destination());
+      const uint64_t Base = kEntry + kVectorWritebackBasePosition;
+      const uint64_t Access =
+          Base + static_cast<uint64_t>(Case.Pre ? Case.Offset : 0);
+      std::vector<uint8_t> Initial(kAddressMemoryVectorBytes);
+      for (unsigned I = 0; I != Initial.size(); ++I)
+        Initial[I] = kVectorWritebackVectorSeed + I;
+      NdOpEmulator Emulator(Image);
+      Emulator.setStrictMode(Strict);
+      Emulator.setRegister(BaseRegister, Base);
+      Emulator.setRegisterBytes(VectorRegister, Initial);
+      auto Expected = Data.Data;
+      std::vector<uint8_t> Value(kAddressMemoryVectorBytes, 0);
+      if (Case.Load)
+        std::copy_n(Data.Data.begin() + Access - Data.VA, Case.Access,
+                    Value.begin());
+      else {
+        Value = Initial;
+        std::copy_n(Initial.begin(), Case.Access,
+                    Expected.begin() + Access - Data.VA);
+      }
+      EXPECT_EQ(Emulator.run(Ops), Ops.size());
+      EXPECT_EQ(Emulator.getRegister(BaseRegister),
+                Base + static_cast<uint64_t>(Case.Offset));
+      EXPECT_EQ(Emulator.getRegisterBytes(VectorRegister),
+                std::optional(Value));
+      for (size_t Byte = 0; Byte != Expected.size();
+           Byte += kAddressMemoryVectorBytes) {
+        LowOp Read;
+        Read.Opcode = NdOp::LOAD;
+        Read.Output = NdVar::reg(a64reg::V0, kAddressMemoryVectorBytes);
+        Read.addInput(NdVar::scalar(Data.VA + Byte, kScalarBytes));
+        ASSERT_TRUE(Emulator.step(Read));
+        const auto Actual = Emulator.getRegisterBytes(a64reg::V0);
+        ASSERT_TRUE(Actual);
+        EXPECT_TRUE(std::equal(Actual->begin(), Actual->end(),
+                               Expected.begin() + Byte));
+      }
+      auto Short = Image;
+      auto &Storage = Short.Segments.front();
+      Storage.Size = Storage.FileSz = Access - Storage.VA + Case.Access - 1;
+      Storage.Data.resize(Storage.Size);
+      NdOpEmulator Refused(Short);
+      Refused.setStrictMode(Strict);
+      Refused.setRegister(BaseRegister, Base);
+      Refused.setRegisterBytes(VectorRegister, Initial);
+      EXPECT_EQ(Refused.run(Ops), 0u);
+      EXPECT_EQ(Refused.getRegister(BaseRegister), Base);
+      EXPECT_EQ(Refused.getRegisterBytes(VectorRegister),
+                std::optional(Initial));
+      if (Case.Load) {
+        NdOpEmulator Naked(Image);
+        Naked.setRegister(BaseRegister, Base);
+        Naked.setRegisterBytes(VectorRegister, Initial);
+        EXPECT_FALSE(Naked.step(Ops.front()));
+        EXPECT_EQ(Naked.getRegisterBytes(VectorRegister),
+                  std::optional(Initial));
+        auto Missing = Ops;
+        Missing.pop_back();
+        EXPECT_EQ(Naked.run(Missing), 0u);
+      }
+    }
+}
+
+TEST(AArch64VectorWritebackMemory, LLVMCallAdmissionPrecedesFunctionSelection) {
+  for (bool Load : {false, true}) {
+    const auto At = std::find_if(std::begin(VectorWritebackCases),
+                                 std::end(VectorWritebackCases),
+                                 [&](const auto &C) { return C.Load == Load; });
+    ASSERT_NE(At, std::end(VectorWritebackCases));
+    for (unsigned Mutation = 0; Mutation != kVectorWritebackCallMutations;
+         ++Mutation) {
+      llvm::LLVMContext Context;
+      const auto Function = vectorWritebackFunction(*At, 0);
+      auto Module =
+          MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
+      ASSERT_TRUE(Module);
+      llvm::CallInst *Owned = nullptr;
+      for (auto &Block : *Module->getFunction(Function.Name))
+        for (auto &Operation : Block)
+          if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&Operation))
+            if (validateAArch64WritebackMemoryCall(Arch::AArch64, *Call))
+              Owned = Call;
+      ASSERT_TRUE(Owned);
+      EXPECT_THROW(validateAArch64WritebackMemoryCall(Arch::X64, *Owned),
+                   std::invalid_argument);
+      const auto *Asm = llvm::cast<llvm::InlineAsm>(Owned->getCalledOperand());
+      const auto Last = Owned->arg_size() - 1;
+      const auto Word =
+          llvm::cast<llvm::ConstantInt>(Owned->getArgOperand(Last))
+              ->getZExtValue();
+      if (Mutation == 0)
+        Owned->setArgOperand(
+            Last, llvm::ConstantInt::get(Owned->getArgOperand(Last)->getType(),
+                                         Word ^ kVectorWritebackVectorBit));
+      else if (Mutation == 1)
+        Owned->setArgOperand(
+            Last, llvm::ConstantInt::get(Owned->getArgOperand(Last)->getType(),
+                                         Word ^ kVectorWritebackLoadBit));
+      else if (Mutation == 2)
+        Owned->setArgOperand(
+            Last, llvm::ConstantInt::get(Owned->getArgOperand(Last)->getType(),
+                                         (Word & ~kVectorWritebackBaseMask) |
+                                             kVectorWritebackSPBase));
+      else if (Mutation == 3)
+        Owned->setCalledOperand(llvm::InlineAsm::get(
+            Asm->getFunctionType(), Asm->getAsmString(), std::string(), true));
+      else if (Mutation == 4)
+        Owned->setCalledOperand(
+            llvm::InlineAsm::get(Asm->getFunctionType(), Asm->getAsmString(),
+                                 Asm->getConstraintString(), false));
+      else if (Mutation == 5)
+        Owned->setMemoryEffects(llvm::MemoryEffects::none());
+      else if (Mutation == 6)
+        Owned->setCallingConv(llvm::CallingConv::Fast);
+      else if (Mutation == 7)
+        Owned->addFnAttr(llvm::Attribute::Speculatable);
+      else if (Mutation == 11)
+        Owned->setDoesNotReturn();
+      else
+        Owned->setCalledOperand(llvm::InlineAsm::get(
+            Asm->getFunctionType(), Asm->getAsmString(),
+            Asm->getConstraintString(), true, Mutation == 8,
+            Mutation == 9 ? llvm::InlineAsm::AD_Intel : llvm::InlineAsm::AD_ATT,
+            Mutation == 10));
+      EXPECT_THROW(validateAArch64WritebackMemoryCall(Arch::AArch64, *Owned),
+                   std::invalid_argument);
+      auto *Other = llvm::Function::Create(
+          llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false),
+          llvm::GlobalValue::ExternalLinkage, kVectorWritebackHiddenFunction,
+          *Module);
+      auto *Entry = llvm::BasicBlock::Create(Context, {}, Other);
+      llvm::IRBuilder<> Builder(Entry);
+      Builder.CreateRetVoid();
+      for (bool Selected : {false, true}) {
+        CEmitterOptions Options;
+        Options.TheArch = Arch::AArch64;
+        std::string Source;
+        llvm::raw_string_ostream Out(Source);
+        EXPECT_THROW(LLVMCEmitter().emit(*Module, Out, Options, nullptr,
+                                         nullptr, Selected ? Other : nullptr),
+                     std::invalid_argument);
+        EXPECT_TRUE(Source.empty());
+      }
+    }
+  }
+}
+
+namespace {
+MedFunc ownedVectorWritebackFunction(const VectorWritebackCase &Case,
+                                     const BinaryImage &Image, va_t Base,
+                                     bool Follow) {
+  auto Function = vectorWritebackFunction(Case, 0);
+  std::vector<MedVar> Replacements;
+  Replacements.push_back(MedVar::makeConst(
+      Base, kScalarBytes, ConstantAddressProvenance::DataAddress));
+  if (!Case.Load) {
+    Replacements.push_back(
+        MedVar::makeConst(kVectorWritebackDataLow, kScalarBytes));
+    Replacements.push_back(
+        MedVar::makeConst(kVectorWritebackDataHigh, kScalarBytes));
+  }
+  Replacements.push_back(
+      MedVar::makeConst(Image.Segments.front().VA, kScalarBytes,
+                        ConstantAddressProvenance::DataAddress));
+  auto &Ops = Function.Blocks.front().Ops;
+  for (auto &Op : Ops)
+    for (unsigned I = 0; I < Op.NumInputs; ++I)
+      if (Op.Inputs[I].Kind == MedVar::Param)
+        Op.Inputs[I] = Replacements[Op.Inputs[I].Id];
+  Function.Params.clear();
+  Function.TypedParams.clear();
+  Function.CC = CallingConv::ARM_AAPCS;
+  const auto Updated = Ops[Ops.size() - 2].Inputs.front();
+  const auto Return = Ops[Ops.size() - 2].Output;
+  const auto FirstStore =
+      std::find_if(Ops.begin(), Ops.end(),
+                   [](const MedOp &Op) { return Op.Opcode == NdOp::STORE; });
+  const auto LastStore =
+      std::find_if(Ops.rbegin(), Ops.rend(),
+                   [](const MedOp &Op) { return Op.Opcode == NdOp::STORE; });
+  const auto Low = FirstStore->Inputs[1];
+  const auto High = LastStore->Inputs[1];
+  int Next = 0;
+  for (const auto &Op : Ops) {
+    Next = std::max(Next, Op.Output.Id + 1);
+    for (const auto &Value : Op.IntrinsicOutputs)
+      Next = std::max(Next, Value.Id + 1);
+  }
+  const auto Temp = [&] {
+    MedVar Value;
+    Value.Kind = MedVar::Temp;
+    Value.TheArch = Arch::AArch64;
+    Value.Id = Next++;
+    Value.SSAVer = 1;
+    Value.Size = kScalarBytes;
+    return Value;
+  };
+  Ops.resize(Ops.size() - 2);
+  const auto Emit = [&](NdOp Opcode, MedVar Output,
+                        std::initializer_list<MedVar> Inputs) {
+    MedOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    Op.Addr = Function.Entry;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    Ops.push_back(Op);
+  };
+  const auto Delta = Temp();
+  Emit(NdOp::INT_SUB, Delta, {Updated, Replacements.front()});
+  auto Result = Delta;
+  if (Follow) {
+    const auto Read = Temp();
+    Emit(NdOp::INTRINSIC, Read,
+         {MedVar::makeConst(static_cast<uint64_t>(Intrinsic::A64_LoadImmediate),
+                            kIdBytes),
+          Updated, MedVar::makeConst(0, kScalarBytes),
+          MedVar::makeConst(kVectorWritebackFollowLoad, kWordBytes)});
+    const auto Pair = Temp();
+    const auto WithRead = Temp();
+    Result = Temp();
+    Emit(NdOp::INT_XOR, Pair, {Low, High});
+    Emit(NdOp::INT_XOR, WithRead, {Pair, Read});
+    Emit(NdOp::INT_XOR, Result, {WithRead, Delta});
+  }
+  Emit(NdOp::COPY, Return, {Result});
+  Emit(NdOp::RETURN, {}, {Return});
+  return Function;
+}
+} // namespace
+
+TEST(AArch64VectorWritebackMemory,
+     OwnedImagesKeepBothValuesAndReturnedRuntimeBases) {
+  for (bool Load : {false, true})
+    for (bool Pre : {false, true}) {
+      const auto At =
+          std::find_if(std::begin(VectorWritebackCases),
+                       std::end(VectorWritebackCases), [&](const auto &C) {
+                         return C.Load == Load && C.Pre == Pre &&
+                                C.Access == kAddressMemoryVectorBytes &&
+                                C.Offset == kVectorWritebackOwnedOffset;
+                       });
+      ASSERT_NE(At, std::end(VectorWritebackCases));
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::MachO;
+      Segment Data;
+      Data.VA = kStorageBase;
+      Data.Size = Data.FileSz = kVectorWritebackStorageBytes;
+      Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Data.Data.resize(Data.Size);
+      for (size_t I = 0; I < Data.Data.size(); ++I)
+        Data.Data[I] = static_cast<uint8_t>(I * kVectorWritebackSeedMultiplier +
+                                            kVectorWritebackSeedBias);
+      Image.Segments.push_back(Data);
+      const auto Base = Data.VA + kVectorWritebackBasePosition;
+      const auto Function =
+          ownedVectorWritebackFunction(*At, Image, Base, true);
+      auto Expected = Data.Data;
+      const auto Access = kVectorWritebackBasePosition + (Pre ? At->Offset : 0);
+      uint64_t Low, High;
+      if (Load) {
+        Low = readLE<uint64_t>(Expected.data() + Access);
+        High = readLE<uint64_t>(Expected.data() + Access + kScalarBytes);
+      } else {
+        Low = kVectorWritebackDataLow;
+        High = kVectorWritebackDataHigh;
+        writeLE<uint64_t>(Expected.data() + Access, Low);
+        writeLE<uint64_t>(Expected.data() + Access + kScalarBytes, High);
+      }
+      const auto Result =
+          Low ^ High ^
+          readLE<uint64_t>(Expected.data() + kVectorWritebackBasePosition +
+                           At->Offset) ^
+          static_cast<uint64_t>(At->Offset);
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit({Function}, Context, kName,
+                                          Arch::AArch64, {}, &Image);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      for (bool LLVMRoute : {false, true}) {
+        const auto Source = memorySource(Function, *Module, LLVMRoute, &Image);
+#if defined(__APPLE__) && defined(__aarch64__)
+        compileMemoryC(Source + llvm::formatv(kVectorWritebackOwnedHarness,
+                                              Function.Name, Result)
+                                    .str(),
+                       true);
+#else
+        compileMemoryC(Source, false);
+#endif
+      }
+      if (Load)
+        for (bool EarlyCopy : {false, true}) {
+          auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+          ExprPtr Loaded, Follow;
+          auto At = std::find_if(
+              High.Body.begin(), High.Body.end(),
+              [&](const HighStmt &Statement) {
+                bool Defines = false;
+                forEachExpr(Statement, [&](const ExprPtr &E) {
+                  if (E &&
+                      E->IntrinsicId == Intrinsic::A64_VectorLoadWriteback) {
+                    Loaded = E;
+                    Defines = true;
+                  }
+                });
+                return Defines;
+              });
+          ASSERT_NE(At, High.Body.end());
+          walkStmts(High.Body, [&](const HighStmt &Statement) {
+            forEachExpr(Statement, [&](const ExprPtr &E) {
+              if (E && E->IntrinsicId == Intrinsic::A64_LoadImmediate)
+                Follow = E;
+            });
+          });
+          ASSERT_TRUE(Loaded && Follow);
+          if (EarlyCopy) {
+            auto Copy = Loaded->IntrinsicOutputs[kWritebackBaseIndex];
+            ++Copy.SSAVer;
+            HighStmt Assign;
+            Assign.Kind = StmtKind::Assign;
+            Assign.Dst = HighExpr::makeVar(Copy);
+            Assign.Val = HighExpr::makeVar(
+                Loaded->IntrinsicOutputs[kWritebackBaseIndex]);
+            High.Body.insert(At, std::move(Assign));
+            Follow->Operands[kAddressMemoryBaseOperand] =
+                HighExpr::makeVar(Copy);
+          } else {
+            auto Definition = std::move(*At);
+            *At = HighStmt{};
+            At->Kind = StmtKind::If;
+            At->Cond = HighExpr::makeConst(0, 1);
+            At->Body.push_back(std::move(Definition));
+          }
+          CEmitterOptions Options;
+          Options.TheArch = Arch::AArch64;
+          Options.Format = BinaryFormat::MachO;
+          Options.Image = &Image;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                       std::invalid_argument);
+          EXPECT_TRUE(Source.empty());
+        }
+      auto Unknown = Function;
+      auto &UnknownOps = Unknown.Blocks.front().Ops;
+      const auto Memory = std::find_if(UnknownOps.begin(), UnknownOps.end(),
+                                       aarch64WritebackMemoryMedShapeIsValid);
+      ASSERT_NE(Memory, UnknownOps.end());
+      Memory->Inputs[kWritebackBaseOperand + 1].Provenance =
+          ConstantAddressProvenance::Unknown;
+      llvm::LLVMContext UnknownContext;
+      EXPECT_THROW(MedLLVMEmitter().emit({Unknown}, UnknownContext, kName,
+                                         Arch::AArch64, {}, &Image),
+                   std::runtime_error);
+      if (!Load && !Pre) {
+        const auto OnePastCase =
+            std::find_if(std::begin(VectorWritebackCases),
+                         std::end(VectorWritebackCases), [&](const auto &C) {
+                           return !C.Load && !C.Pre &&
+                                  C.Access == kAddressMemoryVectorBytes &&
+                                  C.Offset == kVectorWritebackOnePastOffset;
+                         });
+        ASSERT_NE(OnePastCase, std::end(VectorWritebackCases));
+        auto OnePast = Image;
+        auto &Storage = OnePast.Segments.front();
+        Storage.Size = Storage.FileSz =
+            kVectorWritebackBasePosition + OnePastCase->Offset;
+        Storage.Data.resize(Storage.Size);
+        const auto Outgoing =
+            ownedVectorWritebackFunction(*OnePastCase, OnePast, Base, false);
+        llvm::LLVMContext OnePastContext;
+        auto OnePastModule = MedLLVMEmitter().emit(
+            {Outgoing}, OnePastContext, kName, Arch::AArch64, {}, &OnePast);
+        ASSERT_TRUE(OnePastModule);
+        for (bool LLVMRoute : {false, true}) {
+          const auto Source =
+              memorySource(Outgoing, *OnePastModule, LLVMRoute, &OnePast);
+#if defined(__APPLE__) && defined(__aarch64__)
+          compileMemoryC(Source + llvm::formatv(kVectorWritebackOwnedHarness,
+                                                Outgoing.Name,
+                                                OnePastCase->Offset)
+                                      .str(),
+                         true);
+#else
+          compileMemoryC(Source, false);
+#endif
+        }
+      }
+      auto Invalid = Image;
+      auto &Short = Invalid.Segments.front();
+      Short.Size = Short.FileSz = Access + At->Access - 1;
+      Short.Data.resize(Short.Size);
+      llvm::LLVMContext Refused;
+      EXPECT_THROW(MedLLVMEmitter().emit({Function}, Refused, kName,
+                                         Arch::AArch64, {}, &Invalid),
+                   std::runtime_error);
+    }
+}
+
+TEST(AArch64VectorWritebackMemory,
+     DecodedImagesKeepVectorAndCompletedBaseOccurrences) {
+  for (bool Store : {false, true})
+    for (bool Add : {false, true}) {
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::MachO;
+      Image.MachOCPUSubtype = macho_loader::arm64e::kCPUSubtypeX1;
+      Image.Base = Image.Entry = kEntry;
+      std::vector<uint32_t> Words{kVectorWritebackImageADRP};
+      if (Add)
+        Words.push_back(kVectorWritebackImageADD);
+      if (Store)
+        Words.push_back(kVectorWritebackImageInitialLoad);
+      Words.push_back(Store ? kVectorWritebackImageStore
+                            : kVectorWritebackImageLoad);
+      Words.push_back(kVectorWritebackImageMove);
+      Words.push_back(kVectorWritebackImageReadback);
+      Words.push_back(kVectorWritebackImageXor);
+      Words.push_back(kWritebackImageReturn);
+      Segment Text;
+      Text.VA = kEntry;
+      Text.Size = Text.FileSz = Words.size() * kWordBytes;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Text.Data.resize(Text.Size);
+      for (size_t I = 0; I != Words.size(); ++I)
+        writeLE<uint32_t>(Text.Data.data() + I * kWordBytes, Words[I]);
+      Image.Segments.push_back(std::move(Text));
+      Segment Data;
+      Data.VA = kWritebackImageData;
+      Data.Size = Data.FileSz = kVectorWritebackStorageBytes;
+      Data.Flags = Store ? SegmentFlags::Readable | SegmentFlags::Writable
+                         : SegmentFlags::Readable;
+      Data.Data.resize(Data.Size);
+      for (size_t I = 0; I != Data.Data.size(); ++I)
+        Data.Data[I] = static_cast<uint8_t>(I * kVectorWritebackSeedMultiplier +
+                                            kVectorWritebackSeedBias);
+      const auto Position = Add ? kWritebackImagePosition : 0;
+      const auto Expected = readLE<uint64_t>(Data.Data.data() + Position) ^
+                            readLE<uint64_t>(Data.Data.data() + Position +
+                                             kAddressMemoryVectorBytes);
+      Image.Segments.push_back(std::move(Data));
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Image));
+      const auto Low = CFGBuilder().build(Image, Decode, kEntry, kName);
+      LowToMedConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto Function =
+          Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+      ASSERT_TRUE(Function.Params.empty());
+      ASSERT_TRUE(verifyMedFunc(Function, kName));
+      ASSERT_EQ(std::count_if(Function.Blocks.front().Ops.begin(),
+                              Function.Blocks.front().Ops.end(),
+                              aarch64WritebackMemoryMedShapeIsValid),
+                1);
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit({Function}, Context, kName,
+                                          Arch::AArch64, {}, &Image);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      optimizeMemory(*Module);
+      for (bool LLVMRoute : {false, true}) {
+        const auto Source =
+            memorySource(Function, *Module, LLVMRoute, &Image, true);
+#if defined(__APPLE__) && defined(__aarch64__)
+        compileMemoryC(Source + llvm::formatv(kVectorWritebackOwnedHarness,
+                                              Function.Name, Expected)
+                                    .str(),
+                       true);
+#else
+        compileMemoryC(Source, false);
+#endif
+      }
+    }
+  for (uint32_t Subtype :
+       {uint32_t(llvm::MachO::CPU_SUBTYPE_ARM64_ALL),
+        macho_loader::arm64e::kCPUSubtype, macho_loader::arm64e::kCPUSubtypeX1})
+    for (uint32_t Word : {kVectorWritebackV31Load, kVectorWritebackV31Store}) {
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = BinaryFormat::MachO;
+      Image.MachOCPUSubtype = Subtype;
+      Decoder Decode;
+      ASSERT_TRUE(Decode.init(Image));
+      const auto Instruction = aarch64WritebackMemoryInstruction(Word);
+      ASSERT_TRUE(Instruction);
+      EXPECT_TRUE(Instruction->isVector());
+      EXPECT_EQ(Instruction->destination(), kAddressMemoryRegisterMask);
+      std::array<uint8_t, kWordBytes> Bytes;
+      writeLE<uint32_t>(Bytes.data(), Word);
+      DecodedInsn Decoded;
+      ASSERT_EQ(
+          Decode.decodeOneForLift(Bytes.data(), Bytes.size(), kEntry, Decoded),
+          kWordBytes);
+      std::vector<LowOp> Ops;
+      Decode.liftToLow(Decoded, Ops);
+      EXPECT_EQ(std::any_of(Ops.begin(), Ops.end(),
+                            lowAArch64WritebackMemoryShapeIsValid),
+                Subtype == macho_loader::arm64e::kCPUSubtypeX1);
+    }
+}
+
+TEST(AArch64VectorWritebackMemory,
+     DiscardedResultsRetainOriginalMemoryEffects) {
+  for (bool Load : {false, true}) {
+    const auto At = std::find_if(std::begin(VectorWritebackCases),
+                                 std::end(VectorWritebackCases),
+                                 [&](const auto &C) { return C.Load == Load; });
+    ASSERT_NE(At, std::end(VectorWritebackCases));
+    auto Function = vectorWritebackFunction(*At, 0);
+    auto &Ops = Function.Blocks.front().Ops;
+    const auto Memory = std::find_if(Ops.begin(), Ops.end(),
+                                     aarch64WritebackMemoryMedShapeIsValid);
+    ASSERT_NE(Memory, Ops.end());
+    const auto Return = Ops[Ops.size() - 2].Output;
+    Ops.resize(Memory - Ops.begin() + 1);
+    MedOp Zero;
+    Zero.Opcode = NdOp::COPY;
+    Zero.Output = Return;
+    Zero.addInput(MedVar::makeConst(0, kScalarBytes));
+    Ops.push_back(Zero);
+    MedOp End;
+    End.Opcode = NdOp::RETURN;
+    End.addInput(Return);
+    Ops.push_back(End);
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    optimizeMemory(*Module);
+    for (bool LLVMRoute : {false, true})
+      compileMemoryC(memorySource(Function, *Module, LLVMRoute, nullptr, true),
+                     false, [&](llvm::MemoryBufferRef Buffer) {
+                       inspectMemoryObject(Buffer, At->Scratch);
+                     });
   }
 }

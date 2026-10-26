@@ -119,8 +119,8 @@ inline bool lowAArch64WritebackMemoryShapeIsValid(const LowOp &Op) {
     if (!Input.isConst() && !Input.isReg() && !Input.isTemp())
       return false;
   }
-  const bool Store = static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
-                     Intrinsic::A64_StoreWriteback;
+  const bool Store = isAArch64WritebackStoreIntrinsic(
+      static_cast<Intrinsic>(Op.Inputs[0].Offset));
   return aarch64WritebackMemoryShapeIsValid(
       static_cast<Intrinsic>(Op.Inputs[0].Offset), Op.NumInputs, Op.Output.Size,
       Op.Inputs[kWritebackBaseOperand + 1].Size,

@@ -400,6 +400,8 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     Expr->MemoryAddressSpace = Op.MemoryAddressSpace;
     if (Op.Output.Size > 0)
       Expr->Type = NdType::makeInt(Op.Output.Size, false);
+    else if (IID == Intrinsic::A64_VectorLoadWriteback)
+      Expr->Type = NdType::makeVoid();
     return Expr;
   }
 
