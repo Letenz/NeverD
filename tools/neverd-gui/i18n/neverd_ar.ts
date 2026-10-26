@@ -1265,7 +1265,7 @@
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>تعيين تعليمات أو بيانات جديدة في هذا التحليل</translation>
+        <translation>تعيين تعليمات برمجية أو بيانات جديدة في هذا التحليل</translation>
     </message>
 </context>
 <context>
@@ -3274,11 +3274,15 @@ After:
     </message>
     <message>
         <source>Binary bytes:</source>
-        <translation>البيانات الثنائية:</translation>
+        <translation>البايتات الثنائية:</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>اختر ملفاً بحجم من بايت واحد إلى 64 MiB، وعنواناً بالنظام الست عشري واسماً للقسم. تحتاج الدالة إلى اسم وأذونات تنفيذ.</translation>
+        <source>Browse…</source>
+        <translation>استعراض…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>اختر ملفًا بحجم من بايت واحد إلى ‎%1، وعنوانًا ست عشريًا، واسم قسم. تحتاج الدالة إلى اسم وأذونات تنفيذ.</translation>
     </message>
     <message>
         <source>Define a function covering these bytes</source>
@@ -3290,7 +3294,7 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>عيّن ملفاً ثنائياً إلى عنوان افتراضي في الصورة الحالية. احفظ المشروع للاحتفاظ بالتعيين. يبقى الملف الثنائي الأصلي دون تغيير.</translation>
+        <translation>تعيين ملف ثنائي عند عنوان ظاهري في الصورة الحالية. احفظ المشروع للاحتفاظ به. يبقى الملف الثنائي المُدخَل دون تغيير.</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3302,19 +3306,15 @@ After:
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>اختيار البيانات الثنائية</translation>
+        <translation>تحديد البايتات الثنائية</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>تغير المشروع. افتح مربع الحوار هذا مجدداً.</translation>
+        <translation>تغيَّر المشروع. افتح مربع الحوار هذا مرة أخرى.</translation>
     </message>
     <message>
         <source>Virtual address:</source>
-        <translation>العنوان الافتراضي:</translation>
-    </message>
-    <message>
-        <source>Browse…</source>
-        <translation>استعراض…</translation>
+        <translation>العنوان الظاهري:</translation>
     </message>
 </context>
 <context>
@@ -3510,6 +3510,10 @@ After:
         <translation>أُعيد تحميل ملف الإدخال</translation>
     </message>
     <message>
+        <source>Project changes saved</source>
+        <translation>تم حفظ تغييرات المشروع</translation>
+    </message>
+    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>تم إعداد التعديل لجلسة لم تعد مفتوحة، ولم يتم تطبيقه.</translation>
     </message>
@@ -3699,10 +3703,6 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>تم حفظ الدالة المعاد كتابتها عند %1 في %2</translation>
-    </message>
-    <message>
-        <source>Project changes saved</source>
-        <translation>تم حفظ تغييرات المشروع</translation>
     </message>
 </context>
 <context>

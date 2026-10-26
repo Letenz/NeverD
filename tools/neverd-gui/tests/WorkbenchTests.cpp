@@ -8197,6 +8197,58 @@ private slots:
              QStringLiteral("none"));
   }
 
+  void pdbQuestionOnlyForNewProjects_data() {
+    QTest::addColumn<QString>("state");
+    QTest::newRow("new") << QStringLiteral("new");
+    QTest::newRow("project-folder") << QStringLiteral("folder");
+    QTest::newRow("packed-database") << QStringLiteral("database");
+    QTest::newRow("legacy-sidecar") << QStringLiteral("legacy");
+  }
+
+  void pdbQuestionOnlyForNewProjects() {
+    QFETCH(QString, state);
+    QTemporaryDir directory;
+    const auto input =
+        writeFixture(directory, QStringLiteral("symbols-missing.bin"));
+    auto path = input;
+    if (state == QLatin1String("folder")) {
+      QCOMPARE(ProjectDatabase::writeProjectFile(
+                   input, ProjectDatabase::BookmarksSuffix,
+                   QJsonDocument(QJsonArray())),
+               QString());
+    } else if (state == QLatin1String("database")) {
+      path = ProjectDatabase::pathFor(input);
+      QCOMPARE(ProjectDatabase::save(path, input, {}), QString());
+    } else if (state == QLatin1String("legacy")) {
+      QFile sidecar(input + QStringLiteral(".neverd-annotations.json"));
+      QVERIFY(sidecar.open(QIODevice::WriteOnly));
+      QCOMPARE(sidecar.write("[]"), qint64(2));
+    }
+    Workbench bench;
+    int questions = 0;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<PdbPromptDialog *>(QApplication::activeModalWidget());
+      if (dialog) {
+        ++questions;
+        dialog->reject();
+      }
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTest::qWait(OfferWaitMs);
+    const int expected = state == QLatin1String("new") ? 1 : 0;
+    QCOMPARE(questions, expected);
+    bench.session.closeFile();
+    QTRY_VERIFY(!bench.session.loaded());
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QTest::qWait(OfferWaitMs);
+    QCOMPARE(questions, expected);
+  }
+
   void unattendedRunsAskNoPdbQuestion() {
     // A run nobody answers, such as a capture, loads as discovery finds.
     QTemporaryDir directory;

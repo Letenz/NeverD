@@ -24,6 +24,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86/X86Regs.h"
@@ -497,7 +498,9 @@ void NdOpEmulator::clobberVolatileRegisters() {
   }
 }
 
-bool NdOpEmulator::step(const LowOp &Op) {
+bool NdOpEmulator::step(const LowOp &Op) { return stepImpl(Op, {}); }
+
+bool NdOpEmulator::stepImpl(const LowOp &Op, llvm::ArrayRef<LowOp> Following) {
   if (isLowRawEnvironmentRequirement(Op))
     return false;
   if (X87ContextKnown && Op.Output.isReg() &&
@@ -529,6 +532,25 @@ bool NdOpEmulator::step(const LowOp &Op) {
       if (!Updated || !Instruction.controlIndependentSpan(OriginalBase, 0))
         return false;
       const uint64_t Address = Instruction.preIndex() ? *Updated : OriginalBase;
+      if (Instruction.isVector() && Instruction.isLoad()) {
+        const auto Outputs = lowAArch64VectorWritebackOutputs(Op, Following);
+        if (!Outputs)
+          return false;
+        const auto Bytes = loadMemoryBytes(Address, Instruction.accessBytes());
+        if (!Bytes)
+          return false;
+        std::vector<uint8_t> Value(kAddressMemoryVectorBytes, 0);
+        std::copy(Bytes->begin(), Bytes->end(), Value.begin());
+        std::array<uint8_t, kAddressMemoryPointerBytes> CompletedBase;
+        writeLE<uint64_t>(CompletedBase.data(), *Updated);
+        writeOutputBytes((*Outputs)[kWritebackValueIndex], Value);
+        writeOutputBytes((*Outputs)[kWritebackBaseIndex], CompletedBase);
+        if (CollectLoads &&
+            static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
+          LoadLog.push_back(
+              {Address, static_cast<uint16_t>(Instruction.accessBytes())});
+        return true;
+      }
       std::vector<uint8_t> Result(Op.Output.Size, 0);
       if (!Instruction.isLoad()) {
         const auto &Data = Op.Inputs[kWritebackDataOperand + 1];
@@ -1031,7 +1053,7 @@ NdOpEmulator::runImpl(llvm::ArrayRef<LowOp> Ops,
       ++I;
       continue;
     }
-    if (!step(Op)) {
+    if (!stepImpl(Op, Ops.drop_front(I + 1))) {
       if (Op.Opcode == NdOp::INDIR_BR) {
         if (const LowInstructionBoundary *Boundary =
                 boundaryForOp(Ops, Boundaries, I)) {

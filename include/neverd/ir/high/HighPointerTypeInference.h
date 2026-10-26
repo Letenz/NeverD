@@ -22,8 +22,9 @@
 namespace neverd {
 using HighPointerTypeFacts = std::map<HighSourceLocalIdentity, TypeRef>;
 
-/// Infer source pointer types through full-width copies and proven
-/// private-frame stores/loads. Every definition and use of a local must agree.
+/// Infer the record pointer types of source parameters through full-width
+/// copies and proven private-frame stores/loads; no other value originates a
+/// type. Every definition and use of a local must agree.
 /// ParameterTypes, when supplied, must match the function's recovered parameter
 /// positions; the caller owns the binding to source declarations. Reused
 /// storage, unknown writes, overlap and incomplete control flow retain no

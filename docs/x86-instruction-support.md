@@ -132,7 +132,17 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
-| Remaining ADX form and undefined-output audits | ADCX/ADOX still need complete legacy-form qualification. BMI2 value operations, BEXTR, bit counts, ANDN/BLS*/BZHI and the separate TBM family have form-specific undefined-output audits. |
+
+ADCX/ADOX now have complete form-specific undefined-output audits for legacy
+x86/x64 and APX/NDD x64, alongside BMI2 values, BEXTR, bit counts, BMI logic and
+TBM. ADOX uses OF as an **unsigned carry**, and each instruction preserves the
+other chain and all unrelated flags. Their LLVM/HighC/LLVMC arithmetic
+projections passed 864 source profiles and 517,536 value/flag comparisons per
+SDK; original legacy instructions passed 637,824 comparisons on an ADX CPU,
+including ignored 66 on ADOX, cancelled REX and the last adjacent REX's width.
+APX execution is qualified through the lifted
+semantics, not physical APX hardware. This does not certify a complete opaque
+machine-state bank or close the remaining context/continuation rows above.
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
 instruction and passing LowIR/concrete tests do not establish native LLVM or C
@@ -2119,3 +2129,30 @@ profiles verify native SelectionDAG output with no inline assembly or external
 intrinsic calls. Default `llc` O0 FastISel may use equivalent ordinary shifts;
 those objects were also executed. NeverC qualification uses x86-64 targets
 with both operand widths; its existing i686 frontend remains unsupported.
+
+## Native ADX carry values
+
+The [LLVM fork](https://github.com/NeverSight/llvm-project/commit/5b7938a7dea34d00a705a44c6dad43321e11f3e9)
+now provides `llvm.x86.adcx.32/.64` and `llvm.x86.adox.32/.64`, with the fixed
+signature `{i8, iN} (i8 carry, iN a, iN b)`. Each nonzero input carry byte
+supplies one; the result contains unsigned carry and the low sum. Native
+lowering seeds CF or OF, executes the selected instruction and captures its
+carry as explicit SSA values. It requires ADX and uses neither inline assembly
+nor external helpers. The 32-bit operand forms support i386 and x86-64; the
+64-bit forms require x86-64. Simultaneous hardware chains without reseeding
+remain a code-generation optimization, not an ambient EFLAGS API.
+
+[NeverC](https://github.com/NeverSight/NeverC/commit/23013843f1f8e524aa5d8f51b6f0076e2723bd4d)
+exposes `_adcx_u32/u64`, `_adox_u32/u64` and their `__builtin_ia32_*` forms.
+The headers accept `(carry, a, b, sum_pointer)` and return the carry byte.
+`_addcarryx_u32/u64` uses the native ADCX API; `_addcarry_u32/u64` retains its
+baseline implementation without an ADX requirement. These native APIs are
+separate from NeverD's baseline arithmetic projections described above.
+
+The fork's native APIs passed 740,352 x86-64 and 65,536 i386 runtime comparisons
+at O0/O2, including every input carry byte and independent CF/OF chains.
+NeverC and standalone fork-LLVM objects passed another 1,187,840 comparisons;
+six ELF/COFF/Mach-O profiles check native instruction selection and no assembly
+or unresolved helper calls. NeverC qualification uses its supported x86-64
+target. Source availability does not update the released LLVM SDK: that release
+and NeverD's production pin remain pending the context/continuation gaps above.

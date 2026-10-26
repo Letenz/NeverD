@@ -104,6 +104,7 @@ add_neverd_component_library(NeverDLift
   X86/X86LiftCoreMove.cpp
   X86/X86LiftCoreShift.cpp
   X86/X86LiftExt.cpp
+  X86/X86LiftADX.cpp
   X86/X86LiftExtBMI.cpp
   X86/X86LiftFPU.cpp
   X86/X86LiftLegacyBCD.cpp

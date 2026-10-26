@@ -2323,9 +2323,11 @@ void MainWindow::addAnalysisSection() {
              (function->text().trimmed().isEmpty() ||
               !permissions->currentText().contains(QLatin1Char('x'))))) {
           error->setText(
-              tr("Choose a file of 1 byte to 64 MiB, a hexadecimal address "
-                 "and a section name. A function needs a name and executable "
-                 "permissions."));
+              tr("Choose a file of 1 byte to %1, a hexadecimal address and a "
+                 "section name. A function needs a name and executable "
+                 "permissions.")
+                  .arg(locale().formattedDataSize(
+                      qint64(::neverd::sdk::kMaxAnalysisSectionBytes), 0)));
           return;
         }
         QJsonObject payload{
@@ -2603,6 +2605,10 @@ void MainWindow::setAsksForDebugInfo(bool asks) {
 }
 
 void MainWindow::openNow(const QString &path, const LoadOptions &options) {
+  // A cached project restores its debug choices. Missing symbols in an old
+  // project are loaded explicitly through File -> Load file, not offered again.
+  microsoftSymbols_->setOffers(asksForDebugInfo_ &&
+                               !ProjectDatabase::hasState(path));
   // The workbench shows as the file starts to load, after any question
   // asked before the load.
   showWorkbench();

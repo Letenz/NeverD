@@ -216,9 +216,17 @@ winning when destinations alias. Shift counts are masked before LLVM shifts,
 and RORX immediates are scalar values. Their complete undefined-output audit
 has no new arbitrary bits; existing flag producers pass through unchanged.
 PDEP/PEXT retain the shared scalar intrinsic contract and native BMI2 lowering.
-The older BMI/ADX dispatcher now delegates these families and reuses the APX
-validator for ADX, removing its separate address parser. ADX legacy-form
-qualification remains separate.
+`X86LiftADX` owns ADCX/ADOX admission and their independent unsigned CF/OF
+carry chains. It admits legacy map-2 and APX/NDD forms; ADX has no REX2 or NF
+form. It checks raw bytes, all public operands and implicit flags before a
+memory access. ADOX's legacy decoder detail omits TEST_OF and destination read
+access; the architectural inputs remain explicit in LowIR. Both sources and
+carry are consumed before any destination write, including aliases. Its empty
+undefined-output audit preserves earlier arbitrary flags, while the selected
+carry flag is defined by the addition. `X86LegacyScalarPrefixes` shares 66/F3,
+segment, address-size and REX cancellation scanning with bit counts; each
+family owns instruction selection and widths. The old BMI/ADX file is a small
+dispatcher delegating to the family owners.
 
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
@@ -682,6 +690,23 @@ can feed another retained memory operation without reinterpreting them as image
 VAs. The software tracer commits only complete finite reads/writes for which the
 shared address owner proves control-independent access and writeback bits.
 
+SIMD single pre/post-index B/H/S/D/Q accesses use the same descriptor and
+original-instruction owner. A load defines two typed auxiliary SSA results:
+the complete zero-extended V register and completed X base. A store consumes
+the complete V value and returns the base. Xn/Vn numeric overlap is legal;
+V31 remains a vector register. LowIR binding collection, SSA conversion and
+finite tracing share the original result-transport query, preserving typed
+temporary identity by position and width. A SIMD LowIR adapter additionally
+requires independently stored value/base carriers. LowIR validation and finite tracing reject
+missing, shortened or duplicate bindings before publishing memory effects.
+A source use of an auxiliary base must be dominated by its defining instruction,
+including copies that carry it; skipped definitions cannot grant runtime-base
+admission. HighC and
+LLVMC retain the original instruction even when both load results are unused;
+the vector tuple remains internal and grants no native vector entry/return ABI.
+The x1-only automatic policy, exact image occurrences and complete storage
+proof also apply to these single SIMD accesses.
+
 The separate GPR writeback integer bridge passed the unmodified Arm AEM FVP
 11.32.19 at EL1 and EL0: 130 independent samples through HighC/LLVMC O0/O2 and
 LLVM ELF, with all four effective CPTA/CPTA0 settings. The eight-test export,
@@ -690,12 +715,20 @@ selected regression results (including original-owner failures) and model record
 nonoverflow model coverage; it does not qualify native Apple CPA2 hardware or
 automatically lifted whole images.
 
+The SIMD writeback integer bridge independently passed the same unmodified
+model at EL1 and EL0: 100 samples through five output routes and all four
+CPTA/CPTA0 controls, totaling 4,000 generated sample calls. The ten-test input
+report, exact source/object hashes and environment revision are pinned in
+[SIMD evidence](evidence/arm64e-vector-writeback-memory-2026-10-26.json).
+This remains a bounded Normal WB, nonoverflow explicit-IR qualification.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image
 rebasing have the bounded qualification above. GPR single pre/post-index
 writeback has separate explicit-IR, automatic-lifting and image regression
-coverage; SIMD pre/post-index, pair and other ordinary-memory families,
+coverage; SIMD single pre/post-index accesses have separate explicit-IR,
+automatic-lifting and image regressions. Pair and other ordinary-memory families,
 original-SP stack/call projection and Apple native
 execution with CPTA enabled remain unqualified. Controlled Arm model execution
 qualifies the declared explicit-IR exports separately from an automatically
@@ -937,6 +970,13 @@ history object published. The existing recovery checks validate every current
 sidecar and history against that transaction before completing it. Newer staged
 edits stay in memory and are committed afterwards. Unknown or changed journals
 continue to require reopening and foreign sidecars continue to be refused.
+
+History publication composes the recovery journal from serializer-produced JSON
+and reuses the already encoded target history. It retains the owning before/after
+states until all writes finish, constructing a full in-memory journal only after
+an interrupted write for same-session retry. This avoids a second whole-state
+tree and repeated target-history encoding on successful saves. Read comparisons,
+byte budgets, atomic write order and recovery validation remain authoritative.
 
 Find in view is a GUI text operation. Its modeless dialog captures the originating
 pane before taking keyboard focus; pseudocode/IR supplies its complete source
@@ -2126,6 +2166,14 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+`SignatureDataContext` also owns frozen source-local data relations. The producer
+proves that two canonical zero-addend operands refer to one static address within
+the same COFF object. Their shared key names the exact operand of a uniquely
+defined external function; no local variable spelling escapes its object. Only
+that independently settled ordinary function can bind the relation, after all
+matching source refinements agree. The existing single data pass checks consumers
+without changing anchors or restarting inference. The parser/cache preserve a
+separate local-data kind; `LocalDataReference` owns its canonical key syntax.
 Native `!loadcfg` metadata pairs a source configuration field's external pointer
 variable with its default function. The COFF loader owns the role/field mapping;
 `SignatureRuntimePointerContext` queries only its recorded slots after the data
@@ -8436,6 +8484,17 @@ return null only after exhausting the requested count; scan-budget exhaustion
 remains a failure. The checked entry admits the whole count against the object
 extent before pointer or deadline checks. Zero-count searches need no pointer
 access, and a first match does not require the unread suffix to be mapped.
+`memmem` reuses `strstr`'s linear prefix-table search with explicit 64-bit
+lengths and ordinary embedded NUL bytes. An empty needle returns the haystack;
+a shorter haystack returns null, both without reading either input. Otherwise
+the needle and prefix table must fit the model budget, and the haystack is
+read only through the first match or the declared count. Budget exhaustion
+is a failure rather than a guessed no-match. Both searches preserve errno
+and guest bytes and retain the common dynamic-provider lifetime boundary.
+`strcasestr` uses this same prefix table and scan with C-locale ASCII case
+folding. It retains NUL termination, first-match and empty-needle semantics;
+bytes above ASCII remain unchanged. Guest locale changes are not modeled,
+and host locale settings do not affect the search.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
@@ -12470,7 +12529,10 @@ proof follows a bounded single-predecessor chain and checks every intervening
 operation. Joins, exceptional entries and cycles retain the captured callable's
 signature and runtime value without authorizing a new slot read. Barriers,
 partial writes and uncertain aliases stop spill/reload
-proofs; exhausted work publishes no partial observation.
+proofs; exhausted work publishes no partial observation. Pre-SSA queries of one
+growing block share its versioned prefix. Win64's single-register results and
+WDK operand widths belong to its `CallArgumentConvention` entry, not to generic
+lowering or pipeline code.
 
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions

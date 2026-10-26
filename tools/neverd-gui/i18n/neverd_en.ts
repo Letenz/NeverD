@@ -3253,8 +3253,12 @@ After:
         <translation>Binary bytes:</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</translation>
+        <source>Browse…</source>
+        <translation>Browse…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</translation>
     </message>
     <message>
         <source>Define a function covering these bytes</source>
@@ -3287,10 +3291,6 @@ After:
     <message>
         <source>Virtual address:</source>
         <translation>Virtual address:</translation>
-    </message>
-    <message>
-        <source>Browse…</source>
-        <translation>Browse…</translation>
     </message>
 </context>
 <context>
@@ -3486,6 +3486,10 @@ After:
         <translation>Reloaded the input file</translation>
     </message>
     <message>
+        <source>Project changes saved</source>
+        <translation>Project changes saved</translation>
+    </message>
+    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>The edit was prepared for a session that is no longer open and was not applied.</translation>
     </message>
@@ -3671,10 +3675,6 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>Rewritten function at %1 saved to %2</translation>
-    </message>
-    <message>
-        <source>Project changes saved</source>
-        <translation>Project changes saved</translation>
     </message>
 </context>
 <context>

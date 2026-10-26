@@ -923,9 +923,17 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       auto DeclaredType = declaredParamType(Stmt.Dst->Var);
       if (!DeclaredType)
         DeclaredType = Stmt.Dst->Type;
+      // The local's declaration owns its C type: a call's pointer parameter
+      // types its assignments only as emitLocalDecls declared it.
+      const auto Declared = DeclaredCTypes.find(DestName);
+      const bool DeclaredPointer = Declared != DeclaredCTypes.end() &&
+                                   Declared->second &&
+                                   Declared->second->Kind == NdTypeKind::Ptr;
       bool PointerTypeFromCall = false;
       if (auto It = PointerArgDestTypes.find(varName(Stmt.Dst->Var));
           It != PointerArgDestTypes.end() && It->second &&
+          (!DeclaredPointer ||
+           typeToC(Declared->second) == typeToC(cDisplayType(It->second))) &&
           (!DeclaredType || DeclaredType->Kind == NdTypeKind::Int ||
            DeclaredType->Kind == NdTypeKind::Unknown ||
            (DeclaredType->Kind == NdTypeKind::Ptr &&
@@ -948,9 +956,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
       // A local declared as a pointer, such as one a typed record's pointer
       // member gives its type (FieldForwardTypes), takes every value as one.
       bool PointerFromDeclaration = false;
-      if (const auto Declared = DeclaredCTypes.find(DestName);
-          Declared != DeclaredCTypes.end() && Declared->second &&
-          Declared->second->Kind == NdTypeKind::Ptr &&
+      if (DeclaredPointer &&
           (!DeclaredType || DeclaredType->Kind != NdTypeKind::Ptr)) {
         DeclaredType = Declared->second;
         PointerFromDeclaration = true;

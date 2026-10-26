@@ -3250,11 +3250,15 @@ Después:
     </message>
     <message>
         <source>Binary bytes:</source>
-        <translation>Datos binarios:</translation>
+        <translation>Bytes binarios:</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>Seleccione un archivo de 1 byte a 64 MiB, una dirección hexadecimal y un nombre de sección. Una función requiere un nombre y permisos de ejecución.</translation>
+        <source>Browse…</source>
+        <translation>Examinar…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Elija un archivo de 1 byte a %1, una dirección hexadecimal y un nombre de sección. Una función necesita un nombre y permisos de ejecución.</translation>
     </message>
     <message>
         <source>Define a function covering these bytes</source>
@@ -3266,7 +3270,7 @@ Después:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>Mapee un archivo binario en una dirección virtual de la imagen actual. Guarde el proyecto para conservar el mapeo. El archivo binario de entrada no se modifica.</translation>
+        <translation>Mapear un archivo binario en una dirección virtual de la imagen actual. Guarde el proyecto para conservarlo. El binario de entrada no se modifica.</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3278,19 +3282,15 @@ Después:
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>Seleccionar datos binarios</translation>
+        <translation>Seleccionar bytes binarios</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>El proyecto ha cambiado. Abra de nuevo este diálogo.</translation>
+        <translation>El proyecto ha cambiado. Vuelva a abrir este cuadro de diálogo.</translation>
     </message>
     <message>
         <source>Virtual address:</source>
         <translation>Dirección virtual:</translation>
-    </message>
-    <message>
-        <source>Browse…</source>
-        <translation>Examinar…</translation>
     </message>
 </context>
 <context>
@@ -3486,6 +3486,10 @@ Después:
         <translation>Archivo de entrada recargado</translation>
     </message>
     <message>
+        <source>Project changes saved</source>
+        <translation>Cambios del proyecto guardados</translation>
+    </message>
+    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>La modificación se preparó para una sesión que ya no está abierta y no se aplicó.</translation>
     </message>
@@ -3671,10 +3675,6 @@ Después:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>Función reescrita en %1 guardada en %2</translation>
-    </message>
-    <message>
-        <source>Project changes saved</source>
-        <translation>Cambios del proyecto guardados</translation>
     </message>
 </context>
 <context>

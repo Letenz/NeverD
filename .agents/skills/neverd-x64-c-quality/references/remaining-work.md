@@ -211,6 +211,15 @@ deferred ABI recovery. Residual XMM writes and unknown vector PHIs cannot add
 an argument when the complete read summary excludes that bank. Unknown demand,
 real floating inputs and overlapping register-bank reads stay distinct; this
 does not recover genuinely observed clobbers or partially preserved lanes.
+Speculative floating arguments now share the integer call-leftover proof:
+a PHI containing only whole call clobbers supplies no argument setup. Known
+FP demand, mixed joins, partial preservation and possible return fields stay
+visible, including before a result-producing block is visited. Both C routes
+remove the phantom callback parameter in ntos `vDbgPrintExWithPrefixInternal`.
+The original `StDmpSinglePageAdd` still needs the separate byte-observation
+proof above. `KiDispatchException` also retains independent LLVMC unknown
+machine-state operations; count both unknown-value and unknown-machine-state
+markers when reporting residuals.
 Bounded call-free x64 callees now publish scalar constants agreed at every
 return, before SSA, through the shared register-effect summary. Ordinary ABI
 result registers, addresses, exceptional roots and unknown paths remain outside

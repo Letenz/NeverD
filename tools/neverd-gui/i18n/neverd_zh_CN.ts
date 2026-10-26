@@ -1261,11 +1261,11 @@
     </message>
     <message>
         <source>Add analysis section...</source>
-        <translation>添加分析节...</translation>
+        <translation>添加分析段...</translation>
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>向此分析映像中映射新的代码或数据</translation>
+        <translation>将新的代码或数据映射到此分析中</translation>
     </message>
 </context>
 <context>
@@ -3240,19 +3240,23 @@ After:
     </message>
     <message>
         <source>Add analysis section</source>
-        <translation>添加分析节</translation>
+        <translation>添加分析段</translation>
     </message>
     <message>
         <source>Binary bytes:</source>
-        <translation>二进制数据：</translation>
+        <translation>二进制字节：</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>选择大小为 1 字节至 64 MiB 的文件，填写十六进制地址和节名称。定义函数需要填写函数名并启用执行权限。</translation>
+        <source>Browse…</source>
+        <translation>浏览…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>请选择大小为 1 字节到 %1 的文件、十六进制地址和段名称。函数需要名称和可执行权限。</translation>
     </message>
     <message>
         <source>Define a function covering these bytes</source>
-        <translation>将这些字节定义为函数</translation>
+        <translation>定义覆盖这些字节的函数</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3260,7 +3264,7 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>将二进制文件映射到当前映像的虚拟地址。保存项目即可保留此映射，输入二进制文件保持不变。</translation>
+        <translation>将二进制文件映射到当前映像中的虚拟地址。保存项目即可保留它。输入的二进制文件保持不变。</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3268,23 +3272,19 @@ After:
     </message>
     <message>
         <source>Section name:</source>
-        <translation>节名称：</translation>
+        <translation>段名称：</translation>
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>选择二进制数据</translation>
+        <translation>选择二进制字节</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>项目已发生变化，请重新打开此对话框。</translation>
+        <translation>项目已更改。请重新打开此对话框。</translation>
     </message>
     <message>
         <source>Virtual address:</source>
         <translation>虚拟地址：</translation>
-    </message>
-    <message>
-        <source>Browse…</source>
-        <translation>浏览…</translation>
     </message>
 </context>
 <context>
@@ -3480,6 +3480,10 @@ After:
         <translation>已重新加载输入文件</translation>
     </message>
     <message>
+        <source>Project changes saved</source>
+        <translation>项目更改已保存</translation>
+    </message>
+    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>此编辑针对的会话已不再打开，因此未被应用。</translation>
     </message>
@@ -3664,10 +3668,6 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>%1 处的重写函数已保存至 %2</translation>
-    </message>
-    <message>
-        <source>Project changes saved</source>
-        <translation>项目更改已保存</translation>
     </message>
 </context>
 <context>

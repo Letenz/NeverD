@@ -658,15 +658,31 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     ParameterTypes.push_back(emittedParamType(Func, I));
   const auto PointerFacts =
       inferHighPointerTypes(Func, Opts.TheArch, ParameterTypes);
+  // A type's C spelling, empty where C has none.
+  const auto Spelling = [this](const TypeRef &Type) {
+    const TypeRef Display = cDisplayType(Type);
+    return hasCSpelling(Display) ? typeToC(Display) : std::string();
+  };
   std::map<std::string, TypeRef> TransportedPointers;
+  // An assignment whose machine type is another object pointer is written
+  // as that pointer (writeStmtImpl), so its local keeps that type.
+  std::set<std::string> Retyped;
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (S.Kind != StmtKind::Assign || !S.Dst ||
         (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
       return;
     const auto Found = PointerFacts.find(highSourceLocalIdentity(S.Dst->Var));
-    if (Found != PointerFacts.end())
-      TransportedPointers[varName(S.Dst->Var)] = Found->second;
+    if (Found == PointerFacts.end())
+      return;
+    const std::string Name = varName(S.Dst->Var);
+    TransportedPointers[Name] = Found->second;
+    if (S.Dst->Type && S.Dst->Type->Kind == NdTypeKind::Ptr &&
+        !pointsToVoid(S.Dst->Type) &&
+        Spelling(S.Dst->Type) != Spelling(Found->second))
+      Retyped.insert(Name);
   });
+  for (const std::string &Name : Retyped)
+    TransportedPointers.erase(Name);
   std::map<std::string, std::string> ExplicitDeclarations;
   const auto VectorNames =
       aarch64SVEVectorLocalNames(Func, Opts.TheArch, VarFn);
@@ -912,9 +928,18 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
   }
 
   for (auto &[Name, Ty] : UsedVars) {
+    // A call's pointer parameter types the local's assignments and the
+    // arguments it passes (PointerArgDestTypes): a transported source type
+    // declares it only where C spells the two alike.
     if (const auto Found = TransportedPointers.find(Name);
-        Found != TransportedPointers.end())
-      Ty = Found->second;
+        Found != TransportedPointers.end()) {
+      const std::string Transported = Spelling(Found->second);
+      const auto Argument = PointerArgDestTypes.find(Name);
+      if (!Transported.empty() &&
+          (Argument == PointerArgDestTypes.end() || !Argument->second ||
+           Spelling(Argument->second) == Transported))
+        Ty = Found->second;
+    }
     if (auto It = CallResultTypes.find(Name);
         It != CallResultTypes.end() && It->second)
       Ty = It->second;
@@ -2800,9 +2825,15 @@ void HighCWriter::collectTypedPointerArgDests(const HighFunc &Func) {
   PointerArgDestTypes.clear();
   std::map<std::string, TypeRef> UsedAsPtr;
   std::set<std::string> Conflict;
+  // A fixed prototype types the local any call goes through; only a
+  // statement's own call types the locals it passes as arguments.
   std::vector<const HighExpr *> Calls;
-  HighExprSet Seen;
+  HighExprSet Seen, StatementCalls;
   walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Call && S.CallExpr)
+      StatementCalls.insert(S.CallExpr.get());
+    else if (S.Val && S.Val->Kind == ExprKind::Call)
+      StatementCalls.insert(S.Val.get());
     forEachRhsExpr(S, [&](const ExprPtr &Root) {
       std::vector<ExprPtr> Pending{Root};
       while (!Pending.empty()) {
@@ -2857,6 +2888,8 @@ void HighCWriter::collectTypedPointerArgDests(const HighFunc &Func) {
         }
       }
     }
+    if (!StatementCalls.count(Call))
+      continue;
     const size_t Limit = debugCallArgLimit(*Call);
     for (size_t I = 0; I < Call->Operands.size() && I < Limit; ++I) {
       const HighExpr *Op = unwrapIntegerView(Call->Operands[I].get());

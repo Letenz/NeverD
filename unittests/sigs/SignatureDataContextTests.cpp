@@ -93,6 +93,66 @@ TEST(SignatureDataContext, CompleteIndependentAnchorSupportsCandidateOnly) {
   EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
 }
 
+TEST(SignatureDataContext, LocalDataUsesTheExactIndependentAnchorOperand) {
+  const std::string Relation = "00000013:anchor";
+  SignatureDB DB;
+  add(DB, root() + root("anchor", true, " %0013 " + Relation) +
+              getter("getter", "%0003 " + Relation) +
+              getter("rival", "%0003 00000013:another_anchor"));
+  DB.apply(image(), {0x1000, 0x1100});
+  EXPECT_EQ(DB.buildCandidateNameMap().at(0x1100), "getter");
+  EXPECT_TRUE(DB.buildNameMap().empty());
+  auto Changed = image();
+  displacement(Changed, 0x1103, 0x1107, 0x2030);
+  DB.apply(Changed, {0x1000, 0x1100});
+  EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+}
+
+TEST(SignatureDataContext, LocalScopeCannotBeForgedByAnotherNameSiteOrKind) {
+  for (const auto &Ref : {" %0013 00000013:another_anchor",
+                          " %0013 00000003:anchor", " &0013 00000013:anchor"}) {
+    SignatureDB DB;
+    add(DB, root() + root("anchor", true, Ref) +
+                getter("getter", "%0003 00000013:anchor"));
+    DB.apply(image(), {0x1000, 0x1100});
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100)) << Ref;
+  }
+  SignatureDB DB;
+  add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +
+              getter("getter", "&0003 00000013:anchor"));
+  DB.apply(image(), {0x1000, 0x1100});
+  EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+}
+
+TEST(SignatureDataContext, LocalRelationsRetainAllVariantAndParentConstraints) {
+  for (const auto &Other : {"", " %0013 00000013:other",
+                            " %0013 00000013:anchor %0013 00000014:anchor"}) {
+    SignatureDB DB;
+    add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +
+                root("anchor", true, Other) +
+                getter("getter", "%0003 00000013:anchor"));
+    DB.apply(image(), {0x1000, 0x1100});
+    EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+  }
+  SignatureDB DB;
+  add(DB, root("anchor", true, " %0013 00000013:anchor") +
+              getter("getter", "%0003 00000013:anchor"));
+  DB.apply(image(), {0x1000, 0x1100});
+  EXPECT_TRUE(DB.buildCandidateNameMap().empty());
+}
+
+TEST(SignatureDataContext, TwoLocationsForOneLocalAnchorRemainAmbiguous) {
+  SignatureDB DB;
+  add(DB, root() + root("anchor", true, " %0013 00000013:anchor") +
+              getter("getter", "%0003 00000013:anchor"));
+  auto Img = image();
+  std::copy_n(Img.Segments.front().Data.begin(), 24,
+              Img.Segments.front().Data.begin() + 0x200);
+  displacement(Img, 0x1213, 0x1217, 0x2030);
+  DB.apply(Img, {0x1000, 0x1100, 0x1200});
+  EXPECT_FALSE(DB.buildCandidateNameMap().contains(0x1100));
+}
+
 TEST(SignatureDataContext, WeakPartialAmbiguousAndRequiredRootsDoNotBind) {
   for (const auto &Anchor :
        {"90 00 0000 0018 :0000 anchor\n",

@@ -103,12 +103,29 @@ def exercise_worker(executable, directory, arm64):
                         "address": hex(added + 0x1000), "permissions": "rw", "path": str(data_file)}
         ok(client, "analysis_section_add", data_section)
         ok(client, "analysis_section_remove", {"name": ".added_data"})
+        if not arm64:
+            # A chosen debug file reads the input again: the additions stay in
+            # the image it reads, beside the names the file gives.
+            chosen = directory / "chosen-names.map"
+            chosen.write_text("VMA LMA Size Align Out In Symbol\n"
+                              "00400078 00400078 00000006 1 .text\n"
+                              "00400078 00400078 00000006 1 kept_function\n", encoding="utf-8")
+            ok(client, "map_load", {"path": str(chosen), "mode": "unchecked"})
+            for name, address in (("kept_function", entry), ("recovered_first", added)):
+                assert ok(client, "resolve", {"query": name})["payload"]["function_address"] == hex(address)
+            assert ok(client, "bytes", {"address": hex(added), "size": len(code)})["payload"]["data"] == code.hex()
         ok(client, "save")
         ok(client, "analysis_section_add", data_section)
         identity = ok(client, "metadata")["project_id"]
         reloaded = ok(client, "reload")
         assert reloaded["project_id"] == identity and not reloaded["payload"]["dirty"]
         assert [r["name"] for r in ok(client, "analysis_sections")["payload"]["sections"]] == [".recovered"]
+        if not arm64:
+            # The reload opens the input with the debug file chosen for it,
+            # which loads over the saved sections again.
+            assert ok(client, "metadata")["payload"]["map"]["mode"] == "unchecked"
+            for name, address in (("kept_function", entry), ("recovered_first", added)):
+                assert ok(client, "resolve", {"query": name})["payload"]["function_address"] == hex(address)
         assert binary.read_bytes() == original
     sidecar = Path(str(binary) + ".neverd/analysis-sections.json")
     saved = json.loads(sidecar.read_text(encoding="utf-8"))
@@ -128,6 +145,18 @@ def exercise_worker(executable, directory, arm64):
         assert ok(client, "bytes", {"address": hex(added), "size": 1})["payload"]["data"] == ""
         ok(client, "save")
         assert not json.loads(sidecar.read_text(encoding="utf-8"))["sections"]
+        # Project files that change outside this worker replace its comments,
+        # not an unsaved section edit: the project still needs a save.
+        ok(client, "rename", {"address": hex(entry), "name": "renamed_here"})
+        ok(client, "save")
+        renames = Path(str(binary) + ".neverd/renames.json")
+        ok(client, "analysis_section_add", payload)
+        renames.write_text(renames.read_text(encoding="utf-8").replace(
+            "renamed_here", "renamed_elsewhere"), encoding="utf-8")
+        synced = ok(client, "project_sync")["payload"]
+        assert synced["tables"] and synced["dirty"], synced
+        ok(client, "analysis_section_remove", {"name": ".recovered"})
+        ok(client, "save")
         # A foreign section sidecar cannot replace the current active project.
         other = directory / ("bad_arm64.elf" if arm64 else "bad_x64.elf")
         other.write_bytes(original)
@@ -149,7 +178,13 @@ def exercise_capi(library, directory):
         ("neverd_free_string", [ptr], None), ("neverd_last_error", [ptr], ptr),
         ("neverd_analysis_section_add", [ptr, cstr, ptr, size], integer),
         ("neverd_analysis_section_remove", [ptr, cstr], integer),
-        ("neverd_analysis_sections_json", [ptr, integer], ptr)]:
+        ("neverd_analysis_sections_json", [ptr, integer], ptr),
+        ("neverd_session_load_map", [ptr, cstr, integer], integer),
+        ("neverd_session_debug_info_kind", [ptr], ptr),
+        ("neverd_func_find_by_name", [ptr, cstr], integer),
+        ("neverd_search_page", [ptr, cstr], ptr),
+        ("neverd_lift_to_obj", [ptr, cstr, integer, integer], integer),
+        ("neverd_roundtrip_obj", [ptr, ctypes.POINTER(ctypes.c_ulonglong)], ptr)]:
         function = getattr(lib, name)
         function.argtypes, function.restype = args, result
     lib.neverd_analysis_sections_import_json.argtypes = [ptr, cstr]
@@ -211,6 +246,52 @@ def exercise_capi(library, directory):
         other.write_bytes(original)
         foreign_source = text(lib.neverd_decompile_all, str(other).encode(), 0, 0, 0)
         assert "recovered_first" not in foreign_source, foreign_source
+
+        # A debug file chosen later reads the input again: the additions join
+        # the image it reads, or a file they cannot join is refused whole.
+        names = "VMA LMA Size Align Out In Symbol\n00400078 00400078 00000006 1 .text\n"
+        chosen = directory / "chosen.map"
+        chosen.write_text(names + "00400078 00400078 00000006 1 kept_function\n", encoding="utf-8")
+        assert lib.neverd_session_load_map(session, str(chosen).encode(), 1) == 1, text(lib.neverd_last_error)
+        assert text(lib.neverd_session_debug_info_kind) == "map"
+        for function in (b"kept_function", b"recovered_first", b"recovered_second"):
+            assert lib.neverd_func_find_by_name(session, function) >= 0, function
+        assert json.loads(text(lib.neverd_analysis_sections_json, 1)) == before
+        clash = directory / "clash.map"
+        clash.write_text(names + "00400078 00400078 00000006 1 recovered_first\n", encoding="utf-8")
+        assert lib.neverd_session_load_map(session, str(clash).encode(), 1) == 0
+        assert ".recovered" in text(lib.neverd_last_error)
+        assert lib.neverd_func_find_by_name(session, b"kept_function") >= 0
+        assert json.loads(text(lib.neverd_analysis_sections_json, 1)) == before
+
+        # The object a round trip lends outlives section edits, which never
+        # change the input file it was built from.
+        assert lib.neverd_lift_to_obj(session, str(binary).encode(), 0, 0) == 0, text(lib.neverd_last_error)
+        length = ctypes.c_ulonglong()
+        lent = lib.neverd_roundtrip_obj(session, ctypes.byref(length))
+        assert lent and length.value
+        built = ctypes.string_at(lent, length.value)
+
+        # Immediate search indexes an added executable section, even one that
+        # declares no function, and forgets a removed one.
+        def immediates(value):
+            request = json.dumps({"kind": "immediate", "pattern": hex(value), "limit": 16}).encode()
+            for _ in range(64):
+                page = json.loads(text(lib.neverd_search_page, request))
+                if not page["building"]:
+                    return [item["addr"] for item in page["items"]]
+            raise AssertionError("the immediate index did not finish")
+
+        assert immediates(0x1234) == []
+        probe = {"schema": payload["schema"], "name": ".probe", "address": "0x700000", "permissions": "rx"}
+        assert add(probe, b"\xb8\x34\x12\x00\x00\xc3") == 1, text(lib.neverd_last_error)
+        assert immediates(0x1234) == ["0x700000"]
+        assert lib.neverd_analysis_section_remove(session, b".probe") == 1
+        assert immediates(0x1234) == []
+
+        again = ctypes.c_ulonglong()
+        assert lib.neverd_roundtrip_obj(session, ctypes.byref(again)) == lent
+        assert again.value == length.value and ctypes.string_at(lent, length.value) == built
         assert binary.read_bytes() == original
     finally:
         lib.neverd_session_destroy(session)

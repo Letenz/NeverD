@@ -17,6 +17,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -152,6 +153,73 @@ TEST(MedCachedCallTarget, ExhaustionPublishesNoPartialTarget) {
   size_t Budget = 10000;
   ASSERT_TRUE(resolvePreSSAMedCallTarget(B, value(5), Arch::X64, &Budget));
   EXPECT_LT(Budget, 10000u);
+}
+
+TEST(MedCachedCallTarget, IncrementalQueriesMatchWholePrefixProofs) {
+  // A second captured callable follows the first call. The call retires the
+  // registers and ends the earlier frame cell's chain; a new store starts one.
+  const auto SP = reg(1, x86reg::RSP);
+  auto Full = cached();
+  Full.Ops.push_back(op(NdOp::INDIR_CALL, reg(6, x86reg::RAX), {value(5)}));
+  Full.Ops.push_back(
+      op(NdOp::INT_SUB, value(7), {SP, MedVar::makeConst(32, 8)}));
+  Full.Ops.push_back(
+      op(NdOp::STORE, {}, {value(7), MedVar::makeConst(0x1000, 8)}));
+  Full.Ops.push_back(op(NdOp::LOAD, value(8), {value(7)}));
+  Full.Ops.push_back(op(NdOp::LOAD, value(9), {value(4)}));
+  PreSSAMedCallTargets Incremental(Arch::X64);
+  size_t Work = 100000;
+  MedBlock Growing;
+  for (const auto &Op : Full.Ops) {
+    Growing.Ops.push_back(Op);
+    for (int Id : {5, 8, 9}) {
+      const auto Whole =
+          resolvePreSSAMedCallTarget(Growing, value(Id), Arch::X64);
+      const auto Shared = Incremental.resolve(Growing, value(Id), &Work);
+      ASSERT_EQ(Whole.has_value(), Shared.has_value())
+          << Growing.Ops.size() << " " << Id;
+      if (Whole) {
+        EXPECT_EQ(Whole->Address, Shared->Address);
+        EXPECT_EQ(Whole->ThroughSlot, Shared->ThroughSlot);
+      }
+    }
+  }
+  EXPECT_FALSE(resolvePreSSAMedCallTarget(Growing, value(9), Arch::X64));
+  const auto Second = resolvePreSSAMedCallTarget(Growing, value(8), Arch::X64);
+  ASSERT_TRUE(Second);
+  EXPECT_EQ(Second->Address, 0x1000u);
+  EXPECT_FALSE(Second->ThroughSlot);
+  // The incremental proof versions each operation once, where whole-prefix
+  // queries version the prefix again for every call.
+  size_t WholeWork = 100000;
+  MedBlock Prefix;
+  for (const auto &Op : Full.Ops) {
+    Prefix.Ops.push_back(Op);
+    for (int Id : {5, 8, 9})
+      resolvePreSSAMedCallTarget(Prefix, value(Id), Arch::X64, &WholeWork);
+  }
+  EXPECT_GT(Work, WholeWork);
+}
+
+TEST(MedCachedCallTarget, Win64ConventionOwnsWdkOperandsAndSingleResults) {
+  const auto *Win64 = callArgumentConvention(Arch::X64, BinaryFormat::COFF);
+  const auto *SysV = callArgumentConvention(Arch::X64, BinaryFormat::ELF);
+  ASSERT_TRUE(Win64 && SysV && Win64->PrototypeIntegerArguments);
+  EXPECT_TRUE(Win64->SingleRegisterReturns);
+  EXPECT_FALSE(SysV->SingleRegisterReturns);
+  EXPECT_FALSE(SysV->PrototypeIntegerArguments);
+  const auto Arguments = Win64->PrototypeIntegerArguments("IoCreateDevice");
+  ASSERT_TRUE(Arguments);
+  ASSERT_EQ(Arguments->Parameters.size(), 7u);
+  for (size_t I = 0; I < 7; ++I)
+    EXPECT_EQ(Arguments->Parameters[I].Kind,
+              I < 4 ? SourceABICarrierKind::IntegerRegister
+                    : SourceABICarrierKind::Stack)
+        << I;
+  EXPECT_EQ(Arguments->Parameters[4].Bytes, 4u);
+  EXPECT_EQ(Arguments->Parameters[5].Bytes, 1u);
+  EXPECT_EQ(Arguments->Parameters[6].Bytes, 8u);
+  EXPECT_FALSE(Win64->PrototypeIntegerArguments("NotAKernelRoutine"));
 }
 
 TEST(MedCachedCallTarget, RetainsTheOriginalMutableImportObservation) {

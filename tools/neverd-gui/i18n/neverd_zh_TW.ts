@@ -1265,7 +1265,7 @@
     </message>
     <message>
         <source>Map new code or data into this analysis</source>
-        <translation>將新的程式碼或資料映射至此分析映像</translation>
+        <translation>將新的程式碼或資料對應到此分析中</translation>
     </message>
 </context>
 <context>
@@ -3244,15 +3244,19 @@ After:
     </message>
     <message>
         <source>Binary bytes:</source>
-        <translation>二進位資料：</translation>
+        <translation>二進位位元組：</translation>
     </message>
     <message>
-        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
-        <translation>選擇大小為 1 位元組至 64 MiB 的檔案，填寫十六進位位址及區段名稱。定義函式需要填寫函式名稱並啟用執行權限。</translation>
+        <source>Browse…</source>
+        <translation>瀏覽…</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to %1, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>請選擇大小為 1 位元組到 %1 的檔案、十六進位位址和區段名稱。函式需要名稱和可執行權限。</translation>
     </message>
     <message>
         <source>Define a function covering these bytes</source>
-        <translation>將這些位元組定義為函式</translation>
+        <translation>定義涵蓋這些位元組的函式</translation>
     </message>
     <message>
         <source>Function name:</source>
@@ -3260,7 +3264,7 @@ After:
     </message>
     <message>
         <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
-        <translation>將二進位檔案映射至目前映像的虛擬位址。儲存專案即可保留此映射，輸入二進位檔案維持不變。</translation>
+        <translation>將二進位檔案對應到目前映像中的虛擬位址。儲存專案即可保留。輸入的二進位檔案保持不變。</translation>
     </message>
     <message>
         <source>Permissions:</source>
@@ -3272,19 +3276,15 @@ After:
     </message>
     <message>
         <source>Select binary bytes</source>
-        <translation>選擇二進位資料</translation>
+        <translation>選擇二進位位元組</translation>
     </message>
     <message>
         <source>The project changed. Open this dialog again.</source>
-        <translation>專案已變更，請重新開啟此對話方塊。</translation>
+        <translation>專案已變更。請重新開啟此對話方塊。</translation>
     </message>
     <message>
         <source>Virtual address:</source>
         <translation>虛擬位址：</translation>
-    </message>
-    <message>
-        <source>Browse…</source>
-        <translation>瀏覽…</translation>
     </message>
 </context>
 <context>
@@ -3480,6 +3480,10 @@ After:
         <translation>已重新載入輸入檔案</translation>
     </message>
     <message>
+        <source>Project changes saved</source>
+        <translation>專案變更已儲存</translation>
+    </message>
+    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>此編輯所針對的工作階段已不再開啟，因此未套用。</translation>
     </message>
@@ -3664,10 +3668,6 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>%1 處的重寫函式已儲存至 %2</translation>
-    </message>
-    <message>
-        <source>Project changes saved</source>
-        <translation>專案變更已儲存</translation>
     </message>
 </context>
 <context>

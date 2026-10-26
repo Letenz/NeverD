@@ -3513,14 +3513,16 @@ struct ImportPrototypeArguments {
 /// when every argument has a register. The arguments past the registers are on
 /// the stack, which only a convention that summarizes stack arguments (\p
 /// StackArguments) counts; elsewhere such a routine is not listed.  Without
-/// \p RegisterArguments an import takes every argument on the stack.
+/// \p RegisterArguments an import takes every argument on the stack.  A call
+/// to one of \p DispatchThunks, where given, calls its target register.
 ImportPrototypeArguments importPrototypeArguments(
     const BinaryImage &Img, const std::vector<LowFunc> &Funcs,
     const LocalRegisterEffectRefs &Effects, bool StackArguments,
     const DebugContext *Dbg, bool RegisterArguments = true,
     const std::map<va_t, PointerVariableCallee> *PointerCallees = nullptr,
     const std::vector<va_t> *ExportStarts = nullptr,
-    const std::vector<va_t> *AlsoClassify = nullptr) {
+    const std::vector<va_t> *AlsoClassify = nullptr,
+    const std::set<va_t> *DispatchThunks = nullptr) {
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const llvm::ArrayRef<uint64_t> Registers =
       RegisterArguments
@@ -3796,23 +3798,12 @@ ImportPrototypeArguments importPrototypeArguments(
             if (Function->PrototypeLibrary == UserPrototypeLibrary)
               Result.UserDeclared.insert(Addr);
           }
-      // The existing WDK registry also authenticates each stack operand's
-      // width. Publish those uses before SSA, using the same placement owner
-      // as a parsed declaration. Counts alone lose them when recovery moves
-      // RSP between a private spill and the actual call's outgoing area.
-      if (Img.Arch == Arch::X64 && Img.abiFormat() == BinaryFormat::COFF &&
+      // So are those a platform registry authenticates, each with its width
+      // (the convention's PrototypeIntegerArguments).
+      if (Convention && Convention->PrototypeIntegerArguments &&
           !Result.IntegerArguments.count(Addr))
-        if (const auto *Prototype = libc::windowsKernelPrototype(Name)) {
-          std::vector<TypeRef> Parameters;
-          for (unsigned I = 0; I < Prototype->ArgCount; ++I)
-            Parameters.push_back(
-                NdType::makeInt(Prototype->ArgWidths[I], false));
-          // This adapter publishes arguments only, never a result type.
-          if (auto Integer = fixedIntegerCallArguments(
-                  Img.Arch, Img.abiFormat(), NdType::makeInt(8, false),
-                  Parameters))
-            Result.IntegerArguments.emplace(Addr, std::move(*Integer));
-        }
+        if (auto Integer = Convention->PrototypeIntegerArguments(Name))
+          Result.IntegerArguments.emplace(Addr, std::move(*Integer));
       Routine = UserArguments(Name);
       UserDeclared = Routine.has_value();
       PrototypeOwnsArguments = Routine.has_value();
@@ -3940,14 +3931,9 @@ ImportPrototypeArguments importPrototypeArguments(
         Result.UserDeclared.insert(Addr);
     }
   };
-  // An import's declaration belongs to the image, independently of whether
-  // the caller loads its IAT word directly or caches that value in its frame.
-  // Late target discovery must find the same pre-SSA argument contract.
-  for (const auto &Import : Img.Imports)
-    if (Import.IATAddr)
-      Classify(Import.IATAddr);
-  for (const auto &[Slot, Name] : Img.ImportPtrSlots)
-    Classify(Slot);
+  // Whether a call's target is a value the caller computed: an indirect call
+  // through one, or a dispatcher call, which MedIR gives its target register.
+  bool ComputedTargets = false;
   for (const LowFunc &F : Funcs)
     for (const LowBlock &Block : F.Blocks)
       for (size_t I = 0; I < Block.Ops.size(); ++I) {
@@ -3955,15 +3941,32 @@ ImportPrototypeArguments importPrototypeArguments(
         if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
             Op.NumInputs == 0)
           continue;
-        if (Op.Inputs[0].isConst())
+        if (Op.Inputs[0].isConst()) {
           Classify(Op.Inputs[0].Offset);
+          ComputedTargets |=
+              DispatchThunks && DispatchThunks->count(Op.Inputs[0].Offset);
+          continue;
+        }
+        ComputedTargets |= Op.Opcode == NdOp::INDIR_CALL;
         // A register loaded from the slot names the import as the slot does
         // (LowToMed's RegisterCallSlot).
-        else if (Op.Opcode == NdOp::INDIR_CALL && Op.Inputs[0].isReg())
+        if (Op.Opcode == NdOp::INDIR_CALL && Op.Inputs[0].isReg())
           if (const std::optional<va_t> Slot =
                   loadedCallSlot(F, Block, I, Op.Inputs[0]))
             Classify(*Slot);
       }
+  // An import's declaration belongs to the image, independently of whether
+  // the caller loads its IAT word directly or caches that value in its frame.
+  // Late target discovery (MedCallTarget.h) must find the same pre-SSA
+  // argument contract for any slot such a computed target was loaded from.
+  // Without one, no call can observe the imports nothing above names.
+  if (ComputedTargets) {
+    for (const auto &Import : Img.Imports)
+      if (Import.IATAddr)
+        Classify(Import.IATAddr);
+    for (const auto &[Slot, Name] : Img.ImportPtrSlots)
+      Classify(Slot);
+  }
   // Addresses no call above names, classified as a call to them would be.
   if (AlsoClassify)
     for (const va_t Addr : *AlsoClassify)
@@ -4086,30 +4089,34 @@ static LocalRegisterEffect summarizeRecoveredCallRegisters(
   // Late MedIR target recovery cannot repair a summary that already treated
   // this call as opaque. Demand analysis and cache warmup use the same proof.
   // Only this private summary view changes; lifting retains the original
-  // machine operand, especially a captured mutable import.
-  CallRegisterBody Projection;
-  Projection.Blocks.assign(Body.Blocks.begin(), Body.Blocks.end());
-  Projection.Complete = Body.Complete;
-  Projection.UnsafeIndirectBranches = Body.UnsafeIndirectBranches;
-  Projection.HasIndependentRoots = Body.HasIndependentRoots;
+  // machine operand, especially a captured mutable import.  A body with no
+  // such call is summarized in place.
+  std::optional<CallRegisterBody> Projection;
   size_t Work = limits::ir::kSourceFrameAnalysisRemaining;
   if (!Img.IsRelocatable)
-    for (auto &Block : Projection.Blocks)
+    for (size_t B = 0; B < Body.Blocks.size(); ++B)
       for (const auto &[Index, Target] :
-           resolveLowBlockCallTargets(Block, Img.Arch, &Work)) {
+           resolveLowBlockCallTargets(Body.Blocks[B], Img.Arch, &Work)) {
         if (Target.ThroughSlot ? importCalleeName(Img, Target.Address).empty()
                                : !Img.hasExecutableCodeOwnerAt(Target.Address))
           continue;
-        auto &Call = Block.Ops[Index];
+        if (!Projection) {
+          Projection.emplace();
+          Projection->Blocks.assign(Body.Blocks.begin(), Body.Blocks.end());
+          Projection->Complete = Body.Complete;
+          Projection->UnsafeIndirectBranches = Body.UnsafeIndirectBranches;
+          Projection->HasIndependentRoots = Body.HasIndependentRoots;
+        }
+        auto &Call = Projection->Blocks[B].Ops[Index];
         // This private view must also expose an import's register reads.
         // A caller forwarding RCX still owns that incoming parameter even
         // when the callable was transported through a frame slot.
         Call.Opcode = Target.ThroughSlot ? NdOp::INDIR_CALL : NdOp::CALL;
         Call.Inputs[0] = NdVar::cst(Target.Address, Call.Inputs[0].Size);
       }
-  return localRegisterEffect(Img, CallRegisterBodyView(Projection),
-                             &NoReturnTargets, &FixedCallReads,
-                             &ArgumentSources, &StackProbes);
+  return localRegisterEffect(
+      Img, Projection ? CallRegisterBodyView(*Projection) : Body,
+      &NoReturnTargets, &FixedCallReads, &ArgumentSources, &StackProbes);
 }
 
 void computeCallRegisterEffects(
@@ -4434,7 +4441,8 @@ void computeCallRegisterEffects(
       Convention && Convention->ImportArgumentsFromPrototype) {
     ImportPrototypeArguments Prototyped = importPrototypeArguments(
         Img, Result.LowFuncs, Effects, Convention->StackArgumentSummary, Dbg,
-        /*RegisterArguments=*/true, &PointerCallees, ExportStarts);
+        /*RegisterArguments=*/true, &PointerCallees, ExportStarts,
+        /*AlsoClassify=*/nullptr, &DispatchThunks);
     // An exported body joins its declared reads into the entry summary.
     // Its recovered body alone cannot later truncate those arguments.
     for (va_t Addr : Prototyped.PrototypeDeclared)
