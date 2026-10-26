@@ -1152,7 +1152,7 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
                                      Field) &&
           readLE<uint32_t>(Sec.Contents.data() + Rel.Offset) == 0;
       const auto DataField =
-          !At && Opts.EmitDataReferences &&
+          Opts.EmitDataReferences &&
                   (Opts.RequireReferences || Opts.RequireCaller ||
                    Opts.CollisionEvidence) &&
                   Machine == COFF::IMAGE_FILE_MACHINE_AMD64
@@ -1217,7 +1217,8 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       // Only a pointer symbol supplied by a COFF import can name the slot
       // of a memory-indirect call. A global function pointer is not an
       // import merely because its instruction has the same encoding.
-      if ((Machine == COFF::IMAGE_FILE_MACHINE_I386 ||
+      if (!IsData &&
+          (Machine == COFF::IMAGE_FILE_MACHINE_I386 ||
            Machine == COFF::IMAGE_FILE_MACHINE_AMD64) &&
           isX86ImportReferenceField(Sec.Contents.slice(Fn.Offset, Size), *At,
                                     Machine ==

@@ -249,6 +249,7 @@ jobs:
             scripts.tests.test_signature_supplement \
             scripts.tests.test_signature_metadata \
             scripts.tests.test_vtable_context \
+            scripts.tests.test_runtime_pointer_context \
             scripts.tests.test_generate_rich_comp_ids \
             scripts.tests.test_generate_objc_declarations \
             scripts.tests.test_generate_objc_framework_declarations \

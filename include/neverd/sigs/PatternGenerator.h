@@ -287,6 +287,17 @@ llvm::Expected<VTableEvidenceStats>
 generateVTableEvidence(const llvm::object::ObjectFile &Obj,
                        llvm::raw_ostream &OS);
 
+/// Source configuration, requested pointer definitions and actual function
+/// definitions. Missing or unsupported declarations remain explicit evidence.
+struct RuntimePointerEvidenceStats {
+  unsigned Complete = 0;
+  unsigned Incomplete = 0;
+};
+llvm::Expected<RuntimePointerEvidenceStats>
+generateRuntimePointerEvidence(const llvm::object::ObjectFile &Obj,
+                               llvm::ArrayRef<std::string> Names,
+                               llvm::raw_ostream &OS);
+
 /// Writes one .pat line per function \p Obj defines.
 ///
 /// COFF objects are read through their own symbol table: a function is a
