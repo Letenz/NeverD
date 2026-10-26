@@ -165,6 +165,14 @@ int neverd::sdk::reloadDebugInformation(Session &S, DebugInfoRequest Request,
     return 0;
   }
   applyDebugInfo(Image, Found);
+  // The analysis sections are the session's, not the file's: the image read
+  // again takes them as an edit adds them, or the session keeps its image.
+  auto Kept = withAnalysisSections(S, std::move(Image));
+  if (!Kept) {
+    S.setError(llvm::toString(Kept.takeError()));
+    return 0;
+  }
+  Image = std::move(*Kept);
   if (Unchanged && !Unchanged())
     return 0;
   if (Image.Arch != Arch::EVM && Image.Arch != Arch::SBF &&
@@ -174,6 +182,7 @@ int neverd::sdk::reloadDebugInformation(Session &S, DebugInfoRequest Request,
   }
   // Retire analysis while its old image and debug owners still exist.
   S.clearPipeline();
+  S.ImmediateIndex = {};
   S.Img = std::move(Image);
   S.ExceptionHandlersSettled = false;
   S.applyUserNoReturn();

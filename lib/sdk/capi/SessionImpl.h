@@ -917,6 +917,10 @@ struct Session {
   /// Recompute display identity from current evidence. No IR or image names
   /// are modified, and a failed/withdrawn match cannot leave a stale label.
   void refreshFunctionNames();
+  /// The same from \p Names, the names signatures give entries
+  /// (SignatureDB::buildNameMap): a list prepared apart from the session that
+  /// publishes it names its entries by that session's signatures.
+  void refreshFunctionNames(std::unordered_map<uint64_t, std::string> Names);
 
   /// Drop the kept C of every function and the kept LLVM IR views.  A change
   /// to anything the C emitters or the views' comments read beyond the
@@ -1442,12 +1446,21 @@ bool recordProjectInput(Session *S);
 /// after the image ranks as it would had the load named it: a PDB's or
 /// DWARF's names replace a MAP's, and a MAP's fill only what they leave.
 /// The session then takes the image, keeping the user's names, comments and
-/// edits, and \p Request becomes its next load's.  \p Unchanged, when given,
-/// is asked once the files are read and before the session takes them; it
-/// sets the error when it answers false.  Returns 1, or 0 with the session's
-/// error and the session as it was.
+/// edits, and \p Request becomes its next load's.  The session's analysis
+/// sections join the image read again as an edit adds them; one it cannot
+/// take keeps the session as it was.  \p Unchanged, when given, is asked once
+/// the files are read and before the session takes them; it sets the error
+/// when it answers false.  Returns 1, or 0 with the session's error and the
+/// session as it was.
 int reloadDebugInformation(Session &S, DebugInfoRequest Request,
                            llvm::function_ref<bool()> Unchanged = {});
+
+/// \p Image, the session's input read again, with the session's analysis
+/// sections added as neverd_analysis_section_add adds them, from the bytes
+/// the session's image holds; else the error naming the section \p Image
+/// cannot take.  Without sections \p Image passes through unchanged.
+llvm::Expected<BinaryImage> withAnalysisSections(const Session &S,
+                                                 BinaryImage Image);
 
 /// The files \p S read its debug information from, as
 /// neverd_session_debug_info_json() lists them.

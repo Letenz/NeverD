@@ -12525,7 +12525,10 @@ proof follows a bounded single-predecessor chain and checks every intervening
 operation. Joins, exceptional entries and cycles retain the captured callable's
 signature and runtime value without authorizing a new slot read. Barriers,
 partial writes and uncertain aliases stop spill/reload
-proofs; exhausted work publishes no partial observation.
+proofs; exhausted work publishes no partial observation. Pre-SSA queries of one
+growing block share its versioned prefix. Win64's single-register results and
+WDK operand widths belong to its `CallArgumentConvention` entry, not to generic
+lowering or pipeline code.
 
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions

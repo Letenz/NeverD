@@ -305,6 +305,8 @@ inline constexpr int kEngineExecuteImplOpenLoaderStringFieldMax = 16;
 inline constexpr int kEngineExecuteImplOpenOptionsProcessorStringFieldMax = 32;
 inline constexpr int kEngineExecuteImplOpenOptionsPlatformStringFieldMax = 16;
 inline constexpr int kEngineExecuteImplOpenOptionsFieldStringFieldMax = 32;
+inline constexpr int kEngineExecuteImplAnalysisSectionAddPathStringFieldMax =
+    32768;
 inline constexpr int kEngineExecuteImplPdbLoadPdbInspectPathPathStringFieldMax =
     32768;
 inline constexpr int kEngineExecuteImplPdbLoadPdbInspectModeModeStringFieldMax =

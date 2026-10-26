@@ -23,6 +23,7 @@
 #define NEVERD_IR_MED_MEDCALLCONVENTION_H
 
 #include "neverd/Common.h"
+#include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedIR.h"
@@ -141,6 +142,12 @@ struct CallArgumentConvention {
   /// The argument count a platform prototype gives a named function (the
   /// WDK's, for Windows kernel routines), or nullopt.
   std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
+  /// The complete integer operands such a platform prototype gives a named
+  /// function, each with the width it declares, its stack operands included;
+  /// nullopt where it gives none or no stack operand.  The operands bind
+  /// before SSA, as a parsed declaration's do (importPrototypeArguments).
+  std::optional<FixedIntegerCallArguments> (*PrototypeIntegerArguments)(
+      llvm::StringRef Name) = nullptr;
   /// No callee summary gives a call its arguments: the HighIR route
   /// recovers them, and the parameters a forwarder passes straight through,
   /// from the setup each caller writes before its calls, as the LLVM route
@@ -156,6 +163,18 @@ struct CallArgumentConvention {
   /// bank as for any other call: the call reads exactly those, in the
   /// source's order (FormattedCall).
   bool FormattedCallArguments = false;
+  /// A call returns one register value at most: a scalar in the integer or
+  /// the vector result register, a larger record through caller-owned
+  /// memory.  A volatile register read after a call is then never a second
+  /// word of its result (modelCallStructReturn).
+  bool SingleRegisterReturns = false;
+  /// Whether an indirect call to a function of \p Prototype passes and
+  /// returns each value as a call through a pointer to that C type does: the
+  /// declaration names the platform's C convention, and the convention
+  /// carries its result and each parameter as one scalar.  \p Prototype's
+  /// return and parameters are the call's carriers, with no hidden result.
+  /// Null where an indirect call keeps an unprototyped callee.
+  bool (*ScalarPrototypeCall)(const NdType &Prototype) = nullptr;
 };
 
 /// The calling convention MedIR records for code of \p A in a \p F image, or

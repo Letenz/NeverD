@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -28,13 +29,16 @@ using namespace neverd;
 
 class RecordContext : public NullDebugContext {
 public:
-  TypeRef Record = NdType::makeNamedRecord("DISPLAY_RECORD", 16);
-  explicit RecordContext(bool MissingFieldTypes = false) {
+  TypeRef Record;
+  explicit RecordContext(bool MissingFieldTypes = false,
+                         std::string Name = "DISPLAY_RECORD",
+                         uint16_t Size = 16, uint16_t Alignment = 8)
+      : Record(NdType::makeNamedRecord(std::move(Name), Size)) {
     Record->FieldDisplayNames = {"first", "second"};
     Record->FieldDisplayOffsets = {0, 8};
     Record->FieldDisplayTypes = {NdType::makeInt(8, false),
                                  NdType::makeInt(8, false)};
-    Record->FieldDisplayAlignment = 8;
+    Record->FieldDisplayAlignment = Alignment;
     if (MissingFieldTypes)
       Record->FieldDisplayTypes = {nullptr, nullptr};
   }
@@ -119,6 +123,76 @@ int main(void) { record_view(); return !layout_ok; }
   }
 }
 
+/// The C either writer gives a function that passes the frame address
+/// \p Distance bytes below its entry stack pointer to borrow_record. A
+/// nonzero \p FrameAlignment aligns the LLVM frame as MedLLVMFuncBody does.
+std::string renderView(bool LLVM, RecordContext &Debug, uint64_t Distance,
+                       uint64_t FrameAlignment = 0) {
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.EmitIncludes = false;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  if (LLVM) {
+    llvm::LLVMContext C;
+    llvm::Module M("record-view", C);
+    M.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> B(C);
+    auto *F = llvm::Function::Create(
+        llvm::FunctionType::get(B.getInt64Ty(), false),
+        llvm::GlobalValue::ExternalLinkage, "record_view", M);
+    rewrite_source::setOriginalVA(*F, 0x1000);
+    B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", F));
+    auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 152),
+                                 nullptr, "frame");
+    if (FrameAlignment)
+      Frame->setAlignment(llvm::Align(FrameAlignment));
+    auto *Base = B.CreatePtrToInt(
+        B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(72), "frame_end"),
+        B.getInt64Ty(), "rsp_init");
+    auto Opaque =
+        M.getOrInsertFunction("opaque_frame", B.getVoidTy(), B.getInt64Ty());
+    auto Borrow =
+        M.getOrInsertFunction("borrow_record", B.getVoidTy(), B.getPtrTy());
+    rewrite_source::setOriginalVA(
+        *llvm::cast<llvm::Function>(Opaque.getCallee()), 0x2000);
+    rewrite_source::setOriginalVA(
+        *llvm::cast<llvm::Function>(Borrow.getCallee()), 0x3000);
+    B.CreateCall(Opaque, {Base});
+    B.CreateCall(Borrow,
+                 {B.CreateIntToPtr(B.CreateSub(Base, B.getInt64(Distance)),
+                                   B.getPtrTy())});
+    B.CreateRet(B.getInt64(0));
+    EXPECT_TRUE(LLVMCEmitter().emit(M, OS, Options, &Debug, nullptr, F));
+  } else {
+    HighFunc F;
+    F.Name = "record_view";
+    F.Entry = 0x1000;
+    F.FrameSize = 64;
+    F.ReturnType = NdType::makeInt(8, false);
+    MedVar SP;
+    SP.Kind = MedVar::Reg;
+    SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+    SP.Size = 8;
+    SP.TheArch = Arch::X64;
+    auto Base = HighExpr::makeVar(SP, NdType::makeInt(8, false));
+    HighStmt Opaque, Borrow, Return;
+    Opaque.Kind = Borrow.Kind = StmtKind::Call;
+    Opaque.CallExpr = HighExpr::makeCall("opaque_frame", 0x2000, {Base});
+    Borrow.CallExpr = HighExpr::makeCall(
+        "borrow_record", 0x3000,
+        {HighExpr::makeBinop(NdOp::INT_SUB, Base,
+                             HighExpr::makeConst(Distance, 8))});
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeConst(0, 8);
+    F.Body = {Opaque, Borrow, Return};
+    EXPECT_TRUE(HighCEmitter().emit({F}, OS, Options, &Debug));
+  }
+  OS.flush();
+  return Text;
+}
+
 TEST(CDisplayFrameRecord, BothWritersKeepRecordAddressAndFrameOffsets) {
   for (unsigned Variant = 0; Variant != 4; ++Variant) {
     const bool LLVM = Variant & 1;
@@ -127,66 +201,27 @@ TEST(CDisplayFrameRecord, BothWritersKeepRecordAddressAndFrameOffsets) {
     RecordContext Debug(Variant & 2);
     EXPECT_TRUE(sourceAggregateMembers(Debug.Record).empty());
     EXPECT_EQ(Debug.Record->Alignment, 0u);
-    CEmitterOptions Options;
-    Options.TheArch = Arch::X64;
-    Options.Format = BinaryFormat::COFF;
-    Options.EmitIncludes = false;
-    std::string Text;
-    llvm::raw_string_ostream OS(Text);
-    if (LLVM) {
-      llvm::LLVMContext C;
-      llvm::Module M("record-view", C);
-      M.setDataLayout("e-p:64:64");
-      llvm::IRBuilder<> B(C);
-      auto *F = llvm::Function::Create(
-          llvm::FunctionType::get(B.getInt64Ty(), false),
-          llvm::GlobalValue::ExternalLinkage, "record_view", M);
-      rewrite_source::setOriginalVA(*F, 0x1000);
-      B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", F));
-      auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 152),
-                                   nullptr, "frame");
-      auto *Base = B.CreatePtrToInt(
-          B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(72), "frame_end"),
-          B.getInt64Ty(), "rsp_init");
-      auto Opaque =
-          M.getOrInsertFunction("opaque_frame", B.getVoidTy(), B.getInt64Ty());
-      auto Borrow =
-          M.getOrInsertFunction("borrow_record", B.getVoidTy(), B.getPtrTy());
-      rewrite_source::setOriginalVA(
-          *llvm::cast<llvm::Function>(Opaque.getCallee()), 0x2000);
-      rewrite_source::setOriginalVA(
-          *llvm::cast<llvm::Function>(Borrow.getCallee()), 0x3000);
-      B.CreateCall(Opaque, {Base});
-      B.CreateCall(Borrow, {B.CreateIntToPtr(B.CreateSub(Base, B.getInt64(16)),
-                                             B.getPtrTy())});
-      B.CreateRet(B.getInt64(0));
-      ASSERT_TRUE(LLVMCEmitter().emit(M, OS, Options, &Debug, nullptr, F));
-    } else {
-      HighFunc F;
-      F.Name = "record_view";
-      F.Entry = 0x1000;
-      F.FrameSize = 64;
-      F.ReturnType = NdType::makeInt(8, false);
-      MedVar SP;
-      SP.Kind = MedVar::Reg;
-      SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
-      SP.Size = 8;
-      SP.TheArch = Arch::X64;
-      auto Base = HighExpr::makeVar(SP, NdType::makeInt(8, false));
-      HighStmt Opaque, Borrow, Return;
-      Opaque.Kind = Borrow.Kind = StmtKind::Call;
-      Opaque.CallExpr = HighExpr::makeCall("opaque_frame", 0x2000, {Base});
-      Borrow.CallExpr =
-          HighExpr::makeCall("borrow_record", 0x3000,
-                             {HighExpr::makeBinop(NdOp::INT_SUB, Base,
-                                                  HighExpr::makeConst(16, 8))});
-      Return.Kind = StmtKind::Return;
-      Return.RetVal = HighExpr::makeConst(0, 8);
-      F.Body = {Opaque, Borrow, Return};
-      ASSERT_TRUE(HighCEmitter().emit({F}, OS, Options, &Debug));
-    }
+    const std::string Text = renderView(LLVM, Debug, 16);
     EXPECT_NE(Text.find("DISPLAY_RECORD var_"), std::string::npos) << Text;
     executeView(Text);
+  }
+}
+
+TEST(CDisplayFrameRecord, OveralignedRecordKeepsFrameBytes) {
+  // The frame storage is declared with the 16-byte synthetic stack alignment;
+  // C rejects that declaration around a member aligned to 32. The record's
+  // aligned bytes stay part of the frame's own storage in both writers.
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    RecordContext Debug(false, "ALIGNED_RECORD", 32, 32);
+    const std::string Text = renderView(LLVM, Debug, 40, 16);
+    EXPECT_EQ(Text.find("ALIGNED_RECORD var_"), std::string::npos) << Text;
+    source_call_execution_test::checkSyntax(
+        "#include <stdint.h>\n"
+        "typedef struct ALIGNED_RECORD { _Alignas(32) uint64_t first; "
+        "uint64_t second, third, fourth; } ALIGNED_RECORD;\n"
+        "void opaque_frame(uint64_t); void borrow_record(ALIGNED_RECORD *);\n" +
+        Text);
   }
 }
 } // namespace
