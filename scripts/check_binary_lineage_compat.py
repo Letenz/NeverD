@@ -47,6 +47,7 @@ def sample(args: argparse.Namespace) -> None:
     library_hash = digest(args.library)
     directory = os.add_dll_directory(str(args.library.parent)) if hasattr(os, "add_dll_directory") else None
     library = ctypes.CDLL(str(args.library))
+    refusals = {}
     require(hasattr(library, "neverd_lineage_edit_releases_json") == (args.role == "modern"),
             "expected a release-capable modern engine and a legacy engine without that export")
     with Lineage(host=HostAPI(library)) as graph:
@@ -66,19 +67,36 @@ def sample(args: argparse.Namespace) -> None:
             require(graph.summary()["document_schema_version"] == 2, "release edit did not upgrade document")
             require({r["id"]: hashlib.sha256(graph.report(r["id"]).encode()).hexdigest()
                      for r in reports} == sources, "release edit changed report bytes")
-            (args.output_dir / "modern-v2.ndlineage").write_text(graph.export(), encoding="utf-8")
+            released = graph.export()
+            (args.output_dir / "modern-v2.ndlineage").write_text(released, encoding="utf-8")
+            schema_only = json.loads(released)
+            del schema_only["releases"]
+            schema_only_text = json.dumps(schema_only)
+            graph.load(schema_only_text)
+            require(graph.summary()["document_schema_version"] == 2 and
+                    graph.summary()["releases"] == 0,
+                    "schema-only v2 control is not a valid empty release collection")
+            (args.output_dir / "modern-v2-schema-only.ndlineage").write_text(
+                schema_only_text, encoding="utf-8")
         else:
             graph.load((args.output_dir / "modern-v1.ndlineage").read_text(encoding="utf-8"))
             require(graph.export() == exported and graph.summary()["revision"] == summary["revision"],
                     "new v1 export changed legacy canonical persistence or identity")
-            try:
-                graph.load((args.output_dir / "modern-v2.ndlineage").read_text(encoding="utf-8"))
-            except NeverDError as error:
-                require("schema" in str(error) or "version" in str(error),
-                        "v2 refusal did not identify unsupported schema/version")
-                require(graph.export() == exported, "v2 refusal replaced the legacy graph")
-            else:
-                raise ValueError("legacy engine silently accepted v2")
+            for name in ("modern-v2", "modern-v2-schema-only"):
+                try:
+                    graph.load((args.output_dir / (name + ".ndlineage")).read_text(encoding="utf-8"))
+                except NeverDError as error:
+                    message = str(error)
+                    # Older readers can reject the new field before reaching
+                    # the version check. The field-free control must still
+                    # diagnose the unsupported version itself.
+                    require("schema" in message or "version" in message or
+                            (name == "modern-v2" and message == "unknown lineage field: releases"),
+                            "v2 refusal did not identify unsupported schema/version or release field")
+                    require(graph.export() == exported, "v2 refusal replaced the legacy graph")
+                    refusals[name] = message
+                else:
+                    raise ValueError("legacy engine silently accepted " + name)
             try:
                 graph.edit_releases({"upsert": []})
             except RuntimeError as error:
@@ -90,7 +108,8 @@ def sample(args: argparse.Namespace) -> None:
         directory.close()
     require(digest(args.library) == library_hash, "library changed during compatibility check")
     write_json(args.output_dir / (args.role + ".json"),
-               {"validated": True, "library_sha256": library_hash, "identity": identity})
+               {"validated": True, "library_sha256": library_hash, "identity": identity,
+                "v2_refusals": refusals})
 
 
 def run(args: argparse.Namespace) -> None:
@@ -114,8 +133,10 @@ def run(args: argparse.Namespace) -> None:
     write_json(args.output_dir / "result.json", {"validated": True, "inputs_sha256": inputs,
         "bindings_sha256": bindings, "v1_revision": modern["identity"]["revision"],
         "source_reports": len(modern["identity"]["reports"]),
+        "legacy_v2_refusals": legacy["v2_refusals"],
         "checks": ["v1 identity and original reports", "modern v1 export reopens in legacy engine",
-                   "legacy v2 refusal retains v1", "missing optional export retains graph operations"]})
+                   "legacy release extension and schema-only v2 refusals retain v1",
+                   "missing optional export retains graph operations"]})
 
 
 def main() -> None:
