@@ -71,6 +71,79 @@ TEST_F(MedLLVMDeadSlots, PreservesLiveReturnValue) {
   EXPECT_EQ(slots(), 2u);
 }
 
+TEST_F(MedLLVMDeadSlots, DiscardsAnUnobservedEntryIdentityCopy) {
+  auto *Slot = Builder.CreateAlloca(Builder.getInt32Ty());
+  auto *Initial = neverd::llvm_source_unknown::createEntrySeed(
+      Builder, Builder.getInt32Ty());
+  llvm::WeakTrackingVH InitialHandle(Initial);
+  Builder.CreateStore(Initial, Slot);
+  auto *Body = llvm::BasicBlock::Create(Context, "body", Function);
+  Builder.CreateBr(Body);
+  Builder.SetInsertPoint(Body);
+  Builder.CreateStore(Builder.CreateLoad(Builder.getInt32Ty(), Slot), Slot);
+  Builder.CreateRet(Builder.getInt32(19));
+  neverd::discardDeadMedLLVMSlots({Slot});
+  EXPECT_EQ(slots(), 0u);
+  EXPECT_EQ(InitialHandle, nullptr);
+  EXPECT_EQ(Body->size(), 1u);
+}
+
+TEST_F(MedLLVMDeadSlots, IdentityCopiesCannotHideObservedOrChangedState) {
+  auto *Callee = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getVoidTy(), {Builder.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "observe", Module);
+  std::vector<llvm::AllocaInst *> Slots;
+  std::vector<llvm::WeakTrackingVH> Kept;
+  // A live value, an intervening write, escape, ordered accesses and source
+  // annotations each independently prevent the private identity proof.
+  for (unsigned Case = 0; Case != 9; ++Case) {
+    auto *Slot = Builder.CreateAlloca(Builder.getInt32Ty());
+    Slots.push_back(Slot);
+    Builder.CreateStore(Builder.getInt32(41), Slot);
+    auto *Read = Builder.CreateLoad(Builder.getInt32Ty(), Slot);
+    if (Case == 1)
+      Builder.CreateStore(Builder.getInt32(23), Slot);
+    auto *Write = Builder.CreateStore(Read, Slot);
+    Kept.emplace_back(Read);
+    Kept.emplace_back(Write);
+    auto *Annotation = llvm::MDNode::get(Context, {});
+    switch (Case) {
+    case 0: {
+      auto *Use = Builder.CreateAlloca(Builder.getInt32Ty());
+      Builder.CreateStore(Read, Use)->setVolatile(true);
+      break;
+    }
+    case 2:
+      Builder.CreateCall(Callee, {Slot});
+      break;
+    case 3:
+      Read->setVolatile(true);
+      break;
+    case 4:
+      Write->setVolatile(true);
+      break;
+    case 5:
+      Read->setAtomic(llvm::AtomicOrdering::Monotonic);
+      break;
+    case 6:
+      Write->setAtomic(llvm::AtomicOrdering::Monotonic);
+      break;
+    case 7:
+      Read->setMetadata("source-operation", Annotation);
+      break;
+    case 8:
+      Write->setMetadata("source-operation", Annotation);
+      break;
+    default:
+      break;
+    }
+  }
+  Builder.CreateRet(Builder.getInt32(19));
+  neverd::discardDeadMedLLVMSlots(Slots);
+  for (const auto &Handle : Kept)
+    EXPECT_NE(Handle, nullptr);
+}
+
 TEST_F(MedLLVMDeadSlots, PreservesVolatileReadEvenWhenItsValueIsDead) {
   auto *Source = Builder.CreateAlloca(Builder.getInt32Ty());
   auto *Phi = Builder.CreateAlloca(Builder.getInt32Ty());
