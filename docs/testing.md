@@ -5698,6 +5698,11 @@ checks with `UseUnalignedPointers`. `HighCIntegerWidths.*`,
 `HighCPointerAddresses.*`, `HighCStoreForwarding.*`, `LLVMCValues.*`, and the
 frame-memory, atomic and segmented-memory suites cover the surrounding paths.
 
+`LLVMCValues.MultiUsePointerCastKeepsOneMaterializedValue` executes two stores
+through a shared integer-to-pointer conversion at O0/O2 with undefined-behavior
+traps and unused-but-set variables treated as errors. Composed expressions must
+read a materialized cast rather than duplicating its operand spelling.
+
 `HighX86CallSetup` compiles and executes recovered outgoing-stack arithmetic
 through straight-line and nested continuation uses, including 32-bit wraparound.
 It also requires unused argument stores and address chains to disappear.
