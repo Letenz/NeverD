@@ -3663,6 +3663,13 @@ private slots:
                               scenario == "secondary-source";
     auto *origin = useSecondary ? secondary : primary;
     auto *other = useSecondary ? primary : secondary;
+    auto *originDock = bench.dockFor(origin);
+    auto *otherDock = bench.dockFor(other);
+    QVERIFY(originDock && otherDock);
+    // Code documents share a tab group. Select the tab before sending input
+    // to its viewport, just as a user must do in the workbench.
+    originDock->setAsCurrentTab();
+    QTRY_VERIFY(origin->isVisible());
     const QString representation = scenario == "llvmc" || scenario == "low"
                                        ? scenario
                                        : QStringLiteral("source");
@@ -3728,6 +3735,8 @@ private slots:
           // Browsing elsewhere must not redirect acceptance to that pane.
           bench.window->activateWindow();
           QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+          otherDock->setAsCurrentTab();
+          QTRY_VERIFY(other->isVisible());
           other->text()->setFocus();
           QTRY_VERIFY(other->text()->hasFocus());
           QVERIFY(dialog->isVisible());

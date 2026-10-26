@@ -38,6 +38,7 @@
 #include "neverd/ir/low/X86/X86FourSourceShape.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/ir/med/X86/X86RegistrationCall.h"
@@ -1085,6 +1086,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
     }
   }
   size_t LowBlockIndex = 0;
+  size_t CallTargetWork = limits::ir::kSourceFrameAnalysisRemaining;
 
   const auto CachedImports =
       Image && Image->Arch == TheArch && Image->abiFormat() == Fmt &&
@@ -1124,6 +1126,24 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       // A call through a slot that always holds one of the image's own
       // functions calls that function (BinaryImage::ConstantCodeSlots).
       std::optional<LowOp> DirectCall;
+      std::optional<MedCallTarget> CachedTarget;
+      if (const LowOp &Call = LB.Ops[LowOpIndex];
+          Image && Call.Opcode == NdOp::INDIR_CALL && Call.NumInputs == 1 &&
+          !Call.Inputs[0].isConst()) {
+        CachedTarget = resolvePreSSAMedCallTarget(
+            MB, ndVarToMedVar(Call.Inputs[0]), TheArch, &CallTargetWork);
+        const auto OriginalSite = sourceCallOccurrenceKey(Call);
+        const bool AnalystSite = OriginalSite && SourceCallSiteHints &&
+                                 SourceCallSiteHints->count(*OriginalSite);
+        if (CachedTarget && !CachedTarget->ThroughSlot && !AnalystSite &&
+            !Image->IsRelocatable &&
+            Image->hasExecutableCodeOwnerAt(CachedTarget->Address)) {
+          DirectCall = Call;
+          DirectCall->Opcode = NdOp::CALL;
+          DirectCall->Inputs[0] =
+              NdVar::cst(CachedTarget->Address, Call.Inputs[0].Size);
+        }
+      }
       if (const LowOp &Call = LB.Ops[LowOpIndex];
           Image && Call.Opcode == NdOp::INDIR_CALL && Call.NumInputs >= 1 &&
           Call.Inputs[0].isConst())
@@ -1291,6 +1311,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       // slot, names that import as the slot would (`mov rax, [rip+slot];
       // test rax, rax; je; jmp rax` in register_tm_clones).
       RegisterCallSlot = 0;
+      if (CachedTarget && CachedTarget->ThroughSlot && Image &&
+          !importCalleeName(*Image, CachedTarget->Address).empty() &&
+          !importOwnRoutine(*Image, CallArgumentSources, CachedTarget->Address))
+        RegisterCallSlot = CachedTarget->Address;
       if (const auto Cached = CachedImports.Calls.find({LB.Id, LowOpIndex});
           Cached != CachedImports.Calls.end() && LOp.Opcode == NdOp::INDIR_CALL)
         RegisterCallSlot = Cached->second;

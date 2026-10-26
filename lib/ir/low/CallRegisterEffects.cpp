@@ -1834,12 +1834,12 @@ CallRegisterSummaries solveCallRegisterEffects(
   // function's too. A tail callee without a bounded summary leaves none.
   std::set<va_t> UnknownStack;
   for (const auto &[Entry, Effect] : Funcs)
-    if (Effect->UnknownStackReads)
+    if (Effect->UnknownStackReads && !FixedEntryStackArgs.count(Entry))
       UnknownStack.insert(Entry);
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (const auto &[Entry, Effect] : Funcs) {
-      if (UnknownStack.count(Entry))
+      if (UnknownStack.count(Entry) || FixedEntryStackArgs.count(Entry))
         continue;
       if (llvm::any_of(Effect->StackTailCallees, [&](va_t Callee) {
             return Funcs.count(Callee) ? UnknownStack.count(Callee) != 0
@@ -1858,11 +1858,15 @@ CallRegisterSummaries solveCallRegisterEffects(
     if (!UnknownStack.count(Entry))
       StackArgs[Entry] = Effect->StackArgs;
   for (const auto &[Entry, Count] : FixedEntryStackArgs)
-    if (!Funcs.count(Entry))
-      StackArgs[Entry] = Count;
+    StackArgs[Entry] = Count;
   for (bool Changed = true; Changed;) {
     Changed = false;
     for (auto &[Entry, Count] : StackArgs) {
+      // A fixed entry contract owns stack arguments as well as register
+      // reads. Its machine stub may switch stacks or forward into a
+      // dispatcher whose private frame is not this source call's ABI.
+      if (FixedEntryStackArgs.count(Entry))
+        continue;
       auto Func = Funcs.find(Entry);
       if (Func == Funcs.end())
         continue;

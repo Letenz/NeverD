@@ -324,6 +324,10 @@ private:
   Listing &listing();
   ProjectHistory &history();
   Json metadata() const;
+  void loadAnalysisSections(neverd_session_t session,
+                            const std::filesystem::path &path);
+  void saveAnalysisSections();
+  void changedAnalysisSections();
   std::string error() const;
   Json backendJson(const char *owned, bool checkError = false) const;
 };

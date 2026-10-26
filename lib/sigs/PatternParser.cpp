@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/PatternParser.h"
 
+#include "VTableContext.h"
+
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -200,6 +202,7 @@ struct DraftModule {
   uint8_t CRCLen = 0;
   bool RequireReferences = false;
   bool RequireCaller = false;
+  bool IsVTable = false;
 };
 
 /// Where the modules of a chunk are written: each module's bytes, then its
@@ -350,6 +353,9 @@ llvm::Error appendPattern(llvm::StringRef Pat, ChunkWriter &Writer,
   return llvm::Error::success();
 }
 
+StoredModule storedModule(const DraftModule &Draft, const uint8_t *Bytes,
+                          const PatternNames &Names);
+
 /// Parse the pattern line \p Line into \p Writer.  The names the module adds
 /// refer to \p Line's text.  On failure the writer may hold part of the line,
 /// and the caller discards it.
@@ -403,7 +409,8 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
     return Field.starts_with(PublicNamePrefix) ||
            Field.starts_with(DataReferencePrefix) ||
            Field.starts_with(ReferencePrefix) || Field == RequiredReferences ||
-           Field == RequiredCaller || Field.starts_with(UnstatedByte);
+           Field == RequiredCaller || Field == VTableContext ||
+           Field.starts_with(UnstatedByte);
   };
 
   // Remaining tokens form :offset/name pairs, then ^offset/name references,
@@ -413,12 +420,14 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
   for (size_t I = OpeningFields; I < Tokens.size(); ++I) {
     if (Tokens[I] == CollisionEvidenceOnly)
       return patternError("collision evidence is not a matchable signature");
-    if (Tokens[I] == RequiredReferences || Tokens[I] == RequiredCaller) {
+    if (Tokens[I] == RequiredReferences || Tokens[I] == RequiredCaller ||
+        Tokens[I] == VTableContext) {
       if (I != OpeningFields)
         return patternError(
             "context requirement must immediately follow total length");
       Mod.RequireReferences = Tokens[I] == RequiredReferences;
       Mod.RequireCaller = Tokens[I] == RequiredCaller;
+      Mod.IsVTable = Tokens[I] == VTableContext;
       continue;
     }
     if (Tokens[I].starts_with(ReferencePrefix) ||
@@ -516,6 +525,10 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
     Stated[I] = static_cast<uint8_t>(Writer.Bits[I / WordBytes] >>
                                      (I % WordBytes * CHAR_BIT));
   Writer.Used = Mod.Bytes + Count + StatedBytes;
+  if (Mod.IsVTable &&
+      !isValidVTableContext(storedModule(Mod, Writer.Bytes, Writer.Names)))
+    return patternError("!vtable requires one primary table name and complete "
+                        "wildcard code-pointer slots");
   return Mod;
 }
 
@@ -550,6 +563,7 @@ StoredModule storedModule(const DraftModule &Draft, const uint8_t *Bytes,
   Module.CRCLen = Draft.CRCLen;
   Module.RequireReferences = Draft.RequireReferences;
   Module.RequireCaller = Draft.RequireCaller;
+  Module.IsVTable = Draft.IsVTable;
   return Module;
 }
 
@@ -570,6 +584,7 @@ PatternModule PatternParser::toPatternModule(const StoredModule &Module) {
   Result.CRCLen = Module.CRCLen;
   Result.RequireReferences = Module.RequireReferences;
   Result.RequireCaller = Module.RequireCaller;
+  Result.IsVTable = Module.IsVTable;
   Result.TotalLen = Module.TotalLen;
   for (const StoredName &Name : Module.publicNames())
     Result.PublicNames.push_back({Name.Offset, std::string(Name.Name)});

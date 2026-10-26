@@ -118,6 +118,8 @@ NEVERD_MENU_ICON(Comments, "comment")
 NEVERD_MENU_ITEM(Comments, EditRepeatableComment)
 NEVERD_MENU_SEPARATOR(Edit)
 NEVERD_MENU_ITEM(Edit, EditBookmark)
+NEVERD_MENU_SEPARATOR(Edit)
+NEVERD_MENU_ITEM(Edit, EditAddAnalysisSection)
 
 NEVERD_MENU(Jump, None, QT_TRANSLATE_NOOP("Menus", "&Jump"))
 NEVERD_MENU_ITEM(Jump, JumpOperand)

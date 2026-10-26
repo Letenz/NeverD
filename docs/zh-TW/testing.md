@@ -2137,3 +2137,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 該 worker 迴歸另涵蓋十八個混合暫存器／堆疊參數、浮點回傳，以及堆疊參數僅寫入一半時的拒絕。
 
 `SourceCallABI` 與 `CallRegisterConstant` 迴歸檢查過期暫存值、不透明效果、位元組範圍、呼叫位置歧義及精確預算邊界。worker 另經兩條 C 路徑執行呼叫者以減法計算變參向量計數的案例。
+
+`LLVMAddressModelOverlayTests` 分別檢查 AArch64 修飾符、i386 GOT 與 Mach-O GOTPCREL 修正，涵蓋兩種已知 AArch64 守衛寫法及十二種部分修正組合。測試保留 LLVM 輸入與快取副本、隔離繼承的 Git 設定，並拒絕無法辨識的架構守衛。這些設定檢查不能取代原生重定位執行測試。

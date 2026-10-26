@@ -78,6 +78,10 @@ struct PatternModule {
   /// A supported complete, strong body can extend a rooted incoming chain;
   /// its descendants never confirm its outgoing references.
   bool RequireCaller : 1 = false;
+  /// `!vtable`: source-owned primary COFF x64 table metadata, never a
+  /// function-byte claim. PublicNames names the table; References names its
+  /// absolute code-pointer slots. Every pointer is a complete wildcard.
+  bool IsVTable : 1 = false;
 
   uint32_t TotalLen = 0;
 
@@ -155,6 +159,10 @@ struct StoredModule {
   /// A supported complete, strong body can extend a rooted incoming chain;
   /// its descendants never confirm its outgoing references.
   bool RequireCaller : 1 = false;
+  /// `!vtable`: source-owned primary COFF x64 table metadata, never a
+  /// function-byte claim. PublicNames names the table; References names its
+  /// absolute code-pointer slots. Every pointer is a complete wildcard.
+  bool IsVTable : 1 = false;
 
   bool isStated(size_t Byte) const {
     return (Stated[Byte / CHAR_BIT] >> (Byte % CHAR_BIT)) & 1;

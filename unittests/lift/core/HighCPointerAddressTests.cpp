@@ -57,6 +57,8 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/Win64EH.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
 #include <cstring>
@@ -20762,6 +20764,249 @@ TEST(LLVMCPointerAddresses, KeepsFalseBodyLabelWhenItHasAnotherEntry) {
   EXPECT_EQ(Source.find("if (!(flag))", BodyAt), std::string::npos) << Source;
 }
 
+TEST(LLVMCPointerAddresses, NestedReleaseRegionKeepsEveryIncomingEdge) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  const char *IR = R"(
+declare void @record_step(i64)
+define i32 @release_region(i32 %flags, ptr %count) {
+entry:
+  %fast = and i32 %flags, 1
+  %is_fast = icmp ne i32 %fast, 0
+  br i1 %is_fast, label %fast_path, label %slow_path
+fast_path:
+  call void @record_step(i64 1)
+  br label %done
+slow_path:
+  call void @record_step(i64 2)
+  %locked = and i32 %flags, 2
+  %is_locked = icmp eq i32 %locked, 0
+  br i1 %is_locked, label %done, label %owner
+owner:
+  %present = and i32 %flags, 4
+  %has_owner = icmp eq i32 %present, 0
+  br i1 %has_owner, label %wait, label %priority
+priority:
+  %boost = and i32 %flags, 8
+  %boosted = icmp eq i32 %boost, 0
+  br i1 %boosted, label %wait, label %decrement
+decrement:
+  %old = load i32, ptr %count
+  %new = add i32 %old, -1
+  store i32 %new, ptr %count
+  %zero = icmp eq i32 %new, 0
+  br i1 %zero, label %kick, label %wait
+kick:
+  call void @record_step(i64 3)
+  br label %wait
+wait:
+  call void @record_step(i64 4)
+  br label %done
+done:
+  call void @record_step(i64 5)
+  %result = load i32, ptr %count
+  ret i32 %result
+}
+)";
+  auto Module = llvm::parseIR(
+      llvm::MemoryBuffer::getMemBuffer(IR)->getMemBufferRef(), Error, Context);
+  ASSERT_TRUE(Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+  const std::string Harness = R"(
+static uint64_t trace;
+void record_step(uint64_t step) { trace = trace * 10 + step; }
+int main(void) {
+  for (uint32_t flags = 0; flags < 16; ++flags)
+    for (uint32_t initial = 0; initial < 3; ++initial) {
+      uint32_t cell = initial, expected = initial;
+      uint64_t events = flags & 1 ? 15 : 25;
+      if (!(flags & 1) && (flags & 2)) {
+        events = 245;
+        if ((flags & 4) && (flags & 8)) {
+          --expected;
+          if (!expected) events = 2345;
+        }
+      }
+      trace = 0;
+      if (release_region(flags, &cell) != expected || cell != expected ||
+          trace != events) return 1;
+    }
+  return 0;
+}
+)";
+  compileAndRunCallOrdering(Source + Harness, true);
+}
+
+TEST(LLVMCPointerAddresses, AdjacentReleaseRegionsKeepTheirSharedExitLabels) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  const char *IR = R"(
+declare i64 @record_acquire(i64)
+declare i64 @record_priority(i64)
+declare i64 @record_wait(i64)
+define void @nested_release(i64 %lock, i64 %thread, ptr %flags) {
+bb_188:
+  %ld6633 = load volatile i8, ptr %flags, align 1
+  %and6634 = and i8 %ld6633, 33
+  %eq6635 = icmp eq i8 %and6634, 0
+  br i1 %eq6635, label %bb_190, label %bb_189
+
+bb_189:
+  %call6646 = call i64 @record_acquire(i64 %lock)
+  br label %bb_200.sink.split
+
+bb_190:
+  %ld6666 = add i64 %thread, 0
+  %add6669 = add i64 %ld6666, 16
+  %memptr6671 = inttoptr i64 %add6669 to ptr
+  %ld6672 = load i64, ptr %memptr6671, align 1
+  %eq6679 = icmp eq i64 %ld6672, 0
+  br i1 %eq6679, label %bb_194, label %bb_191
+
+bb_191:
+  %add6684 = add i64 %ld6666, 32
+  %memptr6685 = inttoptr i64 %add6684 to ptr
+  %ld6686 = load i8, ptr %memptr6685, align 1
+  %ult6687 = icmp ugt i8 %ld6686, 1
+  br i1 %ult6687, label %bb_194, label %bb_192
+
+bb_192:
+  %add6690 = add i64 %ld6672, 24
+  %memptr6691 = inttoptr i64 %add6690 to ptr
+  %ld6692 = load i32, ptr %memptr6691, align 1
+  %add6696 = add i32 %ld6692, 1
+  store i32 %add6696, ptr %memptr6691, align 1
+  %ne6708.not = icmp eq i32 %add6696, 0
+  br i1 %ne6708.not, label %bb_193, label %bb_194
+
+bb_193:
+  %call6717 = call i64 @record_priority(i64 %ld6666)
+  br label %bb_194
+
+bb_194:
+  %memptr6738 = inttoptr i64 %lock to ptr
+  %ld6739 = load i64, ptr %memptr6738, align 1
+  %or6744 = or i64 %ld6739, 1
+  store i64 %or6744, ptr %memptr6738, align 1
+  %number44 = and i64 %ld6739, 1
+  %bnot6748 = icmp eq i64 %number44, 0
+  br i1 %bnot6748, label %bb_200, label %bb_195
+
+bb_195:
+  %ld6754 = load i64, ptr %memptr6671, align 1
+  %eq6761 = icmp eq i64 %ld6754, 0
+  br i1 %eq6761, label %bb_199, label %bb_196
+
+bb_196:
+  %add6766 = add i64 %ld6666, 32
+  %memptr6767 = inttoptr i64 %add6766 to ptr
+  %ld6768 = load i8, ptr %memptr6767, align 1
+  %ult6769 = icmp ugt i8 %ld6768, 1
+  br i1 %ult6769, label %bb_199, label %bb_197
+
+bb_197:
+  %add6772 = add i64 %ld6754, 24
+  %memptr6773 = inttoptr i64 %add6772 to ptr
+  %ld6774 = load i32, ptr %memptr6773, align 1
+  %sub6778 = add i32 %ld6774, -1
+  store i32 %sub6778, ptr %memptr6773, align 1
+  %ne6790.not = icmp eq i32 %sub6778, 0
+  br i1 %ne6790.not, label %bb_198, label %bb_199
+
+bb_198:
+  %call6799 = call i64 @record_priority(i64 %ld6666)
+  br label %bb_199
+
+bb_199:
+  %call6825 = call i64 @record_wait(i64 %lock)
+  br label %bb_200.sink.split
+
+bb_200.sink.split:
+  br label %bb_200
+
+bb_200:
+  %ld6845 = load volatile i8, ptr %flags, align 1
+  %and6846 = and i8 %ld6845, 1
+  %eq6847 = icmp eq i8 %and6846, 0
+  ret void
+}
+)";
+  auto Module = llvm::parseIR(
+      llvm::MemoryBuffer::getMemBuffer(IR)->getMemBufferRef(), Error, Context);
+  ASSERT_TRUE(Module);
+  ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+  // The first region discovers a goto after the label-reference prepass.
+  // Check both observable paths through the adjacent region, including the
+  // shared wait block after the conditional priority callback.
+  const std::string Harness = R"(
+static uint64_t trace, wanted_lock, wanted_thread;
+static int bad_argument;
+uint64_t record_acquire(uint64_t lock) {
+  bad_argument |= lock != wanted_lock;
+  trace = trace * 10 + 1;
+  return 0;
+}
+uint64_t record_priority(uint64_t thread) {
+  bad_argument |= thread != wanted_thread;
+  trace = trace * 10 + 2;
+  return 0;
+}
+uint64_t record_wait(uint64_t lock) {
+  bad_argument |= lock != wanted_lock;
+  trace = trace * 10 + 3;
+  return 0;
+}
+int main(void) {
+  const uint32_t counts[] = {0, 1, UINT32_MAX};
+  for (unsigned instrumented = 0; instrumented != 2; ++instrumented)
+    for (unsigned present = 0; present != 2; ++present)
+      for (unsigned priority = 0; priority != 3; ++priority)
+        for (unsigned i = 0; i != 3; ++i)
+          for (uint64_t initial_lock = 0; initial_lock != 4; ++initial_lock) {
+            uint64_t thread[5] = {0}, owner[4] = {0};
+            uint64_t lock = initial_lock, expected_lock = initial_lock;
+            uint8_t flags = instrumented ? 1 : 0;
+            uint32_t count = counts[i], expected_count = count;
+            uint64_t expected_trace = 0;
+            thread[2] = present ? (uintptr_t)owner : 0;
+            ((uint8_t *)thread)[32] = priority;
+            __builtin_memcpy((uint8_t *)owner + 24, &count, sizeof(count));
+            if (instrumented) {
+              expected_trace = 1;
+            } else {
+              if (present && priority <= 1 && ++expected_count == 0)
+                expected_trace = 2;
+              expected_lock |= 1;
+              if (initial_lock & 1) {
+                if (present && priority <= 1 && --expected_count == 0)
+                  expected_trace = expected_trace * 10 + 2;
+                expected_trace = expected_trace * 10 + 3;
+              }
+            }
+            wanted_lock = (uintptr_t)&lock;
+            wanted_thread = (uintptr_t)thread;
+            trace = 0;
+            bad_argument = 0;
+            nested_release(wanted_lock, wanted_thread, &flags);
+            __builtin_memcpy(&count, (uint8_t *)owner + 24, sizeof(count));
+            if (bad_argument || trace != expected_trace ||
+                lock != expected_lock || count != expected_count)
+              return 1;
+          }
+  return 0;
+}
+)";
+  compileAndRunCallOrdering(Source + Harness, true);
+}
+
 TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenTrueTargetIsNotNext) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-skip-far", Context);
@@ -37580,6 +37825,78 @@ TEST(LLVMCPointerAddresses, AddressOfWrapperRecordOmitsOffset0Field) {
       << Source;
 }
 
+TEST(LLVMCPointerAddresses, IntegerMembersKeepFrameAndRecordAddressBits) {
+  class RecordDebug : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x140001000)
+        return std::nullopt;
+      auto Record = NdType::makeNamedRecord("FrameHolder", 16);
+      Record->FieldDisplayNames = {"first", "second"};
+      Record->FieldDisplayOffsets = {0, 8};
+      Record->FieldDisplayTypes = {NdType::makeInt(8, false),
+                                   NdType::makeInt(8, false)};
+      FunctionSym Function;
+      Function.Name = "keep_addresses";
+      Function.Addr = Address;
+      Function.Params = {{"record", NdType::makePtr(Record)}};
+      Function.ReturnType = NdType::makeInt(4, true);
+      return Function;
+    }
+    bool hasInfo() const override { return true; }
+  } Debug;
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-member-addresses", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> Builder(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt32Ty(), {Builder.getPtrTy()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "keep_addresses", Module);
+  rewrite_source::setOriginalVA(*Function, 0x140001000);
+  Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Frame = Builder.CreateAlloca(
+      llvm::ArrayType::get(Builder.getInt8Ty(), 64), nullptr, "frame");
+  auto *End = Builder.CreateGEP(Builder.getInt8Ty(), Frame,
+                                Builder.getInt64(40), "frame_end");
+  auto *Address = Builder.CreateSub(
+      Builder.CreatePtrToInt(End, Builder.getInt64Ty()), Builder.getInt64(16));
+  Builder.CreateStore(Builder.getInt64(0x123456789),
+                      Builder.CreateIntToPtr(Address, Builder.getPtrTy()));
+  auto *Record =
+      Builder.CreatePtrToInt(Function->getArg(0), Builder.getInt64Ty());
+  auto *Second = Builder.CreateIntToPtr(
+      Builder.CreateAdd(Record, Builder.getInt64(8)), Builder.getPtrTy());
+  Builder.CreateStore(Address, Function->getArg(0));
+  Builder.CreateStore(Record, Second);
+  auto Observe = Module.getOrInsertFunction(
+      "observe_holder", Builder.getInt32Ty(), Builder.getPtrTy());
+  Builder.CreateRet(Builder.CreateCall(Observe, {Function->getArg(0)}));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Debug, nullptr, Function));
+  OS.flush();
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+typedef struct FrameHolder { uint64_t first, second; } FrameHolder;
+)" + Source + R"(
+uint32_t observe_holder(void *pointer) {
+    FrameHolder *record = pointer;
+    return record->second != (uintptr_t)&record->first ||
+           *(uint64_t *)(uintptr_t)record->first != UINT64_C(0x123456789);
+}
+int main(void) {
+    FrameHolder record = {0, 0};
+    return keep_addresses(&record);
+}
+)",
+                            true);
+}
+
 TEST(LLVMCPointerAddresses, IntegerFieldStorePreservesCallViewAndStoreWidth) {
   class FieldDbg : public NullDebugContext {
   public:
@@ -43532,6 +43849,142 @@ BinaryImage makeCodeFixture(va_t Entry, std::vector<uint8_t> Bytes) {
   Seg.Data = std::move(Bytes);
   Img.Segments.push_back(std::move(Seg));
   return Img;
+}
+
+TEST(HighCPointerAddresses, MemoryExchangePreservesTypedPointerMemberBits) {
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
+      llvm::Triple::x86_64)
+    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
+  auto Record = NdType::makeNamedRecord("CallbackHolder", 8);
+  Record->FieldDisplayNames = {"callback"};
+  Record->FieldDisplayOffsets = {0};
+  Record->FieldDisplayTypes = {NdType::makePtr(NdType::makeInt(1, false))};
+  const auto Pointer = NdType::makePtr(Record);
+  HighFunc Function;
+  Function.Name = "exchange_callback";
+  Function.ReturnType = NdType::makeInt(8, false);
+  Function.Params = {{"arg0", Pointer}};
+  auto Exchange = HighExpr::makeBinop(NdOp::ATOMIC_XCHG, parameter(0, Pointer),
+                                      HighExpr::makeConst(0, 8));
+  Exchange->Type = Function.ReturnType;
+  Exchange->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  returnValue(Function, Exchange);
+  const auto Source = emitFunctions({Function});
+  ASSERT_NE(Source.find("->callback"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+typedef struct CallbackHolder { uint8_t *callback; } CallbackHolder;
+)" + Source + R"(
+int main(void) {
+  uint8_t value = 37;
+  CallbackHolder record = {&value};
+  uint64_t previous = exchange_callback(&record);
+  return previous != (uintptr_t)&value || record.callback != 0 || value != 37;
+}
+)",
+                            true);
+}
+
+TEST(HighCPointerAddresses, CompareExchangePreservesTypedPointerMemberBits) {
+  auto Record = NdType::makeNamedRecord("AtomicPointerHolder", 8);
+  Record->FieldDisplayNames = {"pointer"};
+  Record->FieldDisplayOffsets = {0};
+  Record->FieldDisplayTypes = {NdType::makePtr(NdType::makeInt(1, false))};
+  const auto Pointer = NdType::makePtr(Record);
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Function;
+  Function.Name = "compare_pointer";
+  Function.ReturnType = Word;
+  Function.Params = {{"arg0", Pointer}, {"arg1", Word}, {"arg2", Word}};
+  auto Exchange = HighExpr::makeBinop(
+      NdOp::ATOMIC_CMPXCHG, parameter(0, Pointer), parameter(1, Word));
+  Exchange->Operands.push_back(parameter(2, Word));
+  Exchange->Type = Word;
+  Exchange->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  returnValue(Function, Exchange);
+  const auto Source = emitFunctions({Function});
+  ASSERT_NE(Source.find("->pointer"), std::string::npos) << Source;
+  compileAndRunCallOrdering(R"(
+#include <stdint.h>
+typedef struct AtomicPointerHolder { uint8_t *pointer; } AtomicPointerHolder;
+)" + Source + R"(
+int main(void) {
+  uint8_t first = 37, second = 91;
+  AtomicPointerHolder record = {&first};
+  uint64_t previous = compare_pointer(&record, (uintptr_t)&first,
+                                     (uintptr_t)&second);
+  if (previous != (uintptr_t)&first || record.pointer != &second) return 1;
+  previous = compare_pointer(&record, (uintptr_t)&first, 0);
+  return previous != (uintptr_t)&second || record.pointer != &second ||
+         first != 37 || second != 91;
+}
+)",
+                            true);
+}
+
+TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
+      llvm::Triple::x86_64)
+    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
+  constexpr va_t Entry = 0x140001000;
+  for (unsigned Bytes : {1U, 2U, 4U, 8U})
+    for (bool Locked : {false, true}) {
+      std::vector<uint8_t> Code;
+      if (Locked)
+        Code.push_back(0xf0);
+      // xchg [rcx], dl/dx/edx/rdx; zero-extend the old value into the return
+      // register. No alignment promise can be inferred from the address.
+      if (Bytes == 2)
+        Code.push_back(0x66);
+      if (Bytes == 8)
+        Code.push_back(0x48);
+      Code.insert(Code.end(), {uint8_t(Bytes == 1 ? 0x86 : 0x87), 0x11});
+      if (Bytes <= 2)
+        Code.insert(Code.end(),
+                    {0x0f, uint8_t(Bytes == 1 ? 0xb6 : 0xb7), 0xc2});
+      else {
+        if (Bytes == 8)
+          Code.push_back(0x48);
+        Code.insert(Code.end(), {0x89, 0xd0});
+      }
+      Code.push_back(0xc3);
+      for (bool LLVMRoute : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "bytes=" << Bytes << " lock="
+                                          << Locked << " llvm=" << LLVMRoute);
+        const auto Image = makeCodeFixture(Entry, Code);
+        const auto Source = LLVMRoute ? llvmcOnlyFunction(Image, Entry)
+                                      : highcOnlyFunction(Image, Entry);
+        ASSERT_NE(Source.find("__asm__ __volatile__(\"xchg"), std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("__atomic_exchange_n"), std::string::npos)
+            << Source;
+        compileAndRunCallOrdering(
+            "#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n" +
+                Source + "\ntypedef uint" + std::to_string(Bytes * 8) +
+                "_t word;\n" + R"(
+int main(void) {
+  _Alignas(64) unsigned char storage[64];
+  const word values[] = {0, (word)-1, (word)UINT64_C(0x8877665544332211),
+                         (word)UINT64_C(0x123456789abcdef0)};
+  for (unsigned offset = 8; offset < 24; ++offset)
+    for (unsigned i = 0; i < 4; ++i)
+      for (unsigned j = 0; j < 4; ++j) {
+        memset(storage, 0x5a, sizeof(storage));
+        memcpy(storage + offset, &values[i], sizeof(word));
+        word old = sub_140001000((void *)(storage + offset), values[j]);
+        word current;
+        memcpy(&current, storage + offset, sizeof(word));
+        if (old != values[i] || current != values[j]) return 1;
+        for (unsigned k = 0; k < sizeof(storage); ++k)
+          if ((k < offset || k >= offset + sizeof(word)) && storage[k] != 0x5a)
+            return 2;
+      }
+  return 0;
+}
+)",
+            true);
+      }
+    }
 }
 
 TEST(HighCPointerAddresses,

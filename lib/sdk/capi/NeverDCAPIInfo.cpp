@@ -613,6 +613,14 @@ const char *neverd_sections_json(neverd_session_t Sess) {
     Obj["size"] = static_cast<int64_t>(Sec.Size);
     Obj["file_off"] = static_cast<int64_t>(Sec.FileOff);
     Obj["file_sz"] = static_cast<int64_t>(Sec.FileSz);
+    // Analysis sections own initialized bytes without original-file backing.
+    // Keep file_sz zero and state their materialization independently.
+    if (std::any_of(S->AnalysisSections.begin(), S->AnalysisSections.end(),
+                    [&](const auto &Record) {
+                      return Record.getAsObject()->getString("name") ==
+                             Sec.Name;
+                    }))
+      Obj["materialized_sz"] = static_cast<int64_t>(Sec.Data.size());
     std::string Flags;
     Flags += Sec.isReadable() ? 'R' : '-';
     Flags += Sec.isWritable() ? 'W' : '-';

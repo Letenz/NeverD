@@ -1003,13 +1003,16 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
                                 : Stmt.Val->Kind == ExprKind::Call
                                     ? callResultType(*Stmt.Val)
                                     : callResultPointerType(*Stmt.Val);
-        if (DirectAddress)
+        if (auto Pointer = implicitPointerConversion(*Stmt.Val, DeclaredType))
+          OS << *Pointer;
+        else if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
         else if ((PointerFromDeclaration || PointerTypeFromCall) &&
                  ((ProjectedValueType &&
                    ProjectedValueType->Kind == NdTypeKind::Ptr &&
                    typeToC(cDisplayType(ProjectedValueType)) ==
-                       typeToC(DeclaredType)) ||
+                       typeToC(DeclaredType) &&
+                   printsPointer(*Stmt.Val, ValueText)) ||
                   sameDeclaredLocal(*Stmt.Val, ValueText, DeclaredType)))
           OS << ValueText;
         else if (PointerFromCallResult &&

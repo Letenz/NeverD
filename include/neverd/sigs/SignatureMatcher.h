@@ -130,6 +130,10 @@ public:
     bool hasCallerModules() const {
       return CallerStorage && !CallerStorage->empty();
     }
+    llvm::ArrayRef<size_t> vtableModules() const {
+      return VTableStorage ? llvm::ArrayRef(*VTableStorage)
+                           : llvm::ArrayRef<size_t>();
+    }
     bool hasDataContext() const { return DataContext; }
     llvm::ArrayRef<size_t> dataAnchorModules() const {
       return DataAnchorStorage ? llvm::ArrayRef(*DataAnchorStorage)
@@ -140,6 +144,7 @@ public:
                   std::string_view Name) const;
 
   private:
+    std::shared_ptr<const std::vector<size_t>> VTableStorage;
     bool DataContext = false;
     std::shared_ptr<const std::vector<size_t>> DataAnchorStorage;
     std::shared_ptr<const std::vector<CallerEntry>> CallerStorage;

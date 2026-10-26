@@ -12,7 +12,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "third_party/llvm-project/llvm/lib/MC/AddressModelBackend.cpp"
 HELPER = ROOT / "cmake/NeverDLLVMAddressModel.cmake"
-PATCH = ROOT / "cmake/patches/llvm-aarch64-specifier-scope.patch"
+PATCH_ROOT = ROOT / "cmake/patches"
+SCOPE_PATCHES = [PATCH_ROOT / name for name in (
+    "llvm-aarch64-specifier-scope.patch",
+    "llvm-aarch64-upstream-specifier-scope.patch",
+)]
+I386_PATCH = PATCH_ROOT / "llvm-i386-got-base.patch"
+MACHO_PATCH = PATCH_ROOT / "llvm-macho-gotpcrel-data.patch"
+PATCH_GROUPS = [SCOPE_PATCHES, [I386_PATCH], [MACHO_PATCH]]
 
 
 @unittest.skipUnless(shutil.which("cmake") and shutil.which("git") and BACKEND.is_file(),
@@ -50,18 +57,31 @@ class LLVMAddressModelOverlayTests(unittest.TestCase):
             env=self.environment, text=True, capture_output=True, timeout=60,
         )
 
-    def assert_corrected(self) -> None:
-        result = self.configure()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    def patch(self, patch: Path, *, reverse: bool = False, apply: bool = False,
+              source: bool = False) -> subprocess.CompletedProcess[str]:
         clean = self.environment.copy()
         for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"):
             clean.pop(key, None)
-        check = subprocess.run(
-            ["git", "apply", "--no-index", "--reverse", "--check", str(PATCH)],
-            cwd=self.overlay.parents[3], env=clean,
+        args = ["git", "apply", "--no-index"]
+        if reverse:
+            args.append("--reverse")
+        if not apply:
+            args.append("--check")
+        if source:
+            args.append("-p4")
+        return subprocess.run(
+            [*args, str(patch)],
+            cwd=self.source if source else self.overlay.parents[3], env=clean,
             text=True, capture_output=True, timeout=10,
         )
-        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def assert_corrected(self) -> None:
+        result = self.configure()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for group in PATCH_GROUPS:
+            checks = [self.patch(patch, reverse=True) for patch in group]
+            self.assertTrue(any(check.returncode == 0 for check in checks),
+                            "\n".join(check.stderr for check in checks))
         self.assertEqual(self.backend.read_bytes(), self.original)
         sources = (self.build / "sources.txt").read_text().split(";")
         self.assertEqual(sources, [self.overlay.as_posix(), (self.source / "Other.cpp").as_posix()])
@@ -87,6 +107,42 @@ class LLVMAddressModelOverlayTests(unittest.TestCase):
         self.backend.write_bytes(self.overlay.read_bytes())
         self.original = self.backend.read_bytes()
         self.assert_corrected()
+
+    def test_independently_upstreamed_corrections_are_completed(self) -> None:
+        # Derive the uncorrected source without depending on which corrections
+        # the pinned fork has already adopted. Each mutation remains in this
+        # disposable input; the actual LLVM checkout is never modified.
+        for group in PATCH_GROUPS:
+            for patch in group:
+                if self.patch(patch, reverse=True, source=True).returncode == 0:
+                    result = self.patch(patch, reverse=True, apply=True, source=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    break
+            else:
+                self.assertEqual(self.patch(group[0], source=True).returncode, 0)
+        uncorrected = self.backend.read_bytes()
+        for scope in [None, *SCOPE_PATCHES]:
+            for i386 in (False, True):
+                for macho in (False, True):
+                    with self.subTest(scope=scope, i386=i386, macho=macho):
+                        self.backend.write_bytes(uncorrected)
+                        for patch in [scope, I386_PATCH if i386 else None,
+                                      MACHO_PATCH if macho else None]:
+                            if patch is not None:
+                                result = self.patch(patch, apply=True, source=True)
+                                self.assertEqual(result.returncode, 0, result.stderr)
+                        self.original = self.backend.read_bytes()
+                        self.assert_corrected()
+
+    def test_unrecognized_architecture_guard_is_not_accepted_as_corrected(self) -> None:
+        self.assert_corrected()
+        data = self.overlay.read_bytes()
+        self.assertIn(b"if (TT.isAArch64()", data)
+        self.backend.write_bytes(data.replace(b"if (TT.isAArch64()",
+                                               b"if (TT.isX86()", 1))
+        result = self.configure()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match the scoped correction", result.stderr)
 
     def test_unrecognized_source_fails_without_a_success_stamp(self) -> None:
         self.backend.write_text("int unrecognized;\n", encoding="utf-8")

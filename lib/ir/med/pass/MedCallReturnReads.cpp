@@ -289,12 +289,7 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   std::vector<const MedOp *> Memory;
   std::map<const MedOp *, std::pair<int, size_t>> Positions;
   for (const MedBlock &Block : Func.Blocks) {
-    if (!charge(Remaining, 1) || !charge(Remaining, Block.Ops.size()) ||
-        !charge(Remaining, Block.Phis.size()) ||
-        !charge(Remaining, Block.Preds.size()) ||
-        !charge(Remaining, Block.Succs.size()) ||
-        !charge(Remaining, Block.ExceptionalPreds.size()) ||
-        !charge(Remaining, Block.ExceptionalSuccs.size()))
+    if (!charge(Remaining, 1) || !charge(Remaining, Block.Ops.size()))
       return Exhausted();
     for (size_t I = 0; I < Block.Ops.size(); ++I) {
       const auto &Op = Block.Ops[I];
@@ -305,8 +300,10 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
             sourceCallReturnAddressBias(&Image, Image.Arch, Op.Addr);
         // Synthetic tail calls must never acquire a physical push. Unknown
         // original encodings remain possible writes, not zero-byte writes.
-        if (!Bias || *Bias != 0)
+        if (!Bias || *Bias != 0) {
           Calls.push_back(&Op);
+          Positions.emplace(&Op, std::pair{Block.Id, I});
+        }
       }
       if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           ((Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1) ||
@@ -351,9 +348,12 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
              Op->MemoryAddressSpace == NdMemoryAddressSpace::Default)
       Stores.emplace(Op, A);
   }
-  std::map<const MedOp *, std::optional<int64_t>> CallEnds;
+  std::map<const MedOp *, std::optional<EntryStackOffsetRange>> CallEnds;
   for (size_t I = 0; I < Calls.size(); ++I)
-    CallEnds.emplace(Calls[I], Offsets[Memory.size() + I]);
+    if (const auto Offset = Offsets[Memory.size() + I])
+      CallEnds.emplace(Calls[I], EntryStackOffsetRange{*Offset, *Offset});
+    else
+      CallEnds.emplace(Calls[I], std::nullopt);
   if (llvm::any_of(CallEnds, [](const auto &Entry) { return !Entry.second; })) {
     const auto Registration =
         registrationCalls(Func, FreshSource, Image, StackPointers, Remaining);
@@ -363,20 +363,35 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       if (!End)
         if (const auto Found = Registration.Offsets.find(Call);
             Found != Registration.Offsets.end())
-          End = Found->second;
+          End = EntryStackOffsetRange{Found->second, Found->second};
     for (const MedOp *Call : Registration.Unreached)
       CallEnds.erase(Call);
     for (const MedOp *Call : Registration.PrivateCallbacks)
       CallEnds.erase(Call);
   }
+  std::vector<const MedOp *> UnboundedCalls;
+  std::vector<MedVar> UnboundedStacks;
+  for (const auto &[Call, End] : CallEnds)
+    if (!End)
+      if (const auto Found = StackPointers.find(Call);
+          Found != StackPointers.end()) {
+        UnboundedCalls.push_back(Call);
+        UnboundedStacks.push_back(Found->second);
+      }
+  if (!UnboundedCalls.empty()) {
+    const auto Bounds = entryStackOffsetRanges(
+        Func, UnboundedStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
+    for (size_t I = 0; I < Bounds.size(); ++I)
+      CallEnds.at(UnboundedCalls[I]) = Bounds[I];
+  }
   std::vector<std::pair<int64_t, int64_t>> Ranges;
   bool UnknownLocation = false;
   for (const auto &[Call, End] : CallEnds) {
-    if (!End || *End < std::numeric_limits<int64_t>::min() + Width) {
+    if (!End || End->Min < std::numeric_limits<int64_t>::min() + Width) {
       UnknownLocation = true;
       continue;
     }
-    Ranges.emplace_back(*End - Width, *End);
+    Ranges.emplace_back(End->Min - Width, End->Max);
   }
   llvm::sort(Ranges);
   std::vector<std::pair<int64_t, int64_t>> Merged;
@@ -396,6 +411,12 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   };
   if (llvm::none_of(Loads, OverlapsCall))
     return true;
+  for (const MedBlock &Block : Func.Blocks)
+    if (!charge(Remaining, Block.Preds.size()) ||
+        !charge(Remaining, Block.Succs.size()) ||
+        !charge(Remaining, Block.ExceptionalPreds.size()) ||
+        !charge(Remaining, Block.ExceptionalSuccs.size()))
+      return Exhausted();
   const MedBlockIdIndex Blocks(Func);
   const safety::detail::ExactPhiGraph Graph(Func);
   for (const MedBlock &Block : Func.Blocks)
@@ -413,6 +434,28 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
         ExceptionalIncoming[Edge.BlockId].insert(std::move(Reverse));
       }
     }
+  // Once stack addresses are fixed, only a proven STORE or a possible CALL
+  // write changes this byte history. Canonicalize operation prefixes to these
+  // events so arithmetic, loads and repeated exception prefixes share states.
+  std::map<int, std::vector<size_t>> Events;
+  for (const MedBlock &Block : Func.Blocks)
+    Events.try_emplace(Block.Id);
+  for (const auto &[Op, Store] : Stores)
+    Events.at(Store.Block).push_back(Store.Position);
+  for (const auto &[Op, End] : CallEnds) {
+    const auto [Block, Position] = Positions.at(Op);
+    Events.at(Block).push_back(Position);
+  }
+  if (!charge(Remaining, Stores.size() + CallEnds.size()))
+    return Exhausted();
+  for (auto &[Block, Positions] : Events)
+    llvm::sort(Positions);
+  const auto Prefix = [&](int Block, size_t Position) {
+    const auto &Positions = Events.at(Block);
+    return size_t(
+        std::lower_bound(Positions.begin(), Positions.end(), Position) -
+        Positions.begin());
+  };
   using State = std::pair<int, size_t>;
   std::map<int, std::vector<State>> ExceptionalPrefixes;
   std::map<int64_t, std::set<State>> ProvenBytes;
@@ -423,7 +466,8 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       continue;
     for (int64_t Byte = Load.Begin; Byte < Load.End; ++Byte) {
       auto &Proven = ProvenBytes[Byte];
-      std::vector<State> Pending{{Load.Block, Load.Position}};
+      std::vector<State> Pending{
+          {Load.Block, Prefix(Load.Block, Load.Position)}};
       std::set<State> Seen;
       while (!Pending.empty()) {
         if (!charge(Remaining, 1))
@@ -436,15 +480,16 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
         if (!Block)
           return Refuse("CALL return-slot observation has a missing block");
         if (Current.second) {
-          const auto &Op = Block->Ops[Current.second - 1];
+          const auto &Op = Block->Ops[Events.at(Block->Id)[Current.second - 1]];
           if (const auto It = Stores.find(&Op);
               It != Stores.end() && It->second.contains(Byte))
             continue;
           const auto Call = CallEnds.find(&Op);
           if (Call != CallEnds.end() &&
               (!Call->second ||
-               *Call->second < std::numeric_limits<int64_t>::min() + Width ||
-               (Byte < *Call->second && Byte >= *Call->second - Width)))
+               Call->second->Min <
+                   std::numeric_limits<int64_t>::min() + Width ||
+               (Byte < Call->second->Max && Byte >= Call->second->Min - Width)))
             return Refuse("load at 0x" + llvm::utohexstr(Load.Op->Addr) +
                           " observes a physical CALL return slot from 0x" +
                           llvm::utohexstr(Op.Addr) +
@@ -493,9 +538,11 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
             // Include both sides of a throwing instruction: its CALL may
             // push, whereas its STORE need not complete. A protected range
             // conservatively includes every operation prefix in the block.
-            if (!charge(Remaining, End - Begin + 1))
+            const size_t First = Prefix(Pred->Id, Begin);
+            const size_t Last = Prefix(Pred->Id, End);
+            if (!charge(Remaining, Last - First + 1))
               return Exhausted();
-            for (size_t I = Begin; I <= End; ++I)
+            for (size_t I = First; I <= Last; ++I)
               Prefixes->second.emplace_back(Pred->Id, I);
           }
         }
@@ -510,7 +557,7 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
           if (!Pred)
             return Refuse(
                 "CALL return-slot observation has a missing predecessor");
-          Pending.emplace_back(Id, Pred->Ops.size());
+          Pending.emplace_back(Id, Events.at(Id).size());
         }
       }
       // All histories from these states have now completed without a CALL

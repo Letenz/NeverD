@@ -58,6 +58,22 @@ before rendering it; neither a mnemonic nor an intrinsic declaration alone
 authorizes an architectural register access. Both forms retain unknown memory
 effects, undefined arithmetic flags and native faults, including dead reads.
 
+`ir/X86/X86MpxContext.h` owns concrete MPX enable evidence, the four bounds
+registers, BNDSTATUS and BDE/BTE address calculations. Unknown prerequisites
+remain unknown; a proven disabled prerequisite suppresses MPX effects without
+requiring operand values. The model selects BNDCFGU at CPL 3 and BNDCFGS at
+CPL 0–2, applies MAWA only to long-mode table indexing, and retains known-bit
+masks for bounds. It separates successful loads, invalid-directory #BR and
+implementation-dependent partial BNDLDX reads. Memory providers still own
+access validity, segment/canonical checks, ordering and partial stores.
+Enabled operations require a known nontransactional context; an RTM/HLE
+checkpoint and abort continuation are not supplied by this state component.
+Original branch completion takes an explicit preserve/initialize effect;
+it does not infer an architectural branch from a transformed CFG edge.
+This component is a tested foundation, not yet a lifting/emission contract:
+strict MPX admission remains closed until original-transfer effects and
+memory completion are connected throughout the pipeline.
+
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
 semantics; they do not expose TILECFG or TMM values through an ordinary function
@@ -95,6 +111,20 @@ arithmetic-flag transport definition also supplies REP's packed flag constants.
 MedIR owns the dependency from an old flag input to the returned flags; dead
 flags cannot invent a source parameter. Ordinary completion does not supply a
 complete guest exception or nonlocal continuation ABI.
+
+`X86AtomicExchange.h` owns the native memory XCHG widths, segments, assembly
+and operand constraints. The lifter emits one ordered `ATOMIC_XCHG`, with
+the old value committed to the register only after the memory operation.
+LLVM and both C routes retain a native exchange: an arbitrary decoded
+address does not justify LLVM's natural-alignment promise, and lowering an
+unaligned exchange through a library call changes the original transaction.
+The C renderer is shared by both routes; LLVMC validates owned assembly
+before normalization, including dead calls. This does not change generic
+LLVM atomics or non-x86 exchange emission.
+The x86 scalar concrete emulator commits memory before publishing the old
+exchange value; unsupported exchanges still stop explicitly. LLVMC
+materializes generic atomic RMW results at their original statement, so a
+single-use snapshot cannot delay the transaction across a later load or call.
 
 `X86APXAtomic.h` owns the APX and legacy atomic native API names, operand widths,
 condition/segment controls and exact assembly fallback. The existing
@@ -168,6 +198,12 @@ dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
 contract from these source seeds.
 
+HighC prepares both declared and inferred void returns before analyzing local
+uses, retaining any effectful return evaluation. The shared source-flow graph
+then removes dead PHI definitions, including unknown inputs of a local that is
+defined again before its observable uses. A store, value return or unresolved
+control-flow path retains the corresponding observation and availability check.
+
 `MedSSA` seeds entry liveness with upward-exposed uses, then propagates each
 newly live block/variable pair through real predecessor edges until a definition
 blocks it. The synthetic dominance root carries no variable values. Block-local
@@ -193,6 +229,14 @@ definition can also have that version. Call home areas and released frame bytes
 remain observable without explicit pointer arguments. This proof annotates only
 the source projection; it neither changes native memory effects nor supplies a
 general pointer-escape or kernel continuation contract.
+`MedStackAlignment` also owns signed entry-relative offset bounds for dynamic
+allocations. Machine-width scalar ranges, complete PHI components and checked
+offset arithmetic can separate their CALL return slots from fixed frame loads
+without inventing an exact stack address. Identity copies join the same PHI
+component. Every component needs an outside origin; an unrelated unseeded cycle
+remains unknown. The return-slot reader
+canonicalizes nonmemory operation prefixes before sharing completed byte
+histories, and charges graph work only when that graph is traversed.
 The omitted-callee reader also visits scalar direct calls carrying a proven
 private-frame address. Existing operation and extra-lift budgets still bound
 those bodies; an arity-only summary cannot stand in for their pointer effects.
@@ -483,14 +527,45 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-An explicit runtime GPR parameter remains in runtime coordinates even when the
-module also has an image: LLVM bypasses image resolution for that base, and
-both source boundaries share the same admission owner. Other image-context
-immediate bases fail explicitly until exact page/relocation occurrences,
-accessed-byte ownership and raw-base rebasing agree; source body filtering
-cannot bypass that requirement. Automatic lifting still selects only
-register-offset operations. This is not automatic immediate CPA2 lifting
-coverage or support for image-derived immediate addresses.
+Image configuration automatically selects these single-access immediate
+operations for arm64e.x1 GPR bases through both decoder routes, including
+unprivileged variants. Architecture-only decoding preserves them conservatively;
+image-configured ordinary AArch64 and classic arm64e retain their existing
+memory/frame model. The x1 selection follows Apple's
+[hardware security profile](https://developer.apple.com/documentation/watchos-release-notes/watchos-27-release-notes),
+which introduces CPA2; a classic arm64e header alone does not select this
+checked-memory source contract.
+Reusing a decoder for a different image refreshes this selection even when its
+architecture and instruction mode are unchanged. Literal
+SP immediates retain the existing frame path; that path does not qualify the
+original SP environment under CPA2. An opaque access through a proven entry-SP
+alias also fails image-backed lowering until its stack/call ABI is qualified;
+a nominal footprint cannot justify forwarding or omitting stack arguments.
+Runtime GPR values remain in runtime
+coordinates even when the module has an image. An exact address occurrence may
+instead rebase the raw base only after `AArch64MemoryImage` proves the complete
+base-to-access byte span in one initialized image owner. Negative displacements
+and the maximum unsigned Q span use 64-bit extents. LLVM requires one complete
+storage run; HighC declares the complete containing object. Neither substitutes
+an effective address for the raw base or changes the encoded displacement.
+Numeric equality cannot authenticate a scalar, fragment or code occurrence.
+Source admission also follows SSA/source definitions before body filtering:
+a runtime GPR may flow through scalar arithmetic, but a mixed image/runtime
+selection or unresolved image arithmetic needs an all-arms span proof and fails
+explicitly. A runtime arm cannot authorize another arm's image coordinates.
+HighC uses the shared source-flow graph to authenticate a copied image address
+at its exact use; a later assignment or an address-taken local supplies no
+constant-value certificate. Storage collection reuses that same proof, so a
+retained source variable cannot shrink the mirrored byte span.
+
+The exact ADRP owner recognizes a retained immediate dereference of its live
+page base. An ADRP/ADD chain can also use a retained immediate access as its
+occurrence-bound dereference witness. Reauthentication checks the original
+instruction word, base lane and complete image span; the certificate names the
+ADD's original base, independently of the memory instruction's displacement.
+This specialized provenance witness gives generic memory/alias analyses no
+ordinary-memory or no-fault authority. Constants without a valid image span
+still fail before source body filtering.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. The common machine table also owns literal
 SP forms. With no image, an explicit raw-SP parameter can select the physical SP
@@ -540,9 +615,12 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Automatic immediate, pre/post-index, pair and other ordinary-memory
-lifting remains unqualified for CPA2, as does controlled native execution with CPTA
-enabled. Native half and whole-vector C entry/return ABI and DWARF vector
+identity. Automatic x1 GPR single-immediate lifting and initialized-image
+rebasing have the bounded qualification above. Pre/post-index, pair and other
+ordinary-memory families, original-SP stack/call projection and Apple native
+execution with CPTA enabled remain unqualified. Controlled Arm model execution
+qualifies the declared explicit-IR exports separately from an automatically
+lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
 profile, and does not qualify native Apple SVE or LLVMC scalable carriers.
@@ -728,10 +806,10 @@ not make a packed projection a runnable standalone dylib.
 For a selected dyld cache image, debug discovery does not inspect the container
 or automatically attach its adjacent companions. Explicit DWARF and MAP paths
 retain the existing selected-image architecture and identity checks.
-Exception-level
-authentication, implicit-entry PACM state and CPA2 memory address arithmetic
-remain unsupported; recognizing x1's header does not claim those instruction
-semantics.
+A packed cache remains an analysis input. Recognizing x1's header grants no
+runtime environment: whole-image execution still needs complete exception-level
+authentication, implicit-entry PACM and CPA2/stack contracts. The supported
+explicit-IR operations above do not certify that complete image ABI.
 
 ## GUI project and search ownership
 
@@ -1959,7 +2037,14 @@ claims are not opted into incoming inference merely by loading them. Source
 refinements of ordinary anchors share the frozen reference validation pass;
 contradicted refinements withdraw only the incoming names they supported.
 The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
-loader owns validation of primary MSVC RTTI metadata.
+loader owns validation of primary MSVC RTTI metadata. Native `!vtable` records
+are metadata outside the byte index. `SignatureVTableContext` combines exact
+source slots, immutable relocation-backed storage and loader-validated primary
+RTTI, then queries existing complete strong `!caller` bodies. Its candidates
+receive one frozen outgoing check after incoming inference and before the data
+pass; they cannot restart a chain or establish data anchors. The parser and
+cache share one table-record admission contract. `VTableEvidence` owns raw COFF
+source declarations, including incomplete records used as offline counterclaims.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
@@ -8243,6 +8328,12 @@ NUL without padding and return the destination. API 28 ARM64 uses the C
 NUL-inclusive length to the destination object size. Scan faults and budgets
 precede that fortify check; the destination and overlap checks follow it.
 Undefined overlap and unsupported abort paths refuse without partial writes.
+`memchr` and `__memchr_chk` share the character-search loop, unsigned-byte
+comparison and guest read owner. Memory searches pass embedded NUL bytes and
+return null only after exhausting the requested count; scan-budget exhaustion
+remains a failure. The checked entry admits the whole count against the object
+extent before pointer or deadline checks. Zero-count searches need no pointer
+access, and a first match does not require the unread suffix to be mapped.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
@@ -8286,6 +8377,9 @@ uses the same outer limit before scanning its NUL-terminated input.
 metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
 the common string owner with bounded linear search and provider lifetime checks.
+`strpbrk` shares the bounded byte-set scan used by `strspn` and `strcspn`;
+it returns the first member's guest address or null at NUL, with unchanged errno.
+All three entries use the same guest access, deadline and provider checks.
 See [directory creation contracts](android-directory-creation.md).
 
 `LinuxFiles` also owns the explicit file creation, rename and unlink grants.
@@ -12105,6 +12199,12 @@ Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
 
+SSA liveness includes the implicit full-width SP read of a physical x86 CALL.
+This keeps an exception handler's frame live when its continuation calls before
+explicitly restoring SP. The existing establisher-frame proof supplies that
+root's value; liveness alone grants no offset or new exception-frame contract.
+The original call/jump encoding owner excludes synthetic tail calls.
+
 Exceptional memory histories follow the source instruction's possible prefixes,
 including before and after a throwing CALL or STORE. A complete local store
 ends only its own bytes. Completed byte histories are shared across later
@@ -12223,3 +12323,32 @@ original call occurrences or exhausted work publish no constant. The outgoing
 stack-write proof independently tracks affine addresses, expires temporaries
 at instruction boundaries and discards earlier writes across opaque effects.
 No cross-block values or implicit memory contents are introduced.
+
+`MedCallTarget` observes cached callable values through the Med ABI owner's
+exact address, width and overlap proof. The machine call-summary adapter,
+pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
+An observed import identifies the captured callable's signature and never
+authorizes a new target load. Call barriers, partial writes, uncertain aliases
+and exhausted work retain the unresolved call.
+
+`HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
+redundant writebacks and complete-overwrite proofs within independent regions
+and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
+and exceptional/ordered observations retain their memory effects. Prologue
+cleanup preserves saved register values still observed as data. Word zero-test
+normalization retains operand widths, signedness, effects and source truth.
+
+HighIR pointer type facts follow exact private scalar copies and memory cells,
+joining only agreed predecessor facts and revoking clobbered or escaped cells.
+Source parameter binding can supply display types without mutating machine IR.
+C frame records use validated display alignment and bounded member layouts;
+these declarations grant no ABI, nonalias or lifetime facts. Both C writers
+share record/member-path validation and preserve captured callable values.
+
+Analysis-image additions are owned by Session's C ABI in `NeverDCAPISections.cpp`.
+It validates and atomically extends existing BinaryImage segments, sections and
+function roots, then retires derived caches. Worker and CLI own writer leases
+and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
+Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
+for the same input. File rewriting retains the original file-backed load.
+See [analysis sections](analysis-sections.md).

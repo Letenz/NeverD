@@ -8,8 +8,10 @@
 #include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1420,4 +1422,82 @@ TEST(CSymbolNames, CopiesOfHeaderRoutinesStepAsideFromTheirNames) {
   EXPECT_NE(Source.find("    strlen("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("strlen_1000(0"), std::string::npos) << Source;
   EXPECT_NE(Source.find("    sigaddset_1100("), std::string::npos) << Source;
+}
+
+TEST(CSymbolNames, OmittedImageHeaderRoutinesKeepTheirRecoveredDeclarations) {
+  // A selected caller still references the image's own routine. Omitting the
+  // callee's body must not replace its recovered interface with a host header
+  // declaration, or redeclare that header's ordinary identifier incompatibly.
+  class ImageDebug : public NullDebugContext {
+  public:
+    std::string Name;
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != 0x1180)
+        return std::nullopt;
+      FunctionSym F;
+      F.Name = Name;
+      F.Addr = Address;
+      F.ReturnType = NdType::makeInt(8, false);
+      F.Params = {{"first", F.ReturnType},
+                  {"second", F.ReturnType},
+                  {"third", F.ReturnType}};
+      return F;
+    }
+    bool hasInfo() const override { return true; }
+  } Debug;
+  for (const char *Name :
+       {"strlen", "qsort", "wcschr", "_strupr", "wcscpy_s"}) {
+    SCOPED_TRACE(Name);
+    Debug.Name = Name;
+    BinaryImage Image = startupImage();
+    Image.Format = BinaryFormat::COFF;
+    Image.Symbols.back().Name = Name;
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Image;
+    const auto Caller =
+        returnsCall("caller", 0x1000,
+                    HighExpr::makeCall(Name, 0x1180,
+                                       {HighExpr::makeConst(1, 8),
+                                        HighExpr::makeConst(2, 8),
+                                        HighExpr::makeConst(3, 8)}));
+    std::string High;
+    llvm::raw_string_ostream HighOS(High);
+    ASSERT_TRUE(HighCEmitter().emit({Caller}, HighOS, Options, &Debug));
+
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Diagnostic;
+    auto Module = llvm::parseAssemblyString(R"(
+declare i64 @sub_1180(i64, i64, i64)
+define i64 @caller() {
+  %result = call i64 @sub_1180(i64 1, i64 2, i64 3)
+  ret i64 %result
+}
+)",
+                                            Diagnostic, Context);
+    ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+    std::string LLVM;
+    llvm::raw_string_ostream LLVMOS(LLVM);
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, LLVMOS, Options, &Debug, &Image));
+    auto *Callee = Module->getFunction("sub_1180");
+    ASSERT_NE(Callee, nullptr);
+    Callee->setName(Name);
+    rewrite_source::setOriginalVA(*Callee, 0x1180);
+    std::string NamedLLVM;
+    llvm::raw_string_ostream NamedOS(NamedLLVM);
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, NamedOS, Options, &Debug, &Image));
+    for (const auto &Source : {High, LLVM, NamedLLVM}) {
+      EXPECT_NE(Source.find(std::string(Name) + "_1180("), NotFound) << Source;
+      EXPECT_NE(Source.find("__asm__(\"" + std::string(Name) + "\")"), NotFound)
+          << Source;
+      EXPECT_NE(Source.find("_1180(1, 2, 3)"), NotFound) << Source;
+      for (const char *Optimization : {"-O0", "-O2"})
+        source_call_execution_test::checkSyntax(
+            "#include <stdlib.h>\n#include <string.h>\n#include <wchar.h>\n" +
+                Source,
+            {Optimization, "-Werror=int-conversion",
+             "-Werror=incompatible-pointer-types"});
+    }
+  }
 }

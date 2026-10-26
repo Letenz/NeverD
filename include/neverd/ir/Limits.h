@@ -489,6 +489,7 @@ inline constexpr int kHighDemandedBytesShiftAmountsDepthLimit = 4;
 
 // lib/ir/high/pass/HighExprSimplify.cpp
 inline constexpr int kHighExprSimplifyZeroOrOneDepthLimit = 8;
+inline constexpr unsigned kHighExprSimplifyZeroTestViewDepthLimit = 16;
 inline constexpr int kHighExprSimplifySameIntegerValuePeelPeelDepthLimit = 4;
 
 // lib/ir/high/pass/HighFlowOracle.cpp
@@ -513,6 +514,11 @@ inline constexpr int
 inline constexpr int kHighSymSimplifyStatementRegionsStatementCountLimit = 1024;
 inline constexpr int
     kHighSymSimplifyStatementRegionsFinishTotalWeightMinArgument1 = 4096;
+
+// lib/ir/high/pass/HighPointerTypeInference.cpp
+inline constexpr size_t kHighPointerTypeMaxOperations = 2000000;
+inline constexpr size_t kHighPointerTypeMaxStateEntries = 1000000;
+inline constexpr unsigned kHighPointerTypeMaxExpressionDepth = 64;
 
 // lib/ir/high/pass/HighTypeInference.cpp
 inline constexpr int
