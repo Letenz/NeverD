@@ -2486,6 +2486,23 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   RawMemoryExpressionLoads.clear();
   ScopedScalarNames.clear();
   Dominators.recalculate(Fn);
+  UnconditionalCycleBlocks.clear();
+  llvm::SmallPtrSet<const llvm::BasicBlock *, 32> Completed;
+  for (const auto &Block : Fn) {
+    llvm::SmallVector<const llvm::BasicBlock *, 8> Path;
+    llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Active;
+    const llvm::BasicBlock *Current = &Block;
+    while (Current && !Completed.count(Current) &&
+           Active.insert(Current).second) {
+      Path.push_back(Current);
+      const auto *Branch =
+          llvm::dyn_cast<llvm::UncondBrInst>(Current->getTerminator());
+      Current = Branch ? Branch->getSuccessor(0) : nullptr;
+    }
+    if (Current && Active.count(Current))
+      UnconditionalCycleBlocks.insert(llvm::find(Path, Current), Path.end());
+    Completed.insert(Path.begin(), Path.end());
+  }
   NextVar = 0;
   ValNames.clear();
   UsedNames.clear();
@@ -5003,7 +5020,7 @@ bool LLVMCWriter::instructionIsPrinted(const llvm::Instruction &Inst) {
 }
 
 bool LLVMCWriter::isPrintPassthrough(const llvm::BasicBlock *BB) {
-  if (!BB)
+  if (!BB || UnconditionalCycleBlocks.count(BB))
     return false;
   const auto *Br = llvm::dyn_cast<llvm::UncondBrInst>(BB->getTerminator());
   if (!Br || Br->getNumSuccessors() != 1)

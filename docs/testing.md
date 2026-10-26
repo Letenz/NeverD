@@ -11853,6 +11853,14 @@ Finite-dispatch regressions cover register and frame phases, both byte orders, r
 
 `NeverDLLVMCPhiTests` executes independent and cross-dependent loop updates at O0/O2 over zero-trip loops, iteration boundaries and randomized full-width seeds. Readability assertions require no snapshot locals for independent updates and only the needed snapshot for compound exchanges. Existing branch, switch, moved-arm and swap-loop cases continue to check the selected edge and simultaneous assignment semantics.
 
+`LLVMCBranches.UnconditionalCyclesRetainTheirControlFlow` checks self-loops
+with dead PHI computations and unconditional cycles with multiple entries.
+Both O0 and O2 output must compile with every branch destination intact.
+On Unix hosts, child-process observers also verify that each cycle entry
+continues running until its alarm, while the ordinary exit returns its value.
+The writer identifies these cycles once per function; omitting dead values
+does not turn their control flow into a removable passthrough block.
+
 `LLVMCInternalExitRegions` adds five independent tests covering both exit polarities, zero iterations, parallel exit/backedge swaps, all four combinations of nested header/internal exits and ordered header/body/latch observations. Shared-destination exits and early continuations verify executable fallback; a valid earlier loop followed by an unsupported region must publish no partial structure. Whole-module and selected-function output must agree without changing LLVM. Original LLVM and emitted C run against independent unsigned oracles at O0/O2 over 294,912 calls, with undefined-behavior traps on C.
 
 The same suite checks that a loop-body exit cannot execute the header exit's

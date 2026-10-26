@@ -1152,6 +1152,10 @@ public:
   /// prints the value stored on the edge.
   const llvm::AllocaInst *PhiTailSlot = nullptr;
   const llvm::Value *PhiTailIncoming = nullptr;
+  /// Even without printed values, an unconditional cycle must retain a
+  /// control-flow destination. Compute this once per function, including
+  /// cycles with multiple external entries and unreachable components.
+  std::set<const llvm::BasicBlock *> UnconditionalCycleBlocks;
 };
 
 } // namespace neverd
