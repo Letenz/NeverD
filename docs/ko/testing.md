@@ -2179,3 +2179,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `NeverDSourceCallABITests`는 Windows ARM64의 혼합 레지스터, 폭, 레지스터 소진, 스택 오프셋과 가변 인자 거부를 검사한다. `NeverDWorkerCallSiteTypes`는 ARM64 PE의 정수·double·포인터 호출을 두 C 경로로 복원하여 별도 C 함수와 O0/O2로 실행하고 거부된 편집 후 분석 스냅샷이 같은지 확인한다. Windows ARM64 네이티브 실행 검증은 아니다.
 
 worker 회귀에는 레지스터와 스택에 나뉜 인자 18개, 부동소수점 반환값, 절반만 기록된 스택 인자의 거부도 포함한다.
+
+NeverSight LLVM fork의 `BinaryRewriteRelocationTest`는 x64 PLT, i386 GOT, Mach-O GOTPCREL 및 AArch64 PAGE/PAGEOFF의 최종 바이트를 확인합니다. NeverD 통합 빌드는 기록된 fork를 직접 컴파일합니다. 이 MC 검사는 네이티브 예외 실행을 검증하지 않습니다.

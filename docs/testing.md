@@ -818,6 +818,17 @@ reject unknown/active transaction contexts before state publication. They
 do not qualify instruction decoding, memory-provider faults, IR preservation,
 native code generation or physical MPX hardware; strict lifting stays closed.
 
+`NeverDX86MpxEncodingTests` checks the shared byte reader and full/for-lift/light
+decode routes: 504 memory combinations, 1,152 register combinations, 9,216
+architectural register NOP cases and 6,912 SIB addresses compared with ordinary
+native-width MOV decoding. It covers ignored long-mode 67H, high GPRs and RIP,
+mode-sized BNDMOV memory, LOCK stores, absent MIB base/index and retained scale,
+prefix cancellation, truncation, instruction length and decoder reuse with text
+or detail disabled. Invalid banks, unsupported address forms and ambiguous
+mandatory prefixes cannot acquire a qualified encoding. Stateful instructions
+still refuse strict lifting without publishing LowIR; these checks do not
+certify memory faults, original-branch effects or physical MPX execution.
+
 `NeverDX86TBMTests` exercises all nine trailing-bit operations through full,
 lightweight and lift decoding, with 32/64-bit values, register aliases,
 register/memory sources, i386 ignored XOP fields and FS/GS/address overrides.
@@ -853,6 +864,23 @@ disables BMI/TBM and the exact assembly is checked before linking. The
 original BMI/TBM/APX instruction bytes are never executed. This qualifies
 the value projections; hardware exception delivery and preservation of a
 faulting load after source optimization remain separate work.
+
+`NeverDX86BitCountTests` checks TZCNT/LZCNT/POPCNT in both execution modes,
+with 16/32/64-bit operands, legacy/REX2/APX/NF encodings and all three decode
+routes. Independent bit loops cover every 16-bit source value; register-bank,
+alias, upper-bit preservation, memory-tail, source-fault and malformed-field
+cases exercise admission and effects. Run it with `NeverDX86FPEncodingTests`,
+`NeverDX86APXBMISemanticTests` and `NeverDX86UndefinedEffectsTests`.
+`NeverDLowIRUndefinedIndependenceTests` checks that observing an undefined
+count flag is dependent, that NF retains an earlier arbitrary AF producer,
+and that ordinary POPCNT kills that producer.
+
+`NeverDX86BitCountPipeline` projects raw count fixtures through LLVM, HighC
+and LLVM-to-C, with pipeline optimization on/off and O0/O2 compilation.
+Compilation disables BMI/LZCNT/POPCNT; executed code is compared with bit-loop
+values and only architecturally defined flags, including NF preservation.
+The original APX/REX2 bytes are not executed. This does not qualify physical
+APX execution, CPU-feature fallback to BSF/BSR or native memory exceptions.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -13055,7 +13083,7 @@ The native profile also requires the LLVM-C wide-integer constant/store checks a
 
 The native Linux x64 job also requires three C++ exception replacement checks: Clang IR, Clang native objects and GCC native objects. Their XML and process exit are audited separately, and any failure or skip fails qualification; NeverC is not used for these C++ inputs.
 
-The native qualification job builds the pinned LLVM fork from source, including the scoped x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
+The native qualification job builds the recorded LLVM fork from source, including its x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -13373,6 +13401,16 @@ physical aliases, empty/truncated/unmapped/misaligned buffers and permissions.
 It compares complete fetched pages with pre-submission copies, destination RAM,
 the result timestamp and both memstore timestamps, plus the refusal location.
 
+`SustainedGPUCommandsPreserveTimeAndContextOwnership` submits 1024 independently
+checked PM4 writes separated by virtual sleeps. Raw x64/AArch64 and Bionic
+callers check every retirement, untouched neighboring bytes and another
+context's idle timestamps, the exact elapsed virtual time, duplicate ownership
+after close/reopen, and timestamp reset when a context ID is reused. Android
+O0/O2 relocation variants exercise direct, syscall and dynamic imports; the
+process-public GPU case compares complete C API and CLI reports. These bounded
+workloads use a 30-second execution deadline for the repeated hardware-backend
+exits at O0. They test the synchronous model, not hardware scheduling or shaders.
+
 `AndroidBinder.GuestServicesExecuteSynchronousTransactionsAndReplies` runs
 ordinary and TF_ACCEPT_FDS requests with both data and guest-computed
 TF_STATUS_CODE replies, including exact guards and buffer release. The LP64
@@ -13525,6 +13563,11 @@ LP64 architectures, a pointer overwritten by the ioctl and an unsupported
 retry with complete RAM equality. `ProcessReport.IoctlTrace*` checks strict
 JSON admission and lossless evidence serialization. The Python device
 integration exercises the same report through the public C SDK.
+Selection regressions cover default/explicit `include_unlisted`, rejected
+non-boolean JSON, low-32-bit request matching, exact event and byte budgets,
+unlisted errors after a full trace, and unchanged whole guest reports. The
+sustained GPU fixture retains four selected timestamp queries across more than
+1024 unlisted submissions, including C API/CLI report equality.
 
 `NeverDHighCSupervisorCallTests` verifies that an unmodeled live ARM/AArch64
 SVC result returns a recoverable emission error. Unused results retain the
@@ -14157,3 +14200,5 @@ For patched-binary publication run `NeverDBytePatchTests`,
 output owner must preserve both exclusive creation and default replacement,
 including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
+
+`BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.

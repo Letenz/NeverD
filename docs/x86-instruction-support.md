@@ -40,6 +40,7 @@ complete instruction support or semantic test coverage.
 | XABORT | Exact constant imm8 through validated native LLVM, HighC and LLVM-to-C. Missing or inconsistent decoded operands and nonconstant IR fail; enclosing RTM checkpoint recovery remains separate. |
 | BLCFILL, BLCI, BLCIC, BLCMSK, BLCS, BLSFILL, BLSIC, T1MSKC, TZMSK | Validated XOP forms with source-dependent CF, result-dependent ZF/SF, cleared OF and explicit undefined AF/PF. LLVM, HighC and LLVM-to-C consume the same arithmetic semantics; see the TBM qualification below. |
 | BEXTR | Validated XOP immediate, VEX register-control and APX forms, including NF. Bounded shifts avoid out-of-range LLVM shifts; ordinary forms define CF/OF/ZF and record SF/AF/PF as undefined. See the BEXTR qualification below. |
+| TZCNT, LZCNT, POPCNT | Validated legacy, REX2 and APX/NF forms; aliased inputs, zero operands, destination width and defined/undefined flags retain their architectural meanings. See the count qualification below. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
 | CLTS | Ordered processor-state effect with no fabricated register output. |
 | Operand-free WRMSRNS | Distinct nonserializing instruction with explicit ECX/EAX/EDX inputs on x86 and x64. |
@@ -129,7 +130,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Remaining four-source address forms and hardware qualification | Native lowering now uses explicit SSA sources. The same stack/segment fault-provenance boundary as compact memory remains; physical AVX512_4FMAPS/AVX512_4VNNIW execution and exception behavior require separate qualification. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Default-stack memory and i386 non-DS segments still require preserved segment-fault provenance; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
-| Other BMI/BMI2/ADX form and undefined-output audits | Existing arithmetic lifting and APX tests do not qualify every legacy encoding or its undefined flags. BEXTR and the separate TBM family now have complete form-specific undefined-output audits; the other families still need that qualification. |
+| Other BMI/BMI2/ADX form and undefined-output audits | Existing arithmetic lifting and APX tests do not qualify every legacy encoding or its undefined flags. BEXTR, TZCNT/LZCNT/POPCNT and the separate TBM family have form-specific undefined-output audits; the remaining families still need that qualification. |
 
 This list includes backend guards as well as strict-lifter refusals. A decoded
 instruction and passing LowIR/concrete tests do not establish native LLVM or C
@@ -256,6 +257,35 @@ Memory-tail admission does not qualify every address at runtime. Hardware
 exception delivery and faulting loads removed by source optimization remain
 unqualified, as does a complete opaque machine-state audit.
 
+`X86LiftBitCount` authenticates TZCNT/LZCNT/POPCNT legacy, REX2 and APX/NF
+forms before emitting any effects. The independent F3/66 prefixes, effective
+REX, register banks and memory addresses must agree with decoder detail.
+TZCNT/LZCNT define source-zero CF and result-zero ZF; OF/SF/AF/PF are explicitly
+undefined. POPCNT clears the other status flags, and NF preserves incoming
+flags. A concrete zero chosen for an undefined bit cannot become a proof that
+the architecture defines it. This follows the
+[Intel SDM instruction definitions](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
+
+Count tests include independent bit loops, all 16-bit inputs, complete register
+bank combinations, all decode routes, memory tails, fault-before-write ordering
+and malformed/reserved-field refusals. The undefined-independence tests observe
+the arbitrary flags and their preservation through NF. Source projection checks
+cover LLVM and both C routes, pipeline optimization on/off and O0/O2 compilation.
+The 432 compiled source profiles pass 17,856 value/flag comparisons per SDK.
+Their source contains no inline assembly, and compiled output contains no
+count instructions, so execution does not depend on BMI1/LZCNT/POPCNT hardware.
+These contracts assume the input CPU enables the named count instruction;
+runtime selection of BSF/BSR behavior on processors lacking those features remains
+separate, as do physical APX execution and native memory exceptions.
+
+NeverC exposes LZCNT/POPCNT headers for function-level target attributes in
+Microsoft mode. Its regression covers eight public count interfaces across
+ELF/COFF/Mach-O at O0/O2 with translation-unit features explicitly disabled.
+LLVM `ctlz`, `cttz` and `ctpop` already provide native selection, with a defined
+zero operand for the count-zero APIs; no new intrinsic ID or inline assembly
+is needed. Native NeverC output passes 1,048,624 value comparisons, and the
+independent raw-instruction reference passes 627,033 legacy count/flag cases.
+
 NeverC now installs the native `tbmintrin.h` interfaces through `x86intrin.h`:
 20 value interfaces across ten operations and two widths, including BEXTR's
 constant control. Function-level `target("tbm")` works without a translation-
@@ -281,9 +311,11 @@ whole-program source qualification for this fixture is still incomplete.
 
 MPX memory forms retain their decoded identity in both full and lightweight
 decoding. The decoder no longer assumes MPX is disabled for BNDLDX/BNDSTX.
-Only the unprefixed register forms of `0F 1A/1B` remain architectural NOPs, as
-specified by the SDM's BNDLDX/BNDSTX descriptions. Strict lifting rejects the
-seven unmodeled MPX operations without appending partial effects. Existing
+The register forms of unprefixed `0F 1A/1B` and `F3 0F 1B` are architectural
+NOPs, as specified by the SDM's BNDLDX/BNDSTX/BNDMK descriptions. Their
+qualified segment/address/REX prefixes retain the complete instruction extent.
+Strict lifting rejects the seven unmodeled MPX operations without appending
+partial effects. Existing
 serialized MPX, standalone HLE and generic SHA placeholder IDs remain readable,
 but both LLVM and HighC output fail explicitly instead of silently dropping
 them. Specific SHA and bounded RTM instruction contracts are separate.
@@ -318,8 +350,24 @@ order is implementation-dependent. An invalid BDE instead preserves the bank
 and reports its address in BNDSTATUS. Active or unknown transaction contexts
 are refused before state publication; RTM/HLE checkpoint/abort integration is
 still required. This is not yet connected to strict lifting or native output:
-decoded operand authentication, memory-provider completion and original-branch
+instruction-state integration, memory-provider completion and original-branch
 effects surviving every IR route remain open.
+
+The byte-owned MPX decoder now normalizes long-mode `67H` address operands to
+full-width GPRs and RIP, retaining the prefix separately. Register-only forms
+ignore `67H` in either supported mode. It decodes the SDM's `LOCK BNDMOV`
+memory-store form, keeps BNDMOV's 8-byte i386 versus 16-byte long-mode memory
+footprint, and preserves MIB index/scale/absent-base distinctions. Checks and
+BNDMK still describe address calculations, while table instructions describe
+translation inputs; their displayed memory expression is not a direct access.
+The qualified encoding reader refuses invalid bounds registers, i386 16-bit
+memory addressing, RIP-relative BNDMK/table operations and competing mandatory
+prefixes. Classification of other decoder forms does not imply qualification.
+Its tests cover 504 memory decode combinations, 1,152 register combinations,
+9,216 architectural NOP cases and 6,912 SIB comparisons against independently
+decoded native-width MOV addresses. These are encoding checks, not MPX hardware
+execution or end-to-end lifting qualification. Original-branch effects,
+memory-provider completion and transactional state integration remain open.
 
 Completion therefore still requires extending the shared machine-state/runtime
 contract for transitions, completing the ENCLU leaf/state contracts, and

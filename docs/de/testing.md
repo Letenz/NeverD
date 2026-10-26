@@ -2305,3 +2305,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `NeverDSourceCallABITests` prüft gemischte Register, Breiten, erschöpfte Register, Stapeloffsets und die Ablehnung variadischer Windows-ARM64-Aufrufe. `NeverDWorkerCallSiteTypes` gewinnt einen Ganzzahl-/double-/Zeigeraufruf aus einer ARM64-PE-Datei zurück und führt beide C-Ausgaben mit einer separaten C-Funktion bei O0/O2 aus. Abgewiesene Änderungen müssen den Analysezustand erhalten. Dies validiert keine native Windows-ARM64-Ausführung.
 
 Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparameter, eine Gleitkommarückgabe und die Ablehnung eines nur halb geschriebenen Stapelarguments ab.
+
+`BinaryRewriteRelocationTest` im NeverSight-LLVM-Fork prüft die endgültigen Bytes für x64 PLT, i386 GOT, Mach-O GOTPCREL und AArch64 PAGE/PAGEOFF. Integrierte NeverD-Builds kompilieren die erfasste Fork-Revision direkt. Diese MC-Prüfungen qualifizieren keine native Ausnahmeausführung.
