@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -49,6 +50,20 @@ std::vector<std::optional<int64_t>>
 entryStackOffsets(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
                   Arch Architecture, BinaryFormat Format,
                   StackEntryKind Entry = StackEntryKind::Call);
+
+/// Inclusive bounds on a pointer's signed displacement from entry SP. A
+/// dynamic allocation can have bounds without having an exact stack offset.
+struct EntryStackOffsetRange {
+  int64_t Min;
+  int64_t Max;
+};
+
+/// Bounded dynamic displacements and PHI alternatives rooted at entry SP.
+/// Unanchored cycles, unbounded arithmetic and offset overflow stay unknown.
+std::vector<std::optional<EntryStackOffsetRange>>
+entryStackOffsetRanges(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
+                       Arch Architecture, BinaryFormat Format,
+                       StackEntryKind Entry = StackEntryKind::Call);
 
 /// Full-width SP definitions in the entry block that align an authenticated
 /// entry-stack offset. Each definition is a distinct frame origin; this does

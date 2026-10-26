@@ -24,6 +24,7 @@
 #include "neverd/decode/InstructionRelocations.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/AArch64ImmediateMemoryImage.h"
 #include "neverd/ir/low/ImportedMemoryCopy.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/lift/ARM/ARMRegs.h"
@@ -1878,10 +1879,12 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         DereferenceRec->second.IsResumableTerminator ||
         Dereference->Opcode != Occurrence.DereferenceOpcode ||
         (Dereference->Opcode != NdOp::LOAD &&
-         Dereference->Opcode != NdOp::STORE))
+         Dereference->Opcode != NdOp::STORE &&
+         !lowAArch64AddressMemoryShapeIsValid(*Dereference)))
       return false;
     NdVar DereferenceAddress = Current;
     bool SawDereference = false;
+    LowImageBaseMemoryWitness Memory;
     bool SawFinalArithmetic =
         DereferenceRec->second.Addr != Final.InstructionAddr;
     for (const LowOp &Op : DereferenceRec->second.Ops) {
@@ -1892,16 +1895,19 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         }
         continue;
       }
-      const LowMemoryOperandView CandidateMemory = lowMemoryOperands(Op);
       if (&Op == Dereference) {
-        if (!CandidateMemory.Complete || !CandidateMemory.Address ||
-            *CandidateMemory.Address != DereferenceAddress || SawDereference ||
+        Memory = lowImageBaseMemoryWitness(Img, Op, Address,
+                                           Occurrence.TargetOwnerVA);
+        if (!Memory.Complete || !Memory.Base ||
+            *Memory.Base != DereferenceAddress || SawDereference ||
             proofValueClobbers(Op.Output, Current))
           return false;
         SawDereference = true;
         continue;
       }
-      if (CandidateMemory.Complete || proofValueClobbers(Op.Output, Current))
+      if (lowMemoryOperands(Op).Complete ||
+          lowAArch64AddressMemoryShapeIsValid(Op) ||
+          proofValueClobbers(Op.Output, Current))
         return false;
       if (!SawDereference) {
         if (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
@@ -1913,11 +1919,10 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
         DereferenceAddress = Op.Output;
       }
     }
-    const LowMemoryOperandView Memory = lowMemoryOperands(*Dereference);
     if (!SawFinalArithmetic || !SawDereference || !Memory.Complete ||
-        !Memory.Address ||
+        !Memory.Base ||
         DereferenceAddress != Occurrence.DereferenceAddressWitness ||
-        *Memory.Address != DereferenceAddress ||
+        *Memory.Base != DereferenceAddress ||
         Memory.AccessSize != Occurrence.DereferenceAccessSize ||
         Memory.AccessSize == 0 || Memory.AccessSize - 1 > InvalidVA - Address)
       return false;
@@ -3523,6 +3528,17 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
           }
         }
 
+        if (CanAuthenticatePageByDereference &&
+            lowAArch64AddressMemoryShapeIsValid(Op)) {
+          const auto Offset =
+              relativeOffset(Op.Inputs[kAddressMemoryBaseOperand + 1]);
+          if (Offset && *Offset == 0 &&
+              lowImageBaseMemoryWitness(Img, Op, PageBase, OwnerVA).Complete) {
+            ProvedExactDereference = true;
+            break;
+          }
+        }
+
         std::optional<uint64_t> Derived;
         if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1) {
           Derived = relativeOffset(Op.Inputs[0]);
@@ -3952,13 +3968,13 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
       // InsnRecord, and the usual all-path value queries remain authoritative.
       const LowOp *LocalArithmetic = nullptr;
       const LowOp *LocalDereference = nullptr;
-      LowMemoryOperandView LocalDereferenceMemory;
+      LowImageBaseMemoryWitness LocalDereferenceMemory;
       NdVar LocalDereferenceAddress;
       int LocalBaseSide = -1;
       NdVar LocalAddressValue = CurrentValue;
       bool InvalidLocalShape = false;
       for (const LowOp &Op : UseRec.Ops) {
-        const LowMemoryOperandView Memory = lowMemoryOperands(Op);
+        const auto Memory = lowImageBaseMemoryWitness(Img, Op, CurrentAddress);
         if (!LocalArithmetic) {
           if (Memory.Complete) {
             InvalidLocalShape = true;
@@ -4004,8 +4020,9 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
 
         if (Memory.Complete) {
           if (LocalDereference ||
-              (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE) ||
-              !Memory.Address || *Memory.Address != LocalAddressValue ||
+              (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
+               !lowAArch64AddressMemoryShapeIsValid(Op)) ||
+              !Memory.Base || *Memory.Base != LocalAddressValue ||
               Op.Output == LocalAddressValue ||
               overlapsRegister(Op.Output, LocalAddressValue)) {
             InvalidLocalShape = true;
@@ -4013,7 +4030,7 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
           }
           LocalDereference = &Op;
           LocalDereferenceMemory = Memory;
-          LocalDereferenceAddress = *Memory.Address;
+          LocalDereferenceAddress = *Memory.Base;
           continue;
         }
         if (!LocalDereference && Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
@@ -4107,7 +4124,8 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
       if (Arithmetic && BaseSide >= 0) {
         bool InvalidStep = false;
         for (const LowOp &Op : UseRec.Ops) {
-          const LowMemoryOperandView Memory = lowMemoryOperands(Op);
+          const auto Memory =
+              lowImageBaseMemoryWitness(Img, Op, CurrentAddress);
           if (Memory.Complete ||
               (&Op != Arithmetic &&
                (overlapsRegister(Op.Output, CurrentValue) ||
@@ -4144,14 +4162,15 @@ void CFGBuilder::completeExactAArch64PageBases(const BinaryImage &Img) {
       if (Steps.empty())
         break;
       const LowOp *Dereference = nullptr;
-      LowMemoryOperandView DereferenceMemory;
+      LowImageBaseMemoryWitness DereferenceMemory;
       NdVar DereferenceAddress = CurrentValue;
       bool InvalidDereference = false;
       for (const LowOp &Op : UseRec.Ops) {
-        const LowMemoryOperandView Memory = lowMemoryOperands(Op);
+        const auto Memory = lowImageBaseMemoryWitness(Img, Op, CurrentAddress);
         if (Memory.Complete) {
-          if ((Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE) ||
-              !Memory.Address || *Memory.Address != DereferenceAddress ||
+          if ((Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
+               !lowAArch64AddressMemoryShapeIsValid(Op)) ||
+              !Memory.Base || *Memory.Base != DereferenceAddress ||
               Dereference) {
             InvalidDereference = true;
             break;

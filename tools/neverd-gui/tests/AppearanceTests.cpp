@@ -295,9 +295,32 @@ private slots:
            y < qRound((row.bottom() + 1) * dpr); ++y)
         for (int x = fromX; x < capture.width(); ++x) {
           const auto pixel = capture.pixelColor(x, y);
-          if (qAbs(pixel.red() - color.red()) < 12 &&
-              qAbs(pixel.green() - color.green()) < 12 &&
-              qAbs(pixel.blue() - color.blue()) < 12)
+          const auto background = Theme::instance().chrome("Menu");
+          const auto distance = [&](const QColor &reference) {
+            return qAbs(pixel.red() - reference.red()) +
+                   qAbs(pixel.green() - reference.green()) +
+                   qAbs(pixel.blue() - reference.blue());
+          };
+          // Antialiased glyphs need not contain the exact text color. Accept
+          // foreground/background blends with at least half ink coverage;
+          // other colors, such as a checked icon's border, are not text.
+          const auto textInk = [&] {
+            const int dr = color.red() - background.red();
+            const int dg = color.green() - background.green();
+            const int db = color.blue() - background.blue();
+            const int pr = pixel.red() - background.red();
+            const int pg = pixel.green() - background.green();
+            const int pb = pixel.blue() - background.blue();
+            const double coverage = double(pr * dr + pg * dg + pb * db) /
+                                    (dr * dr + dg * dg + db * db);
+            return coverage >= 0.5 && coverage <= 1.05 &&
+                   qAbs(pr - coverage * dr) < 12 &&
+                   qAbs(pg - coverage * dg) < 12 &&
+                   qAbs(pb - coverage * db) < 12;
+          };
+          const bool matches =
+              color == QColor(Qt::magenta) ? distance(color) < 12 : textInk();
+          if (matches)
             ink |= QRect(x, y, 1, 1);
         }
       return ink;
