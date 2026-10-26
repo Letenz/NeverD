@@ -311,9 +311,11 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
     return;
   for (const auto &Hit : Pending)
     appendModuleMatches(Hit.Address, Hit.Module);
-  // Exactly one pass. Newly admitted candidates cannot confirm one another,
-  // request more callers or retroactively establish their own data bindings.
+  // Exactly one data pass. Newly admitted candidates cannot confirm one
+  // another or retroactively establish their own data bindings.
   checkReferences(Img, Entries, {}, Frozen, Frozen, &Bindings);
+  if (Matches.size() != Frozen)
+    applyCallerContext(Img, Entries, Frozen, &Bindings);
 }
 
 } // namespace neverd::sigs

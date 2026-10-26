@@ -126,13 +126,16 @@ bool MedLLVMEmitter::emitX86DebugTrap(const MedOp &Op, Intrinsic IC,
     return true;
   }
   case I::Retf:
-  case I::Iret: {
-    // Far and interrupt returns are terminal architectural control transfers,
-    // not ABI returns.  Emit a named no-return call whose arguments are the
-    // exact stack cells the transfer reads (CS:IP, plus FLAGS and, for 64-bit
-    // IRET, SS:RSP), so LLVMC prints the same faithful intrinsic as HighC and
-    // nothing resumes after it.  This records the transfer; it reconstructs no
-    // privilege, segment or flag change and grants no source ABI contract.
+  case I::Iret:
+  case I::Sysretq:
+  case I::Sysexitq: {
+    // Architectural returns (far, interrupt and syscall returns) are terminal
+    // control transfers, not ABI returns.  Emit a named no-return call whose
+    // arguments are the exact cells the transfer reads (the stack frame for
+    // RETF/IRET; RCX/R11 or RDX/RCX for the syscall returns), so LLVMC prints
+    // the same faithful intrinsic as HighC and nothing resumes after it.  This
+    // records the transfer; it reconstructs no privilege, segment or flag
+    // change and grants no source ABI contract.
     auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
     llvm::SmallVector<llvm::Value *, 5> Args;
     llvm::SmallVector<llvm::Type *, 5> ArgTys;

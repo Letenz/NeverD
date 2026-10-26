@@ -404,6 +404,37 @@ TEST_P(AndroidNetwork, RefusalAndUnknownPeerStaySeparate) {
   EXPECT_NE(R.Diagnostic.find("matching offline connection"),
             std::string::npos);
 }
+TEST_P(AndroidNetwork, OutgoingMismatchReportsStreamAndBufferOffsets) {
+  Options.Android->ObserveMemoryOnFailure = true;
+  auto &Bytes = Options.LinuxNetwork->Connections.front().ExpectedSend;
+  for (unsigned Raw : {0, 1}) {
+    for (unsigned Offset : {1, 3, 4}) {
+      SCOPED_TRACE(testing::Message() << "raw=" << Raw << " offset=" << Offset);
+      const auto Original = Bytes[Offset];
+      Bytes[Offset] = 0;
+      auto R = run("network_stream", Raw);
+      EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(
+          R.Diagnostic,
+          Offset == 1
+              ? "outgoing TCP bytes differ from the offline contract at "
+                "stream offset 1 (buffer offset 1): expected 0x00, actual "
+                "0xff"
+          : Offset == 3
+              ? "outgoing TCP bytes differ from the offline contract at "
+                "stream offset 3 (buffer offset 1): expected 0x00, actual "
+                "0x13"
+              : "outgoing TCP bytes differ from the offline contract at "
+                "stream offset 4 (buffer offset 0): expected 0x00, actual "
+                "0x7f");
+      if (Offset > 1)
+        EXPECT_EQ(word(R, 2), 2u);
+      if (Offset > 3)
+        EXPECT_EQ(word(R, 3), 2u);
+      Bytes[Offset] = Original;
+    }
+  }
+}
 TEST_P(AndroidNetwork, DynamicResolverUsesTheSameOwner) {
   Options.Android->Libraries["liboffline.so"] = {"getaddrinfo", "freeaddrinfo"};
   auto R = run("network_dynamic");

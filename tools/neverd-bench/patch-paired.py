@@ -42,7 +42,7 @@ def process_clock(pid):
     return lambda: time.clock_gettime_ns(clock.value) / 1e6
 
 
-def run_case(host, snapshots, count, samples, worker):
+def run_case(host, snapshots, count, samples, worker, history=False):
     with tempfile.TemporaryDirectory(prefix="neverd-patch-paired-") as temporary, ExitStack() as clients:
         fixtures, calls, clocks = {}, {}, {}
         for name, snapshot in snapshots.items():
@@ -81,6 +81,8 @@ def run_case(host, snapshots, count, samples, worker):
         at = count // 2
         address = hex(bench.BASE + at)
         operations = ["worker_commit"] if worker else ["cli_list", "cli_preview", "cli_apply"]
+        if worker and history:
+            operations += ["worker_undo", "worker_redo"]
         results = []
         for operation in operations:
             values = {name: {"wall": [], "cpu": []} for name in snapshots}
@@ -92,11 +94,20 @@ def run_case(host, snapshots, count, samples, worker):
                 for name in names:
                     call, clock = calls[name], clocks[name]
                     path, original, sidecar, expected = fixtures[name]
+                    if operation in ("worker_undo", "worker_redo"):
+                        applied = call("patch_apply", {"address": address, "kind": "bytes",
+                                                       "bytes": "91", "expected": "90"})
+                        assert applied["status"] == "ok" and applied["payload"]["saved"], applied
+                        if operation == "worker_redo":
+                            assert call("undo")["status"] == "ok"
                     cpu_start = clock()
                     start = time.perf_counter_ns()
                     if worker:
-                        output = call("patch_apply", {"address": address, "kind": "bytes",
-                                                      "bytes": "91", "expected": "90"})
+                        if operation == "worker_commit":
+                            output = call("patch_apply", {"address": address, "kind": "bytes",
+                                                          "bytes": "91", "expected": "90"})
+                        else:
+                            output = call(operation.removeprefix("worker_"))
                     else:
                         args = [] if operation == "cli_list" else ["--address=" + address, "--bytes=91"]
                         if operation == "cli_apply":
@@ -109,8 +120,13 @@ def run_case(host, snapshots, count, samples, worker):
                         values[name]["cpu"].append(cpu)
                     if worker:
                         assert output["status"] == "ok" and output["payload"]["saved"], output
-                        assert call("bytes", {"address": address, "size": 1})["payload"]["data"] == "91"
-                        assert call("undo")["status"] == "ok"
+                        current = "90" if operation == "worker_undo" else "91"
+                        assert call("bytes", {"address": address, "size": 1})["payload"]["data"] == current
+                        rows = json.loads(sidecar.read_bytes())
+                        assert rows[at]["current"] == current
+                        assert rows[:at] + rows[at+1:] == expected[:at] + expected[at+1:]
+                        if operation != "worker_undo":
+                            assert call("undo")["status"] == "ok"
                     elif operation == "cli_list":
                         assert json.loads(output) == expected
                     else:
@@ -144,6 +160,8 @@ def main():
     parser.add_argument("--cli-rows", type=int, nargs="*", default=[64, 8192, 65536])
     parser.add_argument("--worker-rows", type=int, nargs="*", default=[64, 8192])
     parser.add_argument("--samples", type=int, default=20)
+    parser.add_argument("--worker-history", action="store_true",
+                        help="also time checked durable undo and redo operations")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if sys.platform != "linux" or not __debug__ or args.samples <= 0:
@@ -167,7 +185,8 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     for worker, counts in ((False, args.cli_rows), (True, args.worker_rows)):
         for count in counts:
-            report["results"].extend(run_case(host, snapshots, count, args.samples, worker))
+            report["results"].extend(run_case(host, snapshots, count, args.samples, worker,
+                                              args.worker_history))
             args.output.write_text(json.dumps(report, indent=2) + "\n")
             print("checked", "worker" if worker else "CLI", count, flush=True)
 

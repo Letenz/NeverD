@@ -12,6 +12,8 @@
 
 La nouvelle matrice exécute les lectures signées et non signées de 1/2/4 octets par les deux voies C à O0/O2 avec UBSan, pour la sortie complète ou le seul appelant. Les appelants écrivent uniquement les octets lus ; les lectures dépassant la largeur déclarée sont refusées.
 
+La matrice de largeurs mixtes exécute les lectures de préfixe et de case complète à O0/O2 avec UBSan. Les contrôles du cadre natif couvrent les deux ordres et refusent les seules lectures étroites ou une lecture complète appartenant à une autre case.
+
 Les appels par registre connus sont exécutés dans les deux sorties C pour x64/ARM64 PE/ELF, en module complet et avec appelant seul. Le LowIR original reste indirect. Les contrôles refusent les écritures partielles périmées, effets opaques, temporaires réutilisés, cellules mémoire et budgets épuisés.
 
 `PEFunctionAddresses.*` vérifie les feuilles PE x64 sans cadre, la propriété et les limites des instructions, les préfixes et opérandes étroits refusés, les sorties, l’annulation et la parité avec 1/2/4/16 workers. Les tests de signatures couvrent les 16 conditions rel32 dans les deux sens, les entrées explicites et les contraintes de relocation source. Les tests Python préservent les alternatives et les sites conjointement nécessaires, vérifient chaque contre-exemple brut et évitent les doublons.

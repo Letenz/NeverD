@@ -15,6 +15,7 @@
 #include "neverd/support/ProjectFiles.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -275,6 +276,196 @@ void journalContents() {
           "Reopening lost escaped state or history");
   }
 }
+void loadedDocumentJournal() {
+  for (bool bom : {false, true}) {
+    Fixture fixture;
+    auto original = fixture.open();
+    const auto before = initial(original);
+    const auto historyPath = fixture.path(files::File::History);
+    const auto beforeDocument = Json::parse(text(historyPath));
+    writeFile(historyPath,
+              (bom ? "\xef\xbb\xbf" : "") + beforeDocument.dump(4) + "\n");
+    auto loaded = fixture.open();
+    const auto after = change(loaded, "after reopening");
+    fixture.writer.clear();
+    fixture.writer.failAt = 1;
+    rejects([&] { loaded.persist(after); }, "injected_failure");
+    // Valid top-level file bytes (notably a BOM) are not necessarily valid
+    // nested JSON. Lazy encoding must publish a complete, parseable journal.
+    const auto journal = parseJson(text(fixture.path(files::File::Journal)));
+    check(journal.at("before_history") == beforeDocument &&
+              journal.at("before") == before && journal.at("after") == after,
+          "Loaded history text changed or corrupted the recovery journal");
+    fixture.writer.clear();
+    loaded.persist(after);
+    check(!ProjectHistory::recoveryPending(fixture.binary) &&
+              fixture.open().committedState() == after,
+          "Retry lost the state of a reformatted loaded history");
+  }
+}
+void independentCheckpoints() {
+  Fixture fixture;
+  auto store = fixture.open();
+  const auto before = initial(store);
+  auto checkpoint = store;
+  const auto &retained = checkpoint.committedState();
+  const auto after = change(store, "after");
+  rejects([&] { checkpoint.next(false); }, "history_empty");
+  store.persist(after);
+  check(retained == before && checkpoint.committedState() == before &&
+            !checkpoint.current(),
+        "Commit mutated an independent rollback checkpoint");
+  fixture.writer.clear();
+  rejects([&] { checkpoint.persist(before); }, "foreign_edits");
+  check(fixture.writer.calls.empty(), "Stale checkpoint overwrote newer files");
+  checkpoint.reset();
+  check(checkpoint.committedState() == after && checkpoint.current() &&
+            store.next(false).at("after") == after["renames"][0],
+        "Reset shared mutable state or commands with another history");
+}
+void equivalentAndForeignContents() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto state = initial(store);
+  state["annotations"].push_back({{"addr", "0x20"}, {"text", "second"}});
+  store.persist(state);
+  state = store.committedState();
+  const auto notes = fixture.path(files::File::Annotations);
+  const auto history = fixture.path(files::File::History);
+  const std::string formatted =
+      R"([{"text":"before","addr":"0X01000"},
+           {"addr":"0x0020","text":"second"}])";
+  writeFile(notes, formatted);
+  writeFile(history, Json::parse(text(history)).dump(4));
+  check(store.current(), "Equivalent row order/address spelling was refused");
+  state["renames"][0]["renamed"] = "after";
+  store.persist(state);
+  check(text(notes) == formatted && store.current(),
+        "Equivalent unchanged file was rewritten or lost its identity");
+  // File size and timestamp alone do not establish content identity.
+  const auto timestamp = fs::last_write_time(notes);
+  auto foreign = formatted;
+  foreign.replace(foreign.find("before"), 6, "forged");
+  writeFile(notes, foreign);
+  fs::last_write_time(notes, timestamp);
+  check(!store.current(), "Same-size timestamp-preserving edit was missed");
+  fixture.writer.clear();
+  rejects([&] { store.persist(state); }, "foreign_edits");
+  check(fixture.writer.calls.empty() && text(notes) == foreign,
+        "Foreign file was replaced through a validated snapshot");
+  writeFile(notes, formatted);
+  const auto savedHistory = text(history);
+  const auto historyTime = fs::last_write_time(history);
+  auto changedHistory = savedHistory;
+  const auto schema = changedHistory.find("\"schema_version\":1");
+  check(schema != std::string::npos, "History schema fixture changed");
+  changedHistory[schema + std::string("\"schema_version\":").size()] = '2';
+  writeFile(history, changedHistory);
+  fs::last_write_time(history, historyTime);
+  rejects([&] { store.persist(state); }, "foreign_edits");
+  check(fixture.writer.calls.empty(), "Changed history bypassed comparison");
+  writeFile(history, savedHistory);
+  for (
+      const auto *malformed :
+      {R"([{"addr":"0x1000","addr":"0x1000","text":"before"}])",
+       R"([{"addr":"0x1000","text":"before"},{"addr":"0X01000","text":"before"}])",
+       "{broken"}) {
+    writeFile(notes, malformed);
+    rejects([&] { store.persist(state); }, "history_invalid");
+    check(fixture.writer.calls.empty(), "Malformed file published a journal");
+  }
+  writeFile(notes, "<<<<<<< HEAD\n[]\n=======\n[]\n>>>>>>> incoming\n");
+  rejects([&] { store.persist(state); }, "merge_conflict");
+}
+void missingAndEmptyContents() {
+  Fixture fixture;
+  auto store = fixture.open();
+  const auto state = store.committedState();
+  const auto items = fixture.path(files::File::Items);
+  writeFile(items, "null");
+  writeFile(fixture.path(files::File::Annotations), "[]");
+  check(store.current(), "Missing and empty tables stopped being equivalent");
+  store.persist(state);
+  fs::remove(items);
+  check(store.current(), "Removing an empty file changed its logical table");
+  store.persist(state);
+  auto unknown = state;
+  unknown["future_table"] = Json::array();
+  store.persist(unknown);
+  check(!store.current(), "Disk comparison ignored an extra state table");
+}
+void changedRowsStillRequireAdmission() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto state = initial(store);
+  state["patches"] = Json::array({{{"addr", "0x0"},
+                                   {"file_off", "0x0"},
+                                   {"va", "0x1000"},
+                                   {"size", std::uint64_t(1)},
+                                   {"original", "00"},
+                                   {"current", "01"},
+                                   {"kind", "bytes"}}});
+  state["items"] = Json::array(
+      {{{"addr", "0x1000"}, {"size", std::uint64_t(1)}, {"kind", "byte"}}});
+  store.persist(state);
+  fixture.writer.clear();
+  auto changed = state;
+  changed["patches"][0]["size"] = 1.0;
+  check(changed == state, "Floating-type equality control changed");
+  rejects([&] { store.persist(changed); }, "invalid_request");
+  changed = state;
+  changed["items"][0]["size"] = std::int64_t(1);
+  check(changed == state, "Signed-type equality control changed");
+  rejects([&] { store.persist(changed); }, "history_invalid");
+  changed = state;
+  changed["patches"][0]["current"] = "gg";
+  rejects([&] { store.persist(changed); }, "history_invalid");
+  changed = state;
+  changed["annotations"][0]["text"] = std::string("bad\0text", 8);
+  rejects([&] { store.persist(changed); }, "invalid_request");
+  check(fixture.writer.calls.empty() && store.committedState() == state &&
+            store.current(),
+        "Changed row reused admission or published transaction files");
+}
+void lossyValuesCannotPublishSnapshots() {
+  Fixture fixture;
+  auto store = fixture.open();
+  const auto before = initial(store);
+  fixture.writer.clear();
+  auto after = before;
+  after["annotations"][0]["text"] = std::string(1, '\xff');
+  rejects([&] { store.persist(after); }, "history_invalid");
+  rejects(
+      [&] {
+        store.stage({{"kind", "annotation"},
+                     {"address", "0x1000"},
+                     {"before", "before"},
+                     {"after", std::string(1, '\xff')}});
+      },
+      "history_invalid");
+  rejects([&] { store.next(false); }, "history_empty");
+  for (const auto &value :
+       {Json(std::numeric_limits<double>::infinity()), Json::binary({1, 2})}) {
+    after = before;
+    after["annotations"][0]["extra"] = value;
+    rejects([&] { store.persist(after); }, "history_invalid");
+    after = before;
+    after["extra"] = value;
+    rejects([&] { store.persist(after); }, "history_invalid");
+    rejects(
+        [&] {
+          store.stage({{"kind", "annotation"},
+                       {"address", "0x1000"},
+                       {"before", "before"},
+                       {"after", "after"},
+                       {"extra", value}});
+        },
+        "history_invalid");
+  }
+  check(fixture.writer.calls.empty() && store.committedState() == before &&
+            store.current(),
+        "Lossy JSON created a snapshot that disagrees with its saved bytes");
+}
 void normalization() {
   auto state = ProjectHistory::normalizedState(
       {{"annotations", Json::array()}, {"renames", Json::array()}});
@@ -343,6 +534,12 @@ int main() {
     failureBoundaries();
     retryAndConflict();
     journalContents();
+    loadedDocumentJournal();
+    independentCheckpoints();
+    equivalentAndForeignContents();
+    missingAndEmptyContents();
+    changedRowsStillRequireAdmission();
+    lossyValuesCannotPublishSnapshots();
     normalization();
     budgetBeforePublication();
     journalBudgetBeforePublication();
