@@ -13889,6 +13889,13 @@ backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
 failed-admission atomicity, full byte streams and strict JSON. Tests never use
 host networking. Run the complete affected owners before review.
 
+`LinuxNetwork.MismatchOffsetsUseSharedCursorWithoutConsumingPrefix` checks
+first-difference diagnostics after short writes through descriptor aliases,
+including an unmatched suffix beyond the current transfer window and retry
+without consuming a matching prefix. Android's
+`OutgoingMismatchReportsStreamAndBufferOffsets` checks named sends, writes and
+variadic raw sends through the original C fixture on each available backend.
+
 The network fixtures also exercise TCP failure followed by connected UDP,
 IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty
 datagrams and explicit error completions. The original C receive caller makes

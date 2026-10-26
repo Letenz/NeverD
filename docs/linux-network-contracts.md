@@ -67,6 +67,11 @@ Every outgoing byte is compared before the cursor advances. Per-call ceilings
 of 1–65536 bytes model short transfers. The receive stream ends only when
 `receive_eof` explicitly says so; exhausted input without EOF remains unknown.
 Bad peer or transfer bytes do not consume the connection or stream contract.
+An outgoing TCP mismatch identifies the first differing byte by its absolute
+stream offset and its offset in the current buffer, with expected and actual
+byte values. Only the admitted short-transfer window is compared; a matching
+prefix within a failed window is not consumed. Descriptor aliases report
+offsets using their shared stream cursor.
 Socket seek returns ESPIPE. `setsockopt`/`getsockopt` share SO_RCVTIMEO and
 SO_SNDTIMEO state across aliases, accepting whole seconds up to one day;
 negative seconds retain immediate-timeout state. Fractional timeouts stop
