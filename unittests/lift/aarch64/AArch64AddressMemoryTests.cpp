@@ -6804,11 +6804,13 @@ TEST(AArch64OrderedMemory, TracerUsesExactOriginalMemoryShapes) {
         const auto ReadGuard = [&](va_t Start) {
           LowOp Read;
           Read.Opcode = NdOp::LOAD;
-          Read.Output = NdVar::reg(a64reg::V1, kVectorBytes);
+          Read.Output =
+              NdVar::reg(a64reg::V(kOrderedGuardVectorRegister), kVectorBytes);
           Read.addInput(NdVar::dataAddress(Start, kScalarBytes));
           if (!Emulator.step(Read))
             return std::optional<std::vector<uint8_t>>{};
-          return Emulator.getRegisterBytes(a64reg::V1);
+          return Emulator.getRegisterBytes(
+              a64reg::V(kOrderedGuardVectorRegister));
         };
         const auto Before = ReadGuard(Address);
         const auto Tail = ReadGuard(Address + kVectorBytes);

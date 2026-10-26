@@ -155,6 +155,7 @@ ORDERED_MEMORY_REJECT(0xddc00820U)
 ORDERED_MEMORY_VALUE(unsigned, kOrderedCaseCount, 115)
 ORDERED_MEMORY_VALUE(unsigned, kOrderedFamilyCount, 23)
 ORDERED_MEMORY_VALUE(unsigned, kOrderedEncodingCount, 11776)
+ORDERED_MEMORY_VALUE(unsigned, kOrderedGuardVectorRegister, 1)
 ORDERED_MEMORY_TEXT(kOrderedArtifactProperty,
                     "arm64e_ordered_memory_artifact_directory")
 ORDERED_MEMORY_TEXT(kOrderedImageArtifactProperty,
