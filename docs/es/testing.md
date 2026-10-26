@@ -2304,3 +2304,5 @@ La regresión del worker también cubre dieciocho parámetros mixtos de registro
 `NeverDSelfCompareFlagTests` ejecuta funciones originales y reconstruidas para x86, x64, ARM32 y AArch64. Ejecutar por separado la ruta de código máquina predeterminada, `NEVERD_SEMANTIC_HIGHC=1` y `NEVERD_SEMANTIC_LLVMC=1`. La matriz cubre indicadores CMP/SUB con operandos iguales, saltos y valores condicionales, con pruebas lógicas y operandos desplazados como controles, además de las regresiones existentes de desbordamiento con signo.
 
 La matriz también ejecuta casos sin argumentos de igualdad y desbordamiento de resta. No necesitan valores de registros entrantes y ninguna de las dos rutas C debe añadir una trampa de estado desconocido.
+
+Las pruebas de entradas de importación HFA compilan prototipos C estrictos y ejecutan argumentos y resultados completos para declaraciones de cabecera y locales. Ambas rutas C cubren estructuras float y double, llamadas encadenadas y ejecución en AArch64.

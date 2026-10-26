@@ -14371,3 +14371,5 @@ source projection on the host, including replacement of the import slot after
 the pointer was captured. These host checks do not execute ARM64 machine code.
 
 The self-comparison matrix also executes no-argument equality and subtraction-overflow cases. These require no incoming register value and must not acquire an unknown-state trap in either C route.
+
+The HFA import-slot tests compile strict C prototypes and execute complete arguments and results for header and local declarations. Both C routes cover float and double records, chained calls, and AArch64 execution.

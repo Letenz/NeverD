@@ -2017,3 +2017,5 @@ Il lifter x86 tratta SUB/CMP interi con registri identici come `0 - 0` prima di 
 La semplificazione condivisa dei flag MedIR conserva entrambi gli operandi della sottrazione, anche per `A-A`. Un confronto con sé stesso non deve diventare un confronto con zero; i test logici mantengono la propria regola dipendente dall’ingresso.
 
 Le condizioni intere che confrontano lo stesso valore SSA con sé stesso diventano costanti booleane prima dell’emissione del sorgente, incluso l’overflow della sottrazione. Gli operandi non specificati restano espliciti.
+
+Le destinazioni HFA salvate usano la stessa firma sorgente verificata della ricostruzione degli argomenti e dei risultati di struttura. Il prototipo conserva il puntatore originale e i tipi completi, compresi i gruppi di registri scomposti e gli argomenti sullo stack.

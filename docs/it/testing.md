@@ -2299,3 +2299,5 @@ La regressione worker copre anche diciotto parametri misti registro/stack, un ri
 `NeverDSelfCompareFlagTests` esegue funzioni originali e ricostruite per x86, x64, ARM32 e AArch64. Eseguire separatamente il percorso macchina predefinito, `NEVERD_SEMANTIC_HIGHC=1` e `NEVERD_SEMANTIC_LLVMC=1`. La matrice copre i flag CMP/SUB con operandi uguali, i salti e i valori condizionali, con test logici e operandi traslati come controlli, oltre alle regressioni esistenti sull’overflow con segno.
 
 La matrice esegue anche casi senza argomenti per uguaglianza e overflow della sottrazione. Non richiedono valori di registro in ingresso e nessuno dei due percorsi C deve introdurre una trappola per stato sconosciuto.
+
+I test degli slot di importazione HFA compilano prototipi C rigorosi ed eseguono argomenti e risultati completi per dichiarazioni locali e negli header. Entrambi i percorsi C coprono strutture float e double, chiamate concatenate ed esecuzione AArch64.

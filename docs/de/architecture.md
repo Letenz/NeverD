@@ -2021,3 +2021,5 @@ Der x86-Lifter behandelt ganzzahlige SUB/CMP mit identischen Registern vor dem S
 Die gemeinsame MedIR-Flag-Vereinfachung erhält beide Subtraktionsoperanden, auch bei `A-A`. Ein Selbstvergleich darf nicht zu einem Vergleich mit null werden; logische Selbsttests behalten ihre eigene eingabeabhängige Regel.
 
 Ganzzahlbedingungen, die denselben SSA-Wert mit sich selbst vergleichen, werden vor der Quellausgabe zu booleschen Konstanten. Dies umfasst Subtraktionsüberlauf; unspezifizierte Operanden bleiben explizit.
+
+Gespeicherte HFA-Aufrufziele verwenden dieselbe geprüfte Quellsignatur wie die Rekonstruktion der Strukturargumente und Ergebnisse. Der Prototyp erhält den ursprünglichen Funktionszeiger und die vollständigen Strukturtypen, einschließlich aufgeteilter Registergruppen und Stackargumente.

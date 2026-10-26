@@ -2318,3 +2318,5 @@ Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile,
 `NeverDSelfCompareFlagTests` exécute les fonctions originales et reconstruites pour x86, x64, ARM32 et AArch64. Exécuter séparément la voie machine par défaut, `NEVERD_SEMANTIC_HIGHC=1` et `NEVERD_SEMANTIC_LLVMC=1`. La matrice couvre les indicateurs CMP/SUB sur un même opérande, les branches et les valeurs conditionnelles, avec des tests logiques et des opérandes décalés comme témoins, ainsi que les régressions existantes de débordement signé.
 
 La matrice exécute aussi des cas sans argument d’égalité et de débordement de soustraction. Ils ne nécessitent aucune valeur de registre entrante et ne doivent acquérir aucun piège d’état inconnu dans les deux voies C.
+
+Les tests des entrées d’importation HFA compilent des prototypes C stricts et exécutent les arguments et résultats complets des déclarations locales et des en-têtes. Les deux voies C couvrent les structures float et double, les appels en chaîne et l’exécution AArch64.

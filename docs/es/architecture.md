@@ -2020,3 +2020,5 @@ El lifter x86 trata SUB/CMP enteros con registros idénticos como `0 - 0` antes 
 La simplificación compartida de indicadores MedIR conserva ambos operandos de la resta, incluido `A-A`. Una comparación consigo mismo no debe convertirse en una comparación con cero; las pruebas lógicas conservan su regla independiente que depende de la entrada.
 
 Las condiciones enteras que comparan un mismo valor SSA consigo mismo se convierten en constantes booleanas antes de emitir el código fuente, incluido el desbordamiento de resta. Los operandos no especificados siguen siendo explícitos.
+
+Los destinos capturados de llamadas HFA usan la misma firma de origen verificada que la reconstrucción de argumentos y resultados de estructuras. El prototipo conserva el puntero original y los tipos completos, incluidos los grupos de registros descompuestos y los argumentos de pila.

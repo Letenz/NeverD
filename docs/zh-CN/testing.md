@@ -2168,3 +2168,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `NeverDSelfCompareFlagTests` 执行并对比 x86、x64、ARM32 和 AArch64 的原始及重建函数。分别运行默认机器码路线、`NEVERD_SEMANTIC_HIGHC=1` 和 `NEVERD_SEMANTIC_LLVMC=1`。矩阵覆盖自身 CMP/SUB 的标志位、分支和条件值，以逻辑测试及移位操作数为对照，并运行既有的有符号溢出回归。
 
 自身比较矩阵还执行无参数的相等及减法溢出案例。这些案例不需要任何传入寄存器值，两条 C 路线都不能额外生成未知状态陷阱。
+
+HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声明执行完整参数及返回值验证。两条 C 路线覆盖 float、double 结构体、连续调用和 AArch64 执行。

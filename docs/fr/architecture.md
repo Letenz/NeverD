@@ -2027,3 +2027,5 @@ Le lifter x86 traite les SUB/CMP entiers entre registres identiques comme `0 - 0
 La simplification commune des indicateurs MedIR conserve les deux opérandes de soustraction, y compris pour `A-A`. Une autocomparaison ne doit pas devenir une comparaison avec zéro ; les autotests logiques gardent leur règle distincte dépendant de l’entrée.
 
 Les conditions entières comparant une même valeur SSA à elle-même deviennent des constantes booléennes avant l’émission du source, y compris le débordement de soustraction. Les opérandes non spécifiés restent explicites.
+
+Les cibles HFA mémorisées utilisent la même signature source vérifiée que la reconstruction des arguments et résultats de structure. Le prototype conserve le pointeur de fonction initial et les types complets, y compris les groupes de registres décomposés et les arguments sur la pile.

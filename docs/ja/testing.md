@@ -2203,3 +2203,5 @@ NeverSight LLVM fork の `BinaryRewriteRelocationTest` は x64 PLT、i386 GOT、
 `NeverDSelfCompareFlagTests` は x86、x64、ARM32、AArch64 の元の関数と再構築した関数を実行して比較します。既定の機械語経路、`NEVERD_SEMANTIC_HIGHC=1`、`NEVERD_SEMANTIC_LLVMC=1` を個別に実行します。自己 CMP/SUB のフラグ、分岐、条件値を、論理テストとシフトしたオペランドを対照に検証し、既存の符号付きオーバーフロー回帰も実行します。
 
 自己比較の行列には、引数なしの等値条件と減算オーバーフロー条件の実行も含まれます。入力レジスタ値を必要としないため、どちらの C 経路でも未知状態のトラップを追加してはいけません。
+
+HFA インポートスロットのテストは厳密な C プロトタイプをコンパイルし、ヘッダー宣言とローカル宣言の完全な引数と戻り値を実行検証します。両 C 経路で float・double 構造体、連続呼び出し、AArch64 実行を検証します。

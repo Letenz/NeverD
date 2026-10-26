@@ -2319,3 +2319,5 @@ Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparamet
 `NeverDSelfCompareFlagTests` führt ursprüngliche und rekonstruierte Funktionen für x86, x64, ARM32 und AArch64 aus. Der Standardpfad für Maschinencode sowie `NEVERD_SEMANTIC_HIGHC=1` und `NEVERD_SEMANTIC_LLVMC=1` werden getrennt ausgeführt. Die Matrix prüft Selbst-CMP/SUB-Flags, Verzweigungen und bedingte Werte mit logischen Tests und verschobenen Operanden als Kontrollen sowie die bestehenden Regressionen für vorzeichenbehafteten Überlauf.
 
 Die Selbstvergleichsmatrix führt auch parameterlose Gleichheits- und Subtraktionsüberlauffälle aus. Sie benötigen keinen eingehenden Registerwert und dürfen in keinem C-Pfad einen Trap für unbekannten Zustand erhalten.
+
+Die HFA-Importslot-Tests kompilieren strenge C-Prototypen und führen vollständige Argumente und Ergebnisse für Header- und lokale Deklarationen aus. Beide C-Pfade decken float- und double-Strukturen, verkettete Aufrufe und die Ausführung auf AArch64 ab.

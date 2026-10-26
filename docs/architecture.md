@@ -12503,3 +12503,5 @@ The x86 lifter treats integer SUB/CMP with identical register operands as `0 - 0
 Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A self-comparison must not become a comparison with zero; logical self-tests retain their separate input-dependent rule.
 
 Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.
+
+Captured HFA call targets use the same checked source signature as record argument and result reconstruction. The prototype keeps the original callable value and the complete record types, including flattened register groups and stack arguments.
