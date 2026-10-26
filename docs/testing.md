@@ -13742,6 +13742,12 @@ optimization on and off. Variant 8 supplies a complete later store and executes
 both generated C routes at O0/O2 with an independent provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
 
+`MedSEHEstablisherFrame.CallBeforeStackRestoreKeepsHandlerFrameLive` checks
+direct and indirect CALLs whose only SP use precedes an explicit restore at an
+exception-handler join. Both paths retain the same proven frame. Run the entry
+frame, Win64, System V and i386 call-contract suites after changing this SSA
+liveness boundary.
+
 The call-slot suite also covers complete and partial handler stores, exact
 throwing instructions versus protected ranges, mismatched exceptional edges,
 and restored-stack facts bound to fresh LowIR occurrences. Repeated reads must

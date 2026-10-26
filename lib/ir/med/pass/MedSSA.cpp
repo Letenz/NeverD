@@ -16,6 +16,7 @@
 #include "../X86/SEHSourceRoots.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/SEHFrameProof.h"
@@ -454,6 +455,25 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
             UEVar[B].insert(Inp.Id);
             VarOfId.emplace(Inp.Id, Inp);
           }
+        }
+        // A physical x86 CALL reads SP to write its return slot, even when
+        // none of its source arguments mention SP. Keep that use live across
+        // handler roots before a later explicit restore overwrites SP. The
+        // existing SEH frame proof then supplies the handler's frame value.
+        if (TRI.CallPushesReturnAddress &&
+            (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)) {
+          const auto Bias =
+              sourceCallReturnAddressBias(Image, TargetArch, Op.Addr);
+          if (!Bias || *Bias != 0)
+            if (auto It = RegOffToIds.find(TRI.StackPointer);
+                It != RegOffToIds.end())
+              for (int Id : It->second) {
+                const auto &View = RegVarOfId.at(Id);
+                if (IsFullStackPointer(View) && !Kill.count(Id)) {
+                  UEVar[B].insert(Id);
+                  VarOfId.emplace(Id, View);
+                }
+              }
         }
         // A partial call clobber reads the pre-call value to retain its ABI-
         // preserved low prefix.  Account for that hidden use before applying

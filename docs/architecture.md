@@ -12074,6 +12074,12 @@ Both source routes receive the same conversion diagnostic before cleanup can
 forward an old constant. This guard neither materializes a relocatable return
 PC nor certifies unresolved addresses, callee memory effects or other targets.
 
+SSA liveness includes the implicit full-width SP read of a physical x86 CALL.
+This keeps an exception handler's frame live when its continuation calls before
+explicitly restoring SP. The existing establisher-frame proof supplies that
+root's value; liveness alone grants no offset or new exception-frame contract.
+The original call/jump encoding owner excludes synthetic tail calls.
+
 Exceptional memory histories follow the source instruction's possible prefixes,
 including before and after a throwing CALL or STORE. A complete local store
 ends only its own bytes. Completed byte histories are shared across later
