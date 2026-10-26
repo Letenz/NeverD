@@ -760,6 +760,9 @@ Each rejection must preserve the existing LowIR prefix without adding loads,
 register writes or placeholder effects. Ordinary loads and MMX arithmetic
 remain positive controls. This is admission qualification, not completed
 segment or 3DNow! semantics.
+The pinned decoder corpus census shares these independent legacy encoding
+fixtures. Its 3DNow! samples are explicit refusals, not successful lift counts;
+unexpected refusals of other instruction IDs still fail the corpus test.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
 check that a complete narrow displacement is normalized as a full address,
@@ -768,6 +771,17 @@ Selected image-address tests check both atomic encoding inventories across
 ELF/COFF/Mach-O, including both orders of an incomplete arm and raw FS offsets.
 The shared native memory owner is also covered by the AArch64/x86-64 ELF/PE
 rematerialized-table recurrence in `NeverDNativePointerRelocationBoundaryTests`.
+
+`NeverDX86MpxContextTests` checks the shared state foundation independently of
+host MPX availability: 324 enable-evidence combinations, 864 unsigned bounds
+comparisons, all 4,352 single-bit MAWA/CPL address cases, nonzero directory
+bases, 32/64-bit wrapping, register aliases, pointer mismatches, invalid BDE
+status and unknown partial BNDLDX state. Branch cases distinguish conditional
+BNDINIT from preservation and select the current privilege's configuration.
+Failed input validation leaves the existing state intact. The tests also
+reject unknown/active transaction contexts before state publication. They
+do not qualify instruction decoding, memory-provider faults, IR preservation,
+native code generation or physical MPX hardware; strict lifting stays closed.
 
 `NeverDX86TBMTests` exercises all nine trailing-bit operations through full,
 lightweight and lift decoding, with 32/64-bit values, register aliases,
@@ -3772,6 +3786,13 @@ The engine's C is Clang's dialect (`__builtin_bit_cast`, calls through casts
 to a call site's own ABI, which GCC folds into the declared one), so a host
 without Clang skips it after the analysis checks, naming the routes it did not
 execute.
+`NeverDSourceCallABITests` checks Windows ARM64 fixed mixed register banks,
+scalar widths, register exhaustion, stack offsets and the distinct variadic
+refusal. `NeverDWorkerCallSiteTypes` uses an ARM64 PE caller with integer,
+double and pointer operands, plus eighteen mixed register/stack operands and
+a floating return. Both C routes execute against a separate C callee at O0/O2;
+refused variadic or partially written stack edits preserve the analysis snapshot.
+These host C executions do not establish native Windows ARM64 execution.
 `NeverDWorkerHeaderRecords` builds a program with the host compiler that reads
 `<netdb.h>`'s `struct addrinfo` and `struct servent` through a pointer
 `getaddrinfo` stores in a local and through `getservbyname`'s result, and
@@ -9003,7 +9024,10 @@ cover nested recurrences, shared expression DAGs, role-neutral address leaves
 and independently materialized SELECT arms. Both suites retain ambiguous
 relocatable comparisons and distinguish adjacent objects' one-past addresses.
 `MedConstantPropagation` also checks full SSA identities at maximum integer
-IDs/versions and atomic budget refusal on reverse-ordered width chains.
+IDs/versions, linear-budget propagation along reverse-ordered width chains,
+and width origins through seeded cycles and independent values. A complete
+PHI fanout exhausts the shared work budget during width-origin propagation;
+the refusal leaves every operand unchanged.
 `DefaultWordAbsorptionRequiresTheSameSSAValueAndWidth` checks default MedIR
 absorption on x86, x64, ARM and AArch64 in PE/COFF, ELF and Mach-O. Both operand
 orders simplify `x | (x & y)` and `x & (x | y)`, while a changed SSA version or
@@ -11531,6 +11555,13 @@ guest bytes and errno, and dynamic provider lifetime. Direct model checks
 separate object bounds from memory and deadline limits. C API/CLI and Python
 cover successful named calls and non-returning Fortify failures. Pinned API 28
 source defines the contract; these checks do not establish device equivalence.
+`MemorySearch*` covers `memchr` and `__memchr_chk` with embedded NULs, first
+matches, exact and full-width counts, unsigned-byte conversion, unchanged
+backing and errno, zero counts, read-only page tails and provider lifetime.
+The direct memory cases distinguish a complete no-match from an exhausted
+memory/deadline budget, including fortify-before-access ordering. The public
+`AndroidMemorySearchReportsMatchSDKAndCLI` test compares complete reports on
+success, zero-count invalid pointers, pointer faults and fortify refusal.
 
 `AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
 APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and

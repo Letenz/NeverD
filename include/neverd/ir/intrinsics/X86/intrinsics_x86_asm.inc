@@ -105,7 +105,7 @@ A(Intrinsic::Daa, "daa");
 A(Intrinsic::Das, "das");
 A(Intrinsic::Bound, "bound");
 
-// MPX (deprecated — all no-op)
+// Legacy MPX names. These IDs are rejected without an owned state contract.
 A(Intrinsic::BndMk, "bndmk");
 A(Intrinsic::BndMov, "bndmov");
 A(Intrinsic::BndCl, "bndcl");

@@ -489,7 +489,9 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
             view->showFunction(*function);
       });
     }
-    if (event->type() == QEvent::Hide)
+    // Changing tabs preserves a completed document's exact instruction.
+    // cancel() also clears that selection, so only stop an active request.
+    if (event->type() == QEvent::Hide && code->text()->loading())
       code->text()->cancel();
   }
   return KDDockWidgets::QtWidgets::MainWindow::eventFilter(object, event);

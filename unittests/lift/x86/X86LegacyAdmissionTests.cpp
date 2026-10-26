@@ -8,6 +8,7 @@
 /// segment transitions or packed 3DNow! arithmetic.
 //===----------------------------------------------------------------------===//
 
+#include "X86LegacyAdmissionFixtures.h"
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
@@ -60,19 +61,9 @@ void checkRefusal(Arch Target, unsigned Id, const std::vector<uint8_t> &Bytes) {
 } // namespace
 
 TEST(X86LegacyAdmission, FarPointerLoadsRequireSegmentState) {
-  struct Encoding {
-    unsigned Id;
-    uint8_t Opcode;
-    bool Escape;
-  };
-  constexpr Encoding Encodings[] = {{X86_INS_LDS, 0xc5, false},
-                                    {X86_INS_LES, 0xc4, false},
-                                    {X86_INS_LSS, 0xb2, true},
-                                    {X86_INS_LFS, 0xb4, true},
-                                    {X86_INS_LGS, 0xb5, true}};
   unsigned Cases = 0;
   for (Arch Target : {Arch::X86, Arch::X64})
-    for (const auto &E : Encodings) {
+    for (const auto &E : test::X86FarPointerEncodings) {
       if (Target == Arch::X64 && !E.Escape)
         continue;
       for (unsigned Width : {2u, 4u, 8u}) {
@@ -97,28 +88,9 @@ TEST(X86LegacyAdmission, FarPointerLoadsRequireSegmentState) {
 }
 
 TEST(X86LegacyAdmission, ThreeDNowCannotBecomeCopiesOrScalarFloats) {
-  // AMD APM volume 5: the final opcode selects the packed operation. Keep
-  // this independent of the lifter's dispatch and exercise register/memory.
-  struct Encoding {
-    unsigned Id;
-    uint8_t Opcode;
-  };
-  constexpr Encoding Encodings[] = {
-      {X86_INS_PFADD, 0x9e},    {X86_INS_PFACC, 0xae},
-      {X86_INS_PFNACC, 0x8a},   {X86_INS_PFPNACC, 0x8e},
-      {X86_INS_PFSUB, 0x9a},    {X86_INS_PFSUBR, 0xaa},
-      {X86_INS_PFMUL, 0xb4},    {X86_INS_PFMAX, 0xa4},
-      {X86_INS_PFMIN, 0x94},    {X86_INS_PFCMPEQ, 0xb0},
-      {X86_INS_PFCMPGE, 0x90},  {X86_INS_PFCMPGT, 0xa0},
-      {X86_INS_PFRCP, 0x96},    {X86_INS_PFRCPIT1, 0xa6},
-      {X86_INS_PFRCPIT2, 0xb6}, {X86_INS_PFRSQIT1, 0xa7},
-      {X86_INS_PFRSQRT, 0x97},  {X86_INS_PF2ID, 0x1d},
-      {X86_INS_PF2IW, 0x1c},    {X86_INS_PI2FD, 0x0d},
-      {X86_INS_PI2FW, 0x0c},    {X86_INS_PSWAPD, 0xbb},
-      {X86_INS_PMULHRW, 0xb7},  {X86_INS_PAVGUSB, 0xbf}};
   unsigned Cases = 0;
   for (Arch Target : {Arch::X86, Arch::X64})
-    for (const auto &E : Encodings)
+    for (const auto &E : test::X86ThreeDNowEncodings)
       for (uint8_t ModRM : {0xc1, 0x01})
         for (uint8_t Prefix : {0, 0x67, 0x64, 0x65}) {
           std::vector<uint8_t> Bytes;

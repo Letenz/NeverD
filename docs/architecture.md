@@ -58,6 +58,22 @@ before rendering it; neither a mnemonic nor an intrinsic declaration alone
 authorizes an architectural register access. Both forms retain unknown memory
 effects, undefined arithmetic flags and native faults, including dead reads.
 
+`ir/X86/X86MpxContext.h` owns concrete MPX enable evidence, the four bounds
+registers, BNDSTATUS and BDE/BTE address calculations. Unknown prerequisites
+remain unknown; a proven disabled prerequisite suppresses MPX effects without
+requiring operand values. The model selects BNDCFGU at CPL 3 and BNDCFGS at
+CPL 0–2, applies MAWA only to long-mode table indexing, and retains known-bit
+masks for bounds. It separates successful loads, invalid-directory #BR and
+implementation-dependent partial BNDLDX reads. Memory providers still own
+access validity, segment/canonical checks, ordering and partial stores.
+Enabled operations require a known nontransactional context; an RTM/HLE
+checkpoint and abort continuation are not supplied by this state component.
+Original branch completion takes an explicit preserve/initialize effect;
+it does not infer an architectural branch from a transformed CFG edge.
+This component is a tested foundation, not yet a lifting/emission contract:
+strict MPX admission remains closed until original-transfer effects and
+memory completion are connected throughout the pipeline.
+
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
 semantics; they do not expose TILECFG or TMM values through an ordinary function
@@ -7660,10 +7676,15 @@ MedIR owns bounded invariant-constant propagation across same-width SSA copies a
 
 The constant worklist indexes complete nonconstant SSA identities. Node
 addresses become stable only after all definitions have been collected;
-ordered visitation and the existing work charges remain unchanged. HighIR's
-call-clobber index is local to each converter invocation and retains the first
-record for each full SSA identity, including its variable kind. Reusing a
-converter rebuilds that index before following any preserved-prefix chain.
+the value solver retains its ordered visitation and work charges. Width-view
+origins then propagate through the same use graph, charging each reached node
+and outgoing use edge once instead of rescanning all inputs to convergence.
+Both analyses finish within the shared budget before any operand changes.
+
+HighIR's call-clobber index is local to each converter invocation and retains
+the first record for each full SSA identity, including its variable kind.
+Reusing a converter rebuilds that index before following any preserved-prefix
+chain.
 
 | User route | Representation path | Exit |
 |------------|---------------------|------|
@@ -8266,6 +8287,12 @@ NUL without padding and return the destination. API 28 ARM64 uses the C
 NUL-inclusive length to the destination object size. Scan faults and budgets
 precede that fortify check; the destination and overlap checks follow it.
 Undefined overlap and unsupported abort paths refuse without partial writes.
+`memchr` and `__memchr_chk` share the character-search loop, unsigned-byte
+comparison and guest read owner. Memory searches pass embedded NUL bytes and
+return null only after exhausting the requested count; scan-budget exhaustion
+remains a failure. The checked entry admits the whole count against the object
+extent before pointer or deadline checks. Zero-count searches need no pointer
+access, and a first match does not require the unread suffix to be mapped.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
@@ -12006,6 +12033,14 @@ reservation explicitly excludes unsupported concurrent operations.
 `SymState::storeConditional` optionally applies one STORE or atomic write phase without a nonalias contract. It constructs byte-equality conditions for current materialized bytes in other absolute or 64-bit symbolic banks; the actual bank uses ordinary overlap handling. Missing bytes retain the write's new unknown epochs, and historical facts are never imported. Complete plan validation and work charges precede conditional expression construction and the single store. Owner refusal leaves state unchanged. `SymExec::stepWithConditionalStore` uses this only for STORE and strictly admitted scalar CMPXCHG, retaining existing refusal havoc and publishing Old only after success. Other operations leave the policy Invalid. This does not prove access validity or initial alias consistency, or guarantee inexpensive downstream solving.
 
 ## Analyst call-site source contracts
+
+Windows ARM64 fixed scalar/pointer call-site types reuse `placeAAPCS64` through
+`SourceCallABI`: integer and floating register banks advance independently,
+with overflowing values in eight-byte stack slots. This follows the
+[Microsoft ARM64 ABI](https://learn.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions).
+Windows ARM64 variadic call-site edits remain refused because their arguments
+use integer carriers, including named floating arguments. This does not admit
+ARM64EC, aggregate call-site types or a native Windows driver execution contract.
 
 `SourceCallOccurrenceKey` owns original instruction/sequence/opcode/target
 identity; names and source anchors cannot bind a per-call policy.
