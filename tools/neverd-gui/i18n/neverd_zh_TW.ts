@@ -148,10 +148,6 @@
         <translation>重新命名目前位址</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>輸入註解(&amp;C)...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>為目前位址新增註解</translation>
     </message>

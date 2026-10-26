@@ -333,8 +333,8 @@ void AArch64Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
 
   bool Handled = liftPAuth(*this, S, Insn, ARM64) ||
                  liftCPA(*this, S, Insn, ARM64) || liftCore(S, Insn, ARM64) ||
-                 liftCoreNEON(S, Insn, ARM64) || liftControl(S, Insn, ARM64) ||
-                 liftMem(S, Insn, ARM64) || liftAtomic(S, Insn, ARM64) ||
+                 liftMem(S, Insn, ARM64) || liftCoreNEON(S, Insn, ARM64) ||
+                 liftControl(S, Insn, ARM64) || liftAtomic(S, Insn, ARM64) ||
                  liftFP(S, Insn, ARM64) || liftSIMD(S, Insn, ARM64) ||
                  liftSIMDExt(S, Insn, ARM64);
 

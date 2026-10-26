@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// SIMD results require complete, independently stored temporary carriers.
+/// Auxiliary results require complete, independently stored temporary carriers.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_IR_LOW_AARCH64WRITEBACKMEMORY_H
@@ -18,19 +18,19 @@
 
 namespace neverd {
 
-/// Query a validated vector-load operation before conversion or tracing.
+/// Query a validated auxiliary-load operation before conversion or tracing.
 inline std::optional<std::vector<NdVar>>
-lowAArch64VectorWritebackOutputs(const LowOp &Op,
-                                 llvm::ArrayRef<LowOp> Following) {
+lowAArch64WritebackOutputs(const LowOp &Op, llvm::ArrayRef<LowOp> Following) {
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
   auto Outputs = collectLowIntrinsicOutputBindings(
-      Op, Following,
-      aarch64WritebackMemoryOutputCount(Intrinsic::A64_VectorLoadWriteback));
+      Op, Following, aarch64WritebackMemoryOutputCount(Id));
   if (!aarch64WritebackMemoryOutputsAreValid(
-          Intrinsic::A64_VectorLoadWriteback, Outputs,
-          [](const NdVar &V) { return V.Size; }) ||
-      Outputs[kWritebackValueIndex].Offset ==
-          Outputs[kWritebackBaseIndex].Offset)
+          Id, Outputs, [](const NdVar &V) { return V.Size; }))
     return std::nullopt;
+  for (size_t I = 0; I != Outputs.size(); ++I)
+    for (size_t J = 0; J != I; ++J)
+      if (Outputs[I].Offset == Outputs[J].Offset)
+        return std::nullopt;
   return Outputs;
 }
 

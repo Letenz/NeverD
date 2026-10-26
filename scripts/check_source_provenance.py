@@ -404,6 +404,26 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/evidence/patch-scaling-2026-10-25.json",
+        rule="private-path",
+        commits=frozenset({
+            "6e662ff3f1b4b3c6e457c11b2580392dc4e4511f",
+            "5c153451f79ed2161c16405f7db377263dcbdeb9",
+        }),
+        line="",
+        reason=(
+            "Reviewed normalization of published delivery command checkout "
+            "prefixes. Repository-relative filenames, outcomes, timings and "
+            "artifact hashes are retained. Only the exact publication and "
+            "cleanup commits and line digests are covered; current and future "
+            "private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "7cefd0889458e4fabb7baeeece0756eae7fe277fdb911658dcc0fe0722b27fbe",
+            "d3ada58b4f339865b8016cda1ac1fc42c4a4b64bf19fa24c84ac0f62293230db",
+        }),
+    ),
+    HistoryAllowance(
         path="docs/evidence/patch-history-2026-10-25.json",
         rule="private-path",
         commits=frozenset({"2388152e9b28a5b613b55e2897be2699950c0ece"}),

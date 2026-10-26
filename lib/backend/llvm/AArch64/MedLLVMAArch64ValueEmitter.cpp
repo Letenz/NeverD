@@ -227,6 +227,61 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       Base = Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
     if (!Base->getType()->isIntegerTy(kAddressMemoryPointerBits))
       llvm::report_fatal_error(kWritebackMalformed);
+    if (Instruction.isPair()) {
+      llvm::Type *ValueType = Builder.getInt64Ty();
+      if (Instruction.isVector())
+        ValueType = llvm::FixedVectorType::get(Builder.getInt64Ty(),
+                                               kAddressMemoryVectorBytes /
+                                                   kAddressMemoryPointerBytes);
+      if (!Instruction.isLoad()) {
+        auto *First = getVar(Op.Inputs[kWritebackDataOperand + 1], Builder);
+        auto *Second = getVar(Op.Inputs[kPairSecondDataOperand + 1], Builder);
+        const auto Data = [&](llvm::Value *Value) {
+          if (Instruction.isVector())
+            return Builder.CreateBitCast(Value, ValueType);
+          return Value->getType()->isPointerTy()
+                     ? Builder.CreatePtrToInt(Value, ValueType)
+                     : Value;
+        };
+        auto *Asm = llvm::InlineAsm::get(
+            llvm::FunctionType::get(Builder.getInt64Ty(),
+                                    {Builder.getInt64Ty(), ValueType, ValueType,
+                                     Builder.getInt32Ty()},
+                                    false),
+            Instruction.isVector() ? kPairVectorStoreAsm : kPairStoreAsm,
+            Instruction.isVector() ? kPairVectorStoreConstraints
+                                   : kPairStoreConstraints,
+            true);
+        return Builder.CreateCall(Asm,
+                                  {Base, Data(First), Data(Second),
+                                   Builder.getInt32(Instruction.scratchWord())},
+                                  kWritebackResult);
+      }
+      auto *ResultType = llvm::StructType::get(
+          *Ctx, {ValueType, ValueType, Builder.getInt64Ty()});
+      auto *Asm = llvm::InlineAsm::get(
+          llvm::FunctionType::get(
+              ResultType, {Builder.getInt64Ty(), Builder.getInt32Ty()}, false),
+          Instruction.isVector() ? kPairVectorLoadAsm : kPairLoadAsm,
+          Instruction.isVector() ? kPairVectorLoadConstraints
+                                 : kPairLoadConstraints,
+          true);
+      auto *Result = Builder.CreateCall(
+          Asm, {Base, Builder.getInt32(Instruction.scratchWord())},
+          kWritebackResult);
+      for (unsigned I = 0; I != kPairValues; ++I) {
+        auto *Value = Builder.CreateExtractValue(Result, {I});
+        PendingIntrinsicOutputs[I] =
+            Instruction.isVector()
+                ? Builder.CreateBitCast(
+                      Value, Builder.getIntNTy(kAddressMemoryVectorBits))
+                : Value;
+      }
+      auto *Updated = Builder.CreateExtractValue(Result, {kPairBaseIndex});
+      PendingIntrinsicOutputs[kPairBaseIndex] = Updated;
+      PendingIntrinsicCount = intrinsicOutputCount(IC);
+      return Updated;
+    }
     if (Instruction.isVector()) {
       auto *VectorType = llvm::FixedVectorType::get(
           Builder.getInt64Ty(),

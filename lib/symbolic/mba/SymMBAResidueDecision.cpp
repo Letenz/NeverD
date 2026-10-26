@@ -574,6 +574,69 @@ class LowWordDecisions {
     return Result;
   }
 
+  // These representatives preserve only Count low bits. They are internal to
+  // a scaled product proof; the original full-width expression is never
+  // replaced by one of them. Normalize ring and bitwise operations recursively
+  // so high constants do not give identical low words distinct outer nodes.
+  SymRef projectLowWord(SymRef R, unsigned Count,
+                        std::unordered_map<uint32_t, SymRef> &Cache,
+                        unsigned Depth = 0) {
+    if (!charge() || Depth >= limits::kMaxResidueDecisionDepth) {
+      Failed = true;
+      return R;
+    }
+    if (auto It = Cache.find(R.index()); It != Cache.end())
+      return It->second;
+    const auto Op = Ctx.op(R);
+    auto Result = R;
+    if (Ctx.isConst(R)) {
+      const auto Value = literal(R);
+      if (!Value)
+        return R;
+      const auto Low = Value->getLoBits(Count).getZExtValue();
+      if (*Value != Low) {
+        const size_t Limbs = (size_t(Ctx.width(R)) - 1) / 64 + 1;
+        if (!charge(Limbs, sizeof(SymNode) + Limbs * sizeof(uint64_t)))
+          return R;
+        Result = Ctx.mkConst(Ctx.width(R), Low);
+      }
+    } else if (Op == SymOp::Add || Op == SymOp::Mul || Op == SymOp::And ||
+               Op == SymOp::Or || Op == SymOp::Xor || Op == SymOp::Not) {
+      const size_t N = Ctx.numOperands(R);
+      if (!charge(N, N * sizeof(SymRef)))
+        return R;
+      llvm::SmallVector<SymRef, 8> Operands(Ctx.operands(R));
+      bool Changed = false;
+      size_t Expanded = 0;
+      for (auto &Child : Operands) {
+        const auto Projected = projectLowWord(Child, Count, Cache, Depth + 1);
+        if (Failed)
+          return R;
+        Changed |= Child != Projected;
+        Child = Projected;
+        Expanded += Ctx.op(Child) == Op ? Ctx.numOperands(Child) : 1;
+      }
+      if (Changed) {
+        // Construction can flatten associative children and fold wide
+        // constants. Charge that complete input before changing the arena.
+        const size_t Limbs = (size_t(Ctx.width(R)) - 1) / 64 + 1;
+        if (!charge((1 + Expanded) * Limbs, 2 * sizeof(SymNode) +
+                                                4 * Expanded * sizeof(SymRef) +
+                                                2 * Limbs * sizeof(uint64_t)))
+          return R;
+        Result = Op == SymOp::Add   ? Ctx.mkAdd(Operands)
+                 : Op == SymOp::Mul ? Ctx.mkMul(Operands)
+                 : Op == SymOp::And ? Ctx.mkAnd(Operands)
+                 : Op == SymOp::Or  ? Ctx.mkOr(Operands)
+                 : Op == SymOp::Xor ? Ctx.mkXor(Operands)
+                                    : Ctx.mkNot(Operands.front());
+      }
+    }
+    if (charge(1, sizeof(uint32_t) + sizeof(SymRef) + 4 * sizeof(void *)))
+      Cache.emplace(R.index(), Result);
+    return Result;
+  }
+
   // References into unordered_map elements survive recursive insertions.
   // Cached words are immutable until the parity assumption changes; no view
   // escapes that phase. Cache hits pay for lookup, without copying each bit.
@@ -804,12 +867,13 @@ class LowWordDecisions {
 
   // Count equal and complementary bits before carry propagation. A pair of
   // complements contributes one, while repeated copies move to higher columns.
-  Bits sumWords(llvm::ArrayRef<Bits> Values, unsigned Count) {
+  Bits sumWords(llvm::ArrayRef<Bits> Values, unsigned Count,
+                llvm::ArrayRef<size_t> Multiplicities = {}) {
     using Column = std::map<uint32_t, size_t>;
     if (!charge(Count, Count * sizeof(Column)))
       return Bits(Count, 0);
     std::vector<Column> Columns(Count);
-    auto Insert = [&](unsigned Bit, uint32_t Edge) {
+    auto Insert = [&](unsigned Bit, uint32_t Edge, size_t Copies = 1) {
       if (!charge())
         return false;
       if (!Edge)
@@ -823,12 +887,13 @@ class LowWordDecisions {
           return false;
         It = C.emplace(Edge, 0).first;
       }
-      ++It->second;
+      It->second += Copies;
       return true;
     };
-    for (const auto &Value : Values)
+    for (size_t V = 0; V < Values.size(); ++V)
       for (unsigned I = 0; I < Count; ++I)
-        if (!Insert(I, Value[I]))
+        if (!Insert(I, Values[V][I],
+                    Multiplicities.empty() ? 1 : Multiplicities[V]))
           return Bits(Count, 0);
     Bits Left(Count, 0), Right(Count, 0);
     for (unsigned I = 0; I < Count && !Failed; ++I) {
@@ -891,6 +956,37 @@ class LowWordDecisions {
   }
 
   Bits power(Bits Value, size_t Exponent) {
+    const size_t Width = Value.size();
+    if (Exponent >= Width) {
+      // Words have at most kMaxAffineResidueTableBits bits. Odd residues have
+      // period 2^(Width-2), with periods one and two for widths one and two.
+      // Even residues vanish only once the exponent reaches Width: retain
+      // that lower bound instead of reducing the exponent modulo the period.
+      const size_t Period = residueUnitPeriod(Width);
+      const size_t Residue = Exponent % Period;
+      if (!Residue) {
+        if (!charge(1 + Width))
+          return Bits(Width, 0);
+        std::fill(Value.begin() + 1, Value.end(), 0);
+        return Value;
+      }
+      if (Residue == 1) {
+        // On odd inputs this is the original word; on even inputs it is
+        // zero. Gate every bit rather than treating all inputs as units.
+        if (!charge(1 + Width))
+          return Bits(Width, 0);
+        for (size_t I = 1; I < Width && !Failed; ++I)
+          Value[I] = apply(And, Value.front(), Value[I]);
+        return Value;
+      }
+      const size_t Reduced =
+          Value.front() == 1 ? Residue : Width + (Exponent - Width) % Period;
+      if (Reduced < Exponent) {
+        if (!charge())
+          return Bits(Width, 0);
+        Exponent = Reduced;
+      }
+    }
     Bits Term(Value.size(), 0);
     Term.front() = 1;
     for (; Exponent && !Failed; Exponent >>= 1) {
@@ -947,10 +1043,39 @@ class LowWordDecisions {
     // only the constant, linear and quadratic elementary sums survive.
     // Group equality comes from complete decision words, never from samples.
     const unsigned Split = (Observed + 2) / 3;
-    std::map<Bits, std::vector<Bits>> Groups;
+    struct ProductGroup {
+      std::vector<Bits> Values;
+      std::vector<size_t> Multiplicities;
+      size_t Count = 0;
+    };
+    std::map<Bits, ProductGroup> Groups;
+    std::unordered_map<uint32_t, size_t> Copies;
+    const bool Weighted = Factors.size() > limits::kMaxResidueProductFactors;
+    if (Weighted) {
+      for (auto Factor : Factors) {
+        if (!charge())
+          return {};
+        auto It = Copies.find(Factor.index());
+        if (It == Copies.end()) {
+          if (!charge(1,
+                      sizeof(uint32_t) + sizeof(size_t) + 4 * sizeof(void *)))
+            return {};
+          It = Copies.emplace(Factor.index(), 0).first;
+        }
+        ++It->second;
+      }
+    }
     for (auto Factor : Factors) {
       if (Ctx.isConst(Factor))
         continue;
+      size_t Multiplicity = 1;
+      if (Weighted) {
+        if (!charge())
+          return {};
+        Multiplicity = std::exchange(Copies[Factor.index()], 0);
+        if (!Multiplicity)
+          continue;
+      }
       const auto &Value = word(Factor, Observed);
       if (Failed ||
           !charge(Observed * (1 + std::bit_width(Groups.size())),
@@ -958,14 +1083,22 @@ class LowWordDecisions {
                       (2 * Observed * sizeof(uint32_t) + 2 * sizeof(Bits))))
         return Bits{};
       Bits Low(Value.begin(), Value.begin() + Split);
-      Groups[Low].emplace_back(Value.begin() + Split, Value.end());
+      auto &Group = Groups[Low];
+      Group.Count += Multiplicity;
+      Group.Values.emplace_back(Value.begin() + Split, Value.end());
+      if (Weighted) {
+        if (!charge(1, 2 * sizeof(size_t)))
+          return {};
+        Group.Multiplicities.push_back(Multiplicity);
+      }
     }
     std::vector<Bits> Products;
     if (!charge(Groups.size(), Groups.size() * sizeof(Bits)))
       return Bits{};
-    for (const auto &[Low, Group] : Groups) {
-      const auto Count = Group.size();
-      const auto High = sumWords(Group, Observed - Split);
+    for (const auto &[Low, Entry] : Groups) {
+      const auto &Group = Entry.Values;
+      const auto Count = Entry.Count;
+      const auto High = sumWords(Group, Observed - Split, Entry.Multiplicities);
       if (Failed)
         return Bits{};
       auto Wide = Low;
@@ -983,7 +1116,7 @@ class LowWordDecisions {
         // before exact division by two; two is not invertible in this ring.
         const unsigned N = Observed - 2 * Split + 1;
         Bits Elementary;
-        if (N <= 3) {
+        if (N <= 3 && !Weighted) {
           Elementary = quadraticLowSum(Group, N - 1);
         } else {
           if (!charge(Group.size(), Group.size() * sizeof(Bits)))
@@ -994,7 +1127,7 @@ class LowWordDecisions {
             Bits V(H.begin(), H.begin() + N);
             Squares.push_back(calculate(SymOp::Mul, V, V));
           }
-          auto SumSquares = sumWords(Squares, N);
+          auto SumSquares = sumWords(Squares, N, Entry.Multiplicities);
           auto Sum = Bits(High.begin(), High.begin() + N);
           auto SumSquare = calculate(SymOp::Mul, Sum, Sum);
           for (auto &Bit : SumSquares)
@@ -1665,6 +1798,21 @@ public:
     Bits Product(Observed, 0);
     Product.front() = 1;
     llvm::SmallVector<SymRef, 16> Factors(Ctx.operands(Root));
+    if (Factors.size() > limits::kMaxResidueProductFactors) {
+      std::unordered_map<uint32_t, SymRef> Projections;
+      for (auto &Factor : Factors) {
+        if (Ctx.isConst(Factor))
+          continue;
+        const auto Projected = projectLowWord(Factor, Observed, Projections);
+        if (Failed)
+          return Root;
+        // Only the original leading scalar belongs to Scale. A constant
+        // residue of another factor must still be multiplied, so retain its
+        // source word instead of introducing a second scalar in this view.
+        if (!Ctx.isConst(Projected))
+          Factor = Projected;
+      }
+    }
     uint32_t Parity = 1;
     size_t Nonconstant = Factors.size() - Ctx.isConst(Factors.front());
     std::optional<uint32_t> Selector;
@@ -1681,6 +1829,7 @@ public:
     }
     if (Selector || Nonconstant >= Observed) {
       std::optional<uint32_t> Common;
+      bool CoversAll = !Selector;
       if (Selector)
         Common = Selector;
       else
@@ -1692,19 +1841,55 @@ public:
             return Root;
           if (Common && *Common != Low) {
             Common.reset();
+            CoversAll = false;
             break;
           }
           Common = Low;
         }
+      if (OddProductOnly && !Common && !Failed && Nonconstant > Observed &&
+          (Nonconstant - 1) % residueUnitPeriod(Observed) == 0) {
+        // Admit one independent multiplier beside a common low-prefix group.
+        // A complete unit period collapses the group's leading power; broader
+        // unmatched groups can spend the budget before producing a reading.
+        const unsigned Split = (Observed + 2) / 3;
+        if (!charge(1, 2 * (sizeof(Bits) + Split * sizeof(uint32_t))))
+          return Root;
+        std::array<Bits, 2> Prefixes;
+        std::array<size_t, 2> Counts{};
+        bool Compatible = true;
+        for (auto Factor : Factors) {
+          if (Ctx.isConst(Factor))
+            continue;
+          const auto &Low = word(Factor, Split);
+          if (Failed || !charge(1 + 2 * Split))
+            return Root;
+          const size_t Group = !Counts[0] || Low == Prefixes[0] ? 0 : 1;
+          if (Counts[Group] && Low != Prefixes[Group]) {
+            Compatible = false;
+            break;
+          }
+          if (!Counts[Group])
+            Prefixes[Group] = Low;
+          ++Counts[Group];
+          if (Counts[0] > 1 && Counts[1] > 1) {
+            Compatible = false;
+            break;
+          }
+        }
+        if (Compatible)
+          for (size_t I = 0; I < Counts.size(); ++I)
+            if (Counts[I] + 1 == Nonconstant)
+              Common = Prefixes[I].front();
+      }
       if (Common && *Common > 1) {
         const auto D = decision(*Common);
         if (D.Low <= 1 && D.High <= 1) {
-          // All N factors are even in the other branch, so their product
-          // is zero modulo 2^Observed when N >= Observed. Build only the
-          // odd branch and restore its exact selector after multiplication.
+          // The selected subgroup has at least Observed even factors in the
+          // other branch, or an explicit selector makes that branch zero.
+          // Restore its exact selector after multiplying all retained words.
           Parity = *Common;
           Assumption = std::make_pair(D.Variable, D.High == 1);
-          AssumptionCoversFactors = !Selector;
+          AssumptionCoversFactors = CoversAll;
           PriorityInput = uint32_t(D.Variable);
           Words.clear();
           Arithmetic.clear();

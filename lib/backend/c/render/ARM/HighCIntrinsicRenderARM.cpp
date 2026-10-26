@@ -32,6 +32,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <array>
 #include <climits>
 #include <iterator>
 #include <limits>
@@ -757,7 +758,7 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
                      std::function<std::string(const HighExpr &)> ExprFn,
                      std::function<std::string(const MedVar &)> VarFn,
                      IsAliveFn IsAlive) {
-  if (IID == Intrinsic::A64_VectorLoadWriteback) {
+  if (isAArch64WritebackAuxiliaryLoad(IID)) {
     if (Operands.size() != kWritebackLoadOperands ||
         !aarch64WritebackMemoryOutputsAreValid(
             IID, Outputs, [](const MedVar &V) { return V.Size; }) ||
@@ -773,6 +774,14 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
       throw std::invalid_argument(kWritebackMalformed);
     const auto Instruction = *aarch64WritebackMemoryInstruction(
         Operands[kWritebackWordOperand]->ConstVal);
+    if (Instruction.isPair()) {
+      std::array<std::string, kPairBaseIndex + 1> Names;
+      for (unsigned I = 0; I != Names.size(); ++I)
+        if (!IsAlive || IsAlive(Outputs[I]))
+          Names[I] = VarFn(Outputs[I]);
+      return aarch64PairMemoryCStatement(
+          Instruction, ExprFn(*Operands[kWritebackBaseOperand]), Names);
+    }
     return aarch64VectorWritebackMemoryCStatement(
         Instruction, ExprFn(*Operands[kWritebackBaseOperand]),
         !IsAlive || IsAlive(Outputs[kWritebackValueIndex])
@@ -878,11 +887,22 @@ std::string renderARMIntrinsicCall(Intrinsic Id,
             Id, Count + 1, ResultBytes, OperandBytes[kWritebackBaseOperand],
             OperandBytes[kWritebackWordOperand], Word,
             Store ? OperandBytes[kWritebackDataOperand] : 0,
-            Store ? constantOperand(Ops[kWritebackDataOperand]) : std::nullopt))
+            Store ? constantOperand(Ops[kWritebackDataOperand]) : std::nullopt,
+            Store && isAArch64PairMemoryIntrinsic(Id)
+                ? OperandBytes[kPairSecondDataOperand]
+                : 0,
+            Store && isAArch64PairMemoryIntrinsic(Id)
+                ? constantOperand(Ops[kPairSecondDataOperand])
+                : std::nullopt))
       throw std::invalid_argument(kWritebackMalformed);
-    return aarch64WritebackMemoryC(
-        *aarch64WritebackMemoryInstruction(*Word), Ops[kWritebackBaseOperand],
-        Store ? Ops[kWritebackDataOperand] : llvm::StringRef{});
+    const auto Instruction = *aarch64WritebackMemoryInstruction(*Word);
+    if (Instruction.isPair() && Store)
+      return aarch64PairStoreMemoryC(Instruction, Ops[kWritebackBaseOperand],
+                                     Ops[kWritebackDataOperand],
+                                     Ops[kPairSecondDataOperand]);
+    return aarch64WritebackMemoryC(Instruction, Ops[kWritebackBaseOperand],
+                                   Store ? Ops[kWritebackDataOperand]
+                                         : llvm::StringRef{});
   }
   if (isAArch64PAuthLoadIntrinsic(Id)) {
     const auto Word = Ops.size() == kPAuthLoadOperandCount

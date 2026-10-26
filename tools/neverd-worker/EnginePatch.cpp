@@ -16,7 +16,8 @@
 #include "neverd/sdk/NeverDCAPIBytePatch.h"
 #include "neverd/sdk/NeverDCAPIPatch.h"
 
-#include <map>
+#include <utility>
+#include <vector>
 
 namespace neverd::worker {
 namespace {
@@ -73,13 +74,13 @@ bool Engine::provesSourcePatches() {
 Json Engine::bytePatchRows() const {
   return patches() ? backendJson(patches().rows(session_)) : Json::array();
 }
-bool Engine::reloadBytePatches() {
+bool Engine::reloadBytePatches(bool knownChanged) {
   if (!patches())
     return true;
-  const auto Before = bytePatchRows();
+  const auto Before = knownChanged ? Json() : bytePatchRows();
   if (patches().load(session_) != 0)
     return false;
-  if (Before != bytePatchRows())
+  if (knownChanged || Before != bytePatchRows())
     functionsChanged();
   return true;
 }
@@ -299,7 +300,10 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
     return backendJson(Raw);
   }
   auto &Store = history();
-  auto State = Store.committedState();
+  Json State = Json::object();
+  for (const auto &[Table, Rows] : Store.committedState().items())
+    if (Table != "patches")
+      State[Table] = Rows;
   Json Result;
   if (Operation == "patch_revert") {
     Json Ranges =
@@ -328,12 +332,6 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
       throw Error("patch_refused", error());
     Result = backendJson(Raw);
   }
-  // The committed and replacement tables outlive this diff. Copy only rows
-  // that actually changed into the command, not both complete overlays.
-  std::map<uint64_t, std::pair<const Json *, const Json *>> Changes;
-  for (const auto &Row : Store.committedState().at("patches"))
-    Changes[parseAddress(Row.at("addr").get_ref<const std::string &>())].first =
-        &Row;
   State["patches"] = bytePatchRows();
   if (State["patches"].dump().size() >
       ::neverd::limits::worker::kPatchStateBytes) {
@@ -342,14 +340,29 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
     throw Error("patch_limit", "Patch history exceeds the worker transport "
                                "budget; use the SDK for larger overlays");
   }
-  for (const auto &Row : State.at("patches"))
-    Changes[parseAddress(Row.at("addr").get_ref<const std::string &>())]
-        .second = &Row;
+  // Committed history and SDK overlays are ordered by file offset. Merge
+  // their rows directly; only changed rows enter the owning history command.
+  const auto &OldRows = Store.committedState().at("patches");
+  const auto &NewRows = State.at("patches");
+  auto Old = OldRows.begin(), New = NewRows.begin();
   Json Command;
   const Json Missing;
-  for (const auto &[At, Sides] : Changes) {
-    const auto &Before = Sides.first ? *Sides.first : Missing;
-    const auto &After = Sides.second ? *Sides.second : Missing;
+  while (Old != OldRows.end() || New != NewRows.end()) {
+    const auto OldAt =
+        Old != OldRows.end()
+            ? parseAddress(Old->at("addr").get_ref<const std::string &>())
+            : 0;
+    const auto NewAt =
+        New != NewRows.end()
+            ? parseAddress(New->at("addr").get_ref<const std::string &>())
+            : 0;
+    const bool TakeOld =
+        Old != OldRows.end() && (New == NewRows.end() || OldAt <= NewAt);
+    const bool TakeNew =
+        New != NewRows.end() && (Old == OldRows.end() || NewAt <= OldAt);
+    const auto At = TakeOld ? OldAt : NewAt;
+    const auto &Before = TakeOld ? *Old++ : Missing;
+    const auto &After = TakeNew ? *New++ : Missing;
     if (Before == After)
       continue;
     Json Change{
@@ -367,7 +380,7 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   const auto Checkpoint = Store;
   try {
     Store.stage(std::move(Command));
-    Store.persist(State);
+    Store.persist(std::move(State));
   } catch (...) {
     Store = Checkpoint;
     (void)patches().load(session_);
@@ -376,9 +389,8 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   }
   // This edit always invalidates analysis below; no before/after JSON
   // comparison is needed just to acknowledge its persisted SDK overlay.
-  if (patches().load(session_) != 0)
+  if (!reloadBytePatches(true))
     throw Error("reload_failed", error());
-  functionsChanged();
   ++revision_;
   Result["saved"] = true;
   Result["revision"] = revision();

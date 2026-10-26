@@ -38,6 +38,10 @@ std::size_t sizeField(const Json &Object, const char *Key, std::size_t Fallback,
 Json parseJson(
     std::string_view Text,
     std::size_t MaxBytes = ::neverd::limits::transport::kJsonMaxJsonBytes);
+/// Parse SDK-owned output with Json::parse's number and last-duplicate-key
+/// semantics, without imposing transport frame limits. Frames and sidecar files
+/// must use parseJson instead. Syntax failures remain Json::exception values.
+Json parseBackendJson(std::string_view Text);
 /// Bound allocation while serializing, including JSON escaping.
 std::string serializeJson(
     const Json &Value,

@@ -23,6 +23,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/ConstantRange.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -104,7 +105,7 @@ class StackOffsetProof {
     const MedOp *Op = nullptr;
     const PhiNode *Join = nullptr;
     bool Ambiguous = false;
-    bool Active = false;
+    size_t ActiveContext = 0;
     bool EntryChecked = false;
     bool EntryLiveIn = false;
     std::optional<int64_t> ProvenOffset;
@@ -420,8 +421,7 @@ private:
 
   /// The offset every way into \p Phi brings.  A way back through the join
   /// itself is checked against the offset the other ways agree on.
-  std::optional<int64_t> join(const PhiNode &Phi, ValueDefinition &Definition,
-                              unsigned Depth) {
+  std::optional<int64_t> join(const PhiNode &Phi, unsigned Depth) {
     if (Phi.ExceptionalEntry)
       return std::nullopt;
     std::optional<int64_t> Agreed;
@@ -446,7 +446,6 @@ private:
     if (Cyclic.empty())
       return Agreed;
     const Key K = key(Phi.Output);
-    Definition.Active = false;
     Assumed.emplace(K, *Agreed);
     bool Holds = true;
     for (const MedVar *Arg : Cyclic) {
@@ -457,7 +456,6 @@ private:
       }
     }
     Assumed.erase(K);
-    Definition.Active = true;
     return Holds ? Agreed : std::nullopt;
   }
 
@@ -521,7 +519,7 @@ private:
       const PhiNode *Phi = Definition->Join;
       if ((Phi && (!sameOccurrence(Phi->Output, Value) || Phi->Args.empty() ||
                    Phi->ExceptionalEntry)) ||
-          (Definition->Active && K != RootKey))
+          (Definition->ActiveContext == Assumed.size() + 1 && K != RootKey))
         return false;
       if (Parent)
         Users[K].insert(*Parent);
@@ -606,7 +604,7 @@ private:
     const size_t BeforeContext = ContextUses;
     const unsigned OuterDepth = Deepest;
     Deepest = Depth;
-    auto Result = join(*Definition.Join, Definition, Depth);
+    auto Result = join(*Definition.Join, Depth);
     if (!Result && ContextUses != BeforeContext && !JoiningComponent &&
         Steps < kMaxProofSteps) {
       JoiningComponent = true;
@@ -641,6 +639,11 @@ private:
     const auto It = Definitions.find(K);
     ValueDefinition *Definition =
         It == Definitions.end() ? nullptr : &It->second;
+    // An induction assumption changes the query: an arithmetic definition
+    // active outside that assumption must be checked again on the backedge.
+    // The scoped marker still rejects cycles within the same context. Zero
+    // means inactive; nested assumptions are pushed and popped in call order.
+    const size_t Context = Assumed.size() + 1;
     if (Definition && Definition->Ambiguous)
       return std::nullopt;
     // A range is not one executable stack value. Only a singleton may
@@ -665,17 +668,15 @@ private:
       // 64-bit address container. This preserves the target pointer; it is
       // not a truncation of a 64-bit SP or an eight-byte incoming SP seed.
       const MedOp *Op = Definition ? Definition->Op : nullptr;
-      if (!Op || Definition->Active || !sameOccurrence(Op->Output, Value) ||
-          Op->Opcode != NdOp::INT_ZEXT || Op->NumInputs != 1 ||
-          Op->Inputs[0].Size != TRI.PointerSize ||
+      if (!Op || Definition->ActiveContext == Context ||
+          !sameOccurrence(Op->Output, Value) || Op->Opcode != NdOp::INT_ZEXT ||
+          Op->NumInputs != 1 || Op->Inputs[0].Size != TRI.PointerSize ||
           Op->MemoryOrdering != NdMemoryOrdering::None ||
           Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
           !Op->IntrinsicOutputs.empty())
         return std::nullopt;
-      Definition->Active = true;
-      const auto Result = resolve(Op->Inputs[0], Depth + 1);
-      Definition->Active = false;
-      return Result;
+      llvm::SaveAndRestore Active(Definition->ActiveContext, Context);
+      return resolve(Op->Inputs[0], Depth + 1);
     }
     if (!OnlySeededRoots && Value.Kind == MedVar::Reg &&
         Value.RegOff == TRI.StackPointer &&
@@ -692,17 +693,14 @@ private:
     }
     if (!Definition)
       return std::nullopt;
-    if (Definition->Active) {
+    if (Definition->ActiveContext == Context) {
       ++ContextUses;
       CycleHit = true;
       return std::nullopt;
     }
-    Definition->Active = true;
-    if (Definition->Join) {
-      std::optional<int64_t> Result = resolveJoin(Value, *Definition, Depth);
-      Definition->Active = false;
-      return Result;
-    }
+    llvm::SaveAndRestore Active(Definition->ActiveContext, Context);
+    if (Definition->Join)
+      return resolveJoin(Value, *Definition, Depth);
     std::optional<int64_t> Result;
     if (Definition->Op) {
       const MedOp &Op = *Definition->Op;
@@ -744,7 +742,6 @@ private:
         }
       }
     }
-    Definition->Active = false;
     if (Result && !fitsPointerOffset(*Result))
       Result.reset();
     return Result;

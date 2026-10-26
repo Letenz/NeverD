@@ -12,6 +12,8 @@ Weicht der LLVM-Aufruftyp von der Funktionsdeklaration ab, wertet LLVM C die Umw
 
 Ganzzahlige Stackparameter von 1/2/4/8 Byte behalten ihre genaue Breite im Cache, bei der Eingangsbindung und im Nachweis der Aufruferschreibzugriffe. Vorzeichen- und Nullerweiterung erhalten die gelesenen Bits; schmale Parameter initialisieren keine benachbarten Bytes.
 
+Schmale Zugriffe am selben Offset teilen einen Parameter nur, wenn erreichbarer Originalcode auch die volle deklarierte Breite dieses Slots liest. Der gemeinsame Frame-Nachweis prüft das Maximum je Slot. Wiederholte schmale Zugriffe oder ein vollständiger Zugriff auf einen anderen Slot ersetzen keine fehlenden Bytes.
+
 Konstante Registeraufrufziele verwenden die gemeinsame begrenzte LowIR-Skalaranalyse. Der Stapelnachweis behält die ursprüngliche indirekte Aufrufstelle; nur das Quell-MedIR wird bei übereinstimmendem Ziel, Deklaration und ausgehenden Bytes zu einem benannten Aufruf. Ladevorgänge, blockübergreifende Werte, Aufrufeffekte und unvollständige Register liefern kein Ziel.
 
 Bei gelinkten x64-PE-Dateien erfasst die Funktionserkennung kanonische RIP-relative LEA-Codeadressen im vorhandenen Aufrufscan. Ziele benötigen weiterhin einen unabhängigen Einstieg und einen begrenzten Nachweis eines aufrufbaren Ausgangs; interne Labels, Fortsetzungen und nicht unterstützte Funktionskörper bleiben ausgeschlossen. Erkennung und Signaturen teilen sich die Prüfung der Adresskodierung. Bedingte COFF-rel32-Referenzen erfordern außerdem explizite Funktionssymbole und Relokationen ohne Addend. Offline prüft `--single-reference-context` jede Bedingung mit einer Referenzstelle gegen alle überlappenden ursprünglichen Quelldeklarationen und bewahrt sämtliche Alternativen der Stelle.

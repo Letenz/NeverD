@@ -81,26 +81,30 @@ EncodedJson::EncodedJson(const Json &value)
     : text_(value.dump(-1, ' ', false, Json::error_handler_t::replace)) {}
 
 std::string sidecarText(const Json &value) {
-  const std::string dumped =
+  std::string dumped =
       value.dump(2, ' ', false, Json::error_handler_t::replace);
   // LLVM's JSON writes a backspace and a form feed as \u0008 and \u000c,
   // where nlohmann writes \b and \f.
+  auto escape = dumped.find('\\');
+  if (escape == std::string::npos) {
+    dumped += '\n';
+    return dumped;
+  }
   std::string text;
   text.reserve(dumped.size() + 1);
-  bool inString = false;
-  for (std::size_t i = 0; i < dumped.size(); ++i) {
-    const char c = dumped[i];
-    if (inString && c == '\\' && i + 1 < dumped.size()) {
-      const char escaped = dumped[++i];
-      text += escaped == 'b'   ? "\\u0008"
-              : escaped == 'f' ? "\\u000c"
-                               : std::string{c, escaped};
-      continue;
-    }
-    if (c == '"')
-      inString = !inString;
-    text += c;
+  std::size_t start = 0;
+  // Serializer output has backslashes only inside strings. Consume each
+  // complete escape so a literal backslash followed by b/f stays literal.
+  for (; escape != std::string::npos; escape = dumped.find('\\', start)) {
+    text.append(dumped, start, escape - start);
+    const char escaped = dumped[escape + 1];
+    if (escaped == 'b' || escaped == 'f')
+      text += escaped == 'b' ? "\\u0008" : "\\u000c";
+    else
+      text.append(dumped, escape, 2);
+    start = escape + 2;
   }
+  text.append(dumped, start, dumped.size() - start);
   text += '\n';
   return text;
 }
