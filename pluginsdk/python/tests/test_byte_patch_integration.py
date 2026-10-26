@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,112 @@ class BytePatchIntegrationTests(unittest.TestCase):
                               120 + len(code), 120 + len(code), 4096)
         self.original = header + segment + code
         self.binary.write_bytes(self.original)
+
+    def _snapshot_host(self):
+        from neverd_plugin.ffi import HostAPI
+
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        if not library:
+            self.skipTest("NEVERD_TEST_LIBNEVERD is not configured")
+        path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(path.parent))
+            self.addCleanup(directory.close)
+        return HostAPI(ctypes.CDLL(str(path)))
+
+    def _snapshot(self, host, pointer):
+        snapshot = host.call("neverd_byte_patches_snapshot_v1", pointer)
+        self.assertTrue(snapshot, host.owned_string("neverd_last_error", pointer))
+        self.addCleanup(host.call, "neverd_byte_patch_snapshot_free_v1", snapshot)
+        return snapshot
+
+    @staticmethod
+    def _snapshot_rows(snapshot):
+        return [{"addr": hex(row.file_offset), "file_off": hex(row.file_offset),
+                 "va": hex(row.address), "size": row.size,
+                 "original": ctypes.string_at(row.original, row.size).hex(),
+                 "current": ctypes.string_at(row.current, row.size).hex(),
+                 "kind": row.kind.decode("ascii")}
+                for row in snapshot.contents.rows[:snapshot.contents.row_count]]
+
+    def test_snapshot_distinguishes_unloaded_and_empty_sessions(self) -> None:
+        host = self._snapshot_host()
+        host.call("neverd_byte_patch_snapshot_free_v1", None)
+        self.assertFalse(host.call("neverd_byte_patches_snapshot_v1", None))
+        pointer = host.call("neverd_session_create")
+        self.addCleanup(host.call, "neverd_session_destroy", pointer)
+        self.assertFalse(host.call("neverd_byte_patches_snapshot_v1", pointer))
+        self.assertIn("loaded session", host.owned_string("neverd_last_error", pointer))
+        self.assertEqual(host.call("neverd_session_load", pointer, os.fsencode(self.binary)), 1)
+        snapshot = self._snapshot(host, pointer)
+        self.assertEqual(snapshot.contents.row_count, 0)
+        self.assertFalse(snapshot.contents.rows)
+        self.assertEqual(self._snapshot_rows(snapshot), [])
+
+    def test_snapshots_own_rows_across_edits_reloads_and_session_destruction(self) -> None:
+        from neverd_plugin import Session
+
+        host = self._snapshot_host()
+        with ExitStack() as sessions:
+            pointer = host.call("neverd_session_create")
+            sessions.callback(host.call, "neverd_session_destroy", pointer)
+            self.assertEqual(host.call("neverd_session_load", pointer, os.fsencode(self.binary)), 1)
+            session = Session(pointer, _host=host,
+                              _native=SimpleNamespace(session_address=lambda handle: handle))
+            session.apply_byte_patch(self.entry, kind="constant", value=42)
+            session.apply_byte_patch(self.entry + 4, data=b"\xff\x00")
+            first = self._snapshot(host, pointer)
+            expected = [
+                {"addr": "0x79", "file_off": "0x79", "va": hex(self.entry + 1),
+                 "size": 1, "original": "07", "current": "2a", "kind": "constant"},
+                {"addr": "0x7c", "file_off": "0x7c", "va": hex(self.entry + 4),
+                 "size": 2, "original": "00c3", "current": "ff00", "kind": "bytes"},
+            ]
+            self.assertEqual(self._snapshot_rows(first), expected)
+            self.assertEqual(session.byte_patches, expected)
+            session.save_byte_patches()
+            session.apply_byte_patch(self.entry + 1, data=b"\x7f", allow_overlap=True)
+            second = self._snapshot(host, pointer)
+            second_expected = session.byte_patches
+            self.assertNotEqual(second_expected, expected)
+            self.assertEqual(self._snapshot_rows(first), expected)
+            session.load_byte_patches()
+            self.assertEqual(session.byte_patches, expected)
+            session.revert_byte_patch(self.entry, 6)
+            self.assertEqual(session.byte_patches, [])
+            empty = self._snapshot(host, pointer)
+        self.assertEqual(self._snapshot_rows(first), expected)
+        self.assertEqual(self._snapshot_rows(second), second_expected)
+        self.assertEqual(self._snapshot_rows(empty), [])
+        self.assertEqual(self.binary.read_bytes(), self.original)
+
+    def test_snapshot_keeps_all_byte_values_high_addresses_and_split_runs(self) -> None:
+        from neverd_plugin import Session
+
+        host = self._snapshot_host()
+        pointer = host.call("neverd_session_create")
+        self.addCleanup(host.call, "neverd_session_destroy", pointer)
+        base = 0xffff800012340000
+        raw = self.root / "all-bytes.raw"
+        original = b"\x80" * 256
+        raw.write_bytes(original)
+        options = json.dumps({"loader": "binary", "processor": "x86_64",
+                              "platform": "sysv", "base": base}).encode()
+        self.assertEqual(host.call("neverd_session_set_load_options", pointer, options), 0)
+        self.assertEqual(host.call("neverd_session_load", pointer, os.fsencode(raw)), 1)
+        session = Session(pointer, _host=host,
+                          _native=SimpleNamespace(session_address=lambda handle: handle))
+        current = bytes(range(256))
+        session.apply_byte_patch(base, data=current)
+        snapshot = self._snapshot(host, pointer)
+        expected = [{"addr": hex(start), "file_off": hex(start),
+                     "va": hex(base + start), "size": end - start,
+                     "original": original[start:end].hex(),
+                     "current": current[start:end].hex(), "kind": "bytes"}
+                    for start, end in ((0, 128), (129, 256))]
+        self.assertEqual(self._snapshot_rows(snapshot), expected)
+        self.assertEqual(session.byte_patches, expected)
+        self.assertEqual(raw.read_bytes(), original)
 
     def test_source_preview_retains_explicit_raw_load_options(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")

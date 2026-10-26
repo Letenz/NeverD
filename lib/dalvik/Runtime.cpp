@@ -445,6 +445,8 @@ struct Runtime::State::Engine {
     if (auto reason = program.unsupportedClass(name))
       fail(ExecutionStop::Unsupported, *reason);
     const auto *klass = program.findClass(name);
+    if (program.unmodeled_initializers.contains(klass))
+      fail(ExecutionStop::Unsupported, "class initialization is not modeled");
     auto [entry, inserted] = state.classes.try_emplace(klass);
     auto &storage = entry->second;
     if (inserted) {

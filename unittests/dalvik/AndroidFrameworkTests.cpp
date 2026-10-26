@@ -585,6 +585,47 @@ TEST_F(AndroidFrameworkTest, MainLooperDeclarationsKeepPlatformAccess) {
   ASSERT_NE(post, nullptr);
   EXPECT_TRUE(post->Final);
 }
+TEST_F(AndroidFrameworkTest, ServiceManagerMetadataKeepsFinalPlatformIdentity) {
+  const auto *type = program.findClass("Landroid/os/ServiceManager;");
+  ASSERT_NE(type, nullptr);
+  EXPECT_TRUE(program.knownReference(type->name));
+  EXPECT_TRUE(has(type->access, "public"));
+  EXPECT_TRUE(has(type->access, "final"));
+  EXPECT_EQ(type->superclass, "Ljava/lang/Object;");
+  EXPECT_TRUE(program.assignable(type->name, "Ljava/lang/Object;"));
+  EXPECT_FALSE(program.knownReference("Landroid/os/UnmodeledPlatform;"));
+  Class derived;
+  derived.name = "Ltest/DerivedServiceManager;";
+  derived.superclass = type->name;
+  Program invalid({derived}, Properties{});
+  EXPECT_TRUE(invalid.unsupportedClass(derived.name));
+  Class replacement;
+  replacement.name = type->name;
+  EXPECT_THROW(Program({replacement}, Properties{}), Error);
+}
+TEST_F(AndroidFrameworkTest, ServiceManagerInitializationIsNotAnEmptyBody) {
+  for (unsigned mode = 0; mode != 3; ++mode) {
+    SCOPED_TRACE(mode);
+    Runtime state(program);
+    auto result = mode == 0 ? state.initialize("Landroid/os/ServiceManager;",
+                                               Admit, 65536)
+                            : state.allocate("Landroid/os/ServiceManager;",
+                                             mode == 1, Admit, 65536);
+    EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+    EXPECT_EQ(
+        result.diagnostic,
+        "Landroid/os/ServiceManager;: class initialization is not modeled");
+    EXPECT_EQ(result.value, 0u);
+    EXPECT_TRUE(result.exception.empty());
+    EXPECT_TRUE(state.snapshot().terminal);
+    for (const auto &row : state.snapshot().classes)
+      if (row.descriptor == "Landroid/os/ServiceManager;") {
+        EXPECT_EQ(row.initialization,
+                  JavaClassState::Initialization::NotStarted);
+        EXPECT_EQ(row.class_object, 0u);
+      }
+  }
+}
 TEST_F(AndroidFrameworkTest, LocaleHierarchyPreservesFinalAndMarkerInterfaces) {
   const auto *locale = program.findClass("Ljava/util/Locale;");
   ASSERT_NE(locale, nullptr);

@@ -370,6 +370,7 @@ void Program::addAndroidFramework() {
          "android/content/pm/PackageItemInfo"},
         {"android/content/pm/PackageInfo", "java/lang/Object"},
         {"android/os/Parcelable", "java/lang/Object"},
+        {"android/os/ServiceManager", "java/lang/Object"},
         {"android/os/Handler", "java/lang/Object"},
         {"android/os/Looper", "java/lang/Object"},
         {"android/os/MessageQueue", "java/lang/Object"},
@@ -417,6 +418,7 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "java/lang/StringBuilder" ||
         std::string_view(name) == "java/util/Locale" ||
         std::string_view(name) == "java/net/URL" ||
+        std::string_view(name) == "android/os/ServiceManager" ||
         std::string_view(name) == "android/os/Looper" ||
         std::string_view(name) == "android/os/MessageQueue" ||
         std::string_view(name) == "android/os/Message" ||
@@ -566,6 +568,8 @@ void Program::addAndroidFramework() {
       }
     }
     auto [entry, inserted] = classes.emplace(type.name, std::move(type));
+    if (inserted && std::string_view(name) == "android/os/ServiceManager")
+      unmodeled_initializers.insert(&entry->second);
     if (inserted &&
         (std::string_view(name) == "android/app/ActivityThread" ||
          std::string_view(name) == "android/content/pm/PackageItemInfo" ||

@@ -1390,6 +1390,11 @@ two native threads, global/local reference deletion and detach/reattach against
 the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
 strict JSON input. These tests use synthetic inputs without a phone, host JVM
 or network; they do not establish arbitrary framework lifecycle equivalence.
+`AndroidFrameworkTest.ServiceManager*` and `AndroidJNI.ServiceManager*` distinguish
+known type metadata from unmodeled static initialization. They cover class and
+array identity, hierarchy/final constraints, JNI method/field ID lookup and
+allocation, with no successful initialization or fabricated service state.
+Run the full Dalvik and Android JNI suites when changing this boundary.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -3251,7 +3256,27 @@ Glyph failures include the language and text offset. The UI font also carries
 the bundled fallback families for CoreText shaping; unchanged script lists
 must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
+Its light/dark chrome rows also click Minimize and restore the normal size.
 The shared frame tests separately exercise native edge gestures.
+`quickStartMinimizesAndReopens` covers the startup greeting and in-workbench
+window on every platform: Minimize must keep the application responsive and
+File > Quick start must restore the same window at its previous size.
+`quickStartRestoresFromTheDock` runs the real startup and in-workbench paths on
+Cocoa, clicks Minimize, waits for AppKit's minimized state, then sends the native
+application-reopen event used by Dock clicks. It requires restoration without
+calling `showNormal()` and checks that no application-modal session remains.
+`quickStartReusesItsWindowAndClosesWithTheWorkbench` checks the asynchronous
+greeting, single-window ownership, Go, and destruction before a choice.
+`quickStartQuitsWhileMinimized` starts a child with a real application event
+loop, minimizes the greeting, and requests AppKit termination; the child must
+exit normally before its deadline.
+When packaging, also check system Quit while Quick Start is minimized; a smoke
+test or modeless dialog shown directly does not exercise the startup path.
+The Desktop GUI workflow runs the Quick Start lifecycle cases on native Windows
+and Cocoa, and on Linux with the xcb plugin under Xvfb and Openbox. Cocoa-only
+Dock and AppKit termination cases explicitly skip on other platforms.
+`titleBarControlsRepaintOnPointerLeave` checks that an ordinary pointer-leave
+event repaints the close button even without a separate hover-leave event.
 
 `windowShadowCompositesWithDesktop` checks Windows shadow composition for
 ordinary and Quick Start dialogs, with and without an early native handle,
@@ -3423,7 +3448,9 @@ presses F three times to create one maximized floating workspace with assembly
 on the left, code on the right and output across the bottom. It checks both
 themes, docked and floating origins, restoring the previous layout and window
 state, unchanged data, data addresses outside functions, and ordinary command
-input. Keys enter through `QWindow` so forwarding to the focused widget cannot
+input. After closing the focus workspace, the main close button still highlights
+on hover and returns to its normal color when the pointer leaves. Keys enter
+through `QWindow` so forwarding to the focused widget cannot
 silently reset the sequence.
 `focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
 list, triangle clicks, unchanged analysis geometry, single-click navigation in
@@ -14410,6 +14437,21 @@ services and ART loading are not covered.
 `NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
+
+`BytePatchCAPIHeaderC.c` compiles the frozen snapshot layout and signatures as C
+in `NeverDBytePatchTests`. The real SDK cases in
+`test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
+high addresses, split runs, JSON parity, and ownership across edits, reloads and
+session destruction. The worker mock intentionally omits snapshot exports to
+exercise JSON fallback; run the native patch suite with both current and older
+SDKs when changing this optional transport.
+
+`tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
+commands and durable worker commit/undo/redo against two explicit binary
+snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with
+alternating SDK JSON/CLI samples and independent original/current-byte checks.
+Both record native CPU/wall samples and binary hashes; keep machine-local
+reports outside tracked source and avoid overlapping builds with timed runs.
 
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 

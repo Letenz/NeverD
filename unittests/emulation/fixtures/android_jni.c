@@ -1485,6 +1485,33 @@ int jni_dex_class_pair(const char *first, const char *last) {
   CHECK(!C(vm, int, 5));
   return 0;
 }
+int jni_service_manager_metadata(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  CHECK(type);
+  if (mode == 1)
+    return !C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  if (mode == 2)
+    return !C(e, Ref, 144, type, "sCache", "Ljava/util/Map;");
+  if (mode == 3)
+    return !C(e, Ref, 33, type, "toString", "()Ljava/lang/String;");
+  if (mode == 4)
+    return !C(e, Ref, 27, type);
+  Ref again = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref object = C(e, Ref, 6, "java/lang/Object");
+  Ref parent = C(e, Ref, 10, type);
+  CHECK(C(e, int, 24, type, again));
+  CHECK(C(e, int, 24, parent, object));
+  CHECK(C(e, U8, 11, type, object));
+  CHECK(!C(e, U8, 11, object, type));
+  Ref array = C(e, Ref, 6, "[Landroid/os/ServiceManager;");
+  CHECK(array && !C(e, int, 24, array, type));
+  CHECK(!C(e, U8, 228));
+  CHECK(!C(vm, int, 5));
+  return 0;
+}
 int jni_build_version_wrong_accessor(void) {
   Handle e = attach();
   Ref klass = C(e, Ref, 6, "android/os/Build$VERSION");
