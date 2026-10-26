@@ -74,6 +74,15 @@ This component is a tested foundation, not yet a lifting/emission contract:
 strict MPX admission remains closed until original-transfer effects and
 memory completion are connected throughout the pipeline.
 
+`lift/X86/X86MpxEncoding.h` owns the qualified MPX byte-to-operand mapping.
+The full and lightweight decoder adapters share it, including native-width
+addresses despite long-mode 67H, mode-sized BNDMOV memory fields, LOCK stores,
+and the architectural register NOP forms. Encoded MIB index, scale and absent
+base remain distinct; they do not authorize an ordinary memory operation at
+the displayed expression. Invalid banks, 16-bit memory forms, prohibited
+RIP-relative forms and competing mandatory prefixes do not acquire a qualified
+shape. Decoding a valid stateful instruction does not enable its strict lifter.
+
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
 semantics; they do not expose TILECFG or TMM values through an ordinary function
@@ -178,6 +187,16 @@ LowIR, and records SF/AF/PF as undefined while defining CF/OF/ZF. APX NF
 preserves all flags. The shared prefix and APX validators retain address
 ownership. Decoder flag metadata is checked separately from architectural
 effects: legacy BEXTR metadata currently over-reports control-flag resets.
+
+`X86LiftBitCount` owns TZCNT, LZCNT and POPCNT admission, arithmetic and
+undefined-output effects across legacy, REX2 and APX/NF forms. F3 selection,
+66 operand size and REX cancellation are authenticated independently; shared
+address validators retain memory-tail ownership. The source-zero carry value
+is captured before an aliased destination write. TZCNT/LZCNT record OF/SF/AF/PF
+as undefined, POPCNT defines all status flags, and NF preserves them. Legacy
+Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
+the architectural carry calculation. Completeness of this flag audit does not
+certify runtime CPU-feature selection or a complete opaque machine-state bank.
 
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
@@ -2045,7 +2064,14 @@ claims are not opted into incoming inference merely by loading them. Source
 refinements of ordinary anchors share the frozen reference validation pass;
 contradicted refinements withdraw only the incoming names they supported.
 The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
-loader owns validation of primary MSVC RTTI metadata.
+loader owns validation of primary MSVC RTTI metadata. Native `!vtable` records
+are metadata outside the byte index. `SignatureVTableContext` combines exact
+source slots, immutable relocation-backed storage and loader-validated primary
+RTTI, then queries existing complete strong `!caller` bodies. Its candidates
+receive one frozen outgoing check after incoming inference and before the data
+pass; they cannot restart a chain or establish data anchors. The parser and
+cache share one table-record admission contract. `VTableEvidence` owns raw COFF
+source declarations, including incomplete records used as offline counterclaims.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
@@ -8399,6 +8425,9 @@ uses the same outer limit before scanning its NUL-terminated input.
 metadata and append-stable directory cookies. LinuxClock supplies timestamps;
 JSON carries only initial snapshots, umask and bounds. Bionic `strstr` stays in
 the common string owner with bounded linear search and provider lifetime checks.
+`strpbrk` shares the bounded byte-set scan used by `strspn` and `strcspn`;
+it returns the first member's guest address or null at NUL, with unchanged errno.
+All three entries use the same guest access, deadline and provider checks.
 See [directory creation contracts](android-directory-creation.md).
 
 `LinuxFiles` also owns the explicit file creation, rename and unlink grants.
@@ -12024,6 +12053,12 @@ entry-resolved addresses, never device replies or a second ABI decoder.
 `LinuxServices` supplies the current task; Android supplies its native return
 address. `ProcessReport` serializes the optional stream. Trace limits and
 capture failures cannot replace the original service outcome.
+`linux_files.ioctl_trace.include_unlisted` defaults to `true`, retaining an
+event for every ioctl. Setting it to `false` records only numbers listed in
+`requests`, including entries with no memory ranges. The shared owner matches
+the LP64 ABI's low 32-bit request before charging either trace budget or reading
+diagnostic memory. Unlisted calls still execute and retain their normal service
+events and errors; an empty selection records nothing and is not truncation.
 
 `KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
 
@@ -12334,3 +12369,32 @@ VMA names. Shared unmap retires it; mincore admission and MADV_DONTNEED both use
 this authority. Discard replaces each target page through AddressSpace while
 retaining permissions and VMA policy; old physical aliases and pinned views
 keep their bytes. Device/GPU admission remains in the shared service dispatch.
+
+`MedCallTarget` observes cached callable values through the Med ABI owner's
+exact address, width and overlap proof. The machine call-summary adapter,
+pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
+An observed import identifies the captured callable's signature and never
+authorizes a new target load. Call barriers, partial writes, uncertain aliases
+and exhausted work retain the unresolved call.
+
+`HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
+redundant writebacks and complete-overwrite proofs within independent regions
+and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
+and exceptional/ordered observations retain their memory effects. Prologue
+cleanup preserves saved register values still observed as data. Word zero-test
+normalization retains operand widths, signedness, effects and source truth.
+
+HighIR pointer type facts follow exact private scalar copies and memory cells,
+joining only agreed predecessor facts and revoking clobbered or escaped cells.
+Source parameter binding can supply display types without mutating machine IR.
+C frame records use validated display alignment and bounded member layouts;
+these declarations grant no ABI, nonalias or lifetime facts. Both C writers
+share record/member-path validation and preserve captured callable values.
+
+Analysis-image additions are owned by Session's C ABI in `NeverDCAPISections.cpp`.
+It validates and atomically extends existing BinaryImage segments, sections and
+function roots, then retires derived caches. Worker and CLI own writer leases
+and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
+Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
+for the same input. File rewriting retains the original file-backed load.
+See [analysis sections](analysis-sections.md).

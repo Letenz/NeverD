@@ -137,7 +137,9 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("type_libraries_set"),
                                    QStringLiteral("undo"),
                                    QStringLiteral("redo"),
-                                   QStringLiteral("save")};
+                                   QStringLiteral("save"),
+                                   QStringLiteral("analysis_section_add"),
+                                   QStringLiteral("analysis_section_remove")};
   return edits.contains(operation);
 }
 
@@ -453,6 +455,17 @@ void Session::command(const QString &operation, const QJsonObject &payload,
           if (status == QLatin1String("ok")) {
             if (payload.contains("dirty"))
               dirty_ = payload.value("dirty").toBool();
+            if (operation == QLatin1String("analysis_section_add") ||
+                operation == QLatin1String("analysis_section_remove") ||
+                operation == QLatin1String("reload")) {
+              metadata_ = payload;
+              background_ = payload.value("background").toObject();
+              generation_ = background_.value("generation").toString();
+              functionCount_ = -1;
+              emit functionsChanged();
+              emit generationChanged();
+              emit backgroundChanged();
+            }
             // An opened database holds the project until it is written back.
             if (edit && openedFromDatabase_)
               databaseDirty_ = true;
@@ -1000,7 +1013,7 @@ void Session::save() {
   command(QStringLiteral("save"), {}, [this](const QJsonObject &) {
     dirty_ = false;
     refreshHistory();
-    emit message(tr("Comments and history saved"), 0);
+    emit message(tr("Project changes saved"), 0);
     if (openedFromDatabase_)
       writeDatabase(databasePath_);
   });
@@ -1826,6 +1839,17 @@ void Session::refreshBytePatches() {
          patchRanges_ = std::move(ranges);
          emit bytePatchesChanged();
        });
+}
+
+void Session::addAnalysisSection(const QJsonObject &description, Reply done,
+                                 Failure failed) {
+  command(QStringLiteral("analysis_section_add"), description, std::move(done),
+          std::move(failed));
+}
+void Session::removeAnalysisSection(const QString &name, Reply done,
+                                    Failure failed) {
+  command(QStringLiteral("analysis_section_remove"), {{"name", name}},
+          std::move(done), std::move(failed));
 }
 
 } // namespace neverd::gui

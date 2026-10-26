@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: dfc80a0bf5685db7576ab0eb49dc067cdc190a437a85b33c4a4186eed6915fce -->
+<!-- i18n-source: 40bc95b0497bcc23428886f1765116ce87275a1507ae139a70be4896271650a7 -->
 
 [← Documentation Index](README.md)
 
@@ -185,7 +185,7 @@ report = session.patch_source(
 
 Windows ARM64 の検証では、固定されたサブモジュールと検証済み LLVM-MinGW ツールチェーンからネイティブ ARM64 Unicorn C DLL を実際にビルドし、MSVC インポートライブラリと明示的な CMake ターゲット上書きを使います。隔離したビルド用コピーは、非 SEH ジャンプ関数の組、命令キャッシュ同期を伴う ARM64 ページコミットコールバック、Windows LLP64 用の64ビット即値マスクという三つのホスト修正を認証します。サブモジュールのソースとリビジョンは変更しません。これは CPU 行列のテストホストを検証するもので、標準の MSVC ARM64 JIT 対応を示すものではありません。五つのホスト復帰チェックは、パッチ済みプロセスのネイティブ実行や C++ 例外の証拠と分けて記録します。
 
-`NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` で互換性のあるコンパイラを指定します（Clang 22.1.6 を検証済み）。統合ビルドはビルドディレクトリ内の LLVM コピーだけを修正し、サブモジュールや共有プリビルドキャッシュは変更しません。r3/r4 の x64 PLT 不具合により IR パッチが拒否される場合があります。ネイティブオブジェクトはこの MC 経路を通りません。`NEVERD_TEST_REQUIRE_FIXED_LLVM=1` は修正済みの正確な PLT 生成を必須にします。
+`NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` で互換性のあるコンパイラを指定します（Clang 22.1.6 を検証済み）。統合ビルドは記録された NeverSight LLVM fork を直接コンパイルします。再配置の修正は fork で管理し、NeverD は LLVM ソースへのパッチを適用しません。r3/r4 の x64 PLT 不具合により IR パッチが拒否される場合があります。ネイティブオブジェクトはこの MC 経路を通りません。`NEVERD_TEST_REQUIRE_FIXED_LLVM=1` は修正済みの正確な PLT 生成を必須にします。
 
 `NeverDSourcePatchTests` はネイティブ C/API/オブジェクト/例外を、`NeverDSourcePatchMatrixTests` は Unicorn ですべての組合せを検証します。`NEVERD_TEST_WINDOWS_CRT_LIB`、`NEVERD_TEST_WINDOWS_UCRT_LIB`、`NEVERD_TEST_WINDOWS_SDK_LIB` を設定すると `SourcePatchPE` が 7 つの C++ シナリオを実行します。Windows 以外では `NEVERD_TEST_WINDOWS_RUNNER` も必要です。`NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` は入力不足を失敗とします。専用 Windows ワークフローはネイティブ実行を要求し、スキップを許容しません。
 
@@ -203,7 +203,7 @@ ctest --test-dir build-source -L \
   --output-on-failure --parallel 4
 ```
 
-LLVM のビルド用コピーは Mach-O x64 の GOT データ参照も修正します。Clang の型付き catch 表は 4 バイト再配置フィールドの末尾を基準にします。r3/r4 は 4 バイトずれるため、公開前検証で未修正の結果を拒否します。開発 Mac の x64 Mach-O ケースは Rosetta 2、ARM64 ケースは直接実行します。
+LLVM fork は Mach-O x64 の GOT データ参照も修正します。Clang の型付き catch 表は 4 バイト再配置フィールドの末尾を基準にします。r3/r4 は 4 バイトずれるため、公開前検証で未修正の結果を拒否します。開発 Mac の x64 Mach-O ケースは Rosetta 2、ARM64 ケースは直接実行します。
 
 Windows x64 のネイティブ検証 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) では、PE/オブジェクト/trampoline の専用テスト 16 件と CPU ターゲット行列テスト 143 件が、スキップなしですべて成功しました。FH3 のテストは C++ の実行シナリオ 7 種類を検証し、ターゲット行列は Unicorn を使用します。Clang 22.1.6、ネイティブの MSVC と Windows SDK、統合 LLVM を使用しました。
 

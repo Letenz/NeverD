@@ -18,6 +18,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallTarget.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/DataSymbolBinding.h"
 #include "neverd/loader/MachO/ImmutableNativeCalls.h"
@@ -293,6 +294,25 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
     return Result;
   if (tryResolveLoadTarget(CurOp, CurBlock, FuncNames, Image, Result))
     return Result;
+  if (CurOp.NumInputs && !CurOp.Inputs[0].isConst())
+    for (size_t I = 0; I < CurBlock.Ops.size(); ++I)
+      if (&CurBlock.Ops[I] == &CurOp) {
+        if (const auto Cached =
+                resolveMedCallTarget(CurBlock, I, CurOp.Inputs[0])) {
+          if (Cached->ThroughSlot &&
+              tryResolveLoadedSlot(Cached->Address, FuncNames, Image, Result)) {
+            // The slot identifies the captured callable's signature. It does
+            // not authorize reading the slot again after a possible update.
+            Result.IsIndirect = true;
+            Result.Name = "indirect";
+            return Result;
+          }
+          if (!Cached->ThroughSlot &&
+              tryResolveNamedAddress(Cached->Address, FuncNames, Image, Result))
+            return Result;
+        }
+        break;
+      }
   // The slot can be read in another block, before a loop that calls through
   // the register on every iteration. The import the loader bound there is
   // the callee wherever the read happened.
@@ -346,8 +366,7 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
       CI = K;
       break;
     }
-  auto Args =
-      collectCallArgs(CurBlock, CI, Target.IsIndirect ? 0 : Target.Addr);
+  auto Args = collectCallArgs(CurBlock, CI, Target.Addr);
 
   auto Call = HighExpr::makeCall(
       Target.Name, Target.Addr ? Target.Addr : CurOp.Addr, std::move(Args));

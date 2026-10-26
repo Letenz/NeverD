@@ -1,6 +1,6 @@
 **언어**: [English](../../CONTRIBUTING.md) | [简体中文](../zh-CN/CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
 
 # NeverD 기여 가이드
 
@@ -166,6 +166,11 @@ CMake는 저장소에 설정된 릴리스 패키지를 내려받고 SHA-256을 �
 Intel Mac과 universal 빌드는 기본 로컬 LLVM 빌드를 사용해야 합니다.
 `NEVERD_LLVM_PREBUILT_TAG`, 미러 URL, 캐시 디렉터리, 명시적 checksum 같은 고급
 override는 `cmake/NeverDLLVMPrebuilt.cmake`에 문서화되어 있습니다.
+
+LLVM 수정은 [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project)에서 관리합니다.
+먼저 fork에 커밋하고 병합한 다음 NeverD의 LLVM 서브모듈 버전을 업데이트합니다.
+통합 빌드는 해당 소스를 직접 컴파일합니다. NeverD에 LLVM 패치 파일이나 빌드 디렉터리 소스 덮어쓰기를 추가하지 마세요.
+같은 동작을 검증하려면 수정된 fork에서 사전 빌드 패키지를 다시 빌드해야 합니다.
 
 <!-- i18n-section: workflow -->
 ## 브랜치 및 풀 리퀘스트 워크플로

@@ -23187,6 +23187,47 @@
           "neverd_x87_capabilities_json"
         ]
       }
+    },
+    {
+      "id": "analysis.materialized-image-sections",
+      "kind": "analysis",
+      "status": "experimental",
+      "owner": "sdk",
+      "targets": [
+        "x86",
+        "x86_64",
+        "aarch64"
+      ],
+      "docs": [
+        "docs/analysis-sections.md",
+        "tools/neverd-worker/PROTOCOL.md"
+      ],
+      "limitations": [
+        "Adds caller-encoded bytes and function declarations to the analysis image only; no original-entry replacement, relocation, runnable-file export or behavioral-equivalence claim is supplied.",
+        "Addresses must be unused and bytes materialized; unsupported architectures and malformed additions fail explicitly. Persistence is bound to the original input SHA-256.",
+        "Windows Release CTest coverage uses the real C ABI, worker, CLI and Qt workbench as documented. These integration runners are not gtest or Python-unittest ledger evidence; no supported status or POSIX runtime qualification is claimed."
+      ],
+      "tests": [],
+      "public_surfaces": {
+        "c": [
+          "neverd_analysis_section_add",
+          "neverd_analysis_section_remove",
+          "neverd_analysis_sections_import_json",
+          "neverd_analysis_sections_json"
+        ],
+        "python": [],
+        "cli": [
+          "neverd analysis-sections",
+          "neverd analysis-sections --add",
+          "neverd analysis-sections --data",
+          "neverd analysis-sections --json",
+          "neverd analysis-sections --remove"
+        ],
+        "json": [
+          "neverd_analysis_sections_import_json",
+          "neverd_analysis_sections_json"
+        ]
+      }
     }
   ]
 }

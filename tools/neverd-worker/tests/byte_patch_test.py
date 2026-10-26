@@ -9,6 +9,7 @@ import tempfile
 
 from transport_test import Client
 from function_edits_test import two_routine_elf
+from pe_browse_test import image
 
 
 def ok(client, operation, payload=None):
@@ -102,5 +103,29 @@ def run(executable, real=False):
     print("patch preview, stale protection, history, replica, batch revert, reopen and export passed")
 
 
+def pe_export(executable):
+    data = image()[0]
+    with tempfile.TemporaryDirectory(prefix="neverd-pe-export-") as directory:
+        binary = Path(directory) / "驱动.sys"
+        binary.write_bytes(data)
+        output = Path(directory) / "补丁.sys"
+        with Client(executable) as worker:
+            ok(worker, "open", {"path": str(binary), "analysis": False})
+            ok(worker, "patch_apply", {"address": "0x140001002", "kind": "bytes",
+                                       "bytes": "2b", "expected": "2a"})
+            ok(worker, "patch_export", {"path": str(output)})
+            expected = bytearray(data)
+            expected[0x202] = 0x2b
+            assert output.read_bytes() == expected
+            assert worker.call("patch_export", {"path": str(output)})["status"] == "error"
+            assert output.read_bytes() == expected
+            assert worker.call("patch_export", {"path": str(binary)})["status"] == "error"
+            assert binary.read_bytes() == data
+            assert sorted(path.name for path in Path(directory).glob("*.tmp-*")) == []
+    print("PE export, UTF-8 paths, exclusive output, unchanged input and temporary cleanup passed")
+
+
 if __name__ == "__main__":
     run(sys.argv[1], "--real" in sys.argv[2:])
+    if "--real" in sys.argv[2:]:
+        pe_export(sys.argv[1])

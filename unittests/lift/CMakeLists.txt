@@ -690,9 +690,17 @@ add_neverd_unittest(NeverDX86BEXTRTests
   x86/X86BEXTRTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
+add_neverd_unittest(NeverDX86BitCountTests
+  x86/X86BitCountTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
 add_neverd_unittest(NeverDX86MpxContextTests
   x86/X86MpxContextTests.cpp
   LINK_COMPONENTS IRLowValidation)
+
+add_neverd_unittest(NeverDX86MpxEncodingTests
+  x86/X86MpxEncodingTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86LegacyAdmissionTests
   x86/X86LegacyAdmissionTests.cpp
@@ -4567,6 +4575,12 @@ if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
         "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
     set_tests_properties(NeverDX86TBMPipeline PROPERTIES
       TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86BitCountPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/bitcount_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86BitCountPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
     add_test(NAME NeverDX86BEXTRPipeline
       COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/x86/bextr_pipeline_test.py"
@@ -4777,3 +4791,21 @@ add_neverd_unittest(NeverDX86StateAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86StateAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDMedCachedCallTargetTests
+  core/MedCachedCallTargetTests.cpp
+  LINK_COMPONENTS BackendC)
+
+add_neverd_unittest(NeverDWindowsEHSourceTests
+  eh/COFFExceptionIRTests.cpp LINK_COMPONENTS Pipeline BackendC)
+target_include_directories(NeverDWindowsEHSourceTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(NeverDWindowsEHSourceTests PRIVATE
+  NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}")
+
+add_neverd_unittest(NeverDHighPointerTypeInferenceTests
+  core/HighPointerTypeInferenceTests.cpp LINK_COMPONENTS BackendC)
+target_compile_definitions(NeverDHighPointerTypeInferenceTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+add_neverd_unittest(NeverDCDisplayFrameRecordTests
+  core/CDisplayFrameRecordTests.cpp LINK_COMPONENTS BackendC)

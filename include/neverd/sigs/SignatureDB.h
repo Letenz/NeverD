@@ -311,6 +311,8 @@ private:
   };
   using DataBindings = std::unordered_map<uint64_t, DataBinding>;
   void appendModuleMatches(uint64_t Address, size_t Module);
+  void applyVTableContext(const BinaryImage &Img,
+                          llvm::ArrayRef<uint64_t> Entries);
   void applyDataContext(const BinaryImage &Img,
                         llvm::ArrayRef<uint64_t> Entries,
                         llvm::ArrayRef<SignatureMatcher::Hit> Hits);
@@ -320,13 +322,15 @@ private:
       const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
       const std::unordered_map<uint64_t, std::string> &Names,
       size_t FrozenMatches, size_t FirstParent);
-  /// A nonzero FrozenMatches validates only later incoming candidates, against
-  /// the frozen prefix. Their outcomes cannot change anchors or feed another
+  /// A present FrozenMatches validates only later incoming candidates against
+  /// the frozen prefix, including an empty original set. Their outcomes cannot
+  /// change anchors or feed another
   /// candidate: the same resolver performs one validation pass. FirstChecked
   /// skips earlier validated incoming rows without making them evidence.
   void checkReferences(const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
                        std::vector<SignatureMatcher::Hit> Hits,
-                       size_t FrozenMatches = 0, size_t FirstChecked = 0,
+                       std::optional<size_t> FrozenMatches = std::nullopt,
+                       size_t FirstChecked = 0,
                        const DataBindings *Data = nullptr);
 
   /// Add \p Mods, the modules of \p Src, in place of those of a source with

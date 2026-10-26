@@ -2308,3 +2308,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `NeverDSourceCallABITests` vérifie les banques mixtes, largeurs, dépassements de registres, offsets de pile et refus variadiques Windows ARM64. `NeverDWorkerCallSiteTypes` récupère un appel entier/double/pointeur depuis un PE ARM64 et exécute les deux sorties C avec une fonction C séparée à O0/O2 ; un refus doit préserver l’instantané d’analyse. Ces exécutions hôtes ne valident pas l’exécution native Windows ARM64.
 
 Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile, un retour flottant et le refus d’un argument de pile écrit seulement à moitié.
+
+`BinaryRewriteRelocationTest`, dans le fork LLVM NeverSight, vérifie les octets finaux de x64 PLT, GOT i386, GOTPCREL Mach-O et PAGE/PAGEOFF AArch64. La compilation intégrée de NeverD compile directement le fork enregistré. Ces contrôles MC ne valident pas l’exécution native des exceptions.

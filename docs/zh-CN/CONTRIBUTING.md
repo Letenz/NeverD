@@ -1,6 +1,6 @@
 **语言**: [English](../../CONTRIBUTING.md) | [简体中文](CONTRIBUTING.md) | [繁體中文](../zh-TW/CONTRIBUTING.md) | [日本語](../ja/CONTRIBUTING.md) | [한국어](../ko/CONTRIBUTING.md) | [Français](../fr/CONTRIBUTING.md) | [Deutsch](../de/CONTRIBUTING.md) | [Español](../es/CONTRIBUTING.md) | [Italiano](../it/CONTRIBUTING.md) | [Русский](../ru/CONTRIBUTING.md) | [العربية](../ar/CONTRIBUTING.md)
 
-<!-- i18n-source: 16d510364e6e39035e59d40d91ecef8e4a375e07fdda3ae598eeb6ca002e33f1 -->
+<!-- i18n-source: af6c34901bacab00e5d1ed68b031f0a48a3ff64ac85ee208695647ec935b9790 -->
 
 # 为 NeverD 做贡献
 
@@ -162,6 +162,11 @@ CMake 会下载仓库配置的发布包，校验 SHA-256，并在后续构建中
 用户缓存。预编译通道仅支持 macOS arm64；Intel Mac 和通用二进制构建必须
 使用默认的本地 LLVM 构建。`NEVERD_LLVM_PREBUILT_TAG`、镜像 URL、缓存目录
 和显式校验和等高级覆盖项记录在 `cmake/NeverDLLVMPrebuilt.cmake` 中。
+
+LLVM 修复应在 [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project) 中维护。
+先将修复提交并合并到 fork，再更新 NeverD 的 LLVM 子模块版本。
+集成构建直接编译该源码，不要在 NeverD 中添加 LLVM patch 文件或构建目录源码覆盖层。
+预编译包需要从修正后的 fork 重新构建，才能验证相同的行为。
 
 <!-- i18n-section: workflow -->
 ## 分支与拉取请求流程

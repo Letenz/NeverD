@@ -1276,3 +1276,10 @@ history listing responses expose `changed_rows` and `details_omitted` instead
 of repeating potentially large byte payloads. Patch history items and undo/redo
 responses expose the virtual program address of the first changed run;
 durable history retains its canonical file-offset key for replay.
+
+Analysis sections: `analysis_sections` queries active additions;
+`analysis_section_add` accepts a schema/name/address/permissions/functions
+description and either a byte-file path or `data_hex`; `analysis_section_remove`
+accepts a name. Successful edits invalidate analysis, publish a revision and
+remain unsaved until `save`. Analysis snapshots carry unsaved additions into
+read-only replicas. The shared SDK validates every mutation transactionally.

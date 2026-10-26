@@ -268,12 +268,17 @@ class PatternLine:
     require_references: bool = False
     require_caller: bool = False
     data_sites: frozenset[int] = frozenset()
+    is_vtable: bool = False
 
     def with_refs(self, refs: tuple[tuple[int, str], ...],
                   require: bool | None = None,
                   data_sites: frozenset[int] | None = None) -> "PatternLine":
         """This line stating only `refs`."""
 
+        if self.is_vtable:
+            if refs != self.refs or require not in (None, False) or data_sites:
+                raise BuildError("table slots cannot be refined as function references")
+            return self
         tokens = self.key.split()
         head, tail = tokens[:4], tokens[4:]
         if data_sites is None:
@@ -322,6 +327,8 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     name any of them gives it.
     """
 
+    if any(line.is_vtable for line in lines):
+        raise BuildError("table declarations cannot be folded into function aliases")
     names = tuple(sorted({name for line in lines for name in line.names}, key=alias_order))
     merged = common_refs(lines)
     tokens = merged.key.split()
@@ -496,7 +503,8 @@ def parse_line(text: str) -> PatternLine | None:
     index = 4
     required = tokens[index] == "!refs"
     caller = tokens[index] == "!caller"
-    if required or caller:
+    vtable = tokens[index] == "!vtable"
+    if required or caller or vtable:
         index += 1
     while index < len(tokens):
         token = tokens[index]
@@ -521,8 +529,17 @@ def parse_line(text: str) -> PatternLine | None:
         if any(int(n.split()[0][1:], 16) != 0 for n in names) or \
                 not shape.fully_verified():
             raise BuildError("!caller requires a complete body with public names at its start")
+    if vtable:
+        # A table is metadata, not an all-wildcard function. Every pointer
+        # field must be represented, with alternatives only at the same slot.
+        shape = Shape.of(" ".join(rest))
+        if len(names) != 1 or not re.fullmatch(r":0+ \?\?_7.+@@6B@", names[0]) or \
+                not shape.total or shape.total % 8 or shape.crc_len or int(shape.crc, 16) or \
+                len(shape.lead + shape.tail) != 2 * shape.total or len(rest) > 5 or set(shape.lead + shape.tail) != {"."} or \
+                any(kinds.values()) or set(kinds) != set(range(0, shape.total, 8)):
+            raise BuildError("invalid complete primary x64 table declaration")
     return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller,
-                       frozenset(offset for offset, is_data in kinds.items() if is_data))
+                       frozenset(offset for offset, is_data in kinds.items() if is_data), vtable)
 
 
 @dataclass
@@ -571,6 +588,8 @@ def fold(lines: list[str]) -> FoldResult:
         parsed = parse_line(raw)
         if parsed is None:
             continue
+        if parsed.is_vtable:
+            raise BuildError("table declarations require supplement_vtable_context.py")
         if parsed.require_caller:
             callers[parsed.text] = parsed
             continue

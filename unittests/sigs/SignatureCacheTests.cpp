@@ -124,6 +124,7 @@ void expectSameModules(llvm::ArrayRef<StoredModule> Expected,
     EXPECT_EQ(E.CRC16, A.CRC16) << "module " << I;
     EXPECT_EQ(E.CRCLen, A.CRCLen) << "module " << I;
     EXPECT_EQ(E.RequireReferences, A.RequireReferences) << "module " << I;
+    EXPECT_EQ(E.IsVTable, A.IsVTable) << "module " << I;
     EXPECT_EQ(E.RequireCaller, A.RequireCaller) << "module " << I;
     const size_t Count = E.LeadingCount + E.TailCount;
     for (size_t B = 0; B < Count; ++B) {
@@ -214,7 +215,9 @@ TEST_F(SignatureCacheTest, DataReferenceKindsSurviveReversedCachePieces) {
   write(Source,
         "488D05........E8........C3 00 0000 000D !caller :0000 anchor "
         "&0003 global ^0008 callee\n"
-        "488D05........C3 00 0000 0008 !refs :0000 getter &0003 global\n");
+        "488D05........C3 00 0000 0008 !refs :0000 getter &0003 global\n"
+        "................................ 00 0000 0010 !vtable "
+        ":0000 ??_7Widget@@6B@ ^0000 destroy ^0008 action\n");
   const Parsed Expected = parse();
   const auto Identity = SignatureCache::identify(Source);
   ASSERT_TRUE(Identity);
@@ -228,6 +231,7 @@ TEST_F(SignatureCacheTest, DataReferenceKindsSurviveReversedCachePieces) {
   expectSameModules(Expected.Modules, Entry.Modules);
   ASSERT_TRUE(Entry.Modules[0].references()[0].IsData);
   ASSERT_FALSE(Entry.Modules[0].references()[1].IsData);
+  ASSERT_TRUE(Entry.Modules[2].IsVTable);
 }
 
 TEST_F(SignatureCacheTest, ADamagedEntryIsAMiss) {
@@ -450,4 +454,39 @@ TEST_F(SignatureCacheTest, ContextBodiesRetainParserCoverageRequirements) {
       EXPECT_FALSE(Cache.load(Source, *Identity))
           << "caller=" << Caller << " mutation=" << Mutation;
     }
+}
+
+TEST_F(SignatureCacheTest, InvalidTableRecordsCannotBypassTheTextContract) {
+  write(Source, "................................ 00 0000 0010 !vtable "
+                ":0000 ??_7Widget@@6B@ ^0000 destroy ^0008 action\n");
+  const auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  for (unsigned Case = 0; Case < 6; ++Case) {
+    Parsed ParsedSource = parse();
+    auto &Mod = ParsedSource.Modules.front();
+    auto *Names = const_cast<StoredName *>(Mod.Names);
+    switch (Case) {
+    case 0:
+      Names[0].Name = "not_a_table";
+      break;
+    case 1:
+      Names[1].IsData = true;
+      break;
+    case 2:
+      Names[2].Offset = 1;
+      break;
+    case 3:
+      Mod.ReferenceCount = 1;
+      break;
+    case 4:
+      Mod.TotalLen = 24;
+      break;
+    case 5:
+      Mod.CRC16 = 1;
+      break;
+    }
+    const auto Cache = cache();
+    Cache.store(Source, *Identity, ParsedSource.Modules);
+    EXPECT_FALSE(Cache.load(Source, *Identity)) << Case;
+  }
 }
