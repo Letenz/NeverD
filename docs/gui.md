@@ -632,7 +632,8 @@ programs, and `neverd-gui neverd://…` (or `--link URL`) sends the link to the
 workbench that has its program, matching the SHA-256 when supplied, otherwise
 the input's name, or the only workbench with a program open when neither is
 supplied. A mismatched hash does not fall back to a matching name. The selected
-workbench comes to the front.
+workbench comes to the front, leaving minimization if necessary while keeping
+its size and maximized/full-screen state.
 When none has it, a recently opened file the link names opens in a new
 workbench at the link, `neverd-gui FILE LINK` names the file, and
 `--no-launch` only sends. `neverd-gui --register-link-handler` makes a
