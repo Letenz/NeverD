@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>条件分岐を無条件に実行</translation>
     </message>
+    <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>保存済み比較をまたいで関数を追跡し、矛盾する証拠を調べます</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>バージョン比較グラフ(&amp;G)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -8785,6 +8793,756 @@ Secondary SHA-256: %3
     <message>
         <source>The analysis changed. Reopen this editor before compiling.</source>
         <translation>解析が変わりました。コンパイル前にこのエディターを開き直してください。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · 未保存</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>スナップショット %1 · 元の比較 %2 · 関数 %3 · 競合グループ %4 · 不完全なレポート %5%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>比較を追加(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>ブランチ(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>ラベル(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>グラフを開く(&amp;O)…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>グラフを保存(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>選択した関数を追跡(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>保存済み比較を追加</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>リリース間の保存済み比較を追加して、関数の追跡、矛盾する経路の調査、元の証拠の確認を行います。</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>アドレス</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>曖昧</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>曖昧な候補</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>解析済みスナップショット</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>アンカー</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>アンカー</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>評価</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>評価履歴</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>評価</translation>
+    </message>
+    <message>
+        <source>Association records</source>
+        <translation>関連付けレコード</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>関連付けは保存済みレポートに基づきます。リリース順序やパッチの有無は推定しません。</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>作成者</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>ブランチ</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>候補は承認済みの関連付けではありません。両側とも、列挙されたすべての候補を保持します。</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>案件</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>変更</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>保存済みの証拠を確認中…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>競合</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>矛盾する関数の関連付け</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>競合</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>期限（ミリ秒、0：なし）</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>判断</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>判断履歴</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>現在の元レポートページの図です。配置はリリース順序を表しません。</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>直接の証拠</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>距離</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>距離はレポート間のリンク数です。信頼度ではありません。競合をダブルクリックするとメンバーを調べられます。</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>エッジ</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>ラベル / ブランチを編集(&amp;L)…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>強調表示されたフィールドに %1 から %2 までの値を入力してください。</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>イベント</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>説明</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>元の比較をエクスポート</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>元のレポートをエクスポート…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>名前またはアドレスで関数を検索</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>全体を表示</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>関数フィルター</translation>
+    </message>
+    <message>
+        <source>Function records</source>
+        <translation>関数レコード</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>関数</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>関数と経路の証拠</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>%1 の関数</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>グラフ / 出典</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>グループ</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>仮説</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>不完全</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>競合メンバーを調べる(&amp;M)…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>元の証拠を調べる(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>命令</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>ラベル</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>最新</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>最新の手動評価は、元のレポートと関数ペアに結び付いたままです。他のスナップショットのパッチ判定を確立するものではありません。</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>対応</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>メンバー</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>方法</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>同じスナップショット内の複数の関数や、他のレポート経由で接続された明示的な拒否済みペアは、矛盾する証拠として表示され続けます。</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>ネイティブコード領域</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD 比較 (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>NeverD 比較 (*.nddiff);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>NeverD バージョングラフ (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>NeverD バージョングラフ (*.ndlineage);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>ノード</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>メモ</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>メモ：%1
+参照：%2
+プライマリ：%3  セカンダリ：%4
+置換対象：%5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>未閉鎖の制御境界</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>バージョン比較グラフを開く</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>元の評価メモと参照</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>元の比較証拠</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>元の領域アンカー</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>有効なペア</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>先行ノード</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>プライマリ候補</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>主入力の関数</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>プライマリ関数インデックス</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>プライマリ命令</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>主入力のノード</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>プライマリスナップショット</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>処理作業量の予算</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>保存済みの証拠を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>準備完了</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>置換時には現在のコレクション、その追跡結果、候補コレクションを計上します。上限に達すると操作を停止し、現在のグラフを保持します。レポートテキストの予算はプロセスメモリの上限ではありません。</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>レポート</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>レポートと履歴の警告</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>レポートテキストとラベル（バイト）</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>リソース設定は以降の読み込みとクエリに適用されます。</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>リソース設定…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>SSA ノード</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>SSA 領域</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>現在のグラフを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>閉じる前に現在のグラフとスナップショットのラベルを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>別のグラフを開く前に現在のグラフとスナップショットのラベルを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>バージョン比較グラフを保存</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>バージョングラフを保存しますか？</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>保存済みの領域証拠は承認済みの関数関連付けではありません。行をコピーすると保持された全フィールドを確認できます。完全な SSA ノード対応を得るには元レポートをエクスポートしてください。</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>証拠を保存中…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>セカンダリ候補</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>副入力の関数</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>セカンダリ関数インデックス</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>セカンダリ命令</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>副入力のノード</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>セカンダリスナップショット</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>スナップショットを選択すると、保持されたすべての関数を参照できます。</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>サイズ</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>スナップショット</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>スナップショットのラベルとブランチ</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>元レポート</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>元レポート：%1
+曖昧さと手動判断の有効範囲は元のレポート内です。領域仮説は元の座標を保持し、完全なレコードはエクスポートしたレポートに残ります。</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>バージョングラフのワーカーを起動中…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>状態</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>停止中…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>これらのラベルは解析内容を記述するものです。リリースの系譜を表明するものではありません。</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>これらのメンバーは競合したままです。対応先やパッチ評価は自動選択されません。メンバーをアクティブにすると証拠を追跡できます。</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>追跡</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>関数を追跡して、到達可能なすべての関連付けと最短経路の証拠を確認します。</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>%2 の %1 からの追跡</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>関数の関連付けを追跡中…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>未解決の候補</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>バージョン比較グラフ</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>バージョングラフのリソース設定</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>警告</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>経路を示すエッジ</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>拡大</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>縮小</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>元レポート：%1
+比較方向：%2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>現在のレポートページのバージョン比較図</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> 行数を減らすか、リソース設定を調整してください。</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — 前のページを保持しました</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>%3 件中 %1–%2 件</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>キャンセル済み</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>修正候補</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>コレクションを選択して開始してください。</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>確認</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>矛盾する対応先</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>完全な値をコピー</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>行の証拠をコピー</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>期限に達しました</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>結論なし</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>調査中</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>証拠を読み込み中…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>対応付け</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>次のページ</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>いいえ</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>部分的なパッチ</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>パッチなし</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>パッチあり</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>前のページ</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>ページを更新</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>拒否したペアが接続されています</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>関連する変更</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>リソース上限に達しました</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>取り消されたパッチ</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>ページあたりの行数</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>ページあたりの行数。ページがバイト予算を超えた場合は、この値を減らしてください。</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>行数：</translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>表示する証拠を選択してください。</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>グラフが変更されました。このページを更新してください。</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>対応を解除</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>関連のない変更</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>はい</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source> Your previous graph is still available.</source>
+        <translation> 前のグラフは引き続き利用できます。</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>読み込みを停止しました。再試行できます。</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>%1 を保存しました</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>ワーカーはキャンセルを確認できませんでした。</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>このワーカーはバージョン比較グラフに対応していません。</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>バージョングラフを読み込みました。</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>バージョングラフのワーカーは利用できないか、停止中です。</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>バージョングラフのワーカー：%1</translation>
     </message>
 </context>
 </TS>

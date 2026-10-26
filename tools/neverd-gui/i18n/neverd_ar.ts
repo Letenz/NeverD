@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>تنفيذ الانتقال الشرطي دون شرط</translation>
     </message>
+    <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>تتبّع الدوال وافحص الأدلة المتعارضة عبر المقارنات المحفوظة</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>رسم مقارنة الإصدارات (&amp;G)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -8965,6 +8973,756 @@ SHA-256 الثانوي: %3
     <message>
         <source>The analysis changed. Reopen this editor before compiling.</source>
         <translation>تغير التحليل. أعد فتح هذا المحرر قبل الترجمة.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · غير محفوظ</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>اللقطات: %1 · المقارنات المصدرية: %2 · الدوال: %3 · مجموعات التعارض: %4 · التقارير غير المكتملة: %5%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>إضافة مقارنات (&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>الفرع (&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>التسمية (&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>فتح الرسم (&amp;O)…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>حفظ الرسم (&amp;S)…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>تتبّع الدالة المحددة (&amp;T)</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>إضافة مقارنات محفوظة</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>أضف مقارنات محفوظة بين الإصدارات لتتبّع الدوال وفحص المسارات المتعارضة ومراجعة الأدلة الأصلية.</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>العنوان</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>ملتبس</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>مرشحون ملتبسون</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>اللقطات المحللة</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>مرساة</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>مراسي</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>التقييم</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>سجل التقييمات</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>التقييمات</translation>
+    </message>
+    <message>
+        <source>Association records</source>
+        <translation>سجلات الارتباطات</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>تأتي الارتباطات من التقارير المحفوظة. لا يُستنتج ترتيب الإصدارات أو وجود التصحيح.</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>المؤلف</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>الفرع</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>المرشحون ليسوا ارتباطات مقبولة. يحتفظ كلا الطرفين بجميع المرشحين المدرجين.</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>الحالة</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>التغييرات</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>جارٍ التحقق من الأدلة المحفوظة…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>تعارض</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>ارتباطات دوال متعارضة</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>التعارضات</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>المهلة (بالملي ثانية، 0: بلا مهلة)</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>القرار</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>سجل القرارات</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>رسم صفحة التقارير المصدرية الحالية؛ لا يشير التخطيط إلى ترتيب الإصدارات.</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>أدلة مباشرة</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>المسافة</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>تحسب المسافة عدد الروابط بين التقارير، وليست درجة ثقة. انقر نقراً مزدوجاً على تعارض لفحص أعضائه.</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>حافة</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>تحرير التسمية / الفرع (&amp;L)…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>أدخل قيمة بين %1 و%2 في الحقل المميز.</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>الحدث</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>التفسير</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>تصدير المقارنة الأصلية</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>تصدير التقرير الأصلي…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>البحث عن دالة بالاسم أو العنوان</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>ملاءمة</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>الدالة</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>مرشح الدوال</translation>
+    </message>
+    <message>
+        <source>Function records</source>
+        <translation>سجلات الدوال</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>الدوال</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>الدوال وشواهد المسارات</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>الدوال في %1</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>الرسم / المصادر</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>المجموعة</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>الفرضية</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>غير مكتمل</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>فحص أعضاء التعارض (&amp;M)…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>فحص الأدلة المصدرية (&amp;E)…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>التعليمات</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>النوع</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>التسمية</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>الأحدث</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>تبقى أحدث التقييمات اليدوية مرتبطة بتقريرها وزوج الدوال الأصليين. ولا تثبت حكماً بشأن التصحيح في اللقطات الأخرى.</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>المطابقات</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>الأعضاء</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>الطريقة</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>تبقى الدوال المتعددة من لقطة واحدة، أو الأزواج المرفوضة صراحةً والمتصلة عبر تقارير أخرى، ظاهرةً كأدلة متعارضة.</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>مناطق الشيفرة الأصلية</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>مقارنة NeverD (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>مقارنات NeverD (*.nddiff);;كل الملفات (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>رسوم إصدارات NeverD (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>رسوم إصدارات NeverD (*.ndlineage);;كل الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>العقدة</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>ملاحظة</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>ملاحظة: %1
+المرجع: %2
+الأساسي: %3  الثانوي: %4
+يحل محل: %5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>حدود تحكم مفتوحة</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>فتح رسم مقارنة الإصدارات</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>ملاحظة التقييم الأصلية ومرجعها</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>أدلة المقارنة الأصلية</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>مراسي المناطق الأصلية</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>الزوج نشط</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>السلف</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>الأساسي</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>المرشحون الأساسيون</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>الدالة الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>فهرس الدالة الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>التعليمات الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>العقدة الأساسية</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>اللقطة الأساسية</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>ميزانية أعمال المعالجة</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>جارٍ قراءة الأدلة المحفوظة…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>جاهز</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>يحتسب الاستبدال المجموعة الحالية وتتبّعها والمجموعة المرشحة. يؤدي بلوغ أحد الحدود إلى إيقاف العملية والإبقاء على الرسم الحالي. ميزانية نص التقارير ليست حداً لذاكرة العملية.</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>التقرير</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>تحذيرات التقارير والسجل</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>نص التقارير والتسميات (بايت)</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>ستُطبّق إعدادات الموارد على عمليات التحميل والاستعلام اللاحقة.</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>إعدادات الموارد…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>عقد SSA</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>مناطق SSA</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>حفظ الرسم الحالي؟</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>هل تريد حفظ الرسم الحالي وتسميات اللقطات قبل الإغلاق؟</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>هل تريد حفظ الرسم الحالي وتسميات اللقطات قبل فتح رسم آخر؟</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>حفظ رسم مقارنة الإصدارات</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>حفظ رسم الإصدارات؟</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>أدلة المناطق المحفوظة ليست ارتباطات دوال مقبولة. انسخ صفاً لفحص جميع الحقول المحتفظ بها؛ وصدّر التقرير المصدري للحصول على تعيينات عقد SSA الكاملة.</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>جارٍ حفظ الأدلة…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>الثانوي</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>المرشحون الثانويون</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>الدالة الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>فهرس الدالة الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>التعليمات الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>العقدة الثانوية</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>اللقطة الثانوية</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>حدد لقطة لاستعراض جميع الدوال المحتفظ بها.</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>الحجم</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>لقطة</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>تسمية اللقطة وفرعها</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>التقرير المصدري</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>التقرير المصدري: %1
+تبقى حالات الالتباس والقرارات اليدوية خاصةً بالتقرير. تحتفظ فرضيات المناطق بإحداثياتها الأصلية؛ وتبقى السجلات الكاملة في التقرير المُصدّر.</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>جارٍ بدء عملية رسم الإصدارات…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>الحالة</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>جارٍ الإيقاف…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>تصف هذه التسميات تحليلك، ولا تثبت نسباً بين الإصدارات.</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>يبقى هؤلاء الأعضاء في حالة تعارض. لا يُختار نظير أو تقييم تصحيح تلقائياً. فعّل عضواً لتتبّع أدلته.</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>تتبع</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>تتبّع دالة لعرض كل الارتباطات الممكن الوصول إليها وشاهد أقصر مسار لكل منها.</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>التتبّع من %1 في %2</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>جارٍ تتبّع ارتباطات الدوال…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>مرشحون غير محسومين</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>رسم مقارنة الإصدارات</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>إعدادات موارد رسم الإصدارات</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>التحذيرات</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>حافة المسار الشاهد</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>تكبير</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>تصغير</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>التقرير المصدري: %1
+اتجاه المقارنة: %2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>رسم مقارنة الإصدارات لصفحة التقارير الحالية</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> جرّب تقليل عدد الصفوف أو تعديل إعدادات الموارد.</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — تم الاحتفاظ بالصفحة السابقة</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>%1–%2 من %3</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>أُلغي</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>إصلاح مرشح</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>اختر مجموعة للبدء.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>مكتمل</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>تأكيد</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>نظراء متعارضون</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>نسخ القيمة كاملة</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>نسخ أدلة الصف</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>انتهت المهلة</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>غير حاسم</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>قيد التحقيق</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>جارٍ تحميل الأدلة…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>مطابقة</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>الصفحة التالية</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>لا</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>تصحيح جزئي</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>التصحيح غائب</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>التصحيح موجود</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>الصفحة السابقة</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>تحديث الصفحة</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>زوج مرفوض متصل</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>تغيير ذو صلة</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>تم بلوغ حد الموارد</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>تصحيح متراجع عنه</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>الصفوف في الصفحة</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>الصفوف في الصفحة. قلّل هذه القيمة إذا تجاوزت الصفحة ميزانيتها بالبايت.</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>الصفوف: </translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>حدد الأدلة لعرضها.</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>تغيّر الرسم. حدّث هذه الصفحة.</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>إزالة المطابقة</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>تغيير غير ذي صلة</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>نعم</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source> Your previous graph is still available.</source>
+        <translation> لا يزال الرسم السابق متاحاً.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>توقف التحميل. يمكنك إعادة المحاولة.</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>تم حفظ %1</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>تعذر على العملية تأكيد الإلغاء.</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>لا تدعم هذه العملية رسوم مقارنة الإصدارات.</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>تم تحميل رسم الإصدارات.</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>عملية رسم الإصدارات غير متاحة أو جارٍ إيقافها.</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>عملية رسم الإصدارات: %1</translation>
     </message>
 </context>
 </TS>

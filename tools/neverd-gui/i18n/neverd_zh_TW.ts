@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>無條件執行條件跳躍</translation>
     </message>
+    <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>跨已儲存的比較追蹤函式並檢查衝突證據</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>版本比較圖(&amp;G)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -8785,6 +8793,756 @@ Secondary SHA-256: %3
     <message>
         <source>The analysis changed. Reopen this editor before compiling.</source>
         <translation>分析已變更，請在編譯前重新開啟此編輯器。</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · 尚未儲存</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>%1 個快照 · %2 份來源比較 · %3 個函式 · %4 組衝突 · %5 份不完整報告%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>新增比較(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>分支(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>標籤(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>開啟圖(&amp;O)…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>儲存圖(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>追蹤所選函式(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>新增已儲存的比較</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>新增各版本之間已儲存的比較，以追蹤函式、檢查衝突路徑並檢視原始證據。</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>位址</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>有歧義</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>有歧義的候選項</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>已分析的快照</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>錨點</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>錨點</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>評估</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>評估歷程</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>評估</translation>
+    </message>
+    <message>
+        <source>Association records</source>
+        <translation>關聯記錄</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>關聯來自已儲存的報告，不推斷版本順序或修補程式是否存在。</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>作者</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>分支</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>候選項並非已接受的關聯。兩側均保留所有列出的候選項。</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>案例</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>變更</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>正在檢查已儲存的證據…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>衝突</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>衝突的函式關聯</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>衝突</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>時限（毫秒，0 表示不限）</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>決策</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>決策歷程</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>目前來源報告頁的關係圖；配置不代表版本順序。</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>直接證據</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>距離</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>距離表示經過的報告關聯數，並非可信度。按兩下衝突可檢視成員。</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>邊</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>編輯標籤 / 分支(&amp;L)…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>請為反白欄位輸入 %1 到 %2 之間的值。</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>事件</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>說明</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>匯出原始比較</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>匯出原始報告…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>依名稱或位址尋找函式</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>符合視窗</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>函式篩選</translation>
+    </message>
+    <message>
+        <source>Function records</source>
+        <translation>函式記錄</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>函式</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>函式與路徑證據</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>%1 中的函式</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>關係圖 / 來源</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>群組</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>假設</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>不完整</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>檢視衝突成員(&amp;M)…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>檢視來源證據(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>指令</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>種類</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>標籤</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>最新</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>最新的人工評估始終屬於其原始報告與函式配對，不構成其他快照的修補判定。</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>配對</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>成員</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>方法</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>同一快照中的多個函式，或透過其他報告連通的已明確拒絕配對，均保留為可檢視的衝突證據。</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>原生程式碼區域</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD 比較 (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>NeverD 比較 (*.nddiff);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>NeverD 版本圖 (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>NeverD 版本圖 (*.ndlineage);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>節點</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>備註</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>備註：%1
+參照：%2
+主要端：%3  次要端：%4
+取代：%5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>未閉合的控制邊界</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>開啟版本比較圖</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>原始評估備註與參照</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>原始比較證據</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>原始區域錨點</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>配對有效</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>前驅</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主要檔案</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>主要端候選項</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>主要檔案函式</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>主要端函式索引</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>主要端指令</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>主要檔案節點</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>主要端快照</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>處理工作量預算</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>正在讀取已儲存的證據…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>就緒</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>替換時會計入目前集合、其追蹤結果與候選集合。達到限制會停止操作並保留目前圖。報告文字預算不是處理程序記憶體限制。</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>報告</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>報告與歷程警告</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>報告文字與標籤（位元組）</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>資源設定將套用於後續載入與查詢。</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>資源設定…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>SSA 節點</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>SSA 區域</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>儲存目前圖？</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>關閉前是否儲存目前圖與快照標籤？</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>開啟另一份圖前是否儲存目前圖與快照標籤？</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>儲存版本比較圖</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>儲存版本圖？</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>已儲存的區域證據並非已接受的函式關聯。複製資料列可檢視所有保留欄位；匯出來源報告可取得完整 SSA 節點對應。</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>正在儲存證據…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>次要檔案</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>次要端候選項</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>次要檔案函式</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>次要端函式索引</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>次要端指令</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>次要檔案節點</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>次要端快照</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>選取快照以瀏覽所有保留的函式。</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>大小</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>快照</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>快照標籤與分支</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>來源報告</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>來源報告：%1
+歧義與人工決策僅屬於原報告。區域假設保留其原始座標；完整記錄保留在匯出的報告中。</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>正在啟動版本圖工作程序…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>狀態</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>正在停止…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>這些標籤用於描述分析，不表示版本的衍生關係。</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>這些成員仍有衝突。系統不會自動選擇對應函式或修補評估。啟用成員可追蹤其證據。</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>追蹤</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>追蹤函式以檢視所有可達關聯及其最短路徑證據。</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>從 %2 中的 %1 開始追蹤</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>正在追蹤函式關聯…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>未解決的候選項</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>版本比較圖</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>版本圖資源設定</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>警告</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>路徑證據邊</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>放大</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>縮小</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>來源報告：%1
+比較方向：%2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>目前報告頁的版本比較關係圖</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> 請嘗試減少列數或調整資源設定。</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — 已保留上一頁</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>第 %1–%2 項，共 %3 項</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>候選修復</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>選擇一個集合以開始。</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>完整</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>確認</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>衝突的對應函式</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>複製完整值</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>複製資料列證據</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>已達到時限</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>無結論</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>調查中</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>正在載入證據…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>配對</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>下一頁</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>否</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>部分修補程式</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>修補程式不存在</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>修補程式存在</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>上一頁</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>重新整理頁面</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>被拒絕的配對仍連通</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>相關更改</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>已達到資源限制</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>已回退修補程式</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>每頁列數</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>每頁列數。若頁面超出位元組預算，請減小此值。</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>列數：</translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>選擇要檢視的證據。</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>關係圖已變更，請重新整理此頁。</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>取消匹配</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>無關更改</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>是</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source> Your previous graph is still available.</source>
+        <translation> 先前的關係圖仍可使用。</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>載入已停止，可以重試。</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>已儲存 %1</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>工作程序無法確認取消請求。</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>此工作程序不支援版本比較圖。</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>版本圖已載入。</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>版本圖工作程序無法使用或正在停止。</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>版本圖工作程序：%1</translation>
     </message>
 </context>
 </TS>

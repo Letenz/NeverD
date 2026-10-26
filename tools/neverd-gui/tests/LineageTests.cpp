@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ComparisonSession.h"
+#include "Language.h"
 #include "LineageDialog.h"
 #include "LineageGraph.h"
 #include "LineagePageView.h"
@@ -29,6 +30,7 @@
 #include <QLineEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -38,6 +40,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <QTranslator>
 
 using namespace neverd::gui;
 namespace {
@@ -124,6 +127,83 @@ private slots:
                      });
       QTRY_VERIFY_WITH_TIMEOUT(Saved, Timeout);
       Reports.append(Path);
+    }
+  }
+
+  void localizedWorkspace_data() {
+    QTest::addColumn<QString>("Locale");
+    for (const auto &Language : languages())
+      QTest::newRow(qPrintable(Language.code)) << Language.code;
+  }
+
+  void localizedWorkspace() {
+    QFETCH(QString, Locale);
+    QTranslator Catalog;
+    auto Resource = Locale;
+    Resource.replace('-', '_');
+    QVERIFY(Catalog.load(":/i18n/neverd_" + Resource + ".qm"));
+    const auto Translated = [&](const char *Context, const char *Source) {
+      return Catalog.translate(Context, Source);
+    };
+    applyLanguage(Locale);
+    const auto RestoreLanguage = qScopeGuard([] { applyLanguage("en"); });
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.resize(760, 560);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    Session.load({{"reports", Reports}});
+    auto *Versions = View.findChild<LineagePageView *>("lineageVersions");
+    auto *Functions = View.findChild<LineagePageView *>("lineageFunctions");
+    auto *Tabs = View.findChild<QTabWidget *>("lineageTabs");
+    QVERIFY(Versions && Functions && Tabs);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Versions->rows().size() == 3 &&
+                                 Functions->rows().size() == 1,
+                             Timeout);
+    QCOMPARE(Errors.size(), 0);
+    QCOMPARE(View.windowTitle(), Translated("neverd::gui::LineageDialog",
+                                            "Version comparison graph"));
+    if (Locale != "en")
+      QVERIFY(View.windowTitle() != "Version comparison graph");
+    QCOMPARE(Tabs->tabText(0),
+             Translated("neverd::gui::LineageDialog", "Functions"));
+    const auto *Add = View.findChild<QPushButton *>("lineageAdd");
+    QVERIFY(Add);
+    QCOMPARE(Add->text(),
+             Translated("neverd::gui::LineageDialog", "&Add comparisons…"));
+    const auto *Rows = Versions->findChild<QSpinBox *>("lineagePageRows");
+    QVERIFY(Rows && Rows->isEnabled());
+    QCOMPARE(Rows->accessibleName(),
+             Translated("neverd::gui::LineagePageView", "Rows per page"));
+    QCOMPARE(Rows->prefix(),
+             Translated("neverd::gui::LineagePageView", "Rows: "));
+    QCOMPARE(
+        Functions->table()->model()->headerData(1, Qt::Horizontal).toString(),
+        Translated("neverd::gui::LineageDialog", "Address"));
+    QCOMPARE(Functions->selected()["address"].toString(), QString("0x1000"));
+    QCOMPARE(View.layoutDirection(),
+             Locale == "ar" ? Qt::RightToLeft : Qt::LeftToRight);
+    QCOMPARE(Session.message(), Translated("neverd::gui::LineageSession",
+                                           "Version graph loaded."));
+    QTest::qWait(60);
+    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        !Output.isEmpty()) {
+      QVERIFY(QDir().mkpath(Output));
+      QVERIFY(View.grab().save(Output + "/locale-" + Locale + ".png"));
+    }
+    QCOMPARE(View.width(), 760);
+    const auto *Status = Versions->findChild<QLabel *>("lineagePageStatus");
+    QVERIFY(Status && Status->isVisible());
+    QVERIFY(Status->width() >=
+            Status->fontMetrics().horizontalAdvance(Status->text()));
+    for (const auto *Name : {"lineageAdd", "lineageOpen", "lineageSave",
+                             "lineageOptions", "lineageCancel"}) {
+      const auto *Button = View.findChild<QPushButton *>(Name);
+      QVERIFY(Button && Button->isVisible());
+      QVERIFY(View.rect().contains(
+          QRect(Button->mapTo(&View, QPoint()), Button->size())));
     }
   }
 

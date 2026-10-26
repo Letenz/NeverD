@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>조건 분기를 무조건 실행</translation>
     </message>
+    <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>저장된 비교 간에 함수를 추적하고 상충하는 증거 확인</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>버전 비교 그래프(&amp;G)…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -8785,6 +8793,756 @@ Secondary SHA-256: %3
     <message>
         <source>The analysis changed. Reopen this editor before compiling.</source>
         <translation>분석이 변경되었습니다. 컴파일 전에 이 편집기를 다시 여세요.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · 저장되지 않음</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>스냅샷 %1개 · 원본 비교 %2개 · 함수 %3개 · 충돌 그룹 %4개 · 불완전한 보고서 %5개%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>비교 추가(&amp;A)…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>브랜치(&amp;B)</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>레이블(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>그래프 열기(&amp;O)…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>그래프 저장(&amp;S)…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>선택한 함수 추적(&amp;T)</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>저장된 비교 추가</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>릴리스 간에 저장된 비교를 추가하여 함수를 추적하고, 상충하는 경로를 확인하고, 원본 증거를 검토합니다.</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>주소</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>모호함</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>모호한 후보</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>분석된 스냅샷</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>앵커</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>앵커</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>평가</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>평가 이력</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>평가</translation>
+    </message>
+    <message>
+        <source>Association records</source>
+        <translation>연결 레코드</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>연결은 저장된 보고서에서 가져옵니다. 릴리스 순서와 패치 존재 여부는 추론하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>작성자</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>브랜치</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>후보는 승인된 연결이 아닙니다. 양쪽 모두 나열된 모든 후보를 유지합니다.</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>사례</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>변경 사항</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>저장된 증거 확인 중…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>충돌</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>상충하는 함수 연결</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>충돌</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>시간 제한(밀리초, 0: 없음)</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>결정</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>결정 이력</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>현재 원본 보고서 페이지의 다이어그램입니다. 배치는 릴리스 순서를 나타내지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>직접 증거</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>거리</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>거리는 보고서 연결 수이며 신뢰도 점수가 아닙니다. 충돌을 두 번 클릭하여 구성원을 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>간선</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>레이블 / 브랜치 편집(&amp;L)…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>강조 표시된 필드에 %1부터 %2까지의 값을 입력하세요.</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>이벤트</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>설명</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>원본 비교 내보내기</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>원본 보고서 내보내기…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>이름 또는 주소로 함수 찾기</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>화면에 맞춤</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>함수 필터</translation>
+    </message>
+    <message>
+        <source>Function records</source>
+        <translation>함수 레코드</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>함수</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>함수 및 경로 증거</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>%1의 함수</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>그래프 / 출처</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>그룹</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>가설</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>불완전</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>충돌 구성원 확인(&amp;M)…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>원본 증거 확인(&amp;E)…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>명령어</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>종류</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>레이블</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>최신</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>최신 수동 평가는 원래 보고서와 함수 쌍에 연결된 상태로 유지됩니다. 다른 스냅샷에 대한 패치 판정을 확정하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>일치 항목</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>멤버</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>방법</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>한 스냅샷의 여러 함수 또는 다른 보고서를 통해 연결된 명시적으로 거부된 쌍은 상충하는 증거로 계속 표시됩니다.</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>네이티브 코드 영역</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>NeverD 비교 (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>NeverD 비교 (*.nddiff);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>NeverD 버전 그래프 (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>NeverD 버전 그래프 (*.ndlineage);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>노드</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>메모</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>메모: %1
+참조: %2
+기본: %3  보조: %4
+대체 대상: %5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>열린 제어 경계</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>버전 비교 그래프 열기</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>원본 평가 메모 및 참조</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>원본 비교 증거</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>원본 영역 앵커</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>활성 쌍</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>선행 노드</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>기본</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>기본 후보</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>기본 함수</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>기본 함수 인덱스</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>기본 명령어</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>기본 노드</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>기본 스냅샷</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>처리 작업량 예산</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>저장된 증거 읽는 중…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>준비됨</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>교체 시 현재 컬렉션, 추적 결과 및 후보 컬렉션을 함께 계산합니다. 한도에 도달하면 작업을 중지하고 현재 그래프를 유지합니다. 보고서 텍스트 예산은 프로세스 메모리 한도가 아닙니다.</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>보고서</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>보고서 및 이력 경고</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>보고서 텍스트 및 레이블(바이트)</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>리소스 설정은 이후의 로드 및 쿼리에 적용됩니다.</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>리소스 설정…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>SSA 노드</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>SSA 영역</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>현재 그래프를 저장할까요?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>닫기 전에 현재 그래프와 스냅샷 레이블을 저장할까요?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>다른 그래프를 열기 전에 현재 그래프와 스냅샷 레이블을 저장할까요?</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>버전 비교 그래프 저장</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>버전 그래프를 저장할까요?</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>저장된 영역 증거는 승인된 함수 연결이 아닙니다. 행을 복사하여 보존된 모든 필드를 확인하고, 원본 보고서를 내보내어 전체 SSA 노드 매핑을 확인하세요.</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>증거 저장 중…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>보조</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>보조 후보</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>보조 함수</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>보조 함수 인덱스</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>보조 명령어</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>보조 노드</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>보조 스냅샷</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>스냅샷을 선택하여 보존된 모든 함수를 찾아보세요.</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>크기</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>스냅샷</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>스냅샷 레이블 및 브랜치</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>원본 보고서</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>원본 보고서: %1
+모호성과 수동 결정은 해당 보고서에만 적용됩니다. 영역 가설은 원래 좌표를 유지하며 전체 레코드는 내보낸 보고서에 남아 있습니다.</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>버전 그래프 작업 프로세스 시작 중…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>상태</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>중지 중…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>이 레이블은 분석을 설명하며 릴리스의 계보를 단정하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>이 구성원들은 계속 충돌 상태입니다. 대응 항목이나 패치 평가는 자동으로 선택되지 않습니다. 구성원을 활성화하여 증거를 추적하세요.</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>추적</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>함수를 추적하여 도달 가능한 모든 연결과 최단 경로 증거를 확인합니다.</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>%2의 %1에서 추적</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>함수 연결 추적 중…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>미해결 후보</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>버전 비교 그래프</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>버전 그래프 리소스 설정</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>경고</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>경로 증거 간선</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>확대</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>축소</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>원본 보고서: %1
+비교 방향: %2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>현재 보고서 페이지의 버전 비교 다이어그램</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> 행 수를 줄이거나 리소스 설정을 조정하세요.</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — 이전 페이지 유지됨</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>전체 %3개 중 %1–%2</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>취소됨</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>수정 후보</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>시작하려면 컬렉션을 선택하세요.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>확인</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>상충하는 대응 항목</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>전체 값 복사</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>행 증거 복사</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>시간 제한에 도달함</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>결론 불가</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>조사 중</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>증거 로드 중…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>대응 지정</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>다음 페이지</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>아니요</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>부분 패치</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>패치 없음</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>패치 있음</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>이전 페이지</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>페이지 새로 고침</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>거부된 쌍이 연결됨</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>관련 변경</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>리소스 한도에 도달함</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>되돌린 패치</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>페이지당 행 수</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>페이지당 행 수. 페이지가 바이트 예산을 초과하면 이 값을 줄이세요.</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>행 수: </translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>확인할 증거를 선택하세요.</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>그래프가 변경되었습니다. 이 페이지를 새로 고치세요.</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>일치 해제</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>관련 없는 변경</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>예</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source> Your previous graph is still available.</source>
+        <translation> 이전 그래프를 계속 사용할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>로드가 중지되었습니다. 다시 시도할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>%1 저장됨</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>작업 프로세스가 취소를 확인하지 못했습니다.</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>이 작업 프로세스는 버전 비교 그래프를 지원하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>버전 그래프가 로드되었습니다.</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>버전 그래프 작업 프로세스를 사용할 수 없거나 중지 중입니다.</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>버전 그래프 작업 프로세스: %1</translation>
     </message>
 </context>
 </TS>

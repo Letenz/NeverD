@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>Выполнить условный переход безусловно</translation>
     </message>
+    <message>
+        <source>Trace functions and inspect conflicting evidence across saved comparisons</source>
+        <translation>Прослеживать функции и изучать противоречивые свидетельства в сохранённых сравнениях</translation>
+    </message>
+    <message>
+        <source>Version comparison &amp;graph…</source>
+        <translation>&amp;Граф сравнения версий…</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -8857,6 +8865,756 @@ Secondary SHA-256: %3
     <message>
         <source>The analysis changed. Reopen this editor before compiling.</source>
         <translation>Анализ изменился. Откройте этот редактор заново перед компиляцией.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageDialog</name>
+    <message>
+        <source> · unsaved</source>
+        <translation> · не сохранено</translation>
+    </message>
+    <message>
+        <source>%1 snapshots · %2 source comparisons · %3 functions · %4 conflict groups · %5 incomplete reports%6</source>
+        <translation>Снимки: %1 · исходные сравнения: %2 · функции: %3 · группы конфликтов: %4 · неполные отчёты: %5%6</translation>
+    </message>
+    <message>
+        <source>&amp;Add comparisons…</source>
+        <translation>&amp;Добавить сравнения…</translation>
+    </message>
+    <message>
+        <source>&amp;Branch</source>
+        <translation>&amp;Ветка</translation>
+    </message>
+    <message>
+        <source>&amp;Label</source>
+        <translation>&amp;Метка</translation>
+    </message>
+    <message>
+        <source>&amp;Open graph…</source>
+        <translation>&amp;Открыть граф…</translation>
+    </message>
+    <message>
+        <source>&amp;Save graph…</source>
+        <translation>&amp;Сохранить граф…</translation>
+    </message>
+    <message>
+        <source>&amp;Trace selected function</source>
+        <translation>&amp;Проследить выбранную функцию</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons</source>
+        <translation>Добавить сохранённые сравнения</translation>
+    </message>
+    <message>
+        <source>Add saved comparisons between releases to trace functions, inspect conflicting paths and review the original evidence.</source>
+        <translation>Добавьте сохранённые сравнения версий, чтобы прослеживать функции, изучать противоречивые пути и просматривать исходные свидетельства.</translation>
+    </message>
+    <message>
+        <source>Address</source>
+        <translation>Адрес</translation>
+    </message>
+    <message>
+        <source>Ambiguous</source>
+        <translation>Неоднозначно</translation>
+    </message>
+    <message>
+        <source>Ambiguous candidates</source>
+        <translation>Неоднозначные кандидаты</translation>
+    </message>
+    <message>
+        <source>Analyzed snapshots</source>
+        <translation>Проанализированные снимки</translation>
+    </message>
+    <message>
+        <source>Anchor</source>
+        <translation>Привязка</translation>
+    </message>
+    <message>
+        <source>Anchors</source>
+        <translation>Привязки</translation>
+    </message>
+    <message>
+        <source>Assessment</source>
+        <translation>Оценка</translation>
+    </message>
+    <message>
+        <source>Assessment history</source>
+        <translation>История оценок</translation>
+    </message>
+    <message>
+        <source>Assessments</source>
+        <translation>Оценки</translation>
+    </message>
+    <message>
+        <source>Association records</source>
+        <translation>Записи связей</translation>
+    </message>
+    <message>
+        <source>Associations come from saved reports. Release order and patch presence are not inferred.</source>
+        <translation>Связи взяты из сохранённых отчётов. Порядок версий и наличие исправления не выводятся.</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation>Автор</translation>
+    </message>
+    <message>
+        <source>Branch</source>
+        <translation>Ветка</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Отмена</translation>
+    </message>
+    <message>
+        <source>Candidates are not accepted associations. Both sides retain every listed candidate.</source>
+        <translation>Кандидаты не являются принятыми связями. На обеих сторонах сохраняются все перечисленные кандидаты.</translation>
+    </message>
+    <message>
+        <source>Case</source>
+        <translation>Дело</translation>
+    </message>
+    <message>
+        <source>Changes</source>
+        <translation>Изменения</translation>
+    </message>
+    <message>
+        <source>Checking saved evidence…</source>
+        <translation>Проверка сохранённых свидетельств…</translation>
+    </message>
+    <message>
+        <source>Conflict</source>
+        <translation>Конфликт</translation>
+    </message>
+    <message>
+        <source>Conflicting function associations</source>
+        <translation>Противоречивые связи функций</translation>
+    </message>
+    <message>
+        <source>Conflicts</source>
+        <translation>Конфликты</translation>
+    </message>
+    <message>
+        <source>Deadline (milliseconds, 0: none)</source>
+        <translation>Срок (миллисекунды, 0: без ограничения)</translation>
+    </message>
+    <message>
+        <source>Decision</source>
+        <translation>Решение</translation>
+    </message>
+    <message>
+        <source>Decision history</source>
+        <translation>История решений</translation>
+    </message>
+    <message>
+        <source>Diagram of the current source-report page; layout does not indicate release order.</source>
+        <translation>Диаграмма текущей страницы исходных отчётов; расположение не обозначает порядок версий.</translation>
+    </message>
+    <message>
+        <source>Direct evidence</source>
+        <translation>Прямые свидетельства</translation>
+    </message>
+    <message>
+        <source>Distance</source>
+        <translation>Расстояние</translation>
+    </message>
+    <message>
+        <source>Distance counts report links. It is not a confidence score. Double-click a conflict to inspect its members.</source>
+        <translation>Расстояние — это число связей между отчётами, а не оценка уверенности. Дважды щёлкните конфликт, чтобы изучить его участников.</translation>
+    </message>
+    <message>
+        <source>Edge</source>
+        <translation>Ребро</translation>
+    </message>
+    <message>
+        <source>Edit &amp;label / branch…</source>
+        <translation>Изменить &amp;метку / ветку…</translation>
+    </message>
+    <message>
+        <source>Enter a value from %1 to %2 for the highlighted field.</source>
+        <translation>Введите значение от %1 до %2 в выделенное поле.</translation>
+    </message>
+    <message>
+        <source>Event</source>
+        <translation>Событие</translation>
+    </message>
+    <message>
+        <source>Explanation</source>
+        <translation>Объяснение</translation>
+    </message>
+    <message>
+        <source>Export original comparison</source>
+        <translation>Экспортировать исходное сравнение</translation>
+    </message>
+    <message>
+        <source>Export original report…</source>
+        <translation>Экспортировать исходный отчёт…</translation>
+    </message>
+    <message>
+        <source>Find a function by name or address</source>
+        <translation>Найти функцию по имени или адресу</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation>Вписать</translation>
+    </message>
+    <message>
+        <source>Function</source>
+        <translation>Функция</translation>
+    </message>
+    <message>
+        <source>Function filter</source>
+        <translation>Фильтр функций</translation>
+    </message>
+    <message>
+        <source>Function records</source>
+        <translation>Записи функций</translation>
+    </message>
+    <message>
+        <source>Functions</source>
+        <translation>Функции</translation>
+    </message>
+    <message>
+        <source>Functions &amp; witnesses</source>
+        <translation>Функции и свидетельства пути</translation>
+    </message>
+    <message>
+        <source>Functions in %1</source>
+        <translation>Функции в %1</translation>
+    </message>
+    <message>
+        <source>Graph / sources</source>
+        <translation>Граф / источники</translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation>Группа</translation>
+    </message>
+    <message>
+        <source>Hypothesis</source>
+        <translation>Гипотеза</translation>
+    </message>
+    <message>
+        <source>Incomplete</source>
+        <translation>Неполно</translation>
+    </message>
+    <message>
+        <source>Inspect conflict &amp;members…</source>
+        <translation>Изучить &amp;участников конфликта…</translation>
+    </message>
+    <message>
+        <source>Inspect source &amp;evidence…</source>
+        <translation>Изучить исходные &amp;свидетельства…</translation>
+    </message>
+    <message>
+        <source>Instructions</source>
+        <translation>Инструкции</translation>
+    </message>
+    <message>
+        <source>Kind</source>
+        <translation>Тип</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Метка</translation>
+    </message>
+    <message>
+        <source>Latest</source>
+        <translation>Последняя</translation>
+    </message>
+    <message>
+        <source>Latest manual assessments stay attached to their original report and function pair. They do not establish a patch verdict in other snapshots.</source>
+        <translation>Последние ручные оценки остаются привязаны к исходному отчёту и паре функций. Они не определяют наличие исправления в других снимках.</translation>
+    </message>
+    <message>
+        <source>Matches</source>
+        <translation>Соответствия</translation>
+    </message>
+    <message>
+        <source>Members</source>
+        <translation>Поля</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>Метод</translation>
+    </message>
+    <message>
+        <source>Multiple functions from one snapshot, or an explicitly rejected pair reached through other reports, remain visible as conflicting evidence.</source>
+        <translation>Несколько функций из одного снимка или явно отклонённая пара, связанная через другие отчёты, остаются видимыми как противоречивые свидетельства.</translation>
+    </message>
+    <message>
+        <source>Native regions</source>
+        <translation>Области машинного кода</translation>
+    </message>
+    <message>
+        <source>NeverD comparison (*.nddiff)</source>
+        <translation>Сравнение NeverD (*.nddiff)</translation>
+    </message>
+    <message>
+        <source>NeverD comparisons (*.nddiff);;All files (*)</source>
+        <translation>Сравнения NeverD (*.nddiff);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage)</source>
+        <translation>Графы версий NeverD (*.ndlineage)</translation>
+    </message>
+    <message>
+        <source>NeverD version graphs (*.ndlineage);;All files (*)</source>
+        <translation>Графы версий NeverD (*.ndlineage);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation>Узел</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>Примечание</translation>
+    </message>
+    <message>
+        <source>Note: %1
+Reference: %2
+Primary: %3  Secondary: %4
+Supersedes: %5</source>
+        <translation>Заметка: %1
+Ссылка: %2
+Основной: %3  Вторичный: %4
+Заменяет: %5</translation>
+    </message>
+    <message>
+        <source>Open control frontier</source>
+        <translation>Открытая граница потока управления</translation>
+    </message>
+    <message>
+        <source>Open version comparison graph</source>
+        <translation>Открыть граф сравнения версий</translation>
+    </message>
+    <message>
+        <source>Original assessment note and reference</source>
+        <translation>Исходная заметка оценки и ссылка</translation>
+    </message>
+    <message>
+        <source>Original comparison evidence</source>
+        <translation>Исходные свидетельства сравнения</translation>
+    </message>
+    <message>
+        <source>Original region anchors</source>
+        <translation>Исходные привязки областей</translation>
+    </message>
+    <message>
+        <source>Pair active</source>
+        <translation>Пара активна</translation>
+    </message>
+    <message>
+        <source>Predecessor</source>
+        <translation>Предшественник</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Основной</translation>
+    </message>
+    <message>
+        <source>Primary candidates</source>
+        <translation>Основные кандидаты</translation>
+    </message>
+    <message>
+        <source>Primary function</source>
+        <translation>Основная функция</translation>
+    </message>
+    <message>
+        <source>Primary function index</source>
+        <translation>Индекс основной функции</translation>
+    </message>
+    <message>
+        <source>Primary instructions</source>
+        <translation>Основные инструкции</translation>
+    </message>
+    <message>
+        <source>Primary node</source>
+        <translation>Основной узел</translation>
+    </message>
+    <message>
+        <source>Primary snapshot</source>
+        <translation>Основной снимок</translation>
+    </message>
+    <message>
+        <source>Processing work allowance</source>
+        <translation>Бюджет вычислительной работы</translation>
+    </message>
+    <message>
+        <source>Reading saved evidence…</source>
+        <translation>Чтение сохранённых свидетельств…</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Готово</translation>
+    </message>
+    <message>
+        <source>Replacement accounts for the current collection, its trace and the candidate. A limit stops the operation and preserves the current graph. Report text allowance is not a process-memory limit.</source>
+        <translation>При замене учитываются текущая коллекция, её трассировка и кандидат. Достижение лимита останавливает операцию и сохраняет текущий граф. Бюджет текста отчётов не ограничивает память процесса.</translation>
+    </message>
+    <message>
+        <source>Report</source>
+        <translation>Отчёт</translation>
+    </message>
+    <message>
+        <source>Report and history warnings</source>
+        <translation>Предупреждения отчётов и истории</translation>
+    </message>
+    <message>
+        <source>Report text and labels (bytes)</source>
+        <translation>Текст отчётов и метки (байты)</translation>
+    </message>
+    <message>
+        <source>Resource settings will apply to subsequent loads and queries.</source>
+        <translation>Настройки ресурсов будут применяться к последующим загрузкам и запросам.</translation>
+    </message>
+    <message>
+        <source>Resource settings…</source>
+        <translation>Настройки ресурсов…</translation>
+    </message>
+    <message>
+        <source>SSA nodes</source>
+        <translation>Узлы SSA</translation>
+    </message>
+    <message>
+        <source>SSA regions</source>
+        <translation>Области SSA</translation>
+    </message>
+    <message>
+        <source>Save current graph?</source>
+        <translation>Сохранить текущий граф?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before closing?</source>
+        <translation>Сохранить текущий граф и метки снимков перед закрытием?</translation>
+    </message>
+    <message>
+        <source>Save the current graph and snapshot labels before opening another graph?</source>
+        <translation>Сохранить текущий граф и метки снимков перед открытием другого графа?</translation>
+    </message>
+    <message>
+        <source>Save version comparison graph</source>
+        <translation>Сохранить граф сравнения версий</translation>
+    </message>
+    <message>
+        <source>Save version graph?</source>
+        <translation>Сохранить граф версий?</translation>
+    </message>
+    <message>
+        <source>Saved region evidence is not an accepted function association. Copy a row to inspect all retained fields; export the source for complete SSA node mappings.</source>
+        <translation>Сохранённые свидетельства областей не являются принятыми связями функций. Скопируйте строку для просмотра всех сохранённых полей; экспортируйте исходный отчёт для получения полных соответствий узлов SSA.</translation>
+    </message>
+    <message>
+        <source>Saving evidence…</source>
+        <translation>Сохранение свидетельств…</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Дополнительный</translation>
+    </message>
+    <message>
+        <source>Secondary candidates</source>
+        <translation>Вторичные кандидаты</translation>
+    </message>
+    <message>
+        <source>Secondary function</source>
+        <translation>Дополнительная функция</translation>
+    </message>
+    <message>
+        <source>Secondary function index</source>
+        <translation>Индекс вторичной функции</translation>
+    </message>
+    <message>
+        <source>Secondary instructions</source>
+        <translation>Вторичные инструкции</translation>
+    </message>
+    <message>
+        <source>Secondary node</source>
+        <translation>Дополнительный узел</translation>
+    </message>
+    <message>
+        <source>Secondary snapshot</source>
+        <translation>Вторичный снимок</translation>
+    </message>
+    <message>
+        <source>Select a snapshot to browse all retained functions.</source>
+        <translation>Выберите снимок для просмотра всех сохранённых функций.</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>Размер</translation>
+    </message>
+    <message>
+        <source>Snapshot</source>
+        <translation>Снимок</translation>
+    </message>
+    <message>
+        <source>Snapshot label and branch</source>
+        <translation>Метка и ветка снимка</translation>
+    </message>
+    <message>
+        <source>Source report</source>
+        <translation>Исходный отчёт</translation>
+    </message>
+    <message>
+        <source>Source report: %1
+Ambiguities and manual decisions remain report-local. Region hypotheses retain their original coordinates; full records remain in the exported report.</source>
+        <translation>Исходный отчёт: %1
+Неоднозначности и ручные решения относятся только к этому отчёту. Гипотезы областей сохраняют исходные координаты; полные записи остаются в экспортированном отчёте.</translation>
+    </message>
+    <message>
+        <source>Starting version graph worker…</source>
+        <translation>Запуск рабочего процесса графа версий…</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>Состояние</translation>
+    </message>
+    <message>
+        <source>Stopping…</source>
+        <translation>Остановка…</translation>
+    </message>
+    <message>
+        <source>These labels describe your analysis. They do not assert release ancestry.</source>
+        <translation>Эти метки описывают ваш анализ. Они не утверждают происхождение версий.</translation>
+    </message>
+    <message>
+        <source>These members remain in conflict. No counterpart or patch assessment is selected automatically. Activate a member to trace its evidence.</source>
+        <translation>Эти участники остаются в конфликте. Соответствие или оценка исправления не выбираются автоматически. Активируйте участника, чтобы проследить его свидетельства.</translation>
+    </message>
+    <message>
+        <source>Trace</source>
+        <translation>Проследить</translation>
+    </message>
+    <message>
+        <source>Trace a function to see every reachable association and its shortest-path witness.</source>
+        <translation>Проследите функцию, чтобы увидеть все достижимые связи и свидетельство кратчайшего пути к каждой.</translation>
+    </message>
+    <message>
+        <source>Trace from %1 in %2</source>
+        <translation>Трассировка от %1 в %2</translation>
+    </message>
+    <message>
+        <source>Tracing function associations…</source>
+        <translation>Прослеживание связей функций…</translation>
+    </message>
+    <message>
+        <source>Unresolved candidates</source>
+        <translation>Неразрешённые кандидаты</translation>
+    </message>
+    <message>
+        <source>Version comparison graph</source>
+        <translation>Граф сравнения версий</translation>
+    </message>
+    <message>
+        <source>Version graph resource settings</source>
+        <translation>Настройки ресурсов графа версий</translation>
+    </message>
+    <message>
+        <source>Warnings</source>
+        <translation>Предупреждения</translation>
+    </message>
+    <message>
+        <source>Witness edge</source>
+        <translation>Ребро пути-свидетельства</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>Увеличить</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>Уменьшить</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageGraph</name>
+    <message>
+        <source>Source report: %1
+Comparison direction: %2 → %3</source>
+        <translation>Исходный отчёт: %1
+Направление сравнения: %2 → %3</translation>
+    </message>
+    <message>
+        <source>Version comparison diagram for the current report page</source>
+        <translation>Диаграмма сравнения версий для текущей страницы отчётов</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineagePageView</name>
+    <message>
+        <source> Try fewer rows or adjust Resource settings.</source>
+        <translation> Попробуйте уменьшить число строк или изменить настройки ресурсов.</translation>
+    </message>
+    <message>
+        <source>%1 — previous page retained</source>
+        <translation>%1 — предыдущая страница сохранена</translation>
+    </message>
+    <message>
+        <source>%1–%2 of %3</source>
+        <translation>%1–%2 из %3</translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Отменено</translation>
+    </message>
+    <message>
+        <source>Candidate fix</source>
+        <translation>Кандидат на исправление</translation>
+    </message>
+    <message>
+        <source>Choose a collection to begin.</source>
+        <translation>Выберите коллекцию, чтобы начать.</translation>
+    </message>
+    <message>
+        <source>Complete</source>
+        <translation>Завершено</translation>
+    </message>
+    <message>
+        <source>Confirm</source>
+        <translation>Подтвердить</translation>
+    </message>
+    <message>
+        <source>Conflicting counterparts</source>
+        <translation>Противоречивые соответствия</translation>
+    </message>
+    <message>
+        <source>Copy full value</source>
+        <translation>Копировать полное значение</translation>
+    </message>
+    <message>
+        <source>Copy row evidence</source>
+        <translation>Копировать свидетельства строки</translation>
+    </message>
+    <message>
+        <source>Deadline reached</source>
+        <translation>Истёк срок</translation>
+    </message>
+    <message>
+        <source>Inconclusive</source>
+        <translation>Неопределённый результат</translation>
+    </message>
+    <message>
+        <source>Investigating</source>
+        <translation>Исследуется</translation>
+    </message>
+    <message>
+        <source>Loading evidence…</source>
+        <translation>Загрузка свидетельств…</translation>
+    </message>
+    <message>
+        <source>Match</source>
+        <translation>Сопоставить</translation>
+    </message>
+    <message>
+        <source>Next page</source>
+        <translation>Следующая страница</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Нет</translation>
+    </message>
+    <message>
+        <source>Partial patch</source>
+        <translation>Частичное исправление</translation>
+    </message>
+    <message>
+        <source>Patch absent</source>
+        <translation>Исправление отсутствует</translation>
+    </message>
+    <message>
+        <source>Patch present</source>
+        <translation>Исправление присутствует</translation>
+    </message>
+    <message>
+        <source>Previous page</source>
+        <translation>Предыдущая страница</translation>
+    </message>
+    <message>
+        <source>Refresh page</source>
+        <translation>Обновить страницу</translation>
+    </message>
+    <message>
+        <source>Rejected pair connected</source>
+        <translation>Отклонённая пара связана</translation>
+    </message>
+    <message>
+        <source>Relevant change</source>
+        <translation>Связанное изменение</translation>
+    </message>
+    <message>
+        <source>Resource limit reached</source>
+        <translation>Достигнут лимит ресурсов</translation>
+    </message>
+    <message>
+        <source>Reverted patch</source>
+        <translation>Отменённое исправление</translation>
+    </message>
+    <message>
+        <source>Rows per page</source>
+        <translation>Строк на странице</translation>
+    </message>
+    <message>
+        <source>Rows per page. Reduce this value if a page exceeds its byte allowance.</source>
+        <translation>Строк на странице. Уменьшите это значение, если страница превышает бюджет в байтах.</translation>
+    </message>
+    <message>
+        <source>Rows: </source>
+        <translation>Строки: </translation>
+    </message>
+    <message>
+        <source>Select evidence to view.</source>
+        <translation>Выберите свидетельства для просмотра.</translation>
+    </message>
+    <message>
+        <source>The graph changed. Refresh this page.</source>
+        <translation>Граф изменился. Обновите эту страницу.</translation>
+    </message>
+    <message>
+        <source>Unmatch</source>
+        <translation>Убрать соответствие</translation>
+    </message>
+    <message>
+        <source>Unrelated change</source>
+        <translation>Несвязанное изменение</translation>
+    </message>
+    <message>
+        <source>Yes</source>
+        <translation>Да</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::LineageSession</name>
+    <message>
+        <source> Your previous graph is still available.</source>
+        <translation> Предыдущий граф по-прежнему доступен.</translation>
+    </message>
+    <message>
+        <source>Loading stopped. You can retry.</source>
+        <translation>Загрузка остановлена. Можно повторить попытку.</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>Сохранено: %1</translation>
+    </message>
+    <message>
+        <source>The worker could not acknowledge cancellation.</source>
+        <translation>Рабочий процесс не смог подтвердить отмену.</translation>
+    </message>
+    <message>
+        <source>This worker does not support version comparison graphs.</source>
+        <translation>Этот рабочий процесс не поддерживает графы сравнения версий.</translation>
+    </message>
+    <message>
+        <source>Version graph loaded.</source>
+        <translation>Граф версий загружен.</translation>
+    </message>
+    <message>
+        <source>Version graph worker is unavailable or stopping.</source>
+        <translation>Рабочий процесс графа версий недоступен или останавливается.</translation>
+    </message>
+    <message>
+        <source>Version graph worker: %1</source>
+        <translation>Рабочий процесс графа версий: %1</translation>
     </message>
 </context>
 </TS>
