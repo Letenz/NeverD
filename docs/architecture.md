@@ -2258,6 +2258,10 @@ unproved intervening calls. The argument area, including slot padding, loses
 its old byte identities at each call. Low-to-Med snapshots the original loaded
 pointer and forwards only proven reloads before binding operands and building
 SSA; it does not replace a cached pointer with another read of the import slot.
+HighIR retains a named import for a constant-address copy followed by the
+original slot load only when its existing call-target memory proof establishes
+that the read still reaches the call. An intervening call or possibly aliasing
+write retains the captured indirect target instead.
 Omitted-callee conversion and its cache include the same signatures,
 independently of the selected functions. Forwarding recovery keeps each scalar
 argument width separate from the result width and admits incoming FP parameters

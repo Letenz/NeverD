@@ -14203,6 +14203,8 @@ VMA names and address reuse cannot manufacture anonymous allocation provenance.
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
 mutable import captures and Win64 scalar results versus ELF aggregate transport.
+Constant-address copies also retain live import names on x64 and ARM64, while
+intervening writes and calls preserve the original indirect observation.
 `NeverDWorkerCachedCallABI` generates PE fixtures with direct and cached
 seven-argument imports and zero/one-argument private callees, checking both C
 routes independently of function preparation order.

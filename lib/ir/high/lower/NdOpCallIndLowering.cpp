@@ -301,6 +301,25 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
                 resolveMedCallTarget(CurBlock, I, CurOp.Inputs[0])) {
           if (Cached->ThroughSlot &&
               tryResolveLoadedSlot(Cached->Address, FuncNames, Image, Result)) {
+            // A constant address can arrive through copies before the load.
+            // Keep the named import when this very read still reaches the
+            // call, using the same memory proof as target inlining. A spill
+            // of an older observation must not acquire this live-slot fact.
+            const auto Definition = DefExpr.find(varKey(CurOp.Inputs[0]));
+            if (Definition != DefExpr.end()) {
+              const auto &Read = Definition->second;
+              if (Read && Read->Kind == ExprKind::Load &&
+                  Read->Operands.size() == 1 && Read->Operands[0] &&
+                  Read->Operands[0]->Kind == ExprKind::Const &&
+                  Read->Operands[0]->ConstVal == Cached->Address) {
+                CallTargetUse = {&CurBlock, I};
+                const bool Reaches =
+                    memoryReadReachesCallTarget(CurOp.Inputs[0]);
+                CallTargetUse = {};
+                if (Reaches)
+                  return Result;
+              }
+            }
             // The slot identifies the captured callable's signature. It does
             // not authorize reading the slot again after a possible update.
             Result.IsIndirect = true;
