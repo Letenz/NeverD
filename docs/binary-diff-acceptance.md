@@ -219,3 +219,42 @@ remain complete. All 23 lineage cases passed at each native scale. The three
 selected desktop CTests passed; the 150% offscreen run passed 22 and skipped
 the compositor gesture. CLI, worker and shared-core bytes remained identical
 to integration `a005079b26e26f2ac467a3ebc1af41054c7a6182`.
+
+Naming-provenance and declared-release integration at
+`bc4931f92d9ed6fcd1847668fe5baa5d37ec3f28` selected 14,163 CTests:
+13,971 passed, 21 failed and 171 skipped. All 326 selected DIFF cases passed
+without skips, including the shared reader and release contracts. The overall
+integration remains failed; those broader failures are retained separately from
+successful DIFF qualification. Fifteen failing CLI cases also fail with the
+earlier frozen `4e02ca99499cf10c4f654c8fbbed10c6df97e0cc` CLI. That comparison
+does not classify the remaining direct-component failures or establish that all
+failure causes are identical.
+
+The same frozen integration passed 116 native-backed Python checks, real legacy
+worker/library compatibility, and both three-sample 10,000-release workloads.
+At each native Wayland scale, lineage passed 27 cases, the selected workbench
+workflows passed 19, and layout passed eight. All 89 historical reports remained
+byte-exact through the offline workflow. Fresh live binding intentionally refused
+38 reports from older native naming profiles: `sdk-native-decode-v2` excludes
+generated address names and display-only duplicate numbering from name anchors.
+This is a profile boundary, not 89 successful old-report live authentications.
+
+This local Release profile uses the frozen LLVM
+`03270359c2ed8f6806533d3832a947bf883a6f69` SDK, including its separately built
+JIT/driver archives, Capstone `88f3e3966565fb9383cd4fbb20c051c9aa22f309`, and
+retained dependency fixture overrides. Z3, emulation and embedded Python plugins
+remain disabled. Native Windows/ARM64 and CI coverage are separate. Subsequent
+GUI name presentation, header sizing, test-fixture repairs and upstream merges
+require their own receipts; none converts this failed aggregate into a clean run.
+
+Name-presentation integration at
+`b6612fe61e1d4299d450c8540034141180a253ce` selected 15,367 CTests:
+15,079 passed, 31 failed and 257 skipped. All 333 selected DIFF-related tests
+passed without skips. Its separate capability-manifest check failed on duplicate
+byte-overlay claims and exclusions; the aggregate remains failed. The frozen
+source and dependency hashes were checked after all independent checks finished.
+The same 116 Python checks, real legacy worker/library compatibility, 89
+byte-exact historical reopens and 38 intentional old-profile live-binding
+refusals passed. At both native Wayland scales, lineage passed 27 cases, saved
+comparison passed three, the selected workbench workflows passed 19, and layout
+passed eight, all without skips. Later fixes require their own qualification.
