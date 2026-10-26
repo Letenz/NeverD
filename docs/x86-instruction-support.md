@@ -970,12 +970,30 @@ natural-width offset, constant address bits and constant segment-prefix byte.
 Widths are 32/64 in long mode and 16/32 in i386; code16 and mismatched API modes
 fail explicitly. Prefix zero selects native DS, and `26/2e/36/3e/64/65` select
 ES/CS/SS/DS/FS/GS. These are prefix bytes, not LLVM address-space IDs. The
-offset is truncated before native segment-base addition; the base uses the
-B register so allocator selection cannot silently switch DS to SS.
-Dedicated machine nodes retain normal pointer register classes, memory effects
-and EFLAGS definitions until final encoding selects the narrow BX/EBX address.
+offset is truncated before native segment-base addition. The compiler follow-up
+uses a constrained AX/CX/DX/BX carrier for 32/64-bit data addresses and SI/DI for
+i386 16-bit addresses. The carrier remains constrained through final MC lowering;
+register allocation respects reserved realignment and PIC bases. Dedicated
+machine nodes retain memory effects and EFLAGS definitions.
 The APIs do not introduce ordinary loads or stores around the VMX operation.
 NeverC exposes all eight matching `__builtin_ia32_*_address` builtins.
+
+The compiler follow-up at LLVM `854ff50fb` and NeverC `aac4862c5` adds the
+`0x100` stack-reference bit to supported memory controls. With a 64-bit offset,
+it retains an original stack-default operand's noncanonical `#SS` provenance
+using `[RBP + (offset - RBP)]`, without replacing RBP or probing memory. An SS
+prefix alone still describes a data-default reference. FS/GS and address32
+cannot use the bit. Descriptor/VMX, compact/four-source, RAO/CMPccXADD and AMX
+configuration APIs support it; AMX row-memory and MPX do not. NeverD's decoded
+stack-address admission remains guarded until its IR and all output routes
+transport the same provenance.
+
+The compiler change passes 82 LLVM regression files, 84 NeverC native/frontend
+tests, 91 plugin checks, 53 generator tests and 89 binary tests. Independent LAR
+oracles pass 462,840 result, stack-canary and noncanonical-fault comparisons at
+O0/O2/O3. Descriptor, descriptor-state, VMX, AMX and atomic completion checks
+pass on full LLVM, NeverC and NeverC-to-fork routes. These checks do not qualify
+physical AMX, APX or four-source execution, and the production SDK pin is unchanged.
 
 Qualification passes 8,416 full-LLVM checks and 4,208 checks on each C route,
 plus 896 real CPL3 fault boundaries per C route against independent raw bytes.
@@ -2009,7 +2027,9 @@ passing LLVM's backend-only `evex512` spelling to ordinary Clang.
 FS/GS arguments carry segment-relative offsets, not pre-added linear
 addresses. LLVM's address-space pointer is converted through its integer
 offset before entering the native interface; the instruction owns segment
-base addition. An RBX/EBX carrier retains default DS addressing. The remaining
+base addition. A constrained data-register carrier retains default DS addressing.
+The pinned-SDK and ordinary C assembly alternatives use AX, avoiding compiler-owned
+realignment and PIC bases; exact older BX-owned IR remains readable. The remaining
 stack/segment provenance limitations are listed above. The full LLVM and
 NeverD matrices include i386; NeverC's builtin frontend remains x86-64 only.
 
@@ -2071,11 +2091,19 @@ assembly contract with the same complete register group. NeverC exposes six
 corresponding builtins in `336a54b88` and `__NEVERC_X86_FOUR_SOURCE__`; C output selects them
 when available and otherwise uses the owned ATT/Intel assembly form.
 
-The native pointer carrier is RBX/EBX, so the remaining default-stack and i386
+The native pointer carrier uses constrained data registers; the pinned-SDK and
+ordinary C assembly alternatives use AX. The remaining default-stack and i386
 segment limitations match compact memory. LLVM and NeverD cover i386 and x64;
 NeverC's frontend remains x64-only. Compiler `avx512f` enables the carriers,
 but execution additionally requires AVX512_4FMAPS or AVX512_4VNNIW and the
 appropriate enabled extended state. Ordinary AVX512F hardware is insufficient.
+
+The address-carrier follow-up passes 13 source/ownership tests on each SDK,
+including realigned dynamic frames for both modes and all three formats. Each
+SDK's compact/four-source exports pass 1,962 object audits covering 19,602
+functions and 37,422 native instructions, plus 32 executable C transport
+recorders. The compiler register/stack interpreter also passes full LLVM and
+NeverC probes at O0/O2. These checks retain the hardware-execution limits above.
 
 The numerical executors retain independent four-iteration FP and integer tests,
 including source/destination aliasing, mask suppression, saturation and memory

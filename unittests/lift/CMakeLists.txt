@@ -750,6 +750,7 @@ add_neverd_unittest(NeverDX86PortSourceTests
 
 add_neverd_unittest(NeverDX86CompressExpandSourceTests
   x86/X86CompressExpandSourceTests.cpp
+  x86/X86NativeMemoryCarrierTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 
 add_neverd_unittest(NeverDX86FourSourceSourceTests
