@@ -1801,6 +1801,10 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
         SignatureBounds.emplace(F.Entry, *Bound);
   for (MedFunc &F : Result.MedFuncs)
     for (MedCallInfo &CI : F.CallInfos) {
+      // Entry summaries already include declared inputs that a service gate
+      // need not read in its own body.
+      if (Result.CallPrototypeArguments.count(CI.TargetAddr))
+        continue;
       auto It = CI.IsIndirect ? SignatureBounds.end()
                               : SignatureBounds.find(CI.TargetAddr);
       if (It != SignatureBounds.end())
@@ -1819,6 +1823,8 @@ void matchCallsToCalleeSignatures(const BinaryImage &Img,
     ByEntry.emplace(MF.Entry, &MF);
   for (MedFunc &MF : Result.MedFuncs)
     for (MedCallInfo &CI : MF.CallInfos) {
+      if (Result.CallPrototypeArguments.count(CI.TargetAddr))
+        continue;
       const auto It =
           CI.IsIndirect ? ByEntry.end() : ByEntry.find(CI.TargetAddr);
       if (It == ByEntry.end())

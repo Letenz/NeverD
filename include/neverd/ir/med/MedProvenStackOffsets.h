@@ -25,6 +25,21 @@ struct ProvenStackOffset {
   int64_t Offset = 0;
 };
 
+/// A query-local bound at one current operation or PHI definition. Exactly
+/// one definition pointer is required; the caller proves every incoming
+/// path, including exceptional entries, before supplying the range.
+struct ProvenStackOffsetRange {
+  const MedOp *Definition = nullptr;
+  const PhiNode *Join = nullptr;
+  EntryStackOffsetRange Range;
+};
+
+std::vector<std::optional<EntryStackOffsetRange>>
+entryStackOffsetRangesFromProvenDefinitions(
+    const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
+    llvm::ArrayRef<ProvenStackOffsetRange> Seeds, Arch Architecture,
+    BinaryFormat Format, StackEntryKind Entry);
+
 /// The caller owns the proof of each seed at this exact definition in Func.
 /// Seeds are query-local: they neither annotate mutable IR nor remove memory
 /// effects. The ordinary stack proof owns arithmetic, width and join rules.

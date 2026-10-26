@@ -32,6 +32,13 @@ partial outgoing writes, narrow reads, frame-address returns, preserved-register
 changes, external loads and values initialized by the callee itself. A selected
 call optimized away is checked by compiling and executing its resulting source,
 rather than requiring an intermediate call record to survive optimization.
+`IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
+routes with an incoming last-stack-word declaration and unrelated register and
+stack setup. `HighCPointerAddresses.Win64TwelveArgumentCallKeepsEveryStackArgument`
+separately retains and executes a positional call whose callee reads all twelve
+arguments. Both cases execute O0/O2 output: the stack-only case uses an
+independent source callee, and the positional case checks the complete emitted
+caller and callee against an independent sum oracle.
 The same target runs the shared `SourceFrameAnalysis` suite. Balanced RBP and
 x29/x30 frames, including local stack allocation and `leave`, execute through
 explicit, automatic and selected-caller paths;
@@ -94,11 +101,34 @@ checking every byte-sized count against an independent multiplication oracle
 and refusing unconstrained machine-width products. Copy edges in stack PHI
 cycles preserve exact or bounded outside origins on all four architectures;
 unseeded cycles and changing backedges remain unknown.
+`MedSEHEstablisherFrame.SourceHandlerCallRetainsEveryProtectedStackPosition`
+checks protected allocations and shared ordinary/exceptional handler entries.
+A handler CALL may precede an RBP-based SP restoration only when all possible
+return-slot writes are disjoint from observed bytes. Overlapping reads, missing
+fresh LowIR and explicit handler SP reads retain refusal; native reconstruction
+remains unavailable. The same fixture checks that copy propagation and DCE
+retain the ordinary entry register marker needed to omit an unobserved RBP
+save from both source projections. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
+checks that a range seed cannot become an exact executable value or survive
+query removal, detached definitions or conflicting bounds.
+`MedStackAlignment.AGuardedCounterBoundsRepeatedStackAllocations` checks x86,
+x64, ARM and AArch64 against independently enumerated finite stack updates.
+Both branch polarities and low-byte/extension copies retain the range;
+wrapping counters, bypassed or repeated updates, additional entries, signed
+guards and overflowing displacements reject it. Exact-offset queries remain
+unknown for a changing recurrence.
 `NeverDMedPrologueSavesTests` checks that only
 disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
 and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,
 loop backedges and exceptional prefixes retain their negative controls. Run both
 C route contract suites after changing this proof.
+
+`COFFExceptionIR.LLVMCMixedHandlersKeepUnwindOnlyCleanup` covers independent
+SEH handlers together with an inner handler whose failed filter unwinds through
+a finally. Both O0/O2 Windows object builds retain the nested clauses; host
+execution checks the normal paths and cleanup count. Run the complete
+`COFFExceptionIR.LLVMC*` group to retain compact closed ranges and shared-handler
+loops. Host normal-path checks do not qualify native Windows exception dispatch.
 
 # Testing NeverD
 
@@ -4309,6 +4339,13 @@ the parameters its prototype declares and its code never reads, and that
 `neverd_decompile_all` takes the prototypes; the kernel inputs check
 `ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
 `ExRaiseStatus` the kernel exports without its PDB.
+`HighCPointerAddresses.DocumentedKernelArgumentsSurviveAnOpaqueGate` checks
+both source routes and the shared MedIR call operands for an exported service
+whose prototype declares inputs absent from the gate's own body.
+`Win64CallContract.CallersPassWhatAnExportedRoutinesPrototypeDeclares` also
+retains body reads beyond the declared prefix. The ntos `ZwSetSystemTime`
+caller at `0x140a3aad4` is an integration witness: its two zero arguments must
+survive omitted-callee recovery and its HighC must compile at O0 and O2.
 `IsNoReturnTarget.ExportsAndDeclaredPrototypesNameNoReturnRoutines` covers
 exports and `_Noreturn` prototypes in the no-return index.
 `HighCReturnJoin.BareReturnBesideATailCallReturnsTheParameter` decompiles
@@ -9014,6 +9051,12 @@ form's target, state and size, and that a direct jump is never a long branch.
 `LLVMCValues.ImageStringsInACodeSegmentFollowTheirSection` requires a string
 in `.rodata` inside an R+X segment to print, its bytes in `.text` not to, and
 the segment rule without section headers.
+`LLVMCValues.FoldedImageStringAddressesKeepIntegerCarriers` checks empty and
+nonempty image strings reached through folded constant pointer/integer casts.
+Integer calls and returns retain explicit pointer conversions with preserved
+LLVM function types enabled and disabled; pointer calls and ordinary integer
+constants keep their own types. The x64/ARM64 source cases execute at O0/O2 with
+undefined-behavior traps.
 
 `LinkedLiteralAddsToTheDataItNames` links an ARM getter whose
 `ldr r0, [pc, r0]` reads its literal right after `bx lr`. It requires the
@@ -14310,3 +14353,13 @@ including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
 
 `BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.
+
+`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` checks both C
+routes with optimization enabled and disabled. An independent 32-bit provider
+observes both words of a wide outgoing store and later overwrites of either
+word at O0/O2 with undefined-behavior traps. The fixed import ABI, rather than
+the store's vector transport, determines its scalar argument positions.
+`MedCachedCallTarget.CapturedScalarImportsKeepTheirDeclaredPointerType`
+checks x64 and ARM64 Windows pointer declarations and executes their scalar
+source projection on the host, including replacement of the import slot after
+the pointer was captured. These host checks do not execute ARM64 machine code.

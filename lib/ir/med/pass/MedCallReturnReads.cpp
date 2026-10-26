@@ -12,6 +12,7 @@
 #include "neverd/ir/med/MedCallReturnReads.h"
 
 #include "../../../safety/StackSlotFlow.h"
+#include "../X86/SEHCallStackRanges.h"
 #include "../abi/MedABIPassDetail.h"
 
 #include "neverd/Limits.h"
@@ -315,8 +316,9 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   }
   if (Calls.empty() || Memory.empty())
     return true;
+  std::map<int, MedVar> BlockEntries;
   const auto StackPointers =
-      sourceCallStackPointers(Func, Image.Arch, Remaining);
+      sourceCallStackPointers(Func, Image.Arch, Remaining, BlockEntries);
   if (!Remaining)
     return Exhausted();
   const auto Width = getTargetRegInfo(Image.Arch).PointerSize;
@@ -383,6 +385,18 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
         Func, UnboundedStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
     for (size_t I = 0; I < Bounds.size(); ++I)
       CallEnds.at(UnboundedCalls[I]) = Bounds[I];
+  }
+  if (FreshSource &&
+      llvm::any_of(CallEnds, [](const auto &Entry) { return !Entry.second; })) {
+    const auto HandlerBounds = x86_seh::sourceHandlerCallStackRanges(
+        Func, *FreshSource, Image, StackPointers, BlockEntries, Remaining);
+    if (!Remaining)
+      return Exhausted();
+    for (auto &[Call, End] : CallEnds)
+      if (!End)
+        if (const auto Found = HandlerBounds.find(Call);
+            Found != HandlerBounds.end())
+          End = Found->second;
   }
   std::vector<std::pair<int64_t, int64_t>> Ranges;
   bool UnknownLocation = false;
