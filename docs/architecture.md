@@ -8211,6 +8211,12 @@ NUL without padding and return the destination. API 28 ARM64 uses the C
 NUL-inclusive length to the destination object size. Scan faults and budgets
 precede that fortify check; the destination and overlap checks follow it.
 Undefined overlap and unsupported abort paths refuse without partial writes.
+`memchr` and `__memchr_chk` share the character-search loop, unsigned-byte
+comparison and guest read owner. Memory searches pass embedded NUL bytes and
+return null only after exhausting the requested count; scan-budget exhaustion
+remains a failure. The checked entry admits the whole count against the object
+extent before pointer or deadline checks. Zero-count searches need no pointer
+access, and a first match does not require the unread suffix to be mapped.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
