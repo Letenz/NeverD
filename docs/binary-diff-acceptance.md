@@ -206,3 +206,16 @@ now accounts for the lineage C, Python, CLI and JSON surfaces; its 116 script
 tests and source validation passed. The unchanged Release profile still disables
 Z3, emulation and embedded Python. Merged Android changes therefore have no
 runtime qualification in this profile.
+
+Native layout qualification at `f902f29464b4bb18ca113ab794122b651919239c`
+adds visible-row and non-overlap checks for narrow localized windows. Arabic
+font metrics first reproduced a clipped function row, and a growing error
+message partly hid the selected snapshot. Font-derived table minima, retained
+selection visibility and the dialog's content minimum fix those cases. Screenshot
+review also caught paging status overlapping a table despite valid viewport
+coordinates; the stronger checks cover containment and separation. Multi-line
+metadata is rendered on one table line while original tooltips and evidence
+remain complete. All 23 lineage cases passed at each native scale. The three
+selected desktop CTests passed; the 150% offscreen run passed 22 and skipped
+the compositor gesture. CLI, worker and shared-core bytes remained identical
+to integration `a005079b26e26f2ac467a3ebc1af41054c7a6182`.
