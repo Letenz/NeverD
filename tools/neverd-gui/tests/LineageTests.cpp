@@ -203,8 +203,12 @@ private slots:
       const auto *Table = Page->table();
       const auto Row = Table->visualRect(Table->currentIndex());
       const auto Viewport = Table->viewport()->rect();
+      const auto *Status = Page->findChild<QLabel *>("lineagePageStatus");
       return Row.isValid() && Row.top() >= Viewport.top() &&
-             Row.bottom() <= Viewport.bottom();
+             Row.bottom() <= Viewport.bottom() && Status &&
+             Page->rect().contains(Table->geometry()) &&
+             Page->rect().contains(Status->geometry()) &&
+             Table->geometry().bottom() < Status->geometry().top();
     };
     const auto RowGeometry = [&] {
       QString Text = QString("window=%1x%2 minimum=%3x%4")

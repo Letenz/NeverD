@@ -35,6 +35,7 @@ public:
   LineageSession &session() { return Session; }
 
 protected:
+  bool event(QEvent *Event) override;
   void closeEvent(QCloseEvent *Event) override;
 
 private:

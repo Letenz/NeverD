@@ -21,6 +21,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFontMetrics>
 #include <QFormLayout>
@@ -40,6 +41,7 @@
 #include <QTabWidget>
 #include <QTableView>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <limits>
 #include <tuple>
 #include <utility>
@@ -825,6 +827,18 @@ void LineageDialog::save() {
   SavingSource = false;
   Session.save(Path);
 }
+bool LineageDialog::event(QEvent *Event) {
+  const auto Result = QDialog::event(Event);
+  if (layout() && (Event->type() == QEvent::LayoutRequest ||
+                   Event->type() == QEvent::Resize))
+    // The baseline minimum cannot override the content's font-dependent
+    // minimum: otherwise table rows and the status controls overlap.
+    setMinimumHeight(std::max({limits::kLineageMinimumHeight,
+                               layout()->minimumSize().height(),
+                               layout()->minimumHeightForWidth(width())}));
+  return Result;
+}
+
 void LineageDialog::closeEvent(QCloseEvent *Event) {
   if (Session.busy()) {
     CloseWhenIdle = true;
