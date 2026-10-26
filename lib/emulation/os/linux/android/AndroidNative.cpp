@@ -59,11 +59,17 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     return Budget.takeError();
   std::shared_ptr<ExecutionBudget> Resources(std::move(*Budget));
   uint64_t ReportSize = Native.TraceLimit * 8;
+  const uint64_t CPUStateBytes =
+      sizeof(uint64_t) +
+      architectureRegisters(GuestArchitecture::AArch64).size() *
+          sizeof(RegisterValue);
   if (Native.ObserveCPUState) {
-    const uint64_t Bytes =
-        sizeof(uint64_t) +
-        architectureRegisters(GuestArchitecture::AArch64).size() *
-            sizeof(RegisterValue);
+    if (CPUStateBytes > Options.OutputLimit - ReportSize)
+      return failure(diagnostic::SnapshotLimits);
+    ReportSize += CPUStateBytes;
+  }
+  if (Native.ObserveThreadCPUStates) {
+    const uint64_t Bytes = Native.ThreadLimit * (CPUStateBytes + sizeof(bool));
     if (Bytes > Options.OutputLimit - ReportSize)
       return failure(diagnostic::SnapshotLimits);
     ReportSize += Bytes;
@@ -695,6 +701,8 @@ llvm::Expected<ProcessResult> runNative(const std::filesystem::path &Path,
     else
       State.Diagnostic = llvm::toString(Registers.takeError());
   }
+  if (Native.ObserveThreadCPUStates)
+    Result.ThreadCPUStates = Threads.observeCPUStates();
   return Result;
 }
 } // namespace neverd::emulation::android_model

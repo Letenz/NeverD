@@ -31,10 +31,10 @@ a64_pageoff_bypass_may_escape:
   ret
 .size a64_pageoff_bypass_may_escape, .-a64_pageoff_bypass_may_escape
 
-.p2align 2
-// A local RET-only definition proves that no argument is read. Keep this
-// callee unresolved so the possible writable-table escape remains observable.
+// A real unknown call must retain the possibly escaped argument. A local RET
+// body would instead prove it unread and no longer test this boundary.
 .extern a64_pageoff_bypass_unknown_callee
+.type a64_pageoff_bypass_unknown_callee, %function
 
 .section .data.jt_a64_pageoff_bypass,"aw",%progbits
 .p2align 3

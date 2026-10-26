@@ -23,6 +23,7 @@
 #include "UnicornMemory.h"
 #include "UnicornResourcePause.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -842,12 +843,15 @@ UnicornBackend::supportedControlBits(CPURegister R) const {
     return RegisterValue{x64::fp::ArchitecturalMXCSRMask, 0};
   return ExecutionBackend::supportedControlBits(R);
 }
-llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
-  if (!registerMatches(R, architecture()))
+namespace {
+llvm::Expected<RegisterValue>
+readUnicornRegister(GuestArchitecture Architecture, CPURegister R,
+                    llvm::function_ref<uc_err(int, void *)> Read) {
+  if (!registerMatches(R, Architecture))
     return diagnostic::error(diagnostic::Register);
   RegisterValue V{};
-  if (auto E = check(uc_reg_read(State->Engine, registerID(R), V.data()),
-                     diagnostic::UnicornReadRegister))
+  if (auto E =
+          check(Read(registerID(R), V.data()), diagnostic::UnicornReadRegister))
     return std::move(E);
   if (R == CPURegister::X64FPTag) {
     X64FPState FP;
@@ -855,6 +859,27 @@ llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
     V = {FP.Tag, 0};
   }
   return V;
+}
+} // namespace
+llvm::Expected<RegisterValue> UnicornBackend::readRegister(CPURegister R) {
+  return readUnicornRegister(architecture(), R, [&](int ID, void *Value) {
+    return uc_reg_read(State->Engine, ID, Value);
+  });
+}
+llvm::Expected<RegisterValue>
+UnicornBackend::readContextRegister(const BackendContext &Context,
+                                    CPURegister R) const {
+  const auto *Saved = contextStorage(Context);
+  if (!Saved || Saved->Owner.expired())
+    return diagnostic::error(diagnostic::ContextExpired);
+  if (Saved->Owner.lock() != State->Identity)
+    return diagnostic::error(diagnostic::ContextOwner);
+  if (Saved->Space.lock() != addressSpace())
+    return diagnostic::error(diagnostic::ContextSpace);
+  return readUnicornRegister(architecture(), R, [&](int ID, void *Value) {
+    return uc_context_reg_read(
+        static_cast<const UnicornContext &>(*Saved).Context, ID, Value);
+  });
 }
 llvm::Error UnicornBackend::writeRegister(CPURegister R,
                                           const RegisterValue &V) {

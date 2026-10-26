@@ -26,10 +26,10 @@ a64_pageoff_wrong_base_no_escape:
   ret
 .size a64_pageoff_wrong_base_no_escape, .-a64_pageoff_wrong_base_no_escape
 
-.p2align 2
-// Keep the call genuinely unknown. A defined RET-only body can prove that it
-// ignores the argument and no longer exercises an incomplete-address escape.
+// Keep the callee unresolved. A local RET body proves the argument unread,
+// which would remove the escape this fixture must exercise.
 .extern a64_writable_unknown_callee
+.type a64_writable_unknown_callee, %function
 
 .section .data.jt_a64_pageoff_wrong_base,"aw",%progbits
 .p2align 3

@@ -477,9 +477,9 @@ LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes
 extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
 These are explicit-IR tests; they do not
 qualify automatic decoding/lifting, relocated-image projection or native
-half/whole-vector ABI. Stack and image requirements fail before body filtering.
+half/whole-vector ABI. Synthetic-stack and image requirements fail before body filtering.
 Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
-both generated C files, the independent native harness and an LLVM ELF object
+both generated C files, the independent native harness and LLVM ELF/Mach-O objects
 in a fresh directory recorded in the test's properties. These artifacts allow
 a controlled guest to consume the actual generated output; exporting them is
 not CPTA-on qualification.
@@ -495,7 +495,53 @@ model. It does not qualify automatic lifting, image relocation, original SP,
 writeback/pairs, EL0 instruction execution, native half/whole-vector ABI,
 Apple hardware, other translation/tagging contexts or overflowing memory and
 every CPACHECK choice. Remote GitHub CI results require separate observation.
-SP-origin source execution remains explicitly unsupported. Local Z/P state
+`AArch64StackAddressMemory` separately checks no-image, explicit raw-SP
+parameters with all 177 immediate samples and 184 GPR/SIMD register-offset
+samples. Both C routes and linked LLVM objects execute at O0/O2, retaining
+literal SP, signed/extended indices and both halves of Q results. The same
+361 samples check nominal entry-SP coordinates and LowToMed frame bounds.
+Unknown or expired inputs, joins/independent roots, hidden invalid source
+bases and malformed assembly/clobber contracts retain their refusal.
+`NEVERD_ARM64E_CPTA_STACK_ARTIFACT_DIR` exports the immediate SP matrix under
+the `cpta_stack_memory_artifacts` property, the register-offset SP matrix under
+`cpta_stack_register_memory_artifacts` and its matching GPR controls under
+`cpta_register_memory_artifacts`. The native exception verifier
+consumes successful complete seven-test SP and seven-test immediate reports:
+
+```sh
+python3 scripts/verify_arm64e_sp_memory.py \
+  --stack-artifacts /path/to/stack-export \
+  --control-artifacts /path/to/immediate-export \
+  --stack-report /path/to/stack-tests.json \
+  --control-report /path/to/immediate-tests.json \
+  --neverd-revision FULL_40_CHARACTER_COMMIT \
+  --sdk /path/to/MacOSX.sdk --compiler /path/to/clang \
+  --output /path/to/new-evidence-directory
+```
+
+The verifier compiles each C route at O0/O2 and also links the actual Mach-O
+object. In the default immediate profile, every one of the 177 SP accesses must raise a native SP-alignment
+exception, report exactly the supplied raw SP and leave all 66,064 guarded
+bytes unchanged. Five independent GPR routes execute at the same eight-byte
+misalignment and check their complete byte results. Inputs, commands, compiler
+version, verifier hashes and failed observations are retained. This is a native
+single-access exception check, not Apple CPA2 or stack-ABI qualification.
+Use `--profile register` with the register-offset SP/GPR exports and the same
+complete seven-test SP report for both report arguments to require all 184
+register-offset faults and matching GPR results. Signed W/X indices, each
+encoded extension/scale and all scalar/vector access widths remain in the
+original generated functions.
+Both harnesses must match the independent sample count. Passing a 177-sample
+immediate GPR export to the 184-sample register profile must fail compilation,
+even when the supplied report contains a successful register export.
+The controlled FVP driver's `--profile stack` additionally requires all four
+SA=1 readbacks and 83 guest checks per route. Its `--profile stack-register`
+requires the same controls for all 184 register-offset SP samples;
+`--profile register` separately checks the 184 matching GPR samples.
+Reconstructed source stacks,
+image-backed SP values, tagging and asynchronous unwind remain unqualified.
+
+Local Z/P state
 survives a validated memory operation only when physical V/Z aliases are absent.
 The interleaving test checks original words in LLVM ELF objects and retains the
 existing LLVMC scalable-carrier refusal. It does not qualify Apple SVE execution
@@ -515,8 +561,8 @@ cold/warm query mixtures exercise the distinct cache modes.
 `MedSourceStackAccesses` and `MedPrologueSaves` also verify source-stack proofs;
 an edited store must lose its previous prologue-save annotation before the
 ObjC private-copy machine replay compares both saved representations.
-These checks do not qualify SCTLR2 CPTA-on execution or other CPA2 memory
-instruction families.
+The source-stack proof checks alone do not qualify SCTLR2 CPTA-on execution
+or additional CPA2 memory instruction families.
 `SourceStackSpills` checks that pure POPCOUNT parity calculations allow an
 explicit scratch overwrite while division and actual old-slot reads remain
 barriers. `OverwrittenCallClobberSpills` executes the flag-save case through
@@ -626,8 +672,28 @@ XTEST completions against every incoming arithmetic-flag combination in both
 code modes, retaining DF/GPRs and refusing invented ambient transaction state.
 The source suite carries those flags through LAHF/SETO and compiles native LLVM,
 HighC and LLVM-to-C across ELF/COFF/Mach-O at O0/O2, including NeverC on x64.
+XABORT tests cover every encoded byte on x86/x64 through full, lightweight and
+lift decoding, including ignored prefixes and Capstone's signed immediates.
+XEND/XTEST share the prefix checks and reject inconsistent decoder details.
+Forged decoder records and malformed LowIR/MedIR/HighIR operands fail before
+effects. Native and legacy LLVM C contracts reject variable immediates and
+lost memory effects, including argument-only/inaccessible-memory annotations
+and speculative execution. Store/abort/reload fixtures retain the surrounding
+ordinary-memory order. The source suite compiles 0/127/128/255 through native
+LLVM, HighC and LLVM-to-C across both code modes and all three formats, with
+NeverC for x64; compilation does not qualify hardware rollback.
+The source checks also require the `rtm` attribute when a legacy LLVM inline
+assembly call becomes `_xabort`. A dword memory result fixes the return width
+in the immediate-byte fixtures; constant-return inference is not their oracle.
 The nonlocal-control suite also refuses decoded and legacy-IR XBEGIN forms
 whose original abort target and checkpoint are absent.
+`NeverDX86LegacyAdmissionTests` separately covers incomplete far-pointer
+segment loads and 24 3DNow! operations. Its 76 and 384 valid instruction forms
+run through full, lightweight and lift decoding in strict/permissive modes.
+Each rejection must preserve the existing LowIR prefix without adding loads,
+register writes or placeholder effects. Ordinary loads and MMX arithmetic
+remain positive controls. This is admission qualification, not completed
+segment or 3DNow! semantics.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
 check that a complete narrow displacement is normalized as a full address,
@@ -636,6 +702,26 @@ Selected image-address tests check both atomic encoding inventories across
 ELF/COFF/Mach-O, including both orders of an incomplete arm and raw FS offsets.
 The shared native memory owner is also covered by the AArch64/x86-64 ELF/PE
 rematerialized-table recurrence in `NeverDNativePointerRelocationBoundaryTests`.
+
+`NeverDX86TBMTests` exercises all nine trailing-bit operations through full,
+lightweight and lift decoding, with 32/64-bit values, register aliases,
+register/memory sources, i386 ignored XOP fields and FS/GS/address overrides.
+An independent bit-position oracle checks results and CF/ZF/SF/OF; AF/PF are
+recorded as undefined bits, and DF is preserved. Faulting loads must leave
+architectural outputs unchanged. Mutated raw bytes and decoded detail must
+fail before appending LowIR in both strict and permissive mode. Run this target
+with `NeverDX86FPEncodingTests`, `NeverDX86APXBMISemanticTests` and
+`NeverDX86UndefinedEffectsTests` when changing the shared prefix/effect boundary.
+These are semantic/model checks and do not require TBM hardware.
+
+`NeverDX86TBMPipeline` additionally lifts raw TBM fixtures through LLVM, HighC
+and LLVM-to-C with pipeline optimization on/off, then compiles at O0/O2 and
+executes the generated value/flag projections. The Linux x86-64 test requires
+the CLI and Clang. Its independent bit-position oracle covers zero, all ones,
+each bit boundary and mixed-width inputs with an aliased source/destination.
+Compilation disables TBM and the test inspects the exact assembly before
+linking it, so the original TBM bytes are never executed on the host. This
+checks emitted-code semantics, not physical TBM faults or performance.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -5882,6 +5968,8 @@ framed process and isolation from native-session revisions using a C++ client.
 
 ## Library recognition
 
+`PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
+
 `PatternGeneratorCOFF.*` checks aliases at one source address, equal bytes at
 different addresses, recursion through aliases, canonical indirect import
 relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
@@ -7489,6 +7577,10 @@ writer copies, moves and resets. Both C emitters share this allocator.
 `NeverDRegisterSnapshotTests` checks the complete architecture inventories,
 lossless scalar/vector/80-bit values, refusal of every injected register-read
 failure, and repeated observations through available checked backends.
+The saved-context cases also cover software Unicorn and available checked
+transports, current/saved register separation, refreshed contexts, owner expiry,
+moves and address-space rebinding. Observing saved state after a terminal fault
+must preserve the current registers, fault and RAM; restore remains rejected.
 `AndroidObservation.TerminalRegister*` executes authored ARM64 register loads,
 compares complete reports with observation disabled, preserves normal/error and
 budget stops, checks stopped-child ownership across quanta, and enforces exact
@@ -7498,6 +7590,15 @@ opt-in JSON, high-bit preservation, and separate capture failures. Run these wit
 service stops through both public surfaces, then run
 the Android native, Linux process and execution-session suites after changes to
 terminal register observation. Unavailable transports are skips.
+
+`AndroidObservation.SavedThreadRegisters*` compares complete reports with thread
+observation disabled, then verifies independent GPR/SIMD/TLS and stack ownership
+for two looping workers and a waiting parent across three instruction quanta.
+Joined/retired threads are omitted. `ThreadRegisterBudget*` reserves the full
+configured owner count before execution; terminal-stop cases include faults and
+resource limits. `ProcessReport.ThreadCPUStates*` distinguishes disabled, empty,
+failed and successful captures; the public terminal-state test exercises the
+same opt-in through the SDK and CLI.
 
 `UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
 distinct scalar and SIMD values across repeated checked user/supervisor steps
@@ -11070,6 +11171,13 @@ sections D6.15–16, D6.246 and D6.279–281.
 `AArch64InstructionEffects` owns scalar and FP/SIMD single/pair RAM footprints, including operands up to 128 bits. The shared address space validates every page before CPU entry; `RAMTransaction` commits only complete declared physical writes. A 128-bit write observer receives two ordered 64-bit words before effects. Stops and faults preserve RAM, vectors and writeback. Numeric Xn/Vn overlap is valid; wrapping pair footprints are rejected. `NeverDAArch64MemoryTests` uses independent `AArch64CrossPageCases.def` and `AArch64VectorMemoryCases.def` encodings. `AArch64StructureMemoryCases.def` adds independently assembled NEON lane, register-list, interleaved and replicate forms, plus reserved encodings. Tests cover B/H/S/D elements, 64/128-bit vectors, register wrap, SP, immediate/negative-register writeback, every crossing, exact ordered observers, stopping at every element, denied final bytes, adjacent inaccessible memory, shared physical aliases and restored contexts. All 39 scalar fields and 32 vectors are compared, including retained lanes and cleared upper halves. The same cases run on checked EL0/EL1 Unicorn and available KVM/WHP/HVF transports; unavailable platforms are explicit skips.
 
 `NeverDAArch64StateTests` checks all 71 complete-state read positions at both privileges, including width normalization, missing readers and retry. `NeverDAArch64FPTests` executes original `AArch64FPCases.def` instructions: all vector lanes, packed arithmetic, scalar/vector floating results, four rounding modes, FZ/DN, cumulative FPSR, context state and rejected extensions/control bits. `NeverDAArch64MemoryTests` tests every crossing offset, ordered observers, stops, denied pages, aliases and restored vector inputs. `NeverDUnicornStateTransferTests` (`UnicornStateTransferCases.def`, `CapturesDeclaredWidthsWithoutStaleUpperBits`) injects every scalar/vector read failure after real execution. Unavailable native transports skip explicitly; these tests and cross-compilation do not replace native ARM64 KVM/WHP evidence.
+
+`NeverDUnicornStateReuseTests` checks consecutive steps, every changed scalar
+and vector input, cancelled entry, mapping changes and host code writes at both
+privileges. Linux's wrapped `NeverDUnicornStateTransferTests` also counts avoided
+EL0 packet installs and injects every capture failure after a successful warm
+step: retry must restore the complete original input and execute exactly once.
+The portable state checks do not replace this Linux-only fault injection.
 
 `NeverDAArch64MemoryTests` covers 18 scalar/pair forms at both privilege levels with Unicorn, KVM and WHP. It checks every crossing offset, sign/width results, observer ordering, denied/unmapped second pages, explicit fault consumption and retry, repeated physical aliases, and context restoration after alias replacement. The former valid crossing-load rejection is reproduced before the change. Unavailable transports skip explicitly; portable Unicorn verification and cross-compilation do not replace native ARM64 KVM/WHP evidence.
 

@@ -84,13 +84,20 @@ struct NativeExecutionObservation {
   std::array<uint64_t, 31> Registers{};
   std::vector<NativeMemorySnapshot> Memory;
 };
-/// Registers of the current CPU at the final stop, including terminal faults.
-/// Suspended threads, memory, and backend-private state are not captured.
+/// Complete modeled registers observed from a CPU or saved thread context.
+/// Memory and backend-private state are not captured.
 /// A failed read leaves Registers absent and records its separate diagnostic.
 struct NativeCPUState {
   uint64_t ThreadID = 0;
   std::optional<std::vector<RegisterSnapshot>> Registers;
   std::string Diagnostic;
+};
+/// A thread that has not completed at the final stop. Current reads the CPU;
+/// other entries observe the scheduler's saved context without restoring it.
+/// Completed/retired threads have no retained final context and are omitted.
+struct NativeThreadCPUState {
+  NativeCPUState State;
+  bool Current = false;
 };
 
 /// One visible logd v4 entry. Payload is opaque; no host log is consulted.
@@ -149,6 +156,9 @@ struct AndroidNativeOptions {
   /// Read the final current-thread architectural registers without executing
   /// or switching contexts. Failure never replaces the original stop reason.
   bool ObserveCPUState = false;
+  /// Observe all unfinished threads, including waiting saved contexts. Each
+  /// capture failure has its own diagnostic and preserves the workload stop.
+  bool ObserveThreadCPUStates = false;
   /// Also snapshot ReadMemory from stopped RAM backing after CPU/runtime
   /// failures. Ignores guest read permissions, never reads devices or resumes
   /// execution, and records per-region errors without replacing the stop.

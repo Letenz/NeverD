@@ -489,6 +489,37 @@ guest pointer or mapping request to the host OS.
 
 <a id="windows-pe64-profile"></a>
 
+**Private anonymous page discard.**
+
+`madvise(MADV_DONTNEED)` shares the LinuxMemory implementation across raw LP64
+syscalls and Android Bionic direct, syscall and dynamic-import routes. It admits
+only private anonymous mmap and brk ranges allocated by that owner. Ownership
+is recorded when pages are mapped, independently of optional VMA-name and
+residency observations. Initial image/input RAM, file mappings, devices, locked
+or huge pages and unmodeled advice values are not inferred from generic RAM.
+
+The low 32 bits select the advice. Alignment, rounded length and unsigned end
+overflow are checked before mapping lookup; a valid zero length returns zero.
+Every covered page receives fresh zero backing with its previous permissions.
+Virtual addresses, VMA names, program break and KSM eligibility are retained.
+Previously pinned views and other physical aliases retain the original bytes;
+this operation does not memset shared backing. AddressSpace remains the mapping
+and generation authority, so CPU projections refresh before execution resumes.
+
+Mapped pages on both sides of a hole are discarded before ENOMEM is returned.
+Unknown backing stops explicitly at that range, preserving earlier completed
+page effects. A temporary replacement allocation is prepared before removing
+each old mapping. Exhausting the model's backing budget stops without claiming
+a kernel allocation result or removing the current page; previous page effects
+remain. Unexpected mapping failures are terminal. OS mutation ownership must
+remain exclusive throughout the stopped operation.
+
+This is the byte-visible contract for the restricted anonymous domain, based on
+Android common 4.4.115 `mm/madvise.c` at
+`aa856bd83c43969dc3e8f8c0e97e6105e91aef76`. It does not model lazy page faults,
+RSS, swap or host reclamation. Mincore still requires its separate explicit
+query-time observations; no residency bit is inferred from this host storage.
+
 <!-- i18n-section: linux-clocks -->
 
 ## Explicit guest clocks

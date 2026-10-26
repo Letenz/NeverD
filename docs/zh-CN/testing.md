@@ -4,7 +4,7 @@
 
 # 测试 NeverD
 
-`SymMBAWitness.*` 在不变的工作预算下检查取反输入的 96/128 次乘积，穷举低六位进位输入，并覆盖直到 257 位的字、相邻奇偶扰动和预算拒绝。具体非零反例只停止无效的零化搜索，不能授权替换。使用 `--family complemented-carry-product --count 108` 生成 432 个 48–256 次样本，包含取反输入、因子倒序和相邻奇偶扰动。保留所有旧样本，作为性能与输出成本对照。CLI 与 GUI worker 的源码测试通过全部六条源码路径，在 O0/O2 下执行两份 96 次反例样本。
+`PEFunctionAddresses.*` 检查 x64 PE 无栈帧叶函数、归属及指令边界、被拒绝的前缀和窄操作数、可调用出口、取消，以及 1/2/4/16 个工作线程结果一致。特征测试覆盖全部 16 种条件 rel32 编码、正负位移、显式入口范围和源重定位约束。Python 补充特征测试要求每个单位置条件区分全部原始冲突声明，保留备选名称及必须联合使用的位置，并避免重复已有声明。
 
 `DriverKernelSEH.V2*`, `COFFExceptionParser.*V2*` and `DriverSEHV2Execution.*` cover normalized V2 tables, partial restoration, malformed metadata and original linked driver exceptions. Run `NeverDNativeDriverTests`, `NeverDDriverEmulationTests`, `NeverDWindowsProcessTests` and `NeverDCOFFExceptionV2Tests`; unavailable host backends remain explicit skips.
 
@@ -1091,6 +1091,10 @@ python3 scripts/benchmark_mobile_references.py \
 `SymSimplifyPredicates.*` 穷举四位偏移、符号和输入，检查布尔区间组合与不连续集合，并在 O0/O2 运行独立的字节及全位宽 oracle。覆盖 poison 注解、合流点隐藏的未定义输入、独立读取/freeze、保留的循环 PHI、共享用途收益、累计预算、高扇出、递归上限和混淆标记。翻译对象测试要求两种缓存键都区分条件分析预算。
 
 `SymExpr.*` 用四位输入与掩码的穷举检查非低位常量窗口，并覆盖宽承载、嵌套结构操作、已知与未知字节混合重组及算术进位反例。预算回归把宽节点放在递归边界，并拒绝复制超出预算的宽常量。未知窗口必须保持符号形式，且不能扩展表达式 DAG。 `SymState.*` 还在两种端序下区分标量推导常量和区域字面常量，确保不增加 DAG 节点、不改变完整存储值。
+
+`SymMBAWitness.*` 在不变的工作预算下检查取反输入的 96/128 次乘积，穷举低六位进位输入，并覆盖直到 257 位的字、相邻奇偶扰动和预算拒绝。具体非零反例只停止无效的零化搜索，不能授权替换。使用 `--family complemented-carry-product --count 108` 生成 432 个 48–256 次样本，包含取反输入、因子倒序和相邻奇偶扰动。保留所有旧样本，作为性能与输出成本对照。CLI 与 GUI worker 的源码测试通过全部六条源码路径，在 O0/O2 下执行两份 96 次反例样本。
+
+`SymMBAResiduePowers.*` 检查模幂周期、偶数输入、小指数、乘数的独立奇偶性，以及精确和少一的资源预算。测试使用直到 257 位的完整字乘积，并对原生位宽进行独立求解器证明。`--family residue-power --count 81` 增加 324 个 16–512 次样本，包含周期边界的相邻值和单因子扰动；受预算或规模限制的拒绝仍保留为结果。CLI 与真实 worker 还通过全部六条源码路径，在 O0/O2 下执行带独立乘数的 16/64 次乘积组。
 
 `SymReadability.*` 覆盖减法与补码的打印形式、结合律运算的代价、单比特和宽字面量、共享树大小饱和、有预算的候选选择，以及关闭采样时三比特的穷举等价性。`SymMBASample.*` 将窄值和任意精度验证与 AP 求值器比较，覆盖全部运算符、确定性赋值和未使用的宽输入。比较不同评分版本的候选质量时，必须用同一指标重算两边输出；SDK 随版本变化的大小计数仅供诊断。
 

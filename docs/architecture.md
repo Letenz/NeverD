@@ -128,6 +128,19 @@ SHA-256 vector projections participate in the same feature set, including the
 SGX/AMX fallback branches. LLVM-to-C validates the complete SHA operand/result
 shape before selecting a compiler intrinsic.
 
+`X86LiftTransactions` owns the bounded XABORT/XEND/XTEST instruction family,
+separate from SIMD cryptography. Raw byte/detail agreement precedes all effects.
+XABORT's constant byte and void completion use the shared system-state shape
+across LowIR, MedIR and C admission. Native LLVM and both C routes retain the
+same byte; a missing or dynamic operand cannot become an arbitrary abort code.
+
+`X86LiftTBM` owns the nine trailing-bit operations, including their XOP
+byte/detail validation, source-before-destination carry calculation, defined
+flags and undefined AF/PF effects. The common three-byte prefix and memory-tail
+validators retain VEX/XOP addressing rules; TBM owns its opcode/group, width and
+operand roles. Its arithmetic LowIR is shared by LLVM and both C routes.
+Undefined-output coverage is separate from an opaque machine-state bank audit.
+
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
 function without replacing its other family features, so standalone LLVM IR
@@ -215,6 +228,8 @@ pipeline paths therefore receive a diagnostic instead of executable output.
 The COFF loader separates V2 epilogue positions from prologue operations. V2 restoration uses the primary frame’s saved registers and the exact position within the declared epilogue; stack deallocation is outside that region. Invalid ranges, sizes and restore sequences fail before stack reads. V1 keeps its instruction-based epilogue recognition. Both versions share the checked stack and handler machinery on every backend.
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
+
+Linked x64 PE discovery collects canonical RIP-relative LEA code addresses during the existing call sweep. Targets still need independent ownership and a bounded callable-exit proof; internal labels, continuations and unsupported bodies remain excluded. Discovery and signature references share the address-encoding classifier. COFF conditional rel32 references additionally require explicit source function symbols and zero-addend relocations. Offline `--single-reference-context` audits each complete single-site clause against every overlapping raw source claim, retaining all alternatives at that site.
 
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting
@@ -469,8 +484,16 @@ occurrences, accessed-byte ownership and raw-base rebasing agree; source body
 filtering cannot bypass that requirement. This is not automatic immediate
 CPA2 lifting coverage.
 Both native compiler routes use fixed separate input/output registers, preserving
-source aliases and the encoded scale. SP provenance is retained in IR, but
-execution projection refuses it without its alignment and tagging environment.
+source aliases and the encoded scale. The common machine table also owns literal
+SP forms. With no image, an explicit raw-SP parameter can select the physical SP
+for one original memory instruction. Both projections save the host SP in X14,
+select the supplied SP, execute the unchanged SP-base access and restore the host
+SP on normal completion; X14 and memory are explicit clobbers. A fault observes
+the supplied SP. LLVMC checks the complete template, constraints and literal Rn,
+rather than recognizing an SP instruction as an ordinary GPR access.
+Image-backed bases, constants, SSA/frame values and reconstructed source stacks
+retain their admission failure before body filtering. This single-access contract
+does not reconstruct a stack ABI, asynchronous unwind or tagging environment.
 The software tracer admits a finite image/RAM read only when the authoritative
 address owner proves identical address bits for CPTA on/off and every internal
 CPACHECK choice over all accessed bytes. It refuses state-dependent addresses
@@ -7996,12 +8019,28 @@ backend.
 It publishes a complete packet or an error and never saves/restores a context,
 executes an instruction, or reads guest memory. Width validation rejects invalid
 backend values; architecture transports retain ownership of normalization.
+Its saved-context overload reads the same inventory directly from a context
+owned by that backend and its current address space. It uses the same register
+extraction and normalization as current-state reads, without restoring the
+context, accessing guest memory, or releasing faults or pending events. Expired,
+moved-from, foreign-owner and foreign-space contexts fail clearly; external
+backends without saved-state observation return an explicit unsupported error.
 Android's opt-in `observe_cpu_state` reserves its raw register-byte budget before
 execution and reports the current thread under `android.cpu_state`, even after a
 terminal CPU fault. Registers are named pairs of hexadecimal low/high 64-bit
 words. Capture failure has `registers: null` and a separate diagnostic, preserving
 the original workload stop. This is an observation of modeled architectural
 registers, not suspended-thread state or a resumable VM checkpoint.
+
+The separate `observe_thread_cpu_states` option reserves register bytes for the
+configured thread limit and emits `android.thread_cpu_states` in thread-creation
+order. It captures each unfinished thread: `current_cpu: true` reads the stopped
+CPU; other entries read the scheduler's saved context at its last switch. A
+failed capture retains that thread's diagnostic and does not prevent later
+observations or replace the workload stop. Completed and retired threads are
+omitted because their former contexts do not represent final state. An enabled
+option with no unfinished threads emits an empty array; the disabled option
+omits the field. Neither option captures guest memory or a resumable checkpoint.
 
 Android's separate `observe_memory_on_failure` option uses the existing
 `ExecutionBackend::snapshotBacking` owner for requested terminal RAM ranges.
@@ -8017,6 +8056,13 @@ prefix. `captureAArch64State` remains the sole owner of architectural widths
 and NZCV normalization. Retrying a failed transfer reinstalls the entire input;
 instruction admission, RAM transactions and translation-cache invalidation
 retain their existing boundaries.
+
+After a successful EL0 capture, an identical input packet may reuse the engine's
+registers while its address space, mapping generation and transport base remain
+unchanged. The comparison includes every scalar and vector field from the raw
+capture; normalization remains owned by `captureAArch64State`. Any changed input,
+mapping change or failed step requires a complete install. Supervisor steps keep
+complete installs, and every step still captures the complete output packet.
 
 Serial checked ARM64 steps reuse Unicorn's one-instruction translation only
 after comparing all four executable bytes with a bounded transport cache.
@@ -11911,6 +11957,15 @@ the C text. GUI worker previews and CLI `--stack-frame` requests use this same
 check for both C routes. The SDK checks optional input digests and original
 graph snapshots; the worker owns project history while CLI policies are
 explicit JSON inputs. See [stack-frame corrections](gui-stack-frame.md).
+
+For validated original AArch64 memory operations, a constant raw index supplies
+the encoded nominal byte displacement through the instruction owner. The same
+must-analysis records the exact instruction/sequence, original word, width and
+read/write direction, including SP origin. LowToMed frame bounds reuse these
+observations instead of its flow-insensitive address map. Unknown indices,
+conflicting predecessors, independent roots and expired temporaries grant no
+access. Nominal extents grant no checked-address, incoming-byte, translation or
+no-fault proof; opaque operations remain incomplete to generic memory analyses.
 
 ## Explicit runtime modules and persistent execution
 
