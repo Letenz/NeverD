@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86LiftAPXValidation.h"
+#include "X86LiftBEXTR.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -306,7 +307,6 @@ ApxBmiEncoding decodeApxBmiEncoding(const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_TZCNT:
   case X86_INS_POPCNT:
   case X86_INS_ANDN:
-  case X86_INS_BEXTR:
   case X86_INS_BZHI:
   case X86_INS_MULX:
   case X86_INS_PDEP:
@@ -451,31 +451,18 @@ ApxBmiEncoding decodeApxBmiEncoding(const cs_insn *Insn, const cs_x86 &X86) {
     return Result;
   }
 
-  if (Id == X86_INS_BEXTR || Id == X86_INS_SARX || Id == X86_INS_SHLX ||
-      Id == X86_INS_SHRX) {
+  if (Id == X86_INS_SARX || Id == X86_INS_SHLX || Id == X86_INS_SHRX) {
     const unsigned PP = H.P1 & 3;
-    const unsigned ExpectedPP = Id == X86_INS_BEXTR  ? 0
-                                : Id == X86_INS_SHLX ? 1
+    const unsigned ExpectedPP = Id == X86_INS_SHLX   ? 1
                                 : Id == X86_INS_SARX ? 2
                                                      : 3;
-    const uint8_t ReservedMask = Id == X86_INS_BEXTR ? 0xf3 : 0xf7;
-    const bool NF = Id == X86_INS_BEXTR && (H.P2 & 4) != 0;
-    const uint64_t ExpectedFlags =
-        Id != X86_INS_BEXTR || NF
-            ? 0
-            : X86_EFLAGS_RESET_OF | X86_EFLAGS_UNDEFINED_SF |
-                  X86_EFLAGS_MODIFY_ZF | X86_EFLAGS_UNDEFINED_AF |
-                  X86_EFLAGS_UNDEFINED_PF | X86_EFLAGS_RESET_CF;
     if ((H.P0 & 7) != 2 || H.Opcode != 0xf7 || (!H.Memory && (H.P1 & 4) == 0) ||
-        PP != ExpectedPP || (H.P2 & ReservedMask) != 0 || X86.op_count != 3 ||
-        !validateApxDetail(Insn, X86, ExpectedFlags, X86_REG_INVALID,
-                           Id == X86_INS_BEXTR && !NF ? X86_REG_EFLAGS
-                                                      : X86_REG_INVALID) ||
+        PP != ExpectedPP || (H.P2 & 0xf7) != 0 || X86.op_count != 3 ||
+        !validateApxDetail(Insn, X86, 0) ||
         !apxRegisterOperand(X86.operands[0], ModRMReg, Width, CS_AC_WRITE) ||
         !validateApxRM(Insn, X86, H, X86.operands[1], Width) ||
         !apxRegisterOperand(X86.operands[2], Vvvvv, Width, CS_AC_READ))
       return Result;
-    Result.NF = NF;
     Result.Destination = 0;
     Result.Source = 1;
     Result.Source2 = 2;
@@ -599,6 +586,8 @@ void emitMulx64(X86Lifter::LiftState &S, NdVar Left, NdVar Right, NdVar &Low,
 
 bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                 const cs_x86 &X86) {
+  if (Insn->id == X86_INS_BEXTR)
+    return bextr::lift(L, S, Insn);
   unsigned InsnId = Insn->id;
   const ApxBmiEncoding Apx = decodeApxBmiEncoding(Insn, X86);
   if (Apx.Present && !Apx.Valid)
@@ -736,59 +725,6 @@ bool liftExtBMI(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
              {Dst, NdVar::scalar(0, Dst.Size)});
       S.emit(NdOp::INT_SLESS, NdVar::reg(x86reg::SF, 1),
              {Dst, NdVar::scalar(0, Dst.Size)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::CF, 1), {NdVar::scalar(0, 1)});
-      S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
-    }
-    break;
-  }
-
-  case X86_INS_BEXTR: {
-    if (!Apx.Present && X86.op_count < 3)
-      break;
-    const unsigned DstIndex = Apx.Present ? Apx.Destination : 0;
-    const unsigned SrcIndex = Apx.Present ? Apx.Source : 1;
-    const unsigned CtrlIndex = Apx.Present ? Apx.Source2 : 2;
-    NdVar Src = L.operandRead(S, X86.operands[SrcIndex]);
-    NdVar Ctrl = L.operandRead(S, X86.operands[CtrlIndex]);
-    NdVar Dst = L.operandWrite(X86.operands[DstIndex]);
-    uint16_t Sz = Dst.Size;
-    const uint64_t Bits = Sz * 8;
-    NdVar Start = S.makeTemp(Sz);
-    S.emit(NdOp::INT_AND, Start, {Ctrl, NdVar::scalar(0xFF, Sz)});
-    NdVar StartInRange = S.makeTemp(1);
-    S.emit(NdOp::INT_LESS, StartInRange, {Start, NdVar::scalar(Bits, Sz)});
-    NdVar SafeStart = S.makeTemp(Sz);
-    S.emit(NdOp::SELECT, SafeStart,
-           {StartInRange, Start, NdVar::scalar(0, Sz)});
-    NdVar Shifted = S.makeTemp(Sz);
-    S.emit(NdOp::INT_RIGHT, Shifted, {Src, SafeStart});
-    NdVar Len = S.makeTemp(Sz);
-    S.emit(NdOp::INT_RIGHT, Len, {Ctrl, NdVar::scalar(8, Sz)});
-    S.emit(NdOp::INT_AND, Len, {Len, NdVar::scalar(0xFF, Sz)});
-    NdVar Remaining = S.makeTemp(Sz);
-    S.emit(NdOp::INT_SUB, Remaining, {NdVar::scalar(Bits, Sz), SafeStart});
-    NdVar LenFits = S.makeTemp(1);
-    S.emit(NdOp::INT_LESS, LenFits, {Len, Remaining});
-    NdVar EffectiveLen = S.makeTemp(Sz);
-    S.emit(NdOp::SELECT, EffectiveLen, {LenFits, Len, Remaining});
-    NdVar LenBelowWidth = S.makeTemp(1);
-    S.emit(NdOp::INT_LESS, LenBelowWidth,
-           {EffectiveLen, NdVar::scalar(Bits, Sz)});
-    NdVar SafeLen = S.makeTemp(Sz);
-    S.emit(NdOp::SELECT, SafeLen,
-           {LenBelowWidth, EffectiveLen, NdVar::scalar(0, Sz)});
-    NdVar PartialMask = S.makeTemp(Sz);
-    S.emit(NdOp::INT_LEFT, PartialMask, {NdVar::scalar(1, Sz), SafeLen});
-    S.emit(NdOp::INT_SUB, PartialMask, {PartialMask, NdVar::scalar(1, Sz)});
-    NdVar Mask = S.makeTemp(Sz);
-    S.emit(NdOp::SELECT, Mask,
-           {LenBelowWidth, PartialMask, NdVar::scalar(UINT64_MAX, Sz)});
-    NdVar Extracted = S.makeTemp(Sz);
-    S.emit(NdOp::INT_AND, Extracted, {Shifted, Mask});
-    S.emit(NdOp::SELECT, Dst, {StartInRange, Extracted, NdVar::scalar(0, Sz)});
-    if (!Apx.NF) {
-      S.emit(NdOp::INT_EQUAL, NdVar::reg(x86reg::ZF, 1),
-             {Dst, NdVar::scalar(0, Sz)});
       S.emit(NdOp::COPY, NdVar::reg(x86reg::CF, 1), {NdVar::scalar(0, 1)});
       S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::scalar(0, 1)});
     }

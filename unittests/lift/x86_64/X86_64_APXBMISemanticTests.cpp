@@ -277,6 +277,9 @@ TEST(X86APXBMISemantics, OrdinaryFormsUpdateOnlyArchitecturallyOwnedFlags) {
       Expected.CF = false;
       Expected.OF = false;
       Expected.ZF = Result == 0;
+      // These flags are undefined, not preserved. The concrete lift selects
+      // zero; X86BEXTRTests separately requires their undefined-bit receipt.
+      Expected.SF = Expected.AF = Expected.PF = false;
       break;
     case X86_INS_BLSR:
       Result = R19 & (R19 - 1);

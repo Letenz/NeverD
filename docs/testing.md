@@ -758,6 +758,22 @@ Compilation disables TBM and the test inspects the exact assembly before
 linking it, so the original TBM bytes are never executed on the host. This
 checks emitted-code semantics, not physical TBM faults or performance.
 
+`NeverDX86BEXTRTests` covers XOP immediate controls, VEX register controls,
+APX and APX NF with 32/64-bit operands. It checks register aliases, memory
+sources, ignored i386 fields, all three decode routes, malformed byte/detail
+records and source faults before architectural writes. An independent bit
+loop checks every start/length pair for register-control forms; SF/AF/PF
+have explicit undefined effects, and NF preserves incoming flags. Run the
+same prefix, APX BMI and undefined-effect suites listed above for TBM.
+
+`NeverDX86BEXTRPipeline` projects raw fixtures through LLVM, HighC and
+LLVM-to-C with optimization on/off, compiles at O0/O2, and executes the
+generated value/flag projections against a bit-loop oracle. Compilation
+disables BMI/TBM and the exact assembly is checked before linking. The
+original BMI/TBM/APX instruction bytes are never executed. This qualifies
+the value projections; hardware exception delivery and preservation of a
+faulting load after source optimization remain separate work.
+
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
 encoding fixtures cover every bank operation, register/immediate and extended
@@ -1262,6 +1278,15 @@ page boundaries, permissions, overlap and dynamic provider lifetime. Direct
 memory cases retain the complete backing on pointer, overlap, scan-limit,
 fortify and deadline refusal. `ProcessPublic.AndroidTerminatedCopyReportsMatchSDKAndCLI`
 compares whole SDK/CLI reports for both entries on success and failure.
+`CheckedAppend*` exercises `__strcat_chk` and `__strncat_chk` with exact prefix,
+suffix, NUL and errno expectations. It covers empty and truncated appends,
+full-width counts and extents, the zero-count shortcut, checked destination
+scan order, fortify failure before a later source read, read-only prefixes,
+source and tail permissions, overlap, page ends and closed providers. The
+direct memory test verifies complete backing on refusals, including expired
+budgets and space required for a synthesized NUL.
+`ProcessPublic.AndroidCheckedAppendReportsMatchSDKAndCLI` compares complete
+reports for success, read/write fortify failures and zero-count invalid pointers.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero

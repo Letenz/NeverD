@@ -81,6 +81,196 @@ protected:
   }
 };
 
+TEST_P(AndroidStringCopy, CheckedAppendBytesReturnAndErrno) {
+  Options.Android->Libraries["libappend-checked.so"] = {"__strcat_chk",
+                                                        "__strncat_chk"};
+  for (uint64_t Mode : {0u, 1u}) {
+    const char *Name = Mode ? "__strncat_chk" : "__strcat_chk";
+    for (uint64_t Count : {uint64_t(0), uint64_t(1), uint64_t(3), uint64_t(4),
+                           uint64_t(0x100000001), UINT64_MAX}) {
+      if (!Mode && Count != UINT64_MAX)
+        continue;
+      const uint64_t Copied = Mode ? std::min<uint64_t>(Count, 3) : 3;
+      for (uint64_t Size : {Copied + 2, uint64_t(0x100000001), UINT64_MAX}) {
+        for (uint64_t Route : {0u, 1u}) {
+          SCOPED_TRACE(testing::Message()
+                       << Name << ":" << Count << ":" << Size << ":" << Route);
+          auto &Bytes = Options.Android->Memory[0].Bytes;
+          Bytes.assign(8192, 0xa5);
+          Bytes[16] = 'p';
+          Bytes[17] = 0;
+          const std::array<uint8_t, 4> Text = {0x80, 0xff, 'x', 0};
+          std::copy(Text.begin(), Text.end(), Bytes.begin() + 4096);
+          auto Expected = Bytes;
+          std::copy_n(Text.begin(), Copied, Expected.begin() + 17);
+          Expected[17 + Copied] = 0;
+          llvm::support::endian::write64le(Expected.data() + 2048, 733);
+          auto R = run("append_checked", {Buffer + 16, Source, Count, Size,
+                                          Mode, Route, Buffer + 2048});
+          returned(R, Buffer + 16);
+          ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+          EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+          unsigned Calls = 0;
+          uint64_t Target = 0;
+          for (const auto &Call : R.NativeCalls) {
+            if (Call.Name == "dlsym") {
+              EXPECT_EQ(Call.Symbol, Name);
+              ASSERT_TRUE(Call.Result);
+              Target = *Call.Result;
+            }
+            if (Call.Name != Name)
+              continue;
+            EXPECT_EQ(Call.Arguments[Mode ? 3 : 2], Size);
+            if (Mode)
+              EXPECT_EQ(Call.Arguments[2], Count);
+            EXPECT_EQ(Call.Result, Buffer + 16);
+            EXPECT_EQ(Call.Library, Route ? "libappend-checked.so" : "");
+            if (Route)
+              EXPECT_EQ(Call.PC, Target);
+            ++Calls;
+          }
+          EXPECT_EQ(Calls, 1u);
+        }
+      }
+    }
+  }
+}
+
+TEST_P(AndroidStringCopy, CheckedAppendZeroCountAndClosedProvider) {
+  Options.Android->Libraries["libappend-checked.so"] = {"__strcat_chk",
+                                                        "__strncat_chk"};
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  auto Expected = Bytes;
+  llvm::support::endian::write64le(Expected.data() + 2048, 733);
+  for (uint64_t Route : {0u, 1u}) {
+    for (uint64_t Destination : {uint64_t(0), End, UINT64_MAX}) {
+      auto R = run("append_checked",
+                   {Destination, UINT64_MAX, 0, 0, 1, Route, Buffer + 2048});
+      returned(R, Destination);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    }
+  }
+  for (uint64_t Mode : {0u, 1u}) {
+    auto R = run("append_checked",
+                 {UINT64_MAX, UINT64_MAX, 0, 0, Mode, 2, Buffer + 2048});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name,
+              Mode ? "__strncat_chk" : "__strcat_chk");
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+    EXPECT_FALSE(R.ReturnValue);
+  }
+}
+
+TEST_P(AndroidStringCopy, CheckedAppendDestinationScanPrecedesSource) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  Bytes[16] = 'a';
+  Bytes[17] = 'b';
+  Bytes[18] = 'c';
+  Bytes[19] = 0;
+  for (uint64_t Mode : {0u, 1u}) {
+    const char *Name = Mode ? "__strncat_chk" : "__strcat_chk";
+    for (uint64_t Size : {0u, 1u, 3u})
+      rejected(run("append_checked",
+                   {Buffer + 16, UINT64_MAX, 1, Size, Mode, 0, Buffer + 2048}),
+               Name, "FORTIFY read exceeds object bounds in __strlen_chk");
+    for (uint64_t Destination : {uint64_t(0), End - 1, UINT64_MAX})
+      rejected(run("append_checked",
+                   {Destination, UINT64_MAX, 1, 0, Mode, 0, Buffer + 2048}),
+               Name, "invalid guest pointer");
+    rejected(run("append_checked", {Buffer + 16, UINT64_MAX, 1, UINT64_MAX,
+                                    Mode, 0, Buffer + 2048}),
+             Name, "invalid guest pointer");
+  }
+}
+
+TEST_P(AndroidStringCopy, CheckedAppendSpaceCheckPrecedesNextSourceByte) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  Bytes[16] = 'p';
+  Bytes[17] = 0;
+  Bytes[8191] = 'Z';
+  for (uint64_t Mode : {0u, 1u}) {
+    const char *Name = Mode ? "__strncat_chk" : "__strcat_chk";
+    // There is no readable byte after Z. No terminator slot remains, so the
+    // fortify failure must precede either that read or the strncat count end.
+    rejected(run("append_checked",
+                 {Buffer + 16, End - 1, 1, 2, Mode, 0, Buffer + 2048}),
+             Name, "FORTIFY destination extent exceeded");
+    rejected(run("append_checked_readonly",
+                 {Buffer, Buffer + 16, End - 1, 1, 2, Mode}),
+             Name, "invalid guest pointer");
+  }
+  auto Expected = Bytes;
+  Expected[17] = 'Z';
+  Expected[18] = 0;
+  auto R =
+      run("append_checked_readonly", {Source, Buffer + 16, End - 1, 1, 3, 1});
+  returned(R, Buffer + 16);
+  ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+  EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+  rejected(
+      run("append_checked", {Buffer + 16, End - 1, 1, 3, 0, 0, Buffer + 2048}),
+      "__strcat_chk", "invalid guest pointer");
+}
+
+TEST_P(AndroidStringCopy, CheckedAppendOnlyTailNeedsWritePermission) {
+  for (uint64_t Mode : {0u, 1u}) {
+    const char *Name = Mode ? "__strncat_chk" : "__strcat_chk";
+    auto &Bytes = Options.Android->Memory[0].Bytes;
+    Bytes.assign(8192, 0xa5);
+    Bytes[4094] = 'a';
+    Bytes[4095] = 'b';
+    Bytes[4096] = 0;
+    Bytes[4224] = 'c';
+    Bytes[4225] = 0;
+    auto Expected = Bytes;
+    Expected[4096] = 'c';
+    Expected[4097] = 0;
+    auto R = run("append_checked_readonly",
+                 {Buffer, Source - 2, Source + 128, 1, 4, Mode});
+    returned(R, Source - 2);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    Bytes[16] = 0;
+    // Appending an empty string still writes the existing terminator.
+    rejected(run("append_checked_readonly",
+                 {Source, Source - 2, Buffer + 16, 1, UINT64_MAX, Mode}),
+             Name, "invalid guest pointer");
+    Bytes[8190] = 'p';
+    Bytes[8191] = 0;
+    Expected = Bytes;
+    llvm::support::endian::write64le(Expected.data() + 2048, 733);
+    R = run("append_checked",
+            {End - 2, Buffer + 16, 1, UINT64_MAX, Mode, 0, Buffer + 2048});
+    returned(R, End - 2);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    rejected(run("append_checked", {End - 2, Source + 128, 1, UINT64_MAX, Mode,
+                                    0, Buffer + 2048}),
+             Name, "invalid guest pointer");
+  }
+}
+
+TEST_P(AndroidStringCopy, CheckedAppendRejectsOverlapIncludingExistingPrefix) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  Bytes[128] = 'a';
+  Bytes[129] = 'b';
+  Bytes[130] = 0;
+  for (uint64_t Mode : {0u, 1u}) {
+    const char *Name = Mode ? "__strncat_chk" : "__strcat_chk";
+    for (uint64_t Input : {Buffer + 128, Buffer + 129, Buffer + 130})
+      rejected(run("append_checked", {Buffer + 128, Input, 1, UINT64_MAX, Mode,
+                                      0, Buffer + 2048}),
+               Name, "overlapping string concatenation");
+  }
+}
+
 TEST_P(AndroidStringCopy, TerminatedCopyWholeStringNoPaddingAndErrno) {
   Options.Android->Libraries["libcopy-terminated.so"] = {"strcpy",
                                                          "__strcpy_chk"};
@@ -844,6 +1034,103 @@ INSTANTIATE_TEST_SUITE_P(
                                      ExecutionBackendKind::HVF,
                                      ExecutionBackendKind::KVM,
                                      ExecutionBackendKind::WHP)));
+
+TEST(AndroidStringCopyMemory, CheckedAppendRefusalsPreserveCompleteBacking) {
+  ExecutionConfiguration Configuration;
+  Configuration.Backend = ExecutionBackendKind::Unicorn;
+  Configuration.Architecture = GuestArchitecture::AArch64;
+  Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(Configuration);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  auto Backend = createExecutionBackend(Configuration, 4 * 1024 * 1024);
+  ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+  auto &CPU = *Backend->CPU;
+  auto &Space = *CPU.addressSpace();
+  llvm::cantFail(Space.map(Buffer, 8192, Read | Write | UserAccessible));
+  std::vector<uint8_t> Before(8192, 'x');
+  Before[16] = 'a';
+  Before[17] = 0;
+  Before[128] = 'x';
+  Before[129] = 'y';
+  Before[130] = 0;
+  Before[4094] = 'p';
+  Before[4095] = 0;
+  llvm::cantFail(CPU.write(Buffer, Before));
+  llvm::cantFail(Space.protect(Source, 4096, Read | UserAccessible));
+  ProcessOptions Options;
+  Options.Android.emplace();
+  Options.MemoryLimit = 16;
+  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
+  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, End, Options, Result);
+  const android_model::LinkedImage Linked{};
+  for (bool Bounded : {false, true}) {
+    SCOPED_TRACE(Bounded);
+    auto makeCall = [&](uint64_t Destination, uint64_t Input, uint64_t Count,
+                        uint64_t Extent) {
+      NativeCallEvent Call{};
+      Call.Name = Bounded ? "__strncat_chk" : "__strcat_chk";
+      Call.Arguments = {Destination, Input, Bounded ? Count : Extent, Extent};
+      return Call;
+    };
+    struct Case {
+      uint64_t Destination, Input, Count, Extent;
+      const char *Diagnostic;
+    };
+    for (auto C :
+         {Case{Buffer + 256, UINT64_MAX, 1, 0, "string scan exceeds"},
+          {Buffer + 16, Buffer + 256, 17, UINT64_MAX, "string scan exceeds"},
+          {Buffer + 16, Buffer + 256, 16, UINT64_MAX,
+           Bounded ? "native memory operation exceeds" : "string scan exceeds"},
+          {Buffer + 16, End - 1, 1, 2, "FORTIFY destination"},
+          {Buffer + 16, UINT64_MAX, 1, 1, "FORTIFY read"},
+          {Buffer + 16, UINT64_MAX, 1, UINT64_MAX, "invalid guest pointer"},
+          {Source - 2, Buffer + 128, 3, UINT64_MAX, "invalid guest pointer"},
+          {Buffer + 16, Buffer + 16, 1, UINT64_MAX,
+           "overlapping string concatenation"}}) {
+      SCOPED_TRACE(testing::Message()
+                   << C.Destination << ":" << C.Input << ":" << C.Count);
+      auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+      android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                  Linked);
+      auto Call = makeCall(C.Destination, C.Input, C.Count, C.Extent);
+      auto Value = Model.invoke(Call);
+      ASSERT_FALSE(bool(Value));
+      EXPECT_NE(llvm::toString(Value.takeError()).find(C.Diagnostic),
+                std::string::npos);
+      std::vector<uint8_t> After(8192);
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Before);
+    }
+    for (uint64_t Count : {0u, 1u}) {
+      auto Budget = llvm::cantFail(ExecutionBudget::create(
+          {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
+      android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                  Linked);
+      auto Call = makeCall(UINT64_MAX, UINT64_MAX, Count, 0);
+      auto Value = Model.invoke(Call);
+      if (Bounded && !Count) {
+        ASSERT_TRUE(bool(Value)) << llvm::toString(Value.takeError());
+        ASSERT_TRUE(*Value);
+        EXPECT_EQ(std::get<uint64_t>(**Value), UINT64_MAX);
+        EXPECT_FALSE(Model.timedOut());
+      } else {
+        ASSERT_FALSE(bool(Value));
+        EXPECT_NE(llvm::toString(Value.takeError()).find("timed out"),
+                  std::string::npos);
+        EXPECT_TRUE(Model.timedOut());
+      }
+      std::vector<uint8_t> After(8192);
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Before);
+    }
+  }
+}
 
 TEST(AndroidStringCopyMemory, TerminatedCopyRefusalsPreserveCompleteBacking) {
   ExecutionConfiguration Configuration;
