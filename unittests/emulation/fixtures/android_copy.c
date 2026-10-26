@@ -7,6 +7,10 @@
 /// Freestanding API 28 callers for destination bytes and pointer boundaries.
 
 typedef unsigned long u64;
+extern char *strcpy(char *, const char *);
+__asm__(".type strcpy, %function");
+extern char *__strcpy_chk(char *, const char *, u64);
+__asm__(".type __strcpy_chk, %function");
 extern char *strncpy(char *, const char *, u64);
 extern char *__strncpy_chk(char *, const char *, u64, u64);
 extern char *__strncpy_chk2(char *, const char *, u64, u64, u64);
@@ -19,6 +23,37 @@ extern int mprotect(void *, u64, int);
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
+
+u64 copy_terminated(char *dst, const char *src, u64 dst_size, u64 checked,
+                    u64 route, u64 *error) {
+  char *(*plain)(char *, const char *) = strcpy;
+  char *(*fortified)(char *, const char *, u64) = __strcpy_chk;
+  if (route) {
+    void *library = dlopen("libcopy-terminated.so", 2);
+    if (!library)
+      return 97;
+    void *function = dlsym(library, checked ? "__strcpy_chk" : "strcpy");
+    if (!function)
+      return 96;
+    if (checked)
+      fortified = function;
+    else
+      plain = function;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  char *result = checked ? fortified(dst, src, dst_size) : plain(dst, src);
+  *error = (u64)*__errno();
+  return (u64)result;
+}
+
+u64 copy_terminated_readonly(void *page, char *dst, const char *src,
+                             u64 dst_size, u64 checked) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return (u64)(checked ? __strcpy_chk(dst, src, dst_size) : strcpy(dst, src));
+}
 
 u64 copy_sized(char *dst, const char *src, u64 count, u64 route, u64 *error) {
   u64 (*copy)(char *, const char *, u64) = strlcpy;
