@@ -228,6 +228,53 @@ void retryAndConflict() {
           "Retry discarded newer history");
   }
 }
+void journalContents() {
+  for (bool firstCommit : {true, false}) {
+    Fixture fixture;
+    auto store = fixture.open();
+    if (!firstCommit)
+      initial(store);
+    const auto before = store.committedState();
+    const auto historyPath = fixture.path(files::File::History);
+    const auto beforeHistory =
+        firstCommit ? Json() : Json::parse(text(historyPath));
+    auto after = before;
+    // These bytes must remain JSON string data when encoded subdocuments are
+    // composed, including text that looks like a journal member boundary.
+    const std::string note =
+        "quote\" slash\\ tab\t backspace\b formfeed\f newline\n"
+        "\xe4\xb8\xad\xe6\x96\x87 },\"after\":null";
+    after["annotations"] = Json::array({{{"addr", "0x1000"}, {"text", note}}});
+    const Json command{{"kind", "annotation"},
+                       {"address", "0x1000"},
+                       {"before", firstCommit ? "" : "before"},
+                       {"after", note}};
+    store.stage(command);
+    fixture.writer.clear();
+    fixture.writer.failAt = 1;
+    rejects([&] { store.persist(after); }, "injected_failure");
+    const auto journal = Json::parse(text(fixture.path(files::File::Journal)));
+    const Json history{{"schema_version", 1},
+                       {"source_sha256", std::string(64, '0')},
+                       {"engine_version", "fixture"},
+                       {"cursor", 1},
+                       {"commands", Json::array({command})},
+                       {"state", after}};
+    const Json expected{
+        {"schema_version", 1}, {"source_sha256", std::string(64, '0')},
+        {"before", before},    {"before_history", beforeHistory},
+        {"after", after},      {"after_history", history}};
+    check(journal == expected, "Recovery journal changed its transaction");
+    fixture.writer.clear();
+    store.persist(after);
+    check(Json::parse(text(historyPath)) == history &&
+              !ProjectHistory::recoveryPending(fixture.binary),
+          "Retry disagrees with the published journal");
+    auto reopened = fixture.open();
+    check(reopened.committedState() == after && reopened.next(false) == command,
+          "Reopening lost escaped state or history");
+  }
+}
 void normalization() {
   auto state = ProjectHistory::normalizedState(
       {{"annotations", Json::array()}, {"renames", Json::array()}});
@@ -263,16 +310,45 @@ void budgetBeforePublication() {
             !ProjectHistory::recoveryPending(fixture.binary),
         "Oversized state published a partial transaction");
 }
+void journalBudgetBeforePublication() {
+  Fixture fixture;
+  auto store = fixture.open();
+  auto before = store.committedState();
+  constexpr std::size_t TextBytes = 1024;
+  // Each history fits by itself, but the journal's four state occurrences
+  // exceed its own budget. JSON row overhead puts this above the boundary.
+  const auto count =
+      neverd::limits::worker::kProjectHistoryMaxJournalBytes / (4 * TextBytes);
+  for (std::size_t index = 0; index < count; ++index)
+    before["annotations"].push_back(
+        {{"addr", hexAddress(index)}, {"text", std::string(TextBytes, 'b')}});
+  store.persist(before);
+  const auto history = text(fixture.path(files::File::History));
+  auto after = before;
+  for (auto &row : after["annotations"])
+    row["text"] = std::string(TextBytes, 'a');
+  fixture.writer.clear();
+  rejects([&] { store.persist(after); }, "history_budget_exceeded");
+  check(fixture.writer.calls.empty() && store.committedState() == before &&
+            text(fixture.path(files::File::History)) == history &&
+            !ProjectHistory::recoveryPending(fixture.binary),
+        "Oversized journal published a partial transaction");
+  check(fixture.open().committedState() == before,
+        "Oversized journal changed the persisted sidecars");
+}
 } // namespace
 int main() {
   try {
     unchangedFiles();
     failureBoundaries();
     retryAndConflict();
+    journalContents();
     normalization();
     budgetBeforePublication();
+    journalBudgetBeforePublication();
     std::cout << "Unchanged sidecars, every write failure boundary, retries, "
-                 "foreign edits and normalization passed\n";
+                 "journal contents, budgets, foreign edits and normalization "
+                 "passed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

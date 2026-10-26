@@ -3400,6 +3400,11 @@ while a persistent hold must preserve the old file and recovery journal with a
 path and Win32 error in the failure. A same-session retry completes only its own
 unchanged journal, preserves newer staged edits and undo/redo, and refuses foreign
 sidecars. Reopening also recovers the pending edit.
+`NeverDWorkerHistory` injects failure before and after each transaction write,
+checks unchanged sidecars and foreign-edit refusal, and retries newer staged
+edits. It compares complete published journals for first and later saves with
+escaped/Unicode annotation text, then verifies retry and reopening. History and
+journal budget cases must refuse before publishing any transaction file.
 `SearchCAPITest.SearchPagesContinuePast4096AndReverseWithoutRepeating` checks
 the real search matcher beyond its page budget, address zero, exact-limit
 completion, reverse cursors, text case folding and invalid options.
