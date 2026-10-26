@@ -6,6 +6,7 @@
 
 #include "neverd/sigs/SignatureCache.h"
 
+#include "LocalDataReference.h"
 #include "RuntimePointerContext.h"
 #include "VTableContext.h"
 
@@ -91,14 +92,16 @@ struct ModuleRecord {
 
 /// A StoredName, with its text at \c TextOffset of the names' text.
 struct NameRecord {
-  // The top bit encodes a typed data reference without enlarging each name.
-  // Text offsets address the mapped payload, which must fit below that bit.
+  // The top two bits distinguish external and source-local data references
+  // without enlarging each name. Text offsets must fit below those bits.
   uint64_t TextOffset;
   uint32_t Length;
   uint32_t Offset;
 };
 
 constexpr uint64_t DataReferenceBit = uint64_t(1) << 63;
+constexpr uint64_t LocalDataReferenceBit = DataReferenceBit >> 1;
+constexpr uint64_t NameKindBits = DataReferenceBit | LocalDataReferenceBit;
 
 static_assert(std::is_trivially_copyable_v<Header> &&
                   std::is_trivially_copyable_v<ModuleRecord> &&
@@ -208,11 +211,12 @@ bool SignatureCache::PendingEntry::makeNames(size_t Run) {
   for (size_t I = Run * NamesPerRun; I < End; ++I) {
     const NameRecord R =
         readRecord<NameRecord>(Data + NameRecords + I * sizeof(NameRecord));
-    const uint64_t Offset = R.TextOffset & ~DataReferenceBit;
+    const uint64_t Offset = R.TextOffset & ~NameKindBits;
     if (Offset > TextBytes || R.Length > TextBytes - Offset)
       return false;
     Names[I] = {R.Offset, std::string_view(Data + Text + Offset, R.Length),
-                (R.TextOffset & DataReferenceBit) != 0};
+                (R.TextOffset & DataReferenceBit) != 0,
+                (R.TextOffset & LocalDataReferenceBit) != 0};
   }
   return true;
 }
@@ -248,6 +252,15 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     for (uint64_t N = R.FirstName; N < R.FirstName + Names; ++N) {
       const NameRecord Name =
           readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord));
+      if (Name.TextOffset & LocalDataReferenceBit) {
+        const uint64_t Offset = Name.TextOffset & ~NameKindBits;
+        if (!(Name.TextOffset & DataReferenceBit) || Offset > TextBytes ||
+            Name.Length > TextBytes - Offset ||
+            !localDataAnchor(
+                llvm::StringRef(Data + Text + Offset, Name.Length)) ||
+            R.Context == uint8_t(ContextRequirement::LoadConfig))
+          return false;
+      }
       if ((Name.TextOffset & DataReferenceBit) &&
           (N < R.FirstName + R.PublicNameCount ||
            R.Context == uint8_t(ContextRequirement::None)))
@@ -255,15 +268,14 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
       HasData |= (Name.TextOffset & DataReferenceBit) != 0;
     }
     if (HasData && R.Context != uint8_t(ContextRequirement::LoadConfig)) {
-      llvm::SmallVector<std::pair<uint32_t, bool>, 8> Sites;
+      llvm::SmallVector<std::pair<uint32_t, uint64_t>, 8> Sites;
       for (uint64_t N = R.FirstName + R.PublicNameCount;
            N < R.FirstName + Names; ++N) {
         const NameRecord Name =
             readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord));
         if (Name.Offset >= R.TotalLen)
           return false;
-        Sites.emplace_back(Name.Offset,
-                           (Name.TextOffset & DataReferenceBit) != 0);
+        Sites.emplace_back(Name.Offset, Name.TextOffset & NameKindBits);
       }
       std::sort(Sites.begin(), Sites.end());
       for (size_t N = 1; N < Sites.size(); ++N)
@@ -293,12 +305,13 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
       for (uint64_t N = R.FirstName; N < R.FirstName + Names; ++N) {
         const NameRecord Name =
             readRecord<NameRecord>(Data + NameRecords + N * sizeof(NameRecord));
-        const uint64_t Offset = Name.TextOffset & ~DataReferenceBit;
+        const uint64_t Offset = Name.TextOffset & ~NameKindBits;
         if (Offset > TextBytes || Name.Length > TextBytes - Offset)
           return false;
         TableNames.emplace_back(
             Name.Offset, std::string_view(Data + Text + Offset, Name.Length),
-            (Name.TextOffset & DataReferenceBit) != 0);
+            (Name.TextOffset & DataReferenceBit) != 0,
+            (Name.TextOffset & LocalDataReferenceBit) != 0);
       }
       StoredModule Table = M;
       Table.Names = TableNames.data();
@@ -444,7 +457,7 @@ void SignatureCache::store(const std::filesystem::path &Source,
       H.TextBytes += Name.Name.size();
     }
   }
-  if (H.TextBytes >= DataReferenceBit)
+  if (H.TextBytes >= LocalDataReferenceBit)
     return;
   // The header and the block hashes keep the payload aligned, so the
   // payload's size does not depend on how many blocks it has.
@@ -487,7 +500,8 @@ void SignatureCache::store(const std::filesystem::path &Source,
     for (const StoredName &N :
          llvm::ArrayRef(M.Names, M.PublicNameCount + M.ReferenceCount)) {
       writeRecord(Written.data() + L->NameRecords + Name * sizeof(NameRecord),
-                  NameRecord{Text | (N.IsData ? DataReferenceBit : 0),
+                  NameRecord{Text | (N.IsData ? DataReferenceBit : 0) |
+                                 (N.IsLocalData ? LocalDataReferenceBit : 0),
                              static_cast<uint32_t>(N.Name.size()), N.Offset});
       std::memcpy(Written.data() + L->Text + Text, N.Name.data(),
                   N.Name.size());

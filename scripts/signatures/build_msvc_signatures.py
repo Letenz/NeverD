@@ -272,6 +272,10 @@ class PatternLine:
     data_sites: frozenset[int] = frozenset()
     is_vtable: bool = False
     load_config_fields: tuple[tuple[int, str, str], ...] = ()
+    local_sites: frozenset[int] = frozenset()
+
+    def reference_kind(self, offset: int) -> int:
+        return 2 if offset in self.local_sites else int(offset in self.data_sites)
 
     @property
     def is_load_config(self) -> bool:
@@ -279,27 +283,34 @@ class PatternLine:
 
     def with_refs(self, refs: tuple[tuple[int, str], ...],
                   require: bool | None = None,
-                  data_sites: frozenset[int] | None = None) -> "PatternLine":
+                  data_sites: frozenset[int] | None = None,
+                  local_sites: frozenset[int] | None = None) -> "PatternLine":
         """This line stating only `refs`."""
 
         if self.is_vtable or self.is_load_config:
-            if refs != self.refs or require not in (None, False) or data_sites:
+            if refs != self.refs or require not in (None, False) or data_sites or local_sites:
                 raise BuildError("metadata fields cannot be refined as function references")
             return self
         tokens = self.key.split()
         head, tail = tokens[:4], tokens[4:]
         if data_sites is None:
             data_sites = self.data_sites.intersection(offset for offset, _ in refs)
-        stated = reference_fields(refs, data_sites)
+        if local_sites is None:
+            local_sites = self.local_sites.intersection(offset for offset, _ in refs)
+        if not local_sites <= data_sites:
+            raise BuildError("local references must retain their data kind")
+        stated = reference_fields(refs, data_sites, local_sites)
         required = self.require_references if require is None else require
         constraint = ["!refs"] if required else ["!caller"] if self.require_caller else []
         text = " ".join([*head, *constraint, *self.names, *stated, *tail])
-        return PatternLine(text, self.key, self.names, refs, required, self.require_caller, data_sites)
+        return PatternLine(text, self.key, self.names, refs, required, self.require_caller,
+                           data_sites, local_sites=local_sites)
 
 
-def reference_fields(refs: tuple[tuple[int, str], ...], data_sites: frozenset[int]) -> list[str]:
+def reference_fields(refs: tuple[tuple[int, str], ...], data_sites: frozenset[int],
+                     local_sites: frozenset[int] = frozenset()) -> list[str]:
     """Keep function and external-data sites distinct across text round trips."""
-    return [f"{'&' if offset in data_sites else '^'}{offset:04X} {name}"
+    return [f"{'%' if offset in local_sites else '&' if offset in data_sites else '^'}{offset:04X} {name}"
             for offset, name in refs]
 
 
@@ -339,10 +350,11 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     names = tuple(sorted({name for line in lines for name in line.names}, key=alias_order))
     merged = common_refs(lines)
     tokens = merged.key.split()
-    stated = reference_fields(merged.refs, merged.data_sites)
+    stated = reference_fields(merged.refs, merged.data_sites, merged.local_sites)
     constraint = ["!refs"] if merged.require_references else ["!caller"] if merged.require_caller else []
     text = " ".join([*tokens[:4], *constraint, *names, *stated, *tokens[4:]])
-    return PatternLine(text, merged.key, names, merged.refs, merged.require_references, merged.require_caller, merged.data_sites)
+    return PatternLine(text, merged.key, names, merged.refs, merged.require_references,
+                       merged.require_caller, merged.data_sites, local_sites=merged.local_sites)
 
 
 def ref_table(refs: tuple[tuple[int, str], ...]) -> dict[int, set[str]]:
@@ -369,7 +381,7 @@ def distinguished(lines: list[PatternLine]) -> bool:
         for second in range(first + 1, len(tables)):
             a, b = tables[first], tables[second]
             if not any(offset in b and
-                       (offset in lines[first].data_sites) == (offset in lines[second].data_sites) and
+                       lines[first].reference_kind(offset) == lines[second].reference_kind(offset) and
                        not names & b[offset] for offset, names in a.items()):
                 return False
     return True
@@ -388,14 +400,16 @@ def common_refs(lines: list[PatternLine]) -> PatternLine:
     first = lines[0]
     required = any(line.require_references for line in lines)
     if all(line.refs == first.refs and line.data_sites == first.data_sites
+           and line.local_sites == first.local_sites
            and line.require_references == required
            for line in lines):
         return first
     offsets = set.intersection(*(set(ref_table(line.refs)) for line in lines))
     offsets = {offset for offset in offsets
-               if len({offset in line.data_sites for line in lines}) == 1}
+               if len({line.reference_kind(offset) for line in lines}) == 1}
     refs = {(offset, name) for line in lines for offset, name in line.refs if offset in offsets}
-    return first.with_refs(tuple(sorted(refs)), required, first.data_sites & offsets)
+    return first.with_refs(tuple(sorted(refs)), required, first.data_sites & offsets,
+                           first.local_sites & offsets)
 
 
 @dataclass(frozen=True)
@@ -488,7 +502,7 @@ def _states(pattern: str, other: str) -> bool:
     return True
 
 
-def parse_line(text: str) -> PatternLine | None:
+def parse_line(text: str, *, evidence: bool = False) -> PatternLine | None:
     """Split a line into its byte assertions and its names.
 
     The key is everything but the names, so two lines with equal keys make
@@ -499,13 +513,14 @@ def parse_line(text: str) -> PatternLine | None:
     if not stripped or stripped.startswith((";", "#")) or stripped == "---":
         return None
     tokens = stripped.split()
-    if len(tokens) > 4 and tokens[4] == "!evidence":
+    raw_evidence = len(tokens) > 4 and tokens[4] == "!evidence"
+    if raw_evidence and not evidence:
         raise BuildError("collision evidence is not a candidate pattern")
     if len(tokens) < 6:
         raise BuildError(f"malformed pattern line: {stripped[:120]}")
     names: list[str] = []
     refs: list[tuple[int, str]] = []
-    kinds: dict[int, bool] = {}
+    kinds: dict[int, int] = {}
     rest = tokens[:4]
     index = 4
     required = tokens[index] == "!refs"
@@ -513,7 +528,7 @@ def parse_line(text: str) -> PatternLine | None:
     vtable = tokens[index] == "!vtable"
     load_config = tokens[index] == "!loadcfg"
     config_pairs = defaultdict(dict)
-    if required or caller or vtable or load_config:
+    if required or caller or vtable or load_config or raw_evidence:
         index += 1
     while index < len(tokens):
         token = tokens[index]
@@ -521,15 +536,18 @@ def parse_line(text: str) -> PatternLine | None:
             names.append(f"{token} {tokens[index + 1]}")
             index += 2
             continue
-        if token.startswith(("^", "&")) and index + 1 < len(tokens):
-            offset, is_data = int(token[1:], 16), token.startswith("&")
-            if offset in kinds and kinds[offset] != is_data and not load_config:
+        if token.startswith(("^", "&", "%")) and index + 1 < len(tokens):
+            offset, kind = int(token[1:], 16), {"^": 0, "&": 1, "%": 2}[token[0]]
+            if kind == 2 and (not (required or caller or evidence) or not re.fullmatch(
+                    r"[0-9A-F]{8}:[^\s\x00-\x20\x7f]+", tokens[index + 1])):
+                raise BuildError("invalid source-local data anchor")
+            if offset in kinds and kinds[offset] != kind and not load_config:
                 raise BuildError("reference site mixes function and data kinds")
             if load_config:
-                if is_data in config_pairs[offset]:
+                if kind in config_pairs[offset]:
                     raise BuildError("duplicate load-configuration field kind")
-                config_pairs[offset][is_data] = tokens[index + 1]
-            kinds[offset] = is_data
+                config_pairs[offset][kind] = tokens[index + 1]
+            kinds[offset] = kind
             refs.append((offset, tokens[index + 1]))
             index += 2
             continue
@@ -560,10 +578,12 @@ def parse_line(text: str) -> PatternLine | None:
                 any(offset < 0 or offset % 8 or offset + 8 > shape.total or
                     set(pair) != {False, True} for offset, pair in config_pairs.items()):
             raise BuildError("invalid load-configuration pointer/default pairs")
-    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller,
+    normalized = " ".join([*tokens[:4], *tokens[5:]]) if raw_evidence else stripped
+    return PatternLine(normalized, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller,
                        frozenset(offset for offset, is_data in kinds.items() if is_data), vtable,
                        tuple(sorted((offset, pair[True], pair[False])
-                                    for offset, pair in config_pairs.items())))
+                                    for offset, pair in config_pairs.items())),
+                       frozenset(offset for offset, kind in kinds.items() if kind == 2))
 
 
 @dataclass
@@ -591,7 +611,7 @@ class FoldResult:
         return [line.text for line in self.lines]
 
 
-def fold(lines: list[str]) -> FoldResult:
+def fold(lines: list[str], *, evidence: bool = False) -> FoldResult:
     """Fold identical lines and drop every ambiguous byte claim.
 
     Lines with the same key whose sets of names share a name are one
@@ -609,7 +629,7 @@ def fold(lines: list[str]) -> FoldResult:
     callers: dict[str, PatternLine] = {}
     seen = 0
     for raw in lines:
-        parsed = parse_line(raw)
+        parsed = parse_line(raw, evidence=evidence)
         if parsed is None:
             continue
         if parsed.is_vtable or parsed.is_load_config:
