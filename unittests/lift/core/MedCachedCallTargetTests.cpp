@@ -327,10 +327,12 @@ TEST(MedCachedCallTarget, HighIRNamesOnlyImportsWhoseReadStillReachesTheCall) {
 
 TEST(MedCachedCallTarget,
      CrossBlockObservationsKeepTheSignatureAndCapturedValue) {
+  enum class Barrier { None, Store, Call, OrderedRead, Join };
   for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
-    for (bool SlotChanges : {false, true}) {
+    for (Barrier Between : {Barrier::None, Barrier::Store, Barrier::Call,
+                            Barrier::OrderedRead, Barrier::Join}) {
       SCOPED_TRACE(static_cast<int>(Architecture));
-      SCOPED_TRACE(SlotChanges);
+      SCOPED_TRACE(static_cast<int>(Between));
       const auto PointerBytes = getTargetRegInfo(Architecture).PointerSize;
       auto Observed = value(0, PointerBytes);
       Observed.TheArch = Architecture;
@@ -338,6 +340,9 @@ TEST(MedCachedCallTarget,
       auto Result = value(1, PointerBytes);
       Result.TheArch = Architecture;
       Result.SSAVer = 1;
+      auto Auxiliary = value(2, PointerBytes);
+      Auxiliary.TheArch = Architecture;
+      Auxiliary.SSAVer = 1;
       const auto Slot = kObservationSlotBase + kObservationSlotOffset;
       MedBlock Read;
       Read.Id = 0;
@@ -351,11 +356,21 @@ TEST(MedCachedCallTarget,
       Call.Id = 1;
       Call.StartAddr = kObservationSuccessor;
       Call.Preds = {0};
-      if (SlotChanges)
+      if (Between == Barrier::Store)
         Call.Ops.push_back(
             op(NdOp::STORE, {},
                {MedVar::makeConst(Slot, PointerBytes),
                 MedVar::makeConst(kReplacementCallable, PointerBytes)}));
+      else if (Between == Barrier::Call)
+        Call.Ops.push_back(
+            op(NdOp::CALL, Auxiliary,
+               {MedVar::makeConst(kReplacementCallable, PointerBytes)}));
+      else if (Between == Barrier::OrderedRead) {
+        auto Ordered =
+            op(NdOp::LOAD, Auxiliary, {MedVar::makeConst(Slot, PointerBytes)});
+        Ordered.MemoryOrdering = NdMemoryOrdering::Acquire;
+        Call.Ops.push_back(Ordered);
+      }
       const auto CallSite = Call.StartAddr + Call.Ops.size();
       Call.Ops.push_back(op(NdOp::INDIR_CALL, Result, {Observed}));
       Call.Ops.push_back(op(NdOp::RETURN, {}, {Result}));
@@ -363,6 +378,24 @@ TEST(MedCachedCallTarget,
       F.Entry = kObservationEntry;
       F.Name = kObservationFunction;
       F.Blocks = {Read, Call};
+      if (Between == Barrier::Join) {
+        auto &Entry = F.Blocks.front();
+        Entry.Succs = {1, 2};
+        const auto OtherEntry = kObservationSuccessor + kObservationBlockStride;
+        Entry.Ops.back() =
+            op(NdOp::COND_BR, {},
+               {MedVar::makeConst(OtherEntry, PointerBytes), Observed});
+        MedBlock Other;
+        Other.Id = 2;
+        Other.StartAddr = OtherEntry;
+        Other.Preds = {0};
+        Other.Succs = {1};
+        Other.Ops = {
+            op(NdOp::BRANCH, {},
+               {MedVar::makeConst(kObservationSuccessor, PointerBytes)})};
+        F.Blocks[1].Preds.push_back(Other.Id);
+        F.Blocks.push_back(Other);
+      }
       for (auto &B : F.Blocks) {
         for (size_t I = 0; I < B.Ops.size(); ++I)
           B.Ops[I].Addr = B.StartAddr + I;
@@ -375,10 +408,14 @@ TEST(MedCachedCallTarget,
       const unsigned Calls =
           checkCallAt(High, CallSite, [&](const HighExpr &E) {
             EXPECT_EQ(E.CallAddr, Slot);
-            EXPECT_TRUE(E.IsIndirectCall);
-            ASSERT_TRUE(E.IndirectTarget);
-            ASSERT_EQ(E.IndirectTarget->Kind, ExprKind::Var);
-            EXPECT_EQ(E.IndirectTarget->Var, Observed);
+            EXPECT_EQ(E.IsIndirectCall, Between != Barrier::None);
+            if (Between == Barrier::None)
+              EXPECT_EQ(E.CallTarget, kObservedImport);
+            else {
+              ASSERT_TRUE(E.IndirectTarget);
+              ASSERT_EQ(E.IndirectTarget->Kind, ExprKind::Var);
+              EXPECT_EQ(E.IndirectTarget->Var, Observed);
+            }
           });
       EXPECT_EQ(Calls, 1u);
     }

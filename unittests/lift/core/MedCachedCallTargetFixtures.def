@@ -19,6 +19,7 @@ CACHED_CALL_STRING(kObservedImport, "observed_import")
 #ifdef CACHED_CALL_INTEGER
 CACHED_CALL_INTEGER(kObservationEntry, 0x1000)
 CACHED_CALL_INTEGER(kObservationSuccessor, 0x1100)
+CACHED_CALL_INTEGER(kObservationBlockStride, 0x100)
 CACHED_CALL_INTEGER(kObservationSlotBase, 0x3000)
 CACHED_CALL_INTEGER(kObservationSlotOffset, 8)
 CACHED_CALL_INTEGER(kReplacementCallable, 0x4000)

@@ -245,41 +245,47 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
 
   if (tryResolveConstTarget(CurOp, FuncNames, Image, Result))
     return Result;
-  if (CurOp.NumInputs && !CurOp.Inputs[0].isConst())
-    for (size_t I = 0; I < CurBlock.Ops.size(); ++I)
-      if (&CurBlock.Ops[I] == &CurOp) {
-        if (const auto Cached =
-                resolveMedCallTarget(CurBlock, I, CurOp.Inputs[0])) {
-          if (Cached->ThroughSlot &&
-              tryResolveLoadedSlot(Cached->Address, FuncNames, Image, Result)) {
-            // Naming a captured import has the same memory premise as
-            // inlining its original read at the call. Copies and private
-            // spills do not change which observation owns that premise.
-            CallTargetUse = {&CurBlock, I};
-            const bool Reaches = memoryReadReachesCallTarget(
-                CurBlock.Ops[Cached->LoadIndex].Output);
-            CallTargetUse = {};
-            if (Reaches)
-              return Result;
-            CallIndTarget Captured;
-            Captured.Addr = Result.Addr;
-            return Captured;
-          }
-          if (!Cached->ThroughSlot &&
-              tryResolveNamedAddress(Cached->Address, FuncNames, Image, Result))
-            return Result;
-        }
-        break;
+  size_t CallIdx = 0;
+  for (; CallIdx < CurBlock.Ops.size(); ++CallIdx)
+    if (&CurBlock.Ops[CallIdx] == &CurOp)
+      break;
+  const auto ReadReaches = [&](const MedVar &Observation) {
+    CallTargetUse = {&CurBlock, CallIdx};
+    const bool Reaches = memoryReadReachesCallTarget(Observation);
+    CallTargetUse = {};
+    return Reaches;
+  };
+  if (CurOp.NumInputs && !CurOp.Inputs[0].isConst() &&
+      CallIdx < CurBlock.Ops.size()) {
+    if (const auto Cached =
+            resolveMedCallTarget(CurBlock, CallIdx, CurOp.Inputs[0])) {
+      if (Cached->ThroughSlot &&
+          tryResolveLoadedSlot(Cached->Address, FuncNames, Image, Result)) {
+        // Naming a captured import has the same memory premise as
+        // inlining its original read at the call. Copies and private
+        // spills do not change which observation owns that premise.
+        if (ReadReaches(CurBlock.Ops[Cached->LoadIndex].Output))
+          return Result;
+        CallIndTarget Captured;
+        Captured.Addr = Result.Addr;
+        return Captured;
       }
+      if (!Cached->ThroughSlot &&
+          tryResolveNamedAddress(Cached->Address, FuncNames, Image, Result))
+        return Result;
+    }
+  }
   // A predecessor's observation can still identify the captured value's
-  // signature. It supplies no proof that reading the slot at this call is
-  // equivalent, so keep the runtime operand even when the import is known.
+  // signature. Naming it requires the same reaching-memory proof as a local
+  // read; otherwise keep the runtime operand even when the import is known.
   if (TargetExpr && TargetExpr->Kind == ExprKind::Var) {
     ExprPtr Definition = TargetExpr;
+    MedVar Observation = Definition->Var;
     for (int Depth = 0; Depth < limits::kCallTargetSlotDepth && Definition &&
                         Definition->Kind == ExprKind::Var &&
                         Definition->Var.Id >= 0 && !Definition->Var.isConst();
          ++Depth) {
+      Observation = Definition->Var;
       const auto It = DefExpr.find(varKey(Definition->Var));
       Definition = It == DefExpr.end() ? nullptr : It->second;
     }
@@ -290,6 +296,8 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
         Definition->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         tryResolveLoadedSlot(Definition->Operands[0]->ConstVal, FuncNames,
                              Image, Result)) {
+      if (ReadReaches(Observation))
+        return Result;
       CallIndTarget Captured;
       Captured.Addr = Result.Addr;
       return Captured;

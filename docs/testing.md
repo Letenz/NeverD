@@ -14167,11 +14167,12 @@ while an image missing an accessed byte must fail before emission.
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
 mutable import captures and Win64 scalar results versus ELF aggregate transport.
-It also checks 24 direct/copy/private-spill combinations and eight predecessor
+It also checks 24 direct/copy/private-spill combinations and 20 predecessor
 captures across x86, x64, ARM32 and AArch64. Unchanged original observations
 retain named imports; overwritten slots retain their captured values. SSA and
-pre-SSA queries agree on the original LOAD index, and predecessor captures keep
-their signature without moving the read. The linked AAPCS64 PLT/GOT fixtures
+pre-SSA queries agree on the original LOAD index. A single predecessor with no
+intervening effects can retain the import name; stores, calls, ordered reads
+and joins retain the original captured value and signature. The linked AAPCS64 PLT/GOT fixtures
 retain `getuid()` and `toupper(arg0)` in HighC alongside their LLVM counterparts.
 `NeverDWorkerCachedCallABI` generates PE fixtures with direct and cached
 seven-argument imports and zero/one-argument private callees, checking both C
