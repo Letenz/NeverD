@@ -473,129 +473,123 @@ TEST(IncomingHomeSource, MixedWidthReadsShareOneCompleteInput) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64})
     for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::ELF})
       for (uint16_t CarrierBytes : {4, 8})
-        for (uint16_t PrefixBytes : {1, 2, 4}) {
-          // The ARM64 fixture uses x29 as a full-width scratch value while
-          // preserving its original identity in a private frame.
-          if (Architecture == Arch::AArch64 && CarrierBytes != 8)
-            continue;
-          SCOPED_TRACE(static_cast<unsigned>(Architecture));
-          SCOPED_TRACE(static_cast<unsigned>(Format));
-          SCOPED_TRACE(CarrierBytes);
-          SCOPED_TRACE(PrefixBytes);
-          auto Image = homeImage(Architecture, Format);
-          auto &Text = Image.Segments.front();
-          Text.Data.resize(Callee - Caller);
-          if (Architecture == Arch::X64) {
-            std::vector<uint8_t> Store;
-            if (CarrierBytes == 8)
-              Store.push_back(0x48);
-            Store.insert(Store.end(),
-                         {0xc7, 0x04, 0x24, 0xd5, 0xff, 0xff, 0xff});
-            Store.resize(8, 0x90);
-            std::copy(Store.begin(), Store.end(), Text.Data.begin() + 4);
-            if (PrefixBytes < 4) {
+        for (uint16_t PrefixBytes : {1, 2, 4})
+          for (bool Signed : {false, true}) {
+            // The ARM64 fixture uses x29 as a full-width scratch value while
+            // preserving its original identity in a private frame.
+            if (Architecture == Arch::AArch64 && CarrierBytes != 8)
+              continue;
+            SCOPED_TRACE(static_cast<unsigned>(Architecture));
+            SCOPED_TRACE(static_cast<unsigned>(Format));
+            SCOPED_TRACE(CarrierBytes);
+            SCOPED_TRACE(PrefixBytes);
+            SCOPED_TRACE(Signed);
+            auto Image = homeImage(Architecture, Format);
+            auto &Text = Image.Segments.front();
+            Text.Data.resize(Callee - Caller);
+            if (Architecture == Arch::X64) {
+              std::vector<uint8_t> Store;
+              if (CarrierBytes == 8)
+                Store.push_back(0x48);
+              Store.insert(Store.end(),
+                           {0xc7, 0x04, 0x24, 0xd5, 0xff, 0xff, 0xff});
+              Store.resize(8, 0x90);
+              std::copy(Store.begin(), Store.end(), Text.Data.begin() + 4);
+              if (PrefixBytes < 4) {
+                if (CarrierBytes == 8)
+                  Text.Data.push_back(0x48);
+                Text.Data.insert(
+                    Text.Data.end(),
+                    {0x0f,
+                     static_cast<uint8_t>((PrefixBytes == 1 ? 0xb6 : 0xb7) +
+                                          (Signed ? 8 : 0)),
+                     0x44, 0x24, 8}); // movzx [r/e]ax,[rsp+8]
+              } else if (Signed && CarrierBytes == 8)
+                Text.Data.insert(Text.Data.end(), {0x48, 0x63, 0x44, 0x24, 8});
+              else
+                Text.Data.insert(Text.Data.end(), {0x8b, 0x44, 0x24, 8});
               if (CarrierBytes == 8)
                 Text.Data.push_back(0x48);
+              Text.Data.insert(Text.Data.end(), {0x03, 0x44, 0x24, 8,
+                                                 0xc3}); // add [r/e]ax,[rsp+8]
+            } else {
+              Text.Data[11] = 0x92; // movn x0,#42
+              Text.Data.insert(Text.Data.end(), {0xfd, 0x7b, 0xbf, 0xa9});
               Text.Data.insert(
                   Text.Data.end(),
-                  {0x0f, static_cast<uint8_t>(PrefixBytes == 1 ? 0xb6 : 0xb7),
-                   0x44, 0x24, 8}); // movzx [r/e]ax,[rsp+8]
-            } else
-              Text.Data.insert(Text.Data.end(), {0x8b, 0x44, 0x24, 8});
-            if (CarrierBytes == 8)
-              Text.Data.push_back(0x48);
-            Text.Data.insert(Text.Data.end(), {0x03, 0x44, 0x24, 8,
-                                               0xc3}); // add [r/e]ax,[rsp+8]
-          } else {
-            Text.Data[11] = 0x92; // movn x0,#42
-            Text.Data.insert(
-                Text.Data.end(),
-                {0xfd,
-                 0x7b,
-                 0xbf,
-                 0xa9, // stp x29,x30,[sp,#-16]!
-                 0xe0,
-                 static_cast<uint8_t>(PrefixBytes == 1   ? 0x43
-                                      : PrefixBytes == 2 ? 0x23
-                                                         : 0x13),
-                 0x40,
-                 static_cast<uint8_t>(PrefixBytes == 1 ? 0x39
-                                      : PrefixBytes == 2
-                                          ? 0x79
-                                          : 0xb9), // ldrb/h/w0,[sp,#16]
-                 0xfd,
-                 0x0b,
-                 0x40,
-                 0xf9, // ldr x29,[sp,#16]
-                 0x00,
-                 0x00,
-                 0x1d,
-                 0x8b, // add x0,x0,x29
-                 0xfd,
-                 0x7b,
-                 0xc1,
-                 0xa8, // ldp x29,x30,[sp],#16
-                 0xc0,
-                 0x03,
-                 0x5f,
-                 0xd6}); // ret
-          }
-          Text.Size = Text.FileSz = Text.Data.size();
-          const uint64_t Expected = (uint64_t(1) << (PrefixBytes * 8)) - 86;
-          for (bool Selected : {false, true})
-            for (bool LLVM : {false, true}) {
-              SCOPED_TRACE(Selected);
-              SCOPED_TRACE(LLVM);
-              llvm::LLVMContext Context;
-              PipelineOptions Options;
-              Options.EmitDumpOutput = false;
-              Options.SourceProjection = LLVM;
-              Options.LiftMode = LLVM;
-              Options.OnlyFunctionEntries =
-                  Selected ? std::set<va_t>{Caller}
-                           : std::set<va_t>{Caller, Callee};
-              auto Result = Pipeline().run(Image, Context, Options);
-              ASSERT_TRUE(Result.Success) << Result.Error;
-              const auto Hints =
-                  readIncomingStackCallees(Image, Result, {Callee});
-              ASSERT_TRUE(Hints.contains(Callee));
-              ASSERT_EQ(Hints.at(Callee).Parameters.size(), 1u);
-              EXPECT_EQ(Hints.at(Callee).Parameters.front().Type->Size,
-                        CarrierBytes);
-              std::string Source;
-              llvm::raw_string_ostream Out(Source);
-              CEmitterOptions COptions;
-              COptions.TheArch = Architecture;
-              COptions.Format = Format;
-              COptions.Image = &Image;
-              if (LLVM) {
-                ASSERT_TRUE(Result.LlvmModule);
-                ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule));
-                ASSERT_TRUE(
-                    LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions));
-              } else
-                ASSERT_TRUE(
-                    HighCEmitter().emit(Result.HighFuncs, Out, COptions));
-              ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos)
-                  << Source;
-              const auto CarrierType =
-                  "uint" + std::to_string(CarrierBytes * 8) + "_t";
-              const auto PrefixType =
-                  "uint" + std::to_string(PrefixBytes * 8) + "_t";
-              const std::string Oracle =
-                  (Selected ? "\nuint64_t read_home(" + CarrierType +
-                                  " value) { return (" + CarrierType +
-                                  ")(value + (" + PrefixType + ")value); }\n"
-                            : "") +
-                  "\nint main(void) { return caller_home() != UINT64_C(" +
-                  std::to_string(Expected) + "); }\n";
-              for (llvm::StringRef Level : {"-O0", "-O2"})
-                source_call_execution_test::compileAndRun(
-                    Source + Oracle,
-                    {Level, "-ftrivial-auto-var-init=pattern",
-                     "-fsanitize=undefined", "-fsanitize-trap=all"});
+                  {0xe0,
+                   static_cast<uint8_t>(PrefixBytes == 1   ? 0x43
+                                        : PrefixBytes == 2 ? 0x23
+                                                           : 0x13),
+                   static_cast<uint8_t>(Signed ? 0x80 : 0x40),
+                   static_cast<uint8_t>(PrefixBytes == 1   ? 0x39
+                                        : PrefixBytes == 2 ? 0x79
+                                                           : 0xb9)});
+              Text.Data.insert(Text.Data.end(),
+                               {0xfd, 0x0b, 0x40, 0xf9, // ldr x29,[sp,#16]
+                                0x00, 0x00, 0x1d, 0x8b, // add x0,x0,x29
+                                0xfd, 0x7b, 0xc1, 0xa8, // ldp x29,x30,[sp],#16
+                                0xc0, 0x03, 0x5f, 0xd6}); // ret
             }
-        }
+            Text.Size = Text.FileSz = Text.Data.size();
+            const uint64_t Expected =
+                Signed ? (CarrierBytes == 8 ? uint64_t(-86)
+                                            : (uint64_t(1) << 32) - 86)
+                       : (uint64_t(1) << (PrefixBytes * 8)) - 86;
+            for (bool Selected : {false, true})
+              for (bool LLVM : {false, true}) {
+                SCOPED_TRACE(Selected);
+                SCOPED_TRACE(LLVM);
+                llvm::LLVMContext Context;
+                PipelineOptions Options;
+                Options.EmitDumpOutput = false;
+                Options.SourceProjection = LLVM;
+                Options.LiftMode = LLVM;
+                Options.OnlyFunctionEntries =
+                    Selected ? std::set<va_t>{Caller}
+                             : std::set<va_t>{Caller, Callee};
+                auto Result = Pipeline().run(Image, Context, Options);
+                ASSERT_TRUE(Result.Success) << Result.Error;
+                const auto Hints =
+                    readIncomingStackCallees(Image, Result, {Callee});
+                ASSERT_TRUE(Hints.contains(Callee));
+                ASSERT_EQ(Hints.at(Callee).Parameters.size(), 1u);
+                EXPECT_EQ(Hints.at(Callee).Parameters.front().Type->Size,
+                          CarrierBytes);
+                std::string Source;
+                llvm::raw_string_ostream Out(Source);
+                CEmitterOptions COptions;
+                COptions.TheArch = Architecture;
+                COptions.Format = Format;
+                COptions.Image = &Image;
+                if (LLVM) {
+                  ASSERT_TRUE(Result.LlvmModule);
+                  ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule));
+                  ASSERT_TRUE(
+                      LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions));
+                } else
+                  ASSERT_TRUE(
+                      HighCEmitter().emit(Result.HighFuncs, Out, COptions));
+                ASSERT_EQ(Source.find("__builtin_trap"), std::string::npos)
+                    << Source;
+                const auto CarrierType =
+                    "uint" + std::to_string(CarrierBytes * 8) + "_t";
+                const auto PrefixType = std::string(Signed ? "int" : "uint") +
+                                        std::to_string(PrefixBytes * 8) + "_t";
+                const std::string Oracle =
+                    (Selected ? "\nuint64_t read_home(" + CarrierType +
+                                    " value) { return (" + CarrierType +
+                                    ")(value + (" + PrefixType + ")value); }\n"
+                              : "") +
+                    "\nint main(void) { return caller_home() != UINT64_C(" +
+                    std::to_string(Expected) + "); }\n";
+                for (llvm::StringRef Level : {"-O0", "-O2"})
+                  source_call_execution_test::compileAndRun(
+                      Source + Oracle,
+                      {Level, "-ftrivial-auto-var-init=pattern",
+                       "-fsanitize=undefined", "-fsanitize-trap=all"});
+              }
+          }
 }
 
 TEST(IncomingHomeSource, OmittedStackLeafUsesTheOrdinaryCalleeReader) {
