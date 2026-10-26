@@ -35,7 +35,7 @@ public:
   void setStrict(bool S) { Strict = S; }
   bool isStrict() const { return Strict; }
 
-  /// arm64e images select original immediate accesses. Architecture-only
+  /// arm64e.x1 images select original immediate accesses. Architecture-only
   /// callers retain them conservatively until an image configures the lifter.
   void setPreserveImmediateMemory(bool Preserve) {
     PreserveImmediateMemory = Preserve;

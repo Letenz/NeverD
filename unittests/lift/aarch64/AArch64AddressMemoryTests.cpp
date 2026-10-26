@@ -2533,11 +2533,18 @@ TEST(AArch64ImmediateMemory,
     Image.Arch = Arch::AArch64;
     Image.Bits = Bitness::Bits64;
     Image.Format = BinaryFormat::MachO;
-    for (uint32_t Subtype : {uint32_t(llvm::MachO::CPU_SUBTYPE_ARM64_ALL),
-                             macho_loader::arm64e::kCPUSubtype,
-                             macho_loader::arm64e::kCPUSubtypeX1,
-                             uint32_t(llvm::MachO::CPU_SUBTYPE_ARM64_ALL),
-                             macho_loader::arm64e::kCPUSubtypeX1}) {
+    const std::pair<uint32_t, bool> Subtypes[] = {
+        {llvm::MachO::CPU_SUBTYPE_ARM64_ALL, false},
+        {macho_loader::arm64e::kCPUSubtype, false},
+        {macho_loader::arm64e::kCPUSubtypeX1, true},
+        {macho_loader::arm64e::kCPUSubtypeX1 | kImmediateSubtypeCapabilities,
+         true},
+        {macho_loader::arm64e::kCPUSubtype | kImmediateSubtypeCapabilities,
+         false},
+        {llvm::MachO::CPU_SUBTYPE_ARM64_ALL, false},
+        {macho_loader::arm64e::kCPUSubtypeX1, true},
+    };
+    for (const auto &[Subtype, Preserve] : Subtypes) {
       Image.MachOCPUSubtype = Subtype;
       ASSERT_TRUE(Dec.selectMode(Image, kEntry));
       std::array<uint8_t, kWordBytes> Bytes;
@@ -2552,7 +2559,7 @@ TEST(AArch64ImmediateMemory,
       Dec.liftToLow(Instruction, Operations);
       EXPECT_EQ(std::any_of(Operations.begin(), Operations.end(),
                             lowAArch64AddressMemoryShapeIsValid),
-                Image.isArm64e());
+                Preserve);
     }
   }
   for (size_t I = 0; I != std::size(ImmediateMemoryCases); ++I) {
@@ -2809,7 +2816,8 @@ void executeDecodedImmediateImageBases() {
                 EXPECT_EQ(Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal,
                           LoadWord);
               }
-          ASSERT_EQ(Reads, 1U);
+          ASSERT_EQ(Reads,
+                    Subtype == macho_loader::arm64e::kCPUSubtypeX1 ? 1U : 0U);
           llvm::LLVMContext Context;
           std::unique_ptr<llvm::Module> Module;
           ASSERT_NO_THROW(Module =

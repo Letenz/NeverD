@@ -153,7 +153,10 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
 void Decoder::configureFor(const BinaryImage &Img) {
   configureX86For(Img);
   if (AArch64)
-    AArch64->setPreserveImmediateMemory(Img.isArm64e());
+    AArch64->setPreserveImmediateMemory(
+        Img.isArm64e() &&
+        (Img.MachOCPUSubtype & ~uint32_t(llvm::MachO::CPU_SUBTYPE_MASK)) ==
+            macho_loader::arm64e::kCPUSubtypeX1);
 }
 
 bool Decoder::init(const BinaryImage &Img) {

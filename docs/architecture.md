@@ -484,9 +484,13 @@ operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
 Image configuration automatically selects these single-access immediate
-operations for arm64e/arm64e.x1 GPR bases through both decoder routes, including
+operations for arm64e.x1 GPR bases through both decoder routes, including
 unprivileged variants. Architecture-only decoding preserves them conservatively;
-image-configured ordinary AArch64 retains its existing memory/frame model.
+image-configured ordinary AArch64 and classic arm64e retain their existing
+memory/frame model. The x1 selection follows Apple's
+[hardware security profile](https://developer.apple.com/documentation/watchos-release-notes/watchos-27-release-notes),
+which introduces CPA2; a classic arm64e header alone does not select this
+checked-memory source contract.
 Reusing a decoder for a different image refreshes this selection even when its
 architecture and instruction mode are unchanged. Literal
 SP immediates retain the existing frame path; that path does not qualify the

@@ -486,7 +486,7 @@ interfaces.
 The shared identity regression pins the published scalar and concurrent x86
 identities before admitting the appended vector operations.
 `AArch64ImmediateMemory` checks the raw-operation contract and automatic GPR
-immediate lifting through fast/full and strict/non-strict decoding with 177
+immediate lifting for arm64e.x1 through fast/full and strict/non-strict decoding with 177
 independent LLVM MC samples: unsigned, unscaled and GPR unprivileged immediate
 accesses. An independent Capstone operand-detail comparison also checks all
 112,640 immediate encodings and their scratch rewrites; full and fast lifting
@@ -507,7 +507,9 @@ transports alternate bases through scalar SSA arithmetic, and visible/hidden
 mixed image/runtime selections and image arithmetic must fail both source
 boundaries. A source image-base assignment before its use is accepted; the
 same assignment after its use must be refused before output. Subtype selection is checked through
-repeated arm64/arm64e/x1 transitions on a reused decoder. Separate raw-code
+repeated arm64/arm64e/x1 transitions, including ABI capability bits, on a reused
+decoder. Classic arm64e retains its existing frame path; the compiler-generated
+leaf/nonleaf authentication regression must keep working at O0/O2. Separate raw-code
 fixtures for both authenticated subtypes pass through CFG and SSA, then execute
 both C routes with direct ADRP and ADRP/ADD bases in initialized read-only and
 writable images. Verified LLVM still carries the arm64e analysis marker, and

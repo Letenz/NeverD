@@ -496,6 +496,7 @@ IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateSignedShift, 12)
 IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateSignedFieldMask, 0x1ffU)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateBasePosition, 256)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateRuntimeDelta, 1)
+IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateSubtypeCapabilities, 0x80000000U)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateMemoryBytes, 66064)
 IMMEDIATE_MEMORY_VALUE(unsigned, kImmediateSpanBytes, 65536)
 IMMEDIATE_MEMORY_VALUE(uint32_t, kImmediateMaximumQLoad, 0x3dfffc20U)
@@ -536,6 +537,7 @@ IMMEDIATE_MEMORY_TEXT(
     kImmediateDecodedRuntimeHarness,
     "\nint main(void) {{ uint64_t data[2] = {{0, {1}ULL}; "
     "__auto_type base = _Generic(&{0}, uint64_t (*)(void *): (void *)data, "
+    "int64_t (*)(void *): (void *)data, "
     "default: (uint64_t)(uintptr_t)data); return {0}(base) != {1}ULL; }\n")
 IMMEDIATE_MEMORY_TEXT(kImmediateImageBaseName, "immediate_image_base")
 IMMEDIATE_MEMORY_TEXT(kImmediateImageBaseDeclaration,
