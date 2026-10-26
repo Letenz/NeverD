@@ -14121,3 +14121,9 @@ materialized listing rows, LowIR/MedIR/HighC/CFG, save/load and analysis replica
 `NeverDGuiAnalysisSections` drives the production dialog, native views and .nddb
 save/reopen/removal; `NeverDGuiQueries` checks edit fences and cache retirement.
 See [analysis-section commands](analysis-sections.md#verification).
+
+For patched-binary publication run `NeverDBytePatchTests`,
+`TranslationCLIContract.*` and `NeverDWorkerNativePatch`. The shared temporary
+output owner must preserve both exclusive creation and default replacement,
+including failed closes, locked outputs, unchanged input bytes and cleanup.
+See [Windows patch export](windows-patch-export.md) for the public reproducer.
