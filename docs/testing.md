@@ -4186,6 +4186,12 @@ name and for two functions of one symbol; `ReadsTheDeclarationsHighCWrites`
 reads a typedef name declared again, a block's variable of a typedef's name, a
 C23 enumeration's type and `va_arg` without showing C, and
 `GoViewComputesWhatCComputes` runs a pointer to a copy (`&(int64_t){v}`) in Go.
+`ReadsPrototypeIntegerIdentityTypes` reads the emitted `typeof`/`choose_expr`
+integer types across 32-bit, LP64 and LLP64 targets in C, C++, Rust and Go,
+checks fixed-width results and C token round trips. This covers the type used
+for `fwrite`'s result in the Android `std::filebuf::overflow` reproduction.
+`DoesNotGuessUnknownTypeofExpressions` keeps unknown conditions and operands as
+explicit C fallbacks.
 `SourceAggregate.SourceNamesAreSpelledAsC` checks the C spelling of C++ record
 names and of records that share a C library function's name;
 Native x64 instruction oracles in `HighCPointerAddresses` and

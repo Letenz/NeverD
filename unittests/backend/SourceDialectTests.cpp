@@ -173,6 +173,68 @@ TEST(SourceDialect, ReadsTheDeclarationsHighCWrites) {
   EXPECT_EQ(tokens(spell(C, SourceDialect::C).Text), tokens(C));
 }
 
+TEST(SourceDialect, ReadsPrototypeIntegerIdentityTypes) {
+  // Dump's std::filebuf::overflow uses the portable spelling of unsigned long
+  // for fwrite's result. Keep both its width and the keyword type's identity.
+  const char *C = R"(
+int32_t overflow(void) {
+    __typeof__(__builtin_choose_expr(sizeof(unsigned long) == 8, (unsigned long)0, (uint64_t)0)) v18 = 1;
+    __typeof__(__builtin_choose_expr(sizeof(long) == 4, (long)0, (int32_t)0)) narrow = -1;
+    __typeof__(__builtin_choose_expr(sizeof(long long) == 8, (long long)0, (int64_t)0)) wide = -1;
+    __typeof__(__builtin_choose_expr(sizeof(unsigned long long) == 8, (unsigned long long)0, (uint64_t)0)) other = 2;
+    return (int32_t)(v18 + narrow + wide + other);
+}
+)";
+  for (Arch A : {Arch::X86, Arch::ARM, Arch::X64, Arch::AArch64})
+    for (BinaryFormat F :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (SourceDialect D : {SourceDialect::C, SourceDialect::Cpp,
+                              SourceDialect::Rust, SourceDialect::Go}) {
+        SCOPED_TRACE(sourceDialectKey(D).str());
+        SourceDialectOptions Options;
+        Options.Dialect = D;
+        Options.TheArch = A;
+        Options.Format = F;
+        const auto Text = spellInDialect(C, Options);
+        ASSERT_TRUE(Text.Unread.empty()) << Text.Text;
+        EXPECT_EQ(Text.Text.find("shown as C"), std::string::npos);
+        if (D == SourceDialect::C)
+          EXPECT_EQ(tokens(Text.Text), tokens(C));
+        else if (D == SourceDialect::Rust) {
+          EXPECT_NE(Text.Text.find("v18: u64"), std::string::npos) << Text.Text;
+          EXPECT_NE(Text.Text.find("narrow: i32"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("wide: i64"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("other: u64"), std::string::npos)
+              << Text.Text;
+        } else if (D == SourceDialect::Go) {
+          EXPECT_NE(Text.Text.find("v18 uint64"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("narrow int32"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("wide int64"), std::string::npos)
+              << Text.Text;
+          EXPECT_NE(Text.Text.find("other uint64"), std::string::npos)
+              << Text.Text;
+        }
+      }
+}
+
+TEST(SourceDialect, DoesNotGuessUnknownTypeofExpressions) {
+  for (llvm::StringRef Type :
+       {"__typeof__(unknown())",
+        "__typeof__(__builtin_choose_expr(unknown(), (long)0, (int32_t)0))",
+        "__typeof__(__builtin_choose_expr(sizeof(long) == 8, (long)0, "
+        "unknown()))"}) {
+    const std::string C = ("void f(void) { " + Type + " v18; }\n").str();
+    const auto Text = spell(C, SourceDialect::Cpp);
+    EXPECT_FALSE(Text.Unread.empty()) << Text.Text;
+    EXPECT_NE(Text.Text.find("shown as C"), std::string::npos) << Text.Text;
+    EXPECT_NE(Text.Text.find(C), std::string::npos) << Text.Text;
+  }
+}
+
 TEST(SourceDialect, CxxSymbolsAreValidatedAndKeepOperatorsAndTemplates) {
   EXPECT_EQ(cxxSourceName("?push_back@?$vector@HV?$allocator@H@std@@@std@@"
                           "QEAAXAEBH@Z"),

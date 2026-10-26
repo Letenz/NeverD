@@ -306,6 +306,7 @@ private:
             true)
         .Case("enum", true)
         .Cases({"__attribute__", "_Atomic", "_Complex"}, true)
+        .Case("__typeof__", true)
         .Default(TypedefNames.contains(Tok.Text) && !shadowed(Tok.Text));
   }
   /// Whether a block declares typedef name \p Name as an ordinary identifier,
@@ -410,6 +411,12 @@ private:
         if (E->Kind != ExprKind::Integer || E->Text.getAsInteger(0, Align))
           return fail("_Alignas needs an integer");
         S.AlignAs = Align;
+        continue;
+      } else if (W == "__typeof__") {
+        if (AnyTypeKeyword())
+          break;
+        if (!(Named = parsePrototypeIntegerType()))
+          return false;
         continue;
       } else if (W == "void")
         ++Void;
@@ -572,6 +579,47 @@ private:
     if (Result && Name == "wchar_t")
       Result = T.Types.integer(M.WCharBits, M.WCharSigned, Name);
     return Result;
+  }
+
+  /// CTypeRender's portable prototype integers retain their keyword identity
+  /// when its width agrees with the target, and use a fixed-width type
+  /// otherwise. Read that emitted typeof without treating choose_expr as an
+  /// ordinary call or applying the conditional operator's arithmetic
+  /// conversions.
+  const CType *parsePrototypeIntegerType() {
+    const size_t Begin = offset();
+    ++Pos;
+    if (!expect("("))
+      return nullptr;
+    Expr *Choice = parseAssignment();
+    if (!Choice || !expect(")"))
+      return nullptr;
+    if (Choice->Kind != ExprKind::Call || Choice->Ops.size() != 4 ||
+        Choice->Ops[0]->Kind != ExprKind::Name ||
+        Choice->Ops[0]->Text != "__builtin_choose_expr")
+      return fail("typeof needs a supported prototype integer choice"), nullptr;
+    const Expr *Condition = Choice->Ops[1];
+    if (Condition->Kind != ExprKind::Binary || Condition->Text != "==" ||
+        Condition->Ops[0]->Kind != ExprKind::SizeofType ||
+        Condition->Ops[1]->Kind != ExprKind::Integer)
+      return fail("typeof needs a sizeof type comparison"), nullptr;
+    const auto Size = T.Types.sizeOf(Condition->Ops[0]->Written);
+    uint64_t Bytes = 0;
+    if (!Size || Condition->Ops[1]->Text.getAsInteger(0, Bytes))
+      return fail("typeof needs a known sizeof type comparison"), nullptr;
+    const auto operandType = [](const Expr *Operand) -> const CType * {
+      if (Operand->Kind != ExprKind::Cast || !Operand->Written->isInteger() ||
+          Operand->Ops.front()->Kind != ExprKind::Integer ||
+          Operand->Ops.front()->Text != "0")
+        return nullptr;
+      return Operand->Written;
+    };
+    const CType *Keyword = operandType(Choice->Ops[2]);
+    const CType *Fixed = operandType(Choice->Ops[3]);
+    if (!Keyword || !Fixed)
+      return fail("typeof needs typed zero integer operands"), nullptr;
+    return T.Types.spelled(*Size == Bytes ? Keyword : Fixed,
+                           Src.slice(Begin, lastEnd()));
   }
 
   /// `{ A = 1, B, ... }` after `enum Name`.
