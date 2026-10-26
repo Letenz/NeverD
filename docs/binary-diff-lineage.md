@@ -27,7 +27,10 @@ publication cannot roll back the file.
 The desktop opens an independent worker. Add comparisons, label snapshots and
 branches, filter functions, activate a function to trace it, inspect direct
 source evidence and conflicts, then save or reopen the collection. Tables retain
-one bounded page. **Rows** chooses each table's page size; reduce it when large
+one bounded page. The window uses the selected interface language, including
+right-to-left layout and navigation for Arabic. Original evidence, function
+addresses and saved identifiers retain their original values.
+**Rows** chooses each table's page size; reduce it when large
 labels or evidence exceed the page's byte allowance, then continue with
 Previous/Next through the complete admitted inventory. Changing the page size
 retains its starting offset and retries the query without changing the collection.

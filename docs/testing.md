@@ -2435,6 +2435,13 @@ The original labels and collection remain intact. Ordinary, narrow and large-fon
 captures include the page-size control.
 An independent 200-report display fixture checks that a fitted large diagram can
 zoom in again, and that Zoom out never enlarges an already fitted overview.
+`localizedWorkspace` opens real worker-backed collections in all eleven bundled
+interface languages. It checks translated controls and status, a narrow window,
+automatic row selection, graph-to-table navigation, unchanged native coordinates
+and mirrored paging arrows. Source-key validation uses
+`python3 scripts/check_gui_i18n.py --check-sources`; compiled catalogs are also
+checked by `NeverDGuiLanguages`. Change, assessment, call-impact and dependency
+review regressions run in both left-to-right and right-to-left layouts.
 
 `BinaryDiffSDK.ByteOverlaysBindDataOnlyChangesAndReopenedReports` checks that
 patching data outside decoded functions changes analysis identity, invalidates
