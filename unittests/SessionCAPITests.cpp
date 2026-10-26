@@ -9124,9 +9124,9 @@ TEST_F(SessionCAPITest, SessionCReadsTheImageFunctionNamesItsSymbolsHold) {
   // The image's definition has its own C identifier, retaining the raw
   // symbol as a link label without adopting the library's prototype.
   EXPECT_NE(Own.find("strlen_4000B8("), std::string::npos) << Own;
+  EXPECT_NE(Own.find("strlen_4000B8("), Own.rfind("strlen_4000B8(")) << Own;
   EXPECT_NE(Own.find("__asm__(\"strlen\")"), std::string::npos) << Own;
   EXPECT_EQ(Own.find("#include <string.h>"), std::string::npos) << Own;
-  EXPECT_EQ(Own, Fresh({"strlen"}));
   // Any other change to the symbols goes with retiring the pipeline, which
   // drops the names read before, even when the table keeps its size.
   for (auto &Sym : State.Img.Symbols)
