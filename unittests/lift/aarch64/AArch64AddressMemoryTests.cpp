@@ -4034,6 +4034,12 @@ TEST(AArch64WritebackMemory, MalformedContractsFailBeforeSourceFiltering) {
       EXPECT_THROW(
           MedLLVMEmitter().emit({Function}, Context, kName, Arch::AArch64),
           std::runtime_error);
+      const std::vector<char> Bodies{0};
+      llvm::LLVMContext HiddenContext;
+      EXPECT_THROW(MedLLVMEmitter().emit({Function}, HiddenContext, kName,
+                                         Arch::AArch64, {}, nullptr,
+                                         BinaryFormat::ELF, false, &Bodies),
+                   std::runtime_error);
     }
     Function.Blocks.front().Ops.front() = Valid;
     for (Arch Other : {Arch::X64, Arch::ARM}) {
@@ -4041,6 +4047,23 @@ TEST(AArch64WritebackMemory, MalformedContractsFailBeforeSourceFiltering) {
       EXPECT_THROW(MedLLVMEmitter().emit({Function}, Context, kName, Other),
                    std::runtime_error);
     }
+  }
+  for (const auto &Case :
+       {WritebackCases[0], WritebackCases[kWritebackFirstLoadCase]}) {
+    auto Dead = writebackFunction(Case, 0);
+    Dead.ReturnType = NdType::makeInt(kScalarBytes, false);
+    Dead.Blocks.front().Ops.back().Inputs[0] =
+        MedVar::makeConst(0, kScalarBytes);
+    llvm::LLVMContext DeadContext;
+    auto Module =
+        MedLLVMEmitter().emit({Dead}, DeadContext, kName, Arch::AArch64);
+    ASSERT_TRUE(Module);
+    optimizeMemory(*Module);
+    for (bool LLVMRoute : {false, true})
+      compileMemoryC(memorySource(Dead, *Module, LLVMRoute), false,
+                     [&](llvm::MemoryBufferRef Buffer) {
+                       inspectMemoryObject(Buffer, Case.Scratch);
+                     });
   }
   auto Function = writebackFunction(WritebackCases[kWritebackFirstLoadCase], 0);
   Function.Blocks.front().Ops.front().Inputs[2].ConstVal = kWritebackStackLoad;
