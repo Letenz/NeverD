@@ -13,9 +13,11 @@
 
 #include "llvm/ADT/ArrayRef.h"
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace neverd {
 struct BinaryImage;
@@ -26,11 +28,11 @@ struct PipelineResult;
 
 bool supportsIncomingStackSources(const BinaryImage &Image);
 
-/// A bounded, complete leaf which reads full incoming stack words and defines
-/// its integer result. Private saves may preserve frame/link registers; the
-/// shared byte analysis must prove their restoration and the entry stack. This
-/// describes a source projection, never a machine rewriting ABI. Callers must
-/// bind the same physical stack locations before SSA conversion.
+/// A bounded, complete leaf which reads aligned incoming scalar carriers and
+/// defines its integer result. Private saves may preserve frame/link registers;
+/// the shared byte analysis must prove their restoration and the entry stack.
+/// This describes a source projection, never a machine rewriting ABI. Callers
+/// must bind the same physical stack locations before SSA conversion.
 std::optional<SourceFunctionTypeHint>
 inferIncomingStackLeaf(const BinaryImage &Image, const LowFunc &Low,
                        const MedFunc &Med);
@@ -42,7 +44,8 @@ bool mayReadIncomingStackLeaf(const BinaryImage &Image, va_t Entry,
 
 /// Reconstruct the fixed integer projection of authenticated stack locations.
 std::optional<SourceFunctionTypeHint>
-incomingStackSourceHint(Arch Architecture, llvm::ArrayRef<int64_t> Offsets);
+incomingStackSourceHint(Arch Architecture,
+                        llvm::ArrayRef<std::pair<int64_t, uint16_t>> Inputs);
 
 /// Use the existing image/summary-sensitive omitted-callee memo. Only bounded
 /// leaf candidates are lifted; machine IR and its signatures stay unchanged.

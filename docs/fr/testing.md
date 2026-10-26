@@ -8,7 +8,9 @@
 
 ## Récupération des valeurs de pile à l’entrée
 
-`NeverDSourceEntryBindingTests` compile et exécute la matrice x64/ARM64, PE/ELF, HighC/LLVMC : modules complets, appelants sélectionnés, transport explicite des bits flottants, réutilisation et remise à zéro du cache. Les contrôles négatifs refusent les écritures partielles, lectures étroites, adresses de cadre échappées et entrées indéfinies. Des définitions indépendantes des appelés vérifient les déclarations fixes. Ces exécutions sur l’hôte ne qualifient pas les pilotes Windows ARM64 natifs. La matrice couvre les cadres RBP et x29/x30 équilibrés. Elle refuse les sauvegardes écrasées, RBP modifié malgré SP restauré et l’adresse de retour utilisée comme paramètre, et distingue les registres préservés d’ELF et de Windows.
+`NeverDSourceEntryBindingTests` compile et exécute la matrice x64/ARM64, PE/ELF, HighC/LLVMC : modules complets, appelants sélectionnés, transport explicite des bits flottants, réutilisation et remise à zéro du cache. Les contrôles négatifs refusent les écritures partielles, paramètres non alignés, adresses de cadre échappées et entrées indéfinies. Des définitions indépendantes des appelés vérifient les déclarations fixes. Ces exécutions sur l’hôte ne qualifient pas les pilotes Windows ARM64 natifs. La matrice couvre les cadres RBP et x29/x30 équilibrés. Elle refuse les sauvegardes écrasées, RBP modifié malgré SP restauré et l’adresse de retour utilisée comme paramètre, et distingue les registres préservés d’ELF et de Windows.
+
+La nouvelle matrice exécute les lectures signées et non signées de 1/2/4 octets par les deux voies C à O0/O2 avec UBSan, pour la sortie complète ou le seul appelant. Les appelants écrivent uniquement les octets lus ; les lectures dépassant la largeur déclarée sont refusées.
 
 Les appels par registre connus sont exécutés dans les deux sorties C pour x64/ARM64 PE/ELF, en module complet et avec appelant seul. Le LowIR original reste indirect. Les contrôles refusent les écritures partielles périmées, effets opaques, temporaires réutilisés, cellules mémoire et budgets épuisés.
 

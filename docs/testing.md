@@ -28,10 +28,14 @@ modules and selected callers, checks unchanged results across cached selections,
 and resets the cache before changing the callee bytes. Selected callers also
 link against independently defined integer and floating-point source callees,
 so lost fixed declarations fail compilation or execution. Negative controls reject
-partial outgoing writes, narrow reads, frame-address returns, preserved-register
+incomplete outgoing writes, unaligned carriers, frame-address returns, preserved-register
 changes, external loads and values initialized by the callee itself. A selected
 call optimized away is checked by compiling and executing its resulting source,
 rather than requiring an intermediate call record to survive optimization.
+`IncomingHomeSource.NarrowStackInputsKeepTheirExactWidth` executes signed and
+unsigned 1/2/4-byte reads through both C routes at O0/O2 with UBSan, for x64/ARM64
+PE/ELF and complete or selected-caller output. Callers write only the consumed
+bytes. The frame proof separately rejects reads wider than the declared input.
 `IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
 routes with an incoming last-stack-word declaration and unrelated register and
 stack setup. `HighCPointerAddresses.Win64TwelveArgumentCallKeepsEveryStackArgument`

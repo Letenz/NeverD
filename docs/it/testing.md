@@ -8,7 +8,9 @@
 
 ## Recupero dei valori di stack in ingresso
 
-`NeverDSourceEntryBindingTests` compila ed esegue la matrice x64/ARM64, PE/ELF, HighC/LLVMC: moduli completi, chiamanti selezionati, trasporto esplicito dei bit floating-point, riuso e azzeramento della cache. I controlli negativi rifiutano scritture parziali, letture strette, fuga di indirizzi del frame e ingressi indefiniti. Definizioni indipendenti delle funzioni chiamate verificano le dichiarazioni fisse. Le esecuzioni sull’host non qualificano driver Windows ARM64 nativi. La matrice include frame RBP e x29/x30 bilanciati. Rifiuta salvataggi sovrascritti, RBP modificato anche con SP ripristinato e indirizzi di ritorno usati come parametri; distingue i registri preservati di ELF e Windows.
+`NeverDSourceEntryBindingTests` compila ed esegue la matrice x64/ARM64, PE/ELF, HighC/LLVMC: moduli completi, chiamanti selezionati, trasporto esplicito dei bit floating-point, riuso e azzeramento della cache. I controlli negativi rifiutano scritture parziali, parametri non allineati, fuga di indirizzi del frame e ingressi indefiniti. Definizioni indipendenti delle funzioni chiamate verificano le dichiarazioni fisse. Le esecuzioni sull’host non qualificano driver Windows ARM64 nativi. La matrice include frame RBP e x29/x30 bilanciati. Rifiuta salvataggi sovrascritti, RBP modificato anche con SP ripristinato e indirizzi di ritorno usati come parametri; distingue i registri preservati di ELF e Windows.
+
+La nuova matrice esegue letture con e senza segno di 1/2/4 byte lungo entrambe le vie C a O0/O2 con UBSan, per output completo o del solo chiamante. I chiamanti scrivono soltanto i byte letti; le letture oltre la larghezza dichiarata vengono rifiutate.
 
 Le chiamate tramite registro note vengono eseguite nei due percorsi C per x64/ARM64 PE/ELF, con modulo completo e solo chiamante selezionato. Il LowIR originale resta indiretto. I controlli rifiutano scritture parziali obsolete, effetti opachi, temporanei riutilizzati, celle di memoria e budget esauriti.
 
