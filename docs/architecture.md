@@ -5450,6 +5450,11 @@ linked image's segment name. Writable slots retain
 addressable storage and a symbolic initializer. Undefined data uses an opaque
 assembly-name alias in C, avoiding invented types and system-header conflicts.
 Defined data uses its existing image backing. TLS and IFUNC records are excluded.
+ELF string-table reads share `getLinkedStringTable` for original and reconstructed
+headers. Missing or malformed dynamic strings are diagnosed without invoking
+LLVM diagnostics that require an original section index. Relocation symbol
+snapshots retain their numeric fields with an absent name, so unavailable names
+cannot erase the symbol values needed to relocate the mapped bytes.
 This contract also works without section headers. In sectionless ARM ELF,
 immutable executable bytes can supply scalar literal reads without classifying
 unreached bytes as instructions; overlapping relocations prevent folding.
@@ -12504,7 +12509,10 @@ proofs; exhausted work publishes no partial observation.
 `HighFrameStoreForwarding` owns exact scalar forwarding, captured values,
 redundant writebacks and complete-overwrite proofs within independent regions
 and bounded acyclic branches. Calls, uncertain aliases, partial writes, cycles
-and exceptional/ordered observations retain their memory effects. Prologue
+and exceptional/ordered observations retain their memory effects. Forwarding
+retains an unchanged call expression's instruction-navigation identity.
+Changed call inputs rebuild the shared expression without rebinding
+old observations by address. Prologue
 cleanup preserves saved register values still observed as data. Word zero-test
 normalization retains operand widths, signedness, effects and source truth.
 
