@@ -336,7 +336,8 @@ private:
       llvm::ArrayRef<std::pair<uint64_t, size_t>> FrozenCandidates,
       size_t FrozenMatches, size_t FirstParent, const DataBindings *Data,
       llvm::ArrayRef<uint64_t> Revisit,
-      std::vector<DeferredCaller> *DeferredCallers);
+      std::vector<DeferredCaller> *DeferredCallers,
+      std::optional<std::unordered_map<uint64_t, uint32_t>> &FrozenBodies);
   /// A present FrozenMatches validates only later incoming candidates against
   /// the frozen prefix, including an empty original set. Their outcomes cannot
   /// change anchors or feed another

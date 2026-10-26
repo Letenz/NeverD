@@ -6492,7 +6492,12 @@ partial, ambiguous, required or contradicted initial anchors. Rooted chains
 exercise both input orders, independent frozen validation, weak intermediate
 bodies, unrooted cycles and the depth budget. Cache tests run pieces in reverse
 order and reject invalid caller offsets and CRC coverage without depending on
-another worker's materialized names. `SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
+another worker's materialized names. Independent short-caller cases cover an
+ordinary callee plus a rooted incoming body or a confirmed required root,
+reversed entries and records, changed-buffer reuse, missing/weak/partial or
+ambiguous callees, incomplete source variants and absent roots. A nominal body
+settled by an earlier incoming round cannot masquerade as an independent anchor.
+`SignatureMatcherIndex.CallerRecordsDoNotIncreaseByteScanWork`
 adds 4096 short records while retaining exactly one scheduled ordinary byte
 check; copied, rebuilt and moved indexes retain valid name lookups. Parser,
 cache and generator tests preserve the caller constraint. The SDK profile
