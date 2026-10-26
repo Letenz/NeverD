@@ -16,6 +16,7 @@
 #include "neverd/decode/AArch64/AArch64DecodeContract.h"
 #include "neverd/decode/AArch64/AArch64FastClassify.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/intrinsics/IntrinsicTermination.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -36,7 +37,9 @@ namespace neverd {
 // AArch64Lifter construction
 // ===----------------------------------------------------------------------===//
 
-AArch64Lifter::AArch64Lifter(Arch A) : TargetArch(A) {}
+AArch64Lifter::AArch64Lifter(Arch A)
+    : TargetArch(A),
+      PreserveImmediateMemory(kAddressMemoryUnspecifiedImmediate) {}
 
 // ===----------------------------------------------------------------------===//
 // Operand read / write

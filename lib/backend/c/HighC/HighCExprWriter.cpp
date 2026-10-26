@@ -7634,12 +7634,22 @@ std::optional<std::pair<va_t, uint64_t>>
 HighCWriter::indexedObjectAt(va_t Addr) const {
   if (auto Object = sizedObjectAt(Addr))
     return Object;
-  const Section *Sec = Opts.Image ? Opts.Image->getSectionFor(Addr) : nullptr;
-  if (!Sec || !Sec->isReadable() || Sec->isExecutable() || !Sec->Size ||
-      Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+  if (!Opts.Image)
     return std::nullopt;
-  va_t Begin = Sec->VA;
-  va_t End = Sec->VA + Sec->Size;
+  const Section *Sec = Opts.Image->getSectionFor(Addr);
+  const Segment *Seg = Opts.Image->getSegmentFor(Addr);
+  // A layout-authenticated segment with no section table still owns data.
+  // Keep the common symbol/object bounds below; a gap in an existing section
+  // table cannot acquire this route.
+  if ((!Sec && (!Seg || Opts.Image->layoutAddressOwner(Addr) != Seg->VA)) ||
+      (Sec ? !Sec->isReadable() || Sec->isExecutable()
+           : !Seg->isReadable() || Seg->isExecutable()))
+    return std::nullopt;
+  va_t Begin = Sec ? Sec->VA : Seg->VA;
+  const uint64_t Size = Sec ? Sec->Size : Seg->Size;
+  if (!Size || Size > std::numeric_limits<va_t>::max() - Begin)
+    return std::nullopt;
+  va_t End = Begin + Size;
   const auto &SizedObjects = DataObjects->SizedObjects;
   const auto &SizedObjectReach = DataObjects->SizedObjectReach;
   const auto &DataSymbolStarts = DataObjects->DataSymbolStarts;

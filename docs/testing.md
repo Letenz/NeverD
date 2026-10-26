@@ -498,10 +498,12 @@ declarations remain unqualified; the integer bridges do not certify those
 interfaces.
 The shared identity regression pins the published scalar and concurrent x86
 identities before admitting the appended vector operations.
-`AArch64ImmediateMemory` checks the explicit raw-operation contract with 177
+`AArch64ImmediateMemory` checks the raw-operation contract and automatic GPR
+immediate lifting for arm64e.x1 through fast/full and strict/non-strict decoding with 177
 independent LLVM MC samples: unsigned, unscaled and GPR unprivileged immediate
 accesses. An independent Capstone operand-detail comparison also checks all
-112,640 immediate encodings and their scratch rewrites. The suite covers encoded
+112,640 immediate encodings and their scratch rewrites; full and fast lifting
+must also agree operation-for-operation at every immediate value. The suite covers encoded
 displacements, signed result widths,
 neighboring writeback/pair exclusions, zero-index shape requirements, finite
 tracing in both modes and complete 64-bit byte spans. Both C routes and linked
@@ -511,9 +513,42 @@ extension and unchanged neighbors; Q reads compare both 64-bit halves separately
 a Mach-O image present and requires LLVM to create no image globals: the
 caller supplies the runtime GPR bits directly. Its separate
 `cpta_image_memory_artifacts` property identifies the image-context export.
-These are explicit-IR tests; they do not qualify automatic decoding/lifting,
-image-derived address rebasing or native half/whole-vector ABI. Synthetic-stack
-and unresolved image-coordinate requirements fail before body filtering.
+The same test also runs a separate image-rebased matrix: each original base
+has exact data-address provenance and one complete storage owner, with alternate
+samples transported through SSA COPY. The runtime-parameter matrix separately
+transports alternate bases through scalar SSA arithmetic, and visible/hidden
+mixed image/runtime selections and image arithmetic must fail both source
+boundaries. A source image-base assignment before its use is accepted; the
+same assignment after its use must be refused before output. Subtype selection is checked through
+repeated arm64/arm64e/x1 transitions, including ABI capability bits, on a reused
+decoder. Classic arm64e retains its existing frame path; the compiler-generated
+leaf/nonleaf authentication regression must keep working at O0/O2. Separate raw-code
+fixtures for both authenticated subtypes pass through CFG and SSA, then execute
+both C routes with direct ADRP and ADRP/ADD bases in initialized read-only and
+writable images. Verified LLVM still carries the arm64e analysis marker, and
+native image code generation must retain its ABI/fixup refusal. The separate
+explicit-IR rebasing matrix executes real LLVM objects. An independent getter must alias every
+load/store, and the harness compares all bytes with the original native result.
+`cpta_relocated_memory_artifacts` identifies that separate export. The complete
+span checks reject scalar/unknown/fragment/code roles, a different owner and
+truncated backing bytes, including the 65,536-byte maximum Q span. LowIR boundary
+tests separately check live ADRP page bases and ADRP/ADD certificates whose
+retained dereference has its own nonzero displacement. These tests do not
+qualify original-SP lifting or native half/whole-vector ABI. A decoded SP-to-GPR
+alias stays analyzable without an image and must fail arm64e image-backed
+lowering instead of losing its stack ABI. Synthetic raw-SP
+and invalid constant image requirements fail before body filtering.
+The [2026-10-26 qualification record](evidence/arm64e-immediate-memory-2026-10-26.json)
+binds the tested source, complete reports and actual C/object export hashes.
+The unmodified official Arm AEM FVP 11.32.19 passes all 20 routes: EL1/EL0,
+runtime/image-rebased bases and five output routes, with 177 samples under all
+four effective controls. Each route requires 79 or 83 checks within the original
+45-second process limit. These are explicit-IR, nonoverflow model results;
+automatic decoding is separately tested locally. Apple CPA2 hardware and a
+complete automatically rebuilt arm64e image remain unqualified. The wider
+local run records 650 passes, three unavailable native PAuth cases and the
+retained generic AArch64 ELF variadic Q-save failure; it is not all green.
+
 Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
 both generated C files, the independent native harness and LLVM ELF/Mach-O objects
 in a fresh directory recorded in the test's properties. These artifacts allow

@@ -16,6 +16,7 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/loader/AArch64MemoryImage.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-aarch64-value"
 #include "neverd/ir/intrinsics/AArch64/AArch64CPA.h"
@@ -52,15 +53,13 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
       llvm::report_fatal_error(kAddressMemoryMalformed);
     const auto Instruction = *aarch64AddressMemoryInstruction(
         Op.Inputs[kAddressMemoryWordOperand + 1].ConstVal);
-    const bool RawParameter =
-        !Instruction.hasRegisterIndex() &&
-        Op.Inputs[kAddressMemoryBaseOperand + 1].Kind == MedVar::Param;
-    // Image-derived bases use the existing memory owner. An explicit runtime
-    // parameter already supplies its original GPR bits. The raw index remains
-    // separate: the instruction owns its extension, scale and checked addition.
+    const bool Immediate = !Instruction.hasRegisterIndex();
+    // Runtime bases already supply GPR bits. Image-derived immediate bases
+    // require a complete storage run below; register indices remain separate
+    // because the instruction owns their extension, scale and checked addition.
     llvm::Value *Base = nullptr;
-    if (!RawParameter && Instruction.isLoad() &&
-        OriginalImageStorageForSource && Img)
+    if (!Immediate && Instruction.isLoad() && OriginalImageStorageForSource &&
+        Img)
       if (const auto *Table = recoveredJumpTableForLoad(Op);
           Table && Table->HasBaseAddr && Table->HasDispatchSlotMap &&
           !Table->SlotIndices.empty()) {
@@ -90,10 +89,33 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
               Builder.getInt64(Storage->Pad + Table->BaseAddr - Storage->Base));
         }
       }
-    if (!Instruction.stackBase() && !RawParameter && !Base)
+    if (!Instruction.stackBase() && !Immediate && !Base)
       Base = resolveAtomicMemoryPtr(
           Op.Inputs[kAddressMemoryBaseOperand + 1], Instruction.accessBytes(),
           sizeToType(Instruction.accessBytes()), Builder);
+    if (Immediate && !Instruction.stackBase() && Img) {
+      uint64_t OriginalBase = 0;
+      uint64_t Owner = InvalidVA;
+      if (resolveMaterializableDataAddress(
+              Op.Inputs[kAddressMemoryBaseOperand + 1], OriginalBase, &Owner)) {
+        if (!aarch64ImmediateMemoryImageSpan(
+                *Img, Instruction, OriginalBase,
+                ConstantAddressProvenance::DataAddress, Owner))
+          llvm::report_fatal_error(kAddressMemoryImmediateImageUnsupported);
+        if (Owner == InvalidVA)
+          Owner = Img->layoutAddressOwner(OriginalBase);
+        // Resolve the raw base into one complete storage run, never a suffix
+        // copy of the accessed bytes. The original instruction still applies
+        // its displacement and performs the access-EL checked addition.
+        Base = tryResolveOwnedGlobalData(OriginalBase, Owner,
+                                         kAddressMemoryPointerBytes, true);
+        if (!Base)
+          llvm::report_fatal_error(kAddressMemoryImmediateImageUnsupported);
+      } else {
+        rejectEscapingAddressFragment(Op.Inputs[kAddressMemoryBaseOperand + 1],
+                                      kAddressMemoryImmediateImageUnsupported);
+      }
+    }
     const auto &Machine = Instruction.machine();
     auto Integer = [&](const MedVar &Input) -> llvm::Value * {
       auto *Value = getVar(Input, Builder);
@@ -103,10 +125,9 @@ MedLLVMEmitter::emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
         llvm::report_fatal_error(kAddressMemoryMalformed);
       return Builder.CreateZExtOrTrunc(Value, Builder.getInt64Ty());
     };
-    auto *BaseInteger =
-        Instruction.stackBase() || RawParameter
-            ? Integer(Op.Inputs[kAddressMemoryBaseOperand + 1])
-            : Builder.CreatePtrToInt(Base, Builder.getInt64Ty());
+    auto *BaseInteger = Base
+                            ? Builder.CreatePtrToInt(Base, Builder.getInt64Ty())
+                            : Integer(Op.Inputs[kAddressMemoryBaseOperand + 1]);
     if (Instruction.isVector()) {
       auto *VectorType = llvm::FixedVectorType::get(
           Builder.getInt64Ty(),

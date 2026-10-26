@@ -527,14 +527,45 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-An explicit runtime GPR parameter remains in runtime coordinates even when the
-module also has an image: LLVM bypasses image resolution for that base, and
-both source boundaries share the same admission owner. Other image-context
-immediate bases fail explicitly until exact page/relocation occurrences,
-accessed-byte ownership and raw-base rebasing agree; source body filtering
-cannot bypass that requirement. Automatic lifting still selects only
-register-offset operations. This is not automatic immediate CPA2 lifting
-coverage or support for image-derived immediate addresses.
+Image configuration automatically selects these single-access immediate
+operations for arm64e.x1 GPR bases through both decoder routes, including
+unprivileged variants. Architecture-only decoding preserves them conservatively;
+image-configured ordinary AArch64 and classic arm64e retain their existing
+memory/frame model. The x1 selection follows Apple's
+[hardware security profile](https://developer.apple.com/documentation/watchos-release-notes/watchos-27-release-notes),
+which introduces CPA2; a classic arm64e header alone does not select this
+checked-memory source contract.
+Reusing a decoder for a different image refreshes this selection even when its
+architecture and instruction mode are unchanged. Literal
+SP immediates retain the existing frame path; that path does not qualify the
+original SP environment under CPA2. An opaque access through a proven entry-SP
+alias also fails image-backed lowering until its stack/call ABI is qualified;
+a nominal footprint cannot justify forwarding or omitting stack arguments.
+Runtime GPR values remain in runtime
+coordinates even when the module has an image. An exact address occurrence may
+instead rebase the raw base only after `AArch64MemoryImage` proves the complete
+base-to-access byte span in one initialized image owner. Negative displacements
+and the maximum unsigned Q span use 64-bit extents. LLVM requires one complete
+storage run; HighC declares the complete containing object. Neither substitutes
+an effective address for the raw base or changes the encoded displacement.
+Numeric equality cannot authenticate a scalar, fragment or code occurrence.
+Source admission also follows SSA/source definitions before body filtering:
+a runtime GPR may flow through scalar arithmetic, but a mixed image/runtime
+selection or unresolved image arithmetic needs an all-arms span proof and fails
+explicitly. A runtime arm cannot authorize another arm's image coordinates.
+HighC uses the shared source-flow graph to authenticate a copied image address
+at its exact use; a later assignment or an address-taken local supplies no
+constant-value certificate. Storage collection reuses that same proof, so a
+retained source variable cannot shrink the mirrored byte span.
+
+The exact ADRP owner recognizes a retained immediate dereference of its live
+page base. An ADRP/ADD chain can also use a retained immediate access as its
+occurrence-bound dereference witness. Reauthentication checks the original
+instruction word, base lane and complete image span; the certificate names the
+ADD's original base, independently of the memory instruction's displacement.
+This specialized provenance witness gives generic memory/alias analyses no
+ordinary-memory or no-fault authority. Constants without a valid image span
+still fail before source body filtering.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. The common machine table also owns literal
 SP forms. With no image, an explicit raw-SP parameter can select the physical SP
@@ -584,9 +615,12 @@ MedIR body; a stale prologue-save flag cannot hide an edited store from that
 independent machine replay.
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
-identity. Automatic immediate, pre/post-index, pair and other ordinary-memory
-lifting remains unqualified for CPA2, as does controlled native execution with CPTA
-enabled. Native half and whole-vector C entry/return ABI and DWARF vector
+identity. Automatic x1 GPR single-immediate lifting and initialized-image
+rebasing have the bounded qualification above. Pre/post-index, pair and other
+ordinary-memory families, original-SP stack/call projection and Apple native
+execution with CPTA enabled remain unqualified. Controlled Arm model execution
+qualifies the declared explicit-IR exports separately from an automatically
+lifted whole image. Native half and whole-vector C entry/return ABI and DWARF vector
 declarations remain separate, unqualified interfaces; integer bridges do not certify those native
 interfaces. Local scalable-vector interleaving uses the existing LLVM ELF
 profile, and does not qualify native Apple SVE or LLVMC scalable carriers.
@@ -772,10 +806,10 @@ not make a packed projection a runnable standalone dylib.
 For a selected dyld cache image, debug discovery does not inspect the container
 or automatically attach its adjacent companions. Explicit DWARF and MAP paths
 retain the existing selected-image architecture and identity checks.
-Exception-level
-authentication, implicit-entry PACM state and CPA2 memory address arithmetic
-remain unsupported; recognizing x1's header does not claim those instruction
-semantics.
+A packed cache remains an analysis input. Recognizing x1's header grants no
+runtime environment: whole-image execution still needs complete exception-level
+authentication, implicit-entry PACM and CPA2/stack contracts. The supported
+explicit-IR operations above do not certify that complete image ABI.
 
 ## GUI project and search ownership
 
