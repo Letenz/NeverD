@@ -11304,6 +11304,20 @@ Source frame checks also follow resolved switches only when every published
 target agrees with the CFG; absent, duplicate and unsafe dispatch records
 refuse. The saved-memory interpreter retains its independent stricter domain.
 
+A source-only SEH handler may also receive several protected or ordinary SP
+positions when a certified frame register survives and every handler path
+restores SP before explicitly reading it. That result retains an unresolved
+entry; it grants neither a native frame nor a single offset. The physical CALL
+return-slot reader separately unions every current protected SP and ordinary
+PHI input through query-local definition ranges. Missing sources, exceptional
+cycles without a seed and unbounded offsets retain refusal. The range proof
+can establish that a CALL write is disjoint, but cannot initialize storage or
+replace the exceptional-entry value. Ordinary exact-offset queries reject PHIs
+with an unproved exceptional input. Entry-register declarations survive
+MedIR dead-code cleanup when a renamed copy's incoming value still has readers.
+This preserves the existing callee-save proof for both C routes after copy
+propagation removes uses of the copy's renamed result.
+
 `low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
 for this memory proof. Positional syntax, foreign length/flag extensions, dynamic

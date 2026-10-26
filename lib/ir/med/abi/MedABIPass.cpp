@@ -412,6 +412,15 @@ extern const AbiCallPolicy I386AbiCallPolicy;
 std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
                                                         Arch Architecture,
                                                         size_t &Remaining) {
+  std::map<int, MedVar> Entries;
+  return sourceCallStackPointers(Func, Architecture, Remaining, Entries);
+}
+
+std::map<const MedOp *, MedVar>
+sourceCallStackPointers(const MedFunc &Func, Arch Architecture,
+                        size_t &Remaining,
+                        std::map<int, MedVar> &BlockEntries) {
+  BlockEntries.clear();
   std::map<const MedOp *, MedVar> Result;
   const auto &TRI = getTargetRegInfo(Architecture);
   if (Func.SkippedSSA || Func.Blocks.empty())
@@ -552,9 +561,11 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
     if (!Charge(InheritedCalls[B].size()))
       return {};
     if (Entries[B].State == Basis::Exact &&
-        Entries[B].Value.Size == TRI.PointerSize)
+        Entries[B].Value.Size == TRI.PointerSize) {
+      BlockEntries.emplace(Func.Blocks[B].Id, Entries[B].Value);
       for (const MedOp *Call : InheritedCalls[B])
         Result.emplace(Call, Entries[B].Value);
+    }
   }
   return Result;
 }

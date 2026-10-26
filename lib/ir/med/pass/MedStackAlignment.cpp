@@ -107,6 +107,7 @@ class StackOffsetProof {
     bool EntryChecked = false;
     bool EntryLiveIn = false;
     std::optional<int64_t> ProvenOffset;
+    std::optional<EntryStackOffsetRange> ProvenRange;
   };
 
 public:
@@ -116,7 +117,8 @@ public:
   StackOffsetProof(const MedFunc &Func, Arch Architecture, BinaryFormat Format,
                    StackEntryKind Entry, bool FollowJoins = false,
                    llvm::ArrayRef<ProvenStackOffset> Seeds = {},
-                   bool OnlySeededRoots = false)
+                   bool OnlySeededRoots = false,
+                   llvm::ArrayRef<ProvenStackOffsetRange> RangeSeeds = {})
       : Func(Func), TRI(getTargetRegInfo(Architecture)),
         Architecture(Architecture), Format(Format), Entry(Entry),
         FollowJoins(FollowJoins), OnlySeededRoots(OnlySeededRoots),
@@ -153,6 +155,29 @@ public:
         Definition.Ambiguous = true;
       else
         Definition.ProvenOffset = Seed.Offset;
+    }
+    for (const auto &Seed : RangeSeeds) {
+      if (bool(Seed.Definition) == bool(Seed.Join) ||
+          Seed.Range.Min > Seed.Range.Max ||
+          !fitsPointerOffset(Seed.Range.Min) ||
+          !fitsPointerOffset(Seed.Range.Max))
+        continue;
+      const MedVar &Output =
+          Seed.Definition ? Seed.Definition->Output : Seed.Join->Output;
+      const auto Found = Definitions.find(key(Output));
+      if (Found == Definitions.end() || Found->second.Ambiguous ||
+          Output.Size != TRI.PointerSize ||
+          (Seed.Definition &&
+           (Found->second.Op != Seed.Definition || Seed.Definition->Dead)) ||
+          (Seed.Join && Found->second.Join != Seed.Join))
+        continue;
+      auto &Definition = Found->second;
+      if (Definition.ProvenRange &&
+          (Definition.ProvenRange->Min != Seed.Range.Min ||
+           Definition.ProvenRange->Max != Seed.Range.Max))
+        Definition.Ambiguous = true;
+      else
+        Definition.ProvenRange = Seed.Range;
     }
   }
 
@@ -224,7 +249,8 @@ private:
     const auto &Definition = Found->second;
     if (Definition.Join) {
       const PhiNode &Phi = *Definition.Join;
-      if (!sameOccurrence(Phi.Output, Value) || Phi.Args.empty())
+      if (!sameOccurrence(Phi.Output, Value) || Phi.Args.empty() ||
+          Phi.ExceptionalEntry)
         return Full;
       llvm::ConstantRange Result(Bits, false);
       for (const auto &[Pred, Arg] : Phi.Args) {
@@ -278,9 +304,17 @@ private:
         Value.Size != TRI.PointerSize ||
         (Value.Kind != MedVar::Reg && Value.Kind != MedVar::Temp))
       return std::nullopt;
+    const auto Found = Definitions.find(key(Value));
+    if (Found != Definitions.end() && !Found->second.Ambiguous &&
+        Found->second.ProvenRange) {
+      const auto &Definition = Found->second;
+      const MedVar &Output =
+          Definition.Op ? Definition.Op->Output : Definition.Join->Output;
+      if (sameOccurrence(Output, Value))
+        return Definition.ProvenRange;
+    }
     if (const auto Exact = resolve(Value, Depth))
       return EntryStackOffsetRange{*Exact, *Exact};
-    const auto Found = Definitions.find(key(Value));
     if (Found == Definitions.end() || Found->second.Ambiguous ||
         !RangeActive.insert(key(Value)).second)
       return std::nullopt;
@@ -359,7 +393,7 @@ private:
   /// itself is checked against the offset the other ways agree on.
   std::optional<int64_t> join(const PhiNode &Phi, ValueDefinition &Definition,
                               unsigned Depth) {
-    if (OnlySeededRoots && Phi.ExceptionalEntry)
+    if (Phi.ExceptionalEntry)
       return std::nullopt;
     std::optional<int64_t> Agreed;
     std::vector<const MedVar *> Cyclic;
@@ -445,7 +479,7 @@ private:
           Op->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           Op->IntrinsicOutputs.empty();
       if (!Definition || (!Definition->Join && !Copy) || Assumed.count(K) ||
-          Definition->ProvenOffset || EntryOrigin) {
+          Definition->ProvenOffset || Definition->ProvenRange || EntryOrigin) {
         Boundaries.emplace_back(Value, AtDepth);
         if (Parent)
           Seeded.insert(*Parent);
@@ -453,7 +487,7 @@ private:
       }
       const PhiNode *Phi = Definition->Join;
       if ((Phi && (!sameOccurrence(Phi->Output, Value) || Phi->Args.empty() ||
-                   (OnlySeededRoots && Phi->ExceptionalEntry))) ||
+                   Phi->ExceptionalEntry)) ||
           (Definition->Active && K != RootKey))
         return false;
       if (Parent)
@@ -576,6 +610,16 @@ private:
         It == Definitions.end() ? nullptr : &It->second;
     if (Definition && Definition->Ambiguous)
       return std::nullopt;
+    // A range is not one executable stack value. Only a singleton may
+    // participate in an exact query through the same current definition.
+    if (Definition && Definition->ProvenRange) {
+      const MedVar &Output =
+          Definition->Op ? Definition->Op->Output : Definition->Join->Output;
+      if (!sameOccurrence(Output, Value) ||
+          Definition->ProvenRange->Min != Definition->ProvenRange->Max)
+        return std::nullopt;
+      return Definition->ProvenRange->Min;
+    }
     if (AllowedDefinitions &&
         (!Definition || !Definition->Op ||
          !AllowedDefinitions->count(Definition->Op) ||
@@ -796,6 +840,23 @@ std::vector<std::optional<int64_t>> entryStackOffsetsFromProvenDefinitions(
   for (size_t I = 0; I < Values.size(); ++I)
     Offsets[I] = Proof.offset(Values[I]);
   return Offsets;
+}
+
+std::vector<std::optional<EntryStackOffsetRange>>
+entryStackOffsetRangesFromProvenDefinitions(
+    const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
+    llvm::ArrayRef<ProvenStackOffsetRange> Seeds, Arch Architecture,
+    BinaryFormat Format, StackEntryKind Entry) {
+  std::vector<std::optional<EntryStackOffsetRange>> Ranges(Values.size());
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
+    return Ranges;
+  StackOffsetProof Proof(Func, Architecture, Format, Entry,
+                         /*FollowJoins=*/true, {},
+                         /*OnlySeededRoots=*/false, Seeds);
+  for (size_t I = 0; I < Values.size(); ++I)
+    Ranges[I] = Proof.range(Values[I]);
+  return Ranges;
 }
 
 std::vector<std::optional<int64_t>> stackOffsetsRelativeToDefinition(

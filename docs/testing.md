@@ -101,6 +101,16 @@ checking every byte-sized count against an independent multiplication oracle
 and refusing unconstrained machine-width products. Copy edges in stack PHI
 cycles preserve exact or bounded outside origins on all four architectures;
 unseeded cycles and changing backedges remain unknown.
+`MedSEHEstablisherFrame.SourceHandlerCallRetainsEveryProtectedStackPosition`
+checks protected allocations and shared ordinary/exceptional handler entries.
+A handler CALL may precede an RBP-based SP restoration only when all possible
+return-slot writes are disjoint from observed bytes. Overlapping reads, missing
+fresh LowIR and explicit handler SP reads retain refusal; native reconstruction
+remains unavailable. The same fixture checks that copy propagation and DCE
+retain the ordinary entry register marker needed to omit an unobserved RBP
+save from both source projections. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
+checks that a range seed cannot become an exact executable value or survive
+query removal, detached definitions or conflicting bounds.
 `NeverDMedPrologueSavesTests` checks that only
 disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
 and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,

@@ -104,6 +104,48 @@ TEST(MedStackAlignment, BoundedDynamicOffsetsAreNotExactOffsets) {
     }
 }
 
+TEST(MedStackAlignment, ExceptionalStackRangesAreQueryLocalAndKeepAllEntries) {
+  auto Func = frameWithEntrySP(Arch::X64);
+  auto &EntryOps = Func.Blocks[0].Ops;
+  EntryOps.push_back(op(NdOp::INT_SUB, reg(1, Arch::X64), reg(0, Arch::X64),
+                        MedVar::makeConst(72, 8)));
+  MedBlock Handler;
+  Handler.Id = 1;
+  Handler.StartAddr = 0x1020;
+  PhiNode Join;
+  Join.Output = reg(2, Arch::X64);
+  Join.Args = {{0, reg(1, Arch::X64)}};
+  Join.ExceptionalEntry = MedVar::makeUnspecified(8, Arch::X64);
+  Handler.Phis.push_back(Join);
+  Handler.Ops.push_back(op(NdOp::INT_SUB, reg(3, Arch::X64), Join.Output,
+                           MedVar::makeConst(8, 8)));
+  Func.Blocks.push_back(std::move(Handler));
+  const auto Value = reg(3, Arch::X64);
+  EXPECT_FALSE(entryStackOffset(Func, Value, Arch::X64, BinaryFormat::COFF));
+  EXPECT_FALSE(
+      entryStackOffsetRanges(Func, {Value}, Arch::X64, BinaryFormat::COFF)[0]);
+  const auto Query = [&](const ProvenStackOffsetRange &Seed) {
+    return entryStackOffsetRangesFromProvenDefinitions(
+        Func, {Value}, {Seed}, Arch::X64, BinaryFormat::COFF,
+        StackEntryKind::Call)[0];
+  };
+  const ProvenStackOffsetRange Seed{
+      nullptr, &Func.Blocks[1].Phis[0], {-104, -72}};
+  const auto Range = Query(Seed);
+  ASSERT_TRUE(Range);
+  EXPECT_EQ(Range->Min, -112);
+  EXPECT_EQ(Range->Max, -80);
+  EXPECT_FALSE(entryStackOffset(Func, Value, Arch::X64, BinaryFormat::COFF));
+  // A copy of a definition is not the current occurrence in this function.
+  const auto Detached = Func.Blocks[1].Phis[0];
+  EXPECT_FALSE(Query({nullptr, &Detached, {-104, -72}}));
+  EXPECT_FALSE(Query({nullptr, &Func.Blocks[1].Phis[0], {-72, -104}}));
+  const auto Conflicting = entryStackOffsetRangesFromProvenDefinitions(
+      Func, {Value}, {Seed, {nullptr, &Func.Blocks[1].Phis[0], {-64, -32}}},
+      Arch::X64, BinaryFormat::COFF, StackEntryKind::Call);
+  EXPECT_FALSE(Conflicting[0]);
+}
+
 TEST(MedStackAlignment, ScaledDynamicAllocationsRetainMachineWidthBounds) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64, Arch::X86, Arch::ARM}) {
     const auto Width = getTargetRegInfo(Architecture).PointerSize;
