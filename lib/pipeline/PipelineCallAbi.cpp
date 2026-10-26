@@ -665,7 +665,12 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
           if (Op.Opcode == NdOp::CALL && Op.NumInputs &&
               Op.Inputs[0].isConst() && !Op.SourceCallHint &&
               !Result.CallPrototypeArguments.count(Op.Inputs[0].ConstVal) &&
-              !Result.CallUserPrototypes.count(Op.Inputs[0].ConstVal))
+              !Result.CallUserPrototypes.count(Op.Inputs[0].ConstVal) &&
+              // scalarCalleeDeclaration cannot publish an exception-bearing
+              // body. Its indexed metadata already proves that rejection;
+              // do not lift it solely to rediscover the same fact. Ordinary
+              // signature demands above still read it when needed.
+              !Img.ExceptionMetadata.findFunction(Op.Inputs[0].ConstVal))
             enqueue(Op.Inputs[0].ConstVal);
   std::vector<std::shared_ptr<const MedFunc>> Signatures;
   if (Pending.empty())

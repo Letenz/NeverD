@@ -1637,49 +1637,68 @@ TEST(PipelineOutcome, OmittedPointerDeclarationsStayInSourceModules) {
     auto Function = Symbol::makeFunc(Target);
     Function.Name = "read_pointer";
     Image.Symbols.push_back(std::move(Function));
-    PipelineAnalysisCache Cache;
-    // Reuse the same image cache across native, source and patch requests.
-    // Eight callers also exercise linked LLVM shards with one shared callee.
-    for (const auto [Source, Patch] : {std::pair{false, false},
-                                       {true, false},
-                                       {true, true},
-                                       {true, false}}) {
-      SCOPED_TRACE(Source);
-      SCOPED_TRACE(Patch);
-      llvm::LLVMContext Context;
-      PipelineOptions Options;
-      Options.AnalysisCache = &Cache;
-      Options.EmitDumpOutput = false;
-      Options.OnlyFunctionEntries = Entries;
-      Options.MedAnalysisOnly = true;
-      auto Result = Pipeline().run(Image, Context, Options);
-      ASSERT_TRUE(Result.Success) << Result.Error;
-      Options.MedAnalysisOnly = false;
-      Options.LiftMode = true;
-      Options.SourceProjection = Source;
-      Options.PatchMode = Patch;
-      ASSERT_TRUE(PipelineTestPeer::runLift(Image, Context, Options, Result))
-          << Result.Error;
-      ASSERT_TRUE(Result.LlvmModule);
-      EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
-      for (unsigned I = 0; I != Count; ++I) {
-        auto *Caller = Result.LlvmModule->getFunction("forward_pointer_" +
-                                                      std::to_string(I));
-        ASSERT_TRUE(Caller);
-        unsigned Calls = 0;
-        for (const auto &Block : *Caller)
-          for (const auto &Instruction : Block)
-            if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
-                Call && Call->getCalledFunction() &&
-                !Call->getCalledFunction()->isIntrinsic()) {
-              const auto *Callee = Call->getCalledFunction();
-              ASSERT_TRUE(Callee->isDeclaration());
-              ASSERT_EQ(Callee->arg_size(), 1u);
-              EXPECT_EQ(Callee->getArg(0)->getType()->isPointerTy(),
-                        Source && !Patch);
-              ++Calls;
-            }
-        EXPECT_EQ(Calls, 1u);
+    for (bool HasException : {false, true}) {
+      SCOPED_TRACE(HasException);
+      if (HasException) {
+        ExceptionFunction Exception;
+        Exception.CodeRange = {Target, Target + sizeof(Read)};
+        Exception.Encoding = ExceptionEncoding::DwarfFDE;
+        Exception.Personality = ExceptionPersonality::None;
+        Exception.ParseStatus = ExceptionParseStatus::Complete;
+        Image.ExceptionMetadata.Functions.push_back(std::move(Exception));
+        Image.ExceptionMetadata.rebuildIndex();
+      }
+      PipelineAnalysisCache Cache;
+      // Reuse the same image cache across native, source and patch requests.
+      // Eight callers also exercise linked LLVM shards with one shared callee.
+      for (const auto [Source, Patch] : {std::pair{false, false},
+                                         {true, false},
+                                         {true, true},
+                                         {true, false}}) {
+        SCOPED_TRACE(Source);
+        SCOPED_TRACE(Patch);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.AnalysisCache = &Cache;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = Entries;
+        Options.MedAnalysisOnly = true;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        Options.MedAnalysisOnly = false;
+        Options.LiftMode = true;
+        Options.SourceProjection = Source;
+        Options.PatchMode = Patch;
+        ASSERT_TRUE(PipelineTestPeer::runLift(Image, Context, Options, Result))
+            << Result.Error;
+        ASSERT_TRUE(Result.LlvmModule);
+        EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        // An exception-bearing body is outside the declaration contract. Its
+        // existing zero-stack summary must avoid a redundant signature lift.
+        if (HasException) {
+          ASSERT_TRUE(Result.OmittedCallees);
+          EXPECT_TRUE(Result.OmittedCallees->Bodies.empty());
+        }
+        for (unsigned I = 0; I != Count; ++I) {
+          auto *Caller = Result.LlvmModule->getFunction("forward_pointer_" +
+                                                        std::to_string(I));
+          ASSERT_TRUE(Caller);
+          unsigned Calls = 0;
+          for (const auto &Block : *Caller)
+            for (const auto &Instruction : Block)
+              if (const auto *Call =
+                      llvm::dyn_cast<llvm::CallBase>(&Instruction);
+                  Call && Call->getCalledFunction() &&
+                  !Call->getCalledFunction()->isIntrinsic()) {
+                const auto *Callee = Call->getCalledFunction();
+                ASSERT_TRUE(Callee->isDeclaration());
+                ASSERT_EQ(Callee->arg_size(), 1u);
+                EXPECT_EQ(Callee->getArg(0)->getType()->isPointerTy(),
+                          Source && !Patch && !HasException);
+                ++Calls;
+              }
+          EXPECT_EQ(Calls, 1u);
+        }
       }
     }
   }
