@@ -31,6 +31,7 @@
 #include <numeric>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -138,6 +139,8 @@ struct ContextState {
   RegisterState Origins{};
   ScratchState OriginScratch;
   MemoryPostconditions Postconditions;
+  std::array<std::optional<size_t>, kRegisterCount> InputExpressions{};
+  bool EntryMemoryUnchanged = true;
 
   ContextState() = default;
   ContextState(const MachineState &State) : Scratch(State.Scratch) {
@@ -163,6 +166,10 @@ struct ContextState {
     Scratch.Values.joinValues(Other.Scratch.Values);
     OriginScratch.meet(Other.OriginScratch);
     Postconditions.meet(Other.Postconditions);
+    for (unsigned R = 0; R < kRegisterCount; ++R)
+      if (InputExpressions[R] != Other.InputExpressions[R])
+        InputExpressions[R].reset();
+    EntryMemoryUnchanged &= Other.EntryMemoryUnchanged;
   }
 };
 
@@ -230,13 +237,17 @@ void profileInput(llvm::FoldingSetNodeID &ID, size_t Block, bool Generic,
   Input.Scratch.Values.profile(ID);
 }
 
+struct ContextCall : CallXSummaryEdge {
+  std::vector<CallXContextEvidence> InputExpressionTargets;
+};
+
 struct FunctionContext : llvm::FoldingSetNode {
   size_t ID;
   size_t EntryBlock;
   ContextState Input;
   std::optional<ContextState> Return;
   std::vector<CallXContextEvidence> Sites;
-  std::vector<CallXSummaryEdge> Calls;
+  std::vector<ContextCall> Calls;
   bool IsRoot = false;
   bool Published = false;
   bool Generic;
@@ -328,6 +339,19 @@ private:
                 MissingRegisters *Missing);
   void transferValues(const MedInstruction &Instruction, ContextState &State);
   void refineOrigins(const FunctionContext &Context, ContextState &State);
+  llvm::Expected<size_t> inputExpression(CallXInputExpression Expression);
+  llvm::Error transferInputExpression(const MedInstruction &Instruction,
+                                      ContextState &State);
+  llvm::Error instantiateTargetInputs(FunctionContext &Caller,
+                                      const FunctionContext &Callee,
+                                      const ContextState &Input,
+                                      ContextCall &Edge);
+  ProvenValueSet loadFullWord(const MedInstruction &Instruction,
+                              const ProvenValueSet &Bases,
+                              const StoredRegisterMemory &Memory) const;
+  void classifyTarget(CallXContextEvidence &Evidence,
+                      const ProvenValueSet &Values,
+                      const CallXMissingFact &Missing) const;
   CallXContextEvidence evidence(const FunctionContext &Context,
                                 const MedInstruction &Instruction,
                                 const ContextState &State,
@@ -380,6 +404,11 @@ private:
   size_t SkippedNonCallXRoots = 0;
   size_t SkippedConstantBranchSuccessors = 0;
   size_t RootGeneration = 0;
+  using ExpressionKey =
+      std::tuple<CallXInputExpressionKind, size_t, uint64_t, int64_t>;
+  std::map<ExpressionKey, size_t> ExpressionIndex;
+  std::vector<CallXInputExpression> InputExpressions;
+  size_t InstantiatedTargetInputExpressions = 0;
   bool SpecializationBudgetExhausted = false;
   size_t Visits = 0;
   size_t CacheHits = 0;
@@ -553,9 +582,17 @@ ContextFlow::generalizeRedundantPublishedContext(size_t Entry,
     Pending.clear();
     Pending.push_back(Start.ID);
     Seen[Start.ID] = true;
-    const auto AddSites =
-        [&](const FunctionContext &Context) -> llvm::Expected<bool> {
-      for (const auto &Site : Context.Sites) {
+    const auto AddSites = [&](const FunctionContext &Context,
+                              const ContextCall *Edge =
+                                  nullptr) -> llvm::Expected<bool> {
+      size_t Instantiated = 0;
+      for (const auto &Template : Context.Sites) {
+        const auto &Site =
+            Edge && Instantiated < Edge->InputExpressionTargets.size() &&
+                    Edge->InputExpressionTargets[Instantiated].CallXSlot ==
+                        Template.CallXSlot
+                ? Edge->InputExpressionTargets[Instantiated++]
+                : Template;
         // A union of target alternatives is a different proof from separate
         // singleton contexts; do not discard that distinction here.
         if (Site.TargetValueAlternatives.values().size() > 1)
@@ -582,7 +619,7 @@ ContextFlow::generalizeRedundantPublishedContext(size_t Entry,
         // Legacy dispatch suppresses the immediate child's target evidence;
         // its subsequent summary edges are still traversed by the report.
         if (!Edge.LegacyRuntime) {
-          auto Added = AddSites(Child);
+          auto Added = AddSites(Child, &Edge);
           if (!Added || !*Added)
             return Added;
         }
@@ -796,6 +833,115 @@ llvm::ArrayRef<RegisterValue> possibleValues(const ProvenValueSet &Values) {
                           : Values.values();
 }
 
+llvm::Expected<size_t>
+ContextFlow::inputExpression(CallXInputExpression Expression) {
+  ExpressionKey Key;
+  switch (Expression.Kind) {
+  case CallXInputExpressionKind::InputRegister:
+    Key = {Expression.Kind, Expression.Register, 0, Expression.Offset};
+    break;
+  case CallXInputExpressionKind::Constant:
+    Key = {Expression.Kind, 0, Expression.Constant.Value, 0};
+    break;
+  case CallXInputExpressionKind::Instruction:
+    Key = {Expression.Kind, *Expression.Input, Expression.InstructionSlot, 0};
+    Expression.Depth = InputExpressions[*Expression.Input].Depth + 1;
+    break;
+  }
+  if (const auto It = ExpressionIndex.find(Key); It != ExpressionIndex.end())
+    return It->second;
+  // Include vector growth and the index node in the same retained estimate.
+  constexpr uint64_t Bytes = 2 * sizeof(CallXInputExpression) +
+                             sizeof(decltype(ExpressionIndex)::value_type) +
+                             4 * sizeof(void *);
+  if (auto Error = retain(Bytes))
+    return std::move(Error);
+  const size_t ID = InputExpressions.size();
+  ExpressionIndex.emplace(Key, ID);
+  InputExpressions.push_back(Expression);
+  return ID;
+}
+
+llvm::Error
+ContextFlow::transferInputExpression(const MedInstruction &Instruction,
+                                     ContextState &State) {
+  if (Instruction.Op == Operation::Store)
+    State.EntryMemoryUnchanged = false;
+  if (!Instruction.Semantics.WritesDestination)
+    return llvm::Error::success();
+  const bool Copy = Instruction.Op == Operation::Mov &&
+                    Instruction.Form == OperandForm::DstSrc &&
+                    Instruction.Width == kDoubleWordBitWidth;
+  const bool Load = Instruction.Op == Operation::Load &&
+                    Instruction.Semantics.MemoryWidth == kDoubleWordBitWidth &&
+                    State.EntryMemoryUnchanged;
+  const bool Affine =
+      (Instruction.Op == Operation::Add || Instruction.Op == Operation::Sub) &&
+      Instruction.Form == OperandForm::DstImm &&
+      Instruction.Width == kDoubleWordBitWidth;
+  // Capture the source before killing Dst, including LD r2, [r2+40].
+  const unsigned Source = Load || Copy ? Instruction.Src : Instruction.Dst;
+  auto Input = State.InputExpressions[Source];
+  if (Copy) {
+    State.InputExpressions[Instruction.Dst] = Input;
+    return llvm::Error::success();
+  }
+  State.InputExpressions[Instruction.Dst].reset();
+  if (!Load && !Affine)
+    return llvm::Error::success();
+  if (!Input) {
+    const auto Value = State.Registers[Source].singleton();
+    if (!Load || Value.ValueKind != RegisterValue::Kind::Constant)
+      return llvm::Error::success();
+    CallXInputExpression Constant;
+    Constant.Kind = CallXInputExpressionKind::Constant;
+    Constant.Constant = Value;
+    auto ID = inputExpression(Constant);
+    if (!ID)
+      return ID.takeError();
+    Input = *ID;
+  }
+  CallXInputExpression Step;
+  Step.Kind = CallXInputExpressionKind::Instruction;
+  Step.Input = Input;
+  Step.InstructionSlot = Instruction.Slot;
+  auto ID = inputExpression(Step);
+  if (!ID)
+    return ID.takeError();
+  State.InputExpressions[Instruction.Dst] = *ID;
+  return llvm::Error::success();
+}
+
+ProvenValueSet
+ContextFlow::loadFullWord(const MedInstruction &Instruction,
+                          const ProvenValueSet &Bases,
+                          const StoredRegisterMemory &Memory) const {
+  std::optional<ProvenValueSet> Output;
+  for (const auto &Base : possibleValues(Bases)) {
+    const auto Address = effectiveAddress(Base, Instruction.Offset);
+    const auto Coordinate = Base.ValueKind == RegisterValue::Kind::StackAddress
+                                ? MemoryCoordinate::FrameRelative
+                                : MemoryCoordinate::Absolute;
+    const auto Stored =
+        Address ? Memory.readValues(*Address, Coordinate) : ProvenValueSet{};
+    for (const auto &Value : possibleValues(Stored)) {
+      StoredRegisterMemory Cell;
+      if (Address && !Stored.unknown())
+        Cell.write(*Address, Value, Coordinate);
+      RegisterState Registers{};
+      Registers[Instruction.Src] = Base;
+      applyRegisterTransfer(Instruction, Registers, Program.ExecutableImage,
+                            &Cell);
+      const ProvenValueSet Loaded(Registers[Instruction.Dst]);
+      if (!Output)
+        Output = Loaded;
+      else
+        Output->join(Loaded);
+    }
+  }
+  return *Output;
+}
+
 void ContextFlow::transferValues(const MedInstruction &Instruction,
                                  ContextState &State) {
   const auto OriginAddress = [&](unsigned Register) {
@@ -882,6 +1028,13 @@ void ContextFlow::transferValues(const MedInstruction &Instruction,
   }
   if (!Instruction.Semantics.WritesDestination)
     return;
+
+  if (Instruction.Op == Operation::Load &&
+      Instruction.Semantics.MemoryWidth == kDoubleWordBitWidth) {
+    State.Registers[Instruction.Dst] = loadFullWord(
+        Instruction, State.Registers[Instruction.Src], State.Scratch.Values);
+    return;
+  }
 
   std::optional<ProvenValueSet> Output;
   const auto Evaluate = [&](MachineState &Variant) {
@@ -1021,8 +1174,21 @@ CallXContextEvidence ContextFlow::evidence(const FunctionContext &Context,
   Evidence.CalleeEntrySlot = Program.Med.Blocks[Context.EntryBlock].StartSlot;
   Evidence.CallXSlot = Instruction.Slot;
   Evidence.BeyondEntryBlock = BeyondEntry;
-  const RegisterValue Target =
-      State.Registers[Instruction.CallRegister].singleton();
+  Evidence.InputExpression = State.InputExpressions[Instruction.CallRegister];
+  classifyTarget(Evidence, State.Registers[Instruction.CallRegister],
+                 Missing[Instruction.CallRegister]);
+  return Evidence;
+}
+
+void ContextFlow::classifyTarget(CallXContextEvidence &Evidence,
+                                 const ProvenValueSet &Values,
+                                 const CallXMissingFact &Missing) const {
+  Evidence.Result = CallXContextResult::UnknownTarget;
+  Evidence.TargetAddress.reset();
+  Evidence.TargetSlot.reset();
+  Evidence.TargetValueAlternatives = {};
+  Evidence.Missing = {};
+  const RegisterValue Target = Values.singleton();
   if (Target.ValueKind == RegisterValue::Kind::Constant) {
     Evidence.TargetAddress = Target.Value;
     if (const auto Slot = rawTargetSlot(Target.Value)) {
@@ -1034,10 +1200,9 @@ CallXContextEvidence ContextFlow::evidence(const FunctionContext &Context,
       Evidence.Result = CallXContextResult::InvalidTarget;
     }
   } else {
-    Evidence.Missing = Missing[Instruction.CallRegister];
-    if (State.Registers[Instruction.CallRegister].values().size() > 1) {
-      Evidence.TargetValueAlternatives =
-          State.Registers[Instruction.CallRegister];
+    Evidence.Missing = Missing;
+    if (Values.values().size() > 1) {
+      Evidence.TargetValueAlternatives = Values;
       const bool KnownRawTargets = std::all_of(
           Evidence.TargetValueAlternatives.values().begin(),
           Evidence.TargetValueAlternatives.values().end(),
@@ -1054,7 +1219,101 @@ CallXContextEvidence ContextFlow::evidence(const FunctionContext &Context,
     } else if (Evidence.Missing.Kind == CallXMissingFactKind::None)
       Evidence.Missing.Kind = CallXMissingFactKind::SymbolicTarget;
   }
-  return Evidence;
+}
+
+llvm::Error ContextFlow::instantiateTargetInputs(FunctionContext &Caller,
+                                                 const FunctionContext &Callee,
+                                                 const ContextState &Input,
+                                                 ContextCall &Edge) {
+  for (const auto &Template : Callee.Sites) {
+    if (!Template.InputExpression || Template.TargetAddress ||
+        Template.Result == CallXContextResult::ProvenTargetSet)
+      continue;
+    const size_t Root = *Template.InputExpression;
+    const size_t Depth = InputExpressions[Root].Depth;
+    const uint64_t TemporaryBytes =
+        Depth * (sizeof(size_t) + sizeof(CallXInputExpressionValue) +
+                 2 * kCallXContextValueAlternatives * sizeof(RegisterValue));
+    if (auto Error = retain(TemporaryBytes))
+      return Error;
+    const auto Release =
+        llvm::scope_exit([&] { RetainedBytes -= TemporaryBytes; });
+    std::vector<size_t> Chain;
+    Chain.reserve(Depth);
+    for (std::optional<size_t> ID = Root; ID; ID = InputExpressions[*ID].Input)
+      Chain.push_back(*ID);
+    std::vector<CallXInputExpressionValue> Proof;
+    Proof.reserve(Depth);
+    ProvenValueSet Values;
+    for (auto It = Chain.rbegin(); It != Chain.rend(); ++It) {
+      if (auto Error = visit())
+        return Error;
+      const auto &Node = InputExpressions[*It];
+      CallXInputExpressionValue Witness;
+      Witness.Expression = *It;
+      if (Node.Kind == CallXInputExpressionKind::InputRegister) {
+        Witness.Inputs = Input.Registers[Node.Register];
+        std::optional<ProvenValueSet> Output;
+        for (const auto &Value : possibleValues(Witness.Inputs)) {
+          RegisterState Actual{};
+          Actual[Node.Register] = Value;
+          const ProvenValueSet Result(
+              substituteOrigin({RegisterValue::Kind::StackAddress,
+                                Node.Register + 1, Node.Offset},
+                               Actual, Program));
+          if (!Output)
+            Output = Result;
+          else
+            Output->join(Result);
+        }
+        Values = std::move(*Output);
+      } else if (Node.Kind == CallXInputExpressionKind::Constant) {
+        Values = Node.Constant;
+      } else {
+        Witness.Inputs = Values;
+        const auto &Instruction = *Index.find(Node.InstructionSlot);
+        if (Instruction.Op == Operation::Load) {
+          Values = loadFullWord(Instruction, Values, Input.Scratch.Values);
+        } else {
+          std::optional<ProvenValueSet> Output;
+          for (const auto &Value : possibleValues(Values)) {
+            RegisterState Actual{};
+            Actual[Instruction.Dst] = Value;
+            applyRegisterTransfer(Instruction, Actual, Program.ExecutableImage);
+            const ProvenValueSet Result(Actual[Instruction.Dst]);
+            if (!Output)
+              Output = Result;
+            else
+              Output->join(Result);
+          }
+          Values = std::move(*Output);
+        }
+      }
+      Witness.Values = Values;
+      Proof.push_back(std::move(Witness));
+      if (Values.unknown())
+        break;
+    }
+    if (Values.unknown())
+      continue;
+    CallXContextEvidence Site = Template;
+    classifyTarget(Site, Values, {});
+    if (Site.Result == CallXContextResult::UnknownTarget)
+      continue;
+    Site.InputExpressionValues = std::move(Proof);
+    uint64_t Bytes = 2 * sizeof(Site) +
+                     Site.TargetValueAlternatives.allocatedBytes() +
+                     Site.InputExpressionValues.capacity() *
+                         sizeof(CallXInputExpressionValue);
+    for (const auto &Value : Site.InputExpressionValues)
+      Bytes += Value.Inputs.allocatedBytes() + Value.Values.allocatedBytes();
+    if (auto Error = retain(Bytes))
+      return Error;
+    Caller.RetainedBytes += Bytes;
+    Edge.InputExpressionTargets.push_back(std::move(Site));
+    ++InstantiatedTargetInputExpressions;
+  }
+  return llvm::Error::success();
 }
 
 llvm::Expected<bool> ContextFlow::call(FunctionContext &Context,
@@ -1112,6 +1371,10 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
                                              bool Collect) {
   // Resolved runtime calls keep the one canonical memory-effect owner.
   if (Instruction.Call == CallKind::Syscall) {
+    if (Context.Generic && ReachesCallX[Context.EntryBlock] &&
+        (!Instruction.Syscall ||
+         !preservesCallerMemory(Instruction.Syscall->ID)))
+      State.EntryMemoryUnchanged = false;
     if (!Instruction.Syscall) {
       Context.PreservesMemory = false;
       if (Collect)
@@ -1126,7 +1389,7 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
     transfer(Instruction, State, nullptr);
     return true;
   }
-  CallXSummaryEdge Edge;
+  ContextCall Edge;
   Edge.CallerSummaryID = Context.ID;
   Edge.CallerSlot = Instruction.Slot;
   Edge.CalleeEntrySlot = Instruction.CallTarget;
@@ -1195,6 +1458,13 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
     Edge.CalleeSummaryID = Callee->ID;
     Edge.GeneralizedInputs = Callee->Generic;
     Edge.InputGeneralization = Generalization;
+    if (Collect && !Context.Generic && Callee->Generic && !Edge.LegacyRuntime &&
+        !SpecializationBudgetExhausted)
+      if (auto Error = instantiateTargetInputs(Context, *Callee, Input, Edge)) {
+        if (!SpecializationBudgetExhausted)
+          return std::move(Error);
+        llvm::consumeError(std::move(Error));
+      }
   }
   Context.PreservesMemory &=
       Callee && Callee->PreservesMemory && !Edge.LegacyRuntime;
@@ -1215,6 +1485,8 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
   ScratchState PreservedOrigins = State.OriginScratch;
   const bool PreserveInput =
       Callee && Callee->PreservesMemory && !Edge.LegacyRuntime;
+  if (Context.Generic && ReachesCallX[Context.EntryBlock] && !PreserveInput)
+    State.EntryMemoryUnchanged = false;
   const bool EquivalentLeaf = Edge.InputGeneralization ==
                               CallXInputGeneralization::EquivalentGenericInputs;
   const bool ApplyEffects = Callee && Callee->Generic && !EquivalentLeaf &&
@@ -1373,6 +1645,20 @@ llvm::Expected<bool> ContextFlow::replay(FunctionContext &Context,
       Defined |= Dependencies.Writes;
       if (!*Continues)
         return false;
+      if (Context.Generic && ReachesCallX[Context.EntryBlock]) {
+        for (unsigned R = 0; R < kFirstCalleeSavedRegister; ++R)
+          State.InputExpressions[R].reset();
+        const auto &Origin = State.Origins[kReturnRegister];
+        if (Origin.ValueKind == RegisterValue::Kind::StackAddress) {
+          CallXInputExpression Expression;
+          Expression.Register = Origin.Value - 1;
+          Expression.Offset = Origin.Offset;
+          auto ID = inputExpression(Expression);
+          if (!ID)
+            return ID.takeError();
+          State.InputExpressions[kReturnRegister] = *ID;
+        }
+      }
       if (Collect)
         for (unsigned R = 0; R < kFirstCalleeSavedRegister; ++R) {
           Missing[R] = {};
@@ -1400,6 +1686,9 @@ llvm::Expected<bool> ContextFlow::replay(FunctionContext &Context,
         Context.Effects.addWrite(Address, Instruction->Width / kBitsPerByte,
                                  Program);
       }
+      if (Context.Generic && ReachesCallX[Context.EntryBlock])
+        if (auto Error = transferInputExpression(*Instruction, State))
+          return std::move(Error);
       transfer(*Instruction, State, Collect ? &Missing : nullptr);
     }
   }
@@ -1421,6 +1710,17 @@ ContextFlow::summarize(size_t Entry, const ContextState &Incoming, bool Generic,
   Input.Origins = symbolicInputs();
   Input.OriginScratch.clear();
   Input.Postconditions.clear();
+  Input.InputExpressions = {};
+  Input.EntryMemoryUnchanged = true;
+  if (Generic && ReachesCallX[Entry])
+    for (unsigned R = 0; R < kRegisterCount; ++R) {
+      CallXInputExpression Expression;
+      Expression.Register = R;
+      auto ID = inputExpression(Expression);
+      if (!ID)
+        return ID.takeError();
+      Input.InputExpressions[R] = *ID;
+    }
   for (unsigned R = 0; R < kRegisterCount; ++R)
     if (!(InputRegisters[Entry] & (uint16_t{1} << R))) {
       ProjectedRegisters += !Generic && !Input.Registers[R].unknown();
@@ -1579,6 +1879,8 @@ ContextFlow::summarize(size_t Entry, const ContextState &Incoming, bool Generic,
         Merged.Origins == It->second.Entry.Origins &&
         Merged.OriginScratch == It->second.Entry.OriginScratch &&
         Merged.Postconditions == It->second.Entry.Postconditions &&
+        Merged.InputExpressions == It->second.Entry.InputExpressions &&
+        Merged.EntryMemoryUnchanged == It->second.Entry.EntryMemoryUnchanged &&
         MergedDefinitions == It->second.DefinitelyWritten)
       return llvm::Error::success();
     const uint64_t OldCharge = StateCharge(It->second.Entry);
@@ -1840,9 +2142,15 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
         Worklist.push_back(*Call.CalleeSummaryID);
       }
   }
+  size_t InputExpressionProofElements = 0;
   const auto AddSites = [&](const FunctionContext &Context,
-                            const CallXSummaryEdge *Edge) {
+                            const ContextCall *Edge) {
+    size_t Instantiated = 0;
     for (auto Site : Context.Sites) {
+      if (Edge && Instantiated < Edge->InputExpressionTargets.size() &&
+          Edge->InputExpressionTargets[Instantiated].CallXSlot ==
+              Site.CallXSlot)
+        Site = Edge->InputExpressionTargets[Instantiated++];
       Site.IsRootContext = !Edge;
       if (Edge) {
         Site.CallerSlot = Edge->CallerSlot;
@@ -1856,6 +2164,7 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
           Site.Missing = {};
         }
       }
+      InputExpressionProofElements += Site.InputExpressionValues.size();
       Report.Contexts.push_back(std::move(Site));
     }
   };
@@ -1919,7 +2228,8 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
         AddSites(*Contexts[*Edge.CalleeSummaryID], &Edge);
     }
     if (Report.UnresolvedCallXSlots.size() + Report.Contexts.size() +
-            Report.Summaries.size() + Report.SummaryEdges.size() >
+            Report.Summaries.size() + Report.SummaryEdges.size() +
+            InputExpressions.size() + InputExpressionProofElements >
         kCallXContextOutputElementBudget)
       return llvm::make_error<llvm::StringError>(
           kCallXContextOutputBudgetDiagnostic, llvm::inconvertibleErrorCode());
@@ -1937,6 +2247,9 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
   Report.EquivalentSpecializedReuses = EquivalentSpecializedReuses;
   Report.SkippedNonCallXRootSpecializations = SkippedNonCallXRoots;
   Report.SkippedConstantBranchSuccessors = SkippedConstantBranchSuccessors;
+  Report.InputExpressions = std::move(InputExpressions);
+  Report.InstantiatedTargetInputExpressions =
+      InstantiatedTargetInputExpressions;
   return Report;
 }
 

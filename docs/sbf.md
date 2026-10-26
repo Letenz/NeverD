@@ -438,6 +438,31 @@ generalized unknown. Cached input fields outside the conditional mask are not
 additional requirements on such an edge. The four-summary and resource budgets
 remain unchanged.
 
+Generic summaries can retain a CALLX carrier as an expression of entry
+parameters and full-width loads from entry memory. Copies, supported normalized
+affine operations and canonical return-input expressions compose those values
+across basic blocks. Expressions meet by exact identity at joins; unsupported
+operations and differing expressions become unknown. A new entry-memory load
+is available only while every reaching path has preserved that memory. Stores
+and potentially writing calls invalidate that guarantee, including a change
+that leaves all register values equal. A value captured before a write remains
+available in a carrier that survives the canonical ABI.
+
+When an actual caller uses a completed generic summary, its pre-call parameters
+and scratch can instantiate such a target expression after the frame push.
+This preserves the generic return/memory transfer and four-summary limit.
+Schema 4 reports `target_input_expressions`, normalized instruction slots and
+each `input_expression_proof` step's input/output alternatives. The evidence
+scope is `instantiated_generic_summary_inputs`; `generalized_unknown_inputs`
+still describes the function-summary mode, while the target proof names its
+actual input conditions. Unknown or overflowing alternatives stay unknown;
+legacy dispatch keeps its existing argument and evidence invalidation.
+Expression nodes, proof steps, retained values and evaluations use the existing
+output, retained-state and instruction-work budgets. The instantiation counter
+counts computations, including solver contexts that may later be reclaimed.
+These target proofs do not create candidate-callee summary edges, establish
+that every candidate was summarized, or close unknown runtime callers.
+
 All generic roots remain available, but standalone specialization is skipped
 when the static CFG/direct-call graph cannot reach an unresolved CALLX; actual
 callers can still demand return/memory specializations. Remaining roots retain

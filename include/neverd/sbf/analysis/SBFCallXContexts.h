@@ -68,6 +68,32 @@ enum class CallXInputGeneralization : uint8_t {
   EquivalentSpecializedInputs,
 };
 
+enum class CallXInputExpressionKind : uint8_t {
+  InputRegister,
+  Constant,
+  Instruction,
+};
+
+/// Report-local entry-input expressions. Instruction nodes refer to the
+/// program's normalized transfer, not a second set of opcode semantics.
+struct CallXInputExpression {
+  CallXInputExpressionKind Kind = CallXInputExpressionKind::InputRegister;
+  unsigned Register = 0;
+  int64_t Offset = 0;
+  RegisterValue Constant;
+  std::optional<size_t> Input;
+  size_t InstructionSlot = 0;
+  size_t Depth = 1;
+};
+
+/// Values consumed and produced while instantiating one caller's expression.
+/// Frame-relative values retain their analysis coordinate tags.
+struct CallXInputExpressionValue {
+  size_t Expression = 0;
+  ProvenValueSet Inputs;
+  ProvenValueSet Values;
+};
+
 struct CallXContextEvidence {
   size_t CallerSlot = 0;
   size_t CalleeEntrySlot = 0;
@@ -85,6 +111,8 @@ struct CallXContextEvidence {
   bool EntryPrefixOnly = false;
   bool GeneralizedInputs = false;
   CallXInputGeneralization InputGeneralization = CallXInputGeneralization::None;
+  std::optional<size_t> InputExpression;
+  std::vector<CallXInputExpressionValue> InputExpressionValues;
 };
 
 enum class CallXSummaryBarrier : uint8_t {
@@ -171,6 +199,8 @@ struct CallXContextReport {
   size_t EquivalentSpecializedReuses = 0;
   size_t SkippedNonCallXRootSpecializations = 0;
   size_t SkippedConstantBranchSuccessors = 0;
+  std::vector<CallXInputExpression> InputExpressions;
+  size_t InstantiatedTargetInputExpressions = 0;
 };
 
 /// Analyze complete recognized function CFGs with context-keyed summaries.
