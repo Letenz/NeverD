@@ -36,6 +36,10 @@ rather than requiring an intermediate call record to survive optimization.
 unsigned 1/2/4-byte reads through both C routes at O0/O2 with UBSan, for x64/ARM64
 PE/ELF and complete or selected-caller output. Callers write only the consumed
 bytes. The frame proof separately rejects reads wider than the declared input.
+`IncomingHomeSource.MixedWidthReadsShareOneCompleteInput` executes mixed prefix
+and complete-slot reads through both C routes at O0/O2 with UBSan. The native
+frame controls cover both read orders and reject narrow-only observations or
+a full-width observation belonging to a different slot.
 `IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
 routes with an incoming last-stack-word declaration and unrelated register and
 stack setup. `HighCPointerAddresses.Win64TwelveArgumentCallKeepsEveryStackArgument`

@@ -12,6 +12,8 @@ Quando il tipo di chiamata LLVM differisce dalla dichiarazione, LLVM C valuta la
 
 I parametri interi sullo stack di 1/2/4/8 byte mantengono la larghezza esatta nella cache, nel binding di ingresso e nella prova delle scritture del chiamante. Le estensioni con e senza segno preservano i bit letti; un parametro stretto non inizializza byte adiacenti.
 
+Le letture strette allo stesso offset condividono un parametro solo se il codice originale raggiungibile legge anche tutta la larghezza dichiarata dello slot. La prova del frame verifica il massimo per slot: letture strette ripetute o una lettura completa da un altro slot non forniscono i byte mancanti.
+
 Le destinazioni costanti delle chiamate tramite registro usano la query scalare LowIR limitata e condivisa. La prova dello stack mantiene la chiamata indiretta originale; solo il MedIR sorgente diventa una chiamata nominata dopo l’accordo tra destinazione, dichiarazione e byte in uscita. Caricamenti, valori tra blocchi, effetti delle chiamate e registri incompleti non determinano una destinazione.
 
 Per i PE x64 collegati, il rilevamento raccoglie gli indirizzi di codice delle LEA canoniche relative a RIP durante la scansione delle chiamate esistente. Ogni destinazione richiede ancora un ingresso indipendente e una prova limitata di uscita richiamabile; etichette interne, continuazioni e corpi non supportati restano esclusi. Rilevamento e firme condividono il riconoscimento della codifica. I riferimenti rel32 condizionali COFF richiedono inoltre simboli di funzione espliciti e rilocazioni senza addendo. Offline, `--single-reference-context` verifica ogni condizione con un solo sito rispetto a tutte le dichiarazioni originali sovrapposte, mantenendo tutte le alternative del sito.

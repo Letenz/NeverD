@@ -12,6 +12,8 @@
 
 Die zusätzliche Matrix führt vorzeichenbehaftete und vorzeichenlose Zugriffe von 1/2/4 Byte über beide C-Pfade bei O0/O2 mit UBSan aus, für vollständige Ausgaben und einzelne Aufrufer. Aufrufer schreiben nur die gelesenen Bytes; Zugriffe über die deklarierte Breite hinaus werden abgelehnt.
 
+Die Matrix gemischter Breiten führt Präfix- und vollständige Slot-Lesezugriffe mit O0/O2 und UBSan aus. Native Frame-Kontrollen prüfen beide Reihenfolgen und lehnen ausschließlich schmale Zugriffe sowie vollständige Zugriffe auf einen anderen Slot ab.
+
 Bekannte Registeraufrufe werden über beide C-Ausgaben für x64/ARM64 PE/ELF als vollständiges Modul und ausgewählter Aufrufer ausgeführt. Das ursprüngliche LowIR bleibt indirekt. Gegenproben prüfen Teilüberschreibungen, unbekannte Effekte, wiederverwendete temporäre Werte, Speicherzellen und erschöpfte Budgets.
 
 `PEFunctionAddresses.*` prüft x64-PE-Blattfunktionen ohne Stackframe, Eigentümerschaft und Instruktionsgrenzen, abgewiesene Präfixe und schmale Operanden, Ausgänge, Abbruch und gleiche Ergebnisse mit 1/2/4/16 Workern. Signaturtests decken alle 16 rel32-Bedingungen in beiden Richtungen, explizite Einstiegsbereiche und Quellrelokationen ab. Python-Tests bewahren Alternativen und gemeinsam notwendige Stellen, prüfen jeden ursprünglichen Gegenbeleg und vermeiden doppelte Ansprüche.

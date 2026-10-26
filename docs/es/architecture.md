@@ -12,6 +12,8 @@ Cuando el tipo de llamada LLVM difiere de la declaración, LLVM C evalúa la con
 
 Los parámetros enteros de pila de 1/2/4/8 bytes conservan su anchura exacta en la caché, el enlace de entrada y la prueba de escritura del llamador. Las extensiones con y sin signo preservan los bits leídos; un parámetro estrecho no inicializa bytes adyacentes.
 
+Las lecturas estrechas en el mismo desplazamiento comparten un parámetro solo si el código original alcanzable también lee todo el ancho declarado de esa ranura. La prueba de marco comprueba el máximo por ranura; repetir lecturas estrechas o leer otra ranura completa no aporta los bytes faltantes.
+
 Los destinos constantes de llamadas por registro usan la consulta escalar LowIR acotada y compartida. La prueba de pila conserva la llamada indirecta original; solo el MedIR fuente pasa a una llamada con nombre cuando coinciden destino, declaración y bytes de salida. Cargas, valores entre bloques, efectos de llamadas y registros incompletos no determinan un destino.
 
 En un PE x64 enlazado, el descubrimiento recoge las direcciones de código de LEA relativas a RIP canónicas durante el barrido de llamadas existente. Cada destino sigue necesitando una entrada independiente y una prueba acotada de salida invocable; se excluyen etiquetas internas, continuaciones y cuerpos no admitidos. El descubrimiento y las firmas comparten el reconocimiento de esta codificación. Las referencias rel32 condicionales COFF también exigen símbolos de función explícitos y reubicaciones sin sumando. Sin conexión, `--single-reference-context` verifica cada condición de un solo sitio frente a todas las declaraciones originales superpuestas y conserva todas las alternativas del sitio.
