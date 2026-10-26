@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <set>
@@ -503,7 +504,7 @@ public:
           !aarch64AddressMemoryInstruction(
                Op.Inputs[kAddressMemoryWordOperand + 1].Offset)
                ->stackBase();
-      if (Op.NumInputs > 6 || Op.Output.Size > 64 ||
+      if (Op.NumInputs > std::size(Op.Inputs) || Op.Output.Size > 64 ||
           (Op.Opcode == NdOp::INTRINSIC && !OriginalLoad &&
            !hasNativeScalarIntrinsicEvidence(Op, Architecture) &&
            !(Architecture == Arch::X64 && !ObservationPointers.empty() &&
@@ -2442,8 +2443,8 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
         Temps.clear();
         Instruction = Op.Addr;
       }
-      if (!Remaining-- || Op.NumInputs > 6 || Op.Output.Size > 64 ||
-          Op.Output.Offset > UINT64_MAX - Op.Output.Size)
+      if (!Remaining-- || Op.NumInputs > std::size(Op.Inputs) ||
+          Op.Output.Size > 64 || Op.Output.Offset > UINT64_MAX - Op.Output.Size)
         return false;
       bool AnyTaint = false;
       for (unsigned I = 0; I < Op.NumInputs; ++I) {

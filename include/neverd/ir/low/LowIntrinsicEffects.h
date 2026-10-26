@@ -119,6 +119,16 @@ inline bool lowAArch64WritebackMemoryShapeIsValid(const LowOp &Op) {
     if (!Input.isConst() && !Input.isReg() && !Input.isTemp())
       return false;
   }
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (aarch64StructureOperation(Id))
+    return aarch64StructureShapeIsValid(
+        Id, Op.NumInputs - 1, Op.Output.Size,
+        [&](unsigned I) { return Op.Inputs[I + 1].Size; },
+        [&](unsigned I) -> std::optional<uint64_t> {
+          return Op.Inputs[I + 1].isConst()
+                     ? std::optional<uint64_t>(Op.Inputs[I + 1].Offset)
+                     : std::nullopt;
+        });
   const bool Store = isAArch64WritebackStoreIntrinsic(
       static_cast<Intrinsic>(Op.Inputs[0].Offset));
   return aarch64WritebackMemoryShapeIsValid(
