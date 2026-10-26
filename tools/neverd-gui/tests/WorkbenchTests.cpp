@@ -4381,16 +4381,21 @@ private slots:
     QVERIFY(activateTestWindow(bench.window.get()));
     auto *assembly = bench.window->disassembly();
     auto *action = bench.action(ActionId(command));
-    const auto generate = [&] {
+    const auto generate = [&](QWidget *target) {
+      // Cocoa can deactivate the test between gestures. Establish the
+      // intended input surface instead of sending a key to a null focus.
+      QVERIFY(activateTestWindow(target->window()));
+      target->setFocus();
+      QTRY_VERIFY(target->hasFocus());
       if (action->shortcut().isEmpty())
         action->trigger();
       else
-        QTest::keySequence(QApplication::focusWidget(), action->shortcut());
+        QTest::keySequence(target, action->shortcut());
     };
     assembly->navigate(Base + 0x140);
     QTRY_VERIFY(ListingViewTestAccess::settled(*assembly->listing()));
     assembly->focusContent();
-    generate();
+    generate(assembly->listing());
     QTRY_COMPARE(bench.window->findChildren<CodeView *>().size(), 1);
     auto *first = bench.codeView(representation);
     QVERIFY(first);
@@ -4402,7 +4407,7 @@ private slots:
     // Generate while the jump is pending: the second window must use its
     // destination, not the first window's function.
     assembly->navigate(Base + 0x160);
-    generate();
+    generate(assembly->listing());
     QTRY_COMPARE(bench.window->findChildren<CodeView *>().size(), 2);
     auto views = bench.window->findChildren<CodeView *>();
     auto *second = views[0] == first ? views[1] : views[0];
@@ -4418,8 +4423,9 @@ private slots:
 
     // Generate inside a code window refreshes only that document. Tab then
     // reuses it for another function without replacing the first document.
+    QVERIFY(activateTestWindow(second->window()));
     QTRY_VERIFY(second->text()->hasFocus());
-    generate();
+    generate(second->text());
     QTRY_VERIFY(second->text()->complete());
     QCOMPARE(bench.window->findChildren<CodeView *>().size(), 2);
     QTest::keyClick(second->text(), Qt::Key_Tab);
@@ -4435,11 +4441,11 @@ private slots:
 
     // An explicit generation from assembly may open the same function twice.
     assembly->focusContent();
-    generate();
+    generate(assembly->listing());
     QTRY_COMPARE(bench.window->findChildren<CodeView *>().size(), 3);
     secondDock->forceClose();
     assembly->focusContent();
-    generate();
+    generate(assembly->listing());
     QTRY_VERIFY(secondDock->isOpen() && second->isVisible());
     QTRY_VERIFY(second->text()->complete());
     QCOMPARE(bench.window->findChildren<CodeView *>().size(), 3);
