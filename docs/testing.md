@@ -4932,6 +4932,13 @@ execution of every source architecture.
 whose name binds a prototype, reads the parameters it declares, a system call
 stub's fifth on the stack too, together with any its body reads past them.
 
+`MedCallingConvX86Stack.*` (in `NeverDFPParameterMaskTests`) checks that i386
+incoming stack addresses count as transparent uses only when their output
+definition proves the forwarding. Its cyclic PHIs require independent root
+queries to retain both escaped homes, including distinct SSA versions and
+reversed block order. Run this owner and `NeverDI386CallContractTests` when
+changing CDECL stack-offset query reuse.
+
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
 unmasked return paths while discarding only fully cleared or replaced bytes.
