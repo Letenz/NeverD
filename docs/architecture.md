@@ -818,6 +818,15 @@ footprint. Image source conversion and execution reject the unsupported stack
 environment. Fixed-image bases using register post-index remain outside the
 materialization proof.
 
+The [structure-memory record](evidence/arm64e-structure-memory-2026-10-27.json)
+pins 1,134 independent samples, 58 completed source/projection tests and all
+60 official Arm model guest executions. Explicit and image-context integer
+bridges cover EL1 and EL0 through both C projections at O0/O2 and the actual
+LLVM ELF objects, under all four CPTA/CPTA0 settings. The matrix performs
+90,720 sample calls and 272,160 positive/negative/zero delta comparisons.
+Generated C uses its declared plain-pointer alias contract; compiler warnings,
+the 45-second model deadline and the 2 MiB mapping remain unchanged.
+
 This instruction preservation observes the execution host's controls; it does not model foreign
 EL/SCTLR2/translation state or preserve exception-PC and syndrome register
 identity. Automatic x1 GPR single-immediate lifting and initialized-image

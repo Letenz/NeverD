@@ -41,8 +41,11 @@ rather than requiring an intermediate call record to survive optimization.
 unsigned 1/2/4-byte reads through both C routes at O0/O2 with UBSan, for x64/ARM64
 PE/ELF and complete or selected-caller output. Callers write only the consumed
 bytes. The frame proof separately rejects reads wider than the declared input.
-`IncomingHomeSource.MixedWidthReadsShareOneCompleteInput` executes mixed prefix
-and complete-slot reads through both C routes at O0/O2 with UBSan. The native
+`ByProfile/IncomingHomeSourceMixedWidth.ReadsShareOneCompleteInput/*` executes
+mixed prefix and complete-slot reads through both C routes at O0/O2 with UBSan.
+Six architecture/format/carrier profiles retain every prefix width, signedness
+and complete/selected-caller combination under the original 120-second CTest
+limit. The native
 frame controls cover both read orders and reject narrow-only observations or
 a full-width observation belonging to a different slot.
 `IncomingHomeSource.CompleteStackBindingIgnoresOtherCallSetup` executes both C
@@ -15057,6 +15060,15 @@ core/projection cases must complete before model qualification. Native vector
 entry/return ABI, original SP/frame/call/unwind execution, fixed-image
 register post-index relocation and foreign exception/tag/overflow behavior are
 separate coverage boundaries.
+
+The [structure-memory qualification record](evidence/arm64e-structure-memory-2026-10-27.json)
+binds the exact 58-test report and all source/object inputs to 12 official Arm
+model profiles: two contexts, EL1/EL0 and three groups of unchanged batches.
+All 60 guest executions complete five routes and four effective control modes,
+with 90,720 sample calls and 272,160 delta comparisons. Actual compile commands
+retain strict warnings and the generated C's `-fno-strict-aliasing` contract.
+Native Apple execution and the separate ABI/stack/fault boundaries remain
+unqualified.
 
 The generic LowIR readers use the operation's stored input capacity, including
 source hints, Boolean return proofs, machine-state adapters and specialization
