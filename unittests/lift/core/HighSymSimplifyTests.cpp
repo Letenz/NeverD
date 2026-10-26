@@ -1334,7 +1334,8 @@ TEST(HighSymSimplify, EmptyAnchorsPreserveAvailableDefinitions) {
     for (uint64_t A : {0ULL, 1ULL, 127ULL, 0x80000000ULL, ~0ULL})
       for (uint64_t B : {0ULL, 17ULL, 0x8000000000000000ULL, ~0ULL})
         EXPECT_EQ(integerValue(After, A, B),
-                  llvm::APInt(Bytes * 8, A) + llvm::APInt(Bytes * 8, B));
+                  llvm::APInt(Bytes * 8, A, false, true) +
+                      llvm::APInt(Bytes * 8, B, false, true));
   }
 }
 
