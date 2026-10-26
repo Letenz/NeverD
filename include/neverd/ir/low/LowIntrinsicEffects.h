@@ -19,6 +19,8 @@
 #include "neverd/ir/intrinsics/IntrinsicValueEffects.h"
 #include "neverd/ir/low/LowIR.h"
 
+#include <iterator>
+
 namespace neverd {
 
 inline bool lowAArch64VectorShapeIsValid(const LowOp &Op) {
@@ -248,8 +250,9 @@ inline bool lowAArch64PAuthShapeIsValid(const LowOp &Op) {
 /// One shared effect classification for LowIR consumers. A malformed or
 /// unknown intrinsic cannot grant address-suppression or call-barrier proofs.
 inline bool lowIntrinsicHasOnlyValueEffects(const LowOp &Op) {
-  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 || Op.NumInputs > 6 ||
-      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 ||
+      Op.NumInputs > std::size(Op.Inputs) || !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != 2 ||
       Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
       (!Op.Output.isReg() && !Op.Output.isTemp()) || Op.Output.Size == 0 ||
       Op.MemoryOrdering != NdMemoryOrdering::None ||
@@ -302,8 +305,9 @@ inline bool lowIntrinsicIsUnconditionalTrap(const LowOp &Op) {
 /// intrinsic keeps conservative effect handling.
 inline LowMemoryOperandView lowIntrinsicMemoryOperands(const LowOp &Op) {
   LowMemoryOperandView View;
-  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 || Op.NumInputs > 6 ||
-      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+  if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs == 0 ||
+      Op.NumInputs > std::size(Op.Inputs) || !Op.Inputs[0].isConst() ||
+      Op.Inputs[0].Size != 2 ||
       Op.Inputs[0].Offset >= static_cast<uint64_t>(Intrinsic::_Count) ||
       (!Op.Output.isReg() && !Op.Output.isTemp()) || Op.Output.Size == 0 ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)

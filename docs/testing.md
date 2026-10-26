@@ -14823,3 +14823,10 @@ core/projection cases must complete before model qualification. Native vector
 entry/return ABI, original SP/frame/call/unwind execution, fixed-image
 register post-index relocation and foreign exception/tag/overflow behavior are
 separate coverage boundaries.
+
+The generic LowIR readers use the operation's stored input capacity, including
+source hints, Boolean return proofs, machine-state adapters and specialization
+or independence validation. `ExtendedOperandStorageRetainsUnsupportedEffectRefusal`
+in the specialization and independence suites distinguishes an unsupported
+eight-input effect from out-of-storage malformed input; neither may publish
+a replacement or proof. Opcode-specific arity checks remain in their owners.
