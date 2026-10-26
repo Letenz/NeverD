@@ -267,18 +267,28 @@ class PatternLine:
     refs: tuple[tuple[int, str], ...] = ()
     require_references: bool = False
     require_caller: bool = False
+    data_sites: frozenset[int] = frozenset()
 
     def with_refs(self, refs: tuple[tuple[int, str], ...],
-                  require: bool | None = None) -> "PatternLine":
+                  require: bool | None = None,
+                  data_sites: frozenset[int] | None = None) -> "PatternLine":
         """This line stating only `refs`."""
 
         tokens = self.key.split()
         head, tail = tokens[:4], tokens[4:]
-        stated = [f"^{offset:04X} {name}" for offset, name in refs]
+        if data_sites is None:
+            data_sites = self.data_sites.intersection(offset for offset, _ in refs)
+        stated = reference_fields(refs, data_sites)
         required = self.require_references if require is None else require
         constraint = ["!refs"] if required else ["!caller"] if self.require_caller else []
         text = " ".join([*head, *constraint, *self.names, *stated, *tail])
-        return PatternLine(text, self.key, self.names, refs, required, self.require_caller)
+        return PatternLine(text, self.key, self.names, refs, required, self.require_caller, data_sites)
+
+
+def reference_fields(refs: tuple[tuple[int, str], ...], data_sites: frozenset[int]) -> list[str]:
+    """Keep function and external-data sites distinct across text round trips."""
+    return [f"{'&' if offset in data_sites else '^'}{offset:04X} {name}"
+            for offset, name in refs]
 
 
 def alias_order(name: str) -> tuple:
@@ -315,10 +325,10 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     names = tuple(sorted({name for line in lines for name in line.names}, key=alias_order))
     merged = common_refs(lines)
     tokens = merged.key.split()
-    stated = [f"^{offset:04X} {name}" for offset, name in merged.refs]
+    stated = reference_fields(merged.refs, merged.data_sites)
     constraint = ["!refs"] if merged.require_references else ["!caller"] if merged.require_caller else []
     text = " ".join([*tokens[:4], *constraint, *names, *stated, *tokens[4:]])
-    return PatternLine(text, merged.key, names, merged.refs, merged.require_references, merged.require_caller)
+    return PatternLine(text, merged.key, names, merged.refs, merged.require_references, merged.require_caller, merged.data_sites)
 
 
 def ref_table(refs: tuple[tuple[int, str], ...]) -> dict[int, set[str]]:
@@ -344,7 +354,9 @@ def distinguished(lines: list[PatternLine]) -> bool:
     for first in range(len(tables)):
         for second in range(first + 1, len(tables)):
             a, b = tables[first], tables[second]
-            if not any(offset in b and not names & b[offset] for offset, names in a.items()):
+            if not any(offset in b and
+                       (offset in lines[first].data_sites) == (offset in lines[second].data_sites) and
+                       not names & b[offset] for offset, names in a.items()):
                 return False
     return True
 
@@ -361,12 +373,15 @@ def common_refs(lines: list[PatternLine]) -> PatternLine:
 
     first = lines[0]
     required = any(line.require_references for line in lines)
-    if all(line.refs == first.refs and line.require_references == required
+    if all(line.refs == first.refs and line.data_sites == first.data_sites
+           and line.require_references == required
            for line in lines):
         return first
     offsets = set.intersection(*(set(ref_table(line.refs)) for line in lines))
+    offsets = {offset for offset in offsets
+               if len({offset in line.data_sites for line in lines}) == 1}
     refs = {(offset, name) for line in lines for offset, name in line.refs if offset in offsets}
-    return first.with_refs(tuple(sorted(refs)), required)
+    return first.with_refs(tuple(sorted(refs)), required, first.data_sites & offsets)
 
 
 @dataclass(frozen=True)
@@ -426,6 +441,25 @@ class Shape:
             return False
         return _states(self.tail, other.tail)
 
+    def padding_collision_with(self, other: "Shape") -> bool:
+        """A shorter complete body can acquire this line's return padding.
+
+        COFF section lengths can include x86 INT3/NOP alignment after RET.
+        Such bytes cannot distinguish an otherwise identical shorter routine
+        followed by that alignment in a linked image. This conservative
+        collision check claims no instruction semantics for other machines;
+        it only refuses to use the common byte suffix as nominal identity.
+        CRC spans and unknown suffix bytes stay outside this narrow check.
+        """
+        if other.total >= self.total or self.crc_len or other.crc_len or \
+                not self.fully_verified() or not other.fully_verified():
+            return False
+        own = (self.lead + self.tail)[:2 * self.total].upper()
+        short = (other.lead + other.tail)[:2 * other.total].upper()
+        return short.endswith("C3") and _states(own[:len(short)], short) and all(
+            own[index:index + 2] in {"90", "CC"}
+            for index in range(len(short), len(own), 2))
+
 
 def _states(pattern: str, other: str) -> bool:
     """Whether `other` states every byte `pattern` states, the same way."""
@@ -457,6 +491,7 @@ def parse_line(text: str) -> PatternLine | None:
         raise BuildError(f"malformed pattern line: {stripped[:120]}")
     names: list[str] = []
     refs: list[tuple[int, str]] = []
+    kinds: dict[int, bool] = {}
     rest = tokens[:4]
     index = 4
     required = tokens[index] == "!refs"
@@ -469,8 +504,12 @@ def parse_line(text: str) -> PatternLine | None:
             names.append(f"{token} {tokens[index + 1]}")
             index += 2
             continue
-        if token.startswith("^") and index + 1 < len(tokens):
-            refs.append((int(token[1:], 16), tokens[index + 1]))
+        if token.startswith(("^", "&")) and index + 1 < len(tokens):
+            offset, is_data = int(token[1:], 16), token.startswith("&")
+            if offset in kinds and kinds[offset] != is_data:
+                raise BuildError("reference site mixes function and data kinds")
+            kinds[offset] = is_data
+            refs.append((offset, tokens[index + 1]))
             index += 2
             continue
         rest.append(token)
@@ -482,7 +521,8 @@ def parse_line(text: str) -> PatternLine | None:
         if any(int(n.split()[0][1:], 16) != 0 for n in names) or \
                 not shape.fully_verified():
             raise BuildError("!caller requires a complete body with public names at its start")
-    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller)
+    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller,
+                       frozenset(offset for offset, is_data in kinds.items() if is_data))
 
 
 @dataclass

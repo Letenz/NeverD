@@ -1274,6 +1274,15 @@ page boundaries, permissions, overlap and dynamic provider lifetime. Direct
 memory cases retain the complete backing on pointer, overlap, scan-limit,
 fortify and deadline refusal. `ProcessPublic.AndroidTerminatedCopyReportsMatchSDKAndCLI`
 compares whole SDK/CLI reports for both entries on success and failure.
+`CheckedAppend*` exercises `__strcat_chk` and `__strncat_chk` with exact prefix,
+suffix, NUL and errno expectations. It covers empty and truncated appends,
+full-width counts and extents, the zero-count shortcut, checked destination
+scan order, fortify failure before a later source read, read-only prefixes,
+source and tail permissions, overlap, page ends and closed providers. The
+direct memory test verifies complete backing on refusals, including expired
+budgets and space required for a synthesized NUL.
+`ProcessPublic.AndroidCheckedAppendReportsMatchSDKAndCLI` compares complete
+reports for success, read/write fortify failures and zero-count invalid pointers.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero

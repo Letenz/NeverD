@@ -304,6 +304,16 @@ private:
   /// Drop the matches their references contradict and record the ones they
   /// confirm; see \ref apply.  \p Hits are the modules that matched at each
   /// of \p Entries, the addresses the matches were looked for at.
+  struct DataBinding {
+    std::string_view Name;
+    uint64_t Parent;
+    bool MultipleParents = false;
+  };
+  using DataBindings = std::unordered_map<uint64_t, DataBinding>;
+  void appendModuleMatches(uint64_t Address, size_t Module);
+  void applyDataContext(const BinaryImage &Img,
+                        llvm::ArrayRef<uint64_t> Entries,
+                        llvm::ArrayRef<SignatureMatcher::Hit> Hits);
   void applyCallerContext(const BinaryImage &Img,
                           llvm::ArrayRef<uint64_t> Entries);
   void applyCallerContextRound(
@@ -316,7 +326,8 @@ private:
   /// skips earlier validated incoming rows without making them evidence.
   void checkReferences(const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
                        std::vector<SignatureMatcher::Hit> Hits,
-                       size_t FrozenMatches = 0, size_t FirstChecked = 0);
+                       size_t FrozenMatches = 0, size_t FirstChecked = 0,
+                       const DataBindings *Data = nullptr);
 
   /// Add \p Mods, the modules of \p Src, in place of those of a source with
   /// the same path or after every other source.
