@@ -839,6 +839,38 @@ TEST(SourceCallReturnReads, RepeatedReadsShareCompleteByteHistories) {
       << Error;
 }
 
+TEST(SourceCallReturnReads, NonMemoryOperationsDoNotMultiplyByteHistories) {
+  for (unsigned Written : {4u, 8u}) {
+    auto Func = observedCallSlot();
+    auto &Ops = Func.Blocks.front().Ops;
+    Ops.insert(Ops.begin() + 5, op(NdOp::STORE, none(),
+                                   {temp(20), MedVar::makeConst(29, Written)}));
+    Ops.insert(Ops.begin() + 6, 2048, op(NdOp::NOP, none(), {}));
+    std::string Error;
+    EXPECT_EQ(validateSourceCallReturnReads(Func, callSlotImage(), Error, 8192),
+              Written == 8)
+        << Error;
+    if (Written != 8)
+      EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+          << Error;
+  }
+}
+
+TEST(SourceCallReturnReads, SparseStackWritesNeedOnlyOneOperationScan) {
+  auto Func = observedCallSlot();
+  auto &Ops = Func.Blocks.front().Ops;
+  Ops[2].Inputs[1] = MedVar::makeConst(16, 8);
+  Ops.insert(Ops.begin() + 4, 2048, op(NdOp::NOP, none(), {}));
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error, 4352))
+      << Error;
+  Ops[2].Inputs[1] = MedVar::makeConst(8, 8);
+  EXPECT_FALSE(
+      validateSourceCallReturnReads(Func, callSlotImage(), Error, 4352));
+  EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+      << Error;
+}
+
 TEST(SourceCallReturnReads, ManyCallsShareTheConvergedStackBasis) {
   for (bool Cycle : {false, true})
     for (bool Reversed : {false, true}) {

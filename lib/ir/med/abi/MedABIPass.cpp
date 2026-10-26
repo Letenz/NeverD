@@ -457,6 +457,7 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
   std::vector<Basis> Entries(Count), Exits(Count);
   std::vector<bool> EntryBoundary(Count), ExitBoundary(Count), Queued(Count);
   std::vector<std::vector<size_t>> Users(Count);
+  std::vector<std::vector<const MedOp *>> InheritedCalls(Count);
   for (size_t I = 0; I < Count; ++I) {
     const auto &Block = Func.Blocks[I];
     for (size_t Work : {size_t{1}, Block.Ops.size(), Block.Phis.size(),
@@ -471,11 +472,25 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
         EntryBoundary[I] = true;
         break;
       }
-    for (const auto &Op : Block.Ops)
+    std::optional<MedVar> LocalStack;
+    if (EntryBoundary[I])
+      LocalStack = Entries[I].Value;
+    for (const auto &Op : Block.Ops) {
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          !Op.Dead) {
+        if (!LocalStack)
+          InheritedCalls[I].push_back(&Op);
+        else if (LocalStack->Size == TRI.PointerSize)
+          Result.emplace(&Op, *LocalStack);
+      }
+      // A local definition owns subsequent calls independently of incoming
+      // paths. Retain only calls before that definition for the fixed point.
       if (StackDefinition(Op.Output)) {
+        LocalStack = Op.Output;
         Exits[I] = {Basis::Exact, Op.Output};
         ExitBoundary[I] = true;
       }
+    }
   }
   for (size_t I = 0; I < Count; ++I) {
     const auto &Block = Func.Blocks[I];
@@ -524,26 +539,16 @@ std::map<const MedOp *, MedVar> sourceCallStackPointers(const MedFunc &Func,
         Enqueue(User);
       }
   }
-  // Publish only after every incoming history has reached the fixed point.
-  // A closed cycle with no origin remains unknown, while a local write still
-  // establishes a new basis after an unknown or conflicting block entry.
+  // Publish inherited bases only after every incoming history has reached
+  // the fixed point. Local bases were collected during the first scan, so
+  // publishing does not revisit unrelated operations in large functions.
   for (size_t B = 0; B < Count; ++B) {
-    const auto &Block = Func.Blocks[B];
-    if (!Charge(Block.Ops.size()))
+    if (!Charge(InheritedCalls[B].size()))
       return {};
-    std::optional<MedVar> LocalStack;
-    if (Entries[B].State == Basis::Exact)
-      LocalStack = Entries[B].Value;
-    for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      const auto &Op = Block.Ops[I];
-      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
-          !Op.Dead && LocalStack && LocalStack->Size == TRI.PointerSize)
-        Result.emplace(&Op, *LocalStack);
-      // Cache the same most recent definition used by the backward ABI walk.
-      // A call's own output, if any, belongs only to subsequent occurrences.
-      if (StackDefinition(Op.Output))
-        LocalStack = Op.Output;
-    }
+    if (Entries[B].State == Basis::Exact &&
+        Entries[B].Value.Size == TRI.PointerSize)
+      for (const MedOp *Call : InheritedCalls[B])
+        Result.emplace(Call, Entries[B].Value);
   }
   return Result;
 }
