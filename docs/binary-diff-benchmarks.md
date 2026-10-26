@@ -39,6 +39,41 @@ loading and analysis and does not provide peak RSS or an isolated performance
 comparison. Shared builds or other system load invalidate competitive latency
 interpretation. Do not compare it with a competitor's matching-only time.
 
+## Run IDA, BinExport and BinDiff
+
+[`scripts/benchmark_binary_diff_bindiff.py`](../scripts/benchmark_binary_diff_bindiff.py)
+automates the Linux end-to-end track using existing, licensed IDA and explicitly
+selected BinExport/BinDiff installations. It does not install products or change
+their license configuration. Supply the complete BinDiff configuration file:
+
+```bash
+python3 scripts/benchmark_binary_diff_bindiff.py \
+  --corpus benchmark-results/diff-corpus/manifest.json \
+  --ida /path/to/idat --binexport-plugin /path/to/binexport_ida.so \
+  --bindiff /path/to/bindiff --config /path/to/bindiff-config.json \
+  --output-dir benchmark-results/diff-bindiff
+```
+
+Each case starts two fresh IDA databases, waits for automatic analysis, exports
+their graphs and invokes BinDiff. The exporter binds its graph bytes to IDA's
+native input SHA-256 and version. Admission also checks BinDiff's own ordered
+input identities. A zero process exit alone cannot certify a completed export.
+The runner retains the databases, graph exports, logs, commands, configuration,
+copies of the selected binaries and scripts, hashes, stage outcomes and evaluation.
+Later source edits do not invalidate those retained copies. Timeout or a failed
+stage remains an incomplete run; the timeout terminates only that stage's owned
+process group. Ctrl-C also stops that group and records cancellation before
+exiting with code 130. The default per-stage deadline is 600 seconds and `--timeout`
+overrides it. Existing output directories are refused.
+
+Exit 0 means every case had an exact mapping, 1 means all pipelines completed
+but at least one mapping differed, and 2 means invalid input or an incomplete
+pipeline. A completed competitor run with wrong matches is still useful
+evidence and must not be retried until its score improves. Stage times are
+diagnostics, not a matching-only or peak-memory benchmark. Pin the surrounding
+product installations and dependencies separately for release qualification;
+the runner's hashes do not inventory every shared library or installed plugin.
+
 ## Evaluate another retained result
 
 The evaluator accepts a versioned run receipt for one corpus case:
@@ -104,8 +139,8 @@ The script reads the existing association decisions and native program SHA-256
 identities, checks cancellation, and requires a new output file. Select
 `ghidra-vt` in its run receipt. It does not create a VT session or accept
 candidates. The legacy `ghidra` reader remains available for earlier receipts
-without native hashes. Automated competitor import, correlation and complete
-invocation orchestration remain separate work.
+without native hashes. Automated Ghidra and Diaphora import, correlation and
+complete invocation orchestration remain separate work.
 
 Use `end-to-end` when each product performs its own import and analysis. A
 `common-input` receipt describes a separately prepared, qualified shared-input
@@ -137,7 +172,8 @@ in the evaluation for inspection.
 Run the independent metric and adapter regressions with:
 
 ```bash
-python3 -m unittest scripts.tests.test_benchmark_binary_diff -v
+python3 -m unittest scripts.tests.test_benchmark_binary_diff \
+  scripts.tests.test_benchmark_binary_diff_bindiff -v
 ```
 
 Keep generated corpora and results in ignored benchmark directories. Expand
