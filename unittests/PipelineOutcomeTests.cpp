@@ -1651,10 +1651,11 @@ TEST(PipelineOutcome, OmittedPointerDeclarationsStayInSourceModules) {
       Options.AnalysisCache = &Cache;
       Options.EmitDumpOutput = false;
       Options.OnlyFunctionEntries = Entries;
-      Options.LiftMode = Options.MedAnalysisOnly = true;
+      Options.MedAnalysisOnly = true;
       auto Result = Pipeline().run(Image, Context, Options);
       ASSERT_TRUE(Result.Success) << Result.Error;
       Options.MedAnalysisOnly = false;
+      Options.LiftMode = true;
       Options.SourceProjection = Source;
       Options.PatchMode = Patch;
       ASSERT_TRUE(PipelineTestPeer::runLift(Image, Context, Options, Result))
