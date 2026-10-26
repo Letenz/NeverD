@@ -81,6 +81,157 @@ protected:
   }
 };
 
+TEST_P(AndroidStringCopy, TerminatedCopyWholeStringNoPaddingAndErrno) {
+  Options.Android->Libraries["libcopy-terminated.so"] = {"strcpy",
+                                                         "__strcpy_chk"};
+  for (uint64_t Mode : {0u, 1u}) {
+    const char *Name = Mode ? "__strcpy_chk" : "strcpy";
+    for (uint64_t Route : {0u, 1u}) {
+      for (uint64_t Size :
+           {uint64_t(1), uint64_t(4), uint64_t(0x100000001), UINT64_MAX}) {
+        SCOPED_TRACE(testing::Message() << Name << ":" << Route << ":" << Size);
+        auto &Bytes = Options.Android->Memory[0].Bytes;
+        Bytes.assign(8192, 0xa5);
+        const std::vector<uint8_t> Text =
+            Size == 1 ? std::vector<uint8_t>{0}
+                      : std::vector<uint8_t>{0x80, 0xff, 'x', 0};
+        std::copy(Text.begin(), Text.end(), Bytes.begin() + 4096);
+        auto Expected = Bytes;
+        std::copy(Text.begin(), Text.end(), Expected.begin() + 16);
+        llvm::support::endian::write64le(Expected.data() + 2048, 733);
+        auto R = run("copy_terminated",
+                     {Buffer + 16, Source, Size, Mode, Route, Buffer + 2048});
+        returned(R, Buffer + 16);
+        ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+        EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+        unsigned Calls = 0;
+        uint64_t Target = 0;
+        for (const auto &Call : R.NativeCalls) {
+          if (Call.Name == "dlsym") {
+            EXPECT_EQ(Call.Symbol, Name);
+            ASSERT_TRUE(Call.Result);
+            Target = *Call.Result;
+          }
+          if (Call.Name != Name)
+            continue;
+          if (Mode)
+            EXPECT_EQ(Call.Arguments[2], Size);
+          EXPECT_EQ(Call.Result, Buffer + 16);
+          EXPECT_EQ(Call.Library, Route ? "libcopy-terminated.so" : "");
+          if (Route)
+            EXPECT_EQ(Call.PC, Target);
+          ++Calls;
+        }
+        EXPECT_EQ(Calls, 1u);
+      }
+    }
+  }
+}
+
+TEST_P(AndroidStringCopy, TerminatedCopyPageEndsAndPermissions) {
+  for (uint64_t Mode : {0u, 1u}) {
+    SCOPED_TRACE(Mode);
+    const char *Name = Mode ? "__strcpy_chk" : "strcpy";
+    auto &Bytes = Options.Android->Memory[0].Bytes;
+    Bytes.assign(8192, 0xa5);
+    Bytes[8189] = 0x80;
+    Bytes[8190] = 'v';
+    Bytes[8191] = 0;
+    auto Expected = Bytes;
+    std::copy_n(Bytes.begin() + 8189, 3, Expected.begin() + 16);
+    auto R = run("copy_terminated_readonly",
+                 {Source, Buffer + 16, End - 3, 3, Mode});
+    returned(R, Buffer + 16);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+
+    Bytes[128] = 'x';
+    Bytes[129] = 0;
+    Expected = Bytes;
+    Expected[8190] = 'x';
+    Expected[8191] = 0;
+    llvm::support::endian::write64le(Expected.data() + 2048, 733);
+    R = run("copy_terminated",
+            {End - 2, Buffer + 128, UINT64_MAX, Mode, 0, Buffer + 2048});
+    returned(R, End - 2);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    // The object extent authorizes only the actual copy, not extra padding.
+    rejected(run("copy_terminated_readonly",
+                 {Source, End - 2, Buffer + 128, UINT64_MAX, Mode}),
+             Name, "invalid guest pointer");
+    for (uint64_t Destination : {uint64_t(0), End - 1, UINT64_MAX})
+      rejected(run("copy_terminated", {Destination, Buffer + 128, UINT64_MAX,
+                                       Mode, 0, Buffer + 2048}),
+               Name, "invalid guest pointer");
+    Bytes[8191] = 'w';
+    rejected(run("copy_terminated_readonly",
+                 {Source, Buffer, End - 2, UINT64_MAX, Mode}),
+             Name, "invalid guest pointer");
+  }
+}
+
+TEST_P(AndroidStringCopy, CheckedTerminatedCopyScansBeforeObjectSize) {
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  Bytes[4096] = 'a';
+  Bytes[4097] = 'b';
+  Bytes[4098] = 'c';
+  Bytes[4099] = 0;
+  Options.Android->Libraries["libcopy-terminated.so"] = {"__strcpy_chk"};
+  for (uint64_t Route : {0u, 1u}) {
+    for (uint64_t Size : {0u, 1u, 3u})
+      rejected(run("copy_terminated",
+                   {UINT64_MAX, Source, Size, 1, Route, Buffer + 2048}),
+               "__strcpy_chk", "FORTIFY destination extent exceeded");
+    for (uint64_t Input : {uint64_t(0), End - 1, UINT64_MAX})
+      rejected(
+          run("copy_terminated", {Buffer, Input, 0, 1, Route, Buffer + 2048}),
+          "__strcpy_chk", "invalid guest pointer");
+  }
+  Bytes[4096] = 0;
+  rejected(run("copy_terminated", {Buffer, Source, 0, 1, 0, Buffer + 2048}),
+           "__strcpy_chk", "FORTIFY destination extent exceeded");
+}
+
+TEST_P(AndroidStringCopy, TerminatedCopyOverlapAndClosedProvider) {
+  Options.Android->Libraries["libcopy-terminated.so"] = {"strcpy",
+                                                         "__strcpy_chk"};
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(8192, 0xa5);
+  Bytes[128] = 'a';
+  Bytes[129] = 'b';
+  Bytes[130] = 'c';
+  Bytes[131] = 0;
+  for (uint64_t Mode : {0u, 1u}) {
+    const char *Name = Mode ? "__strcpy_chk" : "strcpy";
+    for (uint64_t Destination :
+         {Buffer + 127, Buffer + 128, Buffer + 130, Buffer + 131})
+      rejected(run("copy_terminated",
+                   {Destination, Buffer + 128, 4, Mode, 0, Buffer + 2048}),
+               Name, "overlapping strcpy");
+    for (uint64_t Destination : {Buffer + 124, Buffer + 132}) {
+      auto Expected = Bytes;
+      std::copy_n(Bytes.begin() + 128, 4,
+                  Expected.begin() + (Destination - Buffer));
+      llvm::support::endian::write64le(Expected.data() + 2048, 733);
+      auto R = run("copy_terminated",
+                   {Destination, Buffer + 128, 4, Mode, 0, Buffer + 2048});
+      returned(R, Destination);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+    }
+    auto R = run("copy_terminated",
+                 {UINT64_MAX, UINT64_MAX, 0, Mode, 2, Buffer + 2048});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, Name);
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+    EXPECT_FALSE(R.ReturnValue);
+  }
+}
+
 TEST_P(AndroidStringCopy, SizedCopyLengthTerminationNoPaddingAndErrno) {
   Options.Android->Libraries["libcopy.so"] = {"strlcpy"};
   for (uint64_t Count :
@@ -693,6 +844,99 @@ INSTANTIATE_TEST_SUITE_P(
                                      ExecutionBackendKind::HVF,
                                      ExecutionBackendKind::KVM,
                                      ExecutionBackendKind::WHP)));
+
+TEST(AndroidStringCopyMemory, TerminatedCopyRefusalsPreserveCompleteBacking) {
+  ExecutionConfiguration Configuration;
+  Configuration.Backend = ExecutionBackendKind::Unicorn;
+  Configuration.Architecture = GuestArchitecture::AArch64;
+  Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(Configuration);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  auto Backend = createExecutionBackend(Configuration, 4 * 1024 * 1024);
+  ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+  auto &CPU = *Backend->CPU;
+  auto &Space = *CPU.addressSpace();
+  llvm::cantFail(Space.map(Buffer, 8192, Read | Write | UserAccessible));
+  std::vector<uint8_t> Before(8192, 'x');
+  Before[128] = 'a';
+  Before[129] = 'b';
+  Before[130] = 'c';
+  Before[131] = 0;
+  llvm::cantFail(CPU.write(Buffer, Before));
+  llvm::cantFail(Space.protect(Source, 4096, Read | UserAccessible));
+  ProcessOptions Options;
+  Options.Android.emplace();
+  Options.MemoryLimit = 16;
+  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
+  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, End, Options, Result);
+  const android_model::LinkedImage Linked{};
+  for (const char *Name : {"strcpy", "__strcpy_chk"}) {
+    SCOPED_TRACE(Name);
+    struct Case {
+      uint64_t Destination, Input, Extent;
+      const char *Diagnostic;
+    };
+    for (auto C : {Case{Buffer, Buffer + 256, 0, "unterminated"},
+                   {Buffer, End - 1, 0, "invalid guest pointer"},
+                   {Buffer, UINT64_MAX, 0, "invalid guest pointer"},
+                   {UINT64_MAX, Buffer + 128, 4, "invalid guest pointer"},
+                   {Source - 1, Buffer + 128, 4, "invalid guest pointer"},
+                   {Buffer + 127, Buffer + 128, 4, "overlapping strcpy"},
+                   {Buffer + 131, Buffer + 128, 4, "overlapping strcpy"}}) {
+      SCOPED_TRACE(testing::Message() << C.Destination << ":" << C.Input);
+      auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+      android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                  Linked);
+      NativeCallEvent Call{};
+      Call.Name = Name;
+      Call.Arguments = {C.Destination, C.Input, C.Extent};
+      auto Value = Model.invoke(Call);
+      ASSERT_FALSE(bool(Value));
+      EXPECT_NE(llvm::toString(Value.takeError()).find(C.Diagnostic),
+                std::string::npos);
+      std::vector<uint8_t> After(8192);
+      llvm::cantFail(Space.snapshotBacking(Buffer, After));
+      EXPECT_EQ(After, Before);
+    }
+    auto Budget = llvm::cantFail(ExecutionBudget::create(
+        {1, 1, 1}, ExecutionBudget::Clock::time_point::min()));
+    android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                Linked);
+    NativeCallEvent Call{};
+    Call.Name = Name;
+    // Even an insufficient fortify bound must not skip the source scan.
+    Call.Arguments = {Buffer, Buffer + 128, 0};
+    auto Value = Model.invoke(Call);
+    ASSERT_FALSE(bool(Value));
+    EXPECT_NE(llvm::toString(Value.takeError()).find("timed out"),
+              std::string::npos);
+    EXPECT_TRUE(Model.timedOut());
+    std::vector<uint8_t> After(8192);
+    llvm::cantFail(Space.snapshotBacking(Buffer, After));
+    EXPECT_EQ(After, Before);
+  }
+  for (uint64_t Extent : {0u, 3u}) {
+    auto Budget = llvm::cantFail(ExecutionBudget::create(Options.Limits));
+    android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                Linked);
+    NativeCallEvent Call{};
+    Call.Name = "__strcpy_chk";
+    Call.Arguments = {Buffer, Buffer + 128, Extent};
+    auto Value = Model.invoke(Call);
+    ASSERT_FALSE(bool(Value));
+    EXPECT_NE(llvm::toString(Value.takeError()).find("FORTIFY destination"),
+              std::string::npos);
+    std::vector<uint8_t> After(8192);
+    llvm::cantFail(Space.snapshotBacking(Buffer, After));
+    EXPECT_EQ(After, Before);
+  }
+}
 
 TEST(AndroidStringCopyMemory, SizedCopyRefusalsPreserveCompleteBacking) {
   for (const char *Name : {"strlcpy", "__strlcpy_chk"}) {

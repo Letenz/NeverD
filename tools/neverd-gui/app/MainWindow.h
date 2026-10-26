@@ -155,7 +155,8 @@ private:
   Dock *makeDock(const QString &id, const char *title, const QString &icon,
                  QWidget *content);
   Dock *chooserDock(ChooserKind kind);
-  CodeView *codeView(const QString &representation);
+  CodeView *codeView(const QString &representation, bool newWindow = false);
+  Dock *codeDock(const QString &id, const QString &representation);
   /// Open code beside the active disassembly, including in a floating window.
   void openCodeDock(Dock *dock);
   void toggleFocusMode();
@@ -286,8 +287,9 @@ private:
   void showLocalReferences(CodeView *origin, const QJsonObject &target);
   void showReferencesDialog(std::optional<Address> address, bool to,
                             CodeView *origin);
+  enum class CodeOpen { Reuse, Generate, Switch };
   void showPseudocode(const QString &representation,
-                      bool selectAssemblyAddress = false);
+                      CodeOpen mode = CodeOpen::Reuse);
   void toggleGraph();
   void searchBinary(const QString &kind, bool again);
   void queryRegister(const QString &kind);
@@ -387,6 +389,8 @@ private:
   QJsonObject pathfinderState_;
   ChooserView *functions_ = nullptr;
   QHash<QString, Dock *> docks_;
+  /// Creation order keeps generated window names stable across focus changes.
+  QVector<Dock *> codeDocks_;
   QHash<int, ChooserView *> choosers_;
   QPointer<CodeView> pseudocode_;
   QPointer<CodeView> lastCodeView_;
@@ -434,7 +438,7 @@ private:
   QTimer statusTimer_;
   QStringList pendingCommands_;
   /// The code view asked for while a jump was still loading.
-  std::optional<std::pair<QString, bool>> pseudocodeAfterJump_;
+  std::optional<std::pair<QString, CodeOpen>> pseudocodeAfterJump_;
   QHash<QString, const char *> dockTitles_;
   static inline MainWindow *instance_ = nullptr;
 };

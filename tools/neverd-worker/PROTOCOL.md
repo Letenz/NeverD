@@ -1044,7 +1044,11 @@ The most recent 128 commands are retained (also bounded by serialized size), and
 a new edit removes the discarded redo branch.
 
 Before changing durable files the worker writes and flushes a journal containing
-the known before/after sidecar and history states. Each target is then replaced
+the known before/after sidecar and history states. Ordinary commits replace only
+tables whose normalized rows changed; unchanged files retain their bytes and
+timestamps. Every table and the history still participate in the external-edit
+check, and every target state's write budget is checked before publication.
+Encoded text is reused for checking and writing. Each changed target is replaced
 atomically and flushed; the journal is removed after history publication. On a
 writable reopen, recovery only completes this known transaction if the input
 hash matches and every current file matches its before or after state. A third

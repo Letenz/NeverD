@@ -491,9 +491,13 @@ neighboring writeback/pair exclusions, zero-index shape requirements, finite
 tracing in both modes and complete 64-bit byte spans. Both C routes and linked
 LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes,
 extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
-These are explicit-IR tests; they do not
-qualify automatic decoding/lifting, relocated-image projection or native
-half/whole-vector ABI. Synthetic-stack and image requirements fail before body filtering.
+`ImageContextPreservesEveryRuntimeParameterAccess` repeats all 177 accesses with
+a Mach-O image present and requires LLVM to create no image globals: the
+caller supplies the runtime GPR bits directly. Its separate
+`cpta_image_memory_artifacts` property identifies the image-context export.
+These are explicit-IR tests; they do not qualify automatic decoding/lifting,
+image-derived address rebasing or native half/whole-vector ABI. Synthetic-stack
+and unresolved image-coordinate requirements fail before body filtering.
 Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
 both generated C files, the independent native harness and LLVM ELF/Mach-O objects
 in a fresh directory recorded in the test's properties. These artifacts allow
@@ -511,6 +515,21 @@ model. It does not qualify automatic lifting, image relocation, original SP,
 writeback/pairs, EL0 instruction execution, native half/whole-vector ABI,
 Apple hardware, other translation/tagging contexts or overflowing memory and
 every CPACHECK choice. Remote GitHub CI results require separate observation.
+The same pinned model also executes the image-context runtime-parameter export
+at EL1 with `--profile image`. This covers the explicit parameters, not
+image-derived address rebasing. Its separate EL0 environment enters EL0t using
+ERET and checks the exact returning SVC site, immediate and hardware-saved
+`SPSR_EL1.M`. The 82-check environment and live wrong-mode, wrong-immediate and
+wrong-site controls verify this boundary. `--profile el0-immediate` executes
+all 177 immediate samples at EL0; `--profile el0-register` executes all 184
+GPR/SIMD register-offset samples. Both generated-output profiles require 83
+checks on each of five C/object routes, under all four effective controls.
+This adds nonoverflow EL0 instruction execution for those explicit GPR-base
+fixtures. Literal SP access at EL0, overflowing memory, tagging, automatic
+immediate lifting, image-derived relocation and Apple CPA2 hardware remain
+unqualified. The companion
+[controlled environment](https://github.com/gmh5225/test_mac_intel/pull/3)
+owns the guest, profiles and independent evidence gates.
 `AArch64StackAddressMemory` separately checks no-image, explicit raw-SP
 parameters with all 177 immediate samples and 184 GPR/SIMD register-offset
 samples. Both C routes and linked LLVM objects execute at O0/O2, retaining
@@ -522,7 +541,7 @@ bases and malformed assembly/clobber contracts retain their refusal.
 the `cpta_stack_memory_artifacts` property, the register-offset SP matrix under
 `cpta_stack_register_memory_artifacts` and its matching GPR controls under
 `cpta_register_memory_artifacts`. The native exception verifier
-consumes successful complete seven-test SP and seven-test immediate reports:
+consumes successful complete seven-test SP and eight-test immediate reports:
 
 ```sh
 python3 scripts/verify_arm64e_sp_memory.py \
@@ -1236,6 +1255,13 @@ page-boundary behavior. The shared memory-refusal test also covers this entry,
 including fortify refusal before an expired deadline. The
 `ProcessPublic.AndroidFortifySizedCopyReportsMatchSDKAndCLI` case compares
 complete reports for truncation, fortify refusal and an invalid source.
+The `TerminatedCopy*` and `CheckedTerminatedCopy*` cases cover `strcpy` and
+`__strcpy_chk`: exact destination returns and bytes including NUL, no padding,
+full-width object sizes, empty strings, source-scan precedence over fortify,
+page boundaries, permissions, overlap and dynamic provider lifetime. Direct
+memory cases retain the complete backing on pointer, overlap, scan-limit,
+fortify and deadline refusal. `ProcessPublic.AndroidTerminatedCopyReportsMatchSDKAndCLI`
+compares whole SDK/CLI reports for both entries on success and failure.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -2944,6 +2970,16 @@ provenance-only changes, changed native bodies, engine/input mismatches and
 missing, truncated or modified source artifacts.
 
 ## GUI function lists and navigation
+
+`generationCreatesIndependentWindows` checks the shared desktop controller's
+F5/Tab and IR commands: independent functions, repeated generation of the same
+function, refresh within a code pane, pending assembly jumps, tab placement,
+and reuse after closing a pane. `generationFromFloatingSourceKeepsItsFunctionAndLanguage`
+checks that source refresh and MedIR generation use the detached pane's own
+function and preserve its language. `generatedViewsStayClosedAfterReopening`
+saves multiple generated panes and checks their restoration and retirement when
+reopening or changing projects. Run these in `neverd-gui-tests`; native Cocoa
+runs also exercise focus delivery and floating-window ownership.
 
 `NeverDGuiWheelInput` replays precision wheel and trackpad events through the
 production disassembly, source and hex views. It compares small-event batches
