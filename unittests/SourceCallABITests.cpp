@@ -8,7 +8,9 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/SourceCallABI.h"
+#include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
@@ -81,13 +83,57 @@ TEST(SourceCallABI, WindowsARM64FixedScalarsKeepSeparateBanksAndStackSlots) {
             SourceABICarrierKind::FloatingRegister);
   EXPECT_EQ(Hint.Signature.ReturnLocation.RegisterOffset, TRI.FPReturnReg);
   EXPECT_EQ(Hint.Signature.ReturnLocation.ValueBytes, 8);
+}
+TEST(SourceCallABI, WindowsARM64VariadicsUseOneIntegerBankForAllScalars) {
+  const std::vector<TypeRef> Types{NdType::makeInt(4),   NdType::makeFloat(4),
+                                   NdType::makeFloat(8), NdType::makeInt(8),
+                                   NdType::makeFloat(8), NdType::makeInt(8),
+                                   NdType::makeFloat(8), NdType::makeInt(8),
+                                   NdType::makeFloat(8), NdType::makeInt(8)};
+  auto Hint = contract(Types, 2);
+  Hint.Signature.ReturnType = NdType::makeFloat(8);
+  std::string Error;
+  ASSERT_TRUE(
+      assignAnalystCallABI(Hint, Arch::AArch64, BinaryFormat::COFF, Error))
+      << Error;
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned I = 0; I < Types.size(); ++I) {
+    const auto &Location = Hint.Signature.Parameters[I].Location;
+    EXPECT_EQ(Location.ValueBytes, Types[I]->Size);
+    if (I < TRI.IntParamRegs.size()) {
+      EXPECT_EQ(Location.Kind, SourceABICarrierKind::IntegerRegister);
+      EXPECT_EQ(Location.RegisterOffset, TRI.IntParamRegs[I]);
+    } else {
+      EXPECT_EQ(Location.Kind, SourceABICarrierKind::Stack);
+      EXPECT_EQ(Location.EntryStackOffset, (I - TRI.IntParamRegs.size()) * 8);
+    }
+  }
+  EXPECT_EQ(Hint.Signature.ReturnLocation.Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint.Signature.ReturnLocation.RegisterOffset, TRI.FPReturnReg);
 
-  // Windows varargs use the integer bank even for named floating operands.
-  // Fixed-call placement must not silently admit that distinct convention.
-  Hint = contract(Types, 1);
+  // An explicit floating bit carrier does not broaden inferred signatures or
+  // authorize a floating result in an integer register.
+  auto Invalid = Hint.Signature;
+  Invalid.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  EXPECT_FALSE(validateSourceABI(Invalid, Error));
+  Invalid = Hint.Signature;
+  Invalid.ReturnLocation = {SourceABICarrierKind::IntegerRegister,
+                            TRI.IntReturnReg, 0, 8};
+  EXPECT_FALSE(validateSourceABI(Invalid, Error));
+  Hint.Signature.Parameters[2].Type = NdType::makeFloat(4);
   EXPECT_FALSE(
       assignAnalystCallABI(Hint, Arch::AArch64, BinaryFormat::COFF, Error));
-  EXPECT_NE(Error.find("Windows ARM64 variadic"), std::string::npos);
+  EXPECT_NE(Error.find("default promotions"), std::string::npos);
+
+  for (auto Format : {BinaryFormat::ELF, BinaryFormat::MachO})
+    EXPECT_FALSE(placeSourceParameters(Arch::AArch64, Format,
+                                       NdType::makeInt(8), Types, true));
+  const auto Wide =
+      placeSourceParameters(Arch::AArch64, BinaryFormat::COFF,
+                            NdType::makeInt(8), {NdType::makeInt(16)}, true);
+  ASSERT_TRUE(Wide);
+  EXPECT_TRUE(Wide->Parameters.empty());
 }
 TEST(SourceCallABI,
      RequiresPromotedVariadicsAndExplicitFloatingDuplicateSupport) {
@@ -182,6 +228,87 @@ TEST(SourceCallABI, RequiresCompleteSameBlockOutgoingStackBytes) {
   F.Blocks[0].Ops.insert(F.Blocks[0].Ops.end() - 1, Earlier);
   EXPECT_FALSE(sourceCallStackArgumentsDefined(F, H, Arch::X64, 8, Error));
 }
+TEST(SourceCallABI, VariadicCountCannotSurviveExpiredTempsOrOpaqueEffects) {
+  auto Hint = contract({NdType::makeInt(4), NdType::makeFloat(8)}, 1);
+  std::string Error;
+  ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::X64, BinaryFormat::ELF, Error));
+  const auto RAX = NdVar::reg(getTargetRegInfo(Arch::X64).IntReturnReg, 8);
+  LowFunc Function;
+  LowBlock Block;
+  Block.Ops = {op(NdOp::COPY, NdVar::tmp(7, 4), {NdVar::cst(1, 4)}),
+               op(NdOp::INT_ZEXT, RAX, {NdVar::tmp(7, 4)}),
+               op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)})};
+  Block.Ops[0].Addr = Block.Ops[1].Addr = 0xf00;
+  Block.Ops.back().Addr = 0x1000;
+  Block.Ops.back().Seq = 3;
+  Function.Blocks = {Block};
+  ASSERT_TRUE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  Function.Blocks[0].Ops[1].Addr = 0xf04;
+  EXPECT_FALSE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  Function.Blocks[0] = Block;
+  auto Opaque = op(NdOp::INTRINSIC, {}, {});
+  Opaque.Addr = 0xf08;
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.end() - 1, Opaque);
+  EXPECT_FALSE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  auto Redefined = op(NdOp::COPY, RAX, {NdVar::cst(1, 8)});
+  Redefined.Addr = 0xf0c;
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.end() - 1, Redefined);
+  EXPECT_TRUE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+}
+
+TEST(SourceCallABI, StackWriteProofCannotSurviveExpiredTempsOrOpaqueEffects) {
+  auto Hint = contract(std::vector<TypeRef>(5, NdType::makeInt(8)));
+  std::string Error;
+  ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::X64, BinaryFormat::COFF, Error));
+  const auto SP = NdVar::reg(getTargetRegInfo(Arch::X64).StackPointer, 8);
+  LowFunc Function;
+  LowBlock Block;
+  Block.Ops = {op(NdOp::INT_ADD, NdVar::tmp(7, 8), {SP, NdVar::cst(32, 8)}),
+               op(NdOp::STORE, {}, {NdVar::tmp(7, 8), NdVar::cst(17, 8)}),
+               op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)})};
+  Block.Ops[0].Addr = Block.Ops[1].Addr = 0xf00;
+  Block.Ops.back().Addr = 0x1000;
+  Block.Ops.back().Seq = 3;
+  Function.Blocks = {Block};
+  ASSERT_TRUE(
+      sourceCallStackArgumentsDefined(Function, Hint, Arch::X64, 8, Error));
+  Function.Blocks[0].Ops[1].Addr = 0xf04;
+  EXPECT_FALSE(
+      sourceCallStackArgumentsDefined(Function, Hint, Arch::X64, 8, Error));
+  Function.Blocks[0] = Block;
+  auto Opaque = op(NdOp::INTRINSIC, {}, {});
+  Opaque.Addr = 0xf08;
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.end() - 1, Opaque);
+  EXPECT_FALSE(
+      sourceCallStackArgumentsDefined(Function, Hint, Arch::X64, 8, Error));
+}
+
+TEST(SourceCallABI, VariadicCountUsesSharedWidthCorrectArithmeticFacts) {
+  auto Hint = contract({NdType::makeInt(4), NdType::makeFloat(8)}, 1);
+  std::string Error;
+  ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::X64, BinaryFormat::ELF, Error));
+  const auto RAX = NdVar::reg(getTargetRegInfo(Arch::X64).IntReturnReg, 8);
+  LowFunc Function;
+  Function.Blocks.emplace_back();
+  auto &Ops = Function.Blocks.front().Ops;
+  Ops = {op(NdOp::COPY, RAX, {NdVar::cst(3, 8)}),
+         op(NdOp::INT_SUB, RAX, {RAX, NdVar::cst(2, 8)}),
+         op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)})};
+  Ops[0].Addr = 0xf00;
+  Ops[1].Addr = 0xf04;
+  Ops.back().Addr = 0x1000;
+  Ops.back().Seq = 3;
+  EXPECT_TRUE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  Ops[1].Inputs[1] = NdVar::cst(4, 8);
+  EXPECT_FALSE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+}
+
 MedVar value(int Id) {
   MedVar V;
   V.Kind = MedVar::Temp;

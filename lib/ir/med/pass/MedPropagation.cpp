@@ -180,6 +180,23 @@ void LowToMedConverter::propagate(MedFunc &Func) {
       for (auto &Op : Blk.Ops) {
         if (Op.NumInputs < 2)
           continue;
+        // Some lifters emit the boolean flag directly, without passing
+        // through MedFlags' compound-condition rewrite. Both routes use the
+        // same identity rule; producers and their effects remain separate.
+        if (Op.NumInputs == 2 && Op.Output.Size == 1 && !Op.Dead &&
+            Op.RegistrationRoot == MedOp::RegistrationRootKind::None &&
+            !Op.SourceCallHint && Op.IntrinsicOutputs.empty() &&
+            Op.MemoryOrdering == NdMemoryOrdering::None &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+          if (const auto Known = selfComparisonConstant(Op.Opcode, Op.Inputs[0],
+                                                        Op.Inputs[1])) {
+            Op.Opcode = NdOp::COPY;
+            Op.Inputs[0] = MedVar::makeConst(*Known, 1);
+            Op.NumInputs = 1;
+            Changed = true;
+            continue;
+          }
+        }
         if (FoldWordAbsorption(Op)) {
           Changed = true;
           continue;

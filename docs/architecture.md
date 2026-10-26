@@ -4791,7 +4791,10 @@ same initialization. This transports an already supplied declaration and does
 not infer an original prototype or authorize a machine-code rewrite.
 
 `PipelineIncomingStack` also derives internal integer source declarations for
-bounded, complete x64/ARM64 PE/ELF leaves that read whole incoming stack words.
+bounded, complete x64/ARM64 PE/ELF leaves that read aligned incoming scalar
+carriers. Their exact 1/2/4/8-byte widths survive the omitted-callee memo,
+entry binding and outgoing-byte proof. Signed and unsigned extensions preserve
+the loaded bits; a narrow input never initializes adjacent stack bytes.
 The shared entry-stack proof owns offsets, and a separate value walk rejects
 external memory, frame escape and undefined inputs. Private frame/link spills
 may survive in the leaf: `SourceFrameAnalysis` checks the original LowIR byte
@@ -4816,7 +4819,7 @@ Exact register-call targets use the shared bounded LowIR scalar query. The origi
 Selected callers use the existing omitted-callee reader and its image- and
 summary-sensitive memo. A bounded instruction preflight only avoids unnecessary
 CFG builds; the ordinary complete CFG and MedIR still establish the declaration.
-The memo accounts for cached stack locations, and follows its existing reset
+The memo accounts for cached stack locations and widths, and follows its existing reset
 contract when image bytes or analysis policy change. Work limits belong to
 `pipeline/Limits.h`. These projections do not infer arbitrary framed/VM state
 inputs, floating types, or an external calling convention.
@@ -12314,9 +12317,13 @@ Windows ARM64 fixed scalar/pointer call-site types reuse `placeAAPCS64` through
 `SourceCallABI`: integer and floating register banks advance independently,
 with overflowing values in eight-byte stack slots. This follows the
 [Microsoft ARM64 ABI](https://learn.microsoft.com/en-us/cpp/build/arm64-windows-abi-conventions).
-Windows ARM64 variadic call-site edits remain refused because their arguments
-use integer carriers, including named floating arguments. This does not admit
-ARM64EC, aggregate call-site types or a native Windows driver execution contract.
+Windows ARM64 variadic scalar/pointer calls use the same placement owner with
+one integer bank, including named floating arguments, then eight-byte stack
+slots. Explicit AArch64 source parameters can describe complete floating bits
+in integer registers; both C routes reinterpret those bits at the call boundary.
+Inferred signatures and floating result carriers retain their restrictions.
+This does not admit ARM64EC, aggregate call-site types or a native Windows driver
+execution contract.
 
 `SourceCallOccurrenceKey` owns original instruction/sequence/opcode/target
 identity; names and source anchors cannot bind a per-call policy.
@@ -12548,6 +12555,14 @@ this authority. Discard replaces each target page through AddressSpace while
 retaining permissions and VMA policy; old physical aliases and pinned views
 keep their bytes. Device/GPU admission remains in the shared service dispatch.
 
+`LowScalarConstant` owns both exact register-call targets and the System V
+variadic AL count. Their byte facts share fixed-width arithmetic, temporary
+lifetimes, opaque-effect invalidation and one bounded work policy. Ambiguous
+original call occurrences or exhausted work publish no constant. The outgoing
+stack-write proof independently tracks affine addresses, expires temporaries
+at instruction boundaries and discards earlier writes across opaque effects.
+No cross-block values or implicit memory contents are introduced.
+
 `MedCallTarget` observes cached callable values through the Med ABI owner's
 exact address, width and overlap proof. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
@@ -12585,3 +12600,15 @@ and source-bound sidecar persistence; GUI owns the dialog and view refreshes.
 Read-only batch views use `PipelineRunner::loadAnalysis` to retain additions
 for the same input. File rewriting retains the original file-backed load.
 See [analysis sections](analysis-sections.md).
+
+`LowScalarConstant` also recognizes fixed-width integer self-subtraction of the same register or instruction-local temporary. Branch recovery and call-site ABI checks share this constant-time identity, so an unknown incoming value can still establish a zero result. Different occurrences, memory operands and malformed widths remain unproved.
+
+The x86 lifter treats integer SUB/CMP with identical register operands as `0 - 0` before taking flag snapshots. This removes false incoming-register dependencies while retaining partial-register writes, CMP preservation, APX NDD sources and NF flag preservation.
+
+`MedCallTarget` retains the original import-load index through private spills. HighIR reuses the source memory-read proof before naming the import directly; a changed slot keeps the captured callable. `MedABIPass` splits wide outgoing stores according to a proven import ABI even when the machine call is indirect.
+
+Shared MedIR flag folding keeps both subtraction operands, including `A-A`. A self-comparison must not become a comparison with zero; logical self-tests retain their separate input-dependent rule.
+
+Integer conditions comparing one SSA value with itself become boolean constants before source emission. This includes subtraction overflow; unspecified operands remain explicit.
+
+Captured HFA call targets use the same checked source signature as record argument and result reconstruction. The prototype keeps the original callable value and the complete record types, including flattened register groups and stack arguments.

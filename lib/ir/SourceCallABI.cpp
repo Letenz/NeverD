@@ -13,6 +13,7 @@
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -82,10 +83,6 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
     return refuse(
         Error, "Call-site types support scalar/pointer x64 and AArch64 C ABIs; "
                "aggregate results need separate ABI support");
-  if (Format == BinaryFormat::COFF && Architecture == Arch::AArch64 &&
-      Hint.AnalystFixedCount >= 0)
-    return refuse(Error, "Windows ARM64 variadic call-site types need separate "
-                         "integer-register argument placement");
   std::vector<TypeRef> Types;
   for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
     const auto &T = Signature.Parameters[I].Type;
@@ -99,8 +96,8 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
         return refuse(Error, "Variadic arguments need default promotions: "
                              "int/unsigned int or double");
     }
-    if (Hint.AnalystFixedCount >= 0 && Format == BinaryFormat::COFF && I < 4 &&
-        T->Kind == NdTypeKind::Float)
+    if (Hint.AnalystFixedCount >= 0 && Format == BinaryFormat::COFF &&
+        Architecture == Arch::X64 && I < 4 && T->Kind == NdTypeKind::Float)
       return refuse(Error,
                     "A Windows x64 variadic floating register argument needs a "
                     "verified duplicate integer-register carrier");
@@ -115,8 +112,10 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
       Format == BinaryFormat::ELF)
     return assignSysVX64VariadicSourceABI(Signature, Hint.AnalystFixedCount,
                                           Error);
-  const auto Placement =
-      placeSourceParameters(Architecture, Format, Signature.ReturnType, Types);
+  const auto Placement = placeSourceParameters(
+      Architecture, Format, Signature.ReturnType, Types,
+      Hint.AnalystFixedCount >= 0 && Architecture == Arch::AArch64 &&
+          Format == BinaryFormat::COFF);
   if (!Placement || Placement->ResultPointer ||
       Placement->Parameters.size() != Types.size())
     return refuse(Error, "The selected platform cannot place every argument of "
@@ -156,62 +155,18 @@ bool neverd::sourceCallVariadicStateDefined(const LowFunc &Function,
     return true;
   if (!Hint.AnalystSite)
     return refuse(Error, "The variadic call has no original occurrence");
-  using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
-  auto key = [](const NdVar &V) { return Key{V.Space, V.Offset, V.Size}; };
-  size_t Work = 0;
-  for (const auto &Block : Function.Blocks) {
-    std::map<Key, uint64_t> Constants;
-    std::optional<unsigned> AL;
-    auto constant = [&](const NdVar &V) -> std::optional<uint64_t> {
-      if (V.isConst())
-        return V.Offset;
-      const auto It = Constants.find(key(V));
-      return It == Constants.end() ? std::nullopt
-                                   : std::optional<uint64_t>(It->second);
-    };
-    for (const auto &Op : Block.Ops) {
-      if (++Work >
-          ::neverd::limits::ir::
-              kSourceCallABINeverdSourceCallVariadicStateDefinedWorkLimit)
-        return refuse(Error,
-                      "The variadic vector-count proof exceeded its budget");
-      if (const auto Site = sourceCallOccurrenceKey(Op);
-          Site && *Site == *Hint.AnalystSite)
-        return AL && *AL >= Floating && *AL <= 8
-                   ? true
-                   : refuse(Error, "System V x64 variadic floating operands "
-                                   "need a defined AL vector-register count in "
-                                   "this call's basic block");
-      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-        Constants.clear();
-        AL.reset();
-      }
-      std::optional<uint64_t> Next;
-      if (Op.Output.Size && Op.Output.Size <= 8 && Op.NumInputs == 1 &&
-          (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT))
-        Next = constant(Op.Inputs[0]);
-      if (!Op.Output.Size)
-        continue;
-      for (auto It = Constants.begin(); It != Constants.end();) {
-        const auto &[Space, Offset, Size] = It->first;
-        if (Space == Op.Output.Space &&
-            Offset < Op.Output.Offset + Op.Output.Size &&
-            Op.Output.Offset < Offset + Size)
-          It = Constants.erase(It);
-        else
-          ++It;
-      }
-      if (Next) {
-        if (Op.Output.Size < 8)
-          *Next &= (uint64_t{1} << (Op.Output.Size * 8)) - 1;
-        Constants[key(Op.Output)] = *Next;
-      }
-      if (Op.Output.Space == VnodeSpace::REG && Op.Output.Offset == x86reg::RAX)
-        AL = Next ? std::optional<unsigned>(unsigned(*Next & 0xff))
-                  : std::nullopt;
-    }
-  }
-  return refuse(Error, "The original variadic call occurrence is unavailable");
+  const auto Count = constantRegisterValueAtCall(Function, *Hint.AnalystSite,
+                                                 NdVar::reg(x86reg::RAX, 1));
+  if (Count.BudgetExceeded)
+    return refuse(Error, "The variadic vector-count proof exceeded its budget");
+  if (!Count.OccurrenceFound)
+    return refuse(Error,
+                  "The original variadic call occurrence is unavailable");
+  return Count.Value && *Count.Value >= Floating && *Count.Value <= 8
+             ? true
+             : refuse(Error, "System V x64 variadic floating operands need a "
+                             "defined AL vector-register count in this call's "
+                             "basic block");
 }
 
 bool neverd::sourceCallStackArgumentsDefined(const LowFunc &Function,
@@ -244,6 +199,7 @@ bool neverd::sourceCallStackArgumentsDefined(
   for (const auto &Block : Function.Blocks) {
     std::map<Key, int64_t> Addresses{{key(SP), 0}};
     std::set<int64_t> Written;
+    va_t Instruction = InvalidVA;
     auto address = [&](const NdVar &V) -> std::optional<int64_t> {
       const auto It = Addresses.find(key(V));
       return It == Addresses.end() ? std::nullopt
@@ -255,6 +211,12 @@ bool neverd::sourceCallStackArgumentsDefined(
               kSourceCallABINeverdSourceCallStackArgumentsDefinedWorkLimit)
         return refuse(Error,
                       "The outgoing stack argument proof exceeded its budget");
+      if (Op.Addr != Instruction) {
+        std::erase_if(Addresses, [](const auto &Entry) {
+          return std::get<0>(Entry.first) == VnodeSpace::TEMP;
+        });
+        Instruction = Op.Addr;
+      }
       if (const auto Site = sourceCallOccurrenceKey(Op);
           Site && *Site == OriginalSite) {
         const auto CurrentSP = address(SP);
@@ -272,7 +234,8 @@ bool neverd::sourceCallStackArgumentsDefined(
           }
         return true;
       }
-      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC) {
         Written.clear();
         const auto CurrentSP = address(SP);
         Addresses.clear();
@@ -282,7 +245,8 @@ bool neverd::sourceCallStackArgumentsDefined(
       if (Op.Opcode == NdOp::STORE) {
         const auto Offset =
             Op.NumInputs == 2 ? address(Op.Inputs[0]) : std::nullopt;
-        if (!Offset || Op.Inputs[1].Size > 16 ||
+        if (!Offset || !Op.Inputs[1].Size ||
+            Op.Inputs[1].Size > limits::ir::kSourceCallStackWriteBytes ||
             Op.MemoryOrdering != NdMemoryOrdering::None ||
             Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           Written.clear();
@@ -300,10 +264,12 @@ bool neverd::sourceCallStackArgumentsDefined(
           int64_t Delta = static_cast<int64_t>(Op.Inputs[1].Offset);
           if (Op.Inputs[1].Size == 4)
             Delta = static_cast<int32_t>(Delta);
-          if (Delta > -(int64_t{1} << 30) && Delta < (int64_t{1} << 30)) {
+          if (Delta > -limits::ir::kSourceCallStackAddressMagnitude &&
+              Delta < limits::ir::kSourceCallStackAddressMagnitude) {
             const int64_t Value =
                 *Base + (Op.Opcode == NdOp::INT_ADD ? Delta : -Delta);
-            if (Value > -(int64_t{1} << 30) && Value < (int64_t{1} << 30))
+            if (Value > -limits::ir::kSourceCallStackAddressMagnitude &&
+                Value < limits::ir::kSourceCallStackAddressMagnitude)
               Next = Value;
           }
         }
