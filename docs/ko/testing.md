@@ -2180,4 +2180,4 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 
 worker 회귀에는 레지스터와 스택에 나뉜 인자 18개, 부동소수점 반환값, 절반만 기록된 스택 인자의 거부도 포함한다.
 
-`LLVMAddressModelOverlayTests`는 AArch64 지정자, i386 GOT, Mach-O GOTPCREL 수정을 각각 검사합니다. 알려진 두 AArch64 가드 형식과 열두 가지 부분 수정 조합을 다루며 LLVM 입력과 캐시 복사본을 보존하고, 상속된 Git 설정을 격리하며, 알 수 없는 아키텍처 가드를 거부합니다. 구성 검사는 네이티브 재배치 실행 테스트를 대신하지 않습니다.
+NeverSight LLVM fork의 `BinaryRewriteRelocationTest`는 x64 PLT, i386 GOT, Mach-O GOTPCREL 및 AArch64 PAGE/PAGEOFF의 최종 바이트를 확인합니다. NeverD 통합 빌드는 기록된 fork를 직접 컴파일합니다. 이 MC 검사는 네이티브 예외 실행을 검증하지 않습니다.

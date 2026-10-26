@@ -154,35 +154,6 @@ bool Decoder::decodePrefixedX86Fence(const uint8_t *Bytes, size_t Len,
   return true;
 }
 
-bool Decoder::decodeUnprefixedX86MpxRegisterNop(const uint8_t *Bytes,
-                                                size_t Len, va_t Addr) {
-  if (!X86 || !Bytes || !InsnBuf || Len < 3 || Bytes[0] != 0x0f ||
-      (Bytes[1] != 0x1a && Bytes[1] != 0x1b) || (Bytes[2] & 0xc0) != 0xc0)
-    return false;
-
-  // cs_malloc owns the detail allocation.  Preserve its pointer while
-  // replacing the failed decode result with a complete three-byte NOP.
-  cs_detail *SavedDetail = InsnBuf->detail;
-  std::memset(InsnBuf, 0, sizeof(*InsnBuf));
-  InsnBuf->detail = SavedDetail;
-  if (SavedDetail)
-    std::memset(SavedDetail, 0, sizeof(*SavedDetail));
-
-  InsnBuf->id = X86_INS_NOP;
-  InsnBuf->address = Addr;
-  InsnBuf->size = 3;
-  std::memcpy(InsnBuf->bytes, Bytes, InsnBuf->size);
-  std::memcpy(InsnBuf->mnemonic, "nop", 4);
-  if (SavedDetail) {
-    SavedDetail->x86.opcode[0] = Bytes[0];
-    SavedDetail->x86.opcode[1] = Bytes[1];
-    SavedDetail->x86.addr_size = TargetArch == Arch::X64 ? 8 : 4;
-    SavedDetail->x86.modrm = Bytes[2];
-    SavedDetail->x86.encoding.modrm_offset = 2;
-  }
-  return true;
-}
-
 bool Decoder::liftX64MemoryCallToLow(
     const DecodedInsn &Insn, std::vector<LowOp> &Ops,
     LowInstructionUndefinedEffects *UndefinedEffects,
@@ -221,6 +192,7 @@ Decoder::getX86ScalarOperandOccurrence() const {
 }
 
 void Decoder::fixupX86DecodeMetadata(cs_insn *I) const {
+  fixupX86MpxDetail(I);
   fixupX86DisplacementDetail(I);
 }
 

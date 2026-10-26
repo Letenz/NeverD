@@ -4097,10 +4097,14 @@ static LocalRegisterEffect summarizeRecoveredCallRegisters(
     for (auto &Block : Projection.Blocks)
       for (const auto &[Index, Target] :
            resolveLowBlockCallTargets(Block, Img.Arch, &Work)) {
-        if (Target.ThroughSlot || !Img.hasExecutableCodeOwnerAt(Target.Address))
+        if (Target.ThroughSlot ? importCalleeName(Img, Target.Address).empty()
+                               : !Img.hasExecutableCodeOwnerAt(Target.Address))
           continue;
         auto &Call = Block.Ops[Index];
-        Call.Opcode = NdOp::CALL;
+        // This private view must also expose an import's register reads.
+        // A caller forwarding RCX still owns that incoming parameter even
+        // when the callable was transported through a frame slot.
+        Call.Opcode = Target.ThroughSlot ? NdOp::INDIR_CALL : NdOp::CALL;
         Call.Inputs[0] = NdVar::cst(Target.Address, Call.Inputs[0].Size);
       }
   return localRegisterEffect(Img, CallRegisterBodyView(Projection),
