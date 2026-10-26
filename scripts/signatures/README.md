@@ -363,3 +363,21 @@ it was built from, with their archive digests and toolset or SDK versions, and
 the NeverD revision and release tag that produced it. A Homebrew asset also
 records its formula and each bottle's tag and SHA-256, by which Homebrew's
 registry serves the bottle.
+
+### Source runtime pointer defaults
+
+`neverd-sigmaker --runtime-pointer-evidence --evidence-symbol NAME` emits offline
+JSONL configuration, pointer and actual function definitions for x64 COFF. Repeat
+`--evidence-symbol` for every selected pointer and proposed default function, and
+include all unpruned source versions as evidence. Undefined declarations do not
+establish a function type; unsupported definitions remain incomplete counterclaims.
+
+`supplement_runtime_pointers.py` joins these declarations and requires existing
+complete caller bodies. `--pointer` selects source variables; `--updated-dir`
+receives copied packs with proved outgoing references added to their existing
+records. `--output` receives only missing `!loadcfg` metadata. Review those copies
+and run `neverd-sigmaker --verify` before publication. Conflicting or incomplete
+source declarations veto selection. Ordinary caller strength limits are unchanged.
+Runtime matching uses loader-recorded immutable relocated slots and validates every
+body wildcard against independently bound storage. These are candidates, not
+source identity or a prediction of a pointer's value after the OS loads an image.

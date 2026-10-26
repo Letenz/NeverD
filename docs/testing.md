@@ -6218,6 +6218,16 @@ reject malformed table records and preserve the kind through reversed cache
 pieces. `scripts.tests.test_vtable_context` checks unpruned evidence, missing
 inputs, exact deduplication and isolation from function folding/refinement.
 
+`SignatureRuntimePointerContext.*` checks requested entries, complete operand
+coverage, immutable pointer ownership, conflicting roles/defaults, source
+conflicts and candidate-only naming. `RuntimePointerEvidence.*` exercises source
+configuration/storage/function separation and incomplete declarations. Cache
+round trips preserve the metadata kind with reversed pieces and reject malformed
+pairs. `scripts.tests.test_runtime_pointer_context` covers unpruned counterclaims,
+missing explicit function definitions and reference-only refinement without
+body duplication. Canonical indirect data operands share generator/runtime tests
+with ordinary data references; import references retain their separate kind.
+
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
 Android/glibc/musl and unknown System V ELF, conflicting ABI notes, bounded

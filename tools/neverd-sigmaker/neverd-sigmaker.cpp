@@ -109,6 +109,14 @@ static cl::opt<bool> VTableEvidence(
         "Emit offline JSONL primary x64 COFF table declarations, including "
         "incomplete counterclaims; this is not a signature pack"),
     cl::init(false));
+static cl::opt<bool>
+    RuntimePointerEvidence("runtime-pointer-evidence",
+                           cl::desc("Emit offline JSONL load-configuration and "
+                                    "selected source definitions"),
+                           cl::init(false));
+static cl::list<std::string>
+    EvidenceSymbols("evidence-symbol",
+                    cl::desc("Exact pointer or function definition to audit"));
 static cl::opt<bool> DataReferences(
     "data-references",
     cl::desc("Include typed external-data operands in contextual or collision "
@@ -207,17 +215,24 @@ int main(int Argc, char *Argv[]) {
                               "  Generate .pat files from static libraries.\n");
 
   if (unsigned(Contextual) + unsigned(CallerContext) +
-          unsigned(CollisionEvidence) + unsigned(VTableEvidence) >
+          unsigned(CollisionEvidence) + unsigned(VTableEvidence) +
+          unsigned(RuntimePointerEvidence) >
       1) {
     WithColor::error()
         << "--contextual, --caller-context, --collision-evidence and "
-           "--vtable-evidence "
+           "--vtable-evidence and --runtime-pointer-evidence "
            "are separate outputs\n";
     return 1;
   }
-  if (VTableEvidence && (References || DataReferences || Verify)) {
+  if ((VTableEvidence || RuntimePointerEvidence) &&
+      (References || DataReferences || Verify)) {
     WithColor::error()
-        << "--vtable-evidence is a separate offline output mode\n";
+        << "metadata evidence is a separate offline output mode\n";
+    return 1;
+  }
+  if (!EvidenceSymbols.empty() && !RuntimePointerEvidence) {
+    WithColor::error()
+        << "--evidence-symbol requires --runtime-pointer-evidence\n";
     return 1;
   }
   if (Verify)
@@ -279,6 +294,7 @@ int main(int Argc, char *Argv[]) {
 
   InputStats Stats;
   VTableEvidenceStats Tables;
+  RuntimePointerEvidenceStats Pointers;
   bool EvidenceFailed = false;
   for (const std::string &Path : Inputs)
     if (!forEachObject(Path, Stats, [&](const ObjectFile &Obj) {
@@ -287,7 +303,17 @@ int main(int Argc, char *Argv[]) {
             return;
           }
           ++Stats.Objects;
-          if (VTableEvidence) {
+          if (RuntimePointerEvidence) {
+            auto Result =
+                generateRuntimePointerEvidence(Obj, EvidenceSymbols, OS);
+            if (!Result) {
+              WithColor::error() << toString(Result.takeError()) << "\n";
+              EvidenceFailed = true;
+            } else {
+              Pointers.Complete += Result->Complete;
+              Pointers.Incomplete += Result->Incomplete;
+            }
+          } else if (VTableEvidence) {
             auto Result = generateVTableEvidence(Obj, OS);
             if (!Result) {
               WithColor::error() << toString(Result.takeError()) << "\n";
@@ -332,7 +358,10 @@ int main(int Argc, char *Argv[]) {
                          << " Mach-O objects were left out: their linker "
                             "optimization hints cannot be read\n";
 
-  if (VTableEvidence)
+  if (RuntimePointerEvidence)
+    outs() << "Generated " << Pointers.Complete << " complete and "
+           << Pointers.Incomplete << " incomplete runtime declarations → ";
+  else if (VTableEvidence)
     outs() << "Generated " << Tables.Complete << " complete and "
            << Tables.Incomplete << " incomplete table declarations → ";
   else
