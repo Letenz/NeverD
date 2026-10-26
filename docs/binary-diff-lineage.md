@@ -24,6 +24,23 @@ exact original source bytes. Output files are replaced only after successful
 preparation and the final cancellation check. A stdout failure after file
 publication cannot roll back the file.
 
+### Open a report from an older analysis profile
+
+If `diff --reopen` reports that the inputs were analyzed with other settings,
+open the saved evidence offline:
+
+```sh
+neverd lineage --report review.nddiff --save history.ndlineage --json
+neverd lineage --reopen history.ndlineage --list reports --json
+```
+
+In the desktop, choose **File → Version comparison graph**, then add the saved
+comparison. Both routes retain its original evidence and report bytes. They do
+not require the original binaries. To compare the binaries using the current
+analysis profile, create a new comparison and save it to a separate file. Fresh
+binding validates the analysis identity and function evidence; changing a
+profile or revision label alone does not migrate a report.
+
 The desktop opens an independent worker. Add comparisons, label snapshots and
 branches, filter functions, activate a function to trace it, inspect direct
 source evidence and conflicts, then save or reopen the collection. Tables retain

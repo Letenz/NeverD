@@ -6767,6 +6767,16 @@ Abdeckung: %7</translation>
         <source>Optimized SSA with expression-bound loop analysis</source>
         <translation>Optimierte SSA mit schleifenbegrenzenden Ausdrücken</translation>
     </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+Primärer Name: %1
+Sekundärer Name: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7750,6 +7760,14 @@ Jede Verwendung eines projizierten Parameters liest dieselben unteren Bits. Das 
     <message>
         <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
         <translation>Jede Verwendung dieses Parameters liest dieselben unteren Bits; die ursprüngliche Bitbreite und native Position bleiben erhalten.</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1 (analysierter Name: %2)</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>Zugeordnete Funktion: %1</translation>
     </message>
 </context>
 <context>

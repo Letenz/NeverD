@@ -6731,6 +6731,16 @@ Coverage: %7</source>
         <source>Optimized SSA with expression-bound loop analysis</source>
         <translation>含運算式邊界迴圈分析的最佳化 SSA</translation>
     </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+主要端名稱：%1
+次要端名稱：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7714,6 +7724,14 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
     <message>
         <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
         <translation>此參數的每次使用皆讀取相同的低位元；原始位寬與原生位置皆已保留。</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1（分析名稱：%2）</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>對應函式：%1</translation>
     </message>
 </context>
 <context>

@@ -6911,6 +6911,16 @@ Coverage: %7</source>
         <source>Optimized SSA with expression-bound loop analysis</source>
         <translation>SSA محسّنة مع تحليل حلقات تحدّها تعبيرات</translation>
     </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+الاسم في الطرف الأساسي: %1
+الاسم في الطرف الثانوي: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7894,6 +7904,14 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
     <message>
         <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
         <translation>كل استخدام لهذا المعامل يقرأ البتات الدنيا نفسها؛ يُحتفظ بالعرض الأصلي والموقع الأصلي.</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1 (الاسم عند التحليل: %2)</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>الدالة المقابلة: %1</translation>
     </message>
 </context>
 <context>

@@ -6767,6 +6767,16 @@ Coverage: %7</translation>
         <source>Optimized SSA with expression-bound loop analysis</source>
         <translation>Optimized SSA with expression-bound loop analysis</translation>
     </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+Primary name: %1
+Secondary name: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7750,6 +7760,14 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
     <message>
         <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
         <translation>Every use of this parameter reads the same low bits; the original width and native site are retained.</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1 (analyzed name: %2)</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>Counterpart: %1</translation>
     </message>
 </context>
 <context>

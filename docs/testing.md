@@ -2712,6 +2712,10 @@ identities after display renames.
 and exports whose spelling resembles a generated label, and distinguishes
 recognized names from unnamed entries. `SessionFunctionDiscovery` checks origin
 retention before and after native pipeline publication.
+The desktop's `savedProjectsCompareThroughTheSharedReader` case preserves
+analyst names containing template delimiters, exposes the analyzed names in
+tooltips and the Evidence pane, and checks access to the complete identity text
+in a narrow window. The pane remains read-only and wraps long identifiers.
 
 Offline lineage adds `BinaryDiffLineage.*`, `NeverDBinaryDiffLineageSDKTests`,
 `NeverDWorkerLineage` and `NeverDGuiLineage`. The core uses an independent

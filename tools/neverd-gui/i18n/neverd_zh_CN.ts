@@ -6731,6 +6731,16 @@ Coverage: %7</source>
         <source>Optimized SSA with expression-bound loop analysis</source>
         <translation>带表达式边界循环分析的优化 SSA</translation>
     </message>
+    <message>
+        <source>
+
+Primary name: %1
+Secondary name: %2</source>
+        <translation>
+
+主侧名称：%1
+次侧名称：%2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7714,6 +7724,14 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
     <message>
         <source>Every use of this parameter reads the same low bits; the original width and native site are retained.</source>
         <translation>此参数的每次使用都读取相同的低位；原始位宽和原生位置均已保留。</translation>
+    </message>
+    <message>
+        <source>%1 (analyzed name: %2)</source>
+        <translation>%1（分析名称：%2）</translation>
+    </message>
+    <message>
+        <source>Counterpart: %1</source>
+        <translation>对应函数：%1</translation>
     </message>
 </context>
 <context>

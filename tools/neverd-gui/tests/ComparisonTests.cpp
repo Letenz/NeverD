@@ -48,6 +48,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
+#include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
 #include <algorithm>
@@ -821,11 +822,14 @@ private slots:
       QCOMPARE(
           ProjectDatabase::writeProjectFile(Path, ".neverd-load.json", Load),
           QString());
-      QCOMPARE(ProjectDatabase::writeProjectFile(
-                   Path, ".neverd-renames.json",
-                   QJsonDocument(QJsonArray{QJsonObject{
-                       {"addr", "0x1000"}, {"renamed", "saved_check"}}})),
-               QString());
+      QCOMPARE(
+          ProjectDatabase::writeProjectFile(
+              Path, ".neverd-renames.json",
+              QJsonDocument(QJsonArray{QJsonObject{
+                  {"addr", "0x1000"},
+                  {"renamed", Path == A ? "saved_check<int>"
+                                        : "saved_secondary_check<int>"}}})),
+          QString());
       QCOMPARE(ProjectDatabase::save(ProjectDatabase::pathFor(Path), Path, {}),
                QString());
       QVERIFY(QFile::remove(Path));
@@ -861,11 +865,50 @@ private slots:
     auto *Inventory = View.findChild<QTableView *>("comparisonFunctions");
     auto *Model = qobject_cast<ComparisonModel *>(Inventory->model());
     QTRY_VERIFY_WITH_TIMEOUT(Model->rowCount() > 0, Timeout);
-    QTRY_VERIFY_WITH_TIMEOUT(Model->row(0)["name"].toString() == "saved_check",
-                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        Model->row(0)["name"].toString() == "saved_check<int>", Timeout);
+    QCOMPARE(Model->row(0)["evidence_name"].toString(), QString("start"));
+    QTextDocument NameTipDocument;
+    NameTipDocument.setHtml(
+        Model->data(Model->index(0, 1), Qt::ToolTipRole).toString());
+    const auto NameTip = NameTipDocument.toPlainText();
+    QVERIFY(NameTip.contains("saved_check<int>"));
+    QVERIFY(NameTip.contains("saved_secondary_check<int>"));
+    QVERIFY(NameTip.contains("start"));
     Inventory->setCurrentIndex(Model->index(0, 0));
     auto *Instructions = View.findChild<QTableView *>("comparisonInstructions");
     QTRY_VERIFY_WITH_TIMEOUT(Instructions->model()->rowCount() > 0, Timeout);
+    auto *Evidence = View.findChild<QPlainTextEdit *>("comparisonEvidence");
+    QVERIFY(Evidence);
+    QVERIFY(Evidence->isReadOnly());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        Evidence->toPlainText().contains("saved_check<int>") &&
+            Evidence->toPlainText().contains("saved_secondary_check<int>") &&
+            Evidence->toPlainText().contains("start"),
+        Timeout);
+    QVERIFY(
+        Evidence->toPlainText().contains(Model->row(0)["identity"].toString()));
+    QVERIFY(Evidence->toPlainText().contains(
+        Model->row(0)["counterpart"].toObject()["identity"].toString()));
+    auto *EvidenceTabs = View.findChild<QTabWidget *>();
+    QVERIFY(EvidenceTabs);
+    EvidenceTabs->setCurrentWidget(Evidence->parentWidget());
+    View.resize(1000, 650);
+    QVERIFY(Evidence->isVisible());
+    QCOMPARE(Evidence->horizontalScrollBar()->maximum(), 0);
+    Evidence->moveCursor(QTextCursor::End);
+    QTRY_VERIFY(Evidence->viewport()->rect().contains(Evidence->cursorRect()));
+    if (Evidence->verticalScrollBar()->maximum() > 0)
+      QVERIFY(Evidence->verticalScrollBar()->value() > 0);
+    if (const auto Captures =
+            qEnvironmentVariable("NEVERD_COMPARISON_SCREENSHOTS");
+        !Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      QVERIFY(
+          View.grab().save(Captures + "/renamed-function-evidence-end.png"));
+      Evidence->moveCursor(QTextCursor::Start);
+      QVERIFY(View.grab().save(Captures + "/renamed-function-evidence.png"));
+    }
     View.resize(1280, 800);
     QCOMPARE(Read(DA), Before);
     QCOMPARE(Read(DB), After);
@@ -899,7 +942,7 @@ private slots:
     QVERIFY(!SecondarySource->extraSelections().isEmpty());
     QVERIFY(View.findChild<QLabel *>("comparisonPrimarySourceTitle")
                 ->text()
-                .contains("saved_check"));
+                .contains("saved_check<int>"));
     auto *Jump =
         View.findChild<QPushButton *>("comparisonPrimarySourceInstruction");
     for (auto Block = PrimarySource->document()->begin();

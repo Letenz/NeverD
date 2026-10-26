@@ -47,7 +47,10 @@ def main() -> int:
             env[key] = str(path)
         env.pop("DISPLAY", None)
         env.pop("WAYLAND_DISPLAY", None)
-        env.update(XDG_SESSION_TYPE="wayland", LIBGL_ALWAYS_SOFTWARE="1")
+        # A desktop-wide x11 override also reaches Qt's GTK platform theme.
+        # This private compositor deliberately has no X server.
+        env.update(XDG_SESSION_TYPE="wayland", GDK_BACKEND="wayland",
+                   LIBGL_ALWAYS_SOFTWARE="1")
         with (root / "compositor.log").open("w+") as log:
             compositor = subprocess.Popen([
                 "gnome-shell", "--unsafe-mode", "--wayland", "--no-x11",

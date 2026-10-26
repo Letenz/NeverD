@@ -97,6 +97,10 @@ including analyst renames and listing suffixes. `evidence_name` identifies the
 underlying name used by the comparison. Search accepts either name; sorting by
 name uses the display name. These presentation annotations are owned by the
 comparison and do not alter matches, snapshot revisions or saved report bytes.
+When the names differ, the desktop's function tooltips and Evidence tab show the
+analyzed name alongside the display name, including the counterpart's names.
+The read-only Evidence pane wraps long identities and supports scrolling and
+copying the complete text.
 
 Continue with `--offset` using the response's `next_offset`. `ambiguous_with`
 always names a function on the opposite side; an absent source is an error,
@@ -1024,6 +1028,8 @@ unique name evidence; literal suffixes in the original symbols remain intact. Th
 `sdk-native-decode-v2` extraction identity records this contract; historical
 reports keep their original evidence and require a new comparison for fresh
 binding under the revised extraction profile.
+Use the [offline report workflow](binary-diff-lineage.md#open-a-report-from-an-older-analysis-profile)
+to inspect those reports without reanalyzing their binaries.
 Unmatched functions are not automatically additions/deletions when discovery is
 partial. Imports, thunks, libraries and incomplete bodies carry separate traits.
 Pairs with no body on either side report `identity_only`, with no body similarity
