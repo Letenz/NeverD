@@ -34,6 +34,8 @@ FUNCTION_STRIDE = 16
 INVENTORY_PAGE_SIZE = 200
 TRACE_PAGE_SIZE = 1
 HASH_BLOCK_BYTES = 1024 * 1024
+# Admit the small edit request while refusing the much larger retained corpus.
+RELEASE_REFUSAL_WORK = 1024
 MANIFEST_SCHEMA = "neverd.benchmark.lineage.corpus.v1"
 RESULT_SCHEMA = "neverd.benchmark.lineage.result.v1"
 
@@ -335,7 +337,8 @@ def sample(args: argparse.Namespace) -> None:
             saved_release = graph.export()
             budget_started = time.perf_counter()
             try:
-                graph.edit_releases({"upsert": [renamed]}, options={"max_work": 1})
+                graph.edit_releases({"upsert": [renamed]},
+                                    options={"max_work": RELEASE_REFUSAL_WORK})
             except NeverDError:
                 timings["release_budget_refusal_seconds"] = time.perf_counter() - budget_started
                 require(graph.status()["operation_state"] == "resource_limited" and
