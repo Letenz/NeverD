@@ -164,20 +164,25 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
         Res *= S[A[K]];
       break;
     case SymOp::And:
+      // Every earlier slot is normalized to its declared width. These
+      // bitwise operators preserve that invariant without another mask.
       Res = S[A[0]] & S[A[1]];
       for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res &= S[A[K]];
-      break;
+      S[I] = Res;
+      continue;
     case SymOp::Or:
       Res = S[A[0]] | S[A[1]];
       for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res |= S[A[K]];
-      break;
+      S[I] = Res;
+      continue;
     case SymOp::Xor:
       Res = S[A[0]] ^ S[A[1]];
       for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res ^= S[A[K]];
-      break;
+      S[I] = Res;
+      continue;
     case SymOp::Not:
       Res = ~S[A[0]];
       break;
@@ -188,8 +193,8 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
     }
     case SymOp::LShr: {
       uint64_t Sh = S[A[1]];
-      Res = Sh >= W ? 0 : (S[A[0]] >> Sh);
-      break;
+      S[I] = Sh >= W ? 0 : (S[A[0]] >> Sh);
+      continue;
     }
     case SymOp::AShr: {
       uint64_t V = S[A[0]], Sh = S[A[1]];
@@ -209,24 +214,24 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
     }
     case SymOp::URem: {
       uint64_t X = S[A[0]], Y = S[A[1]];
-      Res = Y == 0 ? X : (X % Y);
-      break;
+      S[I] = Y == 0 ? X : (X % Y);
+      continue;
     }
     case SymOp::Eq:
-      Res = S[A[0]] == S[A[1]];
-      break;
+      S[I] = S[A[0]] == S[A[1]];
+      continue;
     case SymOp::Ult:
-      Res = S[A[0]] < S[A[1]];
-      break;
+      S[I] = S[A[0]] < S[A[1]];
+      continue;
     case SymOp::Ule:
-      Res = S[A[0]] <= S[A[1]];
-      break;
+      S[I] = S[A[0]] <= S[A[1]];
+      continue;
     case SymOp::Ite:
-      Res = S[A[0]] ? S[A[1]] : S[A[2]];
-      break;
+      S[I] = S[A[0]] ? S[A[1]] : S[A[2]];
+      continue;
     case SymOp::ZExt:
-      Res = S[A[0]];
-      break;
+      S[I] = S[A[0]];
+      continue;
     case SymOp::Extract:
       Res = S[A[0]] >> St.Aux;
       break;

@@ -320,13 +320,20 @@ struct PrefixConstants {
   PrefixValue infer(SymRef R, unsigned Bits, unsigned Depth = 0) {
     if (!Res.charge(1))
       return {};
+    const auto Op = Ctx.op(R);
+    // These leaf facts need no recursive inference or cache entry. Reading
+    // the already-normalized native literal also avoids an APInt copy for
+    // every first prefix query; a free variable contributes no known bits.
+    if (Op == SymOp::Var)
+      return {};
+    const uint64_t Mask = (uint64_t(1) << Bits) - 1;
+    if (Op == SymOp::Const && Ctx.width(R) <= 64)
+      return {Ctx.node(R).Aux & Mask, Mask};
     auto Key = std::make_pair(R.index(), Bits);
     if (auto It = Values.find(Key); It != Values.end())
       return It->second;
     if (Depth >= limits::kMaxAffineResidueDepth)
       return {};
-    const uint64_t Mask = (uint64_t(1) << Bits) - 1;
-    const auto Op = Ctx.op(R);
     auto Evaluate = [&]() -> PrefixValue {
       if (Ctx.isConst(R)) {
         const size_t Words = (size_t(Ctx.width(R)) - 1) / 64 + 1;

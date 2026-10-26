@@ -2953,11 +2953,21 @@ separate allocation for each distinct node hash. Reserved key pairs use
 separate context-owned heads, so every 64-bit hash remains representable. Colliding
 hashes still compare the complete operator, width, auxiliary value and operand
 sequence; context copies and moves own their complete tables and node arenas.
+Existing-node lookup stays separate from table insertion and arena growth;
+only a missing complete identity reaches the allocation path. Native evaluation
+slots remain normalized to their declared widths, so operations that preserve
+that invariant do not mask their results again. External variable values and
+arithmetic that can introduce high bits still receive their width mask.
 The compact two-word hash key uses one 64-bit bucket mix, without hashing its
 halves independently. Sum construction collects small coefficient maps in
 inline storage and sorts completed entries by base-node index before rebuilding.
 Larger sums retain hashed lookup; cancellation, recollection and canonical node
 order are unchanged.
+Dense implicant rounds look up exact one-bit neighbors when that requires
+fewer probes than a complete pair scan. Neighbors retain the original index
+order before merging, preserving prime discovery and greedy-cover tie order.
+The existing quadratic work admission remains unchanged; merge storage stays
+outside the small-recipe synthesis path.
 The shared exact MBA layer also recombines weighted literal AND/OR/XOR/NOT
 views of one opaque word. It constructs per-bit coefficients and a constant,
 then independently checks the pointwise grammar, constant difference and every
@@ -3191,6 +3201,9 @@ observed decision bits agree. Reconstruction restores both the selector and
 every retained factor. This avoids expanding an independent multiplication into
 Boolean carries, including at unit-period neighbors and with low-bit disturbances.
 These searches retain the existing cumulative work and storage bounds.
+Native literal prefix facts use the already-normalized stored value, and free
+variables supply no known bits. These leaves need neither a recursive walk nor
+a prefix-cache entry; wide literals retain their accounted APInt path.
 Ordinary HighIR expression cleanup also uses an iterative operand walk, keeping
 its large local-rewrite frame off nested worker stacks. Operand order, shared
 node visitation and ordered-memory guards remain unchanged.

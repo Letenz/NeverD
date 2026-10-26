@@ -1919,6 +1919,14 @@ Expression interning regressions retain deliberately colliding variable and
 literal identities, all-bit hash values, and references across table growth,
 context copies, assignment and moves. Full symbolic and source-route coverage
 checks the shared table underneath both CLI and GUI simplification.
+`SymExpr.NativeNormalizedResultsRetainWidthBoundaries` compares both native
+evaluation entry points against independent APInt arithmetic at 1/7/8/16/32/64
+bits. Unmasked inputs, wrapping sums and products, both conditional branches,
+overshifts and remainder by zero preserve the normalized scratch-slot invariant.
+`SymMBA.DenseCoversKeepEveryCornerAndWholeWord` exhausts four-, six- and
+eight-input cover tables, including mixed literal polarities and an isolated
+negative corner. Independent bit-plane evaluation checks random complete words
+through 257 bits; zero work must refuse without constructing a new node.
 Paired-product regressions cover degree-64–128 mixed carry frontiers with
 independent 8–257-bit arithmetic oracles. A separate 32-factor fixture retains
 an input-dependent highest-bit correction, exhausts its three relevant low

@@ -46,6 +46,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
@@ -322,6 +323,7 @@ TruthTable coverage(Implicant P, unsigned NumVars) {
 /// grown.  The scan made a round cubic in the number of implicants, which is
 /// only invisible while the arity keeps that number in the dozens — exactly
 /// the assumption this file no longer makes.
+LLVM_ATTRIBUTE_NOINLINE
 std::vector<Implicant> primeImplicants(const TruthTable &Table,
                                        unsigned NumVars, size_t &Work,
                                        size_t Budget) {
@@ -340,18 +342,52 @@ std::vector<Implicant> primeImplicants(const TruthTable &Table,
     std::vector<char> Merged(Current.size(), 0);
     std::vector<Implicant> Next;
     llvm::DenseSet<std::pair<uint32_t, uint32_t>> Seen;
-    for (size_t I = 0; I < Current.size(); ++I) {
-      for (size_t J = I + 1; J < Current.size(); ++J) {
-        if (Current[I].Care != Current[J].Care)
-          continue;
-        uint32_t Diff = (Current[I].Value ^ Current[J].Value) & Current[I].Care;
-        // Adjacent means differing in exactly one constrained input.
-        if (Diff == 0 || (Diff & (Diff - 1)) != 0)
-          continue;
-        Merged[I] = Merged[J] = 1;
-        Implicant Grown{Current[I].Value & ~Diff, Current[I].Care & ~Diff};
-        if (Seen.insert({Grown.Value, Grown.Care}).second)
-          Next.push_back(Grown);
+    auto grow = [&](size_t I, size_t J, uint32_t Diff) {
+      Merged[I] = Merged[J] = 1;
+      Implicant Grown{Current[I].Value & ~Diff, Current[I].Care & ~Diff};
+      if (Seen.insert({Grown.Value, Grown.Care}).second)
+        Next.push_back(Grown);
+    };
+    // Every round removes exactly one cared bit. When indexing each term and
+    // looking up its possible one-bit neighbors needs fewer probes than the
+    // complete pair scan, visit only those exact neighbors. The original
+    // quadratic work admission stays in force.
+    const auto CareBits = std::popcount(Current.front().Care);
+    if (Current.size() - 1 > 2 * size_t(CareBits + 1)) {
+      auto key = [](uint32_t Value, uint32_t Care) {
+        return (uint64_t(Care) << 32) | Value;
+      };
+      llvm::DenseMap<uint64_t, size_t> Positions;
+      Positions.reserve(Current.size());
+      for (size_t I = 0; I < Current.size(); ++I)
+        Positions.try_emplace(key(Current[I].Value, Current[I].Care), I);
+      llvm::SmallVector<size_t, 8> Neighbors;
+      for (size_t I = 0; I < Current.size(); ++I) {
+        Neighbors.clear();
+        for (uint32_t Rest = Current[I].Care; Rest; Rest &= Rest - 1) {
+          const uint32_t Bit = Rest & -Rest;
+          const auto It =
+              Positions.find(key(Current[I].Value ^ Bit, Current[I].Care));
+          if (It != Positions.end() && It->second > I)
+            Neighbors.push_back(It->second);
+        }
+        // Preserve the old (I, J) discovery order: greedy cover ties must not
+        // change merely because the lookup table uses a different traversal.
+        std::sort(Neighbors.begin(), Neighbors.end());
+        for (size_t J : Neighbors)
+          grow(I, J, Current[I].Value ^ Current[J].Value);
+      }
+    } else {
+      for (size_t I = 0; I < Current.size(); ++I) {
+        for (size_t J = I + 1; J < Current.size(); ++J) {
+          if (Current[I].Care != Current[J].Care)
+            continue;
+          const uint32_t Diff =
+              (Current[I].Value ^ Current[J].Value) & Current[I].Care;
+          if (Diff == 0 || (Diff & (Diff - 1)) != 0)
+            continue;
+          grow(I, J, Diff);
+        }
       }
     }
     for (size_t I = 0; I < Current.size(); ++I)
