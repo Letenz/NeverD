@@ -28,6 +28,11 @@ def run(executable, real=False):
         with Client(executable) as worker:
             assert "patch_apply" in worker.hello["capabilities"]
             ok(worker, "open", {"path": str(binary), "analysis": False})
+            ok(worker, "annotation_set", {"address": hex(at), "text": "keep this note"})
+            ok(worker, "save")
+            annotations, = Path(directory).rglob("annotations.json")
+            note_bytes = annotations.read_bytes()
+            note_time = annotations.stat().st_mtime_ns
             original = ok(worker, "bytes", {"address": hex(at), "size": 1})["data"]
             request = {"address": hex(at), "kind": "bytes", "bytes": "2a"}
             plan = ok(worker, "patch_preview", request)
@@ -76,11 +81,24 @@ def run(executable, real=False):
             assert ok(worker, "patches", {"ranges_only": True})["items"] == []
             ok(worker, "undo")
             assert ok(worker, "patches")["total"] == len(rows)
+            assert annotations.read_bytes() == note_bytes
+            assert annotations.stat().st_mtime_ns == note_time, "Patch history rewrote unchanged annotations"
         with Client(executable) as reopened:
             ok(reopened, "open", {"path": str(binary), "analysis": False})
             assert ok(reopened, "patches")["total"] == len(rows)
             ok(reopened, "undo")
             ok(reopened, "redo")
+            assert annotations.read_bytes() == note_bytes
+            assert annotations.stat().st_mtime_ns == note_time
+            # Skipping an unchanged table's write must not skip its conflict check.
+            foreign = json.loads(note_bytes)
+            foreign[0]["text"] = "external edit"
+            annotations.write_text(json.dumps(foreign))
+            before = ok(reopened, "bytes", {"address": hex(at), "size": 1})["data"]
+            refused = reopened.call("patch_apply", {"address": hex(at), "kind": "bytes", "bytes": "66"})
+            assert refused["error"]["code"] == "foreign_edits", refused
+            assert ok(reopened, "bytes", {"address": hex(at), "size": 1})["data"] == before
+            assert json.loads(annotations.read_text()) == foreign
     print("patch preview, stale protection, history, replica, batch revert, reopen and export passed")
 
 
