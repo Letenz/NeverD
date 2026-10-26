@@ -268,6 +268,14 @@ TEST_F(BinaryDiffSDK, AnalysisSectionsBindDataOutsideTheFunctionInventory) {
   EXPECT_EQ(Summary.getAsObject()->getInteger("versions"), 2);
   neverd_lineage_destroy(L);
 
+  const auto Sections = take(neverd_analysis_sections_json(A, 1));
+  auto Replayed = input(body());
+  ASSERT_EQ(neverd_analysis_sections_import_json(Replayed, Sections.c_str()), 1)
+      << take(neverd_last_error(Replayed));
+  C = compare(Replayed, B);
+  EXPECT_EQ(neverd_comparison_restore_json(C, After.c_str()), 1)
+      << take(neverd_comparison_last_error(C));
+
   ASSERT_EQ(neverd_analysis_section_remove(A, ".extra"), 1);
   C = compare(A, B);
   EXPECT_EQ(neverd_comparison_restore_json(C, Before.c_str()), 1)
@@ -307,6 +315,57 @@ TEST_F(BinaryDiffSDK, AnalysisSectionIdentityIgnoresInsertionOrder) {
   ASSERT_TRUE(Left && Right);
   EXPECT_NE(Left->getString("analysis"), Right->getString("analysis"));
   EXPECT_NE(Left->getString("revision"), Right->getString("revision"));
+}
+
+TEST_F(BinaryDiffSDK, AnalysisSectionDeclarationsHaveCanonicalIdentity) {
+  auto A = input(body());
+  auto B = input(body());
+  const auto First = body(7), Second = body(9);
+  auto Bytes = First;
+  Bytes.insert(Bytes.end(), Second.begin(), Second.end());
+  const auto Description = [&](bool Reverse) {
+    llvm::json::Array Functions{llvm::json::Object{{"name", "added_first"},
+                                                   {"offset", "0x0"},
+                                                   {"size", First.size()}},
+                                llvm::json::Object{{"name", "added_second"},
+                                                   {"offset", "0x9"},
+                                                   {"size", Second.size()}}};
+    if (Reverse)
+      std::reverse(Functions.begin(), Functions.end());
+    return render(llvm::json::Object{{"schema", "neverd.analysis-section.v1"},
+                                     {"name", ".code"},
+                                     {"address", "0x3000"},
+                                     {"permissions", "rx"},
+                                     {"functions", std::move(Functions)}});
+  };
+  ASSERT_EQ(neverd_analysis_section_add(A, Description(false).c_str(),
+                                        Bytes.data(), Bytes.size()),
+            1);
+  ASSERT_EQ(neverd_analysis_section_add(B, Description(true).c_str(),
+                                        Bytes.data(), Bytes.size()),
+            1);
+  const auto Equal = parsed(neverd_comparison_export_json(compare(A, B)));
+  auto *Left = Equal.getAsObject()->getObject("primary");
+  auto *Right = Equal.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_EQ(Left->getString("analysis"), Right->getString("analysis"));
+  EXPECT_EQ(Left->getString("revision"), Right->getString("revision"));
+  ASSERT_EQ(neverd_analysis_section_remove(B, ".code"), 1);
+  const auto DataOnly =
+      R"({"schema":"neverd.analysis-section.v1","name":".code",
+                           "address":"0x3000","permissions":"rw"})";
+  ASSERT_EQ(
+      neverd_analysis_section_add(B, DataOnly, Bytes.data(), Bytes.size()), 1);
+  // Filtering out added functions must still bind declaration and mapping
+  // changes in the rest of the input.
+  const auto Different =
+      parsed(neverd_comparison_export_json(compare(A, B, R"({"discover":false,
+                "primary":{"begin":"0x1000","end":"0x1009"},
+                "secondary":{"begin":"0x1000","end":"0x1009"}})")));
+  Left = Different.getAsObject()->getObject("primary");
+  Right = Different.getAsObject()->getObject("secondary");
+  ASSERT_TRUE(Left && Right);
+  EXPECT_NE(Left->getString("analysis"), Right->getString("analysis"));
 }
 
 TEST_F(BinaryDiffSDK, ByteOverlayIdentityIgnoresEditKindsAndGrouping) {

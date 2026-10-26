@@ -65,6 +65,13 @@ comparison binding therefore refuses an earlier unpatched analysis even when
 the decoded function inventory is unchanged. Packed project state remains an
 additional, independent part of snapshot identity.
 
+Materialized analysis sections also contribute their complete bytes, mapping,
+permissions and declared functions to analysis identity, including data outside
+the selected functions. Section and function declaration insertion order does
+not matter. Removing every added section removes this identity component.
+Reopening a saved comparison requires the same additions to be present in the
+current input; the original file hash keeps its original meaning.
+
 An edge retains one accepted pair from one source report. Traversal is undirected;
 the original comparison direction remains in its evidence. Direct, indirect,
 reverse, cyclic and parallel report paths remain visible. A shortest predecessor
