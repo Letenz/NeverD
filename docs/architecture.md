@@ -3337,6 +3337,10 @@ low prefix before the remaining interleaved bits. Dense decision and carry
 caches prepay their bucket growth. Immutable word views avoid repeated copies
 and are discarded when the assumption changes; polynomial views remain valid
 throughout reconstruction.
+Decision identity hits and terminal Boolean operations return before entering
+the allocation and recursive expansion helpers. Cache misses alone need those
+larger stack frames. Lookup, depth admission, charging and insertion keep their
+original order, including failure paths.
 A dominant exact low prefix may be proved separately from unmatched product
 factors. A majority vote, weighted by exact projected-word multiplicities,
 only nominates the prefix; complete decision equality and the exact factor

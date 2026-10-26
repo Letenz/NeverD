@@ -21,6 +21,7 @@
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Compiler.h"
 
 #include <algorithm>
 #include <array>
@@ -170,17 +171,10 @@ class LowWordDecisions {
     return Value && Value->isOne();
   }
 
-  uint32_t node(uint64_t Variable, uint32_t Low, uint32_t High) {
-    if (!charge() || Low == High)
-      return Low;
-    if (Assumption && Variable == Assumption->first)
-      return Assumption->second ? High : Low;
-    const uint32_t Complement = Low & 1;
-    Low ^= Complement;
-    High ^= Complement;
-    const Decision D{Variable, Low, High};
-    if (auto It = Unique.find(D); It != Unique.end())
-      return It->second ^ Complement;
+  // Existing decisions need neither arena growth nor its saved registers.
+  // Keep admission and allocation together after the complete identity miss.
+  LLVM_ATTRIBUTE_NOINLINE
+  uint32_t appendNode(Decision D, uint32_t Complement) {
     if (Nodes.size() >= limits::kMaxResidueDecisionNodes ||
         !charge(1,
                 2 * sizeof(Decision) + sizeof(uint32_t) + 6 * sizeof(void *)) ||
@@ -192,6 +186,43 @@ class LowWordDecisions {
     Nodes.push_back(D);
     Unique.try_emplace(D, Id);
     return Id ^ Complement;
+  }
+
+  uint32_t node(uint64_t Variable, uint32_t Low, uint32_t High) {
+    if (!charge() || Low == High)
+      return Low;
+    if (Assumption && Variable == Assumption->first)
+      return Assumption->second ? High : Low;
+    const uint32_t Complement = Low & 1;
+    Low ^= Complement;
+    High ^= Complement;
+    const Decision D{Variable, Low, High};
+    if (auto It = Unique.find(D); It != Unique.end())
+      return It->second ^ Complement;
+    return appendNode(D, Complement);
+  }
+
+  // Only a missing application needs a recursive frontier and cache insertion.
+  // The caller has already normalized its edges and charged the same lookup.
+  LLVM_ATTRIBUTE_NOINLINE
+  uint32_t expandApplication(Operation Op, uint32_t A, uint32_t B,
+                             unsigned Depth, uint64_t Key,
+                             uint32_t Complement) {
+    // Recursive insertion may reallocate Nodes; copy both decisions first.
+    const auto Left = decision(A), Right = decision(B);
+    const auto Variable = std::min(Left.Variable, Right.Variable);
+    const auto Low =
+        apply(Op, Left.Variable == Variable ? Left.Low : A,
+              Right.Variable == Variable ? Right.Low : B, Depth + 1);
+    const auto High =
+        apply(Op, Left.Variable == Variable ? Left.High : A,
+              Right.Variable == Variable ? Right.High : B, Depth + 1);
+    const auto Result = node(Variable, Low, High);
+    if (!charge(1, sizeof(Key) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
+        !reserveEntry(Applied))
+      return 0;
+    Applied.try_emplace(Key, Result);
+    return Result ^ Complement;
   }
 
   uint32_t apply(Operation Op, uint32_t A, uint32_t B, unsigned Depth = 0) {
@@ -233,21 +264,7 @@ class LowWordDecisions {
     const uint64_t Key = (uint64_t(Op == Xor) << 63) | (uint64_t(A) << 32) | B;
     if (auto It = Applied.find(Key); It != Applied.end())
       return It->second ^ Complement;
-    // Recursive insertion may reallocate Nodes; copy both decisions first.
-    const auto Left = decision(A), Right = decision(B);
-    const auto Variable = std::min(Left.Variable, Right.Variable);
-    const auto Low =
-        apply(Op, Left.Variable == Variable ? Left.Low : A,
-              Right.Variable == Variable ? Right.Low : B, Depth + 1);
-    const auto High =
-        apply(Op, Left.Variable == Variable ? Left.High : A,
-              Right.Variable == Variable ? Right.High : B, Depth + 1);
-    const auto Result = node(Variable, Low, High);
-    if (!charge(1, sizeof(Key) + sizeof(uint32_t) + 4 * sizeof(void *)) ||
-        !reserveEntry(Applied))
-      return 0;
-    Applied.try_emplace(Key, Result);
-    return Result ^ Complement;
+    return expandApplication(Op, A, B, Depth, Key, Complement);
   }
 
   Bits calculate(SymOp Op, const Bits &A, const Bits &B) {
