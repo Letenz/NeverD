@@ -98,6 +98,17 @@ actual event modifiers before adding platform-specific key swaps.
 
 ## Cocoa and Retina validation
 
+- Give main-window geometry one owner. NeverD's application settings restore
+  it at startup; automatic global/project desktop restoration only arranges
+  panes. KDDockWidgets' default `LayoutSaver` temporarily unmaximizes, applies
+  the saved normal frame, shows the window and maximizes it again. Repeating
+  that during startup or after a file loads causes visible movement on Cocoa.
+  Use `RestoreOption_RelativeToMainWindow` for automatic pane restoration and
+  `RestoreOption_AbsoluteFloatingDockWindows` to preserve detached positions.
+  This policy also applies on Windows/Linux. Explicitly loading a desktop can
+  restore its full geometry. Test both normal and maximized main windows,
+  including visibility before first show and move/resize/state events while
+  loading a project; a final screenshot alone misses intermediate jumps.
 - Queue the application quit after the workbench accepts a close event.
   A synchronous `shutdownAccepted` → `QCoreApplication::quit` connection can
   reenter Cocoa's termination callback and crash Qt's thread-local cleanup.

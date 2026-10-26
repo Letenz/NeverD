@@ -3013,6 +3013,13 @@ saves multiple generated panes and checks their restoration and retirement when
 reopening or changing projects. Run these in `neverd-gui-tests`; native Cocoa
 runs also exercise focus delivery and floating-window ownership.
 
+`automaticLayoutsPreserveMainWindow` restores a maximized desktop into both a
+normal and a maximized workbench. Startup restoration must keep the workbench
+hidden until it is ready, and opening a project with its own desktop must not
+move, resize or change the state of the visible main window. Run this case on
+Cocoa as well as offscreen, alongside the Quick Start and generated-pane
+restoration cases.
+
 `NeverDGuiWheelInput` replays precision wheel and trackpad events through the
 production disassembly, source and hex views. It compares small-event batches
 with their combined movement, checks pixel-only and horizontal source scrolling,
