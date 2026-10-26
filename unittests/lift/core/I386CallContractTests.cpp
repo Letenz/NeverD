@@ -973,7 +973,9 @@ TEST(I386CallContract, AStoreWiderThanASlotFillsEachSlotItCovers) {
     }
     Code.insert(Code.end(), Call.begin(), Call.end());
     Code.insert(Code.end(), {0x83, 0xC4, 0x18, 0x5D, 0xC3});
-    const auto Image = makeImage(Code, {"calloc"});
+    auto Image = makeImage(Code, {"calloc"});
+    ASSERT_TRUE(Image.recordImportStorageSlot(
+        slot(0), "calloc", 0, ImportStorageEvidence::LoaderBind));
     for (bool LLVM : {false, true}) {
       SCOPED_TRACE(testing::Message() << RegisterTarget << ':' << LLVM);
       llvm::LLVMContext Context;
@@ -1003,6 +1005,7 @@ TEST(I386CallContract, AStoreWiderThanASlotFillsEachSlotItCovers) {
       EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
 #if defined(__linux__) && (defined(__i386__) || defined(__x86_64__))
       const std::string Oracle = R"(
+#include <stddef.h>
 void *calloc(size_t count, size_t bytes) {
   if (count != 17 || bytes != 23) __builtin_trap();
   return (void *)(uintptr_t)0x1234;
