@@ -12,6 +12,7 @@
 #include "neverd/ir/med/MedStackAlignment.h"
 
 #include "../../../safety/StackSlotFlow.h"
+#include "MedStackRecurrence.h"
 
 #include "neverd/ArchSupport.h"
 #include "neverd/ir/Limits.h"
@@ -231,6 +232,18 @@ public:
   }
 
 private:
+  const std::optional<CountedStackRecurrence> &recurrence(const PhiNode &Phi) {
+    const auto K = key(Phi.Output);
+    const auto [It, New] = Recurrences.emplace(K, std::nullopt);
+    if (New && Steps < kMaxProofSteps) {
+      size_t Remaining = kMaxProofSteps - Steps;
+      It->second = countedStackRecurrence(Func, Phi, Remaining);
+      Steps = kMaxProofSteps - Remaining;
+    }
+    return It->second;
+  }
+  std::map<Key, std::optional<CountedStackRecurrence>> Recurrences;
+
   /// Scalar bounds retain machine-width wrapping. Unknown scalar values have
   /// their full bit range; only a narrower extension or mask can bound them.
   llvm::ConstantRange scalarRange(const MedVar &Value, unsigned Depth) {
@@ -321,8 +334,24 @@ private:
     const auto Clear = llvm::scope_exit([&] { RangeActive.erase(key(Value)); });
     const auto &Definition = Found->second;
     if (Definition.Join) {
+      if (!sameOccurrence(Definition.Join->Output, Value))
+        return std::nullopt;
+      if (const auto &Loop = recurrence(*Definition.Join)) {
+        const auto Base = resolveRange(Loop->Base, Depth + 1);
+        if (Base) {
+          const auto Lower = safety::detail::checkedStackOffset(
+              Base->Min, Loop->MinimumChange, false);
+          const auto Upper = safety::detail::checkedStackOffset(
+              Base->Max, Loop->MaximumChange, false);
+          if (Lower && Upper && fitsPointerOffset(*Lower) &&
+              fitsPointerOffset(*Upper))
+            return EntryStackOffsetRange{*Lower, *Upper};
+        }
+        return std::nullopt;
+      }
       bool HasCycle = false;
-      const auto Boundaries = phiComponentBoundaries(Value, Depth, HasCycle);
+      const auto Boundaries =
+          phiComponentBoundaries(Value, Depth, HasCycle, /*RangeQuery=*/true);
       if (!Boundaries)
         return std::nullopt;
       std::optional<EntryStackOffsetRange> Result;
@@ -444,7 +473,8 @@ private:
   /// the same value around these cycles; other definitions remain boundaries
   /// and retain resolve()'s semantics.
   std::optional<std::vector<std::pair<MedVar, unsigned>>>
-  phiComponentBoundaries(const MedVar &Root, unsigned Depth, bool &HasCycle) {
+  phiComponentBoundaries(const MedVar &Root, unsigned Depth, bool &HasCycle,
+                         bool RangeQuery = false) {
     std::set<Key> Visited, Active;
     std::vector<std::pair<MedVar, unsigned>> Boundaries;
     std::set<Key> Seeded;
@@ -479,7 +509,10 @@ private:
           Op->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           Op->IntrinsicOutputs.empty();
       if (!Definition || (!Definition->Join && !Copy) || Assumed.count(K) ||
-          Definition->ProvenOffset || Definition->ProvenRange || EntryOrigin) {
+          Definition->ProvenOffset || Definition->ProvenRange || EntryOrigin ||
+          (RangeQuery && K != RootKey && Definition->Join &&
+           sameOccurrence(Definition->Join->Output, Value) &&
+           recurrence(*Definition->Join))) {
         Boundaries.emplace_back(Value, AtDepth);
         if (Parent)
           Seeded.insert(*Parent);

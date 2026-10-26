@@ -90,6 +90,7 @@ add_neverd_component_library(NeverDIRMed
   pass/MedSSA.cpp
   pass/MedSourceParameterUses.cpp
   pass/MedStackAlignment.cpp
+  pass/MedStackRecurrence.cpp
   pass/MedTypePass.cpp
   pass/MedVerifier.cpp
 

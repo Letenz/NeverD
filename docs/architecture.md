@@ -11318,6 +11318,15 @@ MedIR dead-code cleanup when a renamed copy's incoming value still has readers.
 This preserves the existing callee-save proof for both C routes after copy
 propagation removes uses of the copy's renamed result.
 
+Changing stack PHIs can also receive a range from a companion unsigned loop
+counter. The current header must guard every iteration, its counter must not
+wrap, and every backedge must cross both the counter update and stack update
+exactly once. Single-entry CFG evidence excludes bypasses and independent or
+exceptional entries. Machine-width copies and zero-extension slices preserve
+the counter bits; signed guards and unbounded recurrences supply no bound.
+The range includes the final header visit and remains separate from exact
+offsets and executable stack values.
+
 `low/Windows/SEHScalarFormat` owns a scalar subset of the
 [Windows printf grammar](https://learn.microsoft.com/en-us/cpp/c-runtime-library/format-specification-syntax-printf-and-wprintf-functions)
 for this memory proof. Positional syntax, foreign length/flag extensions, dynamic

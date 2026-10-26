@@ -111,6 +111,12 @@ retain the ordinary entry register marker needed to omit an unobserved RBP
 save from both source projections. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
 checks that a range seed cannot become an exact executable value or survive
 query removal, detached definitions or conflicting bounds.
+`MedStackAlignment.AGuardedCounterBoundsRepeatedStackAllocations` checks x86,
+x64, ARM and AArch64 against independently enumerated finite stack updates.
+Both branch polarities and low-byte/extension copies retain the range;
+wrapping counters, bypassed or repeated updates, additional entries, signed
+guards and overflowing displacements reject it. Exact-offset queries remain
+unknown for a changing recurrence.
 `NeverDMedPrologueSavesTests` checks that only
 disjoint CALL return-slot ranges are admitted, and that sparse stack definitions
 and nonmemory prefixes fit the existing analysis budget. Partial byte overwrites,

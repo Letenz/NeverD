@@ -104,6 +104,160 @@ TEST(MedStackAlignment, BoundedDynamicOffsetsAreNotExactOffsets) {
     }
 }
 
+TEST(MedStackAlignment, AGuardedCounterBoundsRepeatedStackAllocations) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    const auto Width = getTargetRegInfo(Architecture).PointerSize;
+    for (unsigned Mutation = 0; Mutation != 18; ++Mutation) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mutation);
+      auto Func = frameWithEntrySP(Architecture);
+      Func.Blocks.resize(6);
+      for (int I = 0; I != 6; ++I) {
+        Func.Blocks[I].Id = I;
+        Func.Blocks[I].StartAddr = 0x1000 + I * 0x10;
+      }
+      auto &Entry = Func.Blocks[0];
+      auto &Header = Func.Blocks[1];
+      auto &Update = Func.Blocks[2];
+      auto &Middle = Func.Blocks[3];
+      auto &Latch = Func.Blocks[4];
+      auto &Exit = Func.Blocks[5];
+      Entry.Succs = {1};
+      Header.Preds = {0, 4};
+      Header.Succs = {2, 5};
+      Update.Preds = {1};
+      Update.Succs = {3};
+      Middle.Preds = {2};
+      Middle.Succs = {4};
+      Latch.Preds = {3};
+      Latch.Succs = {1};
+      Exit.Preds = {1};
+      Entry.Ops.push_back(op(NdOp::INT_SUB, reg(1, Architecture),
+                             reg(0, Architecture),
+                             MedVar::makeConst(32, Width)));
+      auto Count = temp(10, Architecture);
+      Count.Size = 1;
+      auto Next = temp(11, Architecture);
+      Next.Size = 1;
+      auto Condition = temp(12, Architecture);
+      Condition.Size = 1;
+      Header.Phis = {{reg(2, Architecture),
+                      {{0, reg(1, Architecture)}, {4, reg(3, Architecture)}}},
+                     {Count, {{0, MedVar::makeConst(0, 1)}, {4, Next}}}};
+      Header.Ops = {
+          op(NdOp::INT_LESSEQUAL, Condition, MedVar::makeConst(16, 1), Count),
+          op(NdOp::COND_BR, {}, MedVar::makeConst(Exit.StartAddr, Width),
+             Condition)};
+      Update.Ops = {op(NdOp::INT_SUB, reg(3, Architecture),
+                       reg(2, Architecture), MedVar::makeConst(16, Width)),
+                    op(NdOp::INT_ADD, Next, Count, MedVar::makeConst(4, 1))};
+      switch (Mutation) {
+      case 0:
+        break;
+      case 1: // The counter can wrap back under the limit.
+        Header.Ops[0].Inputs[0] = MedVar::makeConst(254, 1);
+        break;
+      case 2: // The guard's wrong edge enters the loop.
+        Header.Ops[1].Inputs[0].ConstVal = Update.StartAddr;
+        break;
+      case 3: // An ordinary bypass can miss both updates.
+        Header.Succs.push_back(4);
+        Latch.Preds.push_back(1);
+        break;
+      case 4: // Another entry does not establish this invocation's counter.
+        Update.Preds.push_back(0);
+        Entry.Succs.push_back(2);
+        break;
+      case 5: // The allocation may repeat within one counter iteration.
+        Middle.Succs.push_back(2);
+        Update.Preds.push_back(3);
+        break;
+      case 6:
+        Header.Phis[1].Args[0].second =
+            MedVar::makeUnspecified(1, Architecture);
+        break;
+      case 7:
+        Update.Ops[1].Inputs[1] = MedVar::makeConst(0, 1);
+        break;
+      case 8:
+        Header.Ops[0].Opcode = NdOp::INT_SLESSEQUAL;
+        break;
+      case 9:
+        Header.Phis[0].ExceptionalEntry =
+            MedVar::makeUnspecified(Width, Architecture);
+        break;
+      case 10:
+        Header.Phis[1].Args[1].first = 3;
+        break;
+      case 11:
+        Update.Ops[0].Inputs[1].Provenance =
+            ConstantAddressProvenance::DataAddress;
+        break;
+      case 12:
+        Header.Ops[0].Inputs[1].Size = 2;
+        break;
+      case 13:
+        Func.ModuleAnalysisRoots.insert(Update.StartAddr);
+        break;
+      case 14:
+        Update.Ops[1].MemoryOrdering = NdMemoryOrdering::Relaxed;
+        break;
+      case 15:
+        Update.Ops[0].Inputs[1].ConstVal = UINT64_C(1) << (Width * 8 - 1);
+        break;
+      case 16:
+        Header.Ops[0].Inputs[0].Provenance =
+            ConstantAddressProvenance::DataAddress;
+        break;
+      case 17:
+        Func.ModuleAnalysisRoots.insert(Header.StartAddr);
+        break;
+      }
+      const auto Bounds = entryStackOffsetRanges(
+          Func, {reg(2, Architecture)}, Architecture, BinaryFormat::COFF);
+      EXPECT_FALSE(entryStackOffset(Func, reg(2, Architecture), Architecture,
+                                    BinaryFormat::COFF));
+      if (Mutation) {
+        EXPECT_FALSE(Bounds[0]);
+        continue;
+      }
+      ASSERT_TRUE(Bounds[0]);
+      EXPECT_EQ(Bounds[0]->Min, -96);
+      EXPECT_EQ(Bounds[0]->Max, -32);
+      // Independently enumerate the original unsigned loop, including the
+      // final header visit that fails the guard.
+      int64_t Stack = -32;
+      for (unsigned Counter = 0;; Counter += 4) {
+        EXPECT_LE(Bounds[0]->Min, Stack);
+        EXPECT_GE(Bounds[0]->Max, Stack);
+        if (Counter >= 16)
+          break;
+        Stack -= 16;
+      }
+      // The other branch polarity and the low-byte / extension sequence
+      // represent the same finite loop. Subtracting a negative immediate
+      // still increments at the counter's machine width.
+      Header.Ops[0] =
+          op(NdOp::INT_LESS, Condition, Count, MedVar::makeConst(16, 1));
+      Header.Ops[1].Inputs[0].ConstVal = Update.StartAddr;
+      Update.Ops[1].Opcode = NdOp::INT_SUB;
+      Update.Ops[1].Inputs[1].ConstVal = uint64_t{0} - 4;
+      auto Wide = temp(20, Architecture);
+      auto Narrow = temp(21, Architecture);
+      Narrow.Size = 1;
+      Update.Ops.push_back(op(NdOp::INT_ZEXT, Wide, Next));
+      Update.Ops.push_back(
+          op(NdOp::SUBBYTES, Narrow, Wide, MedVar::makeConst(0, 4)));
+      Header.Phis[1].Args[1].second = Narrow;
+      const auto Copied = entryStackOffsetRanges(
+          Func, {reg(2, Architecture)}, Architecture, BinaryFormat::COFF);
+      ASSERT_TRUE(Copied[0]);
+      EXPECT_EQ(Copied[0]->Min, Bounds[0]->Min);
+      EXPECT_EQ(Copied[0]->Max, Bounds[0]->Max);
+    }
+  }
+}
+
 TEST(MedStackAlignment, ExceptionalStackRangesAreQueryLocalAndKeepAllEntries) {
   auto Func = frameWithEntrySP(Arch::X64);
   auto &EntryOps = Func.Blocks[0].Ops;

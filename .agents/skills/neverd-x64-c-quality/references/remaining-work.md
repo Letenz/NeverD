@@ -610,6 +610,14 @@ conditional memory, invocation lifetime and both C routes remain open.
   machine-state contract. Byte histories reuse memory-event prefixes without
   raising the work limit.
 
+- Source-only SEH handlers with a stable frame register may carry several
+  protected SP positions without choosing one exceptional-entry value. The
+  CALL return-slot check retains every protected and ordinary alternative.
+  Live entry-register declarations survive DCE after copy propagation so both
+  C routes can still prove unobserved callee-save stores. Guarded unsigned
+  counter recurrences bound repeated stack adjustments; unbounded loops and
+  unknown interprocedural frame observations still require further proof.
+
 ## Established rules
 
 - Integer record calls in LLVMC bind physical ABI pieces through the shared
