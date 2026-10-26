@@ -1268,6 +1268,7 @@ TEST(TypeRender, UnitsSpellHeaderTypedefRecordsByTheirNames) {
   EXPECT_TRUE(contains(Embedded.Text, "fd_set readable;")) << Embedded.Text;
   EXPECT_FALSE(contains(Embedded.Text, "struct fd_set")) << Embedded.Text;
   EXPECT_TRUE(llvm::is_contained(Embedded.HeaderTypedefs, "fd_set"));
+  EXPECT_TRUE(llvm::is_contained(Embedded.HeaderTypes, "fd_set"));
 }
 
 TEST(TypeRender, HeaderRecordsNamedLikeTheirFunctionsKeepTheirTags) {
