@@ -1199,8 +1199,9 @@ public:
   /// \returns whether a proven rewrite changed the function.
   bool run() {
     // Nothing commits without budget or a frame address; learn both before
-    // building the flow graph, which none of the checks below needs.
-    if (!Budget)
+    // building the flow graph, which none of the checks below needs. A cyclic
+    // graph never commits below: decide that from statements alone first.
+    if (!Budget || entersCycle(Function.Body, Labels))
       return false;
     State Entry;
     HighExprSet Seen;
@@ -1250,9 +1251,6 @@ public:
       });
     });
     if (!Complete || !EntryStack)
-      return false;
-    // A cyclic graph never commits below: do not build one.
-    if (entersCycle(Function.Body, Labels))
       return false;
     const auto Graph = buildHighSourceFlowGraph(Function);
     if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
