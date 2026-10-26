@@ -1205,6 +1205,13 @@ The `SizedCopy*` cases cover `strlcpy` full-source scanning, truncated and empty
 outputs, NUL termination without padding, full-width and zero capacities,
 read-only and page-tail memory, overlap and closed dynamic providers. Direct
 memory tests cover scan limits and expired deadlines without partial writes.
+The `CheckedSizedCopy*` cases exercise `__strlcpy_chk` through imports and
+dynamic providers: full-width capacity checks precede pointer access and source
+truncation, while accepted calls keep the same length, termination, errno and
+page-boundary behavior. The shared memory-refusal test also covers this entry,
+including fortify refusal before an expired deadline. The
+`ProcessPublic.AndroidFortifySizedCopyReportsMatchSDKAndCLI` case compares
+complete reports for truncation, fortify refusal and an invalid source.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero

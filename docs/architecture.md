@@ -8185,7 +8185,11 @@ Fortify paths requiring unmodeled process-abort effects stop before publishing
 output. Existing memory, deadline and representable-result limits still apply.
 
 `AndroidStrings` owns bounded copies, including `strlcpy` source scanning,
-termination and atomic refusal. `__read_chk` owns only the Bionic extent checks;
+termination and atomic refusal. `__strlcpy_chk` checks the supplied capacity
+against the destination object size before either pointer is accessed, then
+reuses the same copy and full-source-length result. A zero capacity still scans
+the source; a short source does not relax the fortify capacity check.
+`__read_chk` owns only the Bionic extent checks;
 descriptor state and suspended reads stay in the shared Linux read owner.
 Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
 `fstatat` service rather than duplicating pathname resolution or status layouts.
