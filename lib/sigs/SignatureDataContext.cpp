@@ -29,7 +29,6 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -103,7 +102,12 @@ void SignatureDB::applyDataContext(const BinaryImage &Img,
   // Only pending addresses and source-anchor names need settlement. Retain
   // every competing claim at those addresses without sorting or allocating
   // names for unrelated functions in a large image.
-  std::unordered_set<std::string_view> AnchorNames;
+  // Most image names are unrelated long template spellings. Compare lengths
+  // before text so a small anchor set need not hash every byte of every name.
+  auto ByLength = [](std::string_view A, std::string_view B) {
+    return A.size() != B.size() ? A.size() < B.size() : A < B;
+  };
+  std::set<std::string_view, decltype(ByLength)> AnchorNames(ByLength);
   for (size_t Module : index().dataAnchorModules())
     for (const StoredName &Name : Modules[Module].publicNames())
       AnchorNames.insert(Name.Name);
