@@ -276,6 +276,33 @@ void journalContents() {
           "Reopening lost escaped state or history");
   }
 }
+void loadedDocumentJournal() {
+  for (bool bom : {false, true}) {
+    Fixture fixture;
+    auto original = fixture.open();
+    const auto before = initial(original);
+    const auto historyPath = fixture.path(files::File::History);
+    const auto beforeDocument = Json::parse(text(historyPath));
+    writeFile(historyPath,
+              (bom ? "\xef\xbb\xbf" : "") + beforeDocument.dump(4) + "\n");
+    auto loaded = fixture.open();
+    const auto after = change(loaded, "after reopening");
+    fixture.writer.clear();
+    fixture.writer.failAt = 1;
+    rejects([&] { loaded.persist(after); }, "injected_failure");
+    // Valid top-level file bytes (notably a BOM) are not necessarily valid
+    // nested JSON. Lazy encoding must publish a complete, parseable journal.
+    const auto journal = parseJson(text(fixture.path(files::File::Journal)));
+    check(journal.at("before_history") == beforeDocument &&
+              journal.at("before") == before && journal.at("after") == after,
+          "Loaded history text changed or corrupted the recovery journal");
+    fixture.writer.clear();
+    loaded.persist(after);
+    check(!ProjectHistory::recoveryPending(fixture.binary) &&
+              fixture.open().committedState() == after,
+          "Retry lost the state of a reformatted loaded history");
+  }
+}
 void independentCheckpoints() {
   Fixture fixture;
   auto store = fixture.open();
@@ -507,6 +534,7 @@ int main() {
     failureBoundaries();
     retryAndConflict();
     journalContents();
+    loadedDocumentJournal();
     independentCheckpoints();
     equivalentAndForeignContents();
     missingAndEmptyContents();

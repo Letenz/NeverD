@@ -26,6 +26,9 @@ struct ProjectHistory::Snapshot {
   std::string stateText;
   std::shared_ptr<const std::string> document;
   FileContents contents;
+  // A loaded document retains validated file bytes (possibly with a BOM).
+  // Only serializer-produced text can be embedded directly in a journal.
+  bool documentIsEncoded = true;
 };
 namespace {
 // A committed snapshot and its serialized bytes must describe the same value.
@@ -553,12 +556,9 @@ ProjectHistory::readSnapshot(Json *document) const {
   auto previous = read(historyPath_,
                        ::neverd::limits::worker::kProjectHistoryMaxHistoryBytes,
                        &snapshot->contents);
-  auto encoded = compactText(previous);
   const auto &raw = snapshot->contents.at(historyPath_);
-  snapshot->document =
-      raw && *raw == encoded
-          ? raw
-          : std::make_shared<const std::string>(std::move(encoded));
+  snapshot->document = raw ? raw : std::make_shared<const std::string>("null");
+  snapshot->documentIsEncoded = !raw;
   if (document)
     *document = std::move(previous);
   return snapshot;
@@ -746,7 +746,11 @@ void ProjectHistory::persist(Json state) {
   else
     journalText += snapshot_->stateText;
   journalText += ",\"before_history\":";
-  journalText += *snapshot_->document;
+  if (snapshot_->documentIsEncoded)
+    journalText += *snapshot_->document;
+  else
+    journalText +=
+        compactText(transport::parseBackendJson(*snapshot_->document));
   journalText += ",\"after\":";
   journalText += afterText;
   journalText += ",\"after_history\":";

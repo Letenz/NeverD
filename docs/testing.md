@@ -3439,6 +3439,8 @@ journal budget cases must refuse before publishing any transaction file.
 It also checks independent rollback checkpoints, equivalent file reformatting,
 same-size external edits with preserved timestamps, absent/empty sidecars,
 typed row validation and refusal of values that cannot round-trip through JSON.
+Reopened pretty-printed and BOM-prefixed history files must produce complete
+parseable journals and survive an interrupted first save and same-session retry.
 `NeverDWorkerProtocol` compares backend parsing with native JSON values, types,
 encoding and error IDs, while retaining strict external-frame admission.
 `NeverDWorkerProtocolFallback` runs the same cases with SIMD parsing disabled.
