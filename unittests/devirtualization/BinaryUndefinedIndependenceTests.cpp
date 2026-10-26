@@ -144,9 +144,9 @@ TEST(BinaryUndefinedIndependence,
       // XOR defines the input but leaves AF arbitrary. RORX gets imm8=NOP;
       // the other forms consume that same byte as a separate NOP instruction.
       if (Apx)
-        Program.block(0x100, {0x31, 0xc9, 0x62, P0,
-                              static_cast<uint8_t>(P1 | 4), 8, Opcode, ModRM,
-                              0x90, 0xc3});
+        Program.block(0x100,
+                      {0x31, 0xc9, 0x62, P0, static_cast<uint8_t>(P1 | 4), 8,
+                       Opcode, ModRM, 0x90, 0xc3});
       else
         Program.block(0x100,
                       {0x31, 0xc9, 0xc4, P0, P1, Opcode, ModRM, 0x90, 0xc3});
