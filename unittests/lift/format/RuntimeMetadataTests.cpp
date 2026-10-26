@@ -1008,6 +1008,11 @@ TEST(RuntimeMetadata, NumbersANameLowerFunctionsTakeAsIDANumbersIt) {
   EXPECT_EQ(Img.getFunctionNameAt(0x500), "start");
   EXPECT_EQ(Img.getFunctionNameAt(0x5000), "run");
   EXPECT_EQ(Img.functionListName(0x2000, "helper"), "helper_1");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x2000, "helper_1"), "helper");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x3000, "helper_2"), "helper");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x4000, "helper_0"), "helper_0");
+  EXPECT_EQ(functionNameBeforeNumbering(Img, 0x2000, "recognized"),
+            "recognized");
 }
 
 TEST(RuntimeMetadata, ManyAddressesTakeTheNamesEachTakesAlone) {
@@ -1058,6 +1063,42 @@ TEST(RuntimeMetadata, ManyAddressesTakeTheNamesEachTakesAlone) {
   EXPECT_EQ(Alone.at(0x2000), "function");
   EXPECT_EQ(Alone.at(0x7000), "helper_0");
   EXPECT_EQ(Alone.at(0x9000), "sub_9000");
+}
+
+TEST(RuntimeMetadata, RecoveredNamesKeepTheirProducersOrigin) {
+  BinaryImage Img;
+  Symbol Stated;
+  Stated.Name = "sub_1000";
+  Stated.Addr = 0x1000;
+  Stated.IsFunc = true;
+  Stated.Origin = NameOrigin::Stated;
+  Img.Symbols.push_back(Stated);
+  Symbol Generated = Stated;
+  Generated.Name = "sub_2000";
+  Generated.Addr = 0x2000;
+  Generated.Origin = NameOrigin::Synthesized;
+  Img.Symbols.push_back(Generated);
+  Symbol Recognized = Stated;
+  Recognized.Name = "recognized";
+  Recognized.Addr = 0x3000;
+  Recognized.Origin = NameOrigin::Analysis;
+  Img.Symbols.push_back(Recognized);
+  Export Exported;
+  Exported.Name = "sub_4000";
+  Exported.Addr = 0x4000;
+  Img.Exports.push_back(Exported);
+  const std::map<va_t, llvm::StringRef> Recovered{
+      {0x1000, "sub_1000"}, {0x2000, "sub_2000"}, {0x3000, "recognized"},
+      {0x4000, "sub_4000"}, {0x5000, "sub_5000"}, {0x6000, "recovered"},
+      {0x7000, ""}};
+  const auto Origins = recoveredFunctionNameOrigins(Img, Recovered);
+  EXPECT_EQ(Origins.at(0x1000), NameOrigin::Stated);
+  EXPECT_EQ(Origins.at(0x2000), NameOrigin::Synthesized);
+  EXPECT_EQ(Origins.at(0x3000), NameOrigin::Analysis);
+  EXPECT_EQ(Origins.at(0x4000), NameOrigin::Stated);
+  EXPECT_EQ(Origins.at(0x5000), NameOrigin::Synthesized);
+  EXPECT_EQ(Origins.at(0x6000), NameOrigin::Analysis);
+  EXPECT_EQ(Origins.at(0x7000), NameOrigin::Synthesized);
 }
 
 TEST(RuntimeMetadata, StatedNamesOfEveryAddressAreThoseOfEachAlone) {

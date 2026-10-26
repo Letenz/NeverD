@@ -14,6 +14,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -21,10 +22,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <initializer_list>
+#include <map>
 #include <set>
 #include <string>
 #include <thread>
@@ -224,6 +227,188 @@ TEST_F(BinaryDiffSDK, ByteOverlaysBindDataOnlyChangesAndReopenedReports) {
   const auto Restored = compare(A, B);
   EXPECT_EQ(neverd_comparison_restore_json(Restored, Before.c_str()), 1)
       << take(neverd_comparison_last_error(Restored));
+}
+
+TEST_F(BinaryDiffSDK, FunctionNameProvenanceSurvivesReorderingAndRenames) {
+  for (const bool AArch64 : {false, true})
+    for (const unsigned Symbols : {0u, 1u, 2u}) {
+      SCOPED_TRACE(AArch64);
+      SCOPED_TRACE(Symbols);
+      const auto Image = [&](bool Reordered) {
+        auto Bytes = AArch64 ? words({Reordered ? 0x94000008u : 0x94000004u,
+                                      Reordered ? 0x94000003u : 0x94000007u,
+                                      0xd65f03c0, 0xd503201f})
+                             : std::vector<uint8_t>{
+                                   0xe8, uint8_t(Reordered ? 27 : 11), 0, 0, 0,
+                                   0xe8, uint8_t(Reordered ? 6 : 22),  0, 0, 0,
+                                   0xc3};
+        Bytes.resize(48, AArch64 ? 0 : 0xcc);
+        for (unsigned I = 0; I < 2; ++I) {
+          const auto Which = Reordered ? 1 - I : I;
+          const auto Code =
+              AArch64 ? words({Which ? 0x52800260u : 0x528000e0u, 0xd65f03c0})
+                      : body(Which ? 19 : 7);
+          std::copy(Code.begin(), Code.end(), Bytes.begin() + 16 * (I + 1));
+        }
+        // In the stripped variant, only the entry and direct call targets
+        // identify starts. Other variants retain duplicate local symbols or
+        // genuine symbols whose spelling happens to resemble generated labels.
+        using ELF = llvm::object::ELF64LE;
+        using namespace llvm::ELF;
+        constexpr size_t CodeOffset = 0x100;
+        std::vector<uint8_t> File(CodeOffset + Bytes.size(), 0);
+        ELF::Ehdr Header{};
+        std::memcpy(Header.e_ident, ElfMagic, sizeof(ElfMagic) - 1);
+        Header.e_ident[EI_CLASS] = ELFCLASS64;
+        Header.e_ident[EI_DATA] = ELFDATA2LSB;
+        Header.e_ident[EI_VERSION] = EV_CURRENT;
+        Header.e_type = ET_EXEC;
+        Header.e_machine = AArch64 ? EM_AARCH64 : EM_X86_64;
+        Header.e_version = EV_CURRENT;
+        Header.e_entry = 0x400000 + CodeOffset;
+        Header.e_phoff = sizeof(ELF::Ehdr);
+        Header.e_ehsize = sizeof(ELF::Ehdr);
+        Header.e_phentsize = sizeof(ELF::Phdr);
+        Header.e_phnum = 1;
+        Header.e_shentsize = sizeof(ELF::Shdr);
+        ELF::Phdr Segment{};
+        Segment.p_type = PT_LOAD;
+        Segment.p_flags = PF_R | PF_X;
+        Segment.p_vaddr = 0x400000;
+        Segment.p_paddr = 0x400000;
+        Segment.p_filesz = File.size();
+        Segment.p_memsz = File.size();
+        Segment.p_align = 0x1000;
+        std::memcpy(File.data(), &Header, sizeof(Header));
+        std::memcpy(File.data() + sizeof(Header), &Segment, sizeof(Segment));
+        std::copy(Bytes.begin(), Bytes.end(), File.begin() + CodeOffset);
+        if (Symbols) {
+          std::array<ELF::Sym, 4> Names{};
+          std::string Strings(1, '\0');
+          const auto AddName = [&](llvm::StringRef Name) {
+            const auto Offset = Strings.size();
+            Strings.append(Name.data(), Name.size());
+            Strings.push_back('\0');
+            return Offset;
+          };
+          for (unsigned I = 0; I < 2; ++I) {
+            const auto Which = Reordered ? 1 - I : I;
+            auto &Sym = Names[I + 1];
+            Sym.st_name = AddName(Symbols == 1 ? "helper"
+                                  : Which      ? "sub_400120"
+                                               : "sub_400110");
+            Sym.setBindingAndType(STB_LOCAL, STT_FUNC);
+            Sym.st_shndx = 1;
+            Sym.st_value = 0x400110 + 16 * I;
+            Sym.st_size = AArch64 ? 8 : 6;
+          }
+          Names[3].st_name = AddName("entry");
+          Names[3].setBindingAndType(STB_GLOBAL, STT_FUNC);
+          Names[3].st_shndx = 1;
+          Names[3].st_value = Header.e_entry;
+          Names[3].st_size = AArch64 ? 12 : 11;
+          std::array<ELF::Shdr, 4> Sections{};
+          Sections[1].sh_type = SHT_PROGBITS;
+          Sections[1].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+          Sections[1].sh_addr = Header.e_entry;
+          Sections[1].sh_offset = CodeOffset;
+          Sections[1].sh_size = Bytes.size();
+          Sections[1].sh_addralign = 16;
+          Sections[2].sh_type = SHT_SYMTAB;
+          Sections[2].sh_offset = File.size();
+          Sections[2].sh_size = sizeof(Names);
+          Sections[2].sh_link = 3;
+          Sections[2].sh_info = 3;
+          Sections[2].sh_addralign = 8;
+          Sections[2].sh_entsize = sizeof(ELF::Sym);
+          const auto Append = [&](const void *Data, size_t Size) {
+            const auto *Begin = static_cast<const uint8_t *>(Data);
+            File.insert(File.end(), Begin, Begin + Size);
+          };
+          Append(Names.data(), sizeof(Names));
+          Sections[3].sh_type = SHT_STRTAB;
+          Sections[3].sh_offset = File.size();
+          Sections[3].sh_size = Strings.size();
+          Sections[3].sh_addralign = 1;
+          Append(Strings.data(), Strings.size());
+          File.resize((File.size() + 7) & ~size_t(7), 0);
+          Header.e_shoff = File.size();
+          Header.e_shnum = Sections.size();
+          Append(Sections.data(), sizeof(Sections));
+          std::memcpy(File.data(), &Header, sizeof(Header));
+        }
+        return File;
+      };
+      const auto Load = [&](bool Reordered) {
+        const auto Bytes = Image(Reordered);
+        const auto Path =
+            Directory / (std::to_string(Sessions.size()) + ".elf");
+        std::ofstream File(Path, std::ios::binary);
+        File.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+        File.close();
+        auto S = neverd_session_create();
+        Sessions.push_back(S);
+        EXPECT_EQ(neverd_session_load(S, Path.string().c_str()), 1)
+            << take(neverd_last_error(S));
+        return S;
+      };
+      const auto A = Load(false), B = Load(true);
+      const auto Before = parsed(
+          neverd_comparison_export_json(compare(A, B, R"({"discover":true})")));
+      ASSERT_TRUE(Before.getAsObject());
+      const auto *Matches = Before.getAsObject()->getArray("matches");
+      ASSERT_TRUE(Matches);
+      ASSERT_EQ(Matches->size(), 3u) << render(Before);
+      const std::map<std::string, std::string> Expected{
+          {"0x400100", "0x400100"},
+          {"0x400110", "0x400120"},
+          {"0x400120", "0x400110"}};
+      for (const auto &Value : *Matches) {
+        const auto *Row = Value.getAsObject();
+        ASSERT_TRUE(Row && Row->getString("primary"));
+        const auto Found = Expected.find(Row->getString("primary")->str());
+        ASSERT_NE(Found, Expected.end());
+        EXPECT_EQ(Row->getString("secondary"), Found->second);
+        if (!Symbols || (Symbols == 1 && Found->first != "0x400100"))
+          EXPECT_NE(Row->getString("step"), "symbol_name");
+        else
+          EXPECT_EQ(Row->getString("step"), "symbol_name");
+      }
+      // An analyst can give different functions the same display annotation;
+      // that must not replace the extraction's names or manufacture an anchor.
+      ASSERT_EQ(neverd_rename_addr(A, 0x400110, "analyst_label"), 0);
+      ASSERT_EQ(neverd_rename_addr(B, 0x400110, "analyst_label"), 0);
+      const auto Renamed = compare(A, B, R"({"discover":true})");
+      const auto After = parsed(neverd_comparison_export_json(Renamed));
+      ASSERT_TRUE(After.getAsObject());
+      for (const auto *Key : {"primary", "secondary", "functions", "matches"}) {
+        ASSERT_TRUE(Before.getAsObject()->get(Key));
+        ASSERT_TRUE(After.getAsObject()->get(Key));
+        EXPECT_EQ(*Before.getAsObject()->get(Key),
+                  *After.getAsObject()->get(Key))
+            << Key;
+      }
+      ASSERT_EQ(neverd_comparison_restore_json(Renamed, render(Before).c_str()),
+                1)
+          << take(neverd_comparison_last_error(Renamed));
+      for (const auto *Side : {"primary", "secondary"}) {
+        const auto Query = render(
+            llvm::json::Object{{"side", Side}, {"search", "analyst_label"}});
+        const auto Page =
+            parsed(neverd_comparison_functions_json(Renamed, Query.c_str()));
+        const auto *Rows = Page.getAsObject()->getArray("items");
+        ASSERT_TRUE(Rows);
+        ASSERT_EQ(Rows->size(), 1u);
+        const auto *Row = Rows->front().getAsObject();
+        EXPECT_EQ(Row->getString("address"), "0x400110");
+        EXPECT_EQ(Row->getString("name"), "analyst_label");
+        EXPECT_EQ(Row->getString("evidence_name"),
+                  Symbols == 1 ? "helper"
+                  : Symbols == 2 && llvm::StringRef(Side) == "secondary"
+                      ? "sub_400120"
+                      : "sub_400110");
+      }
+    }
 }
 
 TEST_F(BinaryDiffSDK, AnalysisSectionsBindDataOutsideTheFunctionInventory) {

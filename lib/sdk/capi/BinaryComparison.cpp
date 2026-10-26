@@ -364,14 +364,14 @@ ReadInstruction readInstruction(const BinaryImage &Image,
 }
 
 void appendFunction(ProgramBuilder &Builder, const FuncInfo &F,
-                    std::vector<ReadInstruction> &Rows,
+                    llvm::StringRef Name, std::vector<ReadInstruction> &Rows,
                     const FunctionDecodeStatus &Status, const AddressKeys &Keys,
                     uint16_t Traits) {
   const NameSource Source =
-      F.LinkageOrigin == NameOrigin::Synthesized ? NameSource::Generated
-      : F.LinkageOrigin == NameOrigin::Analysis  ? NameSource::Signature
-                                                 : NameSource::Symbol;
-  Builder.beginFunction(F.Entry, F.Size, F.Name, Source, Traits);
+      F.ResolvedOrigin == NameOrigin::Synthesized ? NameSource::Generated
+      : F.ResolvedOrigin == NameOrigin::Analysis  ? NameSource::Signature
+                                                  : NameSource::Symbol;
+  Builder.beginFunction(F.Entry, F.Size, Name.str(), Source, Traits);
   llvm::sort(
       Rows, [](const auto &L, const auto &R) { return L.Address < R.Address; });
   Rows.erase(std::unique(Rows.begin(), Rows.end(),
@@ -629,7 +629,7 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     Identity.ABI += ":macho-subtype:" + llvm::utohexstr(S.Img.MachOCPUSubtype);
   Identity.Normalization =
       AArch64 ? "native-aarch64-operands-v1" : "native-x86-operands-v1";
-  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v1:" +
+  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v2:" +
                       (Options.Discover ? "discover" : "known-functions");
   if (S.PackedProject)
     Identity.Analysis += ":nddb-v1:" + S.PackedProject->StateSHA256;
@@ -747,7 +747,19 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
           A != S.FunctionAttributeEdits.end() &&
           A->second.Library.value_or(false))
         Traits |= TraitLibrary;
-      appendFunction(Builder, F, Slots[I], Status[I], Keys, Traits);
+      llvm::StringRef Name = S.OriginalNames.at(F.Entry);
+      if (Name == F.LinkageName)
+        Name = functionNameBeforeNumbering(S.Img, F.Entry, Name);
+      if (F.Name != Name) {
+        const uint64_t Charge =
+            sizeof(decltype(Result.DisplayNames)::value_type) + F.Name.size();
+        if (Memory.fetch_add(Charge) + Charge > Options.MaxMemoryBytes) {
+          Exhausted = true;
+          break;
+        }
+        Result.DisplayNames.emplace(F.Entry, F.Name);
+      }
+      appendFunction(Builder, F, Name, Slots[I], Status[I], Keys, Traits);
     }
     Done += Page.Functions.size();
     if (Control.Progress)

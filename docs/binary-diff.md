@@ -92,6 +92,12 @@ neverd diff --structural -a original.exe -b patched.exe --list all \
   --list-side secondary --ambiguous-with 0x140001000 --limit 200
 ```
 
+Function projections retain the extracted session's display name in `name`,
+including analyst renames and listing suffixes. `evidence_name` identifies the
+underlying name used by the comparison. Search accepts either name; sorting by
+name uses the display name. These presentation annotations are owned by the
+comparison and do not alter matches, snapshot revisions or saved report bytes.
+
 Continue with `--offset` using the response's `next_offset`. `ambiguous_with`
 always names a function on the opposite side; an absent source is an error,
 while a valid source with no retained ambiguity group returns an empty page.
@@ -1009,6 +1015,15 @@ image address. Only decoded control-flow operands, exact relocation fields and
 known address references receive address normalization.
 
 Duplicate names and indistinguishable bodies remain explicit ambiguities.
+Address-generated labels do not anchor matches, even after native function
+discovery. Name evidence retains its producer origin: a real symbol or export
+named `sub_1234` remains eligible, as do names admitted by recognition. Display
+renames do not replace those names or change native snapshot revisions. Numeric
+suffixes added to distinguish equal names in the listing do not manufacture
+unique name evidence; literal suffixes in the original symbols remain intact. The
+`sdk-native-decode-v2` extraction identity records this contract; historical
+reports keep their original evidence and require a new comparison for fresh
+binding under the revised extraction profile.
 Unmatched functions are not automatically additions/deletions when discovery is
 partial. Imports, thunks, libraries and incomplete bodies carry separate traits.
 Pairs with no body on either side report `identity_only`, with no body similarity

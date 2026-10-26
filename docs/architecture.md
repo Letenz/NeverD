@@ -1053,6 +1053,21 @@ Source previews retain the live session’s load options, analysis policy, user 
 
 ## Structural comparison ownership
 
+The loader's batch function naming owner returns both the selected name and its
+producer origin. Native discovery and pipeline publication consume that same
+owner: finding an entry does not promote an address-generated label into name
+evidence. Session name resolution retains the origin alongside `OriginalNames`
+before applying analyst renames, including accepted recognition names. Native
+comparison snapshots consume that unannotated pair and undo only display
+numbering recorded by the loader. Equal local symbol names stay equal evidence
+after link-order changes; a producer's literal numeric suffix remains intact.
+The SDK adapter separately owns presentation names under the extraction memory
+allowance. Bounded function projections use them for display, search and sort;
+the matcher, snapshot hash and saved evidence consume only the original name.
+The `sdk-native-decode-v2`
+extraction identity distinguishes this evidence contract from older snapshots;
+saved historical reports remain readable without rewriting their evidence.
+
 `programAnalysisIdentity` in `Program` supplies a versioned, length-delimited identity
 encoding shared by binding and offline lineage. Only the caller's path is
 excluded; the historical analyst-review digest format remains unchanged.

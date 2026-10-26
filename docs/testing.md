@@ -2667,6 +2667,17 @@ review window. Synthetic cases separately exercise overlapping clones, internal
 call evidence for inline/outline, tails, suppression and cooperative stop. These
 fixtures do not qualify arbitrary compiler transformations or cross-ISA matching.
 
+`BinaryDiffSDK.FunctionNameProvenanceSurvivesReorderingAndRenames` uses linked
+x64 and AArch64 ELF images with swapped helper bodies and updated call
+destinations. Stripped, duplicate-local-symbol and stated-`sub_...` variants
+check the independently known function mapping, exclude generated-name and
+display-number anchors, preserve real symbol anchors and retain snapshot
+identities after display renames.
+`RuntimeMetadata.RecoveredNamesKeepTheirProducersOrigin` preserves real symbols
+and exports whose spelling resembles a generated label, and distinguishes
+recognized names from unnamed entries. `SessionFunctionDiscovery` checks origin
+retention before and after native pipeline publication.
+
 Offline lineage adds `BinaryDiffLineage.*`, `NeverDBinaryDiffLineageSDKTests`,
 `NeverDWorkerLineage` and `NeverDGuiLineage`. The core uses an independent
 343-graph oracle, all-source shortest distances, complete original edge sets,
