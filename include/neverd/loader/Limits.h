@@ -106,6 +106,10 @@ inline constexpr size_t kCOFFRegistrationEHScanMaxInstallWindow = 64;
 // authority and must not be conflated with the immutable ThrowInfo graph.
 inline constexpr uint32_t kCOFFRegistrationEHThrowInfoMaxTypeName = 4096;
 
+// lib/loader/COFF/RTTI.cpp
+/// Bound the complete class/struct exception graph, including every base.
+inline constexpr uint32_t kMsvcThrowInfoMaxCatchableTypes = 64;
+
 // lib/loader/COFF/eh/COFFRegistrationScalarLeaf.cpp
 inline constexpr unsigned kCOFFRegistrationScalarLeafMaxHelperBytes = 256;
 inline constexpr unsigned kCOFFRegistrationScalarLeafMaxProofStates = 512;
