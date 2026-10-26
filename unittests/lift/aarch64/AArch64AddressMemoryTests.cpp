@@ -3784,12 +3784,15 @@ MedFunc writebackFunction(const WritebackCase &Case, size_t Index) {
     Parameter.RegOff = a64reg::X0 + I * kScalarBytes;
     Parameter.Size = kScalarBytes;
     Function.Params.push_back(Parameter);
+    Function.TypedParams.push_back({{}, NdType::makeInt(kScalarBytes, false)});
   }
   MedOp Access;
   Access.Opcode = NdOp::INTRINSIC;
-  Access.Output.Kind = MedVar::Temp;
+  Access.Output.Kind = MedVar::Reg;
+  Access.Output.RegOff = a64reg::X0;
   Access.Output.TheArch = Arch::AArch64;
   Access.Output.Id = 0;
+  Access.Output.SSAVer = 1;
   Access.Output.Size = Function.ReturnType->Size;
   Access.addInput(MedVar::makeConst(
       static_cast<uint64_t>(Case.Result ? Intrinsic::A64_LoadWriteback
@@ -3806,6 +3809,15 @@ MedFunc writebackFunction(const WritebackCase &Case, size_t Index) {
   Function.Blocks.front().Id = 0;
   Function.Blocks.front().StartAddr = Function.Entry;
   Function.Blocks.front().Ops = {Access, Return};
+  SourceFunctionTypeHint Signature;
+  Signature.ReturnType = Function.ReturnType;
+  for (size_t I = 0; I != Function.Params.size(); ++I) {
+    const auto *Name = I ? kWritebackDataParameter : kWritebackBaseParameter;
+    Signature.Parameters.push_back(
+        {Name, NdType::makeInt(kScalarBytes, false)});
+    Function.TypedParams[I].Name = Name;
+  }
+  Function.SourceTypeHint = Signature;
   return Function;
 }
 
@@ -3901,7 +3913,7 @@ void executeWritebackFamilies(const BinaryImage *Image) {
   Output.write(reinterpret_cast<const char *>(Object.ObjectData.data()),
                Object.ObjectData.size());
   Output.close();
-  compileMemoryC(Declarations + Harness, true, {}, ObjectPath);
+  compileMemoryC(Harness, true, {}, ObjectPath);
 #endif
   if (!ArtifactDirectory.empty()) {
     const auto ELF =
@@ -3944,8 +3956,12 @@ TEST(AArch64WritebackMemory,
       const auto &Detail = Decoded.Raw->detail->aarch64;
       ASSERT_TRUE(Decoded.Raw->detail->writeback);
       EXPECT_EQ(Detail.post_index, !Case.Pre);
-      const auto Offset =
-          Case.Pre ? Detail.operands[1].mem.disp : Detail.operands[2].imm;
+      ASSERT_GE(Detail.op_count, 2);
+      ASSERT_EQ(Detail.operands[1].type, AARCH64_OP_MEM);
+      const auto Offset = !Case.Pre && Detail.op_count >= 3 &&
+                                  Detail.operands[2].type == AARCH64_OP_IMM
+                              ? Detail.operands[2].imm
+                              : Detail.operands[1].mem.disp;
       const auto Parsed = aarch64WritebackMemoryInstruction(Word);
       ASSERT_TRUE(Parsed);
       EXPECT_EQ(static_cast<int64_t>(Parsed->displacement()), Offset);
@@ -4052,6 +4068,7 @@ TEST(AArch64WritebackMemory, MalformedContractsFailBeforeSourceFiltering) {
        {WritebackCases[0], WritebackCases[kWritebackFirstLoadCase]}) {
     auto Dead = writebackFunction(Case, 0);
     Dead.ReturnType = NdType::makeInt(kScalarBytes, false);
+    Dead.SourceTypeHint->ReturnType = Dead.ReturnType;
     Dead.Blocks.front().Ops.back().Inputs[0] =
         MedVar::makeConst(0, kScalarBytes);
     llvm::LLVMContext DeadContext;
@@ -4064,6 +4081,18 @@ TEST(AArch64WritebackMemory, MalformedContractsFailBeforeSourceFiltering) {
                      [&](llvm::MemoryBufferRef Buffer) {
                        inspectMemoryObject(Buffer, Case.Scratch);
                      });
+  }
+  for (const auto &Case :
+       {WritebackCases[0], WritebackCases[kWritebackFirstLoadCase]}) {
+    const auto Operations = liftMemory(Case.Word, false);
+    const auto Memory = std::find_if(Operations.begin(), Operations.end(),
+                                     lowAArch64WritebackMemoryShapeIsValid);
+    ASSERT_NE(Memory, Operations.end());
+    auto Invalid = *Memory;
+    Invalid.Inputs[kWritebackWordOperand + 1].Size = kScalarBytes;
+    auto Error = validateLowInstructionBoundaries(lowFunction(Invalid));
+    EXPECT_TRUE(bool(Error));
+    llvm::consumeError(std::move(Error));
   }
   auto Function = writebackFunction(WritebackCases[kWritebackFirstLoadCase], 0);
   Function.Blocks.front().Ops.front().Inputs[2].ConstVal = kWritebackStackLoad;
@@ -4112,6 +4141,8 @@ TEST(AArch64WritebackMemory,
       Ops.front().Inputs[3] =
           MedVar::makeConst(kWritebackImageLoaded, kScalarBytes);
     Function.Params.clear();
+    Function.TypedParams.clear();
+    Function.SourceTypeHint->Parameters.clear();
     MedVar Base = Ops.front().Output;
     if (!Store) {
       MedOp Extract;
@@ -4138,6 +4169,7 @@ TEST(AArch64WritebackMemory,
     Ops.insert(Ops.end() - 1, Read);
     Ops.back().Inputs[0] = Read.Output;
     Function.ReturnType = NdType::makeInt(kScalarBytes, false);
+    Function.SourceTypeHint->ReturnType = Function.ReturnType;
     ASSERT_TRUE(verifyMedFunc(Function, kName));
     llvm::LLVMContext Context;
     auto Module = MedLLVMEmitter().emit({Function}, Context, kName,

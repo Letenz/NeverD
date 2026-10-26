@@ -149,7 +149,7 @@ WRITEBACK_CASE(0xf8400d2aU, 0xf8400e11U, 8, 8, 0, true)
 WRITEBACK_CASE(0xf8401d2aU, 0xf8401e11U, 8, 8, 1, true)
 WRITEBACK_CASE(0xf84ffd2aU, 0xf84ffe11U, 8, 8, 255, true)
 WRITEBACK_VALUE(size_t, kWritebackCaseCount, 130)
-WRITEBACK_VALUE(size_t, kWritebackFirstLoadCase, 5)
+WRITEBACK_VALUE(size_t, kWritebackFirstLoadCase, 10)
 WRITEBACK_VALUE(unsigned, kWritebackFirstOffset, 0)
 WRITEBACK_VALUE(unsigned, kWritebackLastImmediate, 512)
 WRITEBACK_VALUE(unsigned, kWritebackFixtureOffsetShift, 12)
@@ -212,6 +212,9 @@ WRITEBACK_VALUE(uint32_t, kWritebackImageReadback, 0xf85f8020U)
 WRITEBACK_TEXT(
     kWritebackReturnedBaseHarness,
     "int main(void) {{ return {0}() != UINT64_C(0xfedcba9876543210); }\n")
+
+WRITEBACK_TEXT(kWritebackBaseParameter, "base")
+WRITEBACK_TEXT(kWritebackDataParameter, "data")
 
 #undef WRITEBACK_TEXT
 #undef WRITEBACK_VALUE
