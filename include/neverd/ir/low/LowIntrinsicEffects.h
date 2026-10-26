@@ -131,6 +131,17 @@ inline bool lowAArch64WritebackMemoryShapeIsValid(const LowOp &Op) {
       Store ? Op.Inputs[kWritebackDataOperand + 1].Size : 0,
       Store && Op.Inputs[kWritebackDataOperand + 1].isConst()
           ? std::optional<uint64_t>(Op.Inputs[kWritebackDataOperand + 1].Offset)
+          : std::nullopt,
+      Store && isAArch64PairMemoryIntrinsic(
+                   static_cast<Intrinsic>(Op.Inputs[0].Offset))
+          ? Op.Inputs[kPairSecondDataOperand + 1].Size
+          : 0,
+      Store &&
+              isAArch64PairMemoryIntrinsic(
+                  static_cast<Intrinsic>(Op.Inputs[0].Offset)) &&
+              Op.Inputs[kPairSecondDataOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kPairSecondDataOperand + 1].Offset)
           : std::nullopt);
 }
 

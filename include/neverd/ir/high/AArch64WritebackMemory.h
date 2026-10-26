@@ -35,10 +35,11 @@ inline bool aarch64WritebackMemoryHighShapeIsValid(const HighExpr &Expression) {
     if ((Output.Kind != MedVar::Reg && Output.Kind != MedVar::Temp) ||
         (Output.TheArch != Arch::Unknown && Output.TheArch != Arch::AArch64))
       return false;
-  if (Expression.IntrinsicOutputs.size() > 1 &&
-      Expression.IntrinsicOutputs.front() == Expression.IntrinsicOutputs.back())
-    return false;
-  if (Expression.IntrinsicId == Intrinsic::A64_VectorLoadWriteback
+  for (size_t I = 0; I != Expression.IntrinsicOutputs.size(); ++I)
+    for (size_t J = 0; J != I; ++J)
+      if (Expression.IntrinsicOutputs[I] == Expression.IntrinsicOutputs[J])
+        return false;
+  if (isAArch64WritebackAuxiliaryLoad(Expression.IntrinsicId)
           ? (!Expression.Type || Expression.Type->Kind != NdTypeKind::Void)
           : (!Integer(Expression.Type) &&
              !(Store && Expression.Type &&
@@ -51,9 +52,16 @@ inline bool aarch64WritebackMemoryHighShapeIsValid(const HighExpr &Expression) {
   const auto &Word = *Expression.Operands[kWritebackWordOperand];
   if (!Integer(Word.Type) || Word.Kind != ExprKind::Const)
     return false;
-  const auto &Data = Expression.Operands.back();
-  if (Expression.IntrinsicId == Intrinsic::A64_VectorStoreWriteback &&
-      !Integer(Data->Type))
+  const bool PairStore =
+      Store && isAArch64PairMemoryIntrinsic(Expression.IntrinsicId);
+  const auto &Data =
+      Expression
+          .Operands[Store ? kWritebackDataOperand : kWritebackWordOperand];
+  if ((Expression.IntrinsicId == Intrinsic::A64_VectorStoreWriteback ||
+       Expression.IntrinsicId == Intrinsic::A64_VectorPairStore) &&
+      (!Integer(Data->Type) ||
+       (PairStore &&
+        !Integer(Expression.Operands[kPairSecondDataOperand]->Type))))
     return false;
   return aarch64WritebackMemoryShapeIsValid(
       Expression.IntrinsicId, Expression.Operands.size() + 1,
@@ -62,6 +70,12 @@ inline bool aarch64WritebackMemoryHighShapeIsValid(const HighExpr &Expression) {
       Word.ConstVal, Store ? Data->Type->Size : 0,
       Store && Data->Kind == ExprKind::Const
           ? std::optional<uint64_t>(Data->ConstVal)
+          : std::nullopt,
+      PairStore ? Expression.Operands[kPairSecondDataOperand]->Type->Size : 0,
+      PairStore && Expression.Operands[kPairSecondDataOperand]->Kind ==
+                       ExprKind::Const
+          ? std::optional<uint64_t>(
+                Expression.Operands[kPairSecondDataOperand]->ConstVal)
           : std::nullopt);
 }
 
