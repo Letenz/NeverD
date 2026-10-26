@@ -6963,9 +6963,8 @@ TEST(AArch64OrderedMemory, RegisterRolesKeepSPAndZeroDistinct) {
                   kWordBytes);
         std::vector<LowOp> Ops;
         Decode.liftToLow(Decoded, Ops);
-        EXPECT_EQ(std::any_of(Ops.begin(), Ops.end(),
-                              lowAArch64AddressMemoryShapeIsValid),
-                  Subtype == macho_loader::arm64e::kCPUSubtypeX1);
+        EXPECT_TRUE(std::any_of(Ops.begin(), Ops.end(),
+                                lowAArch64AddressMemoryShapeIsValid));
       }
     for (bool Fast : {false, true}) {
       const auto Word = Case.Word | kAddressMemoryRegisterMask;

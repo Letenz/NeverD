@@ -148,14 +148,16 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
         return true;
       }
     }
-    // GPR-based single accesses retain their encoded displacement and access
-    // EL. Immediate SP accesses still belong to the frame model until that
-    // model can supply the original architectural SP environment.
+    // Ordered GPR-based accesses retain RCpc/release ordering for every image
+    // subtype. Immediate SP accesses still belong to the frame model until
+    // that model can supply the original architectural SP environment.
     if (const auto Instruction =
             aarch64AddressMemoryInstruction(readLE<uint32_t>(Insn->bytes));
         Instruction &&
         (Instruction->hasRegisterIndex() ||
-         (PreserveImmediateMemory && !Instruction->stackBase()))) {
+         (!Instruction->stackBase() &&
+          (PreserveImmediateMemory ||
+           isAArch64OrderedUnscaledMemoryEncoding(Instruction->Word))))) {
       // Preserve the raw index: the machine instruction owns its scale and
       // AddressAdd's access-EL check. Reading inputs before publishing
       // the result also retains source/destination aliases.

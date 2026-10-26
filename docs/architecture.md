@@ -618,14 +618,16 @@ RCpc acquire or release ordering as well as access-EL checked address addition;
 an ordinary acquire load is not an equivalent replacement. Opaque side effects
 and memory clobbers remain through LLVM and both C routes, including discarded
 reads. Unallocated neighboring size/opcode combinations fail at the lifter
-boundary even when supplied operand details claim a valid mnemonic. Existing
-immediate intrinsic identities and SP/image admission rules remain unchanged.
+boundary even when supplied operand details claim a valid mnemonic. Automatic
+GPR-base lifting retains these ordered words for ordinary AArch64, classic
+arm64e and arm64e.x1 images. Existing immediate intrinsic identities and the
+SP/source-environment boundary remain unchanged.
 The finite tracer requires naturally aligned ordered accesses when the original
 alignment controls are unavailable. An unaligned request refuses before any
 result or memory write; address-span evidence alone grants no alignment proof.
 Execution still requires the corresponding host CPU feature; emitting the word
 does not establish that feature or qualify concurrent-memory behavior.
-Image configuration automatically selects these single-access immediate
+Image configuration selects the nonordered single-access immediate
 operations for arm64e.x1 GPR bases through both decoder routes, including
 unprivileged variants. Architecture-only decoding preserves them conservatively;
 image-configured ordinary AArch64 and classic arm64e retain their existing
