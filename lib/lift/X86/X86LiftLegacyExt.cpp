@@ -836,9 +836,20 @@ bool liftLegacyExt(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_WRPKRU:
     S.emitIntrinsic(Intrinsic::Wrpkru, NdVar());
     break;
+  // SYSEXITQ/SYSRETQ are terminal syscall returns: they transfer control to a
+  // named register and never resume in the lifted function.  Project them as a
+  // terminal state-transfer intrinsic naming the transferred cells; this grants
+  // no source ABI contract and reconstructs no privilege or segment change.
   case X86_INS_SYSEXITQ:
+    // SYSEXITQ: RIP <- RDX, RSP <- RCX.
+    S.emitVoidIntrinsic(Intrinsic::Sysexitq,
+                        {NdVar::reg(x86reg::RDX, 8), NdVar::reg(x86reg::RCX, 8)});
+    break;
   case X86_INS_SYSRETQ:
-    return false; // Requires the complete nonlocal machine-state boundary.
+    // SYSRETQ: RIP <- RCX, RFLAGS <- R11.
+    S.emitVoidIntrinsic(Intrinsic::Sysretq,
+                        {NdVar::reg(x86reg::RCX, 8), NdVar::reg(x86reg::R11, 8)});
+    break;
   case X86_INS_WBNOINVD:
     S.emitIntrinsic(Intrinsic::Wbnoinvd, NdVar());
     break;
