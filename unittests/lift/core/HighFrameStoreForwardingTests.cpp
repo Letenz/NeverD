@@ -1811,6 +1811,30 @@ TEST(HighFrameStoreForwarding, OnlyLoopsThatRepeatStopTheBranchProof) {
     }
 }
 
+TEST(HighFrameStoreForwarding, DoWhileTestKeepsTheReadAfterItsBody) {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  auto F = roundTrip(A, T);
+  auto Saved = temporary(1, T, A);
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Cond = parameter(0, T, A);
+  Branch.Body = {store(frameSlot(A), Saved)};
+  // The body always leaves, so no cycle stops the proof. The test would read
+  // the slot after the body's store, never the bits captured before the loop.
+  HighStmt Exit;
+  Exit.Kind = StmtKind::Break;
+  HighStmt Once;
+  Once.Kind = StmtKind::DoWhile;
+  Once.Cond = HighExpr::makeLoad(frameSlot(A), T);
+  Once.Body = {store(frameSlot(A), HighExpr::makeConst(7, 8)), Exit};
+  F.Body = {assign(Saved, HighExpr::makeLoad(frameSlot(A), T)), Branch, Once,
+            returning(frameSlot(A))};
+  forwardPrivateFrameLoads(F, A);
+  EXPECT_EQ(F.Body[1].Body[0].Kind, StmtKind::Block);
+  EXPECT_TRUE(hasLoad(F.Body[2].Cond));
+}
+
 TEST(HighFrameStoreForwarding, BranchProofKeepsExtraStatementEffects) {
   const auto A = Arch::X64;
   const auto T = NdType::makeInt(8, false);

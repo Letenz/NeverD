@@ -1308,7 +1308,11 @@ public:
     std::map<const HighStmt *, HighStmt> Rewritten;
     for (const auto &[Statement, S] : Before) {
       HighStmt Copy = *Statement;
-      forEachRhsExpr(Copy, [&](ExprPtr &E) { E = replaceCapturedReads(E, S); });
+      forEachRhsExpr(Copy, [&](ExprPtr &E) {
+        // A do-while test runs after the body, not in the state at its entry.
+        if (Copy.Kind != StmtKind::DoWhile || &E != &Copy.Cond)
+          E = replaceCapturedReads(E, S);
+      });
       Rewritten.emplace(Statement, std::move(Copy));
       if (!Complete)
         return false;
