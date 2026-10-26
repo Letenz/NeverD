@@ -107,6 +107,12 @@ Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
 
+`NeverDMedVariadicTests` runs the variadic-prologue proof boundaries directly:
+entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
+fresh queries after edits across x86, x64, ARM and AArch64. The i386 cases
+require a homed incoming pointer plus a reload or an advanced-pointer read;
+Darwin's register-only walk remains independently recognizable without a home.
+
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
 and separate unseeded cycles. Scaled allocation bounds also cover x86 and ARM,
@@ -4931,6 +4937,13 @@ execution of every source architecture.
 (`NeverDWin64CallContractTests`) checks that a routine the image exports,
 whose name binds a prototype, reads the parameters it declares, a system call
 stub's fifth on the stack too, together with any its body reads past them.
+
+`MedCallingConvX86Stack.*` (in `NeverDFPParameterMaskTests`) checks that i386
+incoming stack addresses count as transparent uses only when their output
+definition proves the forwarding. Its cyclic PHIs require independent root
+queries to retain both escaped homes, including distinct SSA versions and
+reversed block order. Run this owner and `NeverDI386CallContractTests` when
+changing CDECL stack-offset query reuse.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
@@ -13977,6 +13990,13 @@ backends are skips. `*LinuxNetwork*` checks x64/AArch64 shared descriptors,
 failed-admission atomicity, full byte streams and strict JSON. Tests never use
 host networking. Run the complete affected owners before review.
 
+`LinuxNetwork.MismatchOffsetsUseSharedCursorWithoutConsumingPrefix` checks
+first-difference diagnostics after short writes through descriptor aliases,
+including an unmatched suffix beyond the current transfer window and retry
+without consuming a matching prefix. Android's
+`OutgoingMismatchReportsStreamAndBufferOffsets` checks named sends, writes and
+variadic raw sends through the original C fixture on each available backend.
+
 The network fixtures also exercise TCP failure followed by connected UDP,
 IPv4/IPv6, named/raw/dynamic calls, FD reuse, packet truncation, peek, empty
 datagrams and explicit error completions. The original C receive caller makes
@@ -14588,6 +14608,49 @@ and four existing Win64 cases remain recorded as failures. Fresh minimal
 ASan+UBSan compiler controls still reach the original 20-second limit on arm64
 and x86-64, so the separate 41-test SysV sanitizer group is unavailable and is
 not counted as passed. Code Review CI diagnostics remain unavailable.
+
+`AArch64OrderedMemory.*` owns nine ordered unscaled-memory checks. It covers
+all 13 GPR LRCPC2 and ten B/H/S/D/Q LRCPC3 LDAPUR/STLUR families with 115
+independent LLVM MC samples and all 11,776 encoding/imm9 combinations through
+both decoder routes. The original opcode preserves RCpc acquire/release and
+checked address addition. Tests retain those words through both C projections,
+LLVM, image-context runtime bases and initialized-image relocation, and check
+malformed source filtering, reserved encodings, register roles and dead effects.
+Automatic GPR admission applies to ordinary AArch64, classic arm64e and x1.
+
+Success fixtures retain five encoded displacement boundaries and choose a
+base that makes the effective access naturally aligned, including runtime SSA
+adjustments and relocated image aliases. Every result and all 66,064 buffer
+bytes remain checked. With unknown alignment controls, the finite tracer
+refuses unaligned ordered accesses before results, load records or writes;
+guard reads check unchanged storage in strict and lenient modes.
+`AArch64OrderedMemoryNative.*` separately requires the host's corresponding
+CPU feature. A missing native SIMD feature is an explicit skip.
+
+Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` and select the complete nine-test suite
+to export source, actual ELF/Mach-O objects and the unchanged replay harness.
+The three `arm64e_ordered_memory_*artifact_directory` properties distinguish
+explicit runtime parameters, image-context parameters and relocated storage.
+The controlled environment has `ordered`, `ordered-image` and
+`ordered-image-relocated` profiles and their `el0-` counterparts. Every profile
+requires the exact report, 115 samples, real LRCPC3 readback and every existing
+CPTA/control/origin gate. These sequential Normal WB nonoverflow checks do not
+qualify an unaligned/fault matrix, concurrency litmus behavior, original
+SP/stack/call/unwind, a native vector ABI or Apple CPTA-on hardware.
+
+All six ordered profiles pass five actual output routes and all four effective
+CPTA/CPTA0 settings, totaling 13,800 generated sample calls. The selected 490
+checks pass 484 and explicitly skip six, with no failures. The
+[ordered-memory record](evidence/arm64e-ordered-memory-2026-10-27.json) pins the
+source, model parameters, complete reports, each input hash and the retained
+feature-check refusal and unaligned hardware fault. It also records the
+finite-tracer correction and the initial test-build error.
+Native decode parity now compares explicit lifting refusals as well as
+successful IR, retaining the original 400,000-word randomized scan. A canary
+rejects one-sided refusals and preserves unrelated exceptions. The initial
+unhandled-refusal failure remains recorded separately. The 104-case scalar
+register-offset source matrix and the slow alias/source-ABI case from the
+earlier pair round were not rerun or counted as passed in this selection.
 
 `NeverDMedCachedCallTargetTests` checks bounded cached-call proofs, aliases,
 partial writes, auxiliary outputs, exhaustion, unchanged original operands,
