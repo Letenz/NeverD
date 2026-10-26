@@ -367,7 +367,8 @@ void compileMemoryC(
 }
 
 std::string memorySource(const MedFunc &Function, llvm::Module &Module,
-                         bool LLVMRoute, const BinaryImage *Image = nullptr) {
+                         bool LLVMRoute, const BinaryImage *Image = nullptr,
+                         bool UnsignedParameters = false) {
   CEmitterOptions Options;
   Options.TheArch = Arch::AArch64;
   Options.Format = BinaryFormat::MachO;
@@ -377,7 +378,10 @@ std::string memorySource(const MedFunc &Function, llvm::Module &Module,
   if (LLVMRoute)
     EXPECT_TRUE(LLVMCEmitter().emit(Module, Out, Options));
   else {
-    const auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+    auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+    if (UnsignedParameters)
+      for (auto &Parameter : High.Params)
+        Parameter.Type = NdType::makeInt(kScalarBytes, false);
     EXPECT_TRUE(HighCEmitter().emit({High}, Out, Options));
   }
   return Source;
@@ -3809,15 +3813,6 @@ MedFunc writebackFunction(const WritebackCase &Case, size_t Index) {
   Function.Blocks.front().Id = 0;
   Function.Blocks.front().StartAddr = Function.Entry;
   Function.Blocks.front().Ops = {Access, Return};
-  SourceFunctionTypeHint Signature;
-  Signature.ReturnType = Function.ReturnType;
-  for (size_t I = 0; I != Function.Params.size(); ++I) {
-    const auto *Name = I ? kWritebackDataParameter : kWritebackBaseParameter;
-    Signature.Parameters.push_back(
-        {Name, NdType::makeInt(kScalarBytes, false)});
-    Function.TypedParams[I].Name = Name;
-  }
-  Function.SourceTypeHint = Signature;
   return Function;
 }
 
@@ -3882,8 +3877,13 @@ void executeWritebackFamilies(const BinaryImage *Image) {
       ASSERT_TRUE(LLVMCEmitter().emit(*Module, Output, Options));
     else {
       std::vector<HighFunc> High;
-      for (const auto &Function : Functions)
-        High.push_back(MedToHighConverter().convert(Function, Arch::AArch64));
+      for (const auto &Function : Functions) {
+        auto Body = MedToHighConverter().convert(Function, Arch::AArch64);
+        // The explicit-IR bridge declares full-width unsigned inputs.
+        for (auto &Parameter : Body.Params)
+          Parameter.Type = NdType::makeInt(kScalarBytes, false);
+        High.push_back(std::move(Body));
+      }
       ASSERT_TRUE(HighCEmitter().emit(High, Output, Options));
     }
     Save(LLVMRoute ? kWritebackLLVMArtifact : kWritebackHighArtifact, Source);
@@ -4068,17 +4068,23 @@ TEST(AArch64WritebackMemory, MalformedContractsFailBeforeSourceFiltering) {
        {WritebackCases[0], WritebackCases[kWritebackFirstLoadCase]}) {
     auto Dead = writebackFunction(Case, 0);
     Dead.ReturnType = NdType::makeInt(kScalarBytes, false);
-    Dead.SourceTypeHint->ReturnType = Dead.ReturnType;
-    Dead.Blocks.front().Ops.back().Inputs[0] =
-        MedVar::makeConst(0, kScalarBytes);
+    MedOp Zero;
+    Zero.Opcode = NdOp::COPY;
+    Zero.Output = Dead.Blocks.front().Ops.front().Output;
+    Zero.Output.Id = 1;
+    Zero.Output.SSAVer = 2;
+    Zero.Output.Size = kScalarBytes;
+    Zero.addInput(MedVar::makeConst(0, kScalarBytes));
+    Dead.Blocks.front().Ops.back().Inputs[0] = Zero.Output;
+    Dead.Blocks.front().Ops.insert(Dead.Blocks.front().Ops.end() - 1, Zero);
     llvm::LLVMContext DeadContext;
     auto Module =
         MedLLVMEmitter().emit({Dead}, DeadContext, kName, Arch::AArch64);
     ASSERT_TRUE(Module);
     optimizeMemory(*Module);
     for (bool LLVMRoute : {false, true})
-      compileMemoryC(memorySource(Dead, *Module, LLVMRoute), false,
-                     [&](llvm::MemoryBufferRef Buffer) {
+      compileMemoryC(memorySource(Dead, *Module, LLVMRoute, nullptr, true),
+                     false, [&](llvm::MemoryBufferRef Buffer) {
                        inspectMemoryObject(Buffer, Case.Scratch);
                      });
   }
@@ -4142,7 +4148,6 @@ TEST(AArch64WritebackMemory,
           MedVar::makeConst(kWritebackImageLoaded, kScalarBytes);
     Function.Params.clear();
     Function.TypedParams.clear();
-    Function.SourceTypeHint->Parameters.clear();
     MedVar Base = Ops.front().Output;
     if (!Store) {
       MedOp Extract;
@@ -4169,7 +4174,6 @@ TEST(AArch64WritebackMemory,
     Ops.insert(Ops.end() - 1, Read);
     Ops.back().Inputs[0] = Read.Output;
     Function.ReturnType = NdType::makeInt(kScalarBytes, false);
-    Function.SourceTypeHint->ReturnType = Function.ReturnType;
     ASSERT_TRUE(verifyMedFunc(Function, kName));
     llvm::LLVMContext Context;
     auto Module = MedLLVMEmitter().emit({Function}, Context, kName,
@@ -4178,7 +4182,8 @@ TEST(AArch64WritebackMemory,
     EXPECT_FALSE(Module->global_empty());
     optimizeMemory(*Module);
     for (bool LLVMRoute : {false, true}) {
-      const auto Source = memorySource(Function, *Module, LLVMRoute, &Image);
+      const auto Source =
+          memorySource(Function, *Module, LLVMRoute, &Image, true);
 #if defined(__APPLE__) && defined(__aarch64__)
       compileMemoryC(
           Source +
@@ -4301,7 +4306,8 @@ TEST(AArch64WritebackMemory,
       ASSERT_FALSE(llvm::verifyModule(*Module));
       optimizeMemory(*Module);
       for (bool LLVMRoute : {false, true}) {
-        const auto Source = memorySource(Function, *Module, LLVMRoute, &Image);
+        const auto Source =
+            memorySource(Function, *Module, LLVMRoute, &Image, true);
 #if defined(__APPLE__) && defined(__aarch64__)
         compileMemoryC(
             Source + llvm::formatv(kWritebackReturnedBaseHarness, Function.Name)

@@ -213,9 +213,6 @@ WRITEBACK_TEXT(
     kWritebackReturnedBaseHarness,
     "int main(void) {{ return {0}() != UINT64_C(0xfedcba9876543210); }\n")
 
-WRITEBACK_TEXT(kWritebackBaseParameter, "base")
-WRITEBACK_TEXT(kWritebackDataParameter, "data")
-
 #undef WRITEBACK_TEXT
 #undef WRITEBACK_VALUE
 #undef WRITEBACK_CASE
