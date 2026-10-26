@@ -37,14 +37,9 @@
 namespace neverd {
 namespace med_variadic_detail {
 
-std::optional<int64_t> entrySpDelta(const VariadicValueIndex &Index,
-                                    uint64_t SpOff, const MedVar &Root,
+std::optional<int64_t> entrySpDelta(VariadicScan &S, const MedVar &Root,
                                     int Depth) {
   using Key = VariadicValueIndex::Key;
-  const auto &Definitions = Index.Definitions;
-  const auto &AmbiguousDefinitions = Index.AmbiguousDefinitions;
-  const auto &Phis = Index.Phis;
-  const auto &AmbiguousPhis = Index.AmbiguousPhis;
 
   std::set<Key> Active;
   std::function<std::optional<int64_t>(const MedVar &, int)> Eval =
@@ -59,9 +54,14 @@ std::optional<int64_t> entrySpDelta(const VariadicValueIndex &Index,
       return std::nullopt;
     if (V.Kind != MedVar::Reg && V.Kind != MedVar::Temp)
       return std::nullopt;
-    if (V.Kind == MedVar::Reg && V.RegOff == SpOff && V.SSAVer == 0)
+    if (V.Kind == MedVar::Reg && V.RegOff == S.SpOff && V.SSAVer == 0)
       return int64_t{0};
 
+    const auto &Index = S.values();
+    const auto &Definitions = Index.Definitions;
+    const auto &AmbiguousDefinitions = Index.AmbiguousDefinitions;
+    const auto &Phis = Index.Phis;
+    const auto &AmbiguousPhis = Index.AmbiguousPhis;
     const Key K = VariadicValueIndex::keyOf(V);
     if (!Active.insert(K).second || AmbiguousDefinitions.count(K) ||
         AmbiguousPhis.count(K))
@@ -175,7 +175,7 @@ int firstSavedArgumentRegister(VariadicScan &S,
       const auto *It = llvm::find(Regs, Value.RegOff);
       if (It == Regs.end())
         continue;
-      if (auto Offset = entrySpDelta(S.values(), S.SpOff, Op.Inputs[0], 0))
+      if (auto Offset = entrySpDelta(S, Op.Inputs[0], 0))
         Slots[static_cast<size_t>(It - Regs.begin())].insert(*Offset);
     }
   // Walk down from the last register while each register's slot sits just
@@ -273,7 +273,7 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
     for (const auto &Op : Blk.Ops)
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-        if (auto D = entrySpDelta(S.values(), S.SpOff, Op.Inputs[1], 0))
+        if (auto D = entrySpDelta(S, Op.Inputs[1], 0))
           if (*D >= 0 && *D <= limits::kVariadicOverflowBaseMax)
             if (!Base || *D < *Base)
               Base = *D;

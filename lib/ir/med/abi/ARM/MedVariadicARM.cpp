@@ -19,10 +19,6 @@ namespace med_variadic_detail {
 bool hasAAPCS32VariadicPrologue(VariadicScan &S) {
   const MedFunc &Func = S.Func;
   const TargetRegInfo &TRI = S.TRI;
-  const uint64_t SpOff = S.SpOff;
-  auto getValueIndex = [&S]() -> const VariadicValueIndex & {
-    return S.values();
-  };
   bool Marked = false;
   // ARM32 (softfp) has no FP save area: the GP argument registers are spilled
   // to a save area abutting the entry SP so va_arg walks them then the
@@ -43,7 +39,7 @@ bool hasAAPCS32VariadicPrologue(VariadicScan &S) {
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
           Op.Inputs[1].Kind == MedVar::Reg && Op.Inputs[1].SSAVer == 0 &&
           LastArgIdx >= 0 && TRI.regToArgIdx(Op.Inputs[1].RegOff) == LastArgIdx)
-        if (auto D = entrySpDelta(getValueIndex(), SpOff, Op.Inputs[0], 0))
+        if (auto D = entrySpDelta(S, Op.Inputs[0], 0))
           if (*D == -TRI.PointerSize)
             AbutsEntry = true;
   Marked = AbutsEntry && countParamRegSpills(Func, TRI.IntParamRegs) >= 2;
