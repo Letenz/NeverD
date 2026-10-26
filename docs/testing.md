@@ -1230,6 +1230,13 @@ The `SizedCopy*` cases cover `strlcpy` full-source scanning, truncated and empty
 outputs, NUL termination without padding, full-width and zero capacities,
 read-only and page-tail memory, overlap and closed dynamic providers. Direct
 memory tests cover scan limits and expired deadlines without partial writes.
+The `CheckedSizedCopy*` cases exercise `__strlcpy_chk` through imports and
+dynamic providers: full-width capacity checks precede pointer access and source
+truncation, while accepted calls keep the same length, termination, errno and
+page-boundary behavior. The shared memory-refusal test also covers this entry,
+including fortify refusal before an expired deadline. The
+`ProcessPublic.AndroidFortifySizedCopyReportsMatchSDKAndCLI` case compares
+complete reports for truncation, fortify refusal and an invalid source.
 The `Checked*` cases extend the same callers and byte oracles to
 `__strncpy_chk` and `__strncpy_chk2`: destination checks before access, the
 post-scan source check, NUL-inclusive read counts, padding, truncation, zero
@@ -2929,6 +2936,11 @@ and shortcut tooltips through action changes, translation and disabled actions.
 shortcut dispatch to the same comment action, checks that `:` is unbound and
 the duplicate menu entry is gone, and preserves punctuation in single-line
 and multiline text fields. The shortcut collision check includes aliases.
+`NeverDGuiAppearance::menuShowsOnlyThePrimaryShortcut` checks that menus
+show only the primary comment key while both bindings stay registered and
+available in tooltips, in light and dark themes. `NEVERD_APPEARANCE_CAPTURES`
+saves the rendered menu. The shortcut browser and command-palette checks
+keep the key hints out of command names.
 Cocoa key dispatch skips if macOS refuses to activate the background test
 window; report that missing native coverage separately from offscreen checks.
 `NeverDGuiController::classicJumpChoosersSelectAndCancel` exercises actual

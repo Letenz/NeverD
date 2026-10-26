@@ -156,10 +156,6 @@
         <translation>現在のアドレスにコメントを追加します</translation>
     </message>
     <message>
-        <source>Enter re&amp;peatable comment...</source>
-        <translation>リピータブルコメントを入力(&amp;P)...</translation>
-    </message>
-    <message>
         <source>Mar&amp;k position...</source>
         <translation>位置をマーク(&amp;K)...</translation>
     </message>
