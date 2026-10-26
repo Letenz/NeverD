@@ -164,9 +164,10 @@ inline bool aarch64WritebackMemoryMedShapeIsValid(const MedOp &Op) {
     if ((Output.Kind != MedVar::Reg && Output.Kind != MedVar::Temp) ||
         (Output.TheArch != Arch::Unknown && Output.TheArch != Arch::AArch64))
       return false;
-  if (Op.IntrinsicOutputs.size() > 1 &&
-      Op.IntrinsicOutputs.front() == Op.IntrinsicOutputs.back())
-    return false;
+  for (size_t I = 0; I != Op.IntrinsicOutputs.size(); ++I)
+    for (size_t J = 0; J != I; ++J)
+      if (Op.IntrinsicOutputs[I] == Op.IntrinsicOutputs[J])
+        return false;
   const bool Store = isAArch64WritebackStoreIntrinsic(
       static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
   return aarch64WritebackMemoryShapeIsValid(
@@ -181,6 +182,17 @@ inline bool aarch64WritebackMemoryMedShapeIsValid(const MedOp &Op) {
       Store && Op.Inputs[kWritebackDataOperand + 1].isConst()
           ? std::optional<uint64_t>(
                 Op.Inputs[kWritebackDataOperand + 1].ConstVal)
+          : std::nullopt,
+      Store && isAArch64PairMemoryIntrinsic(
+                   static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
+          ? Op.Inputs[kPairSecondDataOperand + 1].Size
+          : 0,
+      Store &&
+              isAArch64PairMemoryIntrinsic(
+                  static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
+              Op.Inputs[kPairSecondDataOperand + 1].isConst()
+          ? std::optional<uint64_t>(
+                Op.Inputs[kPairSecondDataOperand + 1].ConstVal)
           : std::nullopt);
 }
 

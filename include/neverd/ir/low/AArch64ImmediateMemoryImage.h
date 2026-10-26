@@ -46,7 +46,7 @@ lowImageBaseMemoryWitness(const BinaryImage &Image, const LowOp &Op,
                                          ConstantAddressProvenance::DataAddress,
                                          Owner))
       return {};
-    return {&Base, static_cast<uint16_t>(Instruction.accessBytes()), true};
+    return {&Base, static_cast<uint16_t>(Instruction.totalAccessBytes()), true};
   };
   if (lowAArch64AddressMemoryShapeIsValid(Op))
     return Witness(*aarch64AddressMemoryInstruction(
@@ -71,17 +71,19 @@ lowImageBaseMemoryWritebackCommit(const LowOp &Op, const LowOp *Memory,
       Op.MemoryOrdering != NdMemoryOrdering::None ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
-  if (Memory->Inputs[0].Offset ==
-      static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback)) {
+  if (isAArch64WritebackAuxiliaryLoad(
+          static_cast<Intrinsic>(Memory->Inputs[0].Offset))) {
     const auto It = std::find_if(
         Instruction.begin(), Instruction.end(),
         [&](const LowOp &Candidate) { return &Candidate == Memory; });
     if (It == Instruction.end())
       return false;
-    const auto Outputs = lowAArch64VectorWritebackOutputs(
+    const auto Outputs = lowAArch64WritebackOutputs(
         *Memory, Instruction.drop_front(It - Instruction.begin() + 1));
     return Outputs && Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-           Op.Inputs[0] == (*Outputs)[kWritebackBaseIndex];
+           Op.Inputs[0] ==
+               (*Outputs)[aarch64WritebackBaseIndex(
+                   static_cast<Intrinsic>(Memory->Inputs[0].Offset))];
   }
   const bool Load = static_cast<Intrinsic>(Memory->Inputs[0].Offset) ==
                     Intrinsic::A64_LoadWriteback;

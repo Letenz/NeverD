@@ -104,7 +104,7 @@ void MedToHighConverter::lowerStore(HighFunc &Func, const MedOp &CurOp) {
   if (CurOp.NumInputs >= 2) {
     S.StoreAddr = memoryAddressExpr(CurOp.Inputs[0]);
 
-    auto ValKey = std::make_pair(CurOp.Inputs[1].Id, CurOp.Inputs[1].SSAVer);
+    const auto ValKey = varKey(CurOp.Inputs[1]);
     if (CallOutputs.count(ValKey))
       S.StoreVal = HighExpr::makeVar(CurOp.Inputs[1]);
     else

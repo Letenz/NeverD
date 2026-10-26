@@ -795,11 +795,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
               static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
         if (TheArch != Arch::AArch64 ||
             !lowAArch64WritebackMemoryShapeIsValid(Op) ||
-            (Op.Inputs[0].Offset ==
-                 static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback) &&
-             !lowAArch64VectorWritebackOutputs(
-                 Op, llvm::ArrayRef(Block.Ops).drop_front(
-                         &Op - Block.Ops.data() + 1))))
+            (isAArch64WritebackAuxiliaryLoad(
+                 static_cast<Intrinsic>(Op.Inputs[0].Offset)) &&
+             !lowAArch64WritebackOutputs(Op,
+                                         llvm::ArrayRef(Block.Ops).drop_front(
+                                             &Op - Block.Ops.data() + 1))))
           throw LowToMedConversionError(kWritebackMalformed);
       }
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))

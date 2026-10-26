@@ -13,6 +13,38 @@ class WordOracleTests(unittest.TestCase):
     def equivalent(self, before, after, width=32):
         bench.check_semantics([before], [{"output": after}], width)
 
+    def test_residue_powers_keep_independent_parity_and_near_misses(self):
+        for width in (8, 16, 32, 64):
+            rows = bench.residue_power_corpus(width, 81)
+            self.assertEqual(len(rows), 81)
+            self.assertEqual(rows, bench.residue_power_corpus(width, 81))
+            scale = 3 << (width - 4)
+            self.equivalent(rows[0], f"x+y+z+w+{scale}*z*(x&1)", width)
+            self.equivalent(rows[1], f"x+y+z+w+{scale}*z*((~x)&1)", width)
+            for index in (0, 1, 2):
+                with self.assertRaises(AssertionError):
+                    self.equivalent(rows[index], "x+y+z+w", width)
+            with self.assertRaises(AssertionError):
+                self.equivalent(rows[2],
+                                f"x+y+z+w+{scale}*z*((~x)&1)", width)
+
+    def test_large_quotients_preserve_high_views_and_low_changes(self):
+        for width in (8, 32, 64):
+            rows = bench.residue_quotient_corpus(width, 72)
+            self.assertEqual(rows, bench.residue_quotient_corpus(width, 72))
+            scale = 3 << (width - 4)
+            expected = f"x+y+z+w+{scale}*z*(x&1)"
+            self.equivalent(rows[0], expected, width)
+            self.equivalent(rows[1], expected, width)
+            with self.assertRaises(AssertionError):
+                self.equivalent(rows[2], expected, width)
+
+    def test_oracle_checks_products_beyond_python_recursion_depth(self):
+        row = bench.residue_quotient_corpus(32, 72)[-1]
+        self.equivalent(row, row)
+        with self.assertRaises(AssertionError):
+            self.equivalent(row, "0")
+
     def test_narrow_arithmetic_and_default_width_promotion(self):
         self.equivalent("(x+1)&255", "zext(extract(x,0,8)+1#8,32)")
         self.equivalent("(x&255)+1", "extract(x,0,8)+1")

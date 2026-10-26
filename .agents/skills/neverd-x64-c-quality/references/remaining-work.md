@@ -61,8 +61,9 @@ CLAC/STAC, XEND and CLZERO now share the validated system-instruction contract i
 HighC, native LLVM and LLVMC. Their ordered effects survive unused results and
 source optimization; scalar emulation cannot silently claim completion.
 Instruction IDs remain unchanged, and native RTM code generation enables its
-required feature. SYSRETQ, like interrupt/far returns, still requires the
-complete state-transfer source boundary described below.
+required feature. The architectural returns — far, interrupt and syscall
+returns — now have the terminal state-transfer source boundary described below;
+only RSM and XBEGIN stay refused.
 CLZERO's implicit address no longer depends on Capstone exposing a register
 operand. Address width, FS/GS offsets, unchanged flags and native cache-line
 effects remain explicit; generated code does not replace the instruction with
@@ -85,14 +86,22 @@ Bounded callee register summaries repair stack-probe frame proofs. Replaced-PC
 tail calls and closed recursive internal-call groups have separate checked
 return-slot proofs. Arbitrary changed-stack returns remain outside them.
 
-Full-state x86 interrupt/far returns and kernel context-switch exits remain
-open. An ordinary C return, a bare `iret` assembly statement, or an opaque call
-with only a stack-pointer operand loses observable machine state. The latest
-SDK must be inspected for the required state contract instead of assuming a
-newer intrinsic inventory closes this gap. SYSENTER/SYSEXIT/SYSRET and RSM now
-retain the same explicit refusal in permissive decoding and both source
-routes; old RSM/SYSEXITQ/SYSRETQ IR cannot bypass it through direct emission.
-This closes an incorrect-success path, not the missing state-transfer model.
+x86 architectural returns now lift to a terminal, non-returning state-transfer
+intrinsic that names every cell the transfer reads. Far and interrupt returns
+(RETF/RETFQ, IRET/IRETD/IRETQ) name the stack frame — CS:IP, plus FLAGS and, for
+64-bit IRET, SS:RSP; the syscall returns SYSRET/SYSRETQ and SYSEXIT/SYSEXITQ
+name their transfer registers — RCX:R11 and RDX:RCX. Both C routes print
+`neverd_far_return`/`neverd_interrupt_return`/`neverd_syscall_return`/
+`neverd_sysenter_return` and the shared no-return termination contract ends the
+block; the intrinsic grants no source ABI or memory contract and reconstructs
+no privilege, segment or flag change. An ordinary C return, a bare `iret`
+assembly statement, or an opaque call with only a stack-pointer operand still
+loses that observable machine state and stays rejected. RSM (whole-processor
+restore from SMRAM) and XBEGIN (two-exit abort checkpoint) have no such named
+target and keep the explicit refusal in permissive decoding and both source
+routes; old RSM IR cannot bypass it through direct emission. Native
+reconstruction of the architectural returns remains a
+separate contract this source boundary does not grant.
 Known fixed argument positions now
 survive an interior stack-setup gap, including selected LLVMC recovery; missing
 values remain explicit rather than becoming zero. Unknown incoming stack-pointer
@@ -179,7 +188,9 @@ and explicit local stack allocation. The shared byte proof checks original
 restoration against the current format's preserved bank; saved state, frame
 escape, external memory and unaligned carriers cannot become such inputs.
 The memo retains each input width, signed/unsigned loads preserve their bits,
-and narrow declarations do not initialize adjacent bytes. Every
+and narrow declarations do not initialize adjacent bytes. Mixed prefix and
+complete reads share one scalar carrier only when the original LowIR contains
+a complete read of that same slot; narrow-only evidence cannot widen it. Every
 selected caller must completely write the same outgoing bytes. Selected-only
 LLVM exports retain fixed declarations rather than falling back to varargs.
 These rules do not supply an arbitrary VM dispatcher with a missing bytecode

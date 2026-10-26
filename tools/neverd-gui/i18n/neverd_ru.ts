@@ -148,10 +148,6 @@
         <translation>Переименовать текущий адрес</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>Ввести &amp;комментарий...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>Добавить комментарий к текущему адресу</translation>
     </message>

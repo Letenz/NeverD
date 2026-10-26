@@ -148,10 +148,6 @@
         <translation>Renombrar la dirección actual</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>Introducir &amp;comentario...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>Comentar la dirección actual</translation>
     </message>

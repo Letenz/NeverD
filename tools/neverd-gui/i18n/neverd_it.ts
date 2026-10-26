@@ -148,10 +148,6 @@
         <translation>Rinomina l&apos;indirizzo corrente</translation>
     </message>
     <message>
-        <source>Enter &amp;comment...</source>
-        <translation>Inserisci &amp;commento...</translation>
-    </message>
-    <message>
         <source>Comment the current address</source>
         <translation>Commenta l&apos;indirizzo corrente</translation>
     </message>

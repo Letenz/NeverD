@@ -20,6 +20,11 @@ SIDEEFFECT(Intrinsic::Prefetch);
 SIDEEFFECT(Intrinsic::Int3);
 SIDEEFFECT(Intrinsic::Int1);
 SIDEEFFECT(Intrinsic::IntN);
+// far / interrupt / syscall returns (terminal architectural control transfers)
+SIDEEFFECT(Intrinsic::Retf);
+SIDEEFFECT(Intrinsic::Iret);
+SIDEEFFECT(Intrinsic::Sysretq);
+SIDEEFFECT(Intrinsic::Sysexitq);
 SIDEEFFECT(Intrinsic::Into);
 SIDEEFFECT(Intrinsic::Ud2);
 SIDEEFFECT(Intrinsic::Hlt);
