@@ -25,6 +25,7 @@
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -203,6 +204,7 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
               QApplication::clipboard()->setText(QString::fromUtf8(
                   QJsonDocument(selected()).toJson(QJsonDocument::Indented)));
           });
+  updateTableMinimumHeight();
   buttons();
 }
 QJsonObject LineagePageView::selected() const {
@@ -233,6 +235,21 @@ void LineagePageView::changeEvent(QEvent *Event) {
   QWidget::changeEvent(Event);
   if (Event->type() == QEvent::LayoutDirectionChange)
     buttons();
+  if (Event->type() == QEvent::FontChange ||
+      Event->type() == QEvent::StyleChange)
+    updateTableMinimumHeight();
+}
+void LineagePageView::updateTableMinimumHeight() {
+  // Header and scrollbar geometry vary with the interface language, style
+  // and font. Preserve space for a complete evidence row in a narrow window.
+  const auto RowHeight =
+      std::max({Table->verticalHeader()->defaultSectionSize(),
+                Table->verticalHeader()->minimumSectionSize(),
+                Table->sizeHintForRow(0)});
+  Table->setMinimumHeight(Table->horizontalHeader()->sizeHint().height() +
+                          RowHeight +
+                          Table->horizontalScrollBar()->sizeHint().height() +
+                          Table->frameWidth() * 2);
 }
 void LineagePageView::buttons() {
   Previous->setArrowType(isRightToLeft() ? Qt::RightArrow : Qt::LeftArrow);
@@ -309,6 +326,7 @@ void LineagePageView::page(qint64 First) {
           }
           Model->appendRow(Items);
         }
+        updateTableMinimumHeight();
         if (!Rows.isEmpty())
           Table->setCurrentIndex(Model->index(Selected, 0));
         Status->setText(tr("%1–%2 of %3")

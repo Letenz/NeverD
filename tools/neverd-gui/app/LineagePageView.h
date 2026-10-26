@@ -62,6 +62,7 @@ private:
   bool Pending = false;
   void page(qint64 First);
   void buttons();
+  void updateTableMinimumHeight();
 };
 } // namespace neverd::gui
 
