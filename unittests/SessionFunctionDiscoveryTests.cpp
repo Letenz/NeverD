@@ -106,6 +106,12 @@ TEST_F(SessionFunctionDiscovery,
         ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
         const auto Entry = neverd_session_entry_addr(Session);
         ASSERT_EQ(neverd_session_discover_functions(Session), 1);
+        auto &State = *reinterpret_cast<neverd::sdk::Session *>(Session);
+        ASSERT_EQ(State.Functions.size(), 1u);
+        EXPECT_EQ(State.Functions.front().LinkageOrigin,
+                  neverd::NameOrigin::Synthesized);
+        EXPECT_EQ(State.Functions.front().ResolvedOrigin,
+                  neverd::NameOrigin::Synthesized);
         ASSERT_EQ(neverd_func_size(Session, 0), 0);
         const auto Name = takeString(neverd_func_name(Session, 0));
         if (Lazy)
@@ -115,6 +121,10 @@ TEST_F(SessionFunctionDiscovery,
         EXPECT_EQ(neverd_func_entry(Session, 0), Entry);
         EXPECT_EQ(neverd_func_size(Session, 0), AArch64 ? 8 : 6);
         EXPECT_EQ(takeString(neverd_func_name(Session, 0)), Name);
+        EXPECT_EQ(State.Functions.front().LinkageOrigin,
+                  neverd::NameOrigin::Synthesized);
+        EXPECT_EQ(State.Functions.front().ResolvedOrigin,
+                  neverd::NameOrigin::Synthesized);
         ASSERT_FALSE(takeString(neverd_ir_med(Session, Entry)).empty());
         ASSERT_EQ(neverd_session_analyze(Session), 1);
         EXPECT_EQ(neverd_func_size(Session, 0), AArch64 ? 8 : 6);

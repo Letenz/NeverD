@@ -300,7 +300,9 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"input_scratch_words",
          static_cast<int64_t>(Summary.InputScratchWords)},
         {"output_scratch_words",
-         static_cast<int64_t>(Summary.OutputScratchWords)}});
+         static_cast<int64_t>(Summary.OutputScratchWords)},
+        {"output_parameterized_words",
+         static_cast<int64_t>(Summary.OutputParameterizedWords)}});
   }
   llvm::json::Array Edges;
   for (const auto &Edge : Report.SummaryEdges) {
@@ -311,6 +313,8 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"legacy_runtime_first", Edge.LegacyRuntime}};
     Row["preserved_older_frame_words"] = Edge.PreservedOlderFrames;
     Row["applied_parameterized_memory_effects"] = Edge.AppliedMemoryEffects;
+    Row["applied_stored_values"] =
+        static_cast<int64_t>(Edge.AppliedStoredValues);
     Row["generalized_unknown_inputs"] = Edge.GeneralizedInputs;
     Row["input_generalization"] = generalizationName(Edge.InputGeneralization);
     if (Edge.CalleeSummaryID)
@@ -349,6 +353,8 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
       {"summary_cache_hits", static_cast<int64_t>(Report.SummaryCacheHits)},
       {"reclaimed_unreferenced_summaries",
        static_cast<int64_t>(Report.SummaryCacheEvictions)},
+      {"generalized_redundant_published_summaries",
+       static_cast<int64_t>(Report.GeneralizedPublishedSummaries)},
       {"equivalent_generic_leaf_reuses",
        static_cast<int64_t>(Report.EquivalentGenericReuses)},
       {"skipped_non_callx_root_specializations",

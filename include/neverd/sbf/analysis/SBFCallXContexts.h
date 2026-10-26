@@ -103,6 +103,7 @@ struct CallXSummaryEdge {
   bool LegacyRuntime = false;
   bool PreservedOlderFrames = false;
   bool AppliedMemoryEffects = false;
+  size_t AppliedStoredValues = 0;
   bool GeneralizedInputs = false;
   CallXInputGeneralization InputGeneralization = CallXInputGeneralization::None;
 };
@@ -142,6 +143,7 @@ struct CallXFunctionSummary {
   size_t MinimumDepth = 0;
   size_t InputScratchWords = 0;
   size_t OutputScratchWords = 0;
+  size_t OutputParameterizedWords = 0;
 };
 
 struct CallXContextReport {
@@ -159,6 +161,7 @@ struct CallXContextReport {
   size_t ProjectedScratchSnapshots = 0;
   size_t InputDependencyVisits = 0;
   size_t SummaryCacheEvictions = 0;
+  size_t GeneralizedPublishedSummaries = 0;
   size_t EquivalentGenericReuses = 0;
   size_t SkippedNonCallXRootSpecializations = 0;
   size_t SkippedConstantBranchSuccessors = 0;

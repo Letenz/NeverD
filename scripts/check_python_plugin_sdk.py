@@ -221,6 +221,8 @@ BORROWED_STRING_FUNCTIONS = frozenset(
 def expected_ownership(name: str, result: str):
     from neverd_plugin.abi import Ownership
 
+    if name == "neverd_byte_patches_snapshot_v1":
+        return Ownership.OWNED_OBJECT
     if name in BORROWED_STRING_FUNCTIONS:
         return Ownership.BORROWED_STRING
     if result == "const char *":

@@ -17,11 +17,14 @@ from pathlib import Path
 import capstone
 import lief
 
+from verify_x86_memory_address import memory_address
+
 NAMES = ('v4fmaddps', 'v4fnmaddps', 'v4fmaddss', 'v4fnmaddss', 'vp4dpwssd', 'vp4dpwssds')
 OPCODES = (0x9a, 0xaa, 0x9b, 0xab, 0x52, 0x53)
 
 
-def check(path, prefixes, stack_wide_args=False):
+def check(path, prefixes, stack_wide_args=False, pointer=0x12345678):
+    assert 0 <= pointer < 1 << 64
     binary = lief.parse(str(path))
     section = next(s for s in binary.sections if s.name == '.text')
     code = bytes(section.content)
@@ -38,7 +41,7 @@ def check(path, prefixes, stack_wide_args=False):
         vectors = ({i: bytes([0xd0+i])*64 for i in range(5)} if stack_args else
                    {i: value + bytes(64-width) for i, value in enumerate(inputs)})
         gprs = {n: 0x500000 + i*16 for i, n in enumerate(('rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rbp', 'rsp', *(f'r{i}' for i in range(8,16))))}
-        gprs.update(rsp=0x400038, rdi=0x12345678, rsi=0xa55b)
+        gprs.update(rsp=0x400038, rdi=pointer, rsi=0xa55b)
         saved = dict(gprs)
         masks, memory = {}, {}
 
@@ -128,15 +131,19 @@ def check(path, prefixes, stack_wide_args=False):
         while steps < 1000:
             steps += 1
             start, prefix = at, 0
-            if code[at] in (0x64, 0x65):
+            if code[at] in (0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65):
                 prefix, at = code[at], at+1
             if code[at] == 0x62 and at+6 <= len(code):
                 p0, p1, p2, opcode, modrm = code[at+1:at+6]
                 if (p0 & 7) == 2 and (p1 & 3) == 3 and opcode in OPCODES:
                     assert OPCODES.index(opcode) == kind and calls < 3
-                    assert prefix == prefixes[calls]
-                    assert modrm >> 6 == 0 and modrm & 7 == 3 and p0 & 0x20
-                    assert gprs['rbx'] == saved['rdi']
+                    end, stack, base, index, scale = memory_address(code, at+6, p0, modrm, 64)
+                    assert prefix | (0x100 if stack else 0) == prefixes[calls]
+                    names = ('rax', 'rcx', 'rdx', 'rbx', 'rsp', 'rbp', 'rsi', 'rdi') + tuple(f'r{i}' for i in range(8,16))
+                    native_address = gprs[names[base]]
+                    if index is not None:
+                        native_address += gprs[names[index]] * scale
+                    assert native_address & 0xffffffffffffffff == saved['rdi']
                     source = ((~p1 >> 3) & 15) | ((~p2 & 8) << 1)
                     assert source & 3 == 0
                     destination = ((modrm >> 3) & 7) | ((~p0 & 0x10) >> 1) | ((~p0 & 0x80) >> 3)
@@ -153,7 +160,7 @@ def check(path, prefixes, stack_wide_args=False):
                         value = value[:4] + inputs[0][4:]
                     vectors[destination] = value + bytes(64-width)
                     calls += 1
-                    at += 6
+                    at = end
                     continue
             ins = next(decoder.disasm(code[start:], start, count=1), None)
             assert ins, (name, start, code[start:start+16].hex())
@@ -197,6 +204,7 @@ def check(path, prefixes, stack_wide_args=False):
         assert all(gprs[n] == saved[n] for n in ('rbx', 'rbp', 'r12', 'r13', 'r14', 'r15'))
         result.append({'name': name, 'calls': calls, 'instructions': steps})
     return {'object': str(path), 'functions': result, 'stack_wide_arguments': stack_wide_args,
+            'pointer': pointer,
             'native_arithmetic_executed': False}
 
 
@@ -204,9 +212,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('objects', type=Path, nargs='+')
     parser.add_argument('--prefixes', default='100,100,100')
+    parser.add_argument('--pointer', type=lambda value: int(value, 0), default=0x12345678,
+                        help='native address bits; the controlled instruction does not dereference them')
     parser.add_argument('--stack-wide-args', action='store_true',
                         help='C frontend ABI without a command-line AVX512 target')
     args = parser.parse_args()
     prefixes = tuple(map(int, args.prefixes.split(',')))
     assert len(prefixes) == 3
-    print(json.dumps([check(path, prefixes, args.stack_wide_args) for path in args.objects], indent=2))
+    print(json.dumps([check(path, prefixes, args.stack_wide_args, args.pointer) for path in args.objects], indent=2))

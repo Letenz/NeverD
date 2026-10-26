@@ -323,11 +323,19 @@ private slots:
              theme.color(ColorRole::ListingComment));
   }
 
+  void flowLayoutWrapsRatherThanOverlaps_data() {
+    QTest::addColumn<bool>("RightToLeft");
+    QTest::newRow("left-to-right") << false;
+    QTest::newRow("right-to-left") << true;
+  }
+
   void flowLayoutWrapsRatherThanOverlaps() {
+    QFETCH(bool, RightToLeft);
     // A combo box that keeps its width and the checkboxes after it, as the
     // Local Types options are: narrow, they wrap to rows of their own, each
     // at its own size and none over another; wide, they share one row.
     QWidget row;
+    row.setLayoutDirection(RightToLeft ? Qt::RightToLeft : Qt::LeftToRight);
     auto *flow = new FlowLayout(&row);
     auto *combo = new QComboBox(&row);
     combo->addItem(QStringLiteral("C keywords (unsigned long)"));
@@ -348,6 +356,7 @@ private slots:
     for (int first = 0; first < widgets.size(); ++first) {
       const QRect at = widgets[first]->geometry();
       QCOMPARE(at.size(), widgets[first]->sizeHint());
+      QVERIFY(row.rect().contains(at));
       for (int second = first + 1; second < widgets.size(); ++second)
         QVERIFY2(!at.intersects(widgets[second]->geometry()),
                  qPrintable(widgets[first]->objectName()));
@@ -360,15 +369,21 @@ private slots:
     layOut(wide);
     for (QWidget *widget : widgets)
       QCOMPARE(widget->geometry().center().y(), combo->geometry().center().y());
+    for (int i = 1; i < widgets.size(); ++i)
+      QVERIFY(RightToLeft ? widgets[i]->geometry().right() <
+                                widgets[i - 1]->geometry().left()
+                          : widgets[i]->geometry().left() >
+                                widgets[i - 1]->geometry().right());
     QVERIFY(flow->heightForWidth(wide) < wrapped);
     // A hidden widget takes no place: the one after it moves over by its
     // width.
-    const int before = widgets[3]->geometry().left();
+    const int leading = RightToLeft ? widgets[2]->geometry().right()
+                                    : widgets[2]->geometry().left();
     widgets[2]->hide();
     layOut(wide);
-    QCOMPARE(widgets[3]->geometry().left(),
-             before - widgets[2]->sizeHint().width() -
-                 (before - widgets[2]->geometry().right() - 1));
+    QCOMPARE(RightToLeft ? widgets[3]->geometry().right()
+                         : widgets[3]->geometry().left(),
+             leading);
   }
 
   void flowLayoutCentersOddAndEvenHeights_data() {
@@ -1942,6 +1957,42 @@ private slots:
     QTRY_VERIFY(!button("closeButton")->isVisible());
     window.showNormal();
     QTRY_VERIFY(button("closeButton")->isVisible());
+  }
+
+  void titleBarControlsRepaintOnPointerLeave() {
+    // A native-window handoff can deliver Leave without HoverLeave. Clearing
+    // underMouse must also repaint the close button's previous red highlight.
+    QWidget window;
+    auto *bar = new TitleBar(window);
+    window.resize(500, 300);
+    bar->setGeometry(0, 0, 500, bar->sizeHint().height());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *close = bar->findChild<QAbstractButton *>("closeButton");
+    QVERIFY(close && close->isVisible());
+    const QPoint center = close->rect().center();
+    QEnterEvent enter(center, close->mapTo(&window, center),
+                      close->mapToGlobal(center));
+    QCoreApplication::sendEvent(close, &enter);
+    QHoverEvent hover(QEvent::HoverEnter, center, close->mapToGlobal(center),
+                      QPointF(-1, -1));
+    QCoreApplication::sendEvent(close, &hover);
+    QVERIFY(close->underMouse());
+    QCoreApplication::processEvents();
+    class PaintCounter final : public QObject {
+    public:
+      int paints = 0;
+      bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() == QEvent::Paint)
+          ++paints;
+        return false;
+      }
+    } counter;
+    close->installEventFilter(&counter);
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(close, &leave);
+    QVERIFY(!close->underMouse());
+    QTRY_VERIFY(counter.paints > 0);
   }
 
   void loadQuestionFitsTheFontsItShowsWith() {

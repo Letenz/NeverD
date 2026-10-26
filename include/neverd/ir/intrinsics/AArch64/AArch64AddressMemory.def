@@ -10,6 +10,8 @@
 /// identities, store direction and vector class. ENCODING owns Id, masked word,
 /// access bytes, result bytes and signedness. UNSIGNED and UNSCALED encoding
 /// hooks retain imm12/imm9 and the unprivileged access variant in the word.
+/// Ordered unscaled words retain RCpc acquire or release in the instruction;
+/// a generic acquire load is not a replacement for the RCpc operation.
 /// MACHINE owns the exact stack/vector/direction assembly and constraints.
 /// Loads return accessed bytes;
 /// explicit IR extends them through the encoded W/X result width before
@@ -316,6 +318,60 @@ NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorStoreImmediate,
                                             0xfc000000U, 8, 0, false)
 NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorLoadImmediate,
                                             0xfc400000U, 8, 16, false)
+// FEAT_LRCPC2 GPR and FEAT_LRCPC3 SIMD/FP ordered unscaled accesses. The raw
+// opcode owns ordering, including RCpc's distinction from ordinary acquire.
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_StoreImmediate, 0x19000000U, 1,
+                                            0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x19400000U, 1,
+                                            4, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x19800000U, 1,
+                                            8, true)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x19c00000U, 1,
+                                            4, true)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_StoreImmediate, 0x59000000U, 2,
+                                            0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x59400000U, 2,
+                                            4, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x59800000U, 2,
+                                            8, true)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x59c00000U, 2,
+                                            4, true)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_StoreImmediate, 0x99000000U, 4,
+                                            0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x99400000U, 4,
+                                            4, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0x99800000U, 4,
+                                            8, true)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_StoreImmediate, 0xd9000000U, 8,
+                                            0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_LoadImmediate, 0xd9400000U, 8,
+                                            8, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorStoreImmediate,
+                                            0x1d000800U, 1, 0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorLoadImmediate,
+                                            0x1d400800U, 1, 16, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorStoreImmediate,
+                                            0x1d800800U, 16, 0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorLoadImmediate,
+                                            0x1dc00800U, 16, 16, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorStoreImmediate,
+                                            0x5d000800U, 2, 0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorLoadImmediate,
+                                            0x5d400800U, 2, 16, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorStoreImmediate,
+                                            0x9d000800U, 4, 0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorLoadImmediate,
+                                            0x9d400800U, 4, 16, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorStoreImmediate,
+                                            0xdd000800U, 8, 0, false)
+NEVERD_A64_ADDRESS_UNSCALED_MEMORY_ENCODING(A64_VectorLoadImmediate,
+                                            0xdd400800U, 8, 16, false)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryOrderedClassMask,
+                                0x3f200c00U)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryOrderedGPRClass,
+                                0x19000000U)
+NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryOrderedVectorClass,
+                                0x1d000800U)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryUnsignedOpcodeMask,
                                 0xffc00000U)
 NEVERD_A64_ADDRESS_MEMORY_VALUE(uint32_t, kAddressMemoryUnscaledOpcodeMask,

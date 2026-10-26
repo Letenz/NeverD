@@ -540,9 +540,10 @@ void SignatureDB::apply(const BinaryImage &Img,
     }
   }
   checkReferences(Img, FuncEntries, std::move(Hits));
-  applyCallerContext(Img, FuncEntries);
+  std::vector<DeferredCaller> DeferredCallers;
+  applyCallerContext(Img, FuncEntries, 0, nullptr, {}, &DeferredCallers);
   applyVTableContext(Img, FuncEntries);
-  applyDataContext(Img, FuncEntries, DataHits);
+  applyDataContext(Img, FuncEntries, DataHits, DeferredCallers);
   applyRuntimePointerContext(Img, FuncEntries);
   admitStatedNames(Img);
 }
@@ -1094,18 +1095,70 @@ std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
 
 } // namespace
 
-void SignatureDB::applyCallerContext(const BinaryImage &Img,
-                                     llvm::ArrayRef<uint64_t> Entries) {
+void SignatureDB::applyCallerContext(
+    const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
+    size_t FirstParent, const DataBindings *Data,
+    llvm::ArrayRef<uint64_t> Revisit,
+    std::vector<DeferredCaller> *DeferredCallers) {
   if (!index().hasCallerModules() || Matches.empty())
     return;
-  auto Names = buildCandidateNameMap();
-  std::vector<uint64_t> Requested(Entries.begin(), Entries.end());
-  llvm::sort(Requested);
+  if (Data && Revisit.empty()) {
+    // Most data consumers are short getters or have no code references.
+    // Consult existing source/name indices before building a settlement map.
+    auto HasQuery = [&](const StoredModule &Mod) {
+      return llvm::any_of(Mod.references(), [&](const StoredName &Ref) {
+        return !Ref.IsData && !index().callerModules(Modules, Ref.Name).empty();
+      });
+    };
+    bool Queryable = false;
+    for (size_t I = FirstParent; I < Matches.size() && !Queryable; ++I) {
+      if (!Matches[I].Confirmed || MatchModules[I] == NoModule)
+        continue;
+      const StoredModule &Mod = Modules[MatchModules[I]];
+      if (!Mod.RequireReferences || !SignatureMatcher::isFullyVerified(Mod) ||
+          SignatureMatcher::fixedByteCount(Mod) <
+              SignatureMatcher::MinStatedBytes)
+        continue;
+      Queryable = HasQuery(Mod);
+      for (const StoredName &Name : Mod.publicNames())
+        for (const auto &Source : index().callerModules(Modules, Name.Name))
+          if (Modules[Source.Module].RequireCaller &&
+              HasQuery(Modules[Source.Module]))
+            Queryable = true;
+    }
+    if (!Queryable)
+      return;
+  }
+  std::unordered_map<uint64_t, std::string> Names;
+  std::vector<std::pair<uint64_t, size_t>> FrozenCandidates;
+  if (Data) {
+    // A few data parents should not settle and copy every existing name.
+    // Index the frozen rows once; each visited address still considers all
+    // competing claims through the same settlement owner.
+    FrozenCandidates.reserve(Matches.size());
+    for (size_t I = 0; I < Matches.size(); ++I)
+      FrozenCandidates.emplace_back(Matches[I].Address, I);
+    // Keep sort keys contiguous instead of repeatedly loading addresses from
+    // the much larger candidate records during comparison and binary search.
+    llvm::sort(FrozenCandidates);
+  } else {
+    Names = buildCandidateNameMap();
+  }
+  std::vector<uint64_t> SortedEntries;
+  llvm::ArrayRef<uint64_t> Requested = Entries;
+  if (!llvm::is_sorted(Entries)) {
+    SortedEntries.assign(Entries.begin(), Entries.end());
+    llvm::sort(SortedEntries);
+    Requested = SortedEntries;
+  }
   const size_t FrozenMatches = Matches.size();
-  size_t FirstParent = 0;
+  std::optional<std::unordered_map<uint64_t, uint32_t>> FrozenBodies;
   for (size_t Round = 0; Round < MaxIncomingRounds; ++Round) {
     const size_t Before = Matches.size();
-    applyCallerContextRound(Img, Requested, Names, FrozenMatches, FirstParent);
+    applyCallerContextRound(Img, Requested, Names, FrozenCandidates,
+                            FrozenMatches, FirstParent, Data, Revisit,
+                            DeferredCallers, FrozenBodies);
+    Revisit = {};
     if (Matches.size() == Before)
       break;
     // Earlier rows are immutable and every new row is incoming evidence at a
@@ -1127,9 +1180,28 @@ void SignatureDB::applyCallerContext(const BinaryImage &Img,
 
 void SignatureDB::applyCallerContextRound(
     const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
-    const std::unordered_map<uint64_t, std::string> &Names,
-    size_t FrozenMatches, size_t FirstParent) {
+    std::unordered_map<uint64_t, std::string> &Names,
+    std::vector<std::pair<uint64_t, size_t>> &FrozenCandidates,
+    size_t FrozenMatches, size_t FirstParent, const DataBindings *Data,
+    llvm::ArrayRef<uint64_t> Revisit,
+    std::vector<DeferredCaller> *DeferredCallers,
+    std::optional<std::unordered_map<uint64_t, uint32_t>> &FrozenBodies) {
   const auto &Idx = index();
+  auto FindName = [&](uint64_t Address) {
+    auto Found = Names.find(Address);
+    if (Found != Names.end() || FrozenCandidates.empty())
+      return Found;
+    const auto Begin = llvm::lower_bound(
+        FrozenCandidates, Address,
+        [](const auto &Row, uint64_t VA) { return Row.first < VA; });
+    llvm::SmallVector<const SigMatch *, 4> Claims;
+    for (auto I = Begin; I != FrozenCandidates.end() && I->first == Address;
+         ++I)
+      Claims.push_back(&Matches[I->second]);
+    if (const auto Settled = settle(Claims))
+      return Names.emplace(Address, Settled->Name).first;
+    return Names.end();
+  };
 
   // Extend only the latest supported frontier. All rounds validate their
   // outgoing constraints against the same original result, so descendants
@@ -1137,38 +1209,64 @@ void SignatureDB::applyCallerContextRound(
   // named by a preceding round is never a new request, including cycle edges.
   const size_t OriginalMatches = Matches.size();
   std::map<uint64_t, std::vector<size_t>> At;
-  for (size_t I = FirstParent; I < OriginalMatches; ++I) {
-    const auto Name = Names.find(Matches[I].Address);
+  auto AddParent = [&](size_t I) {
+    const auto Name = FindName(Matches[I].Address);
     if (Name != Names.end() &&
         (Matches[I].Name == Name->second ||
          llvm::is_contained(Matches[I].Aliases, Name->second)))
       At[Matches[I].Address].push_back(I);
+  };
+  // Revisit only ordinary parents that previously had ambiguous data-bearing
+  // requests. The frozen address index avoids another scan of old parents.
+  for (uint64_t Address : Revisit) {
+    auto I = llvm::lower_bound(
+        FrozenCandidates, Address,
+        [](const auto &Row, uint64_t VA) { return Row.first < VA; });
+    for (; I != FrozenCandidates.end() && I->first == Address; ++I)
+      if (I->second < FirstParent)
+        AddParent(I->second);
   }
+  for (size_t I = FirstParent; I < OriginalMatches; ++I)
+    AddParent(I);
+  // Short bodies need a separately established ordinary callee as well as
+  // their existing incoming or required-reference evidence. A short required
+  // root additionally needs an unpruned source refinement, not a pruned clause.
+  std::unordered_map<uint64_t, bool> ShortParents;
   for (auto It = At.begin(); It != At.end();) {
     bool Anchored = true;
+    bool Short = false, NeedsSource = false;
     for (size_t &I : It->second) {
       if (MatchModules[I] == NoModule) {
         Anchored = false;
         break;
       }
       const bool Incoming = I >= FrozenMatches && Matches[I].CallerConfirmed;
+      const bool Confirmed = I < FrozenMatches && Matches[I].Confirmed;
       I = MatchModules[I];
       const StoredModule &Mod = Modules[I];
-      if (((Mod.RequireReferences || Mod.RequireCaller) && !Incoming) ||
+      const bool Weak = SignatureMatcher::fixedByteCount(Mod) <
+                        SignatureMatcher::MinStatedBytes;
+      const bool Contextual = Confirmed && (Data || Weak);
+      if (((Mod.RequireReferences || Mod.RequireCaller) && !Incoming &&
+           !(Contextual && Mod.RequireReferences)) ||
           !SignatureMatcher::isFullyVerified(Mod) ||
-          SignatureMatcher::fixedByteCount(Mod) <
-              SignatureMatcher::MinStatedBytes ||
+          (Weak && !Incoming && !(Contextual && Mod.RequireReferences)) ||
           llvm::any_of(Mod.publicNames(), [&](const StoredName &Public) {
             return Public.Name == Names.at(It->first) && Public.Offset != 0;
           })) {
         Anchored = false;
         break;
       }
+      Short |= Weak;
+      NeedsSource |= Weak && !Incoming;
     }
-    if (Anchored)
+    if (Anchored) {
+      if (Short)
+        ShortParents.emplace(It->first, NeedsSource);
       ++It;
-    else
+    } else {
       It = At.erase(It);
+    }
   }
 
   // Old packs can omit newly supported address references. A source record
@@ -1181,8 +1279,9 @@ void SignatureDB::applyCallerContextRound(
     for (const auto &Candidate : Idx.callerModules(Modules, Name)) {
       const StoredModule &Mod = Modules[Candidate.Module];
       if (!Mod.RequireCaller ||
-          SignatureMatcher::fixedByteCount(Mod) <
-              SignatureMatcher::MinStatedBytes ||
+          (!ShortParents.contains(Address) &&
+           SignatureMatcher::fixedByteCount(Mod) <
+               SignatureMatcher::MinStatedBytes) ||
           llvm::any_of(Proposals, [&](size_t I) {
             return Modules[I].TotalLen != Mod.TotalLen;
           }))
@@ -1201,6 +1300,7 @@ void SignatureDB::applyCallerContextRound(
     uint32_t Offset;
   };
   std::vector<Support> Supports;
+  llvm::DenseSet<std::pair<uint64_t, uint32_t>> DataQueries;
   llvm::DenseMap<std::pair<uint64_t, size_t>, size_t> Tried;
   using Reference = std::pair<uint32_t, std::string_view>;
   auto ReferencesOf = [](const StoredModule &Mod) {
@@ -1259,6 +1359,99 @@ void SignatureDB::applyCallerContextRound(
     if (Extra != Refined.end())
       for (size_t I : Proposals)
         Constrain(References, ReferencesOf(Modules[I]), /*AllowMissing=*/true);
+    if (const auto Short = ShortParents.find(Address);
+        Short != ShortParents.end()) {
+      if (References.empty() || (Short->second && Extra == Refined.end()))
+        continue;
+      if (llvm::none_of(References, [&](const Reference &Ref) {
+            return !Idx.callerModules(Modules, Ref.second).empty();
+          }))
+        continue;
+      // The address index is shared with frozen settlement. Build it only
+      // when a short caller needs independent evidence; inspect body strength
+      // only at the actual target, rather than for every frozen candidate.
+      if (!FrozenBodies) {
+        FrozenBodies.emplace();
+        if (FrozenCandidates.empty()) {
+          FrozenCandidates.reserve(FrozenMatches);
+          for (size_t I = 0; I < FrozenMatches; ++I)
+            FrozenCandidates.emplace_back(Matches[I].Address, I);
+          llvm::sort(FrozenCandidates);
+        }
+      }
+      uint32_t ParentLength = 0;
+      for (size_t I : Proposals)
+        ParentLength = std::max(ParentLength, Modules[I].TotalLen);
+      bool Bound = false;
+      for (size_t R = 0; R < References.size();) {
+        size_t End = R + 1;
+        while (End < References.size() &&
+               References[End].first == References[R].first)
+          ++End;
+        const auto [Offset, Expected] = References[R];
+        const bool Single = End == R + 1;
+        R = End;
+        if (!Single)
+          continue;
+        const uint64_t Start = Img.Arch == Arch::ARM
+                                   ? Address & ~uint64_t(ThumbStateBit)
+                                   : Address;
+        const auto Target = branchTarget(Img, Start, Offset);
+        if (!Target || !Img.isCodeAddress(Target->Target))
+          continue;
+        const auto Name = FindName(Target->Target);
+        if (Name == Names.end() || Name->second != Expected)
+          continue;
+        auto [Body, Fresh] = FrozenBodies->try_emplace(Target->Target, 0);
+        if (Fresh) {
+          const auto Begin = llvm::lower_bound(
+              FrozenCandidates, Target->Target,
+              [](const auto &Row, uint64_t VA) { return Row.first < VA; });
+          llvm::SmallVector<const SigMatch *, 4> Claims;
+          auto End = Begin;
+          while (End != FrozenCandidates.end() && End->first == Target->Target)
+            Claims.push_back(&Matches[(End++)->second]);
+          const auto FrozenName = settle(Claims);
+          // New incoming names cannot disambiguate their old nominal rows
+          // and then reuse those rows as supposedly independent evidence.
+          if (!FrozenName || FrozenName->Name != Expected)
+            continue;
+          for (auto Row = Begin; Row != End; ++Row) {
+            const size_t I = Row->second;
+            const SigMatch &Match = Matches[I];
+            if (Match.Name != Expected &&
+                !llvm::is_contained(Match.Aliases, Expected))
+              continue;
+            if (MatchModules[I] == NoModule) {
+              Body->second = 0;
+              break;
+            }
+            const StoredModule &Mod = Modules[MatchModules[I]];
+            if (Mod.RequireCaller || Mod.RequireReferences ||
+                Match.CallerConfirmed ||
+                !SignatureMatcher::isFullyVerified(Mod) ||
+                SignatureMatcher::fixedByteCount(Mod) <
+                    SignatureMatcher::MinStatedBytes ||
+                llvm::any_of(Mod.publicNames(), [&](const StoredName &N) {
+                  return N.Name == Expected && N.Offset != 0;
+                })) {
+              Body->second = 0;
+              break;
+            }
+            Body->second = std::max(Body->second, Mod.TotalLen);
+          }
+        }
+        if (!Body->second)
+          continue;
+        if (Target->Target >= Address ? Target->Target - Address < ParentLength
+                                      : Address - Target->Target < Body->second)
+          continue;
+        Bound = true;
+        break;
+      }
+      if (!Bound)
+        continue;
+    }
     for (size_t R = 0; R < References.size();) {
       const uint32_t Offset = References[R].first;
       size_t End = R + 1;
@@ -1293,8 +1486,22 @@ void SignatureDB::applyCallerContextRound(
         continue;
       // Existing settled candidates already have a result. Do not duplicate
       // their work or modify the evidence used as a frozen anchor.
-      if (Names.contains(To->Target))
+      if (FindName(To->Target) != Names.end())
         continue;
+      if (DeferredCallers && !Data && Alternatives.size() > 1 &&
+          llvm::all_of(Proposals,
+                       [&](size_t I) {
+                         return !Modules[I].RequireCaller &&
+                                !Modules[I].RequireReferences;
+                       }) &&
+          llvm::any_of(Queries, [&](const auto &Query) {
+            return llvm::any_of(Query.second, [&](const auto &Candidate) {
+              return llvm::any_of(
+                  Modules[Candidate.Module].references(),
+                  [](const StoredName &Ref) { return Ref.IsData; });
+            });
+          }))
+        DataQueries.insert({Address, Offset});
       for (const auto &[Expected, Candidates] : Queries) {
         for (const auto &Candidate : Candidates) {
           const StoredModule &Mod = Modules[Candidate.Module];
@@ -1348,7 +1555,7 @@ void SignatureDB::applyCallerContextRound(
   // Validate incoming bodies' own references with the same resolver. Existing
   // candidates are frozen; new candidates cannot certify one another or feed
   // back into the caller that requested them.
-  checkReferences(Img, Entries, {}, FrozenMatches, OriginalMatches);
+  checkReferences(Img, Entries, {}, FrozenMatches, OriginalMatches, Data);
   llvm::DenseSet<uint64_t> ValidRefinements;
   llvm::DenseSet<CandidateKey> Viable;
   for (size_t I = OriginalMatches; I < Matches.size(); ++I)
@@ -1369,6 +1576,26 @@ void SignatureDB::applyCallerContextRound(
   llvm::sort(Supports, [](const Support &A, const Support &B) {
     return A.Candidate < B.Candidate;
   });
+  if (DeferredCallers && !DataQueries.empty())
+    for (const Support &Claim : Supports) {
+      const auto Site = std::pair{Claim.Parent, Claim.Offset};
+      const auto Names = SiteNames.find(Site);
+      if (Names == SiteNames.end() || !Names->second.empty() ||
+          !DataQueries.contains(Site) || !Viable.contains(Claim.Candidate))
+        continue;
+      const auto &[Address, Module] = Claim.Candidate;
+      for (const StoredName &Ref : Modules[Module].references()) {
+        if (!Ref.IsData)
+          continue;
+        auto Target = dataReferenceTarget(Img, Address, Ref.Offset,
+                                          Modules[Module].TotalLen);
+        if (Target && Ref.IsLocalData)
+          Target =
+              localDataReferenceBase(Img, *Target, *localDataAnchor(Ref.Name));
+        if (Target)
+          DeferredCallers->push_back({Claim.Parent, *Target});
+      }
+    }
   size_t Kept = OriginalMatches;
   for (size_t I = OriginalMatches; I < Matches.size(); ++I) {
     SigMatch &Match = Matches[I];
@@ -1473,6 +1700,12 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   std::vector<uint32_t> ConfirmedMetadata;
   llvm::DenseSet<size_t> ContradictedMetadata;
   llvm::DenseMap<uint64_t, std::optional<llvm::StringRef>> VTableTypes;
+  llvm::DenseMap<uint64_t, std::optional<coff_loader::ThrowInfoType>>
+      ThrowTypes;
+  auto ThrowTypeOf = [](llvm::StringRef Name) {
+    return Name.starts_with("_TI") ? coff_loader::throwInfoTypeName(Name)
+                                   : std::nullopt;
+  };
   std::vector<uint8_t> Unconfirmable;
   for (size_t I = First; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
@@ -1546,11 +1779,18 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         R = End;
         continue;
       }
-      std::optional<Branch> To = branchTarget(Img, Start, References[R].Offset);
+      const auto Alternatives = llvm::ArrayRef(References).slice(R, End - R);
+      const bool IsThrowInfo =
+          llvm::any_of(Alternatives, [&](const StoredName &Name) {
+            return ThrowTypeOf(Name.Name).has_value();
+          });
+      std::optional<Branch> To =
+          IsThrowInfo ? std::nullopt
+                      : branchTarget(Img, Start, References[R].Offset);
       // Taking a named function's address carries the same exact target
       // constraint as calling it. Metadata symbols retain their data-specific
       // checks and cannot turn a vftable or import slot into executable code.
-      if (!To &&
+      if (!To && !IsThrowInfo &&
           llvm::none_of(llvm::ArrayRef(References).slice(R, End - R),
                         [](const StoredName &Name) {
                           return llvm::StringRef(Name.Name).starts_with(
@@ -1570,6 +1810,29 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
         if (const std::optional<Branch> Next = thunkTarget(Img, *To))
           Where.Onward = Next->Target;
         Sites.push_back(std::move(Where));
+      } else if (IsThrowInfo) {
+        if (const auto Target =
+                addressReferenceTarget(Img, Start, References[R].Offset)) {
+          auto [At, Fresh] = ThrowTypes.try_emplace(*Target);
+          if (Fresh)
+            At->second = coff_loader::readThrowInfoType(Img, *Target);
+          if (At->second) {
+            bool Confirmed = false;
+            bool AllTypes = true;
+            for (const StoredName &Reference : Alternatives) {
+              const auto Type = ThrowTypeOf(Reference.Name);
+              AllTypes &= Type.has_value();
+              Confirmed |= Type && *Type == *At->second;
+            }
+            if (Confirmed) {
+              if (ConfirmedMetadata.empty())
+                ConfirmedMetadata.resize(Matches.size(), 0);
+              ++ConfirmedMetadata[I];
+            } else if (AllTypes) {
+              ContradictedMetadata.insert(I);
+            }
+          }
+        }
       } else if (llvm::any_of(llvm::ArrayRef(References).slice(R, End - R),
                               [](const StoredName &Name) {
                                 return llvm::StringRef(Name.Name).starts_with(

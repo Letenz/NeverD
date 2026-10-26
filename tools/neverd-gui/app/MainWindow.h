@@ -36,6 +36,7 @@ class PackageReviewDialog;
 }
 
 class ComparisonDialog;
+class LineageDialog;
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
@@ -78,7 +79,8 @@ public:
   /// Show the workbench, laying out its desktop first if nothing did yet.
   void showWorkbench();
   /// Before the workbench shows, the quick start greets alone and the
-  /// workbench follows the user's choice; closing it quits.
+  /// workbench follows the user's choice; closing it quits. Returns immediately
+  /// so minimizing never leaves an application-modal session running.
   void showQuickStart();
   /// Greet an empty startup on the next event-loop turn, unless opening a
   /// file takes precedence. No window-exposure or engine-ready event is needed.
@@ -405,6 +407,7 @@ private:
   QPointer<QDialog> LocalReferencesDialog;
   QPointer<web::PackageReviewDialog> packageReview_;
   QPointer<ComparisonDialog> comparison_;
+  QPointer<LineageDialog> lineage_;
   bool startupQuickStartPending_ = false;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;

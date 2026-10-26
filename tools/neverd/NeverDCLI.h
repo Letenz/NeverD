@@ -211,6 +211,7 @@ extern llvm::cl::SubCommand ExportCmd;
 extern llvm::cl::SubCommand BookmarksCmd;
 extern llvm::cl::SubCommand AnnotateCmd;
 extern llvm::cl::SubCommand DiffCmd;
+extern llvm::cl::SubCommand LineageCmd;
 extern llvm::cl::SubCommand CallGraphCmd;
 extern llvm::cl::SubCommand PathsCmd;
 extern llvm::cl::SubCommand CallTreeCmd;
@@ -513,6 +514,7 @@ extern llvm::cl::opt<unsigned> DiffOffset, DiffLimit, DiffRegionAnchor,
     DiffImpactSites, DiffImpactWitness, DiffChangesRows, DiffChangesCount,
     DiffEffectRecords, DiffValidationInstructions, DiffSourceInstructions;
 int runStructuralDiff();
+int runLineage();
 
 // Annotate.
 extern llvm::cl::opt<bool> AnnotateList;

@@ -656,7 +656,11 @@ bool NdOpEmulator::stepImpl(const LowOp &Op, llvm::ArrayRef<LowOp> Following) {
           Op.Inputs[kAddressMemoryWordOperand + 1].Offset);
       const auto Address = Instruction->controlIndependentAddress(
           readOperand(Base), readOperand(Index));
-      if (!Address)
+      // Without the original alignment controls, an ordered unaligned access
+      // may fault. Do not publish bytes or a result from the finite snapshot.
+      if (!Address ||
+          (isAArch64OrderedUnscaledMemoryEncoding(Instruction->Word) &&
+           *Address % Instruction->accessBytes()))
         return false;
       if (!Instruction->isLoad()) {
         const auto &Data = Op.Inputs[kAddressMemoryDataOperand + 1];

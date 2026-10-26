@@ -75,7 +75,18 @@ enum LibraryOperation {
   MessageCallback,
   MessageTarget,
   URLOpenConnection,
-  StringGetBytes
+  StringGetBytes,
+  UptimeMillis,
+  ElapsedRealtime,
+  ElapsedRealtimeNanos,
+  PropertyInt,
+  MapSize,
+  MapIsEmpty,
+  MapGet,
+  MapPut,
+  MapContainsKey,
+  MapRemove,
+  MapClear
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

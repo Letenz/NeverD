@@ -103,8 +103,8 @@ callers cannot start a chain without a complete ordinary root.
 Only requested executable entries without a settled candidate are eligible.
 An incoming candidate with complete coverage and the ordinary fixed-byte floor
 can extend a rooted chain. Each round visits only its new frontier, up to
-`MaxIncomingRounds` in `lib/sigs/ReferenceCheckLimits.def`; short bodies do not
-extend it. A previously named target cannot form a new edge back into the
+`MaxIncomingRounds` in `lib/sigs/ReferenceCheckLimits.def`. A short body needs
+the independent callee proof described below before it can extend the chain. A previously named target cannot form a new edge back into the
 chain, so unrooted cycles cannot bootstrap it. Every generation checks its own
 outgoing references with the same resolver against the frozen prior
 result from before incoming inference: contradictions reject it, and missing
@@ -115,7 +115,30 @@ validated incoming names at one target are retained as candidate aliases. Only
 names actually requested by those callers participate; matching bytes do not
 import additional nominal names from the source pattern. This adds suggestions, never
 independent identity evidence or automatic names.
+A short incoming body can also extend its rooted chain when every source
+variant agrees on a direct call or branch to a separately established ordinary
+callee. A short `!refs` root must already be confirmed and additionally have a
+complete `!caller` source refinement; independently pruned clauses cannot stand
+in for that source. The independent callee must have a settled exact linkage
+name, complete coverage, the ordinary fixed-byte floor and no overlapping body
+bytes with the parent. Ambiguous, partial, contextual and newly inferred callees
+cannot supply this proof. In particular, old nominal rows at an address resolved
+by an incoming round do not become independent evidence. Missing source fields
+and alternatives at the supporting site refuse the extension. The existing
+frozen outgoing validation and round budget still apply. An independent-body
+index is constructed only if a short request needs it, once per caller pass.
+No descendant can repair its parent's evidence or start an unrooted cycle.
+
 `neverd-sigmaker --caller-context` emits these records, including short bodies.
+Generation and matching share the canonical x64 LEA field check. When the
+preceding byte could be an instruction prefix, a bounded Capstone walk from
+the declared function entry must reach that complete LEA without overlapping
+instruction paths. Genuine prefixes, unsupported control, unreachable targets
+and exhausted budgets stay unknown. The prefix budget is owned by
+`MaxReferenceBoundaryBytes`; unrelated fields keep their existing fast path.
+Only the most recent decoded prefix is cached per thread, with exact byte
+comparison under that same budget. Reused image buffers cannot retain stale
+positive or negative results.
 The supplement builder requires exact raw source ownership and keeps distinct
 same-byte names separate; they are queries, not claims of byte uniqueness.
 When incoming context is loaded, the name index also reuses complete existing
@@ -134,6 +157,29 @@ appear in the results. Source references are intersected across raw versions,
 and supplement deduplication respects independently selected library packs.
 An ambiguous ordinary body does not cover an audited incoming-context record:
 the latter supplies the source ownership needed for a name-directed query.
+
+After the single frozen data pass, a newly confirmed data consumer may start
+a bounded incoming chain only with complete coverage and the ordinary
+fixed-byte floor. Its code references must still agree across every matching
+source variant. A complete `!caller` source refinement remains distinct from
+pruned `!refs` clauses, even when their union happens to list the same fields.
+The continuation reuses the existing name index and round limit; an early
+query check avoids settlement work for data consumers without relevant
+callees. Every round reads the same frozen data bindings and post-data
+candidates. Neither the parent nor any descendant can create another data
+binding or trigger another data pass. Short data getters without an independent ordinary callee cannot extend a chain,
+and all new names remain candidates rather than automatic identities.
+
+An ordinary caller's ambiguous request can also wait for these frozen data
+bindings. Only sites with multiple viable named alternatives and an explicit
+data operand are deferred. The existing caller must still meet the complete-body
+and fixed-byte rules, and all alternative bodies must be available. After the
+single data pass, the matcher revisits only those ordinary parents through the
+frozen address index, and only if an actual data operand acquired a binding.
+A missing binding or surviving ambiguity leaves the request
+unresolved. Neither a deferred child nor a subsequent descendant can establish
+data bindings, change its parent or initiate another retry. This also works when
+the loaded pack has data-bearing `!caller` records without global `!refs` hits.
 
 The `&offset name` extension explicitly describes an external-data operand in
 a complete `!refs` or `!caller` record. `neverd-sigmaker --data-references`
@@ -181,8 +227,8 @@ auxiliary, executable, split-section and out-of-bounds targets are refused.
 The anchor still requires its canonical zero-addend static-data operand.
 Runtime inverts the delta against frozen exact bindings with checked arithmetic
 and corresponding mapped-region bounds. Relative consumers never become
-bindings or authorize further inference. Raw counterclaims with missing or
-different reference kinds remain unresolved. The cache wire version is 8;
+bindings. Raw counterclaims with missing or different reference kinds remain
+unresolved. The cache wire version is 8;
 older cache entries are rebuilt from source patterns.
 
 Only complete ordinary candidates meeting the existing fixed-byte floor can
@@ -192,8 +238,8 @@ names/locations leave the binding unknown. The full memory operand must fit
 one readable nonexecuting mapping and, when present, one corresponding section;
 zero-filled storage is valid. A candidate cannot supply its own only anchor.
 After incoming inference, pending data candidates receive one validation pass
-against frozen bindings and candidates. They cannot confirm each other or
-extend a chain. This remains candidate evidence, never automatic naming or
+against frozen bindings and candidates. They cannot confirm each other; only
+the independently anchored caller rules above can extend their code references. This remains candidate evidence, never automatic naming or
 source-type identity. The data pass is skipped without pending hits and uses
 the indexed source-anchor names rather than another image scan. Only requested
 addresses and source anchors are grouped; frozen reference validation indexes
@@ -207,6 +253,27 @@ prevents its addition, while alternative names remain alternatives. The tool
 preserves bytes, names and existing fields, writes changed files separately,
 and records input/output hashes. Repeat `--name` to restrict a review to named
 records; evaluate the changed packs through the normal CLI before publication.
+Canonical x64 class/struct ThrowInfo references are also supported. Generation
+requires a zero-addend LEA relocation to an external data symbol; a defined
+source record must occupy read-only, non-executable storage. Matching validates
+the complete bounded image-relative graph and compares its exact type spelling,
+qualifiers and catchable count. Unknown flags, scalar/virtual-base layouts,
+overlapping or truncated records, malformed descriptors and invalid code
+pointers remain unknown. Ordinary descriptor cache storage may be writable;
+its spare word must be empty and every type descriptor must share a checked
+type-info vtable. No exception object size, function ABI or identity is inferred.
+The structural reference is the compiler's
+[MSVC exception metadata emission](https://github.com/NeverSight/llvm-project/blob/06788fb19109851e6a6b9f109a2b8027a606f0c6/clang/lib/CodeGen/MicrosoftCXXABI.cpp)
+and [linker name encoding](https://github.com/NeverSight/llvm-project/blob/06788fb19109851e6a6b9f109a2b8027a606f0c6/clang/lib/AST/MicrosoftMangle.cpp).
+`--caller-code` also permits missing code references in complete `!caller`
+records. The same raw-version intersection and kind checks apply; ordinary
+byte records and required-reference clauses do not gain function fields from
+this option. This can update an existing caller body without another record
+or byte-index entry.
+`--external-data` similarly adds missing external-data operands to complete
+contextual records. Every raw version must own the field with its external-data
+kind; absent, function-kind and source-local fields prevent the refinement.
+Alternative names and existing fields remain unchanged.
 
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,

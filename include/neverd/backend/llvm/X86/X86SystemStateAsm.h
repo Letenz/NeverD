@@ -11,6 +11,7 @@
 #ifndef NEVERD_BACKEND_LLVM_X86_X86SYSTEMSTATEASM_H
 #define NEVERD_BACKEND_LLVM_X86_X86SYSTEMSTATEASM_H
 
+#include "neverd/backend/llvm/X86/X86MemoryAddressAsm.h"
 #include "neverd/ir/intrinsics/X86/X86SystemState.h"
 
 #include <optional>
@@ -225,9 +226,9 @@ x86SystemStateAddressAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   default:
     return std::nullopt;
   }
-  // A fixed BX base is legal in both i386 address sizes and retains DS
-  // when no override is present. Narrow modifiers retain the actual address
-  // prefix in the fallback instead of relying on a numeric pointer cast.
+  // Preserve DS without taking a compiler-owned realignment or PIC base.
+  // Narrow modifiers retain the actual address prefix in the fallback instead
+  // of relying on a numeric pointer cast.
   auto &A = *Plan;
   const auto Offset = std::to_string(A.OutputBytes.size());
   const auto Base = AddressBits == WordBits ? "$" + Offset
@@ -236,11 +237,12 @@ x86SystemStateAddressAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
   A.Text = std::string(C.Mnemonic) + " " + Segment + "(" + Base + ")";
   if (Query)
     A.Text += ", $0\n\tsetz $1";
-  A.InputConstraints = {"{bx}"};
+  const auto *Constraint = x86MemoryAddressAsm(AddressBits).LLVMConstraint;
+  A.InputConstraints = {Constraint};
   A.Constraints.clear();
   for (const auto &Constraint : A.OutputConstraints)
     A.Constraints += Constraint + ",";
-  A.Constraints += "{bx},";
+  A.Constraints += std::string(Constraint) + ",";
   if (A.ChangesFlags)
     A.Constraints += "~{flags},";
   A.Constraints += "~{memory}";

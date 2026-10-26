@@ -322,6 +322,10 @@ memory-coordinate lanes. Arguments and memory enter nested direct calls and
 proven literal CALLX targets; converged returns supply r0 and memory effects.
 The shared transfer owns register clobbers and syscall effects. Callee-saved
 registers survive a return; automatic frames advance by the VM stride.
+Resolved syscalls depend on their five exposed host-ABI argument carriers;
+unexposed return, callee-saved and frame registers do not create new summary
+variants unless the function itself reads them. Unknown calls still depend on
+all registers and memory.
 
 Contextual joins retain complete sets of up to four register/stored-word
 alternatives. Transfers lift the canonical scalar operation over those sets;
@@ -330,6 +334,15 @@ absorbing and set overflow widens to unknown, never a truncated list. Multiple
 remaining CALLX values are reported separately and do not count as a unique
 proven target or authorize a single-callee effect summary. Ordinary block and
 Solana recovery retain the singleton must-analysis policy.
+
+The scalar transfer and raw interpreter share width-normalized wrapping ALU
+evaluation, including bitwise operations, masked shifts and multiplication.
+Only proven constants enter numeric folding. A proven register offset can
+advance a typed address through the same affine rule as an immediate offset;
+symbolic frame/input identities are never evaluated as numbers. Byte-moving
+syscalls can retain complete typed words within a proven copy range even when
+other source bytes are unknown. Partial words and the unknown bytes stay
+unknown; copied symbolic words never become literal VM addresses.
 
 A separate symbolic lane describes entry-register-relative return expressions
 and may-write intervals, including pointer spills through local scratch. Its
@@ -344,6 +357,20 @@ return expressions are instantiated before they can escape to a caller.
 Catalog return annotations do not override the configured host callback outcome;
 possible syscall continuations remain in the CFG.
 
+Replacement searches examine only the entry's live variants in creation order,
+including after reclamation. Their index is charged to the retained-state
+budget; historical stable IDs do not enlarge the four-variant limit.
+
+Full-width stores also produce entry-relative must-value postconditions. These
+are intersected at joins and composed through nested calls, then substituted
+using the actual caller's arguments before the canonical store transfer applies
+them. Distinct formal pointers may alias: partial writes, unknown writes and
+stores through another formal pointer invalidate the affected postconditions.
+This lets a generalized setter return a newly stored function pointer without
+reusing another caller's specialized scratch snapshot. Summary JSON reports
+`output_parameterized_words` and per-edge `applied_stored_values` separately
+from the conservative may-write intervals.
+
 Blocks join every remaining CFG predecessor, including the initial loop entry.
 A conditional successor is excluded only when every value alternative agrees
 on the outcome using the VM's normalized comparison semantics. Unknown or mixed
@@ -355,10 +382,22 @@ monotonic growth. Other caller inputs remain open.
 Only final replay of converged entries publishes evidence and dependencies.
 Solver-only summaries not referenced by a final edge or root may be reclaimed
 when a caller loop widens their inputs. Unrelated inputs within one root use the
-existing specialization limit instead of evicting and recomputing each other;
-pinned proofs are never evicted. When a later root needs a specialization,
+existing specialization limit instead of evicting and recomputing each other.
+When a later root supplies a different image-backed argument and all four
+retained variants repeat the same image argument, an old published dependency
+may be generalized only if its caller-visible return and memory transfer agree
+exactly with the completed generic summary. This currently requires unknown
+memory effects, no returned scratch/postcondition cells, the same scalar return
+alternatives and the same constant or unknown return origin. Any target facts
+in the dependency graph must also be covered by an independently published
+sibling. Complete target alternatives, roots and active caller graphs are not
+discarded. Image membership selects work; it does not prove a target or alias
+relationship. Old incoming edges record specialization-limit generalization,
+and `generalized_redundant_published_summaries` counts these replacements. The
+four-variant and resource budgets remain unchanged. Other pinned proofs stay
+live. When a later root needs a specialization,
 unused earlier parents and their unreferenced children can be reclaimed
-together. Published dependencies and the current root stay live; reusable
+together. Other published dependencies and the current root stay live; reusable
 completed inputs remain cached while no specialization needs their space.
 Function-call-free generic
 summaries with identical projected inputs are reused without losing input facts.
@@ -529,6 +568,18 @@ named register fields and shared memory helpers to bound frontend work. A
 memory error stops at the region's common post-step check before another
 instruction or callback can execute, including before a terminal overrun.
 Public host contracts and architectural register identities are unchanged.
+
+Partitioned Rust keeps saved registers, frame pointers, return PCs and depth
+in one private call-stack object. Shared call helpers record entry faults for
+the post-step check, and combine legacy dispatch with frame entry to avoid
+repeating error propagation in every arm. A legacy host fault stops before
+frame entry; a CALLX frame-entry fault stops before target validation. Saved
+state and frame limits follow the same software calling convention.
+
+The partitioned Rust loop advances the default PC once before dispatch, with
+an extra slot advance for LDDW. Branches, calls and returns replace that default;
+a region handoff retains the original dispatch PC. This removes a repeated
+fallthrough assignment from each ordinary arm while keeping every raw entry.
 
 The syscall database includes logging, memory, PDA, SHA-256/Keccak/Blake3,
 Poseidon, secp256k1, curve and alt-bn128 operations, big modular exponentiation,

@@ -247,8 +247,8 @@ def select(candidates: dict[str, builder.FoldResult],
         # Same-name variants across all source versions still constrain their
         # outgoing references. A field absent in any version is unknown; two
         # names at one field remain alternatives, never a chosen callee.
-        # An owned body is retained only when it adds a new unanimous field:
-        # this is queried metadata, not another globally scanned byte claim.
+        # An owned body must add a unanimous field or a distinct source/query
+        # role; it never adds another globally scanned byte claim.
         for line in lines:
             if not line.require_caller:
                 continue
@@ -269,7 +269,13 @@ def select(candidates: dict[str, builder.FoldResult],
                 not old.require_caller and not old.require_references for old in previous) and any(
                     builder.another_routine(line.names, other.names)
                     for other in source_by_key[line.key])
-            if not previous or adds_reference or ambiguous_ordinary:
+            # A pruned required clause is not a complete source declaration.
+            # An independently confirmed required parent needs an explicit
+            # caller refinement before its omitted code fields can be used.
+            required_parent_refinement = previous and all(
+                old.require_references for old in previous) and any(
+                    offset not in line.data_sites for offset, _ in line.refs)
+            if not previous or adds_reference or ambiguous_ordinary or required_parent_refinement:
                 selected[name].append(line)
         selected[name].sort(key=lambda line: line.text)
     return selected

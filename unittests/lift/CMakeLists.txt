@@ -107,6 +107,7 @@ add_neverd_unittest(NeverDMedDceTests
 add_neverd_unittest(NeverDFPParameterMaskTests
   core/FPParameterMaskTests.cpp
   core/MedCallingConvTests.cpp
+  core/MedCallingConvX86StackTests.cpp
   LINK_COMPONENTS Pipeline BackendLLVM BackendC)
 
 add_neverd_unittest(NeverDHighSwiftEmitterTests
@@ -189,8 +190,12 @@ add_neverd_unittest(NeverDNativeConstantStoresTests
   LINK_COMPONENTS Pipeline)
 
 add_neverd_unittest(NeverDMedEntryFrameTests
+  core/MedSSACallClobberTests.cpp
   core/MedSSAMultiRootTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
+add_neverd_unittest(NeverDMedVariadicTests
+  core/MedVariadicTests.cpp
+  LINK_COMPONENTS IRMed)
 add_neverd_unittest(NeverDExecutableCodeOwnerTests
   core/ExecutableCodeOwnerIndexTests.cpp
   LINK_COMPONENTS Pipeline)
@@ -357,6 +362,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SmcccCallTests.cpp
   core/RegisterPairCallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
+  core/MedSSACallClobberTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
   core/ObjCProtocolTests.cpp
@@ -463,6 +469,7 @@ add_neverd_unittest(NeverDLiftTests
   format/NativePointerRelocationBoundaryTests.cpp
   format/PointerRelocationBatchTests.cpp
   core/MedCallingConvTests.cpp
+  core/MedCallingConvX86StackTests.cpp
   core/FPParameterMaskTests.cpp
   core/MedDceImplicitSpTests.cpp
   core/MedCallLeftoversTests.cpp
@@ -730,6 +737,7 @@ add_neverd_unittest(NeverDX86VirtualizationTests
   LINK_COMPONENTS Decode Lift Loader)
 
 add_neverd_unittest(NeverDX86VirtualizationSourceTests
+  NO_PRETTY_VALUES
   x86_64/X86VirtualizationSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_compile_definitions(NeverDX86VirtualizationSourceTests PRIVATE
@@ -749,6 +757,7 @@ add_neverd_unittest(NeverDX86PortSourceTests
 
 add_neverd_unittest(NeverDX86CompressExpandSourceTests
   x86/X86CompressExpandSourceTests.cpp
+  x86/X86NativeMemoryCarrierTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 
 add_neverd_unittest(NeverDX86FourSourceSourceTests
@@ -800,9 +809,8 @@ target_include_directories(NeverDX86AMXStateTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
-# Pins the LLVM boundary independently from concrete AMX emulation.  Until the
-# versioned runtime owns tile state, restartable strided memory and fault
-# continuation, every exact AMX MedIR shape must fail before emitting effects.
+# Pins the LLVM boundary independently from concrete AMX emulation: legacy
+# value transfers remain guarded; native bank operations retain exact shapes.
 add_neverd_unittest(NeverDX86AMXLLVMGuardTests
   x86_64/X86_64_AMXLLVMGuardTests.cpp
 
@@ -813,6 +821,16 @@ add_neverd_unittest(NeverDX86AMXLLVMGuardTests
 )
 
 target_include_directories(NeverDX86AMXLLVMGuardTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
+add_neverd_unittest(NeverDX86AMXAddressTests
+  x86_64/X86AMXAddressTests.cpp
+
+  LINK_COMPONENTS BackendLLVM BackendC Decode Lift Loader
+)
+target_include_directories(NeverDX86AMXAddressTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )

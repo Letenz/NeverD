@@ -16,6 +16,25 @@ from scripts.check_python_plugin_sdk import (
 
 
 class ABIInventoryTests(unittest.TestCase):
+    def test_byte_patch_snapshot_preserves_native_pointer_and_frozen_layout(self) -> None:
+        from neverd_plugin import abi
+
+        acquire = abi.FUNCTION_SPECS["neverd_byte_patches_snapshot_v1"]
+        free = abi.FUNCTION_SPECS["neverd_byte_patch_snapshot_free_v1"]
+        pointer = ctypes.POINTER(abi.NeverDBytePatchSnapshotV1)
+        self.assertIs(acquire.ownership, abi.Ownership.OWNED_OBJECT)
+        self.assertIs(acquire.restype, pointer)
+        self.assertEqual(free.argtypes, (pointer,))
+        self.assertIsNone(free.restype)
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            self.assertEqual(ctypes.sizeof(abi.NeverDBytePatchRowV1), 48)
+            self.assertEqual(ctypes.sizeof(abi.NeverDBytePatchSnapshotV1), 16)
+            for field, offset in (("file_offset", 0), ("address", 8),
+                                  ("size", 16), ("original", 24),
+                                  ("current", 32), ("kind", 40)):
+                self.assertEqual(getattr(abi.NeverDBytePatchRowV1, field).offset,
+                                 offset)
+
     def test_execution_keeps_fixed_handles_layout_buffers_and_owned_reports(self) -> None:
         from neverd_plugin import abi
 

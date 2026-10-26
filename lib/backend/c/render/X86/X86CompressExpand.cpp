@@ -49,12 +49,16 @@ std::string expression(const X86CompactPlan &P,
                        V + ", " +
                        (P.Expand ? std::to_string(P.Zero) + ", " : "") +
                        std::to_string(P.Prefix) + ")";
-  const auto Segment = P.Prefix ? "%%" + P.segment() + ":" : "";
+  const auto Segment = P.hasSegmentPrefix() ? "%%" + P.segment() + ":" : "";
   // GNU assembly alternatives support both -masm=att and -masm=intel.
   const auto Mask = P.Expand ? "2" : "1";
-  const auto AttMem = Segment + (P.Expand ? "(%1)" : "(%0)");
-  const auto IntelMem =
-      (P.Prefix ? P.segment() + ":" : "") + (P.Expand ? "[%1]" : "[%0]");
+  const auto AttMem = Segment + (P.stackReference() ? "(%%rbp,%%rdx)"
+                                 : P.Expand         ? "(%1)"
+                                                    : "(%0)");
+  const auto IntelMem = (P.hasSegmentPrefix() ? P.segment() + ":" : "") +
+                        (P.stackReference() ? "[rbp+rdx]"
+                         : P.Expand         ? "[%1]"
+                                            : "[%0]");
   const auto Suffix = " %{%" + std::string(Mask) + "%}";
   const auto Att = P.Expand
                        ? AttMem + ", %0" + Suffix + (P.Zero ? " %{z%}" : "")
@@ -62,16 +66,24 @@ std::string expression(const X86CompactPlan &P,
   const auto Intel =
       P.Expand ? "%0" + Suffix + (P.Zero ? " %{z%}" : "") + ", " + IntelMem
                : IntelMem + Suffix + ", %2";
-  std::string Fallback = "__asm__ __volatile__(\"" + P.mnemonic() + " {" + Att +
-                         "|" + Intel + "}\" : ";
+  const auto Setup = P.stackReference()
+                         ? std::string("mov{q %q") + (P.Expand ? "1" : "0") +
+                               ", %%rdx| rdx, %q" + (P.Expand ? "1" : "0") +
+                               "}\\n\\tsub{q %%rbp, %%rdx| rdx, rbp}\\n\\t"
+                         : "";
+  std::string Fallback = "__asm__ __volatile__(\"" + Setup + P.mnemonic() +
+                         " {" + Att + "|" + Intel + "}\" : ";
   if (P.Expand)
     Fallback += "\"+v\"(" + V + ")";
-  Fallback += " : \"b\"(" + Address + "), \"Yk\"((uint" +
+  Fallback += " : \"a\"(" + Address + "), \"Yk\"((uint" +
               std::to_string(P.maskBits()) + "_t)(" + Args[1] + "))";
   if (!P.Expand)
     Fallback += ", \"v\"(" + V + ")";
-  Fallback += " : \"memory\")";
-  Text += "NEVERD_X86_COMPACT(" + Native + ", " + Fallback + "); ";
+  Fallback += std::string(" : \"memory\"") +
+              (P.stackReference() ? ", \"rdx\", \"cc\"" : "") + ")";
+  Text += std::string(P.stackReference() ? "NEVERD_X86_COMPACT_STACK("
+                                         : "NEVERD_X86_COMPACT(") +
+          Native + ", " + Fallback + "); ";
   if (P.Expand && Live)
     Text += Type + " " + Output + "; __builtin_memcpy(&" + Output + ", &" + V +
             ", " + std::to_string(P.Bytes) + "); " + Output + "; ";
@@ -114,9 +126,10 @@ X86CompactPlan x86CompactHighPlan(Arch A, const HighExpr &E) {
     throw std::invalid_argument(X86CompactMalformed);
   const auto C = *x86CompactControl(E.IntrinsicId, *S.Control);
   const unsigned Prefix =
-      E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
-      : E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
-                                                            : 0;
+      (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS   ? 0x64
+       : E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS ? 0x65
+                                                             : 0) |
+      (C.StackReference ? X86NativeStackReference : 0);
   return *x86CompactPlan(E.IntrinsicId == Intrinsic::EVEXExpandLoad, S.Sizes[2],
                          C.Kind, C.Zero, Prefix);
 }
@@ -154,7 +167,9 @@ std::optional<X86CompactPlan> x86CompactCallPlan(Arch A,
       throw std::invalid_argument(X86CompactMalformed);
     P = x86CompactPlan(Expand, Bytes, Kind, Zero, Prefix);
     if (!P || Asm->getAsmString() != P->assembly() ||
-        Asm->getConstraintString() != P->constraints() ||
+        (Asm->getConstraintString() != P->constraints() &&
+         (P->stackReference() ||
+          Asm->getConstraintString() != P->constraints(true))) ||
         !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
         Asm->getDialect() != llvm::InlineAsm::AD_ATT || Call.arg_size() != 3 ||
         Call.getFunctionType() != Asm->getFunctionType())
@@ -164,6 +179,7 @@ std::optional<X86CompactPlan> x86CompactCallPlan(Arch A,
   auto *V = llvm::FixedVectorType::get(
       llvm::Type::getInt32Ty(Call.getContext()), P->Bytes / 4);
   if ((A != Arch::X64 && A != Arch::X86) ||
+      (P->stackReference() && A != Arch::X64) ||
       Call.getFunctionType()->isVarArg() || Call.getNumOperandBundles() ||
       Call.doesNotReturn() || Call.hasFnAttr(llvm::Attribute::NoSync) ||
       Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||

@@ -29,19 +29,21 @@
 #include <stdexcept>
 using namespace neverd;
 namespace {
-std::vector<X86CompactPlan> plans() {
+std::vector<X86CompactPlan> plans(Arch A = Arch::X64) {
   std::vector<X86CompactPlan> R;
   for (unsigned Bytes : {16u, 32u, 64u})
     for (unsigned Kind = 0; Kind < 6; ++Kind)
-      for (unsigned Prefix : {0u, 0x64u, 0x65u})
-        for (unsigned Mode = 0; Mode < 3; ++Mode)
-          R.push_back(
-              *x86CompactPlan(Mode != 0, Bytes, Kind, Mode == 2, Prefix));
+      for (unsigned Prefix : {0u, 0x64u, 0x65u, X86NativeStackReference})
+        if (A != Arch::X86 || !x86NativeMemoryIsStack(Prefix))
+          for (unsigned Mode = 0; Mode < 3; ++Mode)
+            R.push_back(
+                *x86CompactPlan(Mode != 0, Bytes, Kind, Mode == 2, Prefix));
   return R;
 }
 unsigned control(const X86CompactPlan &P) {
   return P.elementBytes() | (P.Kind >= 4 ? X86CompactFloat : 0) |
-         (P.Zero ? X86CompactZero : 0);
+         (P.Zero ? X86CompactZero : 0) |
+         (P.stackReference() ? X86CompactStackReference : 0);
 }
 Intrinsic id(const X86CompactPlan &P) {
   return P.Expand ? Intrinsic::EVEXExpandLoad : Intrinsic::EVEXCompressStore;
@@ -121,6 +123,29 @@ llvm::CallInst *call(llvm::IRBuilder<> &B, llvm::Module &M,
       llvm::InlineAsm::get(T, P.assembly(), P.constraints(), true),
       {Address, B.CreateZExtOrTrunc(Mask, B.getIntNTy(P.maskBits())), Data});
 }
+TEST(X86CompressExpandSource, StackControlsRequire64BitDefaultMemory) {
+  for (unsigned Control : {0x164u, 0x165u, 0x200u})
+    EXPECT_FALSE(x86CompactPlan(true, 16, 2, 0, Control));
+  for (const auto &P : plans()) {
+    if (!P.stackReference())
+      continue;
+    auto F = med(P);
+    auto E = high(P);
+    EXPECT_THROW(x86CompactHighPlan(Arch::X86, *E), std::invalid_argument);
+    llvm::LLVMContext C;
+    EXPECT_THROW(MedLLVMEmitter().emit({F}, C, "wrong-mode", Arch::X86),
+                 std::invalid_argument);
+    for (auto Space :
+         {NdMemoryAddressSpace::X86FS, NdMemoryAddressSpace::X86GS}) {
+      F.Blocks[0].Ops[0].MemoryAddressSpace = Space;
+      E->MemoryAddressSpace = Space;
+      EXPECT_THROW(x86CompactHighPlan(Arch::X64, *E), std::invalid_argument);
+      EXPECT_THROW(MedLLVMEmitter().emit({F}, C, "wrong-segment", Arch::X64),
+                   std::invalid_argument);
+    }
+  }
+}
+
 TEST(X86CompressExpandSource, MedAndSourceShareCheckedControls) {
   for (const auto &P : plans()) {
     llvm::LLVMContext C;
@@ -368,7 +393,7 @@ TEST(X86CompressExpandSource, ExportsNativeAndCompatibleWrappers) {
     std::string High =
         "#include <stdint.h>\n" + std::string(X86CompactCompilerDispatch);
     unsigned Index = 0;
-    for (const auto &P : plans()) {
+    for (const auto &P : plans(A)) {
       const auto Name = "compact_" + std::to_string(Index++);
       llvm::IRBuilder<> B(C);
       auto *F = llvm::Function::Create(
@@ -386,7 +411,9 @@ TEST(X86CompressExpandSource, ExportsNativeAndCompatibleWrappers) {
       B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", F));
       auto *V = llvm::FixedVectorType::get(B.getInt32Ty(), P.Bytes / 4);
       auto *Data = B.CreateAlignedLoad(V, F->getArg(2), llvm::Align(1));
-      const bool Native = llvm::Intrinsic::lookupIntrinsicID(P.llvmName());
+      const bool Native =
+          llvm::Intrinsic::lookupIntrinsicID(P.llvmName()) &&
+          (!P.stackReference() || x86NativeStackMemoryIsAvailable());
       auto *R = call(B, M, P, F->getArg(0), F->getArg(1), Data, Native);
       if (P.Expand)
         B.CreateAlignedStore(R, F->getArg(3), llvm::Align(1));
@@ -452,21 +479,28 @@ TEST(X86CompressExpandSource, PipelineRetainsOriginalOpcodeFamily) {
     // Supply the address, mask and vector through ordinary SysV pointer/
     // integer arguments. A naked instruction using entry RAX/K2 would have
     // unknown inputs, so successful assembly alone would not qualify its C.
-    std::vector<uint8_t> Bytes = {0x62,
-                                  0xf2,
-                                  uint8_t(P.Kind & 1 ? 0xfd : 0x7d),
-                                  uint8_t(0x0a |
-                                          (P.Bytes == 16   ? 0
-                                           : P.Bytes == 32 ? 0x20
-                                                           : 0x40) |
-                                          (P.Zero ? 0x80 : 0)),
-                                  Opcode,
-                                  uint8_t(P.Expand ? 0x08 : 0x18),
-                                  0xc3};
-    if (P.Prefix)
-      Bytes.insert(Bytes.begin(), P.Prefix);
+    std::vector<uint8_t> Bytes = {
+        0x62,
+        0xf2,
+        uint8_t(P.Kind & 1 ? 0xfd : 0x7d),
+        uint8_t(0x0a |
+                (P.Bytes == 16   ? 0
+                 : P.Bytes == 32 ? 0x20
+                                 : 0x40) |
+                (P.Zero ? 0x80 : 0)),
+        Opcode,
+        uint8_t((P.Expand ? 0x08 : 0x18) | (P.stackReference() ? 0x45 : 0)),
+        0xc3};
+    if (P.stackReference())
+      Bytes.insert(Bytes.end() - 1, 0); // RBP + disp8(0).
+    if (P.hasSegmentPrefix())
+      Bytes.insert(Bytes.begin(), x86NativeMemoryPrefix(P.Prefix));
     std::vector<uint8_t> Setup = {0x48, 0x89, 0xf8,        // mov rax,rdi
                                   0xc5, 0xf8, 0x92, 0xd6}; // kmovw k2,esi
+    if (P.stackReference()) {
+      // Preserve RBP and retain the known RAX return of the ordinary fixture.
+      Setup.insert(Setup.begin(), {0x55, 0x48, 0x89, 0xfd});
+    }
     const std::vector<uint8_t> Load =
         P.Bytes == 64 ? std::vector<uint8_t>{0x62, 0xf1, 0xfe, 0x48, 0x6f}
                       : std::vector<uint8_t>{
@@ -480,6 +514,8 @@ TEST(X86CompressExpandSource, PipelineRetainsOriginalOpcodeFamily) {
       Store.push_back(0x09); // vmovdqu[64] [rcx],xmm/ymm/zmm1
       Bytes.insert(Bytes.end() - 1, Store.begin(), Store.end());
     }
+    if (P.stackReference())
+      Bytes.insert(Bytes.end() - 1, 0x5d); // pop rbp.
     BinaryImage Image;
     Image.Arch = Arch::X64;
     Image.Bits = Bitness::Bits64;
@@ -534,6 +570,6 @@ TEST(X86CompressExpandSource, PipelineRetainsOriginalOpcodeFamily) {
     }
     ++Index;
   }
-  EXPECT_EQ(Index, 162u);
+  EXPECT_EQ(Index, 216u);
 }
 } // namespace

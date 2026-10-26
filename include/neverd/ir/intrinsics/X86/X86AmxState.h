@@ -67,15 +67,21 @@ inline constexpr std::array<const char *, unsigned(X86AmxOp::Count)>
         "tcmmrlfp16ps",    "tdpbf8ps",        "tdpbhf8ps",     "tdphbf8ps",
         "tdphf8ps",        "tmmultf32ps",     "tilemovrow",    "tcvtrowd2ps",
         "tcvtrowps2bf16h", "tcvtrowps2bf16l", "tcvtrowps2phh", "tcvtrowps2phl"};
-// Version 1: op [4:0], tile [7:5], left [10:8], right [13:11],
-// addr32 [14], row imm8 [15], APX memory [16], extended row GPR [17], SS [18].
-inline constexpr uint32_t X86AmxStateVersion = 1u << 24;
+// Version 2 separates the explicit SS prefix [18] from the original
+// stack-default address [19]. Version 1 conflated them and also lost the
+// stack default under a DS override; its unsegmented addr64 memory is
+// ambiguous. op [4:0], tile [7:5], left [10:8], right [13:11], addr32 [14], row
+// imm8 [15], APX memory [16], extended row GPR [17].
+inline constexpr uint32_t X86AmxLegacyStateVersion = 1u << 24;
+inline constexpr uint32_t X86AmxStateVersion = 2u << 24;
+inline constexpr uint32_t X86AmxVersionMask = 0xffu << 24;
 inline constexpr uint32_t X86AmxAddress32 = 1u << 14;
 inline constexpr uint32_t X86AmxImmediateRow = 1u << 15;
 inline constexpr uint32_t X86AmxEvexMemory = 1u << 16;
 inline constexpr uint32_t X86AmxExtendedRow = 1u << 17;
 inline constexpr uint32_t X86AmxStackSegment = 1u << 18;
-inline constexpr uint32_t X86AmxDescriptorMask = X86AmxStateVersion | 0x7ffff;
+inline constexpr uint32_t X86AmxStackReference = 1u << 19;
+inline constexpr uint32_t X86AmxDescriptorMask = X86AmxVersionMask | 0xfffff;
 inline constexpr uint16_t X86AmxRowBytes = 64;
 
 constexpr X86AmxOp x86AmxOperation(uint32_t D) { return X86AmxOp(D & 31); }
@@ -97,10 +103,15 @@ constexpr bool x86AmxIsMemory(X86AmxOp K) {
 }
 constexpr bool x86AmxDescriptorIsValid(uint32_t D) {
   const auto K = x86AmxOperation(D);
-  if ((D & ~X86AmxDescriptorMask) || !(D & X86AmxStateVersion) ||
+  const auto Version = D & X86AmxVersionMask;
+  if ((D & ~X86AmxDescriptorMask) ||
+      (Version != X86AmxStateVersion && Version != X86AmxLegacyStateVersion) ||
+      ((D & X86AmxStackReference) &&
+       (Version != X86AmxStateVersion || (D & X86AmxAddress32))) ||
       K >= X86AmxOp::Count ||
       (!x86AmxIsMemory(K) &&
-       (D & (X86AmxAddress32 | X86AmxEvexMemory | X86AmxStackSegment))) ||
+       (D & (X86AmxAddress32 | X86AmxEvexMemory | X86AmxStackSegment |
+             X86AmxStackReference))) ||
       (!x86AmxIsRow(K) && (D & (X86AmxImmediateRow | X86AmxExtendedRow))) ||
       ((D & X86AmxExtendedRow) && (D & X86AmxImmediateRow)))
     return false;
@@ -113,6 +124,22 @@ constexpr bool x86AmxDescriptorIsValid(uint32_t D) {
   return (K != X86AmxOp::LoadConfig && K != X86AmxOp::StoreConfig &&
           K != X86AmxOp::Release) ||
          !x86AmxTile(D);
+}
+
+constexpr bool x86AmxAddressIsValid(uint32_t D, NdMemoryAddressSpace Space) {
+  if (!isKnownMemoryAddressSpace(Space))
+    return false;
+  if (!x86AmxIsMemory(x86AmxOperation(D)))
+    return Space == NdMemoryAddressSpace::Default;
+  if ((D & (X86AmxStackSegment | X86AmxStackReference)) &&
+      Space != NdMemoryAddressSpace::Default)
+    return false;
+  if ((D & X86AmxVersionMask) == X86AmxLegacyStateVersion &&
+      !(D & X86AmxAddress32) && Space == NdMemoryAddressSpace::Default)
+    return false;
+  // Tile rows consume the SIB index as a stride. The config-address lowering
+  // cannot use that same register for an offset relative to the host frame.
+  return !(D & X86AmxStackReference) || !x86AmxIsTileMemory(x86AmxOperation(D));
 }
 
 struct X86AmxShape {
@@ -133,10 +160,7 @@ constexpr bool x86AmxShapeIsValid(const X86AmxShape &S) {
   if (!S.ValidId || !S.Descriptor || !x86AmxDescriptorIsValid(*S.Descriptor) ||
       (S.TargetArch != Arch::Unknown && S.TargetArch != Arch::X64) ||
       S.MemoryOrdering != NdMemoryOrdering::None ||
-      !isKnownMemoryAddressSpace(S.MemoryAddressSpace))
-    return false;
-  if ((*S.Descriptor & X86AmxStackSegment) &&
-      S.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      !x86AmxAddressIsValid(*S.Descriptor, S.MemoryAddressSpace))
     return false;
   const auto K = x86AmxOperation(*S.Descriptor);
   const bool Row = x86AmxIsRow(K), Memory = x86AmxIsMemory(K);

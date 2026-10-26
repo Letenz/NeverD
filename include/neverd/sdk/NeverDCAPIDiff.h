@@ -95,7 +95,11 @@ NEVERD_API int neverd_comparison_restore_json_with_progress(
 /// The returned ambiguity object identifies that source and explains the group;
 /// these candidates are hypotheses, not accepted matches. Search/sort/paging
 /// apply to the target side as usual. Addresses are hexadecimal strings.
-/// Unknown options, missing source entries and out-of-range pages fail.
+/// Function projections use name for the captured display name and
+/// evidence_name for the extracted matching name. Search accepts both; name
+/// sorting uses the display name. Display annotations do not change snapshot or
+/// report identity. Unknown options, missing source entries and out-of-range
+/// pages fail.
 NEVERD_API const char *
 neverd_comparison_functions_json(neverd_comparison_t Comparison,
                                  const char *Query);

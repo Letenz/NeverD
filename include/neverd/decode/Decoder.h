@@ -6,8 +6,8 @@
 ///
 /// \file
 /// Declares the Decoder class that wraps Capstone for instruction decoding
-/// and lifting to LowIR, and the UnliftedInstruction exception for strict
-/// mode failures.
+/// and lifting to LowIR, and the UnliftedInstruction exception for explicit
+/// semantic refusal.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -36,8 +36,8 @@ class X86Lifter;
 class ARMLifter;
 class AArch64Lifter;
 
-/// Thrown by Decoder::liftToLow when strict mode is enabled and an
-/// instruction has no lifter.
+/// Thrown when the selected architecture cannot lift an instruction.
+/// x86 refuses unsupported instructions in both strict and permissive modes.
 class UnliftedInstruction : public std::runtime_error {
 public:
   UnliftedInstruction(va_t Addr, const char *Mnem, const char *Ops)

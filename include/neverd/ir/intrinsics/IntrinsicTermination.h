@@ -33,11 +33,14 @@ inline bool intrinsicNeverReturns(Intrinsic Id,
     return true;
   case Intrinsic::IntN:
     return Operand && isX86NoReturnInterrupt(*Operand);
-  // x86 far and interrupt returns transfer control to an architectural frame
-  // and never resume in the lifted function.  This grants no source ABI or
-  // memory contract; it only records that control leaves here.
+  // x86 architectural returns (far, interrupt and syscall returns) transfer
+  // control to a named frame or register and never resume in the lifted
+  // function.  This grants no source ABI or memory contract; it only records
+  // that control leaves here.
   case Intrinsic::Retf:
   case Intrinsic::Iret:
+  case Intrinsic::Sysretq:
+  case Intrinsic::Sysexitq:
     return true;
   default:
     return false;

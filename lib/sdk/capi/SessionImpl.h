@@ -41,6 +41,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/FunctionNames.h"
 #include "neverd/loader/SymbolSpelling.h"
 #include "neverd/pass/Limits.h"
 #include "neverd/patch/PatchOverlay.h"
@@ -95,6 +96,8 @@ struct FuncInfo {
   /// Original identity is never overwritten by a display annotation or rename.
   std::string LinkageName;
   NameOrigin LinkageOrigin = NameOrigin::Stated;
+  /// Origin of OriginalNames after recognition, before an analyst's rename.
+  NameOrigin ResolvedOrigin = NameOrigin::Synthesized;
 
   bool operator==(const FuncInfo &) const = default;
 };
@@ -870,8 +873,8 @@ struct Session {
       const auto Rename = Renames.find(Entry);
       const bool Renamed = Rename != Renames.end();
       Functions.push_back({Entry, 0, Renamed ? Rename->second : Name,
-                           Renamed ? NameOrigin::User : NameOrigin::Analysis,
-                           Name, NameOrigin::Analysis});
+                           Renamed ? NameOrigin::User : NameOrigin::Synthesized,
+                           Name, NameOrigin::Synthesized});
       Added = true;
     }
     if (Added) {
@@ -892,6 +895,11 @@ struct Session {
     Known.reserve(Functions.size());
     for (const FuncInfo &F : Functions)
       Known.insert(F.Entry);
+    std::map<va_t, llvm::StringRef> NewNames;
+    for (const auto &[Entry, Name] : *DiscoveredFunctions)
+      if (!isDeletedFunction(Entry) && !Known.contains(Entry))
+        NewNames.try_emplace(Entry, Name);
+    const auto Origins = recoveredFunctionNameOrigins(Img, NewNames);
     bool Added = false;
     for (const auto &[Entry, Name] : *DiscoveredFunctions) {
       if (isDeletedFunction(Entry) || !Known.insert(Entry).second)
@@ -899,9 +907,9 @@ struct Session {
       OriginalNames.try_emplace(Entry, Name);
       const auto Rename = Renames.find(Entry);
       const bool Renamed = Rename != Renames.end();
+      const auto Origin = Origins.at(Entry);
       Functions.push_back({Entry, 0, Renamed ? Rename->second : Name,
-                           Renamed ? NameOrigin::User : NameOrigin::Analysis,
-                           Name, NameOrigin::Analysis});
+                           Renamed ? NameOrigin::User : Origin, Name, Origin});
       Added = true;
     }
     if (Added) {

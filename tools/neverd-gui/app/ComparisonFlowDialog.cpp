@@ -160,7 +160,7 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
             [this](const QString &Error) { SliceStatus->setText(Error); });
   connect(Functions, &ComparisonModel::pageReady, this, [this] {
     if (Functions->rowCount() && !FunctionTable->currentIndex().isValid())
-      FunctionTable->selectRow(0);
+      FunctionTable->setCurrentIndex(FunctionTable->model()->index(0, 0));
   });
   connect(FunctionTable->selectionModel(),
           &QItemSelectionModel::currentRowChanged, this,
@@ -224,7 +224,7 @@ ComparisonFlowDialog::ComparisonFlowDialog(ComparisonSession &S,
               "</qt>");
         }
         if (Nodes->rowCount() && !NodeTable->currentIndex().isValid())
-          NodeTable->selectRow(0);
+          NodeTable->setCurrentIndex(NodeTable->model()->index(0, 0));
         controls();
       });
   connect(NodeTable->selectionModel(), &QItemSelectionModel::currentRowChanged,

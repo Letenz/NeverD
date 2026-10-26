@@ -138,7 +138,10 @@ and last-opened time. Long names retain both ends; hovering shows the full path
 and time. Delete or its context menu forgets it. A file dragged over the dialog
 shows that a drop opens it. **Display at startup** decides whether the next
 start shows it again; **File → Quick start** shows it any time, over the
-workbench. Application settings restore the main window's position, size and
+workbench, restoring the existing Quick Start window if one is already open.
+Quick Start can be minimized and restored from the macOS Dock, and system Quit
+remains available while it is minimized.
+Application settings restore the main window's position, size and
 maximized state once at startup. Automatic desktop and project restoration
 arranges the panes within that window; it does not move, resize, show or
 unmaximize it. Detached panes keep their saved positions. **Windows → Load

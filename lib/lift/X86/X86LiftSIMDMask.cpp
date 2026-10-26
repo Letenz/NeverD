@@ -222,11 +222,14 @@ bool liftEvexCompressExpandRegister(X86Lifter &L, X86Lifter::LiftState &S,
         return false;
     const NdMemoryAddressSpace AddressSpace =
         X86Lifter::LiftState::memoryAddressSpace(MemoryOperand);
-    if (!x86NativeDsAddressIsValid(L.targetArch(), X86, MemoryOperand))
+    if (!x86NativeSibAddressIsValid(L.targetArch(), X86, MemoryOperand))
       return false;
     const NdVar Address = S.computeEA(MemoryOperand);
     const unsigned Kind =
-        (Opcode == 0x88 || Opcode == 0x8a) ? X86CompactFloat : 0;
+        ((Opcode == 0x88 || Opcode == 0x8a) ? X86CompactFloat : 0) |
+        (x86NativeAddressIsStack(L.targetArch(), X86, MemoryOperand)
+             ? X86CompactStackReference
+             : 0);
     if (Compress) {
       const NdVar Source = L.operandRead(S, VectorOperand);
       S.emitIntrinsic(

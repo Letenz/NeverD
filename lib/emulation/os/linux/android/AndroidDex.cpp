@@ -9,6 +9,7 @@
 #include "../kernel/LinuxTime.h"
 #include "AndroidInternal.h"
 
+#include "neverd/dalvik/AndroidProperties.h"
 #include "neverd/dalvik/Runtime.h"
 #include "neverd/emulation/Limits.h"
 
@@ -96,8 +97,8 @@ llvm::Error Bionic::initializeDex() {
       if (mobile::dalvik::platformClass(Name) || JNI.Dex->containsClass(Type))
         return failure("JNI class lookup failure shadows a known class");
     }
-    mobile::dalvik::RuntimeServices Services;
-    Services.uptime_milliseconds = [this] {
+    auto ReadClock = [this](int32_t ID, uint64_t Divisor,
+                            const char *RangeError) {
       using mobile::dalvik::ExecutionResult;
       using mobile::dalvik::ExecutionStop;
       // Native and modeled Java work use the same cumulative clock owner.
@@ -105,21 +106,44 @@ llvm::Error Bionic::initializeDex() {
       if (!Kernel.clock().accountInstructions(Budget.instructions(), Result))
         return ExecutionResult{
             ExecutionStop::Unsupported, 0, {}, Result.Diagnostic};
-      auto Now = Kernel.clock().read(linux_model::ClockMonotonic, Result);
+      auto Now = Kernel.clock().read(ID, Result);
       if (!Now)
         return ExecutionResult{
             ExecutionStop::Unsupported, 0, {}, Result.Diagnostic};
-      // API 28 systemTime uses signed nanoseconds before converting to ms.
+      // Both API 28 clock paths use signed nanoseconds before conversion.
       if (Now->Seconds < 0 ||
           uint64_t(Now->Seconds) >
               (uint64_t(INT64_MAX) - Now->Nanoseconds) / 1000000000)
-        return ExecutionResult{ExecutionStop::Unsupported,
+        return ExecutionResult{ExecutionStop::Unsupported, 0, {}, RangeError};
+      return ExecutionResult{
+          ExecutionStop::Returned,
+          (uint64_t(Now->Seconds) * 1000000000 + Now->Nanoseconds) / Divisor};
+    };
+    mobile::dalvik::RuntimeServices Services;
+    Services.uptime_milliseconds = [ReadClock] {
+      return ReadClock(linux_model::ClockMonotonic, 1000000,
+                       "Android monotonic time exceeds its range");
+    };
+    Services.elapsed_realtime_nanoseconds = [ReadClock] {
+      return ReadClock(linux_model::ClockBootTime, 1,
+                       "Android boot time exceeds its range");
+    };
+    Services.property_integer = [this](std::string_view Key, int32_t Default) {
+      using mobile::dalvik::ExecutionResult;
+      using mobile::dalvik::ExecutionStop;
+      // Use the native record owner, including its guest mapping/integrity
+      // checks. A changed record must not fall back to the input dictionary.
+      auto Property = propertyNamed(llvm::StringRef(Key.data(), Key.size()));
+      if (!Property)
+        return ExecutionResult{ExecutionStop::Invalid,
                                0,
                                {},
-                               "Android monotonic time exceeds its range"};
+                               llvm::toString(Property.takeError())};
       return ExecutionResult{ExecutionStop::Returned,
-                             uint64_t(Now->Seconds) * 1000 +
-                                 Now->Nanoseconds / 1000000};
+                             uint32_t(*Property
+                                          ? mobile::dalvik::androidPropertyInt(
+                                                (*Property)->Value, Default)
+                                          : Default)};
     };
     JNI.DexRuntime = std::make_shared<mobile::dalvik::Runtime>(
         *JNI.Dex, JNI.Heap, Native.Application, std::move(Services));
