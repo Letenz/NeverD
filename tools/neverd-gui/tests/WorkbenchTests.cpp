@@ -10173,6 +10173,55 @@ private slots:
     QCOMPARE(disassembly->currentItem(), std::optional<Address>(Base + 0x52));
   }
 
+  void externalLinksPreserveWindowState_data() {
+    QTest::addColumn<bool>("maximized");
+    QTest::addColumn<bool>("minimized");
+    QTest::newRow("normal") << false << false;
+    QTest::newRow("maximized") << true << false;
+    QTest::newRow("normal-minimized") << false << true;
+    QTest::newRow("maximized-minimized") << true << true;
+  }
+
+  void externalLinksPreserveWindowState() {
+    QFETCH(bool, maximized);
+    QFETCH(bool, minimized);
+    Theme::instance().apply();
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    if (maximized)
+      bench.window->showMaximized();
+    bench.window->openFile(writeFixture(directory, "window-link.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    const auto state = maximized ? Qt::WindowMaximized : Qt::WindowNoState;
+    QTRY_COMPARE(bench.window->windowHandle()->windowState(), state);
+    const auto geometry = bench.window->geometry();
+    if (minimized) {
+      bench.window->showMinimized();
+      QTRY_VERIFY(bench.window->isMinimized());
+    }
+
+    QLocalSocket socket;
+    socket.connectToServer(bench.window->instanceServer().serverName());
+    QVERIFY(socket.waitForConnected(1000));
+    socket.write("{\"cmd\":\"open_link\",\"uri\":\"neverd:///"
+                 "window-link.bin/addresses?rva=0x52\"}\n");
+    QByteArray reply;
+    QTRY_VERIFY_WITH_TIMEOUT((reply += socket.readAll()).contains('\n'),
+                             OpenTimeoutMs);
+    const auto result =
+        QJsonDocument::fromJson(reply.left(reply.indexOf('\n'))).object();
+    QCOMPARE(result.value("status").toString(), QStringLiteral("ok"));
+    QTRY_VERIFY(!bench.window->isMinimized());
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    QCOMPARE(bench.window->isMaximized(), maximized);
+    QTRY_COMPARE(bench.window->windowHandle()->windowState(), state);
+    QCOMPARE(bench.window->geometry(), geometry);
+    QTRY_COMPARE(bench.window->disassembly()->currentItem(),
+                 std::optional<Address>(Base + 0x52));
+  }
+
   void otherProgramsFindTheWorkbenchAndOpenLinksInIt() {
     // As IDA 9.4's IPC server: get_info names the program, and open_link
     // opens a link in this window; hcli's requests, without a newline, are
