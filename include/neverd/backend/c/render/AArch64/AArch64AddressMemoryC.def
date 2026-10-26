@@ -50,9 +50,9 @@ NEVERD_A64_ADDRESS_MEMORY_C_TEXT(
                               "register uint64_t {0} __asm__(\"x17\") = {8}; "
                               "register uint64_t {1} __asm__(\"x16\") = {6}; "
                               "register uint64_t {2} __asm__(\"x15\") = {7}; "
-                              "__asm__ volatile(\"{11}\" : "
+                              "__asm__ volatile(\"{10}\" : "
                               ": \"r\"({1}), \"r\"({2}), \"i\"({5}), "
-                              "\"r\"({0}) : {12}); (void)0; })")
+                              "\"r\"({0}) : {11}); (void)0; })")
 
 NEVERD_A64_ADDRESS_MEMORY_C_TEXT(
     kAddressVectorToBitsC,

@@ -10,6 +10,44 @@ extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
 
+extern void *memchr(const void *, int, u64);
+__asm__(".type memchr, %function");
+extern void *__memchr_chk(const void *, int, u64, u64);
+__asm__(".type __memchr_chk, %function");
+
+u64 memory_search(const void *input, u64 character, u64 count, u64 extent,
+                  u64 checked, u64 route, u64 *error) {
+  void *(*plain)(const void *, int, u64) = memchr;
+  void *(*bounded)(const void *, int, u64, u64) = __memchr_chk;
+  if (route) {
+    void *library = dlopen("libmemory-search.so", 2);
+    if (!library)
+      return 97;
+    void *function = dlsym(library, checked ? "__memchr_chk" : "memchr");
+    if (!function)
+      return 96;
+    if (checked)
+      bounded = function;
+    else
+      plain = function;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  void *result = checked ? bounded(input, (int)character, count, extent)
+                         : plain(input, (int)character, count);
+  *error = (u64)*__errno();
+  return (u64)result;
+}
+
+u64 memory_search_readonly(void *page, const void *input, u64 character,
+                           u64 count, u64 extent, u64 checked) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return (u64)(checked ? __memchr_chk(input, (int)character, count, extent)
+                       : memchr(input, (int)character, count));
+}
+
 u64 search_sequence(u64 *out) {
   const char text[] = {'a', (char)0x80, ':', 'b', ':', (char)0xff, 0};
   *__errno() = 733;
@@ -117,6 +155,31 @@ u64 substring_dynamic(const char *text, const char *needle, u64 closed) {
 }
 
 extern u64 strspn(const char *, const char *);
+extern char *strpbrk(const char *, const char *);
+__asm__(".type strpbrk, %function");
+u64 member_search(const char *text, const char *accept, u64 route, u64 *error) {
+  char *(*find)(const char *, const char *) = strpbrk;
+  if (route) {
+    void *library = dlopen("libsearch.so", 2);
+    if (!library)
+      return 97;
+    find = dlsym(library, "strpbrk");
+    if (!find)
+      return 96;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  char *result = find(text, accept);
+  *error = (u64)*__errno();
+  return (u64)result;
+}
+u64 member_search_readonly(void *page, const char *text, const char *accept) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return (u64)strpbrk(text, accept);
+}
+
 u64 span_supplied(const char *text, const char *accept, unsigned *error) {
   *__errno() = 733;
   u64 result = strspn(text, accept);

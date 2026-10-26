@@ -16,9 +16,11 @@
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../../AArch64ImmediateMemoryBase.h"
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../render/X86/X86AtomicExchange.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
 #include "../render/X86/X86ScalarSystem.h"
@@ -41,6 +43,7 @@
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/intrinsics/X86/X86FourSource.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/loader/AArch64MemoryImage.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
@@ -292,10 +295,11 @@ std::string memoryPointerCast(llvm::StringRef Type, llvm::StringRef Address,
                  std::to_string(cMemoryAddressSpace(AddressSpace)) + ")))";
   // addrStr already emits `(uintptr_t)base + imm` for typed pointer offsets.
   // Another integer round-trip is `*(T *)(uintptr_t)((uintptr_t)p + 8)`.
-  // `&member` is already a typed object address; do not recast it.  An
-  // element of a byte backing (`&table[8]`) is a byte's address.
-  if (Address.starts_with("&") && !Address.contains('['))
-    return Address.str();
+  // A displayed member's address can point to a pointer, signed integer or
+  // floating object even when the machine operation accesses unsigned bits.
+  // Retain the operation's exact pointee type for atomic builtin operands.
+  if (Address.starts_with("&"))
+    return "(" + Qualified + " *)(" + Address.str() + ")";
   if (Address.contains("(uintptr_t)"))
     return "(" + Qualified + " *)(" + Address.str() + ")";
   return "(" + Qualified + " *)" + uintptrOf(Address);
@@ -497,6 +501,7 @@ void HighCWriter::prepareFunctionIdentifiers(
   // stems merge, as the MSVC rules want.
   std::map<std::string, std::vector<std::string>> SymbolsByStem;
   std::map<std::string, std::set<std::string>> SourcesBySymbol;
+  std::set<std::string> ImageHeaderSymbols;
   std::set<const HighExpr *> Calls;
   std::function<void(const ExprPtr &)> VisitCall = [&](const ExprPtr &Expr) {
     if (!Expr || !Calls.insert(Expr.get()).second)
@@ -513,8 +518,18 @@ void HighCWriter::prepareFunctionIdentifiers(
       return;
     const std::string Symbol =
         cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch).str();
-    auto &Symbols =
-        SymbolsByStem[canonicalizeCProjectionIdentifier(Symbol, "nd_function")];
+    std::string Stem = canonicalizeCProjectionIdentifier(Symbol, "nd_function");
+    // A callee omitted from this projection is still the image's own copy.
+    // Give its recovered declaration the same namespace protection as a
+    // definition, retaining the original symbol as its assembler link name.
+    if (Expr->CallAddr && copiesHeaderRoutine(Stem, Opts.Format) &&
+        isOwnFunctionName(SourceName, Funcs) && Opts.Image &&
+        !Opts.Image->findImportAt(Expr->CallAddr) &&
+        !Opts.Image->findImportStubAt(Expr->CallAddr)) {
+      Stem += "_" + llvm::utohexstr(Expr->CallAddr);
+      ImageHeaderSymbols.insert(Symbol);
+    }
+    auto &Symbols = SymbolsByStem[Stem];
     if (!llvm::is_contained(Symbols, Symbol))
       Symbols.push_back(Symbol);
     SourcesBySymbol[Symbol].insert(SourceName);
@@ -523,10 +538,14 @@ void HighCWriter::prepareFunctionIdentifiers(
     walkStmts(Func.Body,
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, VisitCall); });
   for (auto &[Stem, Symbols] : SymbolsByStem) {
-    if (Symbols.size() < 2 ||
-        llvm::none_of(Symbols, [](const std::string &Symbol) {
-          return identifierSpelledFromSymbol(Symbol) && !hasMsvcStem(Symbol);
-        }))
+    if (llvm::none_of(Symbols,
+                      [&](const std::string &Symbol) {
+                        return ImageHeaderSymbols.count(Symbol);
+                      }) &&
+        (Symbols.size() < 2 ||
+         llvm::none_of(Symbols, [](const std::string &Symbol) {
+           return identifierSpelledFromSymbol(Symbol) && !hasMsvcStem(Symbol);
+         })))
       continue;
     std::stable_partition(Symbols.begin(), Symbols.end(),
                           [](const std::string &Symbol) {
@@ -1138,6 +1157,9 @@ HighCWriter::atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic exchange requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
+  if (const auto Plan =
+          x86AtomicExchangePlan(Opts.TheArch, Ty->Size, AddressSpace))
+    return renderX86AtomicExchange(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +
@@ -1571,11 +1593,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           x86UsesGnuIntrinsicHeader(Ex.IntrinsicId))
         NeedsGnuX86Intrinsics = true;
-      // GCC's and Clang's CPUID is <cpuid.h>'s.
-      if (Opts.Format != BinaryFormat::COFF &&
-          (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+      if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
           Ex.IntrinsicId == Intrinsic::Cpuid)
-        NeedsGnuCpuid = true;
+        NeedsCpuid = true;
       const std::string SourceName = resolvedCallTarget(Ex);
       std::string Name = SourceName;
       if (!Name.empty()) {
@@ -1830,7 +1850,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("intrin.h");
   if (NeedsGnuX86Intrinsics)
     Headers.insert("x86intrin.h");
-  if (NeedsGnuCpuid)
+  if (NeedsCpuid && Opts.Format != BinaryFormat::COFF)
     Headers.insert("cpuid.h");
 
   // The headers declare what the unit's types and routines name as NeverD
@@ -1839,6 +1859,13 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     OS << "#define _GNU_SOURCE 1\n";
   for (auto &H : Headers)
     OS << "#include <" << H << ">\n";
+  // MinGW omits this declaration when Clang supplies the builtin, while
+  // Clang's intrin.h declares it only for _MSC_VER. A builtin still needs its
+  // prototype in C. Match the intrinsic's exact interface on either compiler.
+  if (NeedsCpuid && Opts.Format == BinaryFormat::COFF)
+    OS << "#ifndef __cpuidex\n"
+          "extern void __cpuidex(int[4], int, int);\n"
+          "#endif\n";
   IncludedHeaders = Headers;
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
@@ -2498,6 +2525,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // the import's address, declared by the name it links as.  A slot a call
   // goes through as well is already the function pointer the call declares.
   ImportDataSlotNames.clear();
+  ImportDataSlotTypes.clear();
   bool DeclaredDataSlot = false;
   for (va_t Slot : ImportDataSlotReads) {
     const std::string Symbol = importDataSlotIdentifier(Slot);
@@ -2511,7 +2539,20 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       }
     const std::string Identifier =
         GlobalIdentifierAllocator.allocateVerbatim(Symbol);
-    OS << "extern void *" << Identifier;
+    HighExpr Query;
+    Query.Kind = ExprKind::Call;
+    Query.CallAddr = Slot;
+    Query.CallTarget = "indirect";
+    Query.IsIndirectCall = true;
+    const auto Callee = debugCallee(Query);
+    const auto Function = Callee ? fixedCalleeFunctionType(*Callee) : nullptr;
+    if (Function) {
+      const auto Pointer = NdType::makePtr(Function);
+      OS << "extern " << declarationToC(Pointer, Identifier);
+      ImportDataSlotTypes.emplace(Slot, Pointer);
+    } else {
+      OS << "extern void *" << Identifier;
+    }
     if (Identifier != Symbol)
       OS << " __asm__(\"" << Symbol << "\")";
     OS << ";\n";
@@ -3334,7 +3375,35 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       GuardedAlignments[*VA] = std::max<uint16_t>(GuardedAlignments[*VA],
                                                   static_cast<uint16_t>(Bytes));
   };
+  std::optional<AArch64ImmediateHighBases> ImageMemoryBases;
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (Opts.TheArch == Arch::AArch64 &&
+        isAArch64AddressMemoryIntrinsic(E.IntrinsicId) &&
+        aarch64AddressMemoryHighShapeIsValid(E)) {
+      const auto Instruction = *aarch64AddressMemoryInstruction(
+          E.Operands[kAddressMemoryWordOperand]->ConstVal);
+      const auto &Base = *E.Operands[kAddressMemoryBaseOperand];
+      const auto *Constant =
+          Instruction.hasRegisterIndex()
+              ? nullptr
+              : ImageMemoryBases->imageConstant(Base, ReadingStmt);
+      if (Constant) {
+        const auto Span = aarch64ImmediateMemoryImageSpan(
+            *Opts.Image, Instruction, Constant->ConstVal,
+            Constant->ConstProvenance, Constant->AddressOwnerVA);
+        if (Span) {
+          const auto Object = indexedObjectAt(Span->Begin);
+          if (!Object || Span->Begin < Object->first ||
+              Span->Begin - Object->first > Object->second ||
+              Span->Bytes > Object->second - (Span->Begin - Object->first))
+            throw std::invalid_argument(
+                kAddressMemoryImmediateImageUnsupported);
+          NoteAccessAddress(&Base);
+          NoteWhole(Span->Begin, nullptr, !Instruction.isLoad());
+          ImageObjects[Object->first].AddressTaken = true;
+        }
+      }
+    }
     if (OriginalMemoryBases.count({Reading, &E})) {
       for (size_t I = 0; I < E.Operands.size(); ++I)
         if (I != kAddressMemoryBaseOperand && E.Operands[I])
@@ -3548,6 +3617,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                                  ? DeclaredReturn->Kind == NdTypeKind::Void
                                  : analyzeVoidReturn(Func);
     Reading = &Func;
+    if (Opts.TheArch == Arch::AArch64)
+      ImageMemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &S) {
       ReadingStmt = &S;
       if (BareReturns && S.Kind == StmtKind::Return && S.RetVal &&
@@ -4718,6 +4789,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   const bool Portable =
       PortableInterface && Funcs.size() == 1 && &Funcs.front() == PortableBody;
   std::set<const HighExpr *> Seen;
+  std::optional<AArch64ImmediateHighBases> MemoryBases;
+  const HighStmt *RequirementStatement = nullptr;
   std::function<void(const ExprPtr &)> CheckRequirement;
   CheckRequirement = [&](const ExprPtr &Expr) {
     if (!Expr || !Seen.insert(Expr.get()).second)
@@ -4729,6 +4802,10 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       const auto Instruction = *aarch64AddressMemoryInstruction(
           Expr->Operands[kAddressMemoryWordOperand]->ConstVal);
       const auto &Base = Expr->Operands[kAddressMemoryBaseOperand];
+      if (Opts.Image && !Instruction.hasRegisterIndex() &&
+          !MemoryBases->supports(*Opts.Image, Instruction, *Base,
+                                 RequirementStatement))
+        throw std::invalid_argument(kAddressMemoryImmediateImageUnsupported);
       if (const char *Reason = Instruction.sourceBaseFailure(
               Opts.Image != nullptr,
               Base->Kind == ExprKind::Var && Base->Var.Kind == MedVar::Param))
@@ -4754,12 +4831,18 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
           "raw environment requirement has no C runtime contract");
     Expr->forEachChildExpr(CheckRequirement);
   };
-  for (const auto &Func : Funcs)
+  for (const auto &Func : Funcs) {
+    Seen.clear();
+    if (Opts.Image && Opts.TheArch == Arch::AArch64)
+      MemoryBases.emplace(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+      RequirementStatement = &Stmt;
+      Seen.clear();
       forEachExpr(Stmt, CheckRequirement);
       for (const auto &Clause : Stmt.EHClauses)
         CheckRequirement(Clause.FilterValue);
     });
+  }
   for (const auto &Func : Funcs)
     if (Func.SourceTypeHint &&
         (hasIndirectSourceParameters(*Func.SourceTypeHint) ||

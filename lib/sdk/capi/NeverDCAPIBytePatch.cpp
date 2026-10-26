@@ -21,7 +21,9 @@
 #include "neverd/support/SHA256.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 
@@ -201,7 +203,11 @@ const char *neverd_byte_patches_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S || !S->Loaded)
     return nullptr;
-  return dupStr(jsonToString(patch::patchRowsJSON(S->BytePatches)));
+  std::string Text;
+  llvm::raw_string_ostream Stream(Text);
+  llvm::json::OStream Output(Stream);
+  patch::writePatchRows(Output, S->BytePatches);
+  return dupStr(Text);
 }
 const char *neverd_byte_patch_ranges_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
@@ -309,10 +315,14 @@ int neverd_byte_patches_save(neverd_session_t Sess) {
         "patches.json changed outside this session; reload it before saving");
     return -1;
   }
-  if (!saveSidecar(S,
-                   project_files::path(S->projectInputPath(),
-                                       project_files::File::Patches),
-                   patch::patchRowsJSON(S->BytePatches), "byte patches"))
+  if (!saveSidecar(
+          S,
+          project_files::path(S->projectInputPath(),
+                              project_files::File::Patches),
+          [&](llvm::json::OStream &Output) {
+            patch::writePatchRows(Output, S->BytePatches);
+          },
+          "byte patches"))
     return -1;
   Current = patchDigest(*S);
   if (!Current) {

@@ -2292,3 +2292,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 La regresión del worker también cubre dieciocho parámetros mixtos de registro/pila, un retorno flotante y el rechazo de un argumento de pila escrito solo a la mitad.
 
 `SourceCallABI` y `CallRegisterConstant` comprueban temporales caducados, efectos opacos, rangos de bytes, llamadas ambiguas y límites exactos del presupuesto. El worker ejecuta ambas salidas C de un llamador que calcula el contador variádico mediante resta.
+
+`LLVMAddressModelOverlayTests` comprueba por separado las correcciones de especificadores AArch64, GOT de i386 y GOTPCREL de Mach-O. Cubre las dos formas conocidas de protección AArch64 y las doce combinaciones de correcciones parciales, conserva la entrada LLVM y la copia en caché, aísla la configuración Git heredada y rechaza una protección desconocida. Estas comprobaciones de configuración no sustituyen las pruebas nativas de reubicación.

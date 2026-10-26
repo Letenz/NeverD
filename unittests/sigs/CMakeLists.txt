@@ -3,11 +3,13 @@ add_neverd_unittest(NeverDSignatureTests
   LibraryFeatureTests.cpp
   MachOPatternGeneratorTests.cpp
   PatternGeneratorTests.cpp
+  VTableEvidenceTests.cpp
   PatternParserTests.cpp
   RichHeaderTests.cpp
   SignatureCacheTests.cpp
   SignatureDBTests.cpp
   SignatureDataContextTests.cpp
+  SignatureVTableContextTests.cpp
   SignatureMatcherTests.cpp
   SignatureTreeTests.cpp
   SynthesizedRoutineTests.cpp

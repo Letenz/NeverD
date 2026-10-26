@@ -18,6 +18,7 @@
 
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace neverd::sigs;
@@ -454,5 +455,37 @@ TEST(PatternParserReferences, DataKindsSurvivePackingAndRejectMixedSites) {
     EXPECT_FALSE(bool(Result)) << Bad;
     if (!Result)
       llvm::consumeError(Result.takeError());
+  }
+}
+
+TEST(PatternParserVTable, PrimaryTableMetadataHasItsOwnRecordKind) {
+  const std::string Line =
+      "................................ 00 0000 0010 !vtable "
+      ":0000 ??_7Widget@@6B@ ^0000 destroy ^0000 fallback ^0008 action";
+  auto Parsed = PatternParser::parseLine(Line);
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  EXPECT_TRUE(Parsed->IsVTable);
+  EXPECT_FALSE(Parsed->RequireCaller);
+  EXPECT_FALSE(Parsed->RequireReferences);
+  EXPECT_EQ(Parsed->References.size(), 3u);
+  for (const auto &[Before, After] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"................................",
+            "90.............................."},
+           {"00 0000", "01 0000"},
+           {"0010 !vtable", "0018 !vtable"},
+           {"??_7Widget@@6B@", "function"},
+           {"??_7Widget@@6B@", "??_7Derived@@6BBase@@@"},
+           {"^0008 action", "^0004 action"},
+           {"^0008 action", ""},
+           {"^0008 action", "&0008 action"},
+           {":0000 ??_7Widget@@6B@", ":0008 ??_7Widget@@6B@"},
+       }) {
+    std::string Bad = Line;
+    Bad.replace(Bad.find(Before), Before.size(), After);
+    auto Rejected = PatternParser::parseLine(Bad);
+    EXPECT_FALSE(bool(Rejected)) << Bad;
+    if (!Rejected)
+      llvm::consumeError(Rejected.takeError());
   }
 }

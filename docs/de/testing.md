@@ -2307,3 +2307,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparameter, eine Gleitkommarückgabe und die Ablehnung eines nur halb geschriebenen Stapelarguments ab.
 
 `SourceCallABI` und `CallRegisterConstant` prüfen abgelaufene temporäre Werte, opake Effekte, Bytebereiche, mehrdeutige Aufrufstellen und genaue Budgetgrenzen. Der Worker führt außerdem beide C-Ausgaben eines Aufrufers aus, der den variadischen Vektorzähler durch Subtraktion berechnet.
+
+`LLVMAddressModelOverlayTests` prüft die Korrekturen für AArch64-Spezifizierer, i386-GOT und Mach-O-GOTPCREL getrennt. Es deckt beide bekannten AArch64-Schutzbedingungen und alle zwölf Kombinationen teilweiser Korrekturen ab, erhält LLVM-Eingabe und Cache-Kopie, isoliert geerbte Git-Einstellungen und weist unbekannte Architekturbedingungen zurück. Diese Konfigurationsprüfungen ersetzen keine nativen Relokationstests.

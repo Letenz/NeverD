@@ -292,6 +292,7 @@ private:
     std::vector<std::string> Names;
     std::vector<uint16_t> Offsets;
     std::vector<TypeRef> Types;
+    uint16_t Alignment;
   };
   mutable std::vector<Named> Completed;
   mutable llvm::DenseSet<const NdType *> CompletedRecords;

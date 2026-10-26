@@ -163,6 +163,7 @@ public:
   void setupFunction(llvm::Function &Fn);
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
+  void writeBlockLabel(const llvm::BasicBlock &BB);
   void planExpressionMaterialization(llvm::Function &Fn);
   void markInlinable(llvm::Function &Fn);
   static bool isFloatingPointBitcast(const llvm::Instruction &Inst);
@@ -719,7 +720,7 @@ public:
   void writeCatchSwitch(llvm::CatchSwitchInst &CS, int Indent);
   void writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent);
   std::string windowsEHFilterExpr(const llvm::CatchSwitchInst &CS);
-  std::string SEHFilterFrameName;
+  std::string SEHParentFrameName;
   std::string windowsCxxCatchType(const llvm::CatchPadInst &Pad);
   void emitIndent(int N);
   const llvm::AllocaInst *asAllocaPointer(const llvm::Value *V) const;
@@ -792,7 +793,9 @@ public:
   std::string blockLabel(const llvm::BasicBlock *BB);
   std::string binopStr(unsigned Opcode, const std::string &LHS,
                        const std::string &RHS, llvm::Type *Ty);
-  std::string integerPointerOperandStr(const llvm::Value *Operand);
+  std::string integerPointerOperandStr(const llvm::Value *Operand,
+                                       const llvm::CallBase *Call = nullptr,
+                                       unsigned ArgIdx = 0);
   std::optional<std::string>
   targetPointerMaskIdentity(const llvm::BinaryOperator &Op);
   std::optional<std::string> lowBitsMaskCast(const llvm::BinaryOperator &Op);
@@ -1149,6 +1152,10 @@ public:
   /// prints the value stored on the edge.
   const llvm::AllocaInst *PhiTailSlot = nullptr;
   const llvm::Value *PhiTailIncoming = nullptr;
+  /// Even without printed values, an unconditional cycle must retain a
+  /// control-flow destination. Compute this once per function, including
+  /// cycles with multiple external entries and unreachable components.
+  std::set<const llvm::BasicBlock *> UnconditionalCycleBlocks;
 };
 
 } // namespace neverd

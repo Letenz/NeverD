@@ -21,6 +21,8 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
+#include "neverd/ir/med/MedCallTarget.h"
+#include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -214,6 +216,15 @@ struct ReducedAddress {
   llvm::APInt Offset;
 };
 
+static bool consumeCallTargetWork(size_t *Remaining) {
+  if (!Remaining)
+    return true;
+  if (!*Remaining)
+    return false;
+  --*Remaining;
+  return true;
+}
+
 static bool sameAddressValue(const MedVar &A, const MedVar &B) {
   return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
          A.RegOff == B.RegOff && A.Size == B.Size && A.TheArch == B.TheArch &&
@@ -223,8 +234,8 @@ static bool sameAddressValue(const MedVar &A, const MedVar &B) {
 // Stop at an opaque value when the next operation cannot be peeled exactly.
 // The already-proven suffix remains usable, including when two accesses share
 // the same conversion result. Invalid widths and conflicting definitions fail.
-static std::optional<ReducedAddress> reduceAddr(const MedBlock &Blk,
-                                                const MedVar &V) {
+static std::optional<ReducedAddress>
+reduceAddr(const MedBlock &Blk, const MedVar &V, size_t *Remaining = nullptr) {
   if (V.Size == 0 || V.Size > 8)
     return std::nullopt;
   ReducedAddress Result{V, llvm::APInt(V.Size * 8u, 0)};
@@ -236,6 +247,8 @@ static std::optional<ReducedAddress> reduceAddr(const MedBlock &Blk,
       break;
     const MedOp *Def = nullptr;
     for (const auto &Op : Blk.Ops) {
+      if (!consumeCallTargetWork(Remaining))
+        return std::nullopt;
       // STOREs and control-flow operations have no defining output. Their
       // default Temp/id=0 must not conflict with a real temporary definition.
       if (Op.Output.Size == 0 || Op.Output.Kind != Cur.Kind ||
@@ -267,9 +280,8 @@ static std::optional<ReducedAddress> reduceAddr(const MedBlock &Blk,
       const unsigned C = Def->Inputs[1].isConst() ? 1 : 0;
       const MedVar &Constant = Def->Inputs[C];
       const MedVar &Base = Def->Inputs[1 - C];
-      if (!Constant.isConst() || Base.isConst() || Base.Size != Cur.Size ||
-          Constant.Size == 0 || Constant.Size > 8 ||
-          (Def->Opcode == NdOp::INT_SUB && C != 1))
+      if (!Constant.isConst() || Base.Size != Cur.Size || Constant.Size == 0 ||
+          Constant.Size > 8 || (Def->Opcode == NdOp::INT_SUB && C != 1))
         break;
       // Match arithmetic Coerce: truncate the constant at its own width,
       // then zero-extend or truncate to the operation's fixed output width.
@@ -340,20 +352,24 @@ authenticatedStackOffset(const MedFunc &Func, const TargetRegInfo &TRI,
 // partial overwrites and atomic accesses invalidate the earlier stored value.
 static std::optional<int>
 reachingStore(const MedBlock &Blk, int LoadIndex,
-              const AbiSpillContext *Context = nullptr, int Depth = 0) {
+              const AbiSpillContext *Context = nullptr, int Depth = 0,
+              size_t *Remaining = nullptr) {
   const MedOp &Load = Blk.Ops[LoadIndex];
   const MedVar *Address = safety::detail::memoryAddress(Load);
   if (!Address || Load.Output.Size == 0 ||
-      Load.MemoryOrdering != NdMemoryOrdering::None)
+      Load.MemoryOrdering != NdMemoryOrdering::None ||
+      Load.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return std::nullopt;
   const auto StackOffset =
       Context ? authenticatedStackOffset(Context->Func, Context->TRI, *Address)
               : std::nullopt;
-  const auto Target =
-      StackOffset ? std::optional<ReducedAddress>{} : reduceAddr(Blk, *Address);
+  const auto Target = StackOffset ? std::optional<ReducedAddress>{}
+                                  : reduceAddr(Blk, *Address, Remaining);
   if (!StackOffset && !Target)
     return std::nullopt;
   for (int I = LoadIndex - 1; I >= 0; --I) {
+    if (!consumeCallTargetWork(Remaining))
+      return std::nullopt;
     const MedOp &Op = Blk.Ops[I];
     if (Op.Opcode == NdOp::INTRINSIC && isAbiRecoveryBarrier(Op))
       return std::nullopt;
@@ -368,7 +384,8 @@ reachingStore(const MedBlock &Blk, int LoadIndex,
     const MedVar *StoreAddress = safety::detail::memoryAddress(Op);
     const MedVar *Value = safety::detail::storedValue(Op);
     if (!StoreAddress || !Value || Value->Size == 0 ||
-        Op.MemoryOrdering != NdMemoryOrdering::None)
+        Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return std::nullopt;
     if (StackOffset) {
       const auto SourceOffset =
@@ -382,7 +399,7 @@ reachingStore(const MedBlock &Blk, int LoadIndex,
                  ? std::optional<int>(I)
                  : std::nullopt;
     }
-    const auto Source = reduceAddr(Blk, *StoreAddress);
+    const auto Source = reduceAddr(Blk, *StoreAddress, Remaining);
     if (!Source)
       return std::nullopt;
     const auto Distance = reducedAddressDistance(*Source, *Target);
@@ -454,6 +471,193 @@ va_t resolveIndirectTargetAddr(const MedBlock &Blk, int FromIdx,
   default:
     return 0;
   }
+}
+
+std::optional<MedCallTarget> resolveMedCallTarget(const MedBlock &Block,
+                                                  size_t Before,
+                                                  const MedVar &Value,
+                                                  size_t *WorkRemaining) {
+  if (Before > Block.Ops.size() || !Value.Size || Value.Size > 8)
+    return std::nullopt;
+  MedVar Current = Value;
+  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!WorkRemaining)
+    WorkRemaining = &OwnWork;
+  for (unsigned Depth = 0; Depth < limits::kCallTargetSlotDepth; ++Depth) {
+    if (!consumeCallTargetWork(WorkRemaining))
+      return std::nullopt;
+    if (Current.isConst())
+      return MedCallTarget{Current.ConstVal, false};
+    const MedOp *Definition = nullptr;
+    for (size_t I = Before; I-- > 0;) {
+      if (!consumeCallTargetWork(WorkRemaining))
+        return std::nullopt;
+      if (sameAddressValue(Block.Ops[I].Output, Current)) {
+        Definition = &Block.Ops[I];
+        Before = I;
+        break;
+      }
+    }
+    if (!Definition || !Definition->NumInputs ||
+        Definition->Output.Size != Value.Size)
+      return std::nullopt;
+    const auto &Def = *Definition;
+    if ((Def.Opcode == NdOp::COPY && Def.NumInputs == 1) ||
+        (Def.Opcode == NdOp::SUBBYTES && Def.NumInputs == 2 &&
+         Def.Inputs[1].isConst() && Def.Inputs[1].ConstVal == 0)) {
+      if (Def.Inputs[0].Size != Value.Size)
+        return std::nullopt;
+      Current = Def.Inputs[0];
+      continue;
+    }
+    if (Def.Opcode != NdOp::LOAD || Def.NumInputs != 1 ||
+        Def.MemoryOrdering != NdMemoryOrdering::None ||
+        Def.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    if (const auto Store = reachingStore(Block, static_cast<int>(Before),
+                                         nullptr, 0, WorkRemaining)) {
+      Current = *safety::detail::storedValue(Block.Ops[*Store]);
+      Before = *Store;
+      continue;
+    }
+    const auto Address = reduceAddr(Block, Def.Inputs[0], WorkRemaining);
+    if (Address && Address->Base.isConst()) {
+      llvm::APInt Slot(Address->Offset.getBitWidth(), Address->Base.ConstVal,
+                       false, true);
+      Slot += Address->Offset;
+      return MedCallTarget{Slot.getZExtValue(), true};
+    }
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<MedCallTarget> resolvePreSSAMedCallTarget(const MedBlock &Block,
+                                                        const MedVar &Value,
+                                                        Arch Architecture,
+                                                        size_t *WorkRemaining) {
+  if (Architecture == Arch::Unknown ||
+      Block.Ops.size() > limits::kMaxCallSetupStackProofWork ||
+      Value.Size != getTargetRegInfo(Architecture).PointerSize)
+    return std::nullopt;
+  using Key = std::tuple<MedVar::VarKind, int, uint64_t, uint16_t>;
+  const auto KeyOf = [](const MedVar &V) {
+    return Key{V.Kind, V.Id, V.RegOff, V.Size};
+  };
+  std::map<Key, int> Versions;
+  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!WorkRemaining)
+    WorkRemaining = &OwnWork;
+  int Next = 1;
+  const auto Read = [&](MedVar V) {
+    if (!V.isConst())
+      V.SSAVer = Versions[KeyOf(V)];
+    return V;
+  };
+  MedBlock Proof;
+  Proof.Ops.reserve(Block.Ops.size());
+  for (const auto &Original : Block.Ops) {
+    if (!consumeCallTargetWork(WorkRemaining))
+      return std::nullopt;
+    MedOp Op = Original;
+    for (unsigned I = 0; I < Op.NumInputs; ++I)
+      Op.Inputs[I] = Read(Op.Inputs[I]);
+    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+        Op.Opcode == NdOp::INTRINSIC)
+      for (auto &[K, Version] : Versions) {
+        if (!consumeCallTargetWork(WorkRemaining))
+          return std::nullopt;
+        if (std::get<0>(K) == MedVar::Reg &&
+            (Op.Opcode == NdOp::INTRINSIC ||
+             std::get<2>(K) != getTargetRegInfo(Architecture).StackPointer))
+          Version = Next++;
+      }
+    if (Op.Output.Size && !Op.Output.isConst()) {
+      // A narrow write also invalidates the old wider register value. Its
+      // missing definition becomes an opaque root, never the preceding bits.
+      if (Op.Output.Kind == MedVar::Reg) {
+        if (Op.Output.RegOff > UINT64_MAX - Op.Output.Size)
+          return std::nullopt;
+        for (auto &[K, Version] : Versions) {
+          if (!consumeCallTargetWork(WorkRemaining))
+            return std::nullopt;
+          if (std::get<0>(K) == MedVar::Reg &&
+              std::get<2>(K) < Op.Output.RegOff + Op.Output.Size &&
+              Op.Output.RegOff < std::get<2>(K) + std::get<3>(K))
+            Version = Next++;
+        }
+      }
+      Op.Output.SSAVer = Versions[KeyOf(Op.Output)] = Next++;
+    }
+    for (auto &Auxiliary : Op.IntrinsicOutputs) {
+      if (!consumeCallTargetWork(WorkRemaining))
+        return std::nullopt;
+      if (Auxiliary.Size && !Auxiliary.isConst())
+        Auxiliary.SSAVer = Versions[KeyOf(Auxiliary)] = Next++;
+    }
+    Proof.Ops.push_back(std::move(Op));
+  }
+  return resolveMedCallTarget(Proof, Proof.Ops.size(), Read(Value),
+                              WorkRemaining);
+}
+
+std::map<size_t, MedCallTarget>
+resolveLowBlockCallTargets(const LowBlock &Block, Arch Architecture,
+                           size_t *WorkRemaining) {
+  std::map<size_t, MedCallTarget> Result;
+  if (Architecture == Arch::Unknown ||
+      Block.Ops.size() > limits::kMaxCallSetupStackProofWork ||
+      std::none_of(Block.Ops.begin(), Block.Ops.end(), [](const LowOp &O) {
+        return O.Opcode == NdOp::INDIR_CALL && O.NumInputs == 1 &&
+               !O.Inputs[0].isConst();
+      }))
+    return Result;
+  size_t OwnWork = limits::ir::kSourceFrameAnalysisRemaining;
+  if (!WorkRemaining)
+    WorkRemaining = &OwnWork;
+  using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
+  std::map<Key, int> Identities;
+  const auto Convert = [&](const NdVar &V) {
+    if (V.isConst())
+      return MedVar::makeConst(V.Offset, V.Size, V.Provenance,
+                               V.AddressOwnerVA);
+    MedVar M;
+    M.Size = V.Size;
+    M.TheArch = Architecture;
+    M.Kind = V.isReg() ? MedVar::Reg : MedVar::Temp;
+    if (V.isReg())
+      M.RegOff = V.Offset;
+    if (!V.isReg() && !V.isTemp())
+      return MedVar::makeUnspecified(V.Size, Architecture);
+    const auto [It, Inserted] = Identities.try_emplace(
+        Key{V.Space, V.Offset, V.Size}, static_cast<int>(Identities.size()));
+    M.Id = It->second;
+    return M;
+  };
+  MedBlock Prefix;
+  for (size_t I = 0; I < Block.Ops.size(); ++I) {
+    if (!consumeCallTargetWork(WorkRemaining))
+      return {};
+    const auto &O = Block.Ops[I];
+    if (O.NumInputs > std::size(O.Inputs))
+      return {};
+    if (O.Opcode == NdOp::INDIR_CALL && O.NumInputs == 1 &&
+        !O.Inputs[0].isConst())
+      if (const auto Target = resolvePreSSAMedCallTarget(
+              Prefix, Convert(O.Inputs[0]), Architecture, WorkRemaining))
+        Result.emplace(I, *Target);
+    MedOp M;
+    M.Opcode = O.Opcode;
+    M.Addr = O.Addr;
+    M.OriginSeq = O.Seq;
+    M.MemoryOrdering = O.MemoryOrdering;
+    M.MemoryAddressSpace = O.MemoryAddressSpace;
+    M.Output = Convert(O.Output);
+    for (unsigned J = 0; J < O.NumInputs; ++J)
+      M.addInput(Convert(O.Inputs[J]));
+    Prefix.Ops.push_back(std::move(M));
+  }
+  return *WorkRemaining ? Result : std::map<size_t, MedCallTarget>();
 }
 
 static int defIndexInBlock(const MedBlock &Blk, int FromIdx, const MedVar &V) {
@@ -856,9 +1060,16 @@ static StackDeltaWalk stackPtrDeltaAt(const MedFunc &Func,
 
 std::optional<int64_t> stackPtrDelta(const MedFunc &Func,
                                      const TargetRegInfo &TRI, const MedVar &V,
-                                     int Depth, MedDefSiteIndex *Defs) {
+                                     int Depth, MedDefSiteIndex *Defs,
+                                     BinaryFormat Format) {
   StackDeltaMemo Memo;
-  return stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo).Delta;
+  const auto Delta = stackPtrDeltaAt(Func, TRI, V, Depth, Defs, Memo).Delta;
+  if (Delta || Depth)
+    return Delta;
+  // Reuse the entry-offset owner's complete loop proof when the local ABI
+  // walk cannot resolve mutually dependent stack PHIs. Calls and outgoing
+  // stores must share that origin instead of losing later stack arguments.
+  return entryStackOffset(Func, V, TRI.TheArch, Format, Func.EntryKind);
 }
 
 static StackDeltaWalk stackPtrDeltaUncached(const MedFunc &Func,

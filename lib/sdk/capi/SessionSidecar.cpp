@@ -15,7 +15,6 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -67,6 +66,15 @@ bool neverd::sdk::saveSidecar(Session *S, const std::filesystem::path &Path,
       if (llvm::json::Object *Object = Row.getAsObject())
         if (std::optional<llvm::StringRef> Address = Object->getString("addr"))
           (*Object)["addr"] = Address->lower();
+  return saveSidecar(
+      S, Path, [&](llvm::json::OStream &Output) { Output.value(Values); },
+      Kind);
+}
+
+bool neverd::sdk::saveSidecar(
+    Session *S, const std::filesystem::path &Path,
+    llvm::function_ref<void(llvm::json::OStream &)> Emit,
+    llvm::StringRef Kind) {
   // The project's files live in its folder beside the input.
   if (std::error_code Folder = project_files::prepare(S->projectInputPath())) {
     S->setError("cannot create the project folder: " + Folder.message());
@@ -89,7 +97,9 @@ bool neverd::sdk::saveSidecar(Session *S, const std::filesystem::path &Path,
     // Two-space indentation, sorted keys and a final newline, byte for byte
     // as the workbench writes the same files (the worker's sidecarText), so
     // a project diffs and merges line by line under version control.
-    OS << llvm::formatv("{0:2}", Values) << '\n';
+    llvm::json::OStream Output(OS, 2);
+    Emit(Output);
+    OS << '\n';
     OS.flush();
     WriteError = OS.error();
     OS.clear_error();

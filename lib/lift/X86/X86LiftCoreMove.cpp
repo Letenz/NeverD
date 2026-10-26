@@ -628,26 +628,38 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_XCHG: {
     if (X86.op_count < 2)
       break;
+    const bool FirstMemory = X86.operands[0].type == X86_OP_MEM;
+    const bool SecondMemory = X86.operands[1].type == X86_OP_MEM;
+    if (FirstMemory || SecondMemory) {
+      const auto &Memory = X86.operands[FirstMemory ? 0 : 1];
+      const auto &Register = X86.operands[FirstMemory ? 1 : 0];
+      if (FirstMemory == SecondMemory || Register.type != X86_OP_REG ||
+          Register.size != Memory.size)
+        return false;
+      // A memory XCHG is locked even without an F0 prefix. The single RMW
+      // owns the old value and the store, and precedes the register write so
+      // an aliased address register and a fault both retain their input state.
+      const NdVar Address = S.computeEA(Memory);
+      const NdVar New = L.operandRead(S, Register);
+      const NdVar Old = S.makeTemp(Memory.size);
+      S.emit(NdOp::ATOMIC_XCHG, Old, {Address, New},
+             NdMemoryOrdering::SequentiallyConsistent,
+             X86Lifter::LiftState::memoryAddressSpace(Memory));
+      S.emit(NdOp::COPY, L.operandWrite(Register), {Old});
+      if (L.targetArch() == Arch::X64 && Memory.size == 4) {
+        const RegInfo RI = mapCapstoneReg(static_cast<x86_reg>(Register.reg));
+        if (RI.Offset == x86reg::RSP || RI.Offset == x86reg::RBP)
+          S.emit(NdOp::INT_ZEXT, NdVar::reg(RI.Offset, 8),
+                 {NdVar::reg(RI.Offset, 4)});
+      }
+      break;
+    }
     NdVar A = L.operandRead(S, X86.operands[0]);
     NdVar B = L.operandRead(S, X86.operands[1]);
     NdVar TmpV = S.makeTemp(A.Size);
     S.emit(NdOp::COPY, TmpV, {A});
-    // A MEMORY operand must be written with an explicit STORE —
-    // L.operandWrite() returns a discarded ram(0) placeholder, so `xchg
-    // [mem],reg` previously updated only the register and silently dropped the
-    // memory half.  Do the store FIRST (using the original register values for
-    // its address) before the register write, so a register that also indexes
-    // the address (e.g. `xchg rax,[rax]`) is not clobbered first.
-    if (X86.operands[0].type == X86_OP_MEM) {
-      S.storeToMem(X86.operands[0], B);
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[1]), {TmpV});
-    } else if (X86.operands[1].type == X86_OP_MEM) {
-      S.storeToMem(X86.operands[1], TmpV);
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[0]), {B});
-    } else {
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[0]), {B});
-      S.emit(NdOp::COPY, L.operandWrite(X86.operands[1]), {TmpV});
-    }
+    S.emit(NdOp::COPY, L.operandWrite(X86.operands[0]), {B});
+    S.emit(NdOp::COPY, L.operandWrite(X86.operands[1]), {TmpV});
     break;
   }
 

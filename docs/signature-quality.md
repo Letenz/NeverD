@@ -46,14 +46,40 @@ Unreadable or unsupported RTTI remains unknown; a valid different type
 contradicts the candidate. These reads are lazy and cached within one match
 application. The data addresses never enter the function-reference graph.
 
+The separate `!vtable` record describes a complete primary x64 COFF table,
+with its exact linkage name and every source-declared pointer slot. Its bytes
+are all wildcards and it never enters the function byte index. The image must
+have matching strict primary RTTI, a relocation-backed locator and every code
+slot, and one read-only, nonexecuting owner for the complete table. A known
+contradicting sibling or conflicting source layout rejects the table. Only
+requested executable function entries without settled names are queried, using
+complete `!caller` bodies with the existing fixed-byte floor. Multiple matching
+nominal alternatives at one slot remain ambiguous. Weak symbols retain their
+explicit fallback alternatives; their search rules do not establish aliases.
+A matching fallback body is a candidate, not proof that the linker selected
+that definition instead of an unknown override. This path never grants source
+identity or automatic naming.
+
+Table candidates receive one outgoing-reference check against the frozen prior
+matches, even when that prior set is empty. They cannot confirm each other,
+restart incoming inference, or establish data anchors. Thus table metadata
+cannot bootstrap an unrooted call cycle. The pass reads indexed relocation
+slots only, and is skipped when no table records are loaded.
+`neverd-sigmaker --vtable-evidence` emits JSONL declarations from x64 COFF
+objects, including incomplete counterclaims. Source tables need dedicated
+read-only COMDAT storage, zero-addend ADDR64 relocations and exact locator/type
+agreement. Unsupported weak chains or ownership remain incomplete. The offline
+selector requires all declarations for a selected type to agree before it
+publishes a new native record; it never repackages existing function bodies.
+
 The optional NeverD `!refs` token immediately after a pattern's total length
 requires whole-function coverage and at least one reference. Every reference
 must be confirmed before the hit becomes a candidate or supports another
 candidate. Required hits cannot bootstrap each other from raw bytes; a cycle
 without independent evidence stays unresolved. The existing bounded withdrawal
 algorithm removes dependent claims when their evidence changes. Older parsers
-reject this extension, and cache format 4 preserves context requirements and
-typed data references. Published
+reject this extension, and cache format 5 preserves context requirements, typed data references and
+explicit table metadata. Published
 constraint packs use `.npat`, which older directory readers ignore while
 retaining the ordinary `.pat` packs. New readers apply the same profile and
 toolset selection to both extensions.
