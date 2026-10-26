@@ -49,9 +49,11 @@ def fixture(instruction, form, width):
                            0xfc if width == 64 else 0x7d if width == 16 else 0x7c,
                            0x0c if form == "apx_nf" else 8, opcode, 0xff])
     # Store the full GPR to observe 16-bit preservation/32-bit zero extension.
-    # Snapshot flags before masking only the flags this form defines.
+    # LAHF and SETO snapshot the six status flags before packing/masking them.
+    # PUSHFQ would also sample unmodeled machine state with native assembly.
     flag_mask = 0x8d5 if instruction == "popcnt" or form == "apx_nf" else 0x41
-    return (setup + operation + bytes.fromhex("48 89 3e 9c 58 25")
+    return (setup + operation + bytes.fromhex(
+        "48 89 3e 9f 0f 90 c1 0f b6 c4 0f b6 c9 c1 e1 0b 09 c8 25")
             + flag_mask.to_bytes(4, "little") + b"\xc3")
 
 
@@ -104,7 +106,7 @@ def run(executable, compiler):
                                 function = module.start
                                 function.argtypes = [ctypes.c_uint64,
                                                      ctypes.POINTER(ctypes.c_uint64)]
-                                function.restype = ctypes.c_uint64
+                                function.restype = ctypes.c_uint32
                                 for value in sorted(values):
                                     output = ctypes.c_uint64(0xfedcba9876543210)
                                     flags = function(value, ctypes.byref(output))

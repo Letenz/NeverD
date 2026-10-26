@@ -40,6 +40,7 @@ complete instruction support or semantic test coverage.
 | XABORT | Exact constant imm8 through validated native LLVM, HighC and LLVM-to-C. Missing or inconsistent decoded operands and nonconstant IR fail; enclosing RTM checkpoint recovery remains separate. |
 | BLCFILL, BLCI, BLCIC, BLCMSK, BLCS, BLSFILL, BLSIC, T1MSKC, TZMSK | Validated XOP forms with source-dependent CF, result-dependent ZF/SF, cleared OF and explicit undefined AF/PF. LLVM, HighC and LLVM-to-C consume the same arithmetic semantics; see the TBM qualification below. |
 | BEXTR | Validated XOP immediate, VEX register-control and APX forms, including NF. Bounded shifts avoid out-of-range LLVM shifts; ordinary forms define CF/OF/ZF and record SF/AF/PF as undefined. See the BEXTR qualification below. |
+| TZCNT, LZCNT, POPCNT | Validated legacy, REX2 and APX/NF forms; aliased inputs, zero operands, destination width and defined/undefined flags retain their architectural meanings. See the count qualification below. |
 | RDFSBASE, RDGSBASE, WRFSBASE, WRGSBASE | 32/64-bit operands in long mode; explicit read/write direction. |
 | CLTS | Ordered processor-state effect with no fabricated register output. |
 | Operand-free WRMSRNS | Distinct nonserializing instruction with explicit ECX/EAX/EDX inputs on x86 and x64. |
@@ -270,6 +271,9 @@ bank combinations, all decode routes, memory tails, fault-before-write ordering
 and malformed/reserved-field refusals. The undefined-independence tests observe
 the arbitrary flags and their preservation through NF. Source projection checks
 cover LLVM and both C routes, pipeline optimization on/off and O0/O2 compilation.
+The 432 compiled source profiles pass 17,856 value/flag comparisons per SDK.
+Their source contains no inline assembly, and compiled output contains no
+count instructions, so execution does not depend on BMI1/LZCNT/POPCNT hardware.
 These contracts assume the input CPU enables the named count instruction;
 runtime selection of BSF/BSR behavior on processors lacking those features remains
 separate, as do physical APX execution and native memory exceptions.
