@@ -19,6 +19,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 #include <map>
@@ -216,6 +217,150 @@ const HighExpr *statementCall(const HighStmt &Stmt) {
     break;
   }
   return Root && Root->Kind == ExprKind::Call ? Root : nullptr;
+}
+
+// The source flow graph's reading of a test: a missing loop test is true,
+// and only an integer constant decides one.
+std::optional<bool> testTruth(const ExprPtr &Test) {
+  if (!Test)
+    return true;
+  if (Test->Kind != ExprKind::Const || !Test->Type ||
+      Test->Type->Kind != NdTypeKind::Int)
+    return std::nullopt;
+  return Test->ConstVal != 0;
+}
+
+// Whether \p Body has a `break` or `continue` (\p Kind) for the statement
+// that encloses it. A nested loop owns both, and a nested switch its breaks.
+bool hasOwnJump(const std::vector<HighStmt> &Body, StmtKind Kind) {
+  for (const HighStmt &S : Body) {
+    if (S.Kind == Kind)
+      return true;
+    if (S.Kind == StmtKind::While || S.Kind == StmtKind::DoWhile ||
+        S.Kind == StmtKind::For ||
+        (Kind == StmtKind::Break && S.Kind == StmtKind::Switch))
+      continue;
+    if (hasOwnJump(S.Body, Kind) || hasOwnJump(S.ElseBody, Kind) ||
+        hasOwnJump(S.DefaultBody, Kind) ||
+        llvm::any_of(S.Cases, [&](const SwitchCase &Case) {
+          return hasOwnJump(Case.Body, Kind);
+        }))
+      return true;
+  }
+  return false;
+}
+
+bool mayComplete(const HighStmt &S);
+
+// Whether control entering \p Body can leave its end, taking either way of
+// every test that is not constant, as the source flow graph does.
+bool mayFallThrough(const std::vector<HighStmt> &Body) {
+  return llvm::all_of(Body, mayComplete);
+}
+
+// Whether control entering \p S can continue after it.
+bool mayComplete(const HighStmt &S) {
+  switch (S.Kind) {
+  case StmtKind::Return:
+  case StmtKind::Goto:
+  case StmtKind::Break:
+  case StmtKind::Continue:
+    return false;
+  case StmtKind::Assign:
+  case StmtKind::ExprStmt:
+    return !isTerminatingHighCall(S.Val);
+  case StmtKind::Call:
+    return !isTerminatingHighCall(S.CallExpr);
+  case StmtKind::Block:
+    return mayFallThrough(S.Body);
+  case StmtKind::If:
+  case StmtKind::IfElse: {
+    const auto Truth = testTruth(S.Cond);
+    return ((!Truth || *Truth) && mayFallThrough(S.Body)) ||
+           ((!Truth || !*Truth) && mayFallThrough(S.ElseBody));
+  }
+  case StmtKind::While:
+  case StmtKind::For: {
+    const auto Truth = testTruth(S.Cond);
+    return !Truth || !*Truth || hasOwnJump(S.Body, StmtKind::Break);
+  }
+  case StmtKind::DoWhile: {
+    const auto Truth = testTruth(S.Cond);
+    return ((!Truth || !*Truth) && (mayFallThrough(S.Body) ||
+                                    hasOwnJump(S.Body, StmtKind::Continue))) ||
+           hasOwnJump(S.Body, StmtKind::Break);
+  }
+  case StmtKind::Switch:
+    return mayFallThrough(S.DefaultBody) ||
+           hasOwnJump(S.DefaultBody, StmtKind::Break) ||
+           llvm::any_of(S.Cases, [](const SwitchCase &Case) {
+             return (!Case.FallsThrough && mayFallThrough(Case.Body)) ||
+                    hasOwnJump(Case.Body, StmtKind::Break);
+           });
+  default:
+    return true;
+  }
+}
+
+// Whether control from the entry certainly enters a cycle, taking either way
+// of every test that is not constant: a loop whose body can return to its
+// test, or a goto to a label that reaches it. FrameWritebacks commits nothing
+// across a cycle, and refining the graph's tests could remove one only where
+// its back edge can never run. \p Labels are the function's goto targets.
+bool entersCycle(const std::vector<HighStmt> &Body,
+                 const std::set<va_t> &Labels) {
+  // Labels that fall through to the visited statement, and the labels that a
+  // goto reached from the entry jumps to.
+  std::vector<va_t> Reaching;
+  std::set<va_t> Entered;
+  bool Cyclic = false;
+  const auto Visit = [&](auto &&Self, const std::vector<HighStmt> &List,
+                         size_t From, bool Live) -> void {
+    const size_t Mark = Reaching.size();
+    for (const HighStmt &S : List) {
+      if (Cyclic)
+        return;
+      if (S.Addr && S.Addr != InvalidVA && Labels.count(S.Addr)) {
+        Reaching.push_back(S.Addr);
+        Live |= Entered.count(S.Addr) != 0;
+      }
+      const auto Truth = testTruth(S.Cond);
+      if (Live && S.Kind == StmtKind::Goto) {
+        Cyclic |= std::find(Reaching.begin() + From, Reaching.end(),
+                            S.GotoTarget) != Reaching.end();
+        Entered.insert(S.GotoTarget);
+      }
+      if (Live &&
+          (S.Kind == StmtKind::While || S.Kind == StmtKind::For ||
+           S.Kind == StmtKind::DoWhile) &&
+          (!Truth || *Truth) &&
+          (mayFallThrough(S.Body) || hasOwnJump(S.Body, StmtKind::Continue)))
+        Cyclic = true;
+      const bool Conditional =
+          S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+          S.Kind == StmtKind::While || S.Kind == StmtKind::For;
+      Self(Self, S.Body, From, Live && (!Conditional || !Truth || *Truth));
+      Self(Self, S.ElseBody, From, Live && (!Truth || !*Truth));
+      // A constant selector enters one arm; a falling case may enter more,
+      // which this conservative walk does not follow.
+      const bool Selected =
+          S.SwitchExpr && S.SwitchExpr->Kind == ExprKind::Const;
+      bool Matched = false;
+      for (const SwitchCase &Case : S.Cases) {
+        const bool Taken = !Selected || Case.Value == S.SwitchExpr->ConstVal;
+        Matched |= Selected && Taken;
+        Self(Self, Case.Body, From, Live && Taken);
+      }
+      Self(Self, S.DefaultBody, From, Live && !Matched);
+      if (!mayComplete(S)) {
+        From = Reaching.size();
+        Live = false;
+      }
+    }
+    Reaching.resize(Mark);
+  };
+  Visit(Visit, Body, 0, true);
+  return Cyclic;
 }
 
 // Prove the effect boundary once, with an acyclic, bounded graph walk. An
@@ -643,6 +788,7 @@ class FrameWritebacks {
   HighFunc &Function;
   Arch Architecture;
   size_t &Budget;
+  const std::set<va_t> &Labels;
   bool Complete = true;
   size_t NextValue = 1;
   ExprPtr EntryStack;
@@ -1046,8 +1192,9 @@ class FrameWritebacks {
   }
 
 public:
-  FrameWritebacks(HighFunc &F, Arch A, size_t &B)
-      : Function(F), Architecture(A), Budget(B) {}
+  /// \p L are the goto targets in \p F.
+  FrameWritebacks(HighFunc &F, Arch A, size_t &B, const std::set<va_t> &L)
+      : Function(F), Architecture(A), Budget(B), Labels(L) {}
 
   void run() {
     // Nothing commits without budget or a frame address; learn both before
@@ -1102,6 +1249,9 @@ public:
       });
     });
     if (!Complete || !EntryStack)
+      return;
+    // A cyclic graph never commits below: do not build one.
+    if (entersCycle(Function.Body, Labels))
       return;
     const auto Graph = buildHighSourceFlowGraph(Function);
     if (!Graph.Diagnostics.Complete || !Graph.Diagnostics.Items.empty() ||
@@ -1390,6 +1540,6 @@ void forwardPrivateFrameLoads(HighFunc &Func, Arch Architecture) {
     Flush(Body.size());
   };
   Forward(Forward, Func.Body, 0);
-  FrameWritebacks(Func, Architecture, Remaining).run();
+  FrameWritebacks(Func, Architecture, Remaining, Entries).run();
 }
 } // namespace neverd

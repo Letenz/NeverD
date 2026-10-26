@@ -1754,6 +1754,39 @@ TEST(HighFrameStoreForwarding, BranchProofDoesNotCommitAcrossCycles) {
   EXPECT_EQ(F.Body[2].GotoTarget, 0x1040u);
 }
 
+TEST(HighFrameStoreForwarding, OnlyLoopsThatRepeatStopTheBranchProof) {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  for (const auto Kind : {StmtKind::While, StmtKind::DoWhile})
+    for (unsigned Shape = 0; Shape != 3; ++Shape) {
+      SCOPED_TRACE(testing::Message()
+                   << (Kind == StmtKind::While ? "while" : "do") << Shape);
+      auto F = roundTrip(A, T);
+      F.Params.push_back({"arg1", T});
+      auto Saved = temporary(1, T, A);
+      HighStmt Branch;
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = parameter(0, T, A);
+      Branch.Body = {store(frameSlot(A), Saved)};
+      // A constant false test and a body that always breaks never repeat;
+      // a body that can fall back to its test does.
+      HighStmt Loop;
+      Loop.Kind = Kind;
+      Loop.Cond = Shape == 0 ? HighExpr::makeConst(0, 4) : parameter(1, T, A);
+      Loop.Body = {assign(temporary(2, T, A), HighExpr::makeConst(7, 8))};
+      if (Shape == 1) {
+        HighStmt Exit;
+        Exit.Kind = StmtKind::Break;
+        Loop.Body.push_back(Exit);
+      }
+      F.Body = {assign(Saved, HighExpr::makeLoad(frameSlot(A), T)), Branch,
+                Loop, returning(frameSlot(A))};
+      forwardPrivateFrameLoads(F, A);
+      EXPECT_EQ(F.Body[1].Body[0].Kind,
+                Shape == 2 ? StmtKind::Store : StmtKind::Block);
+    }
+}
+
 TEST(HighFrameStoreForwarding, BranchProofKeepsExtraStatementEffects) {
   const auto A = Arch::X64;
   const auto T = NdType::makeInt(8, false);
