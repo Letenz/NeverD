@@ -2628,8 +2628,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           // an object pointer converts through void * to that exact type.
           const bool PortablePointer =
               !Defined && Expected->Kind == NdTypeKind::Ptr &&
-              (!Expected->Pointee ||
-               Expected->Pointee->Kind != NdTypeKind::Func) &&
+              Expected->Pointee && Expected->Pointee->Kind == NdTypeKind::Int &&
+              llvm::StringRef(Expected->Pointee->SourceName)
+                  .starts_with("__typeof__(__builtin_choose_expr(") &&
               !c_library::portableScalarDeclaration(*Callee, Name).empty();
           if (((Header && Typedef) || PointerUnion || PortablePointer) &&
               Text != "0" && !llvm::StringRef(Text).starts_with("(void*)"))

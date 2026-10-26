@@ -249,7 +249,11 @@ TEST(HighCSourceCalls, PortableDeclarationsOwnObjectPointerConversions) {
       Function.Addr = Address;
       Function.Name = "read_mask";
       Function.ReturnType = NdType::makeInt(4);
-      Function.Params = {{"mask", NdType::makePtr(NdType::makeInt(4, false))}};
+      auto Integer = NdType::makeInt(4, false);
+      Integer->SourceName =
+          "__typeof__(__builtin_choose_expr(sizeof(unsigned long) == 4, "
+          "(unsigned long)0, (uint32_t)0))";
+      Function.Params = {{"mask", NdType::makePtr(Integer)}};
       Function.PrototypeFromHeader = true;
       Function.PortablePrototypeDeclaration =
           "int read_mask(__typeof__(__builtin_choose_expr("
