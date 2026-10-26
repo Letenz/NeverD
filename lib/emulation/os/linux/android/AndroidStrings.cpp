@@ -89,6 +89,59 @@ BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
   return value(A[0]);
 }
 
+BionicResult Bionic::appendCheckedString(const NativeCallEvent &Call) {
+  const auto &A = Call.Arguments;
+  const bool Bounded = Call.Name == symbol::StrncatChk;
+  // API 28 returns before even reading the destination for a zero count.
+  if (Bounded && !A[2])
+    return value(A[0]);
+  const uint64_t Extent = A[Bounded ? 3 : 2];
+  auto Length = stringLengthValue(A[0], Extent, symbol::StrlenChk);
+  if (!Length)
+    return Length.takeError();
+  // The shared checked scan proves a readable NUL inside the object extent.
+  const uint64_t Output = A[0] + *Length;
+  const uint64_t Remaining = Extent - *Length;
+  const uint64_t Limit =
+      Bounded ? std::min(A[2], Options.MemoryLimit) : Options.MemoryLimit;
+  std::vector<uint8_t> Bytes;
+  uint64_t ReadCount = 0;
+  bool Terminated = false;
+  for (uint64_t I = 0; I < Limit; ++I) {
+    if (A[1] > UINT64_MAX - I || Output > UINT64_MAX - I)
+      return failure(diagnostic::StringAddressOverflow);
+    auto C = byte(A[1] + I);
+    if (!C)
+      return C.takeError();
+    ReadCount = I + 1;
+    // Preserve source/read, destination/write and fortify check order while
+    // staging the effect. Abort paths never publish pre-abort guest bytes.
+    if (auto E = access(Output + I, 1, Write))
+      return std::move(E);
+    if (!*C) {
+      Terminated = true;
+      break;
+    }
+    Bytes.push_back(*C);
+    // Both checked entries reject a missing terminator slot before reading
+    // the next source byte; strncat checks this before its count can end.
+    if (Bytes.size() == Remaining)
+      return failure(diagnostic::FortifyWritePrefix + Call.Name);
+  }
+  if (!Terminated && (!Bounded || Bytes.size() != A[2]))
+    return failure(diagnostic::StringScanLimit);
+  Bytes.push_back(0);
+  // Also admit the synthesized NUL when a count ended the source scan.
+  if (auto E = access(Output, Bytes.size(), Write))
+    return std::move(E);
+  const uint64_t DestinationSize = *Length + Bytes.size();
+  if (A[0] <= A[1] ? A[1] - A[0] < DestinationSize : A[0] - A[1] < ReadCount)
+    return failure(diagnostic::StringAppendOverlap);
+  if (auto E = CPU.write(Output, Bytes))
+    return std::move(E);
+  return value(A[0]);
+}
+
 BionicResult Bionic::decimalInteger(const NativeCallEvent &Call) {
   const bool Narrow = Call.Name == symbol::Atoi;
   auto Parsed =
@@ -321,26 +374,33 @@ llvm::Expected<std::string> Bionic::string(uint64_t Address) {
   return failure(diagnostic::UnterminatedString);
 }
 BionicResult Bionic::stringLength(const NativeCallEvent &Call) {
-  const auto &A = Call.Arguments;
-  llvm::StringRef Name(Call.Name);
-  uint64_t Bound = Name == symbol::Strnlen ? std::min(A[1], Options.MemoryLimit)
+  auto Length =
+      stringLengthValue(Call.Arguments[0], Call.Arguments[1], Call.Name);
+  if (!Length)
+    return Length.takeError();
+  return value(*Length);
+}
+llvm::Expected<uint64_t> Bionic::stringLengthValue(uint64_t Address,
+                                                   uint64_t Size,
+                                                   llvm::StringRef Name) {
+  uint64_t Bound = Name == symbol::Strnlen ? std::min(Size, Options.MemoryLimit)
                                            : Options.MemoryLimit;
   for (uint64_t I = 0; I < Bound; ++I) {
-    if (A[0] > UINT64_MAX - I)
+    if (Address > UINT64_MAX - I)
       return failure(diagnostic::StringAddressOverflow);
-    auto V = byte(A[0] + I);
+    auto V = byte(Address + I);
     if (!V)
       return V.takeError();
     if (!*V) {
       // API 28 checks the object extent only after strlen has reached NUL.
       // The terminator must fit too; scan faults and budgets take precedence.
-      if (Name == symbol::StrlenChk && I >= A[1])
+      if (Name == symbol::StrlenChk && I >= Size)
         return failure(diagnostic::FortifyReadPrefix + Name);
-      return value(I);
+      return I;
     }
   }
-  if (Name == symbol::Strnlen && Bound == A[1])
-    return value(Bound);
+  if (Name == symbol::Strnlen && Bound == Size)
+    return Bound;
   return failure(diagnostic::StringScanLimit);
 }
 

@@ -8203,6 +8203,14 @@ NUL without padding and return the destination. API 28 ARM64 uses the C
 NUL-inclusive length to the destination object size. Scan faults and budgets
 precede that fortify check; the destination and overlap checks follow it.
 Undefined overlap and unsupported abort paths refuse without partial writes.
+`__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
+`__strlen_chk` for the existing destination, then stage only the appended
+bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.
+Otherwise source reads and destination write checks precede each fortify
+capacity check; exhausting the terminator slot fails before another source
+read or the bounded-count exit. Only the appended tail requires write
+permission. Refusals preserve guest bytes, including on source, permission,
+overlap, memory-limit and deadline failures.
 `__read_chk` owns only the Bionic extent checks;
 descriptor state and suspended reads stay in the shared Linux read owner.
 Pathname-only `stat` and `lstat` aliases adapt arguments into the existing
