@@ -33,6 +33,10 @@ symbols or instruction semantics.
 Low-to-Med, Med verification and source output use that contract.
 `X86DescriptorStateNative.h` owns register widths, native API names, memory
 footprints and the assembly fallback. LLVM, HighC and LLVM-to-C share it.
+`X86MemoryAddressAsm.h` selects safe data-address carriers for explicit scalar
+memory fallbacks: AX for address32/64 and DI for i386 address16. Descriptor,
+query and atomic plans share this choice, avoiding compiler-owned realignment
+and PIC registers while retaining the original width and segment controls.
 The four appended legacy table IDs preserve i386's operand-size override
 without changing existing serialized identities. Native memory accesses stay
 inside the instruction. Explicit native addresses retain width/prefix controls;
