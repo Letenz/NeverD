@@ -6382,6 +6382,11 @@ alternative clauses use the same frozen base; missing/conflicting roots,
 cross-region targets and attempts to form a second anchor remain rejected.
 Parser/cache and Python cases reject noncanonical deltas, including signed
 zero, while preserving missing and cross-kind collision counterclaims.
+The data-parent caller cases also cover complete source refinements, reversed
+entry/pattern order, missing or weak roots, source omissions and contradictions,
+ambiguous child names, unrequested targets, all competing frozen target claims,
+rooted chains with back edges, and refusal to create a second data binding
+from an incoming descendant.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
