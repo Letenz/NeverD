@@ -50,6 +50,52 @@ class ComparisonIntegrationTests(unittest.TestCase):
         self.addCleanup(self.host.call, "neverd_comparison_destroy", handle)
         return handle
 
+    def test_analysis_section_bytes_round_trip_and_invalidate_stale_comparison(self) -> None:
+        from neverd_plugin import abi
+
+        left, right = self.session(), self.session()
+        for handle in (left, right):
+            self.assertEqual(self.host.call("neverd_session_load", handle,
+                                            str(self.binary).encode()), 1)
+        comparison = None
+
+        def compare():
+            nonlocal comparison
+            comparison = self.comparison()
+            self.assertEqual(self.host.call("neverd_comparison_run", comparison,
+                left, right, b'{"discover":false}', abi.ComparisonProgressCallback(), None), 1,
+                self.host.owned_string("neverd_comparison_last_error", comparison))
+            return self.host.owned_string("neverd_comparison_export_json", comparison)
+
+        before = compare()
+        data = (ctypes.c_ubyte * 4)(0, 255, 42, 0)
+        description = json.dumps({"schema": "neverd.analysis-section.v1", "name": ".extra",
+                                  "address": "0x2000", "permissions": "rw"}).encode()
+        self.assertEqual(self.host.call("neverd_analysis_section_add", left,
+                                        description, data, len(data)), 1)
+        # The native session owns the bytes, including embedded NULs.
+        data[2] = 1
+        state = self.host.owned_string("neverd_analysis_sections_json", left, 1)
+        self.assertEqual(json.loads(state)["sections"][0]["data_hex"], "00ff2a00")
+        after = compare()
+        self.assertEqual(json.loads(before)["primary"]["sha256"],
+                         json.loads(after)["primary"]["sha256"])
+        self.assertNotEqual(json.loads(before)["primary"]["analysis"],
+                            json.loads(after)["primary"]["analysis"])
+        self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                        before.encode()), 0)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), after)
+        self.assertEqual(self.host.call("neverd_analysis_section_remove", left, b".extra"), 1)
+        compare()
+        self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                        before.encode()), 1)
+        self.assertEqual(self.host.call("neverd_analysis_sections_import_json", left,
+                                        state.encode()), 1)
+        compare()
+        self.assertEqual(self.host.call("neverd_comparison_restore_json", comparison,
+                                        after.encode()), 1)
+        self.assertEqual(self.host.owned_string("neverd_comparison_export_json", comparison), after)
+
     def test_restore_callback_retains_result_and_allows_retry(self) -> None:
         from neverd_plugin import abi
 
