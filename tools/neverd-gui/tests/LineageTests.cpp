@@ -24,6 +24,7 @@
 #include <QFontInfo>
 #include <QGraphicsItem>
 #include <QGraphicsTextItem>
+#include <QItemSelectionModel>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -179,6 +180,16 @@ private slots:
              Translated("neverd::gui::LineagePageView", "Rows per page"));
     QCOMPARE(Rows->prefix(),
              Translated("neverd::gui::LineagePageView", "Rows: "));
+    const auto *Previous =
+        Versions->findChild<QToolButton *>("lineagePreviousPage");
+    const auto *Next = Versions->findChild<QToolButton *>("lineageNextPage");
+    QVERIFY(Previous && Next);
+    QCOMPARE(Previous->arrowType(),
+             Locale == "ar" ? Qt::RightArrow : Qt::LeftArrow);
+    QCOMPARE(Next->arrowType(),
+             Locale == "ar" ? Qt::LeftArrow : Qt::RightArrow);
+    QCOMPARE(Versions->table()->selectionModel()->selectedRows().size(), 1);
+    QCOMPARE(Functions->table()->selectionModel()->selectedRows().size(), 1);
     QCOMPARE(
         Functions->table()->model()->headerData(1, Qt::Horizontal).toString(),
         Translated("neverd::gui::LineageDialog", "Address"));
@@ -205,6 +216,21 @@ private slots:
       QVERIFY(View.rect().contains(
           QRect(Button->mapTo(&View, QPoint()), Button->size())));
     }
+    const auto Revision = Session.revision();
+    const auto Target = Versions->rows()[1].toObject()["id"].toString();
+    auto *Graph = View.findChild<LineageGraph *>("lineageGraph");
+    QVERIFY(Graph);
+    Graph->versionActivated(Target);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !Session.busy() && Functions->selected()["version"] == Target, Timeout);
+    QCOMPARE(Versions->selected()["id"].toString(), Target);
+    QCOMPARE(Session.revision(), Revision);
+    View.setLayoutDirection(Locale == "ar" ? Qt::LeftToRight : Qt::RightToLeft);
+    QCOMPARE(Previous->arrowType(),
+             Locale == "ar" ? Qt::LeftArrow : Qt::RightArrow);
+    QCOMPARE(Next->arrowType(),
+             Locale == "ar" ? Qt::RightArrow : Qt::LeftArrow);
+    QCOMPARE(Session.revision(), Revision);
   }
 
   void navigationPersistenceAndRender() {

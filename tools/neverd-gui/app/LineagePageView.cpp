@@ -18,6 +18,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonDocument>
@@ -157,8 +158,8 @@ LineagePageView::LineagePageView(LineageSession &S, const QStringList &Headers,
   RowsPerPage->setKeyboardTracking(false);
   Previous = new QToolButton(this);
   Next = new QToolButton(this);
-  Previous->setArrowType(Qt::LeftArrow);
-  Next->setArrowType(Qt::RightArrow);
+  Previous->setObjectName("lineagePreviousPage");
+  Next->setObjectName("lineageNextPage");
   Previous->setAccessibleName(tr("Previous page"));
   Previous->setToolTip(tr("Previous page"));
   Next->setAccessibleName(tr("Next page"));
@@ -228,7 +229,14 @@ void LineagePageView::clear() {
   buttons();
 }
 void LineagePageView::refresh() { page(Offset); }
+void LineagePageView::changeEvent(QEvent *Event) {
+  QWidget::changeEvent(Event);
+  if (Event->type() == QEvent::LayoutDirectionChange)
+    buttons();
+}
 void LineagePageView::buttons() {
+  Previous->setArrowType(isRightToLeft() ? Qt::RightArrow : Qt::LeftArrow);
+  Next->setArrowType(isRightToLeft() ? Qt::LeftArrow : Qt::RightArrow);
   const bool Available = Session.ready() && !Session.cancelRequested() &&
                          !Query.isEmpty() && !Pending;
   RowsPerPage->setEnabled(Available);
@@ -302,7 +310,7 @@ void LineagePageView::page(qint64 First) {
           Model->appendRow(Items);
         }
         if (!Rows.isEmpty())
-          Table->selectRow(Selected);
+          Table->setCurrentIndex(Model->index(Selected, 0));
         Status->setText(tr("%1–%2 of %3")
                             .arg(Rows.isEmpty() ? 0 : Offset + 1)
                             .arg(Offset + Rows.size())

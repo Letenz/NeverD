@@ -423,7 +423,8 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
                 if (Versions->selected()["id"].toString() == ID)
                   selectVersion(ID);
                 else
-                  Versions->table()->selectRow(I);
+                  Versions->table()->setCurrentIndex(
+                      Versions->table()->model()->index(I, 0));
                 Selected = true;
                 break;
               }

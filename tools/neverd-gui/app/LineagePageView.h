@@ -38,6 +38,9 @@ public:
   QTableView *table() const { return Table; }
   const QJsonArray &rows() const { return Rows; }
 
+protected:
+  void changeEvent(QEvent *Event) override;
+
 signals:
   void selectionChanged(const QJsonObject &Row);
   void activated(const QJsonObject &Row);
