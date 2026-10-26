@@ -103,6 +103,51 @@ def run(executable, real=False):
     print("patch preview, stale protection, history, replica, batch revert, reopen and export passed")
 
 
+def split_row_history(executable):
+    data, entry = two_routine_elf()
+    with tempfile.TemporaryDirectory(prefix="neverd-patch-merge-history-") as directory:
+        binary = Path(directory) / "input.elf"
+        binary.write_bytes(data)
+        states = [(data[-12:].hex(), [])]
+        expected = bytearray(data[-12:])
+        with Client(executable) as worker:
+            ok(worker, "open", {"path": str(binary), "analysis": False})
+            # Insert before/after existing rows, then split an interior range.
+            for offset, replacement in ((2, b"\x90" * 4), (0, b"\x91"),
+                                        (8, b"\x92"), (3, b"\x93" * 2)):
+                old = expected[offset:offset + len(replacement)].hex()
+                ok(worker, "patch_apply", {"address": hex(entry + offset),
+                                           "kind": "bytes", "bytes": replacement.hex(),
+                                           "expected": old, "allow_overlap": True})
+                expected[offset:offset + len(replacement)] = replacement
+                assert ok(worker, "bytes", {"address": hex(entry), "size": 12})["data"] == expected.hex()
+                rows = ok(worker, "patches")["items"]
+                assert [int(row["addr"], 16) for row in rows] == sorted(int(row["addr"], 16) for row in rows)
+                states.append((expected.hex(), rows))
+            for operation, sequence in (("undo", reversed(states[:-1])),
+                                         ("redo", states[1:])):
+                for bytes_, rows in sequence:
+                    ok(worker, operation)
+                    assert ok(worker, "bytes", {"address": hex(entry), "size": 12})["data"] == bytes_
+                    assert ok(worker, "patches")["items"] == rows
+            rows = states[-1][1]
+            assert len(rows) >= 3, rows
+            ok(worker, "patch_revert", {"address": rows[0]["va"], "ranges": [
+                {"address": row["va"], "size": row["size"]} for row in (rows[0], rows[-1])]})
+            reverted = ok(worker, "patches")["items"]
+            ok(worker, "undo")
+            assert ok(worker, "patches")["items"] == rows
+        with Client(executable) as worker:
+            ok(worker, "open", {"path": str(binary), "analysis": False})
+            assert ok(worker, "bytes", {"address": hex(entry), "size": 12})["data"] == states[-1][0]
+            ok(worker, "redo")
+            assert ok(worker, "patches")["items"] == reverted
+            ok(worker, "undo")
+            assert ok(worker, "patches")["items"] == states[-1][1]
+        assert binary.read_bytes() == data
+    print("ordered patch inserts, split rows, batch removal and reopened undo/redo passed")
+
+
 def pe_export(executable):
     data = image()[0]
     with tempfile.TemporaryDirectory(prefix="neverd-pe-export-") as directory:
@@ -128,4 +173,5 @@ def pe_export(executable):
 if __name__ == "__main__":
     run(sys.argv[1], "--real" in sys.argv[2:])
     if "--real" in sys.argv[2:]:
+        split_row_history(sys.argv[1])
         pe_export(sys.argv[1])

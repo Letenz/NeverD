@@ -837,7 +837,7 @@ bool Engine::loadsDwarfFiles() {
 bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
 }
-bool Engine::reloadUserState() {
+bool Engine::reloadUserState(bool bytePatchesChanged) {
   reloadCodeEdits();
   const bool annotations = neverd_annotations_load(session_) == 0;
   const bool renames = neverd_renames_load(session_) == 0;
@@ -845,7 +845,7 @@ bool Engine::reloadUserState() {
   const bool items = reloadDataItems();
   const bool operands = reloadOperandFormats();
   const bool types = reloadTypeDeclarations();
-  const bool patches = reloadBytePatches();
+  const bool patches = reloadBytePatches(bytePatchesChanged);
   return annotations && renames && functions && items && operands && types &&
          patches;
 }
@@ -1670,7 +1670,7 @@ Json Engine::backendJson(const char *owned, bool checkError) const {
     throw Error("engine_error",
                 error().empty() ? "Engine returned no result" : error());
   try {
-    auto value = Json::parse(text);
+    auto value = transport::parseBackendJson(text);
     canonicalizeAddresses(value);
     return value;
   } catch (const Json::exception &) {
@@ -3188,26 +3188,36 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       changes.push_back(command);
       for (const auto &change : changes) {
         const auto at = parseAddress(change.at("address").get<std::string>());
-        rows.erase(std::remove_if(
-                       rows.begin(), rows.end(),
-                       [&](const Json &row) {
-                         return parseAddress(
-                                    row.at("addr").get<std::string>()) == at;
-                       }),
-                   rows.end());
-        if (const auto &side = change.at(redo ? "after" : "before");
-            !side.is_null())
-          rows.push_back(side);
+        // Committed tables are sorted. Replace in place so undo/redo does not
+        // turn a single changed row into a full erase scan and table sort.
+        const auto position = std::lower_bound(
+            rows.begin(), rows.end(), at, [](const Json &row, auto address) {
+              return parseAddress(
+                         row.at("addr").get_ref<const std::string &>()) <
+                     address;
+            });
+        const bool present =
+            position != rows.end() &&
+            parseAddress(position->at("addr").get_ref<const std::string &>()) ==
+                at;
+        const auto &side = change.at(redo ? "after" : "before");
+        if (side.is_null()) {
+          if (present)
+            rows.erase(position);
+        } else if (present)
+          *position = side;
+        else
+          rows.insert(position, side);
       }
       const auto checkpoint = store;
       store.advance(redo);
       try {
-        store.persist(state);
+        store.persist(std::move(state));
       } catch (...) {
         store = checkpoint;
         throw;
       }
-      if (!reloadUserState())
+      if (!reloadUserState(command.at("kind") == "patch"))
         throw Error("reload_failed",
                     "History operation was saved but cannot be reloaded",
                     {{"saved", true}});
@@ -4216,7 +4226,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     auto state = store.committedState();
     state["annotations"] = backendJson(neverd_annotations_json(session_));
     saveAnalysisSections();
-    store.persist(state);
+    store.persist(std::move(state));
     dirty_ = false;
     return {{"saved", true}, {"dirty", false}};
   }
