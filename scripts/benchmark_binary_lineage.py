@@ -333,9 +333,11 @@ def sample(args: argparse.Namespace) -> None:
             last.pop("parents")
             renamed = {**last, "label": "Renamed benchmark release"}
             saved_release = graph.export()
+            budget_started = time.perf_counter()
             try:
                 graph.edit_releases({"upsert": [renamed]}, options={"max_work": 1})
             except NeverDError:
+                timings["release_budget_refusal_seconds"] = time.perf_counter() - budget_started
                 require(graph.status()["operation_state"] == "resource_limited" and
                         graph.export() == saved_release, "limited release edit changed retained data")
             else:

@@ -2646,7 +2646,10 @@ adds an authored sparse fork/merge DAG to an existing native fixture corpus.
 Use the ordinary `run --corpus NEW_CORPUS --library LIBRARY --output-dir NEW_RUN`
 command to measure fresh-process release inventory and label editing, verify
 parent/child pages, preserve parents on edits, and check cancellation and budget
-refusals against exact retained persistence. This synthetic workload does not
+refusals against exact retained persistence. The receipt times budget refusal
+separately from the subsequent retained-state check; use a corpus with many
+functions/reports as well as many releases to expose serialization costs.
+This synthetic workload does not
 establish matching quality or competitive performance.
 
 The lineage desktop regression also admits 200 snapshots with 48 KiB labels,
