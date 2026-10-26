@@ -16,6 +16,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
@@ -126,6 +127,21 @@ uint64_t SymEvalPlan::evalU64(llvm::ArrayRef<uint64_t> VarVals) {
       [&](uint32_t Id) { return Id < VarVals.size() ? VarVals[Id] : 0; });
 }
 
+namespace {
+
+// Keep arbitrary-precision construction and cleanup out of the common native
+// evaluator's stack frame. General operators still have one semantics owner.
+LLVM_ATTRIBUTE_NOINLINE
+uint64_t evalU64ViaAP(const SymContext &Ctx, SymRef Node,
+                      llvm::ArrayRef<uint32_t> Args, const uint64_t *Values) {
+  llvm::SmallVector<llvm::APInt, 4> APArgs;
+  for (size_t K = 0; K < Args.size(); ++K)
+    APArgs.emplace_back(Ctx.width(Ctx.operand(Node, K)), Values[Args[K]]);
+  return evalNodeAP(Ctx, Node, APArgs).getZExtValue();
+}
+
+} // namespace
+
 uint64_t
 SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
   assert(FitsU64 && "evalU64 requires every node to fit in 64 bits");
@@ -164,20 +180,25 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
         Res *= S[A[K]];
       break;
     case SymOp::And:
+      // Every earlier slot is normalized to its declared width. These
+      // bitwise operators preserve that invariant without another mask.
       Res = S[A[0]] & S[A[1]];
       for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res &= S[A[K]];
-      break;
+      S[I] = Res;
+      continue;
     case SymOp::Or:
       Res = S[A[0]] | S[A[1]];
       for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res |= S[A[K]];
-      break;
+      S[I] = Res;
+      continue;
     case SymOp::Xor:
       Res = S[A[0]] ^ S[A[1]];
       for (uint32_t K = 2; K < St.NumArgs; ++K)
         Res ^= S[A[K]];
-      break;
+      S[I] = Res;
+      continue;
     case SymOp::Not:
       Res = ~S[A[0]];
       break;
@@ -188,8 +209,8 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
     }
     case SymOp::LShr: {
       uint64_t Sh = S[A[1]];
-      Res = Sh >= W ? 0 : (S[A[0]] >> Sh);
-      break;
+      S[I] = Sh >= W ? 0 : (S[A[0]] >> Sh);
+      continue;
     }
     case SymOp::AShr: {
       uint64_t V = S[A[0]], Sh = S[A[1]];
@@ -209,24 +230,24 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
     }
     case SymOp::URem: {
       uint64_t X = S[A[0]], Y = S[A[1]];
-      Res = Y == 0 ? X : (X % Y);
-      break;
+      S[I] = Y == 0 ? X : (X % Y);
+      continue;
     }
     case SymOp::Eq:
-      Res = S[A[0]] == S[A[1]];
-      break;
+      S[I] = S[A[0]] == S[A[1]];
+      continue;
     case SymOp::Ult:
-      Res = S[A[0]] < S[A[1]];
-      break;
+      S[I] = S[A[0]] < S[A[1]];
+      continue;
     case SymOp::Ule:
-      Res = S[A[0]] <= S[A[1]];
-      break;
+      S[I] = S[A[0]] <= S[A[1]];
+      continue;
     case SymOp::Ite:
-      Res = S[A[0]] ? S[A[1]] : S[A[2]];
-      break;
+      S[I] = S[A[0]] ? S[A[1]] : S[A[2]];
+      continue;
     case SymOp::ZExt:
-      Res = S[A[0]];
-      break;
+      S[I] = S[A[0]];
+      continue;
     case SymOp::Extract:
       Res = S[A[0]] >> St.Aux;
       break;
@@ -235,10 +256,7 @@ SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
       // stated once in evalNodeAP.  They are rare in the MBA inner loop, so
       // reconstructing operand APInts here costs little and avoids a second,
       // divergent copy of the semantics.
-      llvm::SmallVector<llvm::APInt, 4> APArgs;
-      for (uint32_t K = 0; K < St.NumArgs; ++K)
-        APArgs.emplace_back(Ctx.width(Ctx.operand(St.Node, K)), S[A[K]]);
-      Res = evalNodeAP(Ctx, St.Node, APArgs).getZExtValue();
+      Res = evalU64ViaAP(Ctx, St.Node, {A, St.NumArgs}, S);
       break;
     }
     }

@@ -1217,6 +1217,52 @@ TEST(SymExpr, EvaluationPlanKeepsSharedInputsAfterContextGrowth) {
   }
 }
 
+TEST(SymExpr, NativeNormalizedResultsRetainWidthBoundaries) {
+  std::mt19937_64 Random(0x6e6f726d616c);
+  for (unsigned Width : {1u, 7u, 8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+    const auto Shift = Ctx.mkVar("shift", 64);
+    const auto Sum = Ctx.mkAdd(X, Y);
+    const auto Product = Ctx.mkMul(X, Ctx.mkConst(Width, 3));
+    const std::array Roots{
+        Ctx.mkLShr(Sum, Shift), Ctx.mkURem(Sum, Y),
+        Ctx.mkEq(Sum, X),       Ctx.mkUlt(Sum, Y),
+        Ctx.mkUle(Sum, X),      Ctx.mkIte(Ctx.mkEq(X, Y), Product, Sum),
+        Ctx.mkZExt(X, 64)};
+    for (unsigned Operation = 0; Operation < Roots.size(); ++Operation) {
+      SCOPED_TRACE(Operation);
+      SymEvalPlan Plan(Ctx, Roots[Operation]);
+      for (unsigned Trial = 0; Trial < 128; ++Trial) {
+        const std::array<uint64_t, 3> Values{
+            Trial == 0 || Trial == 2 ? ~uint64_t(0) : Random(),
+            Trial < 2    ? 0
+            : Trial == 2 ? ~uint64_t(0)
+                         : Random(),
+            std::array<uint64_t, 5>{0, Width - 1, Width, 64,
+                                    ~uint64_t(0)}[Trial % 5]};
+        const llvm::APInt A(Width, Values[0], false, true);
+        const llvm::APInt B(Width, Values[1], false, true);
+        const auto Total = A + B;
+        const std::array Expected{
+            Values[2] >= Width ? uint64_t(0)
+                               : Total.lshr(unsigned(Values[2])).getZExtValue(),
+            (B.isZero() ? Total : Total.urem(B)).getZExtValue(),
+            uint64_t(Total == A),
+            uint64_t(Total.ult(B)),
+            uint64_t(Total.ule(A)),
+            (A == B ? A * llvm::APInt(Width, 3, false, true) : Total)
+                .getZExtValue(),
+            A.getZExtValue()};
+        EXPECT_EQ(Plan.evalU64(Values), Expected[Operation]);
+        EXPECT_EQ(Plan.evalU64With([&](uint32_t Id) { return Values[Id]; }),
+                  Expected[Operation]);
+      }
+    }
+  }
+}
+
 TEST(SymExpr, U64ArithmeticShiftByZeroKeepsTheWholeWord) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", 64);
