@@ -190,6 +190,7 @@ add_neverd_unittest(NeverDNativeConstantStoresTests
   LINK_COMPONENTS Pipeline)
 
 add_neverd_unittest(NeverDMedEntryFrameTests
+  core/MedSSACallClobberTests.cpp
   core/MedSSAMultiRootTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 add_neverd_unittest(NeverDMedVariadicTests
@@ -361,6 +362,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SmcccCallTests.cpp
   core/RegisterPairCallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
+  core/MedSSACallClobberTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
   core/ObjCProtocolTests.cpp
