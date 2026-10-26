@@ -92,6 +92,16 @@ neverd diff --structural -a original.exe -b patched.exe --list all \
   --list-side secondary --ambiguous-with 0x140001000 --limit 200
 ```
 
+Function projections retain the extracted session's display name in `name`,
+including analyst renames and listing suffixes. `evidence_name` identifies the
+underlying name used by the comparison. Search accepts either name; sorting by
+name uses the display name. These presentation annotations are owned by the
+comparison and do not alter matches, snapshot revisions or saved report bytes.
+When the names differ, the desktop's function tooltips and Evidence tab show the
+analyzed name alongside the display name, including the counterpart's names.
+The read-only Evidence pane wraps long identities and supports scrolling and
+copying the complete text.
+
 Continue with `--offset` using the response's `next_offset`. `ambiguous_with`
 always names a function on the opposite side; an absent source is an error,
 while a valid source with no retained ambiguity group returns an empty page.
@@ -1009,6 +1019,17 @@ image address. Only decoded control-flow operands, exact relocation fields and
 known address references receive address normalization.
 
 Duplicate names and indistinguishable bodies remain explicit ambiguities.
+Address-generated labels do not anchor matches, even after native function
+discovery. Name evidence retains its producer origin: a real symbol or export
+named `sub_1234` remains eligible, as do names admitted by recognition. Display
+renames do not replace those names or change native snapshot revisions. Numeric
+suffixes added to distinguish equal names in the listing do not manufacture
+unique name evidence; literal suffixes in the original symbols remain intact. The
+`sdk-native-decode-v2` extraction identity records this contract; historical
+reports keep their original evidence and require a new comparison for fresh
+binding under the revised extraction profile.
+Use the [offline report workflow](binary-diff-lineage.md#open-a-report-from-an-older-analysis-profile)
+to inspect those reports without reanalyzing their binaries.
 Unmatched functions are not automatically additions/deletions when discovery is
 partial. Imports, thunks, libraries and incomplete bodies carry separate traits.
 Pairs with no body on either side report `identity_only`, with no body similarity
@@ -1179,8 +1200,8 @@ reference provenance and broader profile qualification remain work in progress.
 Native runs and verified finite SSA neighborhoods are parts of the required
 transformation work. Broader CFG/IR region matching, compiler/O-level/LTO/PGO/obfuscation
 qualification, cross-ISA profiles, security-fix triage, interprocedural data effects,
-broader semantic validation beyond the pure scalar-return profile, branch-aware
-multi-version lineage, native/game package
+broader semantic validation beyond the pure scalar-return profile, release-aware
+lineage beyond the offline snapshot graph, native/game package
 adapters and competitive qualification remain outstanding. No comparative
 performance superiority is established.
 The [advanced acceptance map](binary-diff-acceptance.md) tracks the required
@@ -1195,3 +1216,16 @@ checks. SDK/core suites have their respective test labels. Shared traversal
 changes also require the session discovery and worker/CLI instruction-flow tests.
 Set `NEVERD_DIFF_SCREENSHOTS` while running the GUI test to retain real light/dark
 Qt captures; run separately with `QT_SCALE_FACTOR=1` and `1.5` for DPI review.
+
+## Multi-version review
+
+The [offline version graph](binary-diff-lineage.md) combines retained comparisons,
+traces function associations across branches and cycles, exposes conflicting
+paths and keeps manual assessments attached to their original evidence. CLI,
+C ABI, Python, worker and desktop share this model and exact source persistence.
+This first profile makes no chronology or automatic patch-presence inference.
+
+Restoring a saved comparison through the worker reads its settings under the
+saved-file byte allowance, not the smaller backend-reply allowance. Reports
+larger than 32 MiB remain local during both restore and start-with-restore;
+interactive responses keep their ordinary bounded pages.

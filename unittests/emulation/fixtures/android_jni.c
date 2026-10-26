@@ -29,6 +29,141 @@ static Handle attach(void) {
     return 0;
   return env;
 }
+static int same_ref(Handle e, Ref first, Ref second) {
+  return C(e, int, 24, first, second);
+}
+static Ref map_get_v(Handle e, Ref map, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  Ref result = C(e, Ref, 35, map, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+int jni_hash_map(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "java/util/HashMap");
+  Ref init = C(e, Ref, 33, type, "<init>", "()V");
+  Ref put = C(e, Ref, 33, type, "put",
+              "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+  Ref get =
+      C(e, Ref, 33, type, "get", "(Ljava/lang/Object;)Ljava/lang/Object;");
+  Ref size = C(e, Ref, 33, type, "size", "()I");
+  Ref contains = C(e, Ref, 33, type, "containsKey", "(Ljava/lang/Object;)Z");
+  Ref remove =
+      C(e, Ref, 33, type, "remove", "(Ljava/lang/Object;)Ljava/lang/Object;");
+  Ref clear = C(e, Ref, 33, type, "clear", "()V");
+  Ref empty = C(e, Ref, 33, type, "isEmpty", "()Z");
+  Ref map = mode == 2 ? C(e, Ref, 27, type) : C(e, Ref, 28, type, init);
+  CHECK(map && get && size && put && contains && remove && clear && empty);
+  if (mode == 1)
+    return C(e, Ref, 34, map, get, map); // Unmodeled custom key hashing.
+  if (mode == 2)
+    return C(e, int, 49, map,
+             size); // Raw AllocObject is not a constructed map.
+  if (mode == 3) {
+    Ref equals = C(e, Ref, 33, type, "equals", "(Ljava/lang/Object;)Z");
+    return C(e, int, 37, map, equals, map);
+  }
+  Ref other = C(e, Ref, 30, type, init, (void *)0);
+  Ref key = C(e, Ref, 167, "Aa"), equal = C(e, Ref, 167, "Aa");
+  Ref collision = C(e, Ref, 167, "BB");
+  CHECK(C(e, int, 37, map, empty) && !C(e, int, 49, map, size));
+  CHECK(!C(e, Ref, 34, map, put, key, map));
+  U64 args[] = {collision, other};
+  CHECK(!C(e, Ref, 36, map, put, args));
+  CHECK(same_ref(e, map_get_v(e, map, get, equal), map));
+  CHECK(same_ref(e, C(e, Ref, 34, map, put, equal, (Ref)0), map));
+  CHECK(C(e, int, 49, map, size) == 2);
+  CHECK(C(e, int, 37, map, contains, key));
+  CHECK(!C(e, Ref, 34, map, get, key));
+  CHECK(!C(e, int, 37, other, contains, key));
+  CHECK(!C(e, Ref, 34, map, put, (Ref)0, other));
+  CHECK(same_ref(e, C(e, Ref, 34, map, get, (Ref)0), other));
+  CHECK(same_ref(e, C(e, Ref, 34, map, remove, (Ref)0), other));
+  CHECK(!C(e, Ref, 34, map, remove, (Ref)0));
+  Ref saved_map = C(e, Ref, 21, map), saved_other = C(e, Ref, 21, other);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e);
+  collision = C(e, Ref, 167, "BB");
+  Ref iface = C(e, Ref, 6, "java/util/Map");
+  Ref interface_get =
+      C(e, Ref, 33, iface, "get", "(Ljava/lang/Object;)Ljava/lang/Object;");
+  CHECK(same_ref(e, C(e, Ref, 34, saved_map, interface_get, collision),
+                 saved_other));
+  C(e, void, 61, saved_map, clear);
+  CHECK(C(e, int, 37, saved_map, empty));
+  CHECK(!C(e, int, 49, saved_map, size));
+  C(e, void, 22, saved_map);
+  C(e, void, 22, saved_other);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+static int property_int_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  int result = C(e, int, 130, type, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+extern const void *__system_property_find(const char *);
+extern int mprotect(void *, U64, int);
+extern int munmap(void *, U64);
+int jni_property_int(unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/SystemProperties");
+  Ref method = C(e, Ref, 113, type, "getInt", "(Ljava/lang/String;I)I");
+  CHECK(type && method);
+  if (mode == 1 || mode == 2) {
+    const void *record = __system_property_find("test.valid");
+    CHECK(record);
+    void *page = (void *)((U64)record & ~4095ULL);
+    if (mode == 1) {
+      CHECK(!mprotect(page, 4096, 3));
+      *(volatile char *)record ^= 1;
+    } else {
+      CHECK(!munmap(page, 4096));
+    }
+    Ref key = C(e, Ref, 167, "test.valid");
+    return C(e, int, 129, type, method, key, 71);
+  }
+  if (mode == 3)
+    return C(e, Ref, 113, type, "set",
+             "(Ljava/lang/String;Ljava/lang/String;)V");
+  const char *names[] = {"test.valid",     "test.hex",         "test.min",
+                         "test.max",       "test.octal",       "test.sign",
+                         "test.empty",     "test.missing",     "test.overflow",
+                         "test.underflow", "test.trailing",    "test.signedhex",
+                         "test.spacehex",  "test.hexoverflow", ""};
+  const int expected[] = {28,         28,  (-2147483647 - 1),
+                          2147483647, 28,  -28,
+                          -41,        -41, -41,
+                          -41,        -41, -41,
+                          -41,        -41, -41};
+  for (unsigned i = 0; i != sizeof(expected) / sizeof(expected[0]); ++i) {
+    Ref key = C(e, Ref, 167, names[i]);
+    U64 args[] = {key, (unsigned)-41};
+    int value = i % 3 == 0   ? C(e, int, 129, type, method, key, -41)
+                : i % 3 == 1 ? property_int_v(e, type, method, key, -41)
+                             : C(e, int, 131, type, method, args);
+    CHECK(value == expected[i]);
+  }
+  char native[92];
+  CHECK(__system_property_get("test.valid", native) == 2);
+  CHECK(native[0] == '2' && native[1] == '8' && !native[2]);
+  U16 encoded_key[] = {0, 0xd800, 'a', 0xd83d, 0xde00};
+  Ref encoded = C(e, Ref, 163, encoded_key, 5);
+  CHECK(C(e, int, 129, type, method, encoded, 41) == -7);
+  (void)C(e, int, 129, type, method, (Ref)0, 41);
+  CHECK(C(e, int, 228));
+  Ref exception = C(e, Ref, 15);
+  C(e, void, 17);
+  Ref npe = C(e, Ref, 6, "java/lang/NullPointerException");
+  CHECK(C(e, int, 32, exception, npe));
+  return C(vm, int, 5);
+}
 static U64 clock_long_v(Handle e, Ref type, Ref method, ...) {
   __builtin_va_list args;
   __builtin_va_start(args, method);

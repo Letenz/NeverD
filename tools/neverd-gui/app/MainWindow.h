@@ -36,6 +36,7 @@ class PackageReviewDialog;
 }
 
 class ComparisonDialog;
+class LineageDialog;
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
@@ -406,6 +407,7 @@ private:
   QPointer<QDialog> LocalReferencesDialog;
   QPointer<web::PackageReviewDialog> packageReview_;
   QPointer<ComparisonDialog> comparison_;
+  QPointer<LineageDialog> lineage_;
   bool startupQuickStartPending_ = false;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;

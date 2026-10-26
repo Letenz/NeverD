@@ -16,6 +16,7 @@
 
 #include <QHash>
 #include <QJsonDocument>
+#include <QTextDocument>
 #include <QTimer>
 #include <utility>
 
@@ -47,6 +48,13 @@ QString names(const QJsonArray &Functions) {
 ComparisonModel::ComparisonModel(ComparisonSession &S, Kind K, QObject *Parent)
     : QAbstractTableModel(Parent), Session(S), Type(K),
       Pages(::neverd::limits::gui::kComparisonCachedPages) {}
+QString ComparisonModel::functionNamesText(const QJsonObject &Function) {
+  const auto Display = Function["name"].toString();
+  const auto Analyzed = Function["evidence_name"].toString();
+  return Analyzed.isEmpty() || Analyzed == Display
+             ? Display
+             : tr("%1 (analyzed name: %2)").arg(Display, Analyzed);
+}
 QString ComparisonModel::parameterViewText(const QJsonObject &V) {
   if (!V["elided_truncations"].toInt())
     return {};
@@ -261,11 +269,18 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
                 "They do not validate behavior, calls, memory effects or patch "
                 "presence.") +
              '\n' + R["id"].toString();
-    if (Type == Kind::Functions || Type == Kind::Candidates)
-      return E["explanation"].toString() + '\n' +
-             tr("Heuristic confidence; structural similarity does not prove "
-                "semantic equivalence.") +
-             '\n' + R["identity"].toString();
+    if (Type == Kind::Functions || Type == Kind::Candidates) {
+      QString Names = functionNamesText(R);
+      const auto Counterpart = R["counterpart"].toObject();
+      if (!Counterpart.isEmpty())
+        Names +=
+            '\n' + tr("Counterpart: %1").arg(functionNamesText(Counterpart));
+      return Qt::convertFromPlainText(
+          Names + "\n\n" + E["explanation"].toString() + '\n' +
+          tr("Heuristic confidence; structural similarity does not prove "
+             "semantic equivalence.") +
+          '\n' + R["identity"].toString());
+    }
     return code(R["primary"].toObject()) + '\n' +
            code(R["secondary"].toObject());
   }

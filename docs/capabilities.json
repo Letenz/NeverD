@@ -14,21 +14,9 @@
           "neverd_annotations_save",
           "neverd_apply_signature_file",
           "neverd_apply_signatures",
-          "neverd_assemble_json",
           "neverd_auto_apply_signatures",
           "neverd_bench_decode",
           "neverd_bench_run",
-          "neverd_byte_patch_apply",
-          "neverd_byte_patch_context_json",
-          "neverd_byte_patch_preview",
-          "neverd_byte_patch_ranges_json",
-          "neverd_byte_patch_revert",
-          "neverd_byte_patch_source_preview_json",
-          "neverd_byte_patch_source_target_json",
-          "neverd_byte_patches_export",
-          "neverd_byte_patches_json",
-          "neverd_byte_patches_load",
-          "neverd_byte_patches_save",
           "neverd_call_paths_json",
           "neverd_call_tree_json",
           "neverd_callgraph_json",
@@ -248,7 +236,6 @@
           "neverd_sig_match_count",
           "neverd_sig_matches_json",
           "neverd_simplify_result_dispose",
-          "neverd_source_patch_context_json",
           "neverd_source_type_json",
           "neverd_stack_frame_json",
           "neverd_string_at",
@@ -432,7 +419,7 @@
       },
       {
         "owner": "binary-diff",
-        "reason": "Structural comparison and bounded scalar validation are qualified separately in docs/binary-diff.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger.",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
         "names": [
           "neverd_comparison_cancel",
           "neverd_comparison_create",
@@ -465,7 +452,18 @@
           "neverd_comparison_status_json",
           "neverd_comparison_summary_json",
           "neverd_comparison_undo",
-          "neverd_comparison_validate_inputs"
+          "neverd_comparison_validate_inputs",
+          "neverd_lineage_cancel",
+          "neverd_lineage_create",
+          "neverd_lineage_destroy",
+          "neverd_lineage_edit_releases_json",
+          "neverd_lineage_export_json",
+          "neverd_lineage_last_error",
+          "neverd_lineage_load_json",
+          "neverd_lineage_query_json",
+          "neverd_lineage_report_json",
+          "neverd_lineage_status_json",
+          "neverd_lineage_summary_json"
         ]
       }
     ],
@@ -1200,22 +1198,6 @@
           "neverd patch --symbol-path",
           "neverd patch --text-section",
           "neverd patch --v",
-          "neverd patch-bytes",
-          "neverd patch-bytes --address",
-          "neverd patch-bytes --allow-overlap",
-          "neverd patch-bytes --allow-unsigned",
-          "neverd patch-bytes --apply",
-          "neverd patch-bytes --assemble",
-          "neverd patch-bytes --att",
-          "neverd patch-bytes --bytes",
-          "neverd patch-bytes --export",
-          "neverd patch-bytes --fill-nops",
-          "neverd patch-bytes --kind",
-          "neverd patch-bytes --o",
-          "neverd patch-bytes --revert",
-          "neverd patch-bytes --size",
-          "neverd patch-bytes --symbols",
-          "neverd patch-bytes --value",
           "neverd paths",
           "neverd paths --arm-function-mode",
           "neverd paths --data-refs",
@@ -1624,7 +1606,7 @@
       },
       {
         "owner": "binary-diff",
-        "reason": "Structural comparison and bounded scalar validation are qualified separately in docs/binary-diff.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger.",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
         "names": [
           "neverd diff --ambiguous-with",
           "neverd diff --changes-context",
@@ -1693,7 +1675,26 @@
           "neverd diff --validate-function",
           "neverd diff --validation-max-instructions",
           "neverd diff --validation-max-work",
-          "neverd diff --validation-side"
+          "neverd diff --validation-side",
+          "neverd lineage",
+          "neverd lineage --address",
+          "neverd lineage --export-report",
+          "neverd lineage --history",
+          "neverd lineage --index",
+          "neverd lineage --json",
+          "neverd lineage --limit",
+          "neverd lineage --list",
+          "neverd lineage --offset",
+          "neverd lineage --options",
+          "neverd lineage --query",
+          "neverd lineage --release",
+          "neverd lineage --release-edit",
+          "neverd lineage --reopen",
+          "neverd lineage --report",
+          "neverd lineage --save",
+          "neverd lineage --search",
+          "neverd lineage --snapshot",
+          "neverd lineage --source"
         ]
       }
     ],
@@ -1703,12 +1704,6 @@
         "reason": "General JSON API outside the focused capability claims in this ledger.",
         "names": [
           "neverd_annotations_json",
-          "neverd_assemble_json",
-          "neverd_byte_patch_context_json",
-          "neverd_byte_patch_ranges_json",
-          "neverd_byte_patch_source_preview_json",
-          "neverd_byte_patch_source_target_json",
-          "neverd_byte_patches_json",
           "neverd_call_paths_json",
           "neverd_call_tree_json",
           "neverd_callgraph_json",
@@ -1758,7 +1753,6 @@
           "neverd_session_load_diagnostics_json",
           "neverd_session_load_options_json",
           "neverd_sig_matches_json",
-          "neverd_source_patch_context_json",
           "neverd_source_type_json",
           "neverd_stack_frame_json",
           "neverd_string_encodings_json",
@@ -1915,7 +1909,7 @@
       },
       {
         "owner": "binary-diff",
-        "reason": "Structural comparison and bounded scalar validation are qualified separately in docs/binary-diff.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger.",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
         "names": [
           "neverd_comparison_dataflow_json",
           "neverd_comparison_export_json",
@@ -1939,7 +1933,14 @@
           "neverd_comparison_source_difference_json",
           "neverd_comparison_source_page_json",
           "neverd_comparison_status_json",
-          "neverd_comparison_summary_json"
+          "neverd_comparison_summary_json",
+          "neverd_lineage_edit_releases_json",
+          "neverd_lineage_export_json",
+          "neverd_lineage_load_json",
+          "neverd_lineage_query_json",
+          "neverd_lineage_report_json",
+          "neverd_lineage_status_json",
+          "neverd_lineage_summary_json"
         ]
       }
     ],
@@ -1965,14 +1966,10 @@
           "Session.analyze",
           "Session.annotation",
           "Session.annotations",
-          "Session.apply_byte_patch",
           "Session.architecture",
-          "Session.assemble",
           "Session.audit",
           "Session.base_address",
           "Session.bitness",
-          "Session.byte_patch_ranges",
-          "Session.byte_patches",
           "Session.call_paths",
           "Session.call_tree",
           "Session.callgraph",
@@ -1989,7 +1986,6 @@
           "Session.disassemble",
           "Session.entry_address",
           "Session.entrypoints",
-          "Session.export_byte_patches",
           "Session.export_count",
           "Session.exports",
           "Session.file_path",
@@ -2009,13 +2005,11 @@
           "Session.last_error",
           "Session.load",
           "Session.load_annotations",
-          "Session.load_byte_patches",
           "Session.loaded",
           "Session.patch_from_c",
           "Session.patch_from_ir",
           "Session.patch_result",
           "Session.patch_source",
-          "Session.preview_byte_patch",
           "Session.project_name",
           "Session.raw",
           "Session.read",
@@ -2024,9 +2018,7 @@
           "Session.rename_function",
           "Session.renames",
           "Session.resolve_address",
-          "Session.revert_byte_patch",
           "Session.save_annotations",
-          "Session.save_byte_patches",
           "Session.search_bytes",
           "Session.search_string",
           "Session.section_count",
@@ -2048,6 +2040,23 @@
           "Session.xrefs_to",
           "SimplifyResult.saved",
           "SynthesisResult.saved"
+        ]
+      },
+      {
+        "owner": "binary-diff",
+        "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
+        "names": [
+          "Lineage.cancel",
+          "Lineage.close",
+          "Lineage.edit_releases",
+          "Lineage.export",
+          "Lineage.load",
+          "Lineage.load_reports",
+          "Lineage.pages",
+          "Lineage.query",
+          "Lineage.report",
+          "Lineage.status",
+          "Lineage.summary"
         ]
       }
     ]
@@ -2363,6 +2372,28 @@
             "windows"
           ],
           "runner": "gtest"
+        },
+        {
+          "runner": "python-unittest",
+          "target": "NeverDPythonSDKUnitTests",
+          "source": "pluginsdk/python/tests/test_byte_patch_integration.py",
+          "filter": "BytePatchIntegrationTests.test_snapshot_distinguishes_unloaded_and_empty_sessions",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "python-unittest",
+          "target": "NeverDPythonSDKUnitTests",
+          "source": "pluginsdk/python/tests/test_byte_patch_integration.py",
+          "filter": "BytePatchIntegrationTests.test_snapshots_own_rows_across_edits_reloads_and_session_destruction",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -2373,12 +2404,14 @@
           "neverd_byte_patch_preview",
           "neverd_byte_patch_ranges_json",
           "neverd_byte_patch_revert",
+          "neverd_byte_patch_snapshot_free_v1",
           "neverd_byte_patch_source_preview_json",
           "neverd_byte_patch_source_target_json",
           "neverd_byte_patches_export",
           "neverd_byte_patches_json",
           "neverd_byte_patches_load",
           "neverd_byte_patches_save",
+          "neverd_byte_patches_snapshot_v1",
           "neverd_source_patch_context_json"
         ],
         "python": [

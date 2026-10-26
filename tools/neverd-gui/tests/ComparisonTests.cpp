@@ -22,6 +22,7 @@
 #include "ProjectDatabase.h"
 #include "Theme.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDebug>
@@ -36,6 +37,7 @@
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QSet>
 #include <QSettings>
@@ -46,6 +48,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
+#include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
 #include <algorithm>
@@ -56,6 +59,11 @@ constexpr int Timeout = 15000;
 bool write(const QString &Path, const QByteArray &Bytes) {
   QFile F(Path);
   return F.open(QIODevice::WriteOnly) && F.write(Bytes) == Bytes.size();
+}
+void layoutDirections() {
+  QTest::addColumn<bool>("RightToLeft");
+  QTest::newRow("left-to-right") << false;
+  QTest::newRow("right-to-left") << true;
 }
 } // namespace
 
@@ -814,11 +822,14 @@ private slots:
       QCOMPARE(
           ProjectDatabase::writeProjectFile(Path, ".neverd-load.json", Load),
           QString());
-      QCOMPARE(ProjectDatabase::writeProjectFile(
-                   Path, ".neverd-renames.json",
-                   QJsonDocument(QJsonArray{QJsonObject{
-                       {"addr", "0x1000"}, {"renamed", "saved_check"}}})),
-               QString());
+      QCOMPARE(
+          ProjectDatabase::writeProjectFile(
+              Path, ".neverd-renames.json",
+              QJsonDocument(QJsonArray{QJsonObject{
+                  {"addr", "0x1000"},
+                  {"renamed", Path == A ? "saved_check<int>"
+                                        : "saved_secondary_check<int>"}}})),
+          QString());
       QCOMPARE(ProjectDatabase::save(ProjectDatabase::pathFor(Path), Path, {}),
                QString());
       QVERIFY(QFile::remove(Path));
@@ -854,11 +865,50 @@ private slots:
     auto *Inventory = View.findChild<QTableView *>("comparisonFunctions");
     auto *Model = qobject_cast<ComparisonModel *>(Inventory->model());
     QTRY_VERIFY_WITH_TIMEOUT(Model->rowCount() > 0, Timeout);
-    QTRY_VERIFY_WITH_TIMEOUT(Model->row(0)["name"].toString() == "saved_check",
-                             Timeout);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        Model->row(0)["name"].toString() == "saved_check<int>", Timeout);
+    QCOMPARE(Model->row(0)["evidence_name"].toString(), QString("start"));
+    QTextDocument NameTipDocument;
+    NameTipDocument.setHtml(
+        Model->data(Model->index(0, 1), Qt::ToolTipRole).toString());
+    const auto NameTip = NameTipDocument.toPlainText();
+    QVERIFY(NameTip.contains("saved_check<int>"));
+    QVERIFY(NameTip.contains("saved_secondary_check<int>"));
+    QVERIFY(NameTip.contains("start"));
     Inventory->setCurrentIndex(Model->index(0, 0));
     auto *Instructions = View.findChild<QTableView *>("comparisonInstructions");
     QTRY_VERIFY_WITH_TIMEOUT(Instructions->model()->rowCount() > 0, Timeout);
+    auto *Evidence = View.findChild<QPlainTextEdit *>("comparisonEvidence");
+    QVERIFY(Evidence);
+    QVERIFY(Evidence->isReadOnly());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        Evidence->toPlainText().contains("saved_check<int>") &&
+            Evidence->toPlainText().contains("saved_secondary_check<int>") &&
+            Evidence->toPlainText().contains("start"),
+        Timeout);
+    QVERIFY(
+        Evidence->toPlainText().contains(Model->row(0)["identity"].toString()));
+    QVERIFY(Evidence->toPlainText().contains(
+        Model->row(0)["counterpart"].toObject()["identity"].toString()));
+    auto *EvidenceTabs = View.findChild<QTabWidget *>();
+    QVERIFY(EvidenceTabs);
+    EvidenceTabs->setCurrentWidget(Evidence->parentWidget());
+    View.resize(1000, 650);
+    QVERIFY(Evidence->isVisible());
+    QCOMPARE(Evidence->horizontalScrollBar()->maximum(), 0);
+    Evidence->moveCursor(QTextCursor::End);
+    QTRY_VERIFY(Evidence->viewport()->rect().contains(Evidence->cursorRect()));
+    if (Evidence->verticalScrollBar()->maximum() > 0)
+      QVERIFY(Evidence->verticalScrollBar()->value() > 0);
+    if (const auto Captures =
+            qEnvironmentVariable("NEVERD_COMPARISON_SCREENSHOTS");
+        !Captures.isEmpty()) {
+      QVERIFY(QDir().mkpath(Captures));
+      QVERIFY(
+          View.grab().save(Captures + "/renamed-function-evidence-end.png"));
+      Evidence->moveCursor(QTextCursor::Start);
+      QVERIFY(View.grab().save(Captures + "/renamed-function-evidence.png"));
+    }
     View.resize(1280, 800);
     QCOMPARE(Read(DA), Before);
     QCOMPARE(Read(DB), After);
@@ -892,7 +942,7 @@ private slots:
     QVERIFY(!SecondarySource->extraSelections().isEmpty());
     QVERIFY(View.findChild<QLabel *>("comparisonPrimarySourceTitle")
                 ->text()
-                .contains("saved_check"));
+                .contains("saved_check<int>"));
     auto *Jump =
         View.findChild<QPushButton *>("comparisonPrimarySourceInstruction");
     for (auto Block = PrimarySource->document()->begin();
@@ -1994,7 +2044,17 @@ private slots:
     delete Dialog;
   }
 
+  void changeReviewPreservesSyntheticAnchorsAndNavigatesEvidence_data() {
+    layoutDirections();
+  }
+
   void changeReviewPreservesSyntheticAnchorsAndNavigatesEvidence() {
+    QFETCH(bool, RightToLeft);
+    const auto OriginalDirection = QApplication::layoutDirection();
+    const auto RestoreDirection = qScopeGuard(
+        [&] { QApplication::setLayoutDirection(OriginalDirection); });
+    QApplication::setLayoutDirection(RightToLeft ? Qt::RightToLeft
+                                                 : Qt::LeftToRight);
     const auto A = Directory.filePath("change-review-a.bin"),
                B = Directory.filePath("change-review-b.bin");
     auto Bytes = QByteArray::fromHex("83ff117406b802000000c3b803000000c3");
@@ -2018,7 +2078,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     auto *Functions = Parent->findChild<QTableView *>("comparisonFunctions");
     QTRY_COMPARE_WITH_TIMEOUT(Functions->model()->rowCount(), 1, Timeout);
-    Functions->selectRow(0);
+    Functions->setCurrentIndex(Functions->model()->index(0, 0));
     auto *Open = Parent->findChild<QPushButton *>("comparisonChangesReview");
     QTRY_VERIFY_WITH_TIMEOUT(Open->isEnabled(), Timeout);
     QTest::mouseClick(Open, Qt::LeftButton);
@@ -2101,7 +2161,17 @@ private slots:
     delete Parent;
   }
 
+  void analystHistoryKeepsDraftBindingAndSurvivesMappingChanges_data() {
+    layoutDirections();
+  }
+
   void analystHistoryKeepsDraftBindingAndSurvivesMappingChanges() {
+    QFETCH(bool, RightToLeft);
+    const auto OriginalDirection = QApplication::layoutDirection();
+    const auto RestoreDirection = qScopeGuard(
+        [&] { QApplication::setLayoutDirection(OriginalDirection); });
+    QApplication::setLayoutDirection(RightToLeft ? Qt::RightToLeft
+                                                 : Qt::LeftToRight);
     const auto A = Directory.filePath("review-a.bin"),
                B = Directory.filePath("review-b.bin");
     QVERIFY(write(A, QByteArray::fromHex("b807000000c3")));
@@ -2123,7 +2193,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     auto *Functions = Parent->findChild<QTableView *>("comparisonFunctions");
     QTRY_COMPARE_WITH_TIMEOUT(Functions->model()->rowCount(), 1, Timeout);
-    Functions->selectRow(0);
+    Functions->setCurrentIndex(Functions->model()->index(0, 0));
     QTRY_VERIFY_WITH_TIMEOUT(
         Parent->findChild<QPushButton *>("comparisonChangesReview")
             ->isEnabled(),
@@ -2220,7 +2290,17 @@ private slots:
     delete Parent;
   }
 
+  void callImpactPathsKeepWitnessesAndUnknownScope_data() {
+    layoutDirections();
+  }
+
   void callImpactPathsKeepWitnessesAndUnknownScope() {
+    QFETCH(bool, RightToLeft);
+    const auto OriginalDirection = QApplication::layoutDirection();
+    const auto RestoreDirection = qScopeGuard(
+        [&] { QApplication::setLayoutDirection(OriginalDirection); });
+    QApplication::setLayoutDirection(RightToLeft ? Qt::RightToLeft
+                                                 : Qt::LeftToRight);
     const auto Path = Directory.filePath("call-paths.bin");
     auto Bytes = QByteArray::fromHex(
         "e80b000000ffd0c3ccccccccccccccccb80700000083c003c3");
@@ -2247,7 +2327,7 @@ private slots:
     auto *SiteRows = qobject_cast<ComparisonModel *>(Sites->model());
     QTRY_COMPARE_WITH_TIMEOUT(Rows->rowCount(), 2, Timeout);
     QTRY_VERIFY_WITH_TIMEOUT(!Rows->row(1).isEmpty(), Timeout);
-    Functions->selectRow(1);
+    Functions->setCurrentIndex(Functions->model()->index(1, 0));
     QTRY_COMPARE_WITH_TIMEOUT(SiteRows->rowCount(), 1, Timeout);
     QTRY_VERIFY_WITH_TIMEOUT(!SiteRows->row(0).isEmpty(), Timeout);
     QCOMPARE(SiteRows->row(0)["instruction"].toObject()["bytes"].toString(),
@@ -2281,7 +2361,7 @@ private slots:
              QString("internal_target"));
     QCOMPARE(SiteRows->row(1)["effect"].toObject()["status"].toString(),
              QString("unresolved_target"));
-    Sites->selectRow(0);
+    Sites->setCurrentIndex(Sites->model()->index(0, 0));
     QVERIFY(Dialog->findChild<QPlainTextEdit *>("impactSiteDetails")
                 ->toPlainText()
                 .contains("Internal callee"));
@@ -2431,7 +2511,17 @@ private slots:
 #endif
   }
 
+  void dependencyReviewSlicesNativeOriginsAndClearsOldEvidence_data() {
+    layoutDirections();
+  }
+
   void dependencyReviewSlicesNativeOriginsAndClearsOldEvidence() {
+    QFETCH(bool, RightToLeft);
+    const auto OriginalDirection = QApplication::layoutDirection();
+    const auto RestoreDirection = qScopeGuard(
+        [&] { QApplication::setLayoutDirection(OriginalDirection); });
+    QApplication::setLayoutDirection(RightToLeft ? Qt::RightToLeft
+                                                 : Qt::LeftToRight);
     const auto Path = Directory.filePath("dependencies.bin");
     // Arithmetic result becomes a recovered argument of a local helper.
     QVERIFY(write(Path, QByteArray::fromHex(

@@ -794,7 +794,10 @@ TypeRef LLVMCWriter::statedVariableType(const llvm::Value *V) const {
       return Type;
     }
   if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    if (const auto Address = declaredImageDataVA(Load->getPointerOperand()))
+    // Source assertions describe the value loaded at this address, whether
+    // it is declared separately or held inside shared image byte storage.
+    // Declaration ownership must not erase the load's original identity.
+    if (const auto Address = imageDataVA(Load->getPointerOperand()))
       if (TypeRef Type = Opts.VariableTypes->global(
               *Address, llvmAccessSize(Load->getType()))) {
         if ((Type->Kind == NdTypeKind::Float) !=
@@ -2345,7 +2348,7 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       Type->Pointee->Kind == NdTypeKind::Struct && !Type->Pointee->IsEnum) {
     std::string Value;
     if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Peeled->first)) {
-      if (declaredImageDataVA(Load->getPointerOperand())) {
+      if (imageDataVA(Load->getPointerOperand())) {
         if (const auto Name = ValNames.find(Load); Name != ValNames.end())
           Value = Name->second;
       } else if (const auto *Slot = asAllocaPointer(Load->getPointerOperand()))

@@ -64,6 +64,7 @@ void Session::refreshFunctionNames(
       }
     }
     Next = std::next(OriginalNames.insert_or_assign(Next, F.Entry, F.Name));
+    F.ResolvedOrigin = F.Origin;
     if (auto Rename = Renames.find(F.Entry); Rename != Renames.end()) {
       F.Name = Rename->second;
       F.Origin = NameOrigin::User;

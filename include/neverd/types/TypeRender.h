@@ -125,6 +125,8 @@ struct EmbeddedC {
   std::vector<std::string> Types;
   /// The library's records Text only declares, by their names.
   std::vector<std::string> DeclaredTypes;
+  /// The library's types taken from the system headers instead of defined.
+  std::vector<std::string> HeaderTypes;
   /// The records the system's headers name by a typedef alone, which Text
   /// takes from them (`typedef struct {...} pthread_mutex_t;`), by their C
   /// names: a unit spells each by its name and declares no typedef of it,
