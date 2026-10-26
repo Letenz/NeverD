@@ -329,6 +329,7 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
       Name = IntrinsicHelper;
     }
     std::string DebugName;
+    std::optional<va_t> ImageCalleeAddress;
     if (isSynthesizedFuncName(Name)) {
       llvm::StringRef Hex = Name;
       if (!Hex.consume_front(kAutoFuncPrefix))
@@ -365,6 +366,9 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
                       symbolOfImportName(Imp->Name, Opts.Format, Opts.TheArch),
                       Opts.Format, Opts.TheArch))
             DebugName.clear();
+        if (Fn.isDeclaration() && !DebugName.empty() && Img &&
+            !Img->findImportAt(Addr) && !Img->findImportStubAt(Addr))
+          ImageCalleeAddress = Addr;
       }
     }
     // An image symbol carries the format's decoration; an LLVM name may have
@@ -374,6 +378,14 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
                           : cNameOfSymbol(DebugName, Opts.Format, Opts.TheArch);
     FunctionSymbolNames.emplace(&Fn, CName.str());
     FunctionSources.emplace(&Fn, DebugName.empty() ? Name.str() : DebugName);
+    if (Fn.isDeclaration() && !ImageCalleeAddress && Img &&
+        copiesHeaderRoutine(CName, Opts.Format)) {
+      auto VA = rewrite_source::getOriginalVA(Fn);
+      if (!VA)
+        llvm::consumeError(VA.takeError());
+      else if (*VA && !Img->findImportAt(**VA) && !Img->findImportStubAt(**VA))
+        ImageCalleeAddress = **VA;
+    }
     std::string Stem;
     if (!Fn.isDeclaration()) {
       CName = cDefinitionName(CName, Opts.Format);
@@ -397,6 +409,11 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
         else if (*VA)
           Stem = (CName + "_" + llvm::utohexstr(**VA)).str();
       }
+    } else if (ImageCalleeAddress && copiesHeaderRoutine(CName, Opts.Format)) {
+      // A selected caller may omit this image-defined callee's body. Its
+      // machine signature still belongs to that image, even when a host
+      // header declares a library function under the same ordinary name.
+      Stem = (CName + "_" + llvm::utohexstr(*ImageCalleeAddress)).str();
     }
     if (!Stem.empty())
       CName = Stem;

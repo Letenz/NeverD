@@ -499,6 +499,7 @@ void HighCWriter::prepareFunctionIdentifiers(
   // stems merge, as the MSVC rules want.
   std::map<std::string, std::vector<std::string>> SymbolsByStem;
   std::map<std::string, std::set<std::string>> SourcesBySymbol;
+  std::set<std::string> ImageHeaderSymbols;
   std::set<const HighExpr *> Calls;
   std::function<void(const ExprPtr &)> VisitCall = [&](const ExprPtr &Expr) {
     if (!Expr || !Calls.insert(Expr.get()).second)
@@ -515,8 +516,18 @@ void HighCWriter::prepareFunctionIdentifiers(
       return;
     const std::string Symbol =
         cNameOfSymbol(SourceName, Opts.Format, Opts.TheArch).str();
-    auto &Symbols =
-        SymbolsByStem[canonicalizeCProjectionIdentifier(Symbol, "nd_function")];
+    std::string Stem = canonicalizeCProjectionIdentifier(Symbol, "nd_function");
+    // A callee omitted from this projection is still the image's own copy.
+    // Give its recovered declaration the same namespace protection as a
+    // definition, retaining the original symbol as its assembler link name.
+    if (Expr->CallAddr && copiesHeaderRoutine(Stem, Opts.Format) &&
+        isOwnFunctionName(SourceName, Funcs) && Opts.Image &&
+        !Opts.Image->findImportAt(Expr->CallAddr) &&
+        !Opts.Image->findImportStubAt(Expr->CallAddr)) {
+      Stem += "_" + llvm::utohexstr(Expr->CallAddr);
+      ImageHeaderSymbols.insert(Symbol);
+    }
+    auto &Symbols = SymbolsByStem[Stem];
     if (!llvm::is_contained(Symbols, Symbol))
       Symbols.push_back(Symbol);
     SourcesBySymbol[Symbol].insert(SourceName);
@@ -525,10 +536,14 @@ void HighCWriter::prepareFunctionIdentifiers(
     walkStmts(Func.Body,
               [&](const HighStmt &Stmt) { forEachExpr(Stmt, VisitCall); });
   for (auto &[Stem, Symbols] : SymbolsByStem) {
-    if (Symbols.size() < 2 ||
-        llvm::none_of(Symbols, [](const std::string &Symbol) {
-          return identifierSpelledFromSymbol(Symbol) && !hasMsvcStem(Symbol);
-        }))
+    if (llvm::none_of(Symbols,
+                      [&](const std::string &Symbol) {
+                        return ImageHeaderSymbols.count(Symbol);
+                      }) &&
+        (Symbols.size() < 2 ||
+         llvm::none_of(Symbols, [](const std::string &Symbol) {
+           return identifierSpelledFromSymbol(Symbol) && !hasMsvcStem(Symbol);
+         })))
       continue;
     std::stable_partition(Symbols.begin(), Symbols.end(),
                           [](const std::string &Symbol) {
