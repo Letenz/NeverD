@@ -2914,8 +2914,10 @@ void recoverCallAbi(
         // A slot found by the stack scan is a stack argument even when its
         // index falls in the integer-register range (i386 FP-register callee
         // with no integer register argument); assemble it after the FP
-        // arguments.  A gap lane belongs to whichever range its index falls in.
-        if (K < NumIntRegArgs && (Gap || !FromStackScan[K])) {
+        // arguments. Classify a gap by the call's register/stack boundary,
+        // which can precede the end of the register bank on i386.
+        if (K < NumIntRegArgs &&
+            (Gap ? K < StackArgBase : !FromStackScan[K])) {
           if (K < IntCap) {
             IntPart.push_back(A);
             IntPartSlots.push_back(K);

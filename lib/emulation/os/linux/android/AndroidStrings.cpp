@@ -16,7 +16,12 @@ namespace neverd::emulation::android_model {
 BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   const uint64_t Count = A[2];
-  if (Call.Name == symbol::Strlcpy) {
+  llvm::StringRef Name(Call.Name);
+  if ((Name == symbol::StrncpyChk || Name == symbol::StrncpyChk2 ||
+       Name == symbol::StrlcpyChk) &&
+      Count > A[3])
+    return failure(diagnostic::FortifyWritePrefix + Name);
+  if (Name == symbol::Strlcpy || Name == symbol::StrlcpyChk) {
     // strlcpy returns the complete source length even when no bytes fit.
     // Stage the terminated source before publishing a truncated destination.
     auto Text = string(A[1]);
@@ -43,10 +48,6 @@ BionicResult Bionic::copyBoundedString(const NativeCallEvent &Call) {
       return std::move(E);
     return value(Length);
   }
-  llvm::StringRef Name(Call.Name);
-  if ((Name == symbol::StrncpyChk || Name == symbol::StrncpyChk2) &&
-      Count > A[3])
-    return failure(diagnostic::FortifyWritePrefix + Name);
   if (!Count)
     return value(A[0]);
   if (auto E = access(A[0], Count, Write))
