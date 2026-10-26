@@ -331,19 +331,27 @@ private slots:
       QVERIFY(View.rect().contains(
           QRect(Button->mapTo(&View, QPoint()), Button->size())));
     }
-    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
-        !Output.isEmpty()) {
-      QTest::qWait(60);
-      QVERIFY(View.grab().save(Output + "/release-" + Locale + ".png"));
-    }
+    const auto CaptureRelease = [&](const QString &Name,
+                                    LineagePageView *Page) {
+      const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+      if (Output.isEmpty())
+        return;
+      const auto OriginalMode = Theme::instance().mode();
+      const auto RestoreTheme =
+          qScopeGuard([&] { Theme::instance().setMode(OriginalMode); });
+      for (const auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(60);
+        QTRY_VERIFY(SelectedRowVisible(Page));
+        QVERIFY(View.grab().save(Output + '/' + Name + '-' + Locale + '-' +
+                                 Theme::modeName(Mode) + ".png"));
+      }
+    };
+    CaptureRelease("release", Releases);
     Relations->setCurrentIndex(1);
     QTRY_VERIFY(SelectedRowVisible(Parents));
     QCOMPARE(Parents->selected()["id"].toString(), QString("parent"));
-    if (const auto Output = qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
-        !Output.isEmpty()) {
-      QTest::qWait(60);
-      QVERIFY(View.grab().save(Output + "/release-parents-" + Locale + ".png"));
-    }
+    CaptureRelease("release-parents", Parents);
   }
 
   void navigationPersistenceAndRender() {

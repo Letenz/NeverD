@@ -2595,7 +2595,8 @@ pages after editing its date, disambiguate duplicate labels by ID, and edit one
 of 257 parents on its current page without losing the remaining links. Release
 creation exercises keyboard activation, cancellation, snapshot selection and
 saving an explicitly unknown publication date in a v2 collection. Release
-and parent tabs are also exercised by the eleven-language layout fixture.
+and parent tabs are also exercised by the eleven-language layout fixture,
+which optionally captures both themes at the native runner's selected scale.
 These cases qualify declared chronology, not inferred release relationships.
 
 For real legacy-reader compatibility, retain the earlier library and run
