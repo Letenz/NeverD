@@ -103,6 +103,8 @@ llvm::StringRef generalizationName(CallXInputGeneralization Kind) {
     return "specialization_resource_budget";
   case CallXInputGeneralization::EquivalentGenericInputs:
     return "reused_equivalent_generic_leaf_inputs";
+  case CallXInputGeneralization::EquivalentSpecializedInputs:
+    return "reused_proven_equivalent_specialized_inputs";
   }
   llvm_unreachable("unknown input generalization");
 }
@@ -337,6 +339,9 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"input_value_alternatives", std::move(Alternatives)},
         {"input_register_dependency_mask", Summary.InputRegisterMask},
         {"may_read_input_memory", Summary.ReadsInputMemory},
+        {"conditional_reuse_input_register_mask",
+         Summary.ReuseInputRegisterMask},
+        {"conditional_reuse_reads_input_memory", Summary.ReuseReadsInputMemory},
         {"may_return", Summary.MayReturn},
         {"return_value", valueJSON(Summary.ReturnValue)},
         {"return_value_alternatives", std::move(Returns)},
@@ -411,6 +416,8 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(Report.GeneralizedPublishedSummaries)},
       {"equivalent_generic_leaf_reuses",
        static_cast<int64_t>(Report.EquivalentGenericReuses)},
+      {"equivalent_specialized_summary_reuses",
+       static_cast<int64_t>(Report.EquivalentSpecializedReuses)},
       {"skipped_non_callx_root_specializations",
        static_cast<int64_t>(Report.SkippedNonCallXRootSpecializations)},
       {"constant_branch_successors_skipped",

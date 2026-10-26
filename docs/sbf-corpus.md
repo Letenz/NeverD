@@ -70,6 +70,16 @@ zero targets is an analysis pass, not a devirtualization pass. Neither these
 conditional facts nor the global unresolved CALLX count can stand in for the
 other.
 
+Completed specialized summaries may reuse their proven conditional input
+dependencies without taking another variant slot. Reports retain the original
+static input masks and cache inputs alongside the separate conditional reuse
+mask and memory-dependency flag. Edges identify equivalent specialized-input
+reuse, and `equivalent_specialized_summary_reuses` counts it. Unknown call
+boundaries remain conservative; different read scratch cannot borrow another
+caller's facts. Definition-mask joins participate in the solver even when all
+register values and origins are unchanged. No numeric qualification budget
+changes with this reuse policy.
+
 Source dispatcher regions use the shared `SBFSourcePartition` layout: every raw
 slot occurs once, including unreachable and continuation slots. HighIR function
 ownership determines grouping; shared tails and unowned ranges remain explicit.

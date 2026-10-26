@@ -65,6 +65,7 @@ enum class CallXInputGeneralization : uint8_t {
   SpecializationLimit,
   ResourceBudget,
   EquivalentGenericInputs,
+  EquivalentSpecializedInputs,
 };
 
 struct CallXContextEvidence {
@@ -129,6 +130,8 @@ struct CallXFunctionSummary {
   size_t EntrySlot = 0;
   uint16_t InputRegisterMask = 0;
   bool ReadsInputMemory = true;
+  uint16_t ReuseInputRegisterMask = 0;
+  bool ReuseReadsInputMemory = true;
   RegisterState Inputs{};
   std::vector<std::pair<unsigned, ProvenValueSet>> InputAlternatives;
   RegisterValue ReturnValue;
@@ -165,6 +168,7 @@ struct CallXContextReport {
   size_t SummaryCacheEvictions = 0;
   size_t GeneralizedPublishedSummaries = 0;
   size_t EquivalentGenericReuses = 0;
+  size_t EquivalentSpecializedReuses = 0;
   size_t SkippedNonCallXRootSpecializations = 0;
   size_t SkippedConstantBranchSuccessors = 0;
 };
