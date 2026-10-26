@@ -1,8 +1,16 @@
 **语言**: [English](../testing.md) | [简体中文](testing.md) | [繁體中文](../zh-TW/testing.md) | [日本語](../ja/testing.md) | [한국어](../ko/testing.md) | [Français](../fr/testing.md) | [Deutsch](../de/testing.md) | [Español](../es/testing.md) | [Italiano](../it/testing.md) | [Русский](../ru/testing.md) | [العربية](../ar/testing.md)
 
+`NeverDLLVMCValueTests` 在 O0/O2、保留 LLVM 类型开关两种状态下，把转换后的可变参数调用与独立的 Windows x64 ABI 被调函数一起编译执行。原生 x64 通过 va_arg 验证浮点值；其他架构明确跳过此执行。
+
 [← 文档索引](README.md)
 
 # 测试 NeverD
+
+## 入口栈值的源码恢复
+
+`NeverDSourceEntryBindingTests` 编译并执行 x64/ARM64、PE/ELF、HighC/LLVMC 的入口栈参数矩阵，覆盖完整模块、单独调用者、显式浮点位传递、缓存复用和重置。负向测试拒绝不完整写入、窄读取、栈地址逃逸和未定义输入；独立被调函数定义检查固定参数声明。主机执行不等于原生 Windows ARM64 驱动验证。 矩阵还覆盖 RBP、x29/x30 栈帧的恢复；覆盖保存字节、SP 恢复但 RBP 改变、把返回地址当参数等反例，并检查 ELF 与 Windows 保留寄存器的差异。
+
+已知寄存器调用覆盖 x64/ARM64 PE/ELF、完整模块和仅选调用者的两条 C 路径，并检查原始 LowIR 仍是间接调用。负例覆盖部分写入旧值、不透明副作用、指令临时变量复用、内存调用槽及工作预算耗尽。
 
 `PEFunctionAddresses.*` 检查 x64 PE 无栈帧叶函数、归属及指令边界、被拒绝的前缀和窄操作数、可调用出口、取消，以及 1/2/4/16 个工作线程结果一致。特征测试覆盖全部 16 种条件 rel32 编码、正负位移、显式入口范围和源重定位约束。Python 补充特征测试要求每个单位置条件区分全部原始冲突声明，保留备选名称及必须联合使用的位置，并避免重复已有声明。
 

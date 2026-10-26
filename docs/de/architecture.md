@@ -1,8 +1,16 @@
 **Sprachen**: [English](../architecture.md) | [简体中文](../zh-CN/architecture.md) | [繁體中文](../zh-TW/architecture.md) | [日本語](../ja/architecture.md) | [한국어](../ko/architecture.md) | [Français](../fr/architecture.md) | [Deutsch](architecture.md) | [Español](../es/architecture.md) | [Italiano](../it/architecture.md) | [Русский](../ru/architecture.md) | [العربية](../ar/architecture.md)
 
+Weicht der LLVM-Aufruftyp von der Funktionsdeklaration ab, wertet LLVM C die Umwandlung über ein skalares zusammengesetztes Literal aus. Dies erhält die Aufruf-ABI einschließlich der Gleitkommakopie für Windows-x64-Varargs, ohne Deklarationsänderung oder volatile-Zugriffe.
+
 [← Dokumentationsindex](README.md)
 
 # NeverD-Architektur
+
+## Quelltextrekonstruktion von Eingangswerten auf dem Stack
+
+`PipelineIncomingStack` leitet begrenzte ganzzahlige Quelldeklarationen für vollständige x64/ARM64-PE/ELF-Blattfunktionen ab. Der gemeinsame Nachweis des Eingangsstacks bestimmt die Offsets; jeder Aufrufer muss alle benötigten Bytes schreiben, sonst wird die Deklaration zurückgezogen. HighC und LLVMC binden dieselbe Deklaration vor SSA und konvertieren nur betroffene Funktionen erneut. Einzelne Aufrufer nutzen den vorhandenen Leser und Cache ausgelassener Aufgerufener und behalten feste Parameterdeklarationen. Dies erschließt weder allgemeinen VM-Zustand noch Gleitkommatypen oder externe ABIs und ändert keine Verträge für Maschinen-Lifting, Patches oder Analyse. `SourceFrameAnalysis` muss SP sowie gesicherte Rahmen- und Linkregister anhand der Byte-Identitäten und des formatspezifischen Registersatzes wiederherstellen. Gesicherte Registerbytes werden keine Quellparameter.
+
+Konstante Registeraufrufziele verwenden die gemeinsame begrenzte LowIR-Skalaranalyse. Der Stapelnachweis behält die ursprüngliche indirekte Aufrufstelle; nur das Quell-MedIR wird bei übereinstimmendem Ziel, Deklaration und ausgehenden Bytes zu einem benannten Aufruf. Ladevorgänge, blockübergreifende Werte, Aufrufeffekte und unvollständige Register liefern kein Ziel.
 
 Bei gelinkten x64-PE-Dateien erfasst die Funktionserkennung kanonische RIP-relative LEA-Codeadressen im vorhandenen Aufrufscan. Ziele benötigen weiterhin einen unabhängigen Einstieg und einen begrenzten Nachweis eines aufrufbaren Ausgangs; interne Labels, Fortsetzungen und nicht unterstützte Funktionskörper bleiben ausgeschlossen. Erkennung und Signaturen teilen sich die Prüfung der Adresskodierung. Bedingte COFF-rel32-Referenzen erfordern außerdem explizite Funktionssymbole und Relokationen ohne Addend. Offline prüft `--single-reference-context` jede Bedingung mit einer Referenzstelle gegen alle überlappenden ursprünglichen Quelldeklarationen und bewahrt sämtliche Alternativen der Stelle.
 
