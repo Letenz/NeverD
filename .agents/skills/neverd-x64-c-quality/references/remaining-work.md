@@ -186,7 +186,9 @@ and explicit local stack allocation. The shared byte proof checks original
 restoration against the current format's preserved bank; saved state, frame
 escape, external memory and unaligned carriers cannot become such inputs.
 The memo retains each input width, signed/unsigned loads preserve their bits,
-and narrow declarations do not initialize adjacent bytes. Every
+and narrow declarations do not initialize adjacent bytes. Mixed prefix and
+complete reads share one scalar carrier only when the original LowIR contains
+a complete read of that same slot; narrow-only evidence cannot widen it. Every
 selected caller must completely write the same outgoing bytes. Selected-only
 LLVM exports retain fixed declarations rather than falling back to varargs.
 These rules do not supply an arbitrary VM dispatcher with a missing bytecode

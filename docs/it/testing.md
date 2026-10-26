@@ -12,6 +12,8 @@
 
 La nuova matrice esegue letture con e senza segno di 1/2/4 byte lungo entrambe le vie C a O0/O2 con UBSan, per output completo o del solo chiamante. I chiamanti scrivono soltanto i byte letti; le letture oltre la larghezza dichiarata vengono rifiutate.
 
+La matrice di larghezze miste esegue letture del prefisso e dello slot completo a O0/O2 con UBSan. I controlli del frame nativo coprono entrambi gli ordini e rifiutano sole letture strette o una lettura completa appartenente a un altro slot.
+
 Le chiamate tramite registro note vengono eseguite nei due percorsi C per x64/ARM64 PE/ELF, con modulo completo e solo chiamante selezionato. Il LowIR originale resta indiretto. I controlli rifiutano scritture parziali obsolete, effetti opachi, temporanei riutilizzati, celle di memoria e budget esauriti.
 
 `PEFunctionAddresses.*` verifica foglie PE x64 senza frame, proprietà e confini delle istruzioni, prefissi e operandi stretti rifiutati, uscite, annullamento e parità con 1/2/4/16 worker. I test delle firme coprono le 16 condizioni rel32 in entrambe le direzioni, ingressi espliciti e vincoli di rilocazione. I test Python preservano alternative e siti necessari congiuntamente, verificano ogni controesempio originale ed evitano duplicati.

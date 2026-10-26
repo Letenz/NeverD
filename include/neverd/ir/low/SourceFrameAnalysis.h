@@ -72,9 +72,11 @@ bool isSourceFrameScalarTransfer(NdOp Opcode);
 /// slots and padding lose spill and written-byte facts before subsequent
 /// restoration or argument checks.
 /// An independently inferred entry signature may additionally authorize exact
-/// eight-byte reads of scalar incoming stack slots: ARM64 at nonnegative
+/// 1/2/4/8-byte reads of scalar incoming stack slots: ARM64 at nonnegative
 /// offsets, or PE/ELF x64 above the pushed return address. Such values are
 /// unknown input bytes, never saved-register identities or private-frame facts.
+/// Prefix reads may share a slot when a reachable original load also observes
+/// its complete declared width. Narrow reads alone cannot widen a carrier.
 /// Separately authenticated ARM64 exceptional calls may end a successorless
 /// block after the same transfer checks. At least one reachable normal return
 /// is required, and every normal return still restores all incoming state.
