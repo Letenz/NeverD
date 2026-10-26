@@ -13365,6 +13365,16 @@ physical aliases, empty/truncated/unmapped/misaligned buffers and permissions.
 It compares complete fetched pages with pre-submission copies, destination RAM,
 the result timestamp and both memstore timestamps, plus the refusal location.
 
+`SustainedGPUCommandsPreserveTimeAndContextOwnership` submits 1024 independently
+checked PM4 writes separated by virtual sleeps. Raw x64/AArch64 and Bionic
+callers check every retirement, untouched neighboring bytes and another
+context's idle timestamps, the exact elapsed virtual time, duplicate ownership
+after close/reopen, and timestamp reset when a context ID is reused. Android
+O0/O2 relocation variants exercise direct, syscall and dynamic imports; the
+process-public GPU case compares complete C API and CLI reports. These bounded
+workloads use a 30-second execution deadline for the repeated hardware-backend
+exits at O0. They test the synchronous model, not hardware scheduling or shaders.
+
 `AndroidBinder.GuestServicesExecuteSynchronousTransactionsAndReplies` runs
 ordinary and TF_ACCEPT_FDS requests with both data and guest-computed
 TF_STATUS_CODE replies, including exact guards and buffer release. The LP64
@@ -13517,6 +13527,11 @@ LP64 architectures, a pointer overwritten by the ioctl and an unsupported
 retry with complete RAM equality. `ProcessReport.IoctlTrace*` checks strict
 JSON admission and lossless evidence serialization. The Python device
 integration exercises the same report through the public C SDK.
+Selection regressions cover default/explicit `include_unlisted`, rejected
+non-boolean JSON, low-32-bit request matching, exact event and byte budgets,
+unlisted errors after a full trace, and unchanged whole guest reports. The
+sustained GPU fixture retains four selected timestamp queries across more than
+1024 unlisted submissions, including C API/CLI report equality.
 
 `NeverDHighCSupervisorCallTests` verifies that an unmodeled live ARM/AArch64
 SVC result returns a recoverable emission error. Unused results retain the
