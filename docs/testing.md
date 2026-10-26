@@ -14127,3 +14127,5 @@ For patched-binary publication run `NeverDBytePatchTests`,
 output owner must preserve both exclusive creation and default replacement,
 including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
+
+`LLVMAddressModelOverlayTests` checks independent AArch64 specifier, i386 GOT and Mach-O GOTPCREL corrections. It covers both known AArch64 guard spellings and all twelve partial-correction combinations, preserves the LLVM input and cached overlay, isolates inherited Git settings, and rejects an unrecognized architecture guard. These configuration checks do not replace native relocation execution tests.
