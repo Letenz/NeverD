@@ -144,36 +144,58 @@ renderAArch64AddressMemoryCall(Arch TheArch, const llvm::CallInst &Call,
       false};
 }
 
-std::optional<InlineAsmRender>
-renderAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call,
-                                 const std::string &ResultName, bool ResultLive,
-                                 const std::vector<std::string> &Args) {
+namespace {
+std::optional<AArch64WritebackMemoryInstruction>
+validatedAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call) {
   const auto *Asm = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
   if (!Asm || (Asm->getAsmString() != kWritebackLoadAsm &&
-               Asm->getAsmString() != kWritebackStoreAsm))
+               Asm->getAsmString() != kWritebackStoreAsm &&
+               Asm->getAsmString() != kWritebackVectorLoadAsm &&
+               Asm->getAsmString() != kWritebackVectorStoreAsm))
     return std::nullopt;
-  const bool Load = Asm->getAsmString() == kWritebackLoadAsm;
+  const bool Vector = Asm->getAsmString() == kWritebackVectorLoadAsm ||
+                      Asm->getAsmString() == kWritebackVectorStoreAsm;
+  const bool Load = Asm->getAsmString() == kWritebackLoadAsm ||
+                    Asm->getAsmString() == kWritebackVectorLoadAsm;
+  const auto MatchesVector = [](llvm::Type *Type) {
+    const auto *V = llvm::dyn_cast<llvm::FixedVectorType>(Type);
+    return V &&
+           V->getNumElements() ==
+               kAddressMemoryVectorBytes / kAddressMemoryPointerBytes &&
+           V->getElementType()->isIntegerTy(kAddressMemoryPointerBits);
+  };
   const unsigned Count =
       Load ? kWritebackLoadOperands : kWritebackStoreOperands;
   const auto *Result = llvm::dyn_cast<llvm::StructType>(Call.getType());
   const bool ResultValid =
       Load ? (Result && Result->getNumElements() == kWritebackLoadOperands &&
-              Result->getElementType(kWritebackValueIndex)
-                  ->isIntegerTy(kAddressMemoryPointerBits) &&
+              (Vector
+                   ? MatchesVector(Result->getElementType(kWritebackValueIndex))
+                   : Result->getElementType(kWritebackValueIndex)
+                         ->isIntegerTy(kAddressMemoryPointerBits)) &&
               Result->getElementType(kWritebackBaseIndex)
                   ->isIntegerTy(kAddressMemoryPointerBits))
            : Call.getType()->isIntegerTy(kAddressMemoryPointerBits);
   if (TheArch != Arch::AArch64 || !ResultValid ||
       Asm->getConstraintString() !=
-          (Load ? kWritebackLoadConstraints : kWritebackStoreConstraints) ||
-      !Asm->hasSideEffects() || Call.arg_size() != Count ||
-      Args.size() != Count ||
+          (Vector ? (Load ? kWritebackVectorLoadConstraints
+                          : kWritebackVectorStoreConstraints)
+                  : (Load ? kWritebackLoadConstraints
+                          : kWritebackStoreConstraints)) ||
+      !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
+      Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
+      Call.arg_size() != Count || Call.getFunctionType()->isVarArg() ||
+      Call.getNumOperandBundles() ||
+      Call.getCallingConv() != llvm::CallingConv::C || Call.doesNotReturn() ||
+      Call.hasFnAttr(llvm::Attribute::Speculatable) ||
+      Call.getMemoryEffects() != llvm::MemoryEffects::unknown() ||
       !Call.getArgOperand(0)->getType()->isIntegerTy(
           kAddressMemoryPointerBits) ||
       !Call.getArgOperand(Count - 1)->getType()->isIntegerTy(
           kAddressMemoryWordBytes * CHAR_BIT) ||
-      (!Load && !Call.getArgOperand(1)->getType()->isIntegerTy(
-                    kAddressMemoryPointerBits)))
+      (!Load && (Vector ? !MatchesVector(Call.getArgOperand(1)->getType())
+                        : !Call.getArgOperand(1)->getType()->isIntegerTy(
+                              kAddressMemoryPointerBits))))
     throw std::invalid_argument(kWritebackMalformed);
   // LLVM store arguments are base, data, word; the source contract remains
   // base, word, data. The encoded word is metadata, never an address value.
@@ -183,11 +205,46 @@ renderAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call,
       Word ? aarch64WritebackMemoryInstruction(Word->getZExtValue())
            : std::nullopt;
   if (!Instruction || Instruction->isLoad() != Load ||
+      Instruction->isVector() != Vector ||
       Instruction->base() != kAddressMemoryScratchBase ||
       Instruction->destination() != kAddressMemoryScratchValue)
     throw std::invalid_argument(kWritebackMalformed);
-  const auto Value = aarch64WritebackMemoryC(
-      *Instruction, Args[0], Load ? llvm::StringRef{} : Args[1]);
+  return Instruction;
+}
+} // namespace
+
+bool validateAArch64WritebackMemoryCall(Arch TheArch,
+                                        const llvm::CallInst &Call) {
+  return validatedAArch64WritebackMemoryCall(TheArch, Call).has_value();
+}
+
+std::optional<InlineAsmRender>
+renderAArch64WritebackMemoryCall(Arch TheArch, const llvm::CallInst &Call,
+                                 const std::string &ResultName, bool ResultLive,
+                                 const std::vector<std::string> &Args) {
+  const auto Instruction = validatedAArch64WritebackMemoryCall(TheArch, Call);
+  if (!Instruction)
+    return std::nullopt;
+  if (Args.size() != Call.arg_size())
+    throw std::invalid_argument(kWritebackMalformed);
+  const bool Vector = Instruction->isVector();
+  const bool Load = Instruction->isLoad();
+  if (Vector && Load)
+    return InlineAsmRender{
+        aarch64VectorWritebackMemoryCStatement(
+            *Instruction, Args[0],
+            ResultLive && !ResultName.empty()
+                ? llvm::formatv(kWritebackCValueField, ResultName).str()
+                : std::string(),
+            ResultLive && !ResultName.empty()
+                ? llvm::formatv(kWritebackCBaseField, ResultName).str()
+                : std::string(),
+            true),
+        false};
+  const auto Data = !Load && Vector
+                        ? llvm::formatv(kAddressVectorToBitsC, Args[1]).str()
+                        : (!Load ? Args[1] : std::string());
+  const auto Value = aarch64WritebackMemoryC(*Instruction, Args[0], Data);
   if (!ResultLive || ResultName.empty())
     return InlineAsmRender{
         llvm::formatv(kAArch64PointerCDiscardStatement, Value).str(), false};

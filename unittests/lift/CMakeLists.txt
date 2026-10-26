@@ -691,6 +691,10 @@ add_neverd_unittest(NeverDX86BEXTRTests
   x86/X86BEXTRTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
+add_neverd_unittest(NeverDX86ADXTests
+  x86/X86ADXTests.cpp
+  LINK_COMPONENTS Decode Lift Loader)
+
 add_neverd_unittest(NeverDX86BMI2Tests
   x86/X86BMI2Tests.cpp
   LINK_COMPONENTS Decode Lift Loader)
@@ -4583,6 +4587,12 @@ if(TARGET neverd AND Python3_Interpreter_FOUND AND CLANG_EXEC)
         "${CMAKE_CURRENT_SOURCE_DIR}/x86/tbm_pipeline_test.py"
         "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
     set_tests_properties(NeverDX86TBMPipeline PROPERTIES
+      TIMEOUT 600 LABELS "unit;x86;source;cli")
+    add_test(NAME NeverDX86ADXPipeline
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/x86/adx_pipeline_test.py"
+        "$<TARGET_FILE:neverd>" "${CLANG_EXEC}")
+    set_tests_properties(NeverDX86ADXPipeline PROPERTIES
       TIMEOUT 600 LABELS "unit;x86;source;cli")
     add_test(NAME NeverDX86BMI2Pipeline
       COMMAND "${Python3_EXECUTABLE}"

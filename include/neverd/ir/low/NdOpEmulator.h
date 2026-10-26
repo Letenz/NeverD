@@ -160,6 +160,8 @@ public:
   /// execution path: always for BRANCH/COND_BR/INDIR_BR/RETURN, and for
   /// CALL/INDIR_CALL unless call-preserved registers have been declared (see
   /// setCallPreservedRegisters), in which case the call is stepped over.
+  /// Multi-result operations require run() and their adjacent result bindings.
+  /// Without those bindings step() refuses before any effect.
   bool step(const LowOp &Op);
 
   /// Execute a sequence of ops.  Stops at the first terminator.  For backwards
@@ -285,6 +287,7 @@ private:
   bool storeMemoryBytes(uint64_t Addr, llvm::ArrayRef<uint8_t> Value);
   bool storeMemory(uint64_t Addr, uint16_t Size, uint64_t Value);
 
+  bool stepImpl(const LowOp &Op, llvm::ArrayRef<LowOp> Following);
   bool executeArith(const LowOp &Op);
   bool executeFloatArith(const LowOp &Op);
   bool executeFloatConvert(const LowOp &Op);

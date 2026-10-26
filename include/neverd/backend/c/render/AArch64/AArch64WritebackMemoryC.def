@@ -37,4 +37,24 @@ NEVERD_A64_WRITEBACK_C_TEXT(kWritebackCStructAssignment,
 
 NEVERD_A64_WRITEBACK_C_TEXT(kWritebackCAssignment, "{0} = {1};\n")
 
+NEVERD_A64_WRITEBACK_C_TEXT(
+    kWritebackVectorStoreCExpression,
+    "({{ const uint64_t {4} = (uint64_t)({2}); "
+    "const unsigned __int128 {5} = (unsigned __int128)({6}); "
+    "register int64_t __attribute__((vector_size(16))) {0} __asm__(\"v17\") = "
+    "{7}; "
+    "register uint64_t {1} __asm__(\"x16\") = {4}; "
+    "__asm__ volatile(\".inst %c2\" : \"+r\"({1}) "
+    ": \"w\"({0}), \"i\"({3}) : \"memory\"); {1}; })")
+NEVERD_A64_WRITEBACK_C_TEXT(
+    kWritebackVectorLoadCStatement,
+    "{{ const uint64_t {4} = (uint64_t)({2}); "
+    "register int64_t __attribute__((vector_size(16))) {0} __asm__(\"v17\"); "
+    "register uint64_t {1} __asm__(\"x16\") = {4}; "
+    "__asm__ volatile(\".inst %c2\" : \"=&w\"({0}), \"+r\"({1}) "
+    ": \"i\"({3}) : \"memory\"); {5} }\n")
+
+NEVERD_A64_WRITEBACK_C_TEXT(kWritebackCValueField, "{0}.field_0")
+NEVERD_A64_WRITEBACK_C_TEXT(kWritebackCBaseField, "{0}.field_1")
+
 #undef NEVERD_A64_WRITEBACK_C_TEXT
