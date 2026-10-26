@@ -10,6 +10,7 @@
 #ifndef NEVERD_BACKEND_LLVM_X86_X86APXATOMIC_H
 #define NEVERD_BACKEND_LLVM_X86_X86APXATOMIC_H
 
+#include "neverd/backend/llvm/X86/X86MemoryAddressAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <array>
@@ -115,10 +116,13 @@ struct X86APXAtomicPlan {
            " " + (compare() ? "$3, $0, " : "$1, ") + Prefix + "(" + Address +
            ")";
   }
-  std::string constraints() const {
-    if (legacy())
-      return compare() ? "=R,{bx},0,R,~{flags},~{memory}" : "{bx},R,~{memory}";
-    return compare() ? "=r,{bx},0,r,~{flags},~{memory}" : "{bx},r,~{memory}";
+  std::string constraints(bool LegacyBX = false) const {
+    const std::string Base =
+        LegacyBX ? "{bx}" : x86MemoryAddressAsm(AddressBits).LLVMConstraint;
+    const std::string Register = legacy() ? "R" : "r";
+    return compare() ? "=" + Register + "," + Base + ",0," + Register +
+                           ",~{flags},~{memory}"
+                     : Base + "," + Register + ",~{memory}";
   }
 };
 

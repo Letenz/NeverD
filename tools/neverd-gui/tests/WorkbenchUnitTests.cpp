@@ -1944,6 +1944,42 @@ private slots:
     QTRY_VERIFY(button("closeButton")->isVisible());
   }
 
+  void titleBarControlsRepaintOnPointerLeave() {
+    // A native-window handoff can deliver Leave without HoverLeave. Clearing
+    // underMouse must also repaint the close button's previous red highlight.
+    QWidget window;
+    auto *bar = new TitleBar(window);
+    window.resize(500, 300);
+    bar->setGeometry(0, 0, 500, bar->sizeHint().height());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *close = bar->findChild<QAbstractButton *>("closeButton");
+    QVERIFY(close && close->isVisible());
+    const QPoint center = close->rect().center();
+    QEnterEvent enter(center, close->mapTo(&window, center),
+                      close->mapToGlobal(center));
+    QCoreApplication::sendEvent(close, &enter);
+    QHoverEvent hover(QEvent::HoverEnter, center, close->mapToGlobal(center),
+                      QPointF(-1, -1));
+    QCoreApplication::sendEvent(close, &hover);
+    QVERIFY(close->underMouse());
+    QCoreApplication::processEvents();
+    class PaintCounter final : public QObject {
+    public:
+      int paints = 0;
+      bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() == QEvent::Paint)
+          ++paints;
+        return false;
+      }
+    } counter;
+    close->installEventFilter(&counter);
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(close, &leave);
+    QVERIFY(!close->underMouse());
+    QTRY_VERIFY(counter.paints > 0);
+  }
+
   void loadQuestionFitsTheFontsItShowsWith() {
     // The style sheet gives the detail line its font only as the dialog
     // polishes; the question measured before then was a pixel short in

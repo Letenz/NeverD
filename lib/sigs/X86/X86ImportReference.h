@@ -88,6 +88,10 @@ inline bool isX86ConditionalReferenceField(llvm::ArrayRef<uint8_t> Code,
 
 /// REX.W LEA r64,[RIP+disp32]. Only the canonical whole-pointer address
 /// materialization is supported; address/segment overrides are not inferred.
+/// When its predecessor looks like a prefix, a bounded decoded path from the
+/// declared function entry must prove this instruction's exact boundary.
+bool hasDecodedX64AddressBoundary(llvm::ArrayRef<uint8_t> Code, size_t Start);
+
 inline bool isX64AddressReferenceField(llvm::ArrayRef<uint8_t> Code,
                                        size_t Offset) {
   constexpr size_t DisplacementOffset = x86::kAddressDisplacementOffset;
@@ -97,7 +101,8 @@ inline bool isX64AddressReferenceField(llvm::ArrayRef<uint8_t> Code,
   const size_t Start = Offset - DisplacementOffset;
   return x86::isRipRelativeAddressInstruction(
              Code.slice(Start, x86::kAddressInstructionSize)) &&
-         (Start == 0 || !isX86ReferencePrefix(Code[Start - 1], true));
+         (Start == 0 || !isX86ReferencePrefix(Code[Start - 1], true) ||
+          hasDecodedX64AddressBoundary(Code, Start));
 }
 
 } // namespace neverd::sigs

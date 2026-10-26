@@ -116,6 +116,15 @@ names actually requested by those callers participate; matching bytes do not
 import additional nominal names from the source pattern. This adds suggestions, never
 independent identity evidence or automatic names.
 `neverd-sigmaker --caller-context` emits these records, including short bodies.
+Generation and matching share the canonical x64 LEA field check. When the
+preceding byte could be an instruction prefix, a bounded Capstone walk from
+the declared function entry must reach that complete LEA without overlapping
+instruction paths. Genuine prefixes, unsupported control, unreachable targets
+and exhausted budgets stay unknown. The prefix budget is owned by
+`MaxReferenceBoundaryBytes`; unrelated fields keep their existing fast path.
+Only the most recent decoded prefix is cached per thread, with exact byte
+comparison under that same budget. Reused image buffers cannot retain stale
+positive or negative results.
 The supplement builder requires exact raw source ownership and keeps distinct
 same-byte names separate; they are queries, not claims of byte uniqueness.
 When incoming context is loaded, the name index also reuses complete existing
@@ -219,6 +228,23 @@ prevents its addition, while alternative names remain alternatives. The tool
 preserves bytes, names and existing fields, writes changed files separately,
 and records input/output hashes. Repeat `--name` to restrict a review to named
 records; evaluate the changed packs through the normal CLI before publication.
+Canonical x64 class/struct ThrowInfo references are also supported. Generation
+requires a zero-addend LEA relocation to an external data symbol; a defined
+source record must occupy read-only, non-executable storage. Matching validates
+the complete bounded image-relative graph and compares its exact type spelling,
+qualifiers and catchable count. Unknown flags, scalar/virtual-base layouts,
+overlapping or truncated records, malformed descriptors and invalid code
+pointers remain unknown. Ordinary descriptor cache storage may be writable;
+its spare word must be empty and every type descriptor must share a checked
+type-info vtable. No exception object size, function ABI or identity is inferred.
+The structural reference is the compiler's
+[MSVC exception metadata emission](https://github.com/NeverSight/llvm-project/blob/06788fb19109851e6a6b9f109a2b8027a606f0c6/clang/lib/CodeGen/MicrosoftCXXABI.cpp)
+and [linker name encoding](https://github.com/NeverSight/llvm-project/blob/06788fb19109851e6a6b9f109a2b8027a606f0c6/clang/lib/AST/MicrosoftMangle.cpp).
+`--caller-code` also permits missing code references in complete `!caller`
+records. The same raw-version intersection and kind checks apply; ordinary
+byte records and required-reference clauses do not gain function fields from
+this option. This can update an existing caller body without another record
+or byte-index entry.
 
 Required context can distinguish claims from independently selected packs,
 but the supplement builder still checks every overlapping raw source claim,

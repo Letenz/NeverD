@@ -106,6 +106,10 @@ parameter, while an earlier definition at entry or before the read kills it.
 Run `NeverDFPParameterMaskTests` and the calling-convention owners alongside
 `NeverDMedEntryFrameTests` when changing shared SSA liveness; their call-clobber
 and partial-register cases exercise the same block-local use/kill facts.
+`MedSSACallClobber` in the entry/frame owner checks distinct call occurrences
+at one native address, per-callee GPR preservation, preserving stack probes,
+and chained AArch64/Win64 vector prefixes. It reuses a converter across
+functions and formats so call-local facts cannot leak into later conversions.
 
 `NeverDMedVariadicTests` runs the variadic-prologue proof boundaries directly:
 entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
@@ -246,6 +250,16 @@ four-source arithmetic. Pair these with `NeverDX86FourFMAExactTests`,
 `NeverDX86VP4DPWTests` and `NeverDNdOpEmulatorTests` for numerical and
 unknown-value regressions. Hardware AVX512_4FMAPS/AVX512_4VNNIW behavior remains
 unqualified on hosts without those capabilities.
+
+`X86NativeMemoryCarrier.*` in `NeverDX86CompressExpandSourceTests` compiles owned
+compact/four-source, descriptor, query and atomic assembly in dynamically
+allocated, realigned frames for i386/x64 and ELF/COFF/Mach-O. Its 48 objects
+include both explicit address sizes for scalar operations. The decoded memory
+operand must avoid reserved frame bases and retain its address width. Separate
+admission checks retain exact older BX constraints while rejecting replacement
+constraints outside the owned contract. Run it with both SDKs, alongside the
+compact/four-source, descriptor and atomic source checks. These tests do not
+execute unavailable four-source or atomic hardware instructions.
 
 `NeverDX86PortSourceTests` compiles the LLVM-to-C projection of every immediate
 port byte and eight 16-bit DX boundary values for byte, word and dword IN/OUT.
@@ -1380,6 +1394,21 @@ two native threads, global/local reference deletion and detach/reattach against
 the same process objects. `ProcessReport.AndroidApplicationSnapshot*` checks
 strict JSON input. These tests use synthetic inputs without a phone, host JVM
 or network; they do not establish arbitrary framework lifecycle equivalence.
+`AndroidFrameworkTest.ServiceManager*` and `AndroidJNI.ServiceManager*` distinguish
+known type metadata from unmodeled static initialization. They cover class and
+array identity, hierarchy/final constraints, JNI method/field ID lookup and
+allocation, with no successful initialization or fabricated service state.
+Run the full Dalvik and Android JNI suites when changing this boundary.
+`AndroidFrameworkTest.SystemClock*` checks independent uptime and elapsed
+epochs, millisecond truncation, wide DEX returns, missing services, invalid
+signed values and terminal budget/service stops without an application
+snapshot. `AndroidJNI.SystemClock*` runs independent AArch64 callers through
+ordinary, va_list and jvalue-array forms, comparing against Linux clock reads
+before/after Java calls and virtual sleep. It also checks instruction time,
+missing clock IDs, zero, the exact signed-nanosecond maximum and one-nanosecond
+overflow, plus refusal of unmodeled members. Run full Dalvik, Android JNI,
+callback/thread and Linux clock tests after changing these shared services;
+these checks do not execute a device JVM or infer suspended-device time.
 The loader failure tests check exact loader/name isolation, null versus empty
 and UTF-8 messages, fresh throwable identities, known-class conflicts, strict
 typed/JSON admission, DEX catch and shared message access, terminal instruction
@@ -3241,7 +3270,27 @@ Glyph failures include the language and text offset. The UI font also carries
 the bundled fallback families for CoreText shaping; unchanged script lists
 must not clear Qt's font cache on every theme application. Quick Start's
 geometry test resizes the dialog and checks content growth and reopen size.
+Its light/dark chrome rows also click Minimize and restore the normal size.
 The shared frame tests separately exercise native edge gestures.
+`quickStartMinimizesAndReopens` covers the startup greeting and in-workbench
+window on every platform: Minimize must keep the application responsive and
+File > Quick start must restore the same window at its previous size.
+`quickStartRestoresFromTheDock` runs the real startup and in-workbench paths on
+Cocoa, clicks Minimize, waits for AppKit's minimized state, then sends the native
+application-reopen event used by Dock clicks. It requires restoration without
+calling `showNormal()` and checks that no application-modal session remains.
+`quickStartReusesItsWindowAndClosesWithTheWorkbench` checks the asynchronous
+greeting, single-window ownership, Go, and destruction before a choice.
+`quickStartQuitsWhileMinimized` starts a child with a real application event
+loop, minimizes the greeting, and requests AppKit termination; the child must
+exit normally before its deadline.
+When packaging, also check system Quit while Quick Start is minimized; a smoke
+test or modeless dialog shown directly does not exercise the startup path.
+The Desktop GUI workflow runs the Quick Start lifecycle cases on native Windows
+and Cocoa, and on Linux with the xcb plugin under Xvfb and Openbox. Cocoa-only
+Dock and AppKit termination cases explicitly skip on other platforms.
+`titleBarControlsRepaintOnPointerLeave` checks that an ordinary pointer-leave
+event repaints the close button even without a separate hover-leave event.
 
 `windowShadowCompositesWithDesktop` checks Windows shadow composition for
 ordinary and Quick Start dialogs, with and without an early native handle,
@@ -3413,7 +3462,9 @@ presses F three times to create one maximized floating workspace with assembly
 on the left, code on the right and output across the bottom. It checks both
 themes, docked and floating origins, restoring the previous layout and window
 state, unchanged data, data addresses outside functions, and ordinary command
-input. Keys enter through `QWindow` so forwarding to the focused widget cannot
+input. After closing the focus workspace, the main close button still highlights
+on hover and returns to its normal color when the pointer leaves. Keys enter
+through `QWindow` so forwarding to the focused widget cannot
 silently reset the sequence.
 `focusFunctionsSidebarTogglesAndNavigates` checks the initially folded function
 list, triangle clicks, unchanged analysis geometry, single-click navigation in
@@ -6414,6 +6465,18 @@ different addresses, recursion through aliases, canonical indirect import
 relocations, and unsupported prefixed/truncated forms. `SignatureDBReferences.*`
 checks x86/x64 IAT evidence, exact spelling and mapped slot ownership, ambiguous
 or absent metadata, evidence withdrawal, and the separate identity gate.
+`X86ReferenceBoundary.*` covers prefix-looking operands before a canonical
+x64 LEA, genuine prefixes, embedded instruction bytes, unreachable targets,
+overlapping paths, truncation, the exact decode budget and unsupported LOOP
+control. Producer and incoming-request cases exercise the same boundary owner.
+Reused-buffer cases verify positive and negative cache invalidation after edits.
+The metadata-refinement Python cases require every raw source to own a new
+caller code field, retain alternatives and reject missing or data-kind fields.
+`ThrowInfoReference.*` checks complete x64 exception graphs, all dependent
+records, ranges, pointer roles, qualifiers/counts, writable descriptor caches,
+metadata changes between applications and the separate identity gate. Producer
+cases reject function/static/executable source targets and nonzero addends;
+Python refinements retain missing, alternative and cross-kind raw counterclaims.
 The COFF cases also check primary x64 vftable references: exact RTTI types,
 locator and hierarchy consistency, bounded strings, unsupported secondary
 layouts, malformed data, instruction prefixes and negative displacements.
@@ -14388,6 +14451,21 @@ services and ART loading are not covered.
 `NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
+
+`BytePatchCAPIHeaderC.c` compiles the frozen snapshot layout and signatures as C
+in `NeverDBytePatchTests`. The real SDK cases in
+`test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
+high addresses, split runs, JSON parity, and ownership across edits, reloads and
+session destruction. The worker mock intentionally omits snapshot exports to
+exercise JSON fallback; run the native patch suite with both current and older
+SDKs when changing this optional transport.
+
+`tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
+commands and durable worker commit/undo/redo against two explicit binary
+snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with
+alternating SDK JSON/CLI samples and independent original/current-byte checks.
+Both record native CPU/wall samples and binary hashes; keep machine-local
+reports outside tracked source and avoid overlapping builds with timed runs.
 
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 

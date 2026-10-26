@@ -33,6 +33,10 @@ symbols or instruction semantics.
 Low-to-Med, Med verification and source output use that contract.
 `X86DescriptorStateNative.h` owns register widths, native API names, memory
 footprints and the assembly fallback. LLVM, HighC and LLVM-to-C share it.
+`X86MemoryAddressAsm.h` selects safe data-address carriers for explicit scalar
+memory fallbacks: AX for address32/64 and DI for i386 address16. Descriptor,
+query and atomic plans share this choice, avoiding compiler-owned realignment
+and PIC registers while retaining the original width and segment controls.
 The four appended legacy table IDs preserve i386's operand-size override
 without changing existing serialized identities. Native memory accesses stay
 inside the instruction. Explicit native addresses retain width/prefix controls;
@@ -1084,6 +1088,17 @@ the SDK's complete, file-offset-ordered inventory with the committed rows.
 A committed patch command proves that reloading must invalidate analysis, so
 it does not produce two more complete inventories just to detect that change.
 Ordinary reloads still compare before and after.
+
+The SDK's versioned byte-patch snapshot copies canonical rows and raw bytes into
+independent owned storage. The worker builds its history DOM directly from those
+rows, avoiding a complete JSON serialization, parse and address normalization.
+It resolves acquisition and release together and retains JSON compatibility with
+older SDKs. Snapshot storage survives session edits and destruction; the overlay
+still owns all admission, ordering and kind decisions. CLI JSON and sidecar
+formats remain unchanged.
+Their shared writer reuses hexadecimal scratch storage and emits only
+formatter-produced hex directly; general strings retain JSON escaping and
+external input retains its existing validation.
 
 Shared transport JSON has separate entry points for bounded external frames
 and SDK-owned documents. Backend parsing preserves native JSON number types,
@@ -2271,6 +2286,13 @@ index reuses complete native `!refs` and `!caller` bodies; ordinary nominal
 claims are not opted into incoming inference merely by loading them. Source
 refinements of ordinary anchors share the frozen reference validation pass;
 contradicted refinements withdraw only the incoming names they supported.
+The signature component shares x64 address-field boundary checks between
+generation and matching. A prefix-looking predecessor invokes a bounded
+Capstone walk from the declared function entry; only a reachable canonical
+LEA with nonoverlapping decoded paths is accepted. Unsupported or exhausted
+walks remain unknown. This fallback supplies no identity or lifting semantics.
+Its single per-thread prefix cache compares every byte within the same bound;
+buffer addresses and hashes cannot preserve a proof after input changes.
 The matcher owns byte/index behavior, the database owns reference settlement, and the COFF
 loader owns validation of primary MSVC RTTI metadata. Native `!vtable` records
 are metadata outside the byte index. `SignatureVTableContext` combines exact
@@ -2280,6 +2302,13 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+The COFF type reader also validates bounded x64 class/struct ThrowInfo graphs:
+read-only records, every catchable base, descriptor names, pointer roles,
+qualifiers, counts and nonoverlapping ownership must agree. Descriptor cache
+storage may be writable, but does not supply a type by itself. Exact source
+references to these records are metadata checks, never executable targets.
+The signature database caches validated graphs only within one reference pass;
+their agreement remains candidate evidence under the same identity gate.
 `SignatureDataContext` also owns frozen source-local data relations. The producer
 proves that two canonical zero-addend operands refer to one static address within
 the same COFF object. Their shared key names the exact operand of a uniquely
