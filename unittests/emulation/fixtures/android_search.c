@@ -136,6 +136,33 @@ u64 decimal_dynamic(const char *input, u64 closed) {
 }
 
 extern char *strstr(const char *, const char *);
+extern void *memmem(const void *, u64, const void *, u64);
+__asm__(".type memmem, %function");
+u64 binary_substring(const void *text, u64 count, const void *needle,
+                     u64 length, u64 route, u64 *error) {
+  void *(*find)(const void *, u64, const void *, u64) = memmem;
+  if (route) {
+    void *library = dlopen("libsearch.so", 2);
+    if (!library)
+      return 97;
+    find = dlsym(library, "memmem");
+    if (!find)
+      return 96;
+    if (route == 2 && dlclose(library))
+      return 95;
+  }
+  *__errno() = 733;
+  void *result = find(text, count, needle, length);
+  *error = (u64)*__errno();
+  return (u64)result;
+}
+u64 binary_substring_readonly(void *page, const void *text, u64 count,
+                              const void *needle, u64 length) {
+  if (mprotect(page, 4096, 1))
+    return 98;
+  return (u64)memmem(text, count, needle, length);
+}
+
 u64 substring_supplied(const char *text, const char *needle, unsigned *error) {
   *__errno() = 733;
   char *result = strstr(text, needle);

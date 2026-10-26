@@ -406,6 +406,115 @@ TEST_P(AndroidSearch,
   }
 }
 
+TEST_P(AndroidSearch, BinarySubstringCountsBytesErrnoAndProvider) {
+  struct Case {
+    std::vector<uint8_t> Text, Needle;
+    int Offset;
+  };
+  const Case Cases[] = {
+      {{}, {}, 0},
+      {{'a'}, {}, 0},
+      {{}, {'a'}, -1},
+      {{0x80, 0, 0xff, 0, 0xff}, {0, 0xff}, 1},
+      {{'a', 'b', 'a', 'b', 'a', 'b', 'a', 'c'}, {'a', 'b', 'a', 'c'}, 4},
+      {{'a', 'a', 'a', 'b'}, {'a', 'a', 'b'}, 1},
+      {{0xff, 0x80}, {0x80}, 1},
+      {{0, 'b'}, {'b', 0}, -1},
+      {{'a', 'b'}, {'a', 'b', 'c'}, -1},
+      {{'a', 'b'}, {'a', 'b'}, 0},
+      {{'a', 'b', 'c'}, {'x'}, -1}};
+  Options.Android->Libraries["libsearch.so"] = {"memmem"};
+  Options.Android->ReadMemory = {{Buffer, 4096}};
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  for (const auto &C : Cases) {
+    for (uint64_t Route : {0u, 1u}) {
+      SCOPED_TRACE(testing::Message() << C.Offset << ":" << C.Text.size() << ":"
+                                      << C.Needle.size() << ":" << Route);
+      Bytes.assign(4096, 0xa5);
+      std::copy(C.Text.begin(), C.Text.end(), Bytes.begin());
+      std::copy(C.Needle.begin(), C.Needle.end(), Bytes.begin() + 64);
+      auto Expected = Bytes;
+      llvm::support::endian::write64le(Expected.data() + 128, 733);
+      const uint64_t Address = C.Offset < 0 ? 0 : Buffer + C.Offset;
+      auto R = run("binary_substring", {Buffer, C.Text.size(), Buffer + 64,
+                                        C.Needle.size(), Route, Buffer + 128});
+      returned(R, Address);
+      ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+      unsigned Matches = 0;
+      uint64_t Target = 0;
+      for (const auto &Call : R.NativeCalls) {
+        if (Call.Name == "dlsym") {
+          EXPECT_EQ(Call.Symbol, "memmem");
+          ASSERT_TRUE(Call.Result);
+          Target = *Call.Result;
+        }
+        if (Call.Name != "memmem")
+          continue;
+        EXPECT_EQ(Call.Arguments[1], C.Text.size());
+        EXPECT_EQ(Call.Arguments[3], C.Needle.size());
+        EXPECT_EQ(Call.Result, Address);
+        EXPECT_EQ(Call.Library, Route ? "libsearch.so" : "");
+        if (Route)
+          EXPECT_EQ(Call.PC, Target);
+        ++Matches;
+      }
+      EXPECT_EQ(Matches, 1u);
+    }
+  }
+}
+
+TEST_P(AndroidSearch, BinarySubstringBoundsAndReadOnlyPageTail) {
+  Options.Android->ReadMemory = {{Buffer, 4096}};
+  auto &Bytes = Options.Android->Memory[0].Bytes;
+  Bytes.assign(4096, 0xa5);
+  Bytes[0] = Bytes[4093] = 'x';
+  Bytes[1] = Bytes[4094] = 0;
+  Bytes[2] = Bytes[4095] = 'y';
+  for (const auto C : {std::array<uint64_t, 4>{3, Buffer, 3, PageEnd - 3},
+                       {2, Buffer, 3, 0},
+                       {2, Buffer + 1, 1, PageEnd - 2},
+                       {3, Buffer + 3, 1, 0},
+                       {UINT64_MAX, Buffer, 3, PageEnd - 3},
+                       {0x100000001, Buffer, 3, PageEnd - 3},
+                       {3, PageEnd - 2, 2, PageEnd - 2}}) {
+    auto R = run("binary_substring_readonly",
+                 {Buffer, PageEnd - 3, C[0], C[1], C[2]});
+    returned(R, C[3]);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Bytes);
+  }
+  rejected(
+      run("binary_substring_readonly", {Buffer, PageEnd - 3, 4, Buffer + 3, 1}),
+      "memmem", "invalid guest pointer");
+  rejected(
+      run("binary_substring_readonly", {Buffer, Buffer, 3, PageEnd - 2, 3}),
+      "memmem", "invalid guest pointer");
+  for (uint64_t Pointer : {uint64_t(0), PageEnd, UINT64_MAX}) {
+    returned(run("binary_substring",
+                 {Pointer, UINT64_MAX, Pointer, 0, 0, Buffer + 128}),
+             Pointer);
+    returned(run("binary_substring", {Pointer, 1, Pointer, 2, 0, Buffer + 128}),
+             0);
+    rejected(run("binary_substring", {Pointer, 1, Buffer, 1, 0, Buffer + 128}),
+             "memmem", "invalid guest pointer");
+    rejected(run("binary_substring", {Buffer, 1, Pointer, 1, 0, Buffer + 128}),
+             "memmem", "invalid guest pointer");
+  }
+}
+
+TEST_P(AndroidSearch, BinarySubstringClosedProviderPrecedesEmptyNeedle) {
+  Options.Android->Libraries["libsearch.so"] = {"memmem"};
+  auto R = run("binary_substring",
+               {UINT64_MAX, UINT64_MAX, UINT64_MAX, 0, 2, Buffer + 128});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+  ASSERT_FALSE(R.NativeCalls.empty());
+  EXPECT_EQ(R.NativeCalls.back().Name, "memmem");
+  EXPECT_FALSE(R.NativeCalls.back().Result);
+  EXPECT_FALSE(R.ReturnValue);
+}
+
 TEST_P(AndroidSearch, SubstringUsesFirstByteMatchAndPreservesErrnoAndInputs) {
   struct Case {
     const char *Text, *Needle;
@@ -846,6 +955,87 @@ TEST(AndroidSearchMemory, MemorySearchBudgetsAndCompleteBacking) {
       llvm::cantFail(Space.snapshotBacking(Buffer, After));
       EXPECT_EQ(After, Before);
     }
+  }
+}
+
+TEST(AndroidSearchMemory, BinarySubstringBudgetsAndCompleteBacking) {
+  ExecutionConfiguration Configuration;
+  Configuration.Backend = ExecutionBackendKind::Unicorn;
+  Configuration.Architecture = GuestArchitecture::AArch64;
+  Configuration.Contract = ExecutionContract::CheckedUserAArch64;
+  auto Probe = probeExecutionBackend(Configuration);
+  ASSERT_TRUE(bool(Probe)) << llvm::toString(Probe.takeError());
+  if (Probe->Availability != BackendAvailability::Available)
+    GTEST_SKIP() << Probe->Reason;
+  auto Backend = createExecutionBackend(Configuration, 4 * 1024 * 1024);
+  ASSERT_TRUE(bool(Backend)) << llvm::toString(Backend.takeError());
+  auto &CPU = *Backend->CPU;
+  auto &Space = *CPU.addressSpace();
+  llvm::cantFail(Space.map(Buffer, 4096, Read | Write | UserAccessible));
+  std::vector<uint8_t> Before(4096, 'x');
+  Before[8] = Before[64] = 0;
+  Before[65] = 'y';
+  llvm::cantFail(CPU.write(Buffer, Before));
+  llvm::cantFail(Space.protect(Buffer, 4096, Read | UserAccessible));
+  ProcessOptions Options;
+  Options.Android.emplace();
+  const linux_model::MemoryLayout Layout{linux_model::UserLimitARM64, 4096};
+  ProcessResult Result{ProcessProfile::AndroidNativeAArch64,
+                       GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn,
+                       {}};
+  linux_model::LinuxServices Kernel(CPU, Layout, PageEnd, Options, Result);
+  const android_model::LinkedImage Linked{};
+  struct Case {
+    uint64_t Limit, Text, Count, Needle, Length;
+    bool Expired;
+    const char *Error;
+    uint64_t Expected;
+  };
+  for (const auto C :
+       {Case{8, Buffer, 8, Buffer + 64, 1, false, nullptr, 0},
+        {8, Buffer, 9, Buffer + 64, 1, false, "scan exceeds memory limit", 0},
+        {9, Buffer, 9, Buffer + 64, 1, false, nullptr, Buffer + 8},
+        {16, Buffer, 10, Buffer + 64, 2, false, nullptr, 0},
+        {8, Buffer, UINT64_MAX, Buffer, 1, false, nullptr, Buffer},
+        {8, Buffer, 2, Buffer, 2, false, "scan exceeds memory limit", 0},
+        {16, Buffer, 2, Buffer, 2, false, nullptr, Buffer},
+        {0, UINT64_MAX, UINT64_MAX, UINT64_MAX, 0, false, nullptr, UINT64_MAX},
+        {0, UINT64_MAX, UINT64_MAX, UINT64_MAX, 0, true, nullptr, UINT64_MAX},
+        {0, UINT64_MAX, 1, UINT64_MAX, 2, true, nullptr, 0},
+        {8, Buffer, UINT64_MAX, Buffer, 0x100000001, false,
+         "scan exceeds memory limit", 0},
+        {0, Buffer, 1, Buffer, 1, false, "scan exceeds memory limit", 0},
+        {8, PageEnd, 1, Buffer, 1, false, "invalid guest pointer", 0},
+        {8, Buffer, 1, PageEnd, 1, false, "invalid guest pointer", 0},
+        {16, Buffer, 2, PageEnd - 1, 2, false, "invalid guest pointer", 0},
+        {8, PageEnd, 1, Buffer, 1, true, "timed out", 0},
+        {8, Buffer, 1, PageEnd, 1, true, "timed out", 0}}) {
+    SCOPED_TRACE(testing::Message() << C.Limit << ":" << C.Count << ":"
+                                    << C.Length << ":" << C.Expired);
+    Options.MemoryLimit = C.Limit;
+    auto Budget = llvm::cantFail(ExecutionBudget::create(
+        Options.Limits, C.Expired ? ExecutionBudget::Clock::time_point::min()
+                                  : ExecutionBudget::Clock::now()));
+    android_model::Bionic Model(CPU, Kernel, Layout, Options, Result, *Budget,
+                                Linked);
+    NativeCallEvent Call{};
+    Call.Name = "memmem";
+    Call.Arguments = {C.Text, C.Count, C.Needle, C.Length};
+    auto Value = Model.invoke(Call);
+    if (C.Error) {
+      ASSERT_FALSE(bool(Value));
+      EXPECT_NE(llvm::toString(Value.takeError()).find(C.Error),
+                std::string::npos);
+    } else {
+      ASSERT_TRUE(bool(Value)) << llvm::toString(Value.takeError());
+      ASSERT_TRUE(*Value);
+      EXPECT_EQ(std::get<uint64_t>(**Value), C.Expected);
+    }
+    EXPECT_EQ(Model.timedOut(), C.Expired && C.Length && C.Count >= C.Length);
+    std::vector<uint8_t> After(4096);
+    llvm::cantFail(Space.snapshotBacking(Buffer, After));
+    EXPECT_EQ(After, Before);
   }
 }
 

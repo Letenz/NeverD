@@ -3705,6 +3705,117 @@ TEST_F(ProcessPublic, AndroidMemorySearchReportsMatchSDKAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic, AndroidBinarySubstringReportsMatchSDKAndCLI) {
+#ifndef NEVERD_ANDROID_FIXTURE_DIR
+  GTEST_SKIP() << "Android shared library fixtures unavailable";
+#else
+  Path =
+      (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) / "search-O2-relr.so")
+          .string();
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  struct Case {
+    const char *Text;
+    uint64_t Count;
+    const char *Needle;
+    uint64_t Length;
+    const char *Expected;
+  };
+  const Case Cases[] = {
+      {"0x20000040", 5, "0x20000048", 2, "20000041"},
+      {"0x20000040", 2, "0x20000048", 2, "0"},
+      {"0xffffffffffffffff", 5, "0xffffffffffffffff", 0, "ffffffffffffffff"},
+      {"0xffffffffffffffff", 1, "0xffffffffffffffff", 2, "0"},
+      {"0xffffffffffffffff", 2, "0x20000048", 2, nullptr},
+      {"0x20000040", 5, "0xffffffffffffffff", 2, nullptr}};
+  for (unsigned Route : {0u, 1u}) {
+    for (const auto &C : Cases) {
+      SCOPED_TRACE(testing::Message() << Route << ":" << C.Text << ":"
+                                      << C.Count << ":" << C.Length);
+      const bool Fails = !C.Expected;
+      std::vector<uint8_t> Expected(96, 0xa5);
+      Expected[64] = 0x80;
+      Expected[65] = Expected[67] = Expected[72] = 0;
+      Expected[66] = Expected[68] = Expected[73] = 0xff;
+      llvm::json::Object Request{
+          {"backend", "unicorn"},
+          {"android",
+           llvm::json::Object{
+               {"entry_symbol", "binary_substring"},
+               {"initialize", false},
+               {"arguments", llvm::json::Array{C.Text, C.Count, C.Needle,
+                                               C.Length, Route, "0x20000050"}},
+               {"memory", llvm::json::Array{llvm::json::Object{
+                              {"address", "0x20000000"},
+                              {"size", 4096},
+                              {"bytes_hex", llvm::toHex(Expected, true)}}}},
+               {"read_memory", llvm::json::Array{llvm::json::Object{
+                                   {"address", "0x20000000"}, {"size", 96}}}},
+               {"libraries",
+                llvm::json::Object{
+                    {"libsearch.so", llvm::json::Array{"memmem"}}}}}}};
+      const auto Options = jsonText(std::move(Request));
+      const auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), AndroidNativeAArch64, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      const auto Parsed = llvm::cantFail(llvm::json::parse(Text));
+      const auto *Report = Parsed.getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString(field::Stop),
+                Fails ? "runtime_failure" : "returned");
+      const auto *Android = Report->getObject(field::Android);
+      ASSERT_NE(Android, nullptr);
+      const auto *Calls = Android->getArray(field::NativeCalls);
+      ASSERT_NE(Calls, nullptr);
+      const llvm::json::Object *Lookup = nullptr, *Call = nullptr;
+      for (const auto &Event : *Calls) {
+        const auto *E = Event.getAsObject();
+        if (E->getString(field::Name) == "dlsym")
+          Lookup = E;
+        if (E->getString(field::Name) == "memmem")
+          Call = E;
+      }
+      ASSERT_NE(Call, nullptr);
+      if (Route) {
+        EXPECT_EQ(Call->getString(field::Library), "libsearch.so");
+        ASSERT_NE(Lookup, nullptr);
+        EXPECT_EQ(Lookup->getString(field::Symbol), "memmem");
+        EXPECT_EQ(Call->getString(field::PC), Lookup->getString(field::Result));
+      } else {
+        EXPECT_FALSE(Call->get(field::Library));
+        EXPECT_EQ(Lookup, nullptr);
+      }
+      const auto *Memory = Android->getArray(field::Memory);
+      ASSERT_NE(Memory, nullptr);
+      if (Fails) {
+        EXPECT_EQ(*Report->get(field::ReturnValue), llvm::json::Value(nullptr));
+        EXPECT_EQ(*Call->get(field::Result), llvm::json::Value(nullptr));
+        ASSERT_TRUE(Report->getString(field::Diagnostic));
+        EXPECT_NE(
+            Report->getString(field::Diagnostic)->find("invalid guest pointer"),
+            llvm::StringRef::npos);
+        EXPECT_TRUE(Memory->empty());
+      } else {
+        EXPECT_EQ(Report->getString(field::ReturnValue), C.Expected);
+        EXPECT_EQ(Call->getString(field::Result), C.Expected);
+        llvm::support::endian::write64le(Expected.data() + 80, 733);
+        ASSERT_EQ(Memory->size(), 1u);
+        EXPECT_EQ(Memory->front().getAsObject()->getString(field::Bytes),
+                  llvm::toHex(Expected, true));
+      }
+      const int CLIStatus =
+          runCLIRequest(Path, AndroidNativeAArch64, Options, Output);
+      EXPECT_EQ(CLIStatus,
+                Fails ? process_cli::Incomplete : process_cli::Success);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, Parsed));
+    }
+  }
+#endif
+}
+
 TEST_F(ProcessPublic, AndroidFortifiedSearchReportsMatchSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR
   GTEST_SKIP() << "Android shared library fixtures unavailable";

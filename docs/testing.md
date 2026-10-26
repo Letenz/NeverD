@@ -11778,6 +11778,15 @@ The direct memory cases distinguish a complete no-match from an exhausted
 memory/deadline budget, including fortify-before-access ordering. The public
 `AndroidMemorySearchReportsMatchSDKAndCLI` test compares complete reports on
 success, zero-count invalid pointers, pointer faults and fortify refusal.
+`BinarySubstring*` covers `memmem` with embedded NUL and high bytes, repeated
+prefixes, first matches, exact and 64-bit counts, empty needles, shorter
+haystacks, overlapping read-only inputs, page tails, errno and dynamic
+provider lifetime. The direct model cases distinguish a complete no-match
+from exhausted scan or prefix-table budgets and check deadline refusal with
+unchanged backing. `AndroidBinarySubstringReportsMatchSDKAndCLI` compares
+complete public reports for direct and dynamic calls, including pointer
+faults and no-read results. Existing `Substring*` cases retain `strstr`'s
+NUL-terminated behavior in the shared search owner.
 
 `AndroidTimeTests.cpp` executes independent O0/O2 C fixtures with ordinary,
 APS2 and RELR relocations. It checks explicit fixed clocks, post-2038 and
