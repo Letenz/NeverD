@@ -8033,6 +8033,14 @@ Each failed range retains its own bounded diagnostic and publishes no partial
 bytes, without changing the execution failure or preventing later captures.
 The default report and resumable-stop memory contract remain unchanged.
 
+`observe_memory_at_stop` explicitly selects the same diagnostic RAM capture
+at every final stop, including instruction/event limits and normal returns.
+A range unmapped by a completed thread retains its own diagnostic instead of
+turning the workload's stop into a runtime failure or discarding later ranges.
+Both diagnostic options share the stopped-backing reader, bounded errors and
+one per-range output reservation. They do not relax entry mapping requirements;
+ordinary final reads and the failure-only option retain their existing scope.
+
 The checked Unicorn ARM64 transport installs and captures complete register
 packets using the shared register inventory. A read packet has private zeroed
 storage: partial failures, cancellation and deadline expiry cannot publish a

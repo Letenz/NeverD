@@ -7570,6 +7570,15 @@ resource limits. `ProcessReport.ThreadCPUStates*` distinguishes disabled, empty,
 failed and successful captures; the public terminal-state test exercises the
 same opt-in through the SDK and CLI.
 
+`AndroidSnapshots.AtStopRAM*` compares whole workloads with reads disabled
+against explicit diagnostic snapshots at normal, service, CPU-fault and budget
+stops. Unmapped ranges fail independently, protected RAM remains observable,
+later ranges survive a failed capture, and both diagnostic flags reserve their
+shared error budget once. The existing initial-mapping and ordinary-read
+refusals stay strict. `ProcessReport.MemoryAtStop*` checks boolean admission;
+`ProcessPublic.AndroidMemoryAtStop*` checks matching SDK/CLI results and unchanged
+stops even when the first requested range is absent.
+
 `UnicornAArch64.CheckedRegisterPacketsPreserveEveryLaneAndRestoration` checks
 distinct scalar and SIMD values across repeated checked user/supervisor steps
 and context restoration. Linux's `NeverDUnicornStateTransferTests` injects each
