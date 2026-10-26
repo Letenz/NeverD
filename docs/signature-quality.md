@@ -161,7 +161,8 @@ bindings. Only sites with multiple viable named alternatives and an explicit
 data operand are deferred. The existing caller must still meet the complete-body
 and fixed-byte rules, and all alternative bodies must be available. After the
 single data pass, the matcher revisits only those ordinary parents through the
-frozen address index. A missing binding or surviving ambiguity leaves the request
+frozen address index, and only if an actual data operand acquired a binding.
+A missing binding or surviving ambiguity leaves the request
 unresolved. Neither a deferred child nor a subsequent descendant can establish
 data bindings, change its parent or initiate another retry. This also works when
 the loaded pack has data-bearing `!caller` records without global `!refs` hits.

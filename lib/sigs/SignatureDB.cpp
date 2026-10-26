@@ -540,12 +540,8 @@ void SignatureDB::apply(const BinaryImage &Img,
     }
   }
   checkReferences(Img, FuncEntries, std::move(Hits));
-  std::vector<uint64_t> DeferredCallers;
+  std::vector<DeferredCaller> DeferredCallers;
   applyCallerContext(Img, FuncEntries, 0, nullptr, {}, &DeferredCallers);
-  llvm::sort(DeferredCallers);
-  DeferredCallers.erase(
-      std::unique(DeferredCallers.begin(), DeferredCallers.end()),
-      DeferredCallers.end());
   applyVTableContext(Img, FuncEntries);
   applyDataContext(Img, FuncEntries, DataHits, DeferredCallers);
   applyRuntimePointerContext(Img, FuncEntries);
@@ -1099,12 +1095,11 @@ std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
 
 } // namespace
 
-void SignatureDB::applyCallerContext(const BinaryImage &Img,
-                                     llvm::ArrayRef<uint64_t> Entries,
-                                     size_t FirstParent,
-                                     const DataBindings *Data,
-                                     llvm::ArrayRef<uint64_t> Revisit,
-                                     std::vector<uint64_t> *DeferredCallers) {
+void SignatureDB::applyCallerContext(
+    const BinaryImage &Img, llvm::ArrayRef<uint64_t> Entries,
+    size_t FirstParent, const DataBindings *Data,
+    llvm::ArrayRef<uint64_t> Revisit,
+    std::vector<DeferredCaller> *DeferredCallers) {
   if (!index().hasCallerModules() || Matches.empty())
     return;
   if (Data && Revisit.empty()) {
@@ -1187,7 +1182,8 @@ void SignatureDB::applyCallerContextRound(
     std::unordered_map<uint64_t, std::string> &Names,
     llvm::ArrayRef<size_t> FrozenCandidates, size_t FrozenMatches,
     size_t FirstParent, const DataBindings *Data,
-    llvm::ArrayRef<uint64_t> Revisit, std::vector<uint64_t> *DeferredCallers) {
+    llvm::ArrayRef<uint64_t> Revisit,
+    std::vector<DeferredCaller> *DeferredCallers) {
   const auto &Idx = index();
   auto FindName = [&](uint64_t Address) {
     auto Found = Names.find(Address);
@@ -1472,10 +1468,26 @@ void SignatureDB::applyCallerContextRound(
   llvm::sort(Supports, [](const Support &A, const Support &B) {
     return A.Candidate < B.Candidate;
   });
-  if (DeferredCallers)
-    for (const auto &[Site, Name] : SiteNames)
-      if (Name.empty() && DataQueries.contains(Site))
-        DeferredCallers->push_back(Site.first);
+  if (DeferredCallers && !DataQueries.empty())
+    for (const Support &Claim : Supports) {
+      const auto Site = std::pair{Claim.Parent, Claim.Offset};
+      const auto Names = SiteNames.find(Site);
+      if (Names == SiteNames.end() || !Names->second.empty() ||
+          !DataQueries.contains(Site) || !Viable.contains(Claim.Candidate))
+        continue;
+      const auto &[Address, Module] = Claim.Candidate;
+      for (const StoredName &Ref : Modules[Module].references()) {
+        if (!Ref.IsData)
+          continue;
+        auto Target = dataReferenceTarget(Img, Address, Ref.Offset,
+                                          Modules[Module].TotalLen);
+        if (Target && Ref.IsLocalData)
+          Target =
+              localDataReferenceBase(Img, *Target, *localDataAnchor(Ref.Name));
+        if (Target)
+          DeferredCallers->push_back({Claim.Parent, *Target});
+      }
+    }
   size_t Kept = OriginalMatches;
   for (size_t I = OriginalMatches; I < Matches.size(); ++I) {
     SigMatch &Match = Matches[I];
