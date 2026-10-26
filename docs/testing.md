@@ -4377,6 +4377,24 @@ name and for two functions of one symbol; `ReadsTheDeclarationsHighCWrites`
 reads a typedef name declared again, a block's variable of a typedef's name, a
 C23 enumeration's type and `va_arg` without showing C, and
 `GoViewComputesWhatCComputes` runs a pointer to a copy (`&(int64_t){v}`) in Go.
+`ReadsPrototypeIntegerIdentityTypes` reads the emitted `typeof`/`choose_expr`
+integer types across 32-bit, LP64 and LLP64 targets in C, C++, Rust and Go,
+checks fixed-width results and C token round trips. This covers the type used
+for `fwrite`'s result in the Android `std::filebuf::overflow` reproduction.
+`DoesNotGuessUnknownTypeofExpressions` keeps unknown conditions and operands as
+explicit C fallbacks.
+`ReadsTargetHeaderTypesWithoutPrintingTheirDefinitions` checks Android ARM32
+and ARM64, Linux, macOS and Windows header types; the emitted source remains
+the displayed text. `EmittedDefinitionsOverrideTargetHeaderTypes` checks local
+overrides and emitter-proved header types whose origin is DWARF.
+`ReadsUnevaluatedMemberTypeofCasts`, `ReadsAnonymousRecordCompoundLiterals`,
+`ReadsLLVMScalarTypeSpellings` and `ReadsAutoTypeFromItsInitializer` cover the
+other type forms HighC and LLVM-C emit. The native C/Rust and C/Go comparisons
+also query `typeof(*(cursor++))`, checking narrowing and that the query does
+not advance the cursor. Unknown inference and bit-field queries remain
+diagnosed, and C token round trips retain the GNU attributes and literals.
+`CxxAnonymousRecordsCompileAndKeepTheirBits` compiles the C++ projection and
+executes it, checking the union's bits and a single initializer side effect.
 `SourceAggregate.SourceNamesAreSpelledAsC` checks the C spelling of C++ record
 names and of records that share a C library function's name;
 Native x64 instruction oracles in `HighCPointerAddresses` and

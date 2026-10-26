@@ -114,6 +114,8 @@ private:
     case CType::Kind::Integer:
       return (Ty->Signed ? "i" : "u") + std::to_string(Ty->Bits);
     case CType::Kind::Floating:
+      if (Ty->Bits != 32 && Ty->Bits != 64)
+        unsupported("floating type '" + Ty->Spelling + "'");
       return "f" + std::to_string(Ty->Bits);
     case CType::Kind::Pointer: {
       const CType *Pointee = Ty->Inner;
