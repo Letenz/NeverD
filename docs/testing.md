@@ -14226,3 +14226,5 @@ See [Windows patch export](windows-patch-export.md) for the public reproducer.
 `X86CarryArithmeticFlags.SelfSubtract*` and `APXSelfSubtract*` check result bits, arithmetic flags and preserved register state. Worker scalar-branch cases compare native execution with HighC/LLVMC at O0/O2, including branches on self-subtraction and self-comparison flags.
 
 `BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` covers direct register captures and private spills. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` executes HighC and LLVMC with two distinct scalar arguments at O0/O2 on Linux x86, for memory and register call targets. The Python ABI inventory and GUI source-catalog check include the analysis-section interfaces and messages.

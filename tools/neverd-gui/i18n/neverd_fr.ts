@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>Prendre le branchement conditionnel sans condition</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>Ajouter une section d’analyse...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>Mapper du code ou des données supplémentaires dans cette analyse</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3236,6 +3244,54 @@ Après :
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>Valeur non signée (décimale ou hexadécimale 0x) :</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>Ajouter une section d’analyse</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>Données binaires :</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Choisissez un fichier de 1 octet à 64 MiB, une adresse hexadécimale et un nom de section. Une fonction nécessite un nom et des droits d’exécution.</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>Définir une fonction couvrant ces octets</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>Nom de la fonction :</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>Mappez un fichier binaire à une adresse virtuelle de l’image actuelle. Enregistrez le projet pour conserver ce mappage. Le fichier binaire d’entrée reste inchangé.</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>Droits :</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>Nom de la section :</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>Sélectionner les données binaires</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>Le projet a changé. Rouvrez cette boîte de dialogue.</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>Adresse virtuelle :</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Parcourir…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3430,10 +3486,6 @@ Après :
         <translation>Fichier d&apos;entrée rechargé</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>Commentaires et historique enregistrés</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>La modification a été préparée pour une session qui n&apos;est plus ouverte et n&apos;a pas été appliquée.</translation>
     </message>
@@ -3619,6 +3671,10 @@ Après :
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>Fonction réécrite à %1 enregistrée dans %2</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>Modifications du projet enregistrées</translation>
     </message>
 </context>
 <context>

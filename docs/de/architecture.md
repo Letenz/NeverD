@@ -2015,3 +2015,5 @@ Windows-ARM64-Aufruftypen verwenden `placeAAPCS64` über `SourceCallABI`: feste 
 `LowScalarConstant` erkennt auch die Ganzzahlsubtraktion eines Registers oder befehlslokalen Temporärwerts von sich selbst bei fester Breite. Sprungrekonstruktion und ABI-Prüfungen an Aufrufstellen teilen diese Identität mit konstanter Laufzeit; auch ein unbekannter Eingangswert liefert damit eine bewiesene Null. Verschiedene Vorkommen, Speicheroperanden und fehlerhafte Breiten bleiben unbewiesen.
 
 Der x86-Lifter behandelt ganzzahlige SUB/CMP mit identischen Registern vor dem Sichern der Flag-Operanden als `0 - 0`. Dies entfernt falsche Abhängigkeiten von Eingangsregistern und erhält Teilregisterschreibzugriffe, die Register bei CMP, APX-NDD-Quellen und die Flag-Erhaltung durch NF.
+
+`MedCallTarget` erhält den ursprünglichen Import-Leseindex über private Stack-Sicherungen hinweg. HighIR verwendet den vorhandenen Nachweis für Speicherlesezugriffe vor dem direkten Importnamen; ein geänderter Slot behält den erfassten Funktionszeiger. `MedABIPass` teilt breite Argumentschreibzugriffe gemäß der nachgewiesenen Import-ABI auch bei indirekten Aufrufen.

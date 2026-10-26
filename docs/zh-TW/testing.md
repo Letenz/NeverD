@@ -2143,3 +2143,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `X86CarryArithmeticFlags.SelfSubtract*` 和 `APXSelfSubtract*` 檢查結果位元、算術旗標及未修改的暫存器狀態。worker 純量分支測試將原生執行與 O0/O2 下的 HighC/LLVMC 比較，包含依賴自減和自身比較旗標的分支。
 
 `BinaryRewriteRelocationTest` 在 NeverSight LLVM fork 中檢查 x64 PLT、i386 GOT、Mach-O GOTPCREL 與 AArch64 PAGE/PAGEOFF 的最終位元組。NeverD 整合建置直接編譯所記錄的 fork。這些 MC 檢查不代表原生例外執行已獲驗證。
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` 涵蓋暫存器直接保存和私有堆疊保存。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` 在 Linux x86 上以兩個不同的純量參數執行 HighC 和 LLVMC 的 O0/O2 結果，涵蓋記憶體和暫存器呼叫目標。Python ABI 清單與 GUI 來源字串檢查包含分析區段介面及提示。

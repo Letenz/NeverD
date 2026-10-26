@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>تنفيذ الانتقال الشرطي دون شرط</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>إضافة قسم تحليل...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>تعيين تعليمات أو بيانات جديدة في هذا التحليل</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3260,6 +3268,54 @@ After:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>قيمة غير موقعة (عشرية أو سداسية عشرية ببادئة 0x):</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>إضافة قسم تحليل</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>البيانات الثنائية:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>اختر ملفاً بحجم من بايت واحد إلى 64 MiB، وعنواناً بالنظام الست عشري واسماً للقسم. تحتاج الدالة إلى اسم وأذونات تنفيذ.</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>تعريف دالة تغطي هذه البايتات</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>اسم الدالة:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>عيّن ملفاً ثنائياً إلى عنوان افتراضي في الصورة الحالية. احفظ المشروع للاحتفاظ بالتعيين. يبقى الملف الثنائي الأصلي دون تغيير.</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>الأذونات:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>اسم القسم:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>اختيار البيانات الثنائية</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>تغير المشروع. افتح مربع الحوار هذا مجدداً.</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>العنوان الافتراضي:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>استعراض…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3454,10 +3510,6 @@ After:
         <translation>أُعيد تحميل ملف الإدخال</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>تم حفظ التعليقات والسجل</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>تم إعداد التعديل لجلسة لم تعد مفتوحة، ولم يتم تطبيقه.</translation>
     </message>
@@ -3647,6 +3699,10 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>تم حفظ الدالة المعاد كتابتها عند %1 في %2</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>تم حفظ تغييرات المشروع</translation>
     </message>
 </context>
 <context>

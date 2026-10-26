@@ -2313,3 +2313,5 @@ Die Worker-Regression deckt außerdem achtzehn gemischte Register-/Stapelparamet
 `X86CarryArithmeticFlags.SelfSubtract*` und `APXSelfSubtract*` prüfen Ergebnisbits, arithmetische Flags und erhaltene Register. Die skalaren Worker-Verzweigungstests vergleichen native Ausführung mit HighC/LLVMC unter O0/O2, einschließlich Verzweigungen nach SUB/CMP desselben Registers.
 
 `BinaryRewriteRelocationTest` im NeverSight-LLVM-Fork prüft die endgültigen Bytes für x64 PLT, i386 GOT, Mach-O GOTPCREL und AArch64 PAGE/PAGEOFF. Integrierte NeverD-Builds kompilieren die erfasste Fork-Revision direkt. Diese MC-Prüfungen qualifizieren keine native Ausnahmeausführung.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` prüft Registerwerte und private Stack-Sicherungen. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` führt HighC und LLVMC unter Linux x86 mit zwei verschiedenen skalaren Argumenten und O0/O2 für Speicher- und Registerziele aus. Python-ABI-Inventar und GUI-Katalogprüfung enthalten Schnittstellen und Texte der Analysesektionen.

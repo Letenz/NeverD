@@ -2265,3 +2265,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 `X86CarryArithmeticFlags.SelfSubtract*` и `APXSelfSubtract*` проверяют результат, арифметические флаги и сохранённые регистры. Тесты скалярных переходов worker сравнивают нативное исполнение с HighC/LLVMC при O0/O2, включая переходы по флагам SUB/CMP одного регистра.
 
 `BinaryRewriteRelocationTest` в форке LLVM NeverSight проверяет итоговые байты x64 PLT, i386 GOT, Mach-O GOTPCREL и AArch64 PAGE/PAGEOFF. Интегрированная сборка NeverD напрямую компилирует записанный форк. Эти проверки MC не подтверждают нативное выполнение исключений.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` проверяет захват в регистре и сохранение в частном стеке. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` исполняет HighC и LLVMC при O0/O2 на Linux x86 с двумя различными скалярными аргументами для целей в памяти и регистрах. Инвентаризация ABI Python и проверка каталогов GUI включают интерфейсы и сообщения секций анализа.

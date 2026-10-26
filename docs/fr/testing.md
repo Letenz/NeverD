@@ -2312,3 +2312,5 @@ Cette régression worker couvre aussi dix-huit paramètres mixtes registre/pile,
 `X86CarryArithmeticFlags.SelfSubtract*` et `APXSelfSubtract*` vérifient le résultat, les indicateurs arithmétiques et les registres préservés. Les tests de branches scalaires du worker comparent l’exécution native à HighC/LLVMC en O0/O2, y compris les branches issues de SUB/CMP sur un même registre.
 
 `BinaryRewriteRelocationTest`, dans le fork LLVM NeverSight, vérifie les octets finaux de x64 PLT, GOT i386, GOTPCREL Mach-O et PAGE/PAGEOFF AArch64. La compilation intégrée de NeverD compile directement le fork enregistré. Ces contrôles MC ne valident pas l’exécution native des exceptions.
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` couvre les captures en registre et les sauvegardes privées. `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` exécute HighC et LLVMC en O0/O2 sur Linux x86 avec deux arguments scalaires distincts, pour des cibles en mémoire et en registre. L’inventaire ABI Python et le contrôle des catalogues GUI incluent les interfaces et messages des sections d’analyse.

@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>Take the conditional branch unconditionally</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>Add analysis section...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>Map new code or data into this analysis</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3236,6 +3244,54 @@ After:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>Unsigned value (decimal or 0x hexadecimal):</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>Add analysis section</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>Binary bytes:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>Define a function covering these bytes</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>Function name:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>Permissions:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>Section name:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>Select binary bytes</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>The project changed. Open this dialog again.</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>Virtual address:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Browse…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3430,10 +3486,6 @@ After:
         <translation>Reloaded the input file</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>Comments and history saved</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>The edit was prepared for a session that is no longer open and was not applied.</translation>
     </message>
@@ -3619,6 +3671,10 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>Rewritten function at %1 saved to %2</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>Project changes saved</translation>
     </message>
 </context>
 <context>

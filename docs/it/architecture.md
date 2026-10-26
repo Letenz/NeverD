@@ -2011,3 +2011,5 @@ I tipi di chiamata Windows ARM64 riutilizzano `placeAAPCS64` tramite `SourceCall
 `LowScalarConstant` riconosce anche la sottrazione intera a larghezza fissa di un registro o temporaneo locale all’istruzione da se stesso. Il recupero dei salti e i controlli ABI delle chiamate condividono questa identità a tempo costante: anche un ingresso sconosciuto può quindi produrre uno zero dimostrato. Occorrenze diverse, operandi in memoria e larghezze errate restano non dimostrati.
 
 Il lifter x86 tratta SUB/CMP interi con registri identici come `0 - 0` prima di salvare gli operandi dei flag. Elimina false dipendenze dai registri in ingresso mantenendo scritture parziali, registri di CMP, sorgenti APX NDD e conservazione dei flag con NF.
+
+`MedCallTarget` conserva l’indice della lettura originale dell’importazione attraverso i salvataggi privati. HighIR riusa la prova di lettura della memoria prima di usare direttamente il nome dell’importazione; se lo slot cambia, mantiene il puntatore acquisito. `MedABIPass` divide le scritture ampie degli argomenti secondo l’ABI dimostrata dell’importazione anche nelle chiamate indirette.

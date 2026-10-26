@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>条件分岐を無条件に実行</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>解析セクションを追加...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>新しいコードまたはデータをこの解析にマップ</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3230,6 +3238,54 @@ After:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>符号なしの値（10 進数または 0x 16 進数）:</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>解析セクションを追加</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>バイナリデータ:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>1 バイトから 64 MiB のファイルを選び、16 進数のアドレスとセクション名を指定してください。関数の定義には名前と実行権限が必要です。</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>このバイト範囲を関数として定義</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>関数名:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>バイナリファイルを現在のイメージの仮想アドレスにマップします。保持するにはプロジェクトを保存してください。入力バイナリは変更されません。</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>権限:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>セクション名:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>バイナリデータを選択</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>プロジェクトが変更されました。このダイアログを開き直してください。</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>仮想アドレス:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>参照…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3424,10 +3480,6 @@ After:
         <translation>入力ファイルを再読み込みしました</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>コメントと履歴を保存しました</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>この編集は既に閉じられたセッション用に準備されたものであるため、適用されませんでした。</translation>
     </message>
@@ -3612,6 +3664,10 @@ After:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>%1 の書き換えた関数を %2 に保存しました</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>プロジェクトの変更を保存しました</translation>
     </message>
 </context>
 <context>

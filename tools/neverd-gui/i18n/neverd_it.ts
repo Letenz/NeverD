@@ -1259,6 +1259,14 @@
         <source>Take the conditional branch unconditionally</source>
         <translation>Esegui il salto condizionale in modo incondizionato</translation>
     </message>
+    <message>
+        <source>Add analysis section...</source>
+        <translation>Aggiungi sezione di analisi...</translation>
+    </message>
+    <message>
+        <source>Map new code or data into this analysis</source>
+        <translation>Mappa nuovo codice o nuovi dati in questa analisi</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -3236,6 +3244,54 @@ Dopo:
         <source>Unsigned value (decimal or 0x hexadecimal):</source>
         <translation>Valore senza segno (decimale o esadecimale con 0x):</translation>
     </message>
+    <message>
+        <source>Add analysis section</source>
+        <translation>Aggiungi sezione di analisi</translation>
+    </message>
+    <message>
+        <source>Binary bytes:</source>
+        <translation>Dati binari:</translation>
+    </message>
+    <message>
+        <source>Choose a file of 1 byte to 64 MiB, a hexadecimal address and a section name. A function needs a name and executable permissions.</source>
+        <translation>Scegliere un file da 1 byte a 64 MiB, un indirizzo esadecimale e un nome di sezione. Una funzione richiede un nome e i permessi di esecuzione.</translation>
+    </message>
+    <message>
+        <source>Define a function covering these bytes</source>
+        <translation>Definisci una funzione che copra questi byte</translation>
+    </message>
+    <message>
+        <source>Function name:</source>
+        <translation>Nome della funzione:</translation>
+    </message>
+    <message>
+        <source>Map a binary file at a virtual address in the current image. Save the project to keep it. The input binary stays unchanged.</source>
+        <translation>Mappa un file binario a un indirizzo virtuale nell’immagine corrente. Salvare il progetto per mantenere la mappatura. Il file binario di ingresso rimane invariato.</translation>
+    </message>
+    <message>
+        <source>Permissions:</source>
+        <translation>Permessi:</translation>
+    </message>
+    <message>
+        <source>Section name:</source>
+        <translation>Nome della sezione:</translation>
+    </message>
+    <message>
+        <source>Select binary bytes</source>
+        <translation>Seleziona dati binari</translation>
+    </message>
+    <message>
+        <source>The project changed. Open this dialog again.</source>
+        <translation>Il progetto è cambiato. Riaprire questa finestra di dialogo.</translation>
+    </message>
+    <message>
+        <source>Virtual address:</source>
+        <translation>Indirizzo virtuale:</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Sfoglia…</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -3430,10 +3486,6 @@ Dopo:
         <translation>File di input ricaricato</translation>
     </message>
     <message>
-        <source>Comments and history saved</source>
-        <translation>Commenti e cronologia salvati</translation>
-    </message>
-    <message>
         <source>The edit was prepared for a session that is no longer open and was not applied.</source>
         <translation>La modifica era stata preparata per una sessione non più aperta e non è stata applicata.</translation>
     </message>
@@ -3619,6 +3671,10 @@ Dopo:
     <message>
         <source>Rewritten function at %1 saved to %2</source>
         <translation>Funzione riscritta a %1 salvata in %2</translation>
+    </message>
+    <message>
+        <source>Project changes saved</source>
+        <translation>Modifiche del progetto salvate</translation>
     </message>
 </context>
 <context>

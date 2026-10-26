@@ -2197,3 +2197,5 @@ worker の回帰には、18 個のレジスター／スタック混合引数、�
 `X86CarryArithmeticFlags.SelfSubtract*` と `APXSelfSubtract*` は結果、算術フラグ、保持されるレジスター状態を確認します。worker のスカラー分岐テストは自己減算・自己比較のフラグによる分岐を含め、ネイティブ実行と O0/O2 の HighC/LLVMC を比較します。
 
 NeverSight LLVM fork の `BinaryRewriteRelocationTest` は x64 PLT、i386 GOT、Mach-O GOTPCREL、AArch64 PAGE/PAGEOFF の最終バイト列を確認します。NeverD の統合ビルドは記録された fork を直接コンパイルします。これらの MC 検査はネイティブ例外実行の検証ではありません。
+
+`MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` は直接レジスター保持と私有スタック退避を検査します。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` は Linux x86 で異なる二つのスカラー引数を使い、メモリー・レジスター両ターゲットの HighC/LLVMC を O0/O2 で実行します。Python ABI 一覧と GUI 文字列検査には解析セクションのインターフェイスと表示文言を含みます。
