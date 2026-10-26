@@ -5699,21 +5699,29 @@ void executePairMemoryFamilies(const BinaryImage *Image) {
                                                : kPairTestScalarStoreCall),
                       Function.Name)
             .str();
-    const auto Native =
-        llvm::formatv(
-            Case.Load ? kPairTestNativeLoad : kPairTestNativeStore, I,
-            Case.Word, Case.Vector ? kPairTestVectorType : kPairTestScalarType,
-            Case.Vector ? kPairTestVectorBank : kPairTestScalarBank,
-            Case.Load ? (Case.Vector ? kPairTestVectorOutputConstraint
-                                     : kPairTestScalarOutputConstraint)
-                      : (Case.Vector ? kPairTestVectorInputConstraint
-                                     : kPairTestScalarInputConstraint),
-            Case.Vector ? kPairTestFirstVectorBits : kPairTestFirstScalarBits,
-            Case.Vector ? kPairTestSecondVectorBits : kPairTestSecondScalarBits,
-            Case.Vector ? kPairTestFirstVectorInput : kPairTestFirstScalarInput,
-            Case.Vector ? kPairTestSecondVectorInput
-                        : kPairTestSecondScalarInput)
+    const auto *Type = Case.Vector ? kPairTestVectorType : kPairTestScalarType;
+    const auto *Bank = Case.Vector ? kPairTestVectorBank : kPairTestScalarBank;
+    const auto *FirstBits =
+        Case.Vector ? kPairTestFirstVectorBits : kPairTestFirstScalarBits;
+    const auto *SecondBits =
+        Case.Vector ? kPairTestSecondVectorBits : kPairTestSecondScalarBits;
+    const auto Native = [&] {
+      if (Case.Load)
+        return llvm::formatv(kPairTestNativeLoad, I, Case.Word, Type, Bank,
+                             Case.Vector ? kPairTestVectorOutputConstraint
+                                         : kPairTestScalarOutputConstraint,
+                             FirstBits, SecondBits)
             .str();
+      return llvm::formatv(kPairTestNativeStore, I, Case.Word, Type, Bank,
+                           Case.Vector ? kPairTestVectorInputConstraint
+                                       : kPairTestScalarInputConstraint,
+                           FirstBits, SecondBits,
+                           Case.Vector ? kPairTestFirstVectorInput
+                                       : kPairTestFirstScalarInput,
+                           Case.Vector ? kPairTestSecondVectorInput
+                                       : kPairTestSecondScalarInput)
+          .str();
+    }();
     const bool Writeback =
         Case.Mode == kPairTestPostMode || Case.Mode == kPairTestPreMode;
     Replays +=
