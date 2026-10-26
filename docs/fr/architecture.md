@@ -2023,3 +2023,5 @@ Les types d’appel Windows ARM64 réutilisent `placeAAPCS64` via `SourceCallABI
 Le lifter x86 traite les SUB/CMP entiers entre registres identiques comme `0 - 0` avant de capturer les opérandes des indicateurs. Il élimine les fausses dépendances aux registres entrants tout en conservant les écritures partielles, les registres de CMP, les sources APX NDD et les indicateurs NF.
 
 `MedCallTarget` conserve l’indice de lecture initial de l’import à travers les sauvegardes privées. HighIR réutilise la preuve de lecture mémoire avant de nommer directement l’import ; si le slot change, il garde le pointeur capturé. `MedABIPass` découpe les écritures larges d’arguments selon l’ABI prouvée de l’import, même pour un appel indirect.
+
+La simplification commune des indicateurs MedIR conserve les deux opérandes de soustraction, y compris pour `A-A`. Une autocomparaison ne doit pas devenir une comparaison avec zéro ; les autotests logiques gardent leur règle distincte dépendant de l’entrée.

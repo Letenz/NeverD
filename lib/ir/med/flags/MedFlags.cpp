@@ -357,6 +357,8 @@ CmpSource findCmpSource(const std::vector<MedOp> &Ops, int SearchEnd,
         Result.SourceOpIndex = J;
         Result.FlagOpIndex = I;
         if (Prev.Opcode == NdOp::INT_SUB) {
+          // A-A compares equal for every input. Keep both operands; replacing
+          // the second with zero would instead test A itself, as TEST does.
           Result.A = Prev.Inputs[0];
           Result.B = Prev.Inputs[1];
           Result.FromSub = true;
@@ -378,8 +380,6 @@ CmpSource findCmpSource(const std::vector<MedOp> &Ops, int SearchEnd,
         break;
     }
   }
-  if (Result.Valid && Result.A == Result.B)
-    Result.B = MedVar::makeConst(0, Result.A.Size);
   return Result;
 }
 

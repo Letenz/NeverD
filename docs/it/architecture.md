@@ -2013,3 +2013,5 @@ I tipi di chiamata Windows ARM64 riutilizzano `placeAAPCS64` tramite `SourceCall
 Il lifter x86 tratta SUB/CMP interi con registri identici come `0 - 0` prima di salvare gli operandi dei flag. Elimina false dipendenze dai registri in ingresso mantenendo scritture parziali, registri di CMP, sorgenti APX NDD e conservazione dei flag con NF.
 
 `MedCallTarget` conserva l’indice della lettura originale dell’importazione attraverso i salvataggi privati. HighIR riusa la prova di lettura della memoria prima di usare direttamente il nome dell’importazione; se lo slot cambia, mantiene il puntatore acquisito. `MedABIPass` divide le scritture ampie degli argomenti secondo l’ABI dimostrata dell’importazione anche nelle chiamate indirette.
+
+La semplificazione condivisa dei flag MedIR conserva entrambi gli operandi della sottrazione, anche per `A-A`. Un confronto con sé stesso non deve diventare un confronto con zero; i test logici mantengono la propria regola dipendente dall’ingresso.

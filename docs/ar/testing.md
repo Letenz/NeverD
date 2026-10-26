@@ -2225,3 +2225,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 يفحص `BinaryRewriteRelocationTest` في فرع LLVM الخاص بـ NeverSight البايتات النهائية لـ x64 PLT وi386 GOT وMach-O GOTPCREL وAArch64 PAGE/PAGEOFF. يترجم بناء NeverD المتكامل الفرع المسجل مباشرة. لا تثبت فحوص MC هذه تنفيذ الاستثناءات الأصلي.
 
 يغطي `MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` الالتقاط في السجلات والحفظ في المكدس الخاص. ينفذ `I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` ناتج HighC وLLVMC عند O0/O2 على Linux x86 بمعاملين عدديين مختلفين، لأهداف الذاكرة والسجلات. يشمل فحص ABI في Python وكتالوج مصادر GUI واجهات أقسام التحليل ورسائلها.
+
+ينفذ `NeverDSelfCompareFlagTests` الدوال الأصلية والمعاد بناؤها على x86 وx64 وARM32 وAArch64. شغّل مسار الشيفرة الآلية الافتراضي و`NEVERD_SEMANTIC_HIGHC=1` و`NEVERD_SEMANTIC_LLVMC=1` كلّاً على حدة. تغطي المصفوفة أعلام CMP/SUB ذات المعاملين المتساويين والفروع والقيم الشرطية، مع اختبارات منطقية ومعاملات مزاحة للمقارنة، إضافة إلى اختبارات تجاوز السعة الموقّع القائمة.

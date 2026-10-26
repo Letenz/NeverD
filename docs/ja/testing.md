@@ -2199,3 +2199,5 @@ worker の回帰には、18 個のレジスター／スタック混合引数、�
 NeverSight LLVM fork の `BinaryRewriteRelocationTest` は x64 PLT、i386 GOT、Mach-O GOTPCREL、AArch64 PAGE/PAGEOFF の最終バイト列を確認します。NeverD の統合ビルドは記録された fork を直接コンパイルします。これらの MC 検査はネイティブ例外実行の検証ではありません。
 
 `MedCachedCallTarget.HighIRCallsTheCapturedValueAfterTheSlotChanges` は直接レジスター保持と私有スタック退避を検査します。`I386CallContract.AStoreWiderThanASlotFillsEachSlotItCovers` は Linux x86 で異なる二つのスカラー引数を使い、メモリー・レジスター両ターゲットの HighC/LLVMC を O0/O2 で実行します。Python ABI 一覧と GUI 文字列検査には解析セクションのインターフェイスと表示文言を含みます。
+
+`NeverDSelfCompareFlagTests` は x86、x64、ARM32、AArch64 の元の関数と再構築した関数を実行して比較します。既定の機械語経路、`NEVERD_SEMANTIC_HIGHC=1`、`NEVERD_SEMANTIC_LLVMC=1` を個別に実行します。自己 CMP/SUB のフラグ、分岐、条件値を、論理テストとシフトしたオペランドを対照に検証し、既存の符号付きオーバーフロー回帰も実行します。
