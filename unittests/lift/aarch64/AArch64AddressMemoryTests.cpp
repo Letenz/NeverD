@@ -2649,7 +2649,8 @@ TEST(AArch64ImmediateMemory,
 
 namespace {
 void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
-                                    bool Stack, bool Immediate) {
+                                    bool Stack, bool Immediate,
+                                    const BinaryImage *Image = nullptr) {
   llvm::SmallString<kVectorPathStorage> ArtifactDirectory;
   if (const auto *Root =
           std::getenv(Stack || !Immediate ? kStackArtifactEnvironment
@@ -2659,16 +2660,18 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
     llvm::SmallString<kVectorPathStorage> Prefix(Root);
     llvm::sys::path::append(
         Prefix,
-        Stack
+        Image ? kImmediateImageArtifactPrefix
+        : Stack
             ? (Immediate ? kStackArtifactPrefix : kStackRegisterArtifactPrefix)
             : (Immediate ? kImmediateArtifactPrefix : kRegisterArtifactPrefix));
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory(Prefix, ArtifactDirectory));
     ::testing::Test::RecordProperty(
-        Stack ? (Immediate ? kStackArtifactProperty
-                           : kStackRegisterArtifactProperty)
-              : (Immediate ? kImmediateArtifactProperty
-                           : kRegisterArtifactProperty),
+        Image   ? kImmediateImageArtifactProperty
+        : Stack ? (Immediate ? kStackArtifactProperty
+                             : kStackRegisterArtifactProperty)
+                : (Immediate ? kImmediateArtifactProperty
+                             : kRegisterArtifactProperty),
         ArtifactDirectory.str().str());
   }
   auto SaveArtifact = [&](llvm::StringRef Name, llvm::StringRef Bytes) {
@@ -2716,8 +2719,11 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
     Functions.push_back(std::move(Function));
   }
   llvm::LLVMContext Context;
-  auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64);
+  auto Module = MedLLVMEmitter().emit(Functions, Context, kName, Arch::AArch64,
+                                      {}, Image);
   ASSERT_TRUE(Module);
+  if (Image)
+    EXPECT_TRUE(Module->global_empty());
   optimizeMemory(*Module);
   ASSERT_FALSE(llvm::verifyModule(*Module));
   const auto Harness =
@@ -2727,6 +2733,7 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
     CEmitterOptions Options;
     Options.TheArch = Arch::AArch64;
     Options.Format = BinaryFormat::MachO;
+    Options.Image = Image;
     std::string Source;
     llvm::raw_string_ostream Out(Source);
     if (LLVMRoute)
@@ -2786,6 +2793,21 @@ void executeImmediateMemoryFamilies(llvm::ArrayRef<ImmediateMemoryCase> Cases,
 TEST(AArch64ImmediateMemory,
      BothCProjectionsAndLLVMExecuteEveryImmediateFamily) {
   executeImmediateMemoryFamilies(ImmediateMemoryCases, false, true);
+}
+
+TEST(AArch64ImmediateMemory, ImageContextPreservesEveryRuntimeParameterAccess) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::MachO;
+  Segment Data;
+  Data.Name = kStorageTableName;
+  Data.VA = kStorageBase;
+  Data.Size = Data.FileSz = kImmediateMemoryBytes;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.resize(Data.Size);
+  Image.Segments.push_back(std::move(Data));
+  executeImmediateMemoryFamilies(ImmediateMemoryCases, false, true, &Image);
 }
 
 TEST(AArch64StackAddressMemory,
@@ -2895,19 +2917,57 @@ TEST(AArch64ImmediateMemory,
       auto Function = immediateMemoryFunction(*Case, 0);
       const std::vector<char> Mask{0};
       llvm::LLVMContext Context;
-      EXPECT_THROW(MedLLVMEmitter().emit({Function}, Context, kName,
-                                         Arch::AArch64, {}, &Image,
-                                         BinaryFormat::MachO, false, &Mask),
-                   std::runtime_error);
-      CEmitterOptions Options;
-      Options.TheArch = Arch::AArch64;
-      Options.Image = &Image;
-      std::string Source;
-      llvm::raw_string_ostream Out(Source);
-      EXPECT_THROW(HighCEmitter().emit(
-                       {MedToHighConverter().convert(Function, Arch::AArch64)},
-                       Out, Options),
-                   std::invalid_argument);
+      for (auto Kind :
+           {MedVar::Const, MedVar::Reg, MedVar::Temp, MedVar::Stack})
+        for (bool Hidden : {false, true}) {
+          SCOPED_TRACE(static_cast<unsigned>(Kind));
+          SCOPED_TRACE(Hidden);
+          auto Rejected = Function;
+          auto High = MedToHighConverter().convert(Function, Arch::AArch64);
+          MedVar RejectedBase;
+          for (auto &Op : Rejected.Blocks.front().Ops)
+            if (aarch64AddressMemoryMedShapeIsValid(Op)) {
+              auto &Base = Op.Inputs[kAddressMemoryBaseOperand + 1];
+              Base.Kind = Kind;
+              Base.ConstVal = kStorageBase;
+              RejectedBase = Base;
+            }
+          EXPECT_THROW(MedLLVMEmitter().emit({Rejected}, Context, kName,
+                                             Arch::AArch64, {}, &Image,
+                                             BinaryFormat::MachO, false,
+                                             Hidden ? &Mask : nullptr),
+                       std::runtime_error);
+          std::function<void(const ExprPtr &)> RejectBase;
+          RejectBase = [&](const ExprPtr &Expression) {
+            if (!Expression)
+              return;
+            if (isAArch64AddressMemoryIntrinsic(Expression->IntrinsicId))
+              Expression->Operands[kAddressMemoryBaseOperand] =
+                  Kind == MedVar::Const
+                      ? HighExpr::makeConst(kStorageBase, kScalarBytes)
+                      : HighExpr::makeVar(RejectedBase,
+                                          NdType::makeInt(kScalarBytes, false));
+            Expression->forEachChildExpr(RejectBase);
+          };
+          walkStmts(High.Body, [&](const HighStmt &Statement) {
+            forEachExpr(Statement, RejectBase);
+          });
+          if (Hidden) {
+            HighStmt Branch;
+            Branch.Kind = StmtKind::If;
+            Branch.Cond = HighExpr::makeConst(0, 1);
+            Branch.Body = std::move(High.Body);
+            High.Body = {std::move(Branch)};
+          }
+          CEmitterOptions Options;
+          Options.TheArch = Arch::AArch64;
+          Options.Image = &Image;
+          std::string Source;
+          llvm::raw_string_ostream Out(Source);
+          EXPECT_THROW(HighCEmitter().emit({High}, Out, Options),
+                       std::invalid_argument);
+          EXPECT_TRUE(Source.empty());
+        }
       const uint32_t Word = (Case->Word & ~StackMask) | StackMask;
       const auto Stack = aarch64AddressMemoryInstruction(Word);
       ASSERT_TRUE(Stack);

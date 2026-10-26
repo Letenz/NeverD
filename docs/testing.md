@@ -473,9 +473,13 @@ neighboring writeback/pair exclusions, zero-index shape requirements, finite
 tracing in both modes and complete 64-bit byte spans. Both C routes and linked
 LLVM objects execute the GPR and B/H/S/D/Q forms at O0/O2, checking actual bytes,
 extension and unchanged neighbors; Q reads compare both 64-bit halves separately.
-These are explicit-IR tests; they do not
-qualify automatic decoding/lifting, relocated-image projection or native
-half/whole-vector ABI. Synthetic-stack and image requirements fail before body filtering.
+`ImageContextPreservesEveryRuntimeParameterAccess` repeats all 177 accesses with
+a Mach-O image present and requires LLVM to create no image globals: the
+caller supplies the runtime GPR bits directly. Its separate
+`cpta_image_memory_artifacts` property identifies the image-context export.
+These are explicit-IR tests; they do not qualify automatic decoding/lifting,
+image-derived address rebasing or native half/whole-vector ABI. Synthetic-stack
+and unresolved image-coordinate requirements fail before body filtering.
 Set `NEVERD_ARM64E_CPTA_ARTIFACT_DIR` for the immediate execution test to retain
 both generated C files, the independent native harness and LLVM ELF/Mach-O objects
 in a fresh directory recorded in the test's properties. These artifacts allow

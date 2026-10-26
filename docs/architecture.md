@@ -475,11 +475,14 @@ These operations retain the raw base and encoded displacement; their index
 operand is a required constant zero. Scratch rewriting changes only Rn/Rt,
 leaving every immediate bit and the access-EL variant intact. Explicit IR can
 execute these forms through LLVM and either C route without an image model.
-Automatic lifting still selects only register-offset operations. Image-backed
-immediate source projection fails explicitly until exact page/relocation
-occurrences, accessed-byte ownership and raw-base rebasing agree; source body
-filtering cannot bypass that requirement. This is not automatic immediate
-CPA2 lifting coverage.
+An explicit runtime GPR parameter remains in runtime coordinates even when the
+module also has an image: LLVM bypasses image resolution for that base, and
+both source boundaries share the same admission owner. Other image-context
+immediate bases fail explicitly until exact page/relocation occurrences,
+accessed-byte ownership and raw-base rebasing agree; source body filtering
+cannot bypass that requirement. Automatic lifting still selects only
+register-offset operations. This is not automatic immediate CPA2 lifting
+coverage or support for image-derived immediate addresses.
 Both native compiler routes use fixed separate input/output registers, preserving
 source aliases and the encoded scale. The common machine table also owns literal
 SP forms. With no image, an explicit raw-SP parameter can select the physical SP
