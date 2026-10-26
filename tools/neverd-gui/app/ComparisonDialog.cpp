@@ -53,6 +53,7 @@
 #include <QTableView>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <utility>
 
 namespace neverd::gui {
@@ -458,6 +459,11 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   FunctionTable->setColumnWidth(4, 85);
   FunctionTable->setColumnWidth(5, 95);
   auto *Columns = FunctionTable->horizontalHeader();
+  for (int Column = 0; Column < Functions->columnCount(); ++Column)
+    if (!Columns->isSectionHidden(Column))
+      Columns->resizeSection(Column,
+                             std::max(Columns->sectionSize(Column),
+                                      Columns->sectionSizeHint(Column)));
   Columns->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(Columns, &QHeaderView::customContextMenuRequested, this,
           [this, Columns](const QPoint &Position) {
