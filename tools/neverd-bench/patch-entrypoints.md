@@ -19,6 +19,25 @@ build flags beside the reports. The driver records binary and script hashes,
 host load, every sample, medians and p95. Keep machine-local reports in ignored
 benchmark directories; commit reusable tools and regression tests.
 
+On a busy host, prefer short pairs for end-to-end comparisons. Long batches can
+attribute frequency, contention or cache changes to the patch. `patch-paired.py`
+alternates A/B and B/A per sample, verifies each process's SDK, and includes the
+unchanged CLI preview path as a control. Each snapshot directory must contain
+`bin/neverd`, `bin/neverd-worker` and `bin/libneverd.so`:
+
+```sh
+TMPDIR=/path/on/the/same/filesystem python3 tools/neverd-bench/patch-paired.py \
+  --baseline /snapshots/baseline --candidate /snapshots/candidate \
+  --cli-rows 64 8192 65536 --worker-rows 64 8192 --samples 20 \
+  --output benchmark-results/patch-paired.json
+```
+
+The paired worker samples also read the child's process CPU clock, including
+all threads, around each commit. Readback and undo are outside timing. Compare
+both wall and CPU samples, retain the preview control, and investigate a
+regression or a shifting control before publishing a speedup claim. Nearby
+pairs reduce host drift; they do not make a shared machine an isolated lab.
+
 The owned raw x64 fixtures contain adjacent one-byte rows of alternating kinds.
 No guest instructions execute. Every CLI sample starts a new process and
 includes loading, command execution and capturing its output. The filesystem
