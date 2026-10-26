@@ -643,8 +643,8 @@ TEST_P(SharedCPU, ChecksExternalMappingsAtAttachmentAndBeforeExecution) {
   ASSERT_EQ(llvm::toString(First->bindAddressSpace(B)), "");
   ASSERT_EQ(llvm::toString(B->map(Invalid, PageSize, Read | Execute)), "");
   ASSERT_EQ(B->mappingGeneration(), A->mappingGeneration());
-  ASSERT_EQ(llvm::toString(First->writeRegister(resultRegister(), {Updated, 0})),
-            "");
+  ASSERT_EQ(
+      llvm::toString(First->writeRegister(resultRegister(), {Updated, 0})), "");
   EXPECT_NE(llvm::toString(First->run(Code, Timeout)), "");
   EXPECT_EQ((*First->readRegister(resultRegister()))[0], Updated);
   ASSERT_EQ(llvm::toString(B->unmap(Invalid, PageSize)), "");
