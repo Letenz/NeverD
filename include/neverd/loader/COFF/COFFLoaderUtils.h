@@ -27,6 +27,13 @@
 namespace neverd {
 namespace coff_loader {
 
+/// Loader-owned offsets of pointer-storage fields in the PE load configuration.
+struct LoadConfigCallableField {
+  uint32_t Offset;
+  RuntimeCallablePointerSlotKind Kind;
+};
+llvm::ArrayRef<LoadConfigCallableField> loadConfigCallableFields(Bitness Bits);
+
 namespace detail {
 
 /// PE32/PE32+ named import thunks reserve every bit above the low 31.
