@@ -26,12 +26,42 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <exception>
+#include <memory>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::sdk;
 namespace patchLimits = neverd::limits::patch;
 
 namespace {
+struct BytePatchSnapshot : neverd_byte_patch_snapshot_v1 {
+  std::vector<neverd_byte_patch_row_v1> Rows;
+  std::unique_ptr<uint8_t[]> Bytes;
+
+  explicit BytePatchSnapshot(const patch::PatchOverlay &Overlay)
+      : neverd_byte_patch_snapshot_v1{} {
+    if (Overlay.empty())
+      return;
+    // Admission has already bounded the canonical overlay's row and byte
+    // totals. One payload allocation keeps every pointer stable while rows are
+    // appended.
+    Rows.reserve(Overlay.rows().size());
+    Bytes = std::make_unique_for_overwrite<uint8_t[]>(Overlay.bytes() * 2);
+    auto *Next = Bytes.get();
+    for (const auto &[Offset, Row] : Overlay.rows()) {
+      const auto *Original = Next;
+      Next = std::copy(Row.Original.begin(), Row.Original.end(), Next);
+      const auto *Current = Next;
+      Next = std::copy(Row.Current.begin(), Row.Current.end(), Next);
+      Rows.push_back({Offset, Row.Address, Row.size(), Original, Current,
+                      patch::patchKindName(Row.Kind).data()});
+    }
+    row_count = Rows.size();
+    rows = Rows.data();
+  }
+};
+
 llvm::Error invalid(const llvm::Twine &Message) {
   return llvm::make_error<llvm::StringError>(Message,
                                              llvm::inconvertibleErrorCode());
@@ -208,6 +238,27 @@ const char *neverd_byte_patches_json(neverd_session_t Sess) {
   llvm::json::OStream Output(Stream);
   patch::writePatchRows(Output, S->BytePatches);
   return dupStr(Text);
+}
+const neverd_byte_patch_snapshot_v1 *
+neverd_byte_patches_snapshot_v1(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("byte patch snapshot requires a loaded session");
+    return nullptr;
+  }
+  try {
+    return new BytePatchSnapshot(S->BytePatches);
+  } catch (const std::exception &Error) {
+    S->setError(std::string("byte patch snapshot failed: ") + Error.what());
+    return nullptr;
+  }
+}
+void neverd_byte_patch_snapshot_free_v1(
+    const neverd_byte_patch_snapshot_v1 *Snapshot) {
+  delete static_cast<const BytePatchSnapshot *>(Snapshot);
 }
 const char *neverd_byte_patch_ranges_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);

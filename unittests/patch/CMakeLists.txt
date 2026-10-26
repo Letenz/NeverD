@@ -1,5 +1,6 @@
 add_neverd_unittest(NeverDBytePatchTests
   BytePatchTests.cpp
+  BytePatchCAPIHeaderC.c
   PatchJSONTests.cpp
   LINK_COMPONENTS Patch Sigs LibC
 )

@@ -14364,6 +14364,21 @@ services and ART loading are not covered.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
+`BytePatchCAPIHeaderC.c` compiles the frozen snapshot layout and signatures as C
+in `NeverDBytePatchTests`. The real SDK cases in
+`test_byte_patch_integration.py` check empty/unloaded snapshots, all byte values,
+high addresses, split runs, JSON parity, and ownership across edits, reloads and
+session destruction. The worker mock intentionally omits snapshot exports to
+exercise JSON fallback; run the native patch suite with both current and older
+SDKs when changing this optional transport.
+
+`tools/neverd-bench/patch-paired.py --worker-history` compares complete CLI
+commands and durable worker commit/undo/redo against two explicit binary
+snapshots. `tools/neverd-bench/patch-payload.py` covers a large merged row, with
+alternating SDK JSON/CLI samples and independent original/current-byte checks.
+Both record native CPU/wall samples and binary hashes; keep machine-local
+reports outside tracked source and avoid overlapping builds with timed runs.
+
 `NeverDGuiPatchKeys` routes all second keys through `QWindow` shortcut dispatch, including pending menus, cancellation and editor typing. `NeverDGuiNativePatchKeys` checks real SDK bytes, Hex and floating windows, undo/redo and restoration. Run the same executable under X11 to exercise native popup routing.
 
 ```sh

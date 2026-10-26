@@ -255,6 +255,35 @@ TEST_F(BytePatch, SerializedRowsKeepProtocolAndSidecarBytes) {
                            return Row == Entry.second;
                          }));
 }
+TEST_F(BytePatch, SerializedHexKeepsEveryByteAcrossLargeAndSmallRows) {
+  std::vector<uint8_t> Initial(512, 0xcc), Current(256);
+  for (size_t I = 0; I < Current.size(); ++I) {
+    Current[I] = static_cast<uint8_t>(I);
+    Initial[I] = static_cast<uint8_t>(I ^ 0xff);
+  }
+  reset(std::move(Initial));
+  ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1000, Current, PatchKind::Bytes));
+  ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1100, {0x90}, PatchKind::Nop));
+  ASSERT_EQ(Overlay.rows().size(), 2u);
+  for (unsigned Indent : {0u, 2u, 4u}) {
+    std::string Text;
+    llvm::raw_string_ostream Stream(Text);
+    llvm::json::OStream Output(Stream, Indent);
+    writePatchRows(Output, Overlay);
+    auto Rows = parsePatchRows(Text);
+    ASSERT_TRUE(bool(Rows)) << llvm::toString(Rows.takeError());
+    ASSERT_EQ(Rows->size(), 2u);
+    EXPECT_EQ((*Rows)[0].Current, Current);
+    EXPECT_EQ((*Rows)[0].Original,
+              (std::vector<uint8_t>(Original.begin(), Original.begin() + 256)));
+    EXPECT_EQ((*Rows)[1].Current, (std::vector<uint8_t>{0x90}));
+    EXPECT_EQ((*Rows)[1].Original, (std::vector<uint8_t>{0xcc}));
+    EXPECT_EQ((*Rows)[1].Address, 0x1100u);
+    EXPECT_EQ((*Rows)[1].FileOffset, 256u);
+    EXPECT_EQ((*Rows)[1].Kind, PatchKind::Nop);
+  }
+}
+
 TEST_F(BytePatch, ExportIsExclusiveAndReplaysImmutableInput) {
   ASSERT_FALSE(
       Overlay.apply(Img, *Input, 0x1000, {0xeb}, PatchKind::BranchAlways));
