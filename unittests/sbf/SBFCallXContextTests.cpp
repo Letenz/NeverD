@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SBFCallXMemoryEffects.h"
 #include "SBFSolanaTestsDetail.h"
 #include "gtest/gtest.h"
 
@@ -29,6 +30,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -2280,7 +2282,25 @@ TEST(SBFCallXContexts, InstantiatesMustStoreValuesThroughGeneralizedWrappers) {
     for (const auto &Edge : Report->SummaryEdges)
       GenericStore |= Edge.CalleeEntrySlot == Middle &&
                       Edge.GeneralizedInputs && Edge.AppliedStoredValues != 0;
-    EXPECT_EQ(GenericStore, MustStore || Case == StoreCase::Aliased);
+    EXPECT_EQ(GenericStore, MustStore || Case == StoreCase::Aliased ||
+                                Case == StoreCase::Conflicting);
+    if (Case == StoreCase::Conflicting)
+      for (const auto &Proof : Report->Contexts)
+        if (!Proof.EntryPrefixOnly &&
+            std::find(CallXs.begin(), CallXs.end(), Proof.CallXSlot) !=
+                CallXs.end()) {
+          // The zero target is a real alternative, never silently discarded
+          // to turn this incomplete dispatcher into a singleton proof.
+          EXPECT_FALSE(Proof.TargetSlot);
+          EXPECT_EQ(Proof.TargetValueAlternatives.values().size(), 2u);
+          EXPECT_TRUE(std::any_of(
+              Proof.TargetValueAlternatives.values().begin(),
+              Proof.TargetValueAlternatives.values().end(),
+              [](const auto &Value) {
+                return Value.ValueKind == RegisterValue::Kind::Constant &&
+                       Value.Value == 0;
+              }));
+        }
     if (MustStore) {
       bool LeafStore = false, WrapperStore = false;
       for (const auto &Summary : Report->Summaries)
@@ -2305,6 +2325,256 @@ TEST(SBFCallXContexts, InstantiatesMustStoreValuesThroughGeneralizedWrappers) {
                 Case == StoreCase::Constant ? 100u : 100u + Count - 1);
     }
   }
+}
+
+TEST(SBFCallXContexts, GenericStoresKeepCompleteFiniteValues) {
+  enum class StoreCase {
+    Branches,
+    Joined,
+    Reloaded,
+    Parameters,
+    Missing,
+    Unknown,
+    Partial,
+    Aliased
+  };
+  for (const auto Case :
+       {StoreCase::Branches, StoreCase::Joined, StoreCase::Reloaded,
+        StoreCase::Parameters, StoreCase::Missing, StoreCase::Unknown,
+        StoreCase::Partial, StoreCase::Aliased})
+    for (size_t Alternatives : {2u, 4u, 5u}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "case=" << static_cast<unsigned>(Case)
+                   << ", alternatives=" << Alternatives);
+      // Both wrapper and writer exhaust their four specializations. The last
+      // two calls must instantiate the generic stores using their own output.
+      const size_t Count = kCallXContextSpecializationsPerEntry + 2;
+      std::vector<test::EncodedInstruction> Text;
+      std::vector<size_t> Calls, CallXs, Branches, Choices(Alternatives), Joins;
+      std::vector<std::tuple<size_t, unsigned, size_t>> Literals;
+      const auto Literal = [&](unsigned Register, size_t Target) {
+        Literals.emplace_back(Text.size(), Register, Target);
+        const auto Value = test::loadImm64(Register, 0);
+        Text.insert(Text.end(), Value.begin(), Value.end());
+      };
+      const auto Input = test::loadImm64(8, kInputStart);
+      Text.insert(Text.end(), Input.begin(), Input.end());
+      for (size_t I = 0; I < Count; ++I) {
+        Text.push_back(encode(Opcode::MOV64_REG, 6, 10));
+        Text.push_back(encode(Opcode::ADD64_IMM, 6, 0, 0,
+                              -static_cast<int32_t>((I + 1) * 32)));
+        Text.push_back(encode(Opcode::MOV64_REG, 1, 6));
+        Literal(2, I);
+        Literal(3, Count);
+        // Initialize the omitted path to a valid target for raw execution.
+        Text.push_back(encode(Opcode::ST_DW_REG, 1, 3));
+        Text.push_back(encode(Opcode::ST_DW_REG, 1, 3, 8));
+        Text.push_back(encode(Opcode::MOV64_REG, 4, 1));
+        Text.push_back(encode(Opcode::LD_DW_REG, 5, 8));
+        Text.push_back(encode(Opcode::MOV64_IMM, 9, 0, 0, I));
+        Calls.push_back(Text.size());
+        Text.push_back({});
+        Text.push_back(encode(Opcode::LD_DW_REG, 2, 6));
+        CallXs.push_back(Text.size());
+        Text.push_back(encode(Opcode::CALL_REG, 2));
+        Text.push_back(encode(Opcode::MOV64_REG, 7, 0));
+        Text.push_back(encode(Opcode::LD_DW_REG, 2, 6, 8));
+        CallXs.push_back(Text.size());
+        Text.push_back(encode(Opcode::CALL_REG, 2));
+        Text.push_back(encode(Opcode::ADD64_REG, 0, 7));
+      }
+      Text.push_back(encode(Opcode::EXIT));
+      const size_t Middle = Text.size();
+      Text.push_back(encode(Opcode::MOV64_REG, 7, 9));
+      Text.push_back(encode(Opcode::CALL_IMM, 0, 1, 0, 1));
+      Text.push_back(encode(Opcode::EXIT));
+      const size_t Leaf = Text.size();
+      Text.push_back(encode(Opcode::MOV64_REG, 7, 9));
+      for (size_t I = 0; I + 1 < Alternatives; ++I) {
+        Branches.push_back(Text.size());
+        Text.push_back({});
+      }
+      for (size_t N = 0; N < Alternatives; ++N) {
+        const size_t I = (N + Alternatives - 1) % Alternatives;
+        Choices[I] = Text.size();
+        if (Case == StoreCase::Parameters) {
+          Text.push_back(encode(Opcode::MOV64_REG, 0, I % 2 ? 3 : 2));
+        } else if (Case == StoreCase::Unknown && I + 1 == Alternatives) {
+          Text.push_back(encode(Opcode::LD_DW_REG, 0, 8, 8));
+        } else {
+          Literal(0, I);
+        }
+        if (Case != StoreCase::Joined &&
+            !(Case == StoreCase::Missing && I + 1 == Alternatives)) {
+          Text.push_back(encode(Opcode::ST_DW_REG, 1, 0));
+          if (Case != StoreCase::Reloaded)
+            Text.push_back(encode(Opcode::ST_DW_REG, 1, 0, 8));
+        }
+        Joins.push_back(Text.size());
+        Text.push_back({});
+      }
+      const size_t Join = Text.size();
+      if (Case == StoreCase::Joined) {
+        Text.push_back(encode(Opcode::ST_DW_REG, 1, 0));
+        Text.push_back(encode(Opcode::ST_DW_REG, 1, 0, 8));
+      }
+      if (Case == StoreCase::Reloaded) {
+        Text.push_back(encode(Opcode::LD_DW_REG, 0, 1));
+        Text.push_back(encode(Opcode::ST_DW_REG, 1, 0, 8));
+      }
+      if (Case == StoreCase::Partial)
+        Text.push_back(encode(Opcode::ST_B_IMM, 1, 0, 7, 1));
+      if (Case == StoreCase::Aliased)
+        Text.push_back(encode(Opcode::ST_DW_REG, 4, 3));
+      Text.push_back(encode(Opcode::EXIT));
+      const size_t Targets = Text.size();
+      for (size_t I = 0; I <= Count; ++I) {
+        Text.push_back(encode(Opcode::MOV64_IMM, 0, 0, 0, 100 + I));
+        Text.push_back(encode(Opcode::EXIT));
+      }
+      for (const auto &[Slot, Register, Target] : Literals) {
+        const auto Value = test::loadImm64(
+            Register, kBytecodeStart + (Targets + Target * 2) * 8);
+        std::copy(Value.begin(), Value.end(), Text.begin() + Slot);
+      }
+      for (size_t I = 0; I < Branches.size(); ++I)
+        Text[Branches[I]] =
+            encode(Opcode::JEQ64_IMM, 5, 0, Choices[I] - Branches[I] - 1, I);
+      for (size_t Jump : Joins)
+        Text[Jump] = encode(Opcode::JA, 0, 0, Join - Jump - 1);
+      for (size_t Call : Calls)
+        Text[Call] = encode(Opcode::CALL_IMM, 0, 1, 0, Middle - Call - 1);
+      auto Program = analyze(test::makeImage(Text, {}));
+      ASSERT_TRUE(static_cast<bool>(Program))
+          << llvm::toString(Program.takeError());
+      auto Report = recoverCallXContexts(*Program);
+      ASSERT_TRUE(static_cast<bool>(Report))
+          << llvm::toString(Report.takeError());
+      const bool Complete =
+          Case == StoreCase::Parameters ||
+          (Alternatives <= kCallXContextValueAlternatives &&
+           (Case == StoreCase::Branches || Case == StoreCase::Joined ||
+            Case == StoreCase::Reloaded));
+      for (size_t I = kCallXContextSpecializationsPerEntry; I < Count; ++I) {
+        EXPECT_TRUE(std::any_of(
+            Report->SummaryEdges.begin(), Report->SummaryEdges.end(),
+            [&](const auto &E) {
+              return E.CallerSlot == Calls[I] &&
+                     E.InputGeneralization ==
+                         CallXInputGeneralization::SpecializationLimit;
+            }));
+        for (size_t Field = 0; Field < 2; ++Field) {
+          bool Saw = false;
+          for (const auto &Site : Report->Contexts)
+            if (!Site.EntryPrefixOnly &&
+                Site.CallXSlot == CallXs[I * 2 + Field]) {
+              if (Complete) {
+                EXPECT_EQ(Site.Result, CallXContextResult::ProvenTargetSet);
+                std::set<uint64_t> Expected, Actual;
+                if (Case == StoreCase::Parameters) {
+                  Expected.insert(kBytecodeStart + (Targets + I * 2) * 8);
+                  Expected.insert(kBytecodeStart + (Targets + Count * 2) * 8);
+                } else {
+                  for (size_t N = 0; N < Alternatives; ++N)
+                    Expected.insert(kBytecodeStart + (Targets + N * 2) * 8);
+                }
+                for (const auto &Value :
+                     Site.TargetValueAlternatives.values()) {
+                  EXPECT_EQ(Value.ValueKind, RegisterValue::Kind::Constant);
+                  Actual.insert(Value.Value);
+                }
+                EXPECT_EQ(Actual, Expected);
+              } else if (Field == 0) {
+                // An aliased final store is known to write the caller's r3.
+                EXPECT_EQ(Site.Result, Case == StoreCase::Aliased
+                                           ? CallXContextResult::ProvenTarget
+                                           : CallXContextResult::UnknownTarget);
+                if (Case == StoreCase::Aliased)
+                  EXPECT_EQ(Site.TargetSlot, Targets + Count * 2);
+                else
+                  EXPECT_TRUE(Site.TargetValueAlternatives.unknown());
+              }
+              Saw = true;
+            }
+          EXPECT_TRUE(Saw);
+        }
+      }
+      checkSummaryReferences(*Report);
+      for (size_t Selector = 0; Selector < Alternatives; ++Selector) {
+        ExecutionEnvironment Environment;
+        std::vector<uint8_t> Bytes(16);
+        llvm::support::endian::write64le(Bytes.data(), Selector);
+        llvm::support::endian::write64le(
+            Bytes.data() + 8, kBytecodeStart + (Targets + Selector * 2) * 8);
+        Environment.Memory.push_back({kInputStart, Bytes, false, "selector"});
+        auto Raw = executeRaw(*Program, std::move(Environment));
+        ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+        if (Case == StoreCase::Partial) {
+          EXPECT_EQ(Raw->Status, ExecutionStatus::Faulted);
+          EXPECT_EQ(Raw->FinalSlot, CallXs[0]);
+        } else {
+          EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+          const size_t Selected =
+              Case == StoreCase::Parameters ? (Selector % 2 ? Count : Count - 1)
+              : Case == StoreCase::Missing && Selector + 1 == Alternatives
+                  ? Count
+                  : Selector;
+          const size_t First = Case == StoreCase::Aliased ? Count : Selected;
+          EXPECT_EQ(Raw->ReturnValue, 200u + First + Selected);
+        }
+      }
+    }
+}
+
+TEST(SBFCallXMemoryPostconditions,
+     InstantiatesEveryCompleteArgumentAlternative) {
+  using namespace callx_detail;
+  const RegisterValue Output{RegisterValue::Kind::StackAddress, 2, 0};
+  MemoryPostconditions Left, Right;
+  Left.store(Output, 8, RegisterValue{RegisterValue::Kind::StackAddress, 3, 0});
+  Right.store(Output, 8,
+              RegisterValue{RegisterValue::Kind::StackAddress, 4, 0});
+  Left.meet(Right);
+  auto Program = analyze(test::makeImage(
+      {encode(Opcode::MOV64_IMM, 0), encode(Opcode::EXIT)}, {}));
+  ASSERT_TRUE(static_cast<bool>(Program))
+      << llvm::toString(Program.takeError());
+  std::array<ProvenValueSet, kRegisterCount> Entry{};
+  Entry[1] = RegisterValue{RegisterValue::Kind::StackAddress, kStackStart, 16};
+  Entry[2] = RegisterValue{RegisterValue::Kind::Constant, kBytecodeStart, 0};
+  for (unsigned I = 1; I < kCallXContextValueAlternatives; ++I)
+    Entry[2].join(RegisterValue{RegisterValue::Kind::Constant,
+                                kBytecodeStart + I * 8, 0});
+  // This formal is a duplicate of an actual alternative, so there are four
+  // results after substitution, not five independently sampled expressions.
+  Entry[3] = Entry[2].values().back();
+  ScratchState Scratch;
+  EXPECT_EQ(Left.apply(Scratch, Entry, *Program), 1u);
+  EXPECT_EQ(Scratch.Values.readValues(kStackStart + 16,
+                                      MemoryCoordinate::FrameRelative),
+            Entry[2]);
+  // Distinct fifth and unknown values both absorb the complete fact.
+  for (const auto &Value :
+       {RegisterValue{RegisterValue::Kind::Constant, kBytecodeStart + 32, 0},
+        RegisterValue{}}) {
+    Entry[3] = Value;
+    Scratch.clear();
+    EXPECT_EQ(Left.apply(Scratch, Entry, *Program), 0u);
+    EXPECT_TRUE(Scratch.empty());
+  }
+  // Private formal origins are substituted into tagged caller values. Neither
+  // a symbolic input number nor a frame coordinate may become a VM integer.
+  Entry[2] = RegisterValue{RegisterValue::Kind::StackAddress, kStackStart, 32};
+  Entry[3] = RegisterValue{RegisterValue::Kind::StackAddress, kStackStart, 40};
+  EXPECT_EQ(Left.apply(Scratch, Entry, *Program), 1u);
+  const auto Stored = Scratch.Values.readValues(
+      kStackStart + 16, MemoryCoordinate::FrameRelative);
+  ASSERT_EQ(Stored.values().size(), 2u);
+  for (const auto &Value : Stored.values())
+    EXPECT_EQ(Value.ValueKind, RegisterValue::Kind::StackAddress);
+  EXPECT_TRUE(
+      Scratch.Values.readValues(kStackStart + 16, MemoryCoordinate::Absolute)
+          .unknown());
 }
 
 TEST(SBFCallXContexts, RedundantPublishedTargetsDoNotDisplaceNewTargets) {

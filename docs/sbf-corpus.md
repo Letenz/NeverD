@@ -70,6 +70,13 @@ zero targets is an analysis pass, not a devirtualization pass. Neither these
 conditional facts nor the global unresolved CALLX count can stand in for the
 other.
 
+Generic full-width stored-value summaries keep complete two-to-four alternatives
+across CFG joins and nested wrappers. Their keys must still be present on every
+returning path; actual argument substitution must retain every alternative and
+stay within the same four-value bound. Aliases, partial overwrites, unknown
+values and overflow retain conservative invalidation. These are memory-transfer
+facts, separate from global CALLX closure or executed-handler coverage.
+
 Completed specialized summaries may reuse their proven conditional input
 dependencies without taking another variant slot. Reports retain the original
 static input masks and cache inputs alongside the separate conditional reuse
