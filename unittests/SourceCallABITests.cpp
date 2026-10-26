@@ -182,6 +182,65 @@ TEST(SourceCallABI, RequiresCompleteSameBlockOutgoingStackBytes) {
   F.Blocks[0].Ops.insert(F.Blocks[0].Ops.end() - 1, Earlier);
   EXPECT_FALSE(sourceCallStackArgumentsDefined(F, H, Arch::X64, 8, Error));
 }
+TEST(SourceCallABI, VariadicCountCannotSurviveExpiredTempsOrOpaqueEffects) {
+  auto Hint = contract({NdType::makeInt(4), NdType::makeFloat(8)}, 1);
+  std::string Error;
+  ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::X64, BinaryFormat::ELF, Error));
+  const auto RAX = NdVar::reg(getTargetRegInfo(Arch::X64).IntReturnReg, 8);
+  LowFunc Function;
+  LowBlock Block;
+  Block.Ops = {op(NdOp::COPY, NdVar::tmp(7, 4), {NdVar::cst(1, 4)}),
+               op(NdOp::INT_ZEXT, RAX, {NdVar::tmp(7, 4)}),
+               op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)})};
+  Block.Ops[0].Addr = Block.Ops[1].Addr = 0xf00;
+  Block.Ops.back().Addr = 0x1000;
+  Block.Ops.back().Seq = 3;
+  Function.Blocks = {Block};
+  ASSERT_TRUE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  Function.Blocks[0].Ops[1].Addr = 0xf04;
+  EXPECT_FALSE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  Function.Blocks[0] = Block;
+  auto Opaque = op(NdOp::INTRINSIC, {}, {});
+  Opaque.Addr = 0xf08;
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.end() - 1, Opaque);
+  EXPECT_FALSE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+  auto Redefined = op(NdOp::COPY, RAX, {NdVar::cst(1, 8)});
+  Redefined.Addr = 0xf0c;
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.end() - 1, Redefined);
+  EXPECT_TRUE(
+      sourceCallVariadicStateDefined(Function, Hint, BinaryFormat::ELF, Error));
+}
+
+TEST(SourceCallABI, StackWriteProofCannotSurviveExpiredTempsOrOpaqueEffects) {
+  auto Hint = contract(std::vector<TypeRef>(5, NdType::makeInt(8)));
+  std::string Error;
+  ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::X64, BinaryFormat::COFF, Error));
+  const auto SP = NdVar::reg(getTargetRegInfo(Arch::X64).StackPointer, 8);
+  LowFunc Function;
+  LowBlock Block;
+  Block.Ops = {op(NdOp::INT_ADD, NdVar::tmp(7, 8), {SP, NdVar::cst(32, 8)}),
+               op(NdOp::STORE, {}, {NdVar::tmp(7, 8), NdVar::cst(17, 8)}),
+               op(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)})};
+  Block.Ops[0].Addr = Block.Ops[1].Addr = 0xf00;
+  Block.Ops.back().Addr = 0x1000;
+  Block.Ops.back().Seq = 3;
+  Function.Blocks = {Block};
+  ASSERT_TRUE(
+      sourceCallStackArgumentsDefined(Function, Hint, Arch::X64, 8, Error));
+  Function.Blocks[0].Ops[1].Addr = 0xf04;
+  EXPECT_FALSE(
+      sourceCallStackArgumentsDefined(Function, Hint, Arch::X64, 8, Error));
+  Function.Blocks[0] = Block;
+  auto Opaque = op(NdOp::INTRINSIC, {}, {});
+  Opaque.Addr = 0xf08;
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.end() - 1, Opaque);
+  EXPECT_FALSE(
+      sourceCallStackArgumentsDefined(Function, Hint, Arch::X64, 8, Error));
+}
+
 MedVar value(int Id) {
   MedVar V;
   V.Kind = MedVar::Temp;
