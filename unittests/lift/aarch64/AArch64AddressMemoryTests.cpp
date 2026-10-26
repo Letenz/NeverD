@@ -4194,12 +4194,35 @@ TEST(AArch64WritebackMemory,
       compileMemoryC(Source, false);
 #endif
     }
+    if (Store) {
+      // Post-index may return one-past storage without accessing that byte.
+      auto OnePast = Image;
+      auto &Storage = OnePast.Segments.front();
+      Storage.Size = Storage.FileSz = kWritebackImagePosition + kScalarBytes;
+      Storage.Data.resize(Storage.Size);
+      llvm::LLVMContext OnePastContext;
+      auto OnePastModule = MedLLVMEmitter().emit(
+          {Function}, OnePastContext, kName, Arch::AArch64, {}, &OnePast);
+      ASSERT_TRUE(OnePastModule);
+      for (bool LLVMRoute : {false, true}) {
+        const auto Source =
+            memorySource(Function, *OnePastModule, LLVMRoute, &OnePast, true);
+#if defined(__APPLE__) && defined(__aarch64__)
+        compileMemoryC(
+            Source + llvm::formatv(kWritebackReturnedBaseHarness, Function.Name)
+                         .str(),
+            true);
+#else
+        compileMemoryC(Source, false);
+#endif
+      }
+    }
     // Unknown provenance and a base without its full outgoing span fail closed.
     for (bool Truncate : {false, true}) {
       auto Invalid = Function;
       if (Truncate) {
         Image.Segments.front().Size = Image.Segments.front().FileSz =
-            kWritebackImagePosition + kScalarBytes;
+            kWritebackImagePosition + kScalarBytes - 1;
         Image.Segments.front().Data.resize(Image.Segments.front().Size);
       } else
         Invalid.Blocks.front().Ops.front().Inputs[1].Provenance =
