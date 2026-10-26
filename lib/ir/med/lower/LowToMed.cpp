@@ -28,6 +28,7 @@
 #include "neverd/ir/intrinsics/X86/X64Syscall.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
@@ -791,10 +792,16 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
           Op.Inputs[0].isConst() &&
           isAArch64WritebackMemoryIntrinsic(
-              static_cast<Intrinsic>(Op.Inputs[0].Offset)) &&
-          (TheArch != Arch::AArch64 ||
-           !lowAArch64WritebackMemoryShapeIsValid(Op)))
-        throw LowToMedConversionError(kWritebackMalformed);
+              static_cast<Intrinsic>(Op.Inputs[0].Offset))) {
+        if (TheArch != Arch::AArch64 ||
+            !lowAArch64WritebackMemoryShapeIsValid(Op) ||
+            (Op.Inputs[0].Offset ==
+                 static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback) &&
+             !lowAArch64VectorWritebackOutputs(
+                 Op, llvm::ArrayRef(Block.Ops).drop_front(
+                         &Op - Block.Ops.data() + 1))))
+          throw LowToMedConversionError(kWritebackMalformed);
+      }
       if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
         llvm::report_fatal_error(
             "LowIR contains an unknown memory address space");

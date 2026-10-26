@@ -36,9 +36,10 @@ collectLowIntrinsicOutputBindings(const LowOp &Instruction,
     if (!Write.NumInputs || !Write.Inputs[0].isTemp())
       continue;
     const auto &Source = Write.Inputs[0];
-    // One temporary identity cannot provide two independently typed results.
-    if (std::none_of(Outputs.begin(), Outputs.end(),
-                     [&](const NdVar &V) { return V.Offset == Source.Offset; }))
+    // Match LowToMed's typed temporary identity without merging width views.
+    if (std::none_of(Outputs.begin(), Outputs.end(), [&](const NdVar &V) {
+          return V.Offset == Source.Offset && V.Size == Source.Size;
+        }))
       Outputs.push_back(Source);
   }
   return Outputs;

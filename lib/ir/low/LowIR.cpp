@@ -11,8 +11,8 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86DescriptorState.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
-#include "neverd/ir/low/LowIntrinsicOutputs.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/low/X86/X86CompactShape.h"
 #include "neverd/ir/low/X86/X86FourSourceShape.h"
@@ -574,13 +574,7 @@ llvm::Error validateLowInstructionBoundaries(
           Op.Inputs[0].Offset ==
               static_cast<uint64_t>(Intrinsic::A64_VectorLoadWriteback)) {
         const auto Following = Ops->drop_front(&Op - Ops->data() + 1);
-        const auto Outputs = collectLowIntrinsicOutputBindings(
-            Op, Following,
-            aarch64WritebackMemoryOutputCount(
-                Intrinsic::A64_VectorLoadWriteback));
-        if (!aarch64WritebackMemoryOutputsAreValid(
-                Intrinsic::A64_VectorLoadWriteback, Outputs,
-                [](const NdVar &V) { return V.Size; }))
+        if (!lowAArch64VectorWritebackOutputs(Op, Following))
           return invalid(kWritebackMalformed);
       }
     }

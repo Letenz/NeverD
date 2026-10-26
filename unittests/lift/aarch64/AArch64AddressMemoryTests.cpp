@@ -22,6 +22,7 @@
 #include "neverd/ir/SourceStackFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/NdOpEmulator.h"
@@ -4812,6 +4813,19 @@ TEST(AArch64VectorWritebackMemory, MalformedTuplesFailBeforeBodyFiltering) {
         auto Error = validateLowInstructionBoundaries(Low);
         EXPECT_TRUE(bool(Error));
         llvm::consumeError(std::move(Error));
+        EXPECT_THROW(LowToMedConverter().convert(Low, Arch::AArch64),
+                     LowToMedConversionError);
+        if (Mutation == kVectorWritebackLowMutations - 1) {
+          const auto Generic = collectLowIntrinsicOutputBindings(
+              Block.Ops[Memory - Operations.begin()],
+              llvm::ArrayRef(Block.Ops).drop_front(Memory - Operations.begin() +
+                                                   1),
+              aarch64WritebackMemoryOutputCount(
+                  Intrinsic::A64_VectorLoadWriteback));
+          ASSERT_EQ(Generic.size(), 2u);
+          EXPECT_EQ(Generic.front().Offset, Generic.back().Offset);
+          EXPECT_NE(Generic.front().Size, Generic.back().Size);
+        }
       }
     }
   }

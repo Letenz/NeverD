@@ -24,8 +24,8 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
-#include "neverd/ir/low/LowIntrinsicOutputs.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -533,10 +533,8 @@ bool NdOpEmulator::stepImpl(const LowOp &Op, llvm::ArrayRef<LowOp> Following) {
         return false;
       const uint64_t Address = Instruction.preIndex() ? *Updated : OriginalBase;
       if (Instruction.isVector() && Instruction.isLoad()) {
-        const auto Outputs = collectLowIntrinsicOutputBindings(
-            Op, Following, intrinsicOutputCount(Id));
-        if (!aarch64WritebackMemoryOutputsAreValid(
-                Id, Outputs, [](const NdVar &V) { return V.Size; }))
+        const auto Outputs = lowAArch64VectorWritebackOutputs(Op, Following);
+        if (!Outputs)
           return false;
         const auto Bytes = loadMemoryBytes(Address, Instruction.accessBytes());
         if (!Bytes)
@@ -545,8 +543,8 @@ bool NdOpEmulator::stepImpl(const LowOp &Op, llvm::ArrayRef<LowOp> Following) {
         std::copy(Bytes->begin(), Bytes->end(), Value.begin());
         std::array<uint8_t, kAddressMemoryPointerBytes> CompletedBase;
         writeLE<uint64_t>(CompletedBase.data(), *Updated);
-        writeOutputBytes(Outputs[kWritebackValueIndex], Value);
-        writeOutputBytes(Outputs[kWritebackBaseIndex], CompletedBase);
+        writeOutputBytes((*Outputs)[kWritebackValueIndex], Value);
+        writeOutputBytes((*Outputs)[kWritebackBaseIndex], CompletedBase);
         if (CollectLoads &&
             static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
           LoadLog.push_back(

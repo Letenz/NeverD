@@ -687,7 +687,9 @@ original-instruction owner. A load defines two typed auxiliary SSA results:
 the complete zero-extended V register and completed X base. A store consumes
 the complete V value and returns the base. Xn/Vn numeric overlap is legal;
 V31 remains a vector register. LowIR binding collection, SSA conversion and
-finite tracing share the original result-transport query. LowIR validation and finite tracing reject
+finite tracing share the original result-transport query, preserving typed
+temporary identity by position and width. A SIMD LowIR adapter additionally
+requires independently stored value/base carriers. LowIR validation and finite tracing reject
 missing, shortened or duplicate bindings before publishing memory effects.
 A source use of an auxiliary base must be dominated by its defining instruction,
 including copies that carry it; skipped definitions cannot grant runtime-base

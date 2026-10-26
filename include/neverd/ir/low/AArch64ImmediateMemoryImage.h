@@ -10,8 +10,8 @@
 #ifndef NEVERD_IR_LOW_AARCH64IMMEDIATEMEMORYIMAGE_H
 #define NEVERD_IR_LOW_AARCH64IMMEDIATEMEMORYIMAGE_H
 
+#include "neverd/ir/low/AArch64WritebackMemory.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
-#include "neverd/ir/low/LowIntrinsicOutputs.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/loader/AArch64MemoryImage.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -78,14 +78,10 @@ lowImageBaseMemoryWritebackCommit(const LowOp &Op, const LowOp *Memory,
         [&](const LowOp &Candidate) { return &Candidate == Memory; });
     if (It == Instruction.end())
       return false;
-    const auto Outputs = collectLowIntrinsicOutputBindings(
-        *Memory, Instruction.drop_front(It - Instruction.begin() + 1),
-        intrinsicOutputCount(Intrinsic::A64_VectorLoadWriteback));
-    return aarch64WritebackMemoryOutputsAreValid(
-               Intrinsic::A64_VectorLoadWriteback, Outputs,
-               [](const NdVar &V) { return V.Size; }) &&
-           Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-           Op.Inputs[0] == Outputs[kWritebackBaseIndex];
+    const auto Outputs = lowAArch64VectorWritebackOutputs(
+        *Memory, Instruction.drop_front(It - Instruction.begin() + 1));
+    return Outputs && Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+           Op.Inputs[0] == (*Outputs)[kWritebackBaseIndex];
   }
   const bool Load = static_cast<Intrinsic>(Memory->Inputs[0].Offset) ==
                     Intrinsic::A64_LoadWriteback;
