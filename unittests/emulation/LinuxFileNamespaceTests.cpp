@@ -1496,6 +1496,78 @@ TEST_P(LinuxFileNamespace, IoctlTraceKeepsEntryPointerAndRefusedCallBytes) {
 }
 
 TEST_P(LinuxFileNamespace,
+       IoctlTraceSelectionPrecedesBudgetAndPreservesRefusals) {
+  auto &D = Options.LinuxFiles->Devices["/dev/example"];
+  D.AccessMode = 2;
+  D.Ioctls = {{7, 0, {}, {}},
+              {8, 37, {}, {{0, {}, {0xa5}, {0x7f}}}},
+              {7, -13, {}, {}},
+              {8, -22, {}, {}}};
+  auto &T = Options.LinuxFiles->IoctlTrace.emplace();
+  T.IncludeUnlisted = false;
+  T.EventLimit = 1;
+  T.ByteLimit = 2;
+  T.Requests[8] = {{0, 1, {}}};
+  llvm::cantFail(linux_model::validateFileOptions(*Options.LinuxFiles));
+  Kernel = std::make_unique<linux_model::LinuxServices>(
+      cpu(), Layout, Base + 8192, Options, Report);
+  const auto FD = open("/dev/example", 2);
+  llvm::cantFail(cpu().write(Base + 256, {0xa5}));
+  EXPECT_EQ(call(ServiceKind::Ioctl, FD, 7, UINT64_MAX), 0u);
+  EXPECT_TRUE(Report.IoctlTrace.empty());
+  EXPECT_EQ(call(ServiceKind::Ioctl, FD, 8 | (uint64_t(9) << 32), Base + 256),
+            37u);
+  ASSERT_EQ(Report.IoctlTrace.size(), 1u);
+  EXPECT_EQ(Report.IoctlTrace[0].Request, 8u);
+  EXPECT_EQ(Report.IoctlTrace[0].Memory[0].Before,
+            (std::vector<uint8_t>{0xa5}));
+  EXPECT_EQ(Report.IoctlTrace[0].Memory[0].After, (std::vector<uint8_t>{0x7f}));
+  EXPECT_EQ(call(ServiceKind::Ioctl, FD, 7, UINT64_MAX), uint64_t(-13));
+  EXPECT_FALSE(Report.IoctlTraceTruncated);
+  EXPECT_EQ(call(ServiceKind::Ioctl, FD, 8, Base + 256), uint64_t(-22));
+  EXPECT_TRUE(Report.IoctlTraceTruncated);
+  const auto Before = bytes(Base, 8192);
+  EXPECT_FALSE(call(ServiceKind::Ioctl, FD, 7, UINT64_MAX));
+  EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(bytes(Base, 8192), Before);
+  EXPECT_EQ(Report.IoctlTrace.size(), 1u);
+}
+
+TEST_P(LinuxFileNamespace,
+       IoctlTraceEmptySelectionAndMetadataOnlyRequestsRemainDistinct) {
+  for (bool Select : {false, true}) {
+    SCOPED_TRACE(Select);
+    Report = {ProcessProfile::LinuxELF64,
+              GetParam(),
+              ExecutionBackendKind::Unicorn,
+              {}};
+    auto &D = Options.LinuxFiles->Devices["/dev/example"];
+    D.AccessMode = 2;
+    D.Ioctls = {{7, 0, {}, {}}, {8, 1, {}, {}}};
+    auto &T = Options.LinuxFiles->IoctlTrace.emplace();
+    T.IncludeUnlisted = false;
+    T.EventLimit = 1;
+    T.ByteLimit = 1;
+    if (Select)
+      T.Requests[8] = {};
+    Kernel = std::make_unique<linux_model::LinuxServices>(
+        cpu(), Layout, Base + 8192, Options, Report);
+    const auto FD = open("/dev/example", 2);
+    EXPECT_EQ(call(ServiceKind::Ioctl, FD, 7, UINT64_MAX), 0u);
+    EXPECT_EQ(call(ServiceKind::Ioctl, FD, 8, UINT64_MAX), 1u);
+    EXPECT_FALSE(call(ServiceKind::Ioctl, FD, 9, UINT64_MAX));
+    EXPECT_EQ(Report.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_FALSE(Report.IoctlTraceTruncated);
+    ASSERT_EQ(Report.IoctlTrace.size(), Select ? 1u : 0u);
+    if (Select) {
+      EXPECT_EQ(Report.IoctlTrace[0].Request, 8u);
+      EXPECT_EQ(Report.IoctlTrace[0].Result, 1u);
+      EXPECT_TRUE(Report.IoctlTrace[0].Memory.empty());
+    }
+  }
+}
+
+TEST_P(LinuxFileNamespace,
        DirentLayoutPaddingAndSeekCookiesAreIndependentOfHostABI) {
   auto FD = open("/empty");
   llvm::cantFail(cpu().write(Base + 256, std::vector<uint8_t>(64, 0xa5)));

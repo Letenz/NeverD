@@ -12034,6 +12034,12 @@ entry-resolved addresses, never device replies or a second ABI decoder.
 `LinuxServices` supplies the current task; Android supplies its native return
 address. `ProcessReport` serializes the optional stream. Trace limits and
 capture failures cannot replace the original service outcome.
+`linux_files.ioctl_trace.include_unlisted` defaults to `true`, retaining an
+event for every ioctl. Setting it to `false` records only numbers listed in
+`requests`, including entries with no memory ranges. The shared owner matches
+the LP64 ABI's low 32-bit request before charging either trace budget or reading
+diagnostic memory. Unlisted calls still execute and retain their normal service
+events and errors; an empty selection records nothing and is not truncation.
 
 `KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
 
