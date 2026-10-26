@@ -98,6 +98,14 @@ class BytePatchIntegrationTests(unittest.TestCase):
         rows = json.loads(call())
         saved = next(self.root.rglob("patches.json")).read_bytes()
         self.assertEqual(saved, (json.dumps(rows, indent=2, sort_keys=True) + "\n").encode())
+        sidecar = next(self.root.rglob("patches.json"))
+        broken = ("[" + json.dumps(rows[0]) + ",null]").encode()
+        sidecar.write_bytes(broken)
+        call("--address", hex(self.entry), "--kind", "constant",
+             "--value", "43", "--apply", success=False)
+        self.assertEqual(sidecar.read_bytes(), broken)
+        self.assertEqual(self.binary.read_bytes(), self.original)
+        sidecar.write_bytes(saved)
         output = self.root / "cli.elf"
         call("--export", "-o", str(output))
         self.assertEqual(output.read_bytes()[120:125], bytes.fromhex("b82a000000"))
@@ -160,6 +168,24 @@ class BytePatchIntegrationTests(unittest.TestCase):
                                      expected=plan["original"])
         sidecar = next(self.root.rglob("patches.json"))
         saved = sidecar.read_bytes()
+        live_rows = session.byte_patches
+        changed_row = {**live_rows[0], "current": "2b"}
+        first = json.dumps(changed_row)
+        for malformed in (
+            "[" + first + ",null]",
+            "[" + first + ",]",
+            "[" + first[:-1] + ',"size":1.0}]',
+            "[" + first + "," + json.dumps({**changed_row, "original": "xx"}) + "]",
+        ):
+            with self.subTest(malformed=malformed):
+                encoded = malformed.encode()
+                sidecar.write_bytes(encoded)
+                with self.assertRaises(NeverDError):
+                    session.load_byte_patches()
+                self.assertEqual(session.byte_patches, live_rows)
+                self.assertEqual(session.preview_byte_patch(
+                    self.entry, kind="constant", value=7)["original"], "b82a000000")
+                self.assertEqual(sidecar.read_bytes(), encoded)
         sidecar.write_bytes(b"[]\n")
         with self.assertRaisesRegex(NeverDError, "changed"):
             session.save_byte_patches()

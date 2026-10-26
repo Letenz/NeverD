@@ -7,6 +7,7 @@
 /// \file
 /// Observe a callable's original value through exact same-block spills. An
 /// import observation identifies its original load; it never rereads an IAT.
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_IR_MED_MEDCALLTARGET_H

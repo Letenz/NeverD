@@ -190,6 +190,16 @@ TEST(ProcessReport, IoctlTraceHasStrictBoundsAndExplicitCaptureStatus) {
   const auto &T = *O->LinuxFiles->IoctlTrace;
   EXPECT_EQ(T.EventLimit, 8u);
   EXPECT_EQ(T.ByteLimit, 256u);
+  EXPECT_TRUE(T.IncludeUnlisted);
+  for (const char *Value : {"true", "false"}) {
+    auto Selected = processOptionsFromJSON(
+        std::string(R"({"linux_files":{"files":[],"ioctl_trace":{
+          "event_limit":1,"byte_limit":1,"requests":[],"include_unlisted":)") +
+        Value + "}}}");
+    ASSERT_TRUE(bool(Selected)) << llvm::toString(Selected.takeError());
+    EXPECT_EQ(Selected->LinuxFiles->IoctlTrace->IncludeUnlisted,
+              llvm::StringRef(Value) == "true");
+  }
   ASSERT_EQ(T.Requests.at(UINT32_MAX).size(), 1u);
   EXPECT_EQ(T.Requests.at(UINT32_MAX)[0].PointerOffset, 0u);
   for (
@@ -199,6 +209,9 @@ TEST(ProcessReport, IoctlTraceHasStrictBoundsAndExplicitCaptureStatus) {
        R"({"event_limit":4097,"byte_limit":1,"requests":[]})",
        R"({"event_limit":1,"byte_limit":1048577,"requests":[]})",
        R"({"event_limit":1,"byte_limit":1,"requests":[],"extra":0})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[],"include_unlisted":null})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[],"include_unlisted":0})",
+       R"({"event_limit":1,"byte_limit":1,"requests":[],"include_unlisted":"false"})",
        R"({"event_limit":1,"byte_limit":1,"requests":[{"request":4294967296,"memory":[]}]})",
        R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[]},{"request":0,"memory":[]}]})",
        R"({"event_limit":1,"byte_limit":1,"requests":[{"request":0,"memory":[{"offset":0,"size":0}]}]})",

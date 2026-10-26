@@ -183,7 +183,7 @@ These artifacts qualify exactly the source and harness commits listed below. Lat
 
 The Windows ARM64 qualification uses a native ARM64 Unicorn C DLL built from the pinned submodule with the verified LLVM-MinGW toolchain, an MSVC import library and an explicit CMake target override. Its isolated build copy authenticates three host fixes: the non-SEH jump pair, an ARM64 page-commit callback with instruction-cache synchronization, and 64-bit immediate masks for Windows LLP64. The submodule source and revision stay unchanged. This qualifies the test host for the CPU matrix; it does not establish default MSVC ARM64 JIT support. The five host-recovery checks are separate from native patched-process and C++ exception evidence.
 
-Use a compatible source producer through `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (Clang 22.1.6 was checked). Integrated LLVM receives a scoped correction in a build-directory copy; the submodule and shared prebuilt cache remain unchanged. The r3/r4 prebuilt x64 PLT bug can cause an IR patch to be refused; native objects avoid that MC path. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires the exact corrected PLT producer.
+Use a compatible source producer through `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (Clang 22.1.6 was checked). Integrated builds compile the recorded NeverSight LLVM fork directly, including its relocation corrections; NeverD applies no LLVM source patches. The r3/r4 prebuilt x64 PLT bug can cause an IR patch to be refused; native objects avoid that MC path. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires the exact corrected PLT producer.
 
 `NeverDSourcePatchTests` contains native C/API/object/EH cases; `NeverDSourcePatchMatrixTests` requires 283 checks across fourteen target profiles through Unicorn. `SourcePatchPE` runs seven C++ scenarios when `NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and `NEVERD_TEST_WINDOWS_SDK_LIB` are supplied. Non-Windows hosts also need `NEVERD_TEST_WINDOWS_RUNNER`. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing runtime inputs fail. The dedicated Windows workflow requires native execution and rejects skipped cases.
 
@@ -201,7 +201,7 @@ ctest --test-dir build-source -L \
   --output-on-failure --parallel 4
 ```
 
-The scoped LLVM copy also corrects Mach-O x64 GOT data references: Clang’s typed-catch table is relative to the end of its four-byte relocation word. The r3/r4 prebuilt misanchors that reference by four bytes. Publication validates the encoded field and refuses the uncorrected producer. On the development Mac, x64 Mach-O runtime cases use Rosetta 2; ARM64 cases execute directly.
+The LLVM fork also corrects Mach-O x64 GOT data references: Clang’s typed-catch table is relative to the end of its four-byte relocation word. The r3/r4 prebuilt misanchors that reference by four bytes. Publication validates the encoded field and refuses the uncorrected producer. On the development Mac, x64 Mach-O runtime cases use Rosetta 2; ARM64 cases execute directly.
 
 Native Windows x64 qualification at [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) passed all 16 focused PE/object/trampoline checks and all 143 CPU target-matrix checks without skips. The FH3 case executed seven C++ runtime scenarios; the target matrix uses Unicorn. This run used Clang 22.1.6 with native MSVC and Windows SDK inputs and integrated LLVM.
 

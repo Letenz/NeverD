@@ -818,6 +818,17 @@ reject unknown/active transaction contexts before state publication. They
 do not qualify instruction decoding, memory-provider faults, IR preservation,
 native code generation or physical MPX hardware; strict lifting stays closed.
 
+`NeverDX86MpxEncodingTests` checks the shared byte reader and full/for-lift/light
+decode routes: 504 memory combinations, 1,152 register combinations, 9,216
+architectural register NOP cases and 6,912 SIB addresses compared with ordinary
+native-width MOV decoding. It covers ignored long-mode 67H, high GPRs and RIP,
+mode-sized BNDMOV memory, LOCK stores, absent MIB base/index and retained scale,
+prefix cancellation, truncation, instruction length and decoder reuse with text
+or detail disabled. Invalid banks, unsupported address forms and ambiguous
+mandatory prefixes cannot acquire a qualified encoding. Stateful instructions
+still refuse strict lifting without publishing LowIR; these checks do not
+certify memory faults, original-branch effects or physical MPX execution.
+
 `NeverDX86TBMTests` exercises all nine trailing-bit operations through full,
 lightweight and lift decoding, with 32/64-bit values, register aliases,
 register/memory sources, i386 ignored XOP fields and FS/GS/address overrides.
@@ -853,6 +864,49 @@ disables BMI/TBM and the exact assembly is checked before linking. The
 original BMI/TBM/APX instruction bytes are never executed. This qualifies
 the value projections; hardware exception delivery and preservation of a
 faulting load after source optimization remain separate work.
+
+`NeverDX86BitCountTests` checks TZCNT/LZCNT/POPCNT in both execution modes,
+with 16/32/64-bit operands, legacy/REX2/APX/NF encodings and all three decode
+routes. Independent bit loops cover every 16-bit source value; register-bank,
+alias, upper-bit preservation, memory-tail, source-fault and malformed-field
+cases exercise admission and effects. Run it with `NeverDX86FPEncodingTests`,
+`NeverDX86APXBMISemanticTests` and `NeverDX86UndefinedEffectsTests`.
+`NeverDLowIRUndefinedIndependenceTests` checks that observing an undefined
+count flag is dependent, that NF retains an earlier arbitrary AF producer,
+and that ordinary POPCNT kills that producer.
+
+`NeverDX86BitCountPipeline` projects raw count fixtures through LLVM, HighC
+and LLVM-to-C, with pipeline optimization on/off and O0/O2 compilation.
+Compilation disables BMI/LZCNT/POPCNT; executed code is compared with bit-loop
+values and only architecturally defined flags, including NF preservation.
+The original APX/REX2 bytes are not executed. This does not qualify physical
+APX execution, CPU-feature fallback to BSF/BSR or native memory exceptions.
+
+`NeverDX86BMILogicTests` checks ANDN, BLSI/BLSMSK/BLSR and BZHI values,
+source/destination aliases, flag effects, both execution modes, register banks,
+ignored i386 fields, memory tails, fault-before-write ordering and malformed
+or reserved fields. Independent bit loops cover every low-word BLS source and
+every 16-bit BZHI control. Run it with `NeverDX86APXBMISemanticTests`, the TBM,
+BEXTR and bit-count targets, and `NeverDLowIRUndefinedIndependenceTests` for the
+shared scalar flag audit. The latter also observes AF/PF and NF preservation.
+`NeverDX86BMILogicPipeline` compiles LLVM and both C projections at O0/O2 with
+BMI/BMI2 disabled and executes only the resulting baseline code. It covers
+pipeline optimization on/off and both operand widths; only defined flags are
+compared. Physical APX execution and native memory faults remain separate.
+
+`NeverDX86BMI2Tests` covers MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX in
+32-bit mode and x64 VEX/APX forms. Independent bit loops and 128-bit products
+check aliases, both MULX destinations, every flag, all low-word controls,
+all imm8 rotations, register banks and fault-before-write ordering. The
+malformed-detail matrix runs strict and permissive lifting through all three
+decode routes. Pair it with `NeverDX86APXBMISemanticTests`, the FP encoding,
+instruction coverage and undefined-effects targets; the independence suite
+also checks prior arbitrary AF passing through the arithmetic families.
+`NeverDX86BMI2Pipeline` compiles LLVM, HighC and LLVMC at O0/O2 with pipeline
+optimization on/off. It executes baseline output for multiplication and
+shifts; PDEP/PEXT retain native BMI2 and execute only on hosts advertising
+BMI2. The test reports any compile-only profiles explicitly. It requires no
+APX hardware and does not qualify native memory faults or opaque state.
 
 AMX qualification uses `NeverDX86AMXStateTests`, `NeverDX86AMXLLVMGuardTests`
 and `X86AmxSource.*` in `NeverDX86VirtualizationSourceTests`. The 63 independent
@@ -3012,6 +3066,13 @@ function and preserve its language. `generatedViewsStayClosedAfterReopening`
 saves multiple generated panes and checks their restoration and retirement when
 reopening or changing projects. Run these in `neverd-gui-tests`; native Cocoa
 runs also exercise focus delivery and floating-window ownership.
+
+`automaticLayoutsPreserveMainWindow` restores a maximized desktop into both a
+normal and a maximized workbench. Startup restoration must keep the workbench
+hidden until it is ready, and opening a project with its own desktop must not
+move, resize or change the state of the visible main window. Run this case on
+Cocoa as well as offscreen, alongside the Quick Start and generated-pane
+restoration cases.
 
 `NeverDGuiWheelInput` replays precision wheel and trackpad events through the
 production disassembly, source and hex views. It compares small-event batches
@@ -6174,6 +6235,16 @@ weak search policies and incomplete source counterclaims. Parser/cache cases
 reject malformed table records and preserve the kind through reversed cache
 pieces. `scripts.tests.test_vtable_context` checks unpruned evidence, missing
 inputs, exact deduplication and isolation from function folding/refinement.
+
+`SignatureRuntimePointerContext.*` checks requested entries, complete operand
+coverage, immutable pointer ownership, conflicting roles/defaults, source
+conflicts and candidate-only naming. `RuntimePointerEvidence.*` exercises source
+configuration/storage/function separation and incomplete declarations. Cache
+round trips preserve the metadata kind with reversed pieces and reject malformed
+pairs. `scripts.tests.test_runtime_pointer_context` covers unpruned counterclaims,
+missing explicit function definitions and reference-only refinement without
+body duplication. Canonical indirect data operands share generator/runtime tests
+with ordinary data references; import references retain their separate kind.
 
 `NeverDSignatureTests` includes target-profile and pre-I/O pack-selection
 regressions: PE native user processes versus drivers, restricted PE loads,
@@ -10710,6 +10781,15 @@ compiles and runs generated C with warnings as errors and Rust with
 syscall traces. Public API tests traverse every IR stage, disassembly, CFG,
 metadata, LLVM, C, and Rust from a generated strict SBF ELF.
 
+`SBFLLVMEmitter.CallXTargetEdgesStayLinearAsCallSitesGrow` checks that increasing
+dynamic call sites does not duplicate full raw-slot tables. It bounds emitted
+target edges without imposing a host-specific timing threshold.
+`SBFLLVMDifferential.SharedCallXDispatchPreservesNestedFramesAndDistinctReturns`
+executes three call sites and two callees across v0-v4, checking distinct return
+PCs, restored callee-saved registers/frame pointers and nested call-depth faults
+against the raw interpreter. Keep the unaligned-v2, continuation-target and
+fault-ordering differential tests in the same gate.
+
 #### Audited SBF evidence snapshot
 
 The reproducible gate was audited on 2026-08-24 and pins Anza `sbpf`
@@ -10807,6 +10887,43 @@ NEVERD_AGAVE_CONFORMANCE_REVISION=68bb4af40235562e8852fa23d5727e49c2a0b862 \
 ctest --test-dir build-sbf-asan-ubsan --output-on-failure --parallel 4 \
   -L '^NeverDSBF'
 ```
+
+The SBF source differential suite executes both the monolithic and bounded
+function-owned dispatcher layouts against the raw interpreter. It covers calls,
+returns, continuation entries, host faults, and 32-bit result extension, in
+addition to structured control flow. The caller/callee register test crosses
+multiple source regions. Terminal memory cases preserve fault precedence over
+overrun, and a faulting load prevents a following host call. Strict compiler
+warnings also cover continuation-only and no-EXIT regions.
+The synthetic Rust cases compile together as separate public modules, and the
+driver executes every case in both layouts. This amortizes compiler/linker
+startup without changing the independent, budgeted per-SO corpus compilations.
+`SBFSourcePartition` checks exact raw-slot
+coverage, shared tails and malformed ranges. `SBFImmutableLoad` checks that the
+register fixed point and instruction replay agree on complete immutable loads,
+while mutable, hidden, truncated and clobbered-address reads remain unknown.
+`SBFCallXContexts` and `SBFStoredRegisterMemory` cover pre-clobber arguments,
+different callers, joint cross-block pointer spills, all-path and loop-entry
+meets, automatic frame separation, partial overwrite, overlapping memmove,
+legacy runtime effects, and absolute-versus-frame coordinate aliasing. Whole-CFG
+cases cover nested return/memory propagation, callee-saved restoration, targets
+beyond the entry block, conflicting branch targets, discarded loop-iteration
+proofs, memory-sensitive cache keys, conservative recursive/generalized effects,
+and a CALLX-discovered block that was not a function entry. Further cases check
+common targets reached through different table bases, finite-set overflow and
+unknown absorption, dead-input projection, generic frame writes and writes into
+a caller frame, composed argument-relative writes/returns with aliasing and
+unknown pointers, solver-only cache reclamation after loop widening, distinct
+parameter/register-spill origins whose numeric values are both unknown,
+equivalent generic leaf reuse, demand-driven root specialization, preserving
+four concrete caller variants before eagerly specializing unknown wrapper
+roots, and a returning host callback despite a catalog never-return annotation.
+A registered legacy runtime invalidates memory even when its file-local callee
+is pure. Selected
+target proofs are checked against raw bytecode execution. The optional query
+retains dynamic fallback and does not qualify closed-world devirtualization.
+The pinned 72-file native-object scan described in [sbf-corpus.md](sbf-corpus.md)
+is separate from these synthetic execution tests and from official VM gates.
 
 ## One-shot targets
 
@@ -13059,7 +13176,7 @@ The native profile also requires the LLVM-C wide-integer constant/store checks a
 
 The native Linux x64 job also requires three C++ exception replacement checks: Clang IR, Clang native objects and GCC native objects. Their XML and process exit are audited separately, and any failure or skip fails qualification; NeverC is not used for these C++ inputs.
 
-The native qualification job builds the pinned LLVM fork from source, including the scoped x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
+The native qualification job builds the recorded LLVM fork from source, including its x64 PLT/AArch64 specifier correction. The r4 prebuilt alone does not qualify the Clang IR exception route.
 
 ## Ordinary Darwin whole-file lock coverage
 
@@ -13377,6 +13494,16 @@ physical aliases, empty/truncated/unmapped/misaligned buffers and permissions.
 It compares complete fetched pages with pre-submission copies, destination RAM,
 the result timestamp and both memstore timestamps, plus the refusal location.
 
+`SustainedGPUCommandsPreserveTimeAndContextOwnership` submits 1024 independently
+checked PM4 writes separated by virtual sleeps. Raw x64/AArch64 and Bionic
+callers check every retirement, untouched neighboring bytes and another
+context's idle timestamps, the exact elapsed virtual time, duplicate ownership
+after close/reopen, and timestamp reset when a context ID is reused. Android
+O0/O2 relocation variants exercise direct, syscall and dynamic imports; the
+process-public GPU case compares complete C API and CLI reports. These bounded
+workloads use a 30-second execution deadline for the repeated hardware-backend
+exits at O0. They test the synchronous model, not hardware scheduling or shaders.
+
 `AndroidBinder.GuestServicesExecuteSynchronousTransactionsAndReplies` runs
 ordinary and TF_ACCEPT_FDS requests with both data and guest-computed
 TF_STATUS_CODE replies, including exact guards and buffer release. The LP64
@@ -13529,6 +13656,11 @@ LP64 architectures, a pointer overwritten by the ioctl and an unsupported
 retry with complete RAM equality. `ProcessReport.IoctlTrace*` checks strict
 JSON admission and lossless evidence serialization. The Python device
 integration exercises the same report through the public C SDK.
+Selection regressions cover default/explicit `include_unlisted`, rejected
+non-boolean JSON, low-32-bit request matching, exact event and byte budgets,
+unlisted errors after a full trace, and unchanged whole guest reports. The
+sustained GPU fixture retains four selected timestamp queries across more than
+1024 unlisted submissions, including C API/CLI report equality.
 
 `NeverDHighCSupervisorCallTests` verifies that an unmodeled live ARM/AArch64
 SVC result returns a recoverable emission error. Unused results retain the
@@ -13983,7 +14115,7 @@ services and ART loading are not covered.
 <!-- i18n-section: interactive-byte-patches -->
 ## Interactive patch ownership
 
-`NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
+`NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
@@ -14132,4 +14264,4 @@ output owner must preserve both exclusive creation and default replacement,
 including failed closes, locked outputs, unchanged input bytes and cleanup.
 See [Windows patch export](windows-patch-export.md) for the public reproducer.
 
-`LLVMAddressModelOverlayTests` checks independent AArch64 specifier, i386 GOT and Mach-O GOTPCREL corrections. It covers both known AArch64 guard spellings and all twelve partial-correction combinations, preserves the LLVM input and cached overlay, isolates inherited Git settings, and rejects an unrecognized architecture guard. These configuration checks do not replace native relocation execution tests.
+`BinaryRewriteRelocationTest` in the [NeverSight LLVM fork](https://github.com/NeverSight/llvm-project/blob/main/llvm/unittests/MC/BinaryRewriteRelocationTest.cpp) checks final output bytes for x64 PLT, i386 GOT, Mach-O GOTPCREL and AArch64 PAGE/PAGEOFF. Integrated NeverD builds compile the recorded fork directly. These MC checks do not qualify native exception execution.

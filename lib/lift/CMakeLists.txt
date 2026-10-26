@@ -95,6 +95,7 @@ add_neverd_component_library(NeverDLift
   ARM/ARMLifter.cpp
   ARM/ARMRegs.cpp
   X86/X86FPEncoding.cpp
+  X86/X86MpxEncoding.cpp
   X86/X86LiftAtomic.cpp
   X86/X86LiftControl.cpp
   X86/X86LiftCore.cpp
@@ -140,6 +141,9 @@ add_neverd_component_library(NeverDLift
   X86/X86LiftSystemState.cpp
   X86/X86LiftTBM.cpp
   X86/X86LiftBEXTR.cpp
+  X86/X86LiftBitCount.cpp
+  X86/X86LiftBMI2.cpp
+  X86/X86LiftBMILogic.cpp
   X86/X86LiftTransactions.cpp
   X86/X86LiftRepState.cpp
   X86/X86LiftSgx.cpp

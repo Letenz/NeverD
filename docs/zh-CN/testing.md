@@ -2155,4 +2155,4 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 
 该 worker 回归还覆盖十八个混合寄存器／栈参数、浮点返回，以及栈参数只写入一半时的拒绝。
 
-`LLVMAddressModelOverlayTests` 分别检查 AArch64 修饰符、i386 GOT 和 Mach-O GOTPCREL 修正，覆盖两种已知 AArch64 守卫写法及十二种部分修正组合。测试保留 LLVM 输入和缓存副本，隔离继承的 Git 设置，并拒绝无法识别的架构守卫。这些配置检查不能替代原生重定位执行测试。
+`BinaryRewriteRelocationTest` 在 NeverSight LLVM fork 中检查 x64 PLT、i386 GOT、Mach-O GOTPCREL 和 AArch64 PAGE/PAGEOFF 的最终字节。NeverD 集成构建直接编译所记录的 fork。这些 MC 检查不代表原生异常执行已获验证。

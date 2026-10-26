@@ -314,6 +314,8 @@ TEST(X86APXBMISemantics, OrdinaryFormsUpdateOnlyArchitecturallyOwnedFlags) {
     default:
       FAIL() << "unexpected instruction";
     }
+    // AF/PF are arbitrary; the concrete choice is audited in X86BMILogicTests.
+    Expected.AF = Expected.PF = false;
     EXPECT_EQ(getGpr(Emulator, F.Destination), Result);
     expectFlags(Emulator, Expected);
     EXPECT_FALSE(Emulator.skips().any());
@@ -626,12 +628,11 @@ TEST(X86APXBMISemantics, ApxCountNfPreservesFlagsAndPopcntClearsOwnedFlags) {
       ASSERT_EQ(Emulator.run(Aliased.Ops), Aliased.Ops.size());
       EXPECT_EQ(getGpr(Emulator, X86_REG_R18),
                 MergedDestination(Original, W.Width * 8, W.Width));
-      Flags Expected = Input;
-      Expected.CF = true;
-      Expected.ZF = false;
-      Expected.SF = false;
-      Expected.OF = false;
-      expectFlags(Emulator, Expected);
+      EXPECT_EQ(Emulator.getRegister(x86reg::CF), 1u);
+      EXPECT_EQ(Emulator.getRegister(x86reg::ZF), 0u);
+      EXPECT_EQ(Emulator.getRegister(x86reg::DF), Input.DF);
+      // OF/SF/AF/PF are undefined, not preserved or architecturally zero.
+      // X86BitCount checks their effects; the NF cases above check preservation.
       EXPECT_FALSE(Emulator.skips().any());
     }
   }
@@ -1102,6 +1103,7 @@ TEST(X86APXBMISemantics, DestructiveBitResetUsesOriginalSourceForCarry) {
           Expected.ZF = F.Id == X86_INS_BLSR && Result == 0;
           Expected.SF = (Result >> (F.Width * 8 - 1)) != 0;
           Expected.OF = false;
+          Expected.AF = Expected.PF = false;
         }
         expectFlags(Emulator, Expected);
       }

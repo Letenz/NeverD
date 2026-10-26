@@ -74,6 +74,15 @@ This component is a tested foundation, not yet a lifting/emission contract:
 strict MPX admission remains closed until original-transfer effects and
 memory completion are connected throughout the pipeline.
 
+`lift/X86/X86MpxEncoding.h` owns the qualified MPX byte-to-operand mapping.
+The full and lightweight decoder adapters share it, including native-width
+addresses despite long-mode 67H, mode-sized BNDMOV memory fields, LOCK stores,
+and the architectural register NOP forms. Encoded MIB index, scale and absent
+base remain distinct; they do not authorize an ordinary memory operation at
+the displayed expression. Invalid banks, 16-bit memory forms, prohibited
+RIP-relative forms and competing mandatory prefixes do not acquire a qualified
+shape. Decoding a valid stateful instruction does not enable its strict lifter.
+
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
 semantics; they do not expose TILECFG or TMM values through an ordinary function
@@ -178,6 +187,38 @@ LowIR, and records SF/AF/PF as undefined while defining CF/OF/ZF. APX NF
 preserves all flags. The shared prefix and APX validators retain address
 ownership. Decoder flag metadata is checked separately from architectural
 effects: legacy BEXTR metadata currently over-reports control-flag resets.
+
+`X86LiftBitCount` owns TZCNT, LZCNT and POPCNT admission, arithmetic and
+undefined-output effects across legacy, REX2 and APX/NF forms. F3 selection,
+66 operand size and REX cancellation are authenticated independently; shared
+address validators retain memory-tail ownership. The source-zero carry value
+is captured before an aliased destination write. TZCNT/LZCNT record OF/SF/AF/PF
+as undefined, POPCNT defines all status flags, and NF preserves them. Legacy
+Capstone LZCNT detail omits MODIFY_CF; that decoder contract does not override
+the architectural carry calculation. Completeness of this flag audit does not
+certify runtime CPU-feature selection or a complete opaque machine-state bank.
+
+`X86LiftBMILogic` owns ANDN, BLSI/BLSMSK/BLSR and BZHI VEX/APX/NF forms.
+Its raw encoding, operand and implicit-effect admission precedes every load
+and architectural write. Source-dependent carry is captured before aliased
+destinations, BZHI masks only the low eight index bits and bounds every shift,
+and ordinary forms record AF/PF as undefined. VEX BLSR decoder metadata reports
+RESET_ZF; the owner still computes the architectural result-zero ZF.
+`X86UndefinedFlagAudit` shares the effect-shape and later-use checks across
+BMI logic, bit counts, BEXTR and TBM; each family owns its admitted forms and
+the actual set of undefined flags.
+
+`X86LiftBMI2` owns flag-preserving MULX, PDEP/PEXT, RORX and SARX/SHLX/SHRX.
+VEX and APX forms share canonical prefix and memory-tail validators; raw bytes,
+implicit EDX/RDX and every public operand must agree before lifting. Both MULX
+halves are computed before either destination changes, with the high half
+winning when destinations alias. Shift counts are masked before LLVM shifts,
+and RORX immediates are scalar values. Their complete undefined-output audit
+has no new arbitrary bits; existing flag producers pass through unchanged.
+PDEP/PEXT retain the shared scalar intrinsic contract and native BMI2 lowering.
+The older BMI/ADX dispatcher now delegates these families and reuses the APX
+validator for ADX, removing its separate address parser. ADX legacy-form
+qualification remains separate.
 
 `X86SystemStateNative` also owns the RTM and CLZERO target requirements for
 native system calls. LLVM emission adds those requirements to the completed
@@ -923,6 +964,8 @@ window used to route branch arrows. Revision and navigation fences still apply.
 ## Interactive patch ownership
 
 `lib/patch` owns byte admission, LLVM MC encoding, the immutable input snapshot, canonical overlay runs and exclusive export. The SDK proves source targets against exact emitted C, canonical LowIR occurrences and decoded operands; a navigation anchor alone does not authorize an edit. The worker journals optional `patches.json` rows with ordinary undo/redo and invalidates analysis after edits. Signature names read original bytes; patched routines lose identity-derived library effects. GUI, CLI and Python share these APIs. Whole-function replacement still uses `neverd_patch_source` and requires exporting and reopening any byte overlay first.
+
+Patch persistence reads typed, owning rows directly from a validated SIMD JSON tape when `NEVERD_ENABLE_SIMDJSON` is enabled. The LLVM reader remains available when acceleration is disabled or the input is outside the SIMD parser’s domain. Both readers share field admission and resource limits, including the existing last-duplicate-key and integer-only size rules; no borrowed parser strings escape. Overlay replay still validates every row against the immutable input.
 
 Source previews retain the live session’s load options, analysis policy, user metadata and an owning snapshot of signature evidence. Instruction display limits never limit full-range validation; truncated previews report this explicitly. Thumb edits must cover the complete IT block when removing its predicate.
 
@@ -2045,6 +2088,18 @@ receive one frozen outgoing check after incoming inference and before the data
 pass; they cannot restart a chain or establish data anchors. The parser and
 cache share one table-record admission contract. `VTableEvidence` owns raw COFF
 source declarations, including incomplete records used as offline counterclaims.
+Native `!loadcfg` metadata pairs a source configuration field's external pointer
+variable with its default function. The COFF loader owns the role/field mapping;
+`SignatureRuntimePointerContext` queries only its recorded slots after the data
+pass. Immutable, relocation-backed storage and requested executable entries must
+agree with existing complete `!caller` bodies. This independent metadata gate
+can accept a short body only when all wildcards are bound canonical data operands
+and every reference names independently established storage. It does not lower
+the ordinary caller floor, restart incoming inference, or create data anchors.
+The resulting names remain candidates. `RuntimePointerEvidence` emits source
+configuration, pointer and explicitly typed function definitions, retaining
+incomplete counterclaims; the offline selector refines existing body references
+and publishes only missing metadata.
 The separately gated library-feature path retains its independent identity
 verifier before candidate settlement. A name analysis or the user gave otherwise
 says nothing of what the function is. A linked COFF image's section symbols,
@@ -12005,6 +12060,12 @@ entry-resolved addresses, never device replies or a second ABI decoder.
 `LinuxServices` supplies the current task; Android supplies its native return
 address. `ProcessReport` serializes the optional stream. Trace limits and
 capture failures cannot replace the original service outcome.
+`linux_files.ioctl_trace.include_unlisted` defaults to `true`, retaining an
+event for every ioctl. Setting it to `false` records only numbers listed in
+`requests`, including entries with no memory ranges. The shared owner matches
+the LP64 ABI's low 32-bit request before charging either trace budget or reading
+diagnostic memory. Unlisted calls still execute and retain their normal service
+events and errors; an empty selection records nothing and is not truncation.
 
 `KernelModelFileCreate` owns device-pointer opens within the existing `FileOperation`. Namespace resolution, CREATE packets and final release share the ordinary file-open owner. The object manager acquires the file reference through the private handle; `queryFileDevice` supplies the related device, and the existing handle-close continuation performs CLEANUP. The original caller releases its critical region only after that continuation completes. Public output overlap cannot replace the private referenced object.
 

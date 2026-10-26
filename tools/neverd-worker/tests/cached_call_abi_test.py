@@ -149,6 +149,8 @@ def run(worker, compiler=None):
                               "limit": 2048})["text"]
                     arguments = call_arguments(text)
                     assert len(arguments) == 7, (cached, representation, text)
+                    assert re.search(r"\barg\d+\b", arguments[0]), (cached, representation, text)
+                    assert "unknown" not in arguments[0] and "__builtin_trap" not in arguments[0], text
                     assert "0x22" in arguments[3], arguments
                     assert "__int128" not in text, text
                     if representation == "c":
