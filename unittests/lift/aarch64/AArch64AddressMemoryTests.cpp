@@ -52,6 +52,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -87,6 +88,20 @@ namespace {
   inline constexpr Type Name = Value;
 #define STACK_MEMORY_TEXT(Name, Text) inline constexpr char Name[] = Text;
 #include "AArch64StackAddressMemoryFixtures.def"
+
+llvm::StringRef
+writebackConstraintsWithoutMemoryClobber(const llvm::InlineAsm &Asm) {
+  // LLVM rejects missing result constraints before a call can reach NeverD.
+  // Keep that negative check, then use legal LLVM constraints which violate
+  // the owned memory contract to exercise both NeverD admission boundaries.
+  EXPECT_TRUE(llvm::errorToBool(
+      llvm::InlineAsm::verify(Asm.getFunctionType(), llvm::StringRef())));
+  auto Constraints = Asm.getConstraintString();
+  EXPECT_TRUE(Constraints.consume_back(",~{memory}"));
+  EXPECT_FALSE(llvm::errorToBool(
+      llvm::InlineAsm::verify(Asm.getFunctionType(), Constraints)));
+  return Constraints;
+}
 
 struct MemoryCase {
   uint32_t Word;
@@ -5099,7 +5114,8 @@ TEST(AArch64VectorWritebackMemory, LLVMCallAdmissionPrecedesFunctionSelection) {
                                              kVectorWritebackSPBase));
       else if (Mutation == 3)
         Owned->setCalledOperand(llvm::InlineAsm::get(
-            Asm->getFunctionType(), Asm->getAsmString(), std::string(), true));
+            Asm->getFunctionType(), Asm->getAsmString(),
+            writebackConstraintsWithoutMemoryClobber(*Asm), true));
       else if (Mutation == 4)
         Owned->setCalledOperand(
             llvm::InlineAsm::get(Asm->getFunctionType(), Asm->getAsmString(),
@@ -6271,9 +6287,9 @@ TEST(AArch64PairMemory, LLVMAdmissionChecksBothValuesBeforeFunctionSelection) {
               Last, llvm::ConstantInt::get(
                         Owned->getArgOperand(Last)->getType(), Changed));
         } else if (Mutation == 3)
-          Owned->setCalledOperand(llvm::InlineAsm::get(Asm->getFunctionType(),
-                                                       Asm->getAsmString(),
-                                                       std::string(), true));
+          Owned->setCalledOperand(llvm::InlineAsm::get(
+              Asm->getFunctionType(), Asm->getAsmString(),
+              writebackConstraintsWithoutMemoryClobber(*Asm), true));
         else if (Mutation == 4)
           Owned->setCalledOperand(
               llvm::InlineAsm::get(Asm->getFunctionType(), Asm->getAsmString(),
