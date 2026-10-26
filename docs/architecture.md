@@ -2720,6 +2720,10 @@ proof-gated semantic synthesis in both HighC and LLVM-to-C. HighC tries
 synthesis after exact derivation, retaining the derivation if synthesis
 cannot improve it. Width conversions also start inner numeric regions, so
 extensions do not hide narrow arithmetic or change its overflow semantics.
+Empty block anchors left by dead-store removal retain available scalar
+definitions. A referenced jump or exception entry still clears them; child
+scopes, expressions and effects keep their existing boundaries. Serial and
+parallel source simplification share this classification.
 Generated wide constants retain explicit zero extensions when their 64-bit
 payload would otherwise be ambiguous to an enclosing symbolic region.
 LLVM source enables synthesis in the existing semantic fixed point. Both consume

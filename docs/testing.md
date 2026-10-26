@@ -1985,6 +1985,10 @@ refusal. Supported masks through 512 bits are checked alongside a 513-bit
 refusal; unsafe neighboring masks must remain ineligible.
 `HighSymSimplify` covers signedness-preserving definition conversion, disjoint
 frame locals, overlapping views, address escape and transitive store kills.
+Its `EmptyAnchorsPreserveAvailableDefinitions` and
+`AnchorsKeepControlFlowAndEffectBoundaries` cases cover dead-store placeholders,
+full-width integer results, jump/exception entries, child scopes and effects.
+The parallel segment comparison includes the same empty anchors.
 `HighFrameStoreForwarding.EmptyDeadStoreAnchorsPreservePrivateFacts` checks
 empty versus effectful/malformed block boundaries across four architectures.
 
