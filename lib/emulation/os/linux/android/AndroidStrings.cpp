@@ -276,10 +276,15 @@ BionicResult Bionic::spanString(const NativeCallEvent &Call) {
 BionicResult Bionic::findCharacter(const NativeCallEvent &Call) {
   const auto &A = Call.Arguments;
   llvm::StringRef Name(Call.Name);
+  const bool Memory = Name == symbol::Memchr || Name == symbol::MemchrChk;
+  // The checked memory entry admits the whole count before any read, even
+  // when an early match could have used fewer bytes.
+  if (Name == symbol::MemchrChk && A[2] > A[3])
+    return failure(diagnostic::FortifyReadPrefix + Name);
   bool Fortified = Name == symbol::StrchrChk || Name == symbol::StrrchrChk;
   bool FindLast = Name == symbol::Strrchr || Name == symbol::StrrchrChk;
   uint8_t Character = static_cast<uint8_t>(A[1]);
-  uint64_t Bound = Fortified ? A[2] : Options.MemoryLimit;
+  uint64_t Bound = Memory || Fortified ? A[2] : Options.MemoryLimit;
   uint64_t Match = 0;
   // Check the object extent before each read. A first match may return without
   // reaching NUL; a last match still requires a complete terminated string.
@@ -296,8 +301,13 @@ BionicResult Bionic::findCharacter(const NativeCallEvent &Call) {
         return value(Address);
       Match = Address;
     }
-    if (!*C)
+    if (!Memory && !*C)
       return value(Match);
+  }
+  if (Memory) {
+    if (Bound <= Options.MemoryLimit)
+      return value(0);
+    return failure(diagnostic::MemoryLimit);
   }
   if (Fortified && Bound <= Options.MemoryLimit)
     return failure(diagnostic::FortifyReadPrefix + Name);

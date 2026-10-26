@@ -232,6 +232,7 @@ jobs:
             jumpBrowserKeepsItsOpeningAddress \
             commandPaletteReturnsToItsSource \
             xrefsReturnToTheOriginatingCodeWindow \
+            tabFromAssemblyWaitsForPagesAndUnfoldsTarget \
             changedSourceDismissesReferenceBrowsers \
             localVariableReferencesStayInTheirCodeWindow \
             localReferencesAllowWorkbenchInteraction \

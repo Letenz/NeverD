@@ -58,6 +58,22 @@ before rendering it; neither a mnemonic nor an intrinsic declaration alone
 authorizes an architectural register access. Both forms retain unknown memory
 effects, undefined arithmetic flags and native faults, including dead reads.
 
+`ir/X86/X86MpxContext.h` owns concrete MPX enable evidence, the four bounds
+registers, BNDSTATUS and BDE/BTE address calculations. Unknown prerequisites
+remain unknown; a proven disabled prerequisite suppresses MPX effects without
+requiring operand values. The model selects BNDCFGU at CPL 3 and BNDCFGS at
+CPL 0–2, applies MAWA only to long-mode table indexing, and retains known-bit
+masks for bounds. It separates successful loads, invalid-directory #BR and
+implementation-dependent partial BNDLDX reads. Memory providers still own
+access validity, segment/canonical checks, ordering and partial stores.
+Enabled operations require a known nontransactional context; an RTM/HLE
+checkpoint and abort continuation are not supplied by this state component.
+Original branch completion takes an explicit preserve/initialize effect;
+it does not infer an architectural branch from a transformed CFG edge.
+This component is a tested foundation, not yet a lifting/emission contract:
+strict MPX admission remains closed until original-transfer effects and
+memory completion are connected throughout the pipeline.
+
 `X86AmxState.h` owns the versioned x64 AMX architectural-bank contract. Decoded
 instructions name physical tile registers and retain their memory/encoding
 semantics; they do not expose TILECFG or TMM values through an ordinary function
@@ -8278,6 +8294,12 @@ NUL without padding and return the destination. API 28 ARM64 uses the C
 NUL-inclusive length to the destination object size. Scan faults and budgets
 precede that fortify check; the destination and overlap checks follow it.
 Undefined overlap and unsupported abort paths refuse without partial writes.
+`memchr` and `__memchr_chk` share the character-search loop, unsigned-byte
+comparison and guest read owner. Memory searches pass embedded NUL bytes and
+return null only after exhausting the requested count; scan-budget exhaustion
+remains a failure. The checked entry admits the whole count against the object
+extent before pointer or deadline checks. Zero-count searches need no pointer
+access, and a first match does not require the unread suffix to be mapped.
 `__strcat_chk` and `__strncat_chk` reuse the same checked-length owner as
 `__strlen_chk` for the existing destination, then stage only the appended
 bytes. API 28's zero-count `__strncat_chk` returns before any pointer access.

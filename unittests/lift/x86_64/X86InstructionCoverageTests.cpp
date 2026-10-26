@@ -9,6 +9,7 @@
 /// This does not claim complete ISA, emitter or executable semantic coverage.
 //===----------------------------------------------------------------------===//
 
+#include "../x86/X86LegacyAdmissionFixtures.h"
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
@@ -134,12 +135,17 @@ TEST(X86InstructionCoverage, PinnedDecoderCorpusHasExplicitLiftResults) {
       ASSERT_EQ(D.decodeOneForLift(Bytes.data(), Bytes.size(), 0x1000, I),
                 Bytes.size());
       std::vector<LowOp> Ops;
+      const bool LegacyGap =
+          std::ranges::any_of(test::X86FarPointerEncodings,
+                              [&](const auto &E) { return E.Id == I.Id; }) ||
+          std::ranges::any_of(test::X86ThreeDNowEncodings,
+                              [&](const auto &E) { return E.Id == I.Id; });
       if (I.Id == X86_INS_RETF || I.Id == X86_INS_RETFQ ||
           I.Id == X86_INS_IRET || I.Id == X86_INS_IRETD ||
           I.Id == X86_INS_IRETQ || I.Id == X86_INS_SYSENTER ||
           I.Id == X86_INS_SYSEXIT || I.Id == X86_INS_SYSEXITQ ||
           I.Id == X86_INS_SYSRET || I.Id == X86_INS_SYSRETQ ||
-          I.Id == X86_INS_RSM) {
+          I.Id == X86_INS_RSM || LegacyGap) {
         EXPECT_THROW(D.liftToLow(I, Ops), UnliftedInstruction);
         EXPECT_TRUE(Ops.empty());
         ++Refused;
