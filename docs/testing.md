@@ -9635,6 +9635,15 @@ Legacy cancellation tests retain the API continuation across cancellation, neste
 
 ## Test layout
 
+`NeverDSymbolicCallEffectTests` checks explicit call register results and path
+exploration: multiple outputs, pre-call values, return-output precedence,
+overlapping writes in both byte orders, ordinary memory havoc, malformed-range
+refusal without state changes, and successor discovery from a summarized
+register result. `NeverDSymbolicIntegerIntrinsicTests` supplies the affected
+execution, scalar-state and store-preservation regressions. These targets test
+the generic effect mechanism; they do not certify an external function's ABI
+or operating-system behavior.
+
 For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
 and run `NeverDSolverTests`; see [solver validation](solver.md) for the
 cross-backend benchmark and replayable query export. Validate an OFF build too

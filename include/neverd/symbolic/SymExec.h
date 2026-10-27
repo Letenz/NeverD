@@ -79,6 +79,13 @@ struct SymCallMemoryWrite {
   SymRef Value;
 };
 
+/// A whole-byte register-bank result supplied by a complete call contract.
+/// Offsets use the same architecture-neutral coordinates as SymState.
+struct SymCallRegisterWrite {
+  uint64_t Offset = 0;
+  SymRef Value;
+};
+
 /// Analysis-neutral effects for one exact call occurrence.
 ///
 /// A provider may return this only when it covers the complete contract needed
@@ -90,6 +97,12 @@ struct SymCallEffect {
   SymRef ReturnValue;
   std::vector<SymCallMemoryWrite> Writes;
   std::vector<SymRef> Constraints;
+  /// Values are captured before the call, in this state's context. Apply in
+  /// order after ordinary register havoc and explicit memory writes, then
+  /// assign the LowIR call output from ReturnValue. Later overlapping writes
+  /// win. Omitted bytes retain the configured preservation/havoc policy.
+  /// Invalid register writes reject the call before any state mutation.
+  std::vector<SymCallRegisterWrite> Registers;
 };
 
 /// Shape accepted for a single CMPXCHG preservation commit: default memory,
