@@ -11253,6 +11253,10 @@ unchanged readers, feature gates and attempt order. MIPS register-list
 metadata maps expanded operands back to the list, base and displacement
 descriptors; signed MicroMIPS offsets are scaled without negative shifts.
 
+The shared assembly stream combines terminator detection with bounded token
+copying. Sources that may alias the stream retain length-first copying, with
+unchanged truncation, markup and closed-stream behavior.
+
 NeverD's existing architecture-specific metadata corrections and fallback
 decoders remain authoritative after the Capstone call. The native batch API
 is available in the fork; this `dev` integration uses the existing iterator
