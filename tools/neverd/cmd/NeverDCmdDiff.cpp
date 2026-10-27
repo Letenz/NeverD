@@ -140,13 +140,16 @@ void progress(void *Context, const char *Phase, neverd_va_t Done,
     S.Last = Now;
   }
 }
-struct RestoreCancelled : std::runtime_error {
-  RestoreCancelled()
-      : std::runtime_error("saved comparison restore cancelled") {}
+struct ComparisonCancelled : std::runtime_error {
+  using std::runtime_error::runtime_error;
 };
 void checkRestoreCancelled() {
   if (Interrupted.load(std::memory_order_relaxed))
-    throw RestoreCancelled();
+    throw ComparisonCancelled("saved comparison restore cancelled");
+}
+void checkEditCancelled() {
+  if (Interrupted.load(std::memory_order_relaxed))
+    throw ComparisonCancelled("comparison edit cancelled");
 }
 std::string readSaved(llvm::StringRef Path, ProgressState &Progress) {
   checkRestoreCancelled();
@@ -419,25 +422,33 @@ int runStructuralDiff() {
                                                         progress, &Progress)) {
         const auto Status = parse(take(neverd_comparison_status_json(C)));
         if (Status.getAsObject()->getString("restore_state") == "cancelled")
-          throw RestoreCancelled();
+          throw ComparisonCancelled("saved comparison restore cancelled");
         throw std::runtime_error("reopen failed: " +
                                  take(neverd_comparison_last_error(C)));
       }
       checkRestoreCancelled();
     }
     if (!DiffOverrides.empty()) {
+      checkEditCancelled();
       auto Overrides =
           parse(read(DiffOverrides, limits::diff::kMaxOptionsBytes));
       const auto *Rows = Overrides.getAsArray();
       if (!Rows)
         throw std::runtime_error("override file must contain an array");
       for (const auto &Row : *Rows) {
+        checkEditCancelled();
         std::string Text;
         llvm::raw_string_ostream OS(Text);
         OS << Row;
-        if (!neverd_comparison_override_json(C, Text.c_str()))
+        if (!neverd_comparison_override_json_with_progress(
+                C, Text.c_str(), progress, &Progress)) {
+          const auto Status = parse(take(neverd_comparison_status_json(C)));
+          if (Status.getAsObject()->getString("edit_state") == "cancelled")
+            throw ComparisonCancelled("comparison edit cancelled");
           throw std::runtime_error("override failed: " +
                                    take(neverd_comparison_last_error(C)));
+        }
+        checkEditCancelled();
       }
     }
     if (!DiffReviewRecord.empty()) {
@@ -694,13 +705,19 @@ int runStructuralDiff() {
         HumanOutput << "Coverage is incomplete; inspect the reported gaps.\n";
     }
     const auto BeforePublish = [&] {
-      if (!DiffReopen.empty()) {
+      if (!DiffOverrides.empty()) {
+        progress(&Progress, "edit:publish-output", 0, 1);
+        checkEditCancelled();
+      } else if (!DiffReopen.empty()) {
         progress(&Progress, "restore:publish-output", 0, 1);
         checkRestoreCancelled();
       }
     };
     if (!DiffSave.empty()) {
-      if (!DiffReopen.empty()) {
+      if (!DiffOverrides.empty()) {
+        progress(&Progress, "edit:write", 0, Saved.size());
+        checkEditCancelled();
+      } else if (!DiffReopen.empty()) {
         progress(&Progress, "restore:write", 0, Saved.size());
         checkRestoreCancelled();
       }
@@ -714,7 +731,7 @@ int runStructuralDiff() {
     if (JSONOutput)
       llvm::outs() << '\n';
     return Partial ? 3 : (Changed || Unresolved) ? 2 : 0;
-  } catch (const RestoreCancelled &E) {
+  } catch (const ComparisonCancelled &E) {
     llvm::errs() << "diff: " << E.what() << "; no output was published\n";
     return 3;
   } catch (const std::exception &E) {

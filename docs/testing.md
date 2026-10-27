@@ -3280,6 +3280,10 @@ checks responsive progress, selection, retained history and a non-error stopped
 message. Cancellation is cooperative; these checks assert outcomes rather than
 a hard latency deadline. Old-engine capability checks must retain ordinary edits
 while omitting only the unsupported progress exports from cancellation admission.
+The CLI editing regression sends SIGINT during actual native remeasurement and
+while writing a large saved report. Both stops require exit 3, empty stdout and
+unchanged existing output, followed by successful edit/save/reopen. This signal
+delivery check runs on POSIX hosts; Windows reports it as skipped.
 Overlapping-candidate regressions use an independently specified six-cycle:
 all six measured alternatives must survive, and the other three pairs must
 stay absent under direction and layout changes. Another case combines exact

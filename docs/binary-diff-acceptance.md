@@ -45,7 +45,8 @@ cooperative cancellation through affected-function measurement. Native controls
 cover match/unmatch/confirm, undo/redo, unchanged cached views and both history
 branches, callback failures, expired deadlines and historical stopped reports.
 Worker and real Qt workflows cancel native alignment, retain revision/selection,
-retry and save/reopen; Python checks callback ownership and older-engine optional
+retry and save/reopen; POSIX CLI controls stop editing and output writes without
+overwriting saved results. Python checks callback ownership and older-engine optional
 exports. A failed request after cancellation reports its own failure rather than
 inheriting the earlier stop. Successful edits keep a separate completion marker
 from the saved snapshot's state. Copies, sorting and final publication remain

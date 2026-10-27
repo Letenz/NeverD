@@ -123,6 +123,71 @@ def cancel_saved_restore(args, root, base, saved):
     assert json.loads(run(base + ["--json", "--reopen", str(saved)], {2, 3}).stdout) == json.loads(saved.read_text())
 
 
+def cancel_mapping_edits(args, root):
+    if os.name != "posix":
+        print("SKIP: CLI editing interrupt requires POSIX child SIGINT delivery")
+        return
+    paths = [root / "edit-primary.bin", root / "edit-secondary.bin"]
+    add, xor = bytes.fromhex("83c001") * 3000, bytes.fromhex("83f003") * 3000
+    for path, code in zip(paths, (add + xor, xor + add)):
+        path.write_bytes(bytes.fromhex("b807000000") + code + b"\xc3")
+        project = pathlib.Path(str(path) + ".neverd")
+        project.mkdir()
+        (project / "load.json").write_text(json.dumps({
+            "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": "0x1000"}))
+    base = [args.neverd, "diff", "--structural", "-a", str(paths[0]), "-b", str(paths[1])]
+    decisions = root / "edit-decisions.json"
+    decisions.write_text(json.dumps([{"kind": kind, "primary": "0x1000", "secondary": "0x1000"}
+                                    for kind in ("unmatch", "match")]))
+    report = root / "edit-before.nddiff"
+    document = json.loads(run(base + ["--json", "--save", str(report)], {2, 3}).stdout)
+    # A long saved diagnostic makes the actual output write interruptible.
+    document["warnings"].append("retained diagnostic " + "x" * (64 * 1024 * 1024))
+    report.write_text(json.dumps(document))
+    target = root / "edit-retained.nddiff"
+    for stage in ("edit:measure 0/1", "edit:write "):
+        target.write_text("existing review must survive\n")
+        output = root / "edit-stopped.json"
+        command = base + ["--overrides", str(decisions), "--json", "--save", str(target)]
+        if stage.startswith("edit:write"):
+            command += ["--reopen", str(report)]
+        with output.open("w") as stdout:
+            process = subprocess.Popen(command, stdout=stdout, stderr=subprocess.PIPE, text=True)
+            messages, captured = queue.Queue(), []
+
+            def drain():
+                for line in process.stderr:
+                    captured.append(line)
+                    messages.put(line)
+                messages.put(None)
+
+            reader = threading.Thread(target=drain, daemon=True)
+            reader.start()
+            try:
+                deadline = time.monotonic() + 20
+                while True:
+                    line = messages.get(timeout=max(0.1, deadline - time.monotonic()))
+                    assert line is not None and time.monotonic() < deadline, captured
+                    if line.startswith("diff: " + stage):
+                        process.send_signal(signal.SIGINT)
+                        break
+                process.wait(timeout=20)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=15)
+                reader.join(timeout=5)
+                process.stderr.close()
+        assert process.returncode == 3, (stage, process.returncode, captured)
+        assert "edit cancelled; no output was published" in "".join(captured), captured
+        assert output.read_text() == "", output.read_text()
+        assert target.read_text() == "existing review must survive\n"
+    retried = json.loads(run(base + ["--overrides", str(decisions), "--json", "--save", str(target)], {2, 3}).stdout)
+    assert len(retried["overrides"]) == 2 and retried["matches"][0]["confirmed"]
+    assert json.loads(run(base + ["--reopen", str(target), "--json"], {2, 3}).stdout) == retried
+    print("CLI edit cancellation: measurement/write stopped, old files retained, retry and reopen passed")
+
+
 def ambiguity_pages(args, root):
     source = root / "copies.c"
     source.write_text("\n".join(f"int copy_{index:02d}(void) {{ return 7; }}" for index in range(40))
@@ -177,6 +242,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="neverd-diff-cli-") as folder:
         root = pathlib.Path(folder)
         ambiguity_pages(args, root)
+        cancel_mapping_edits(args, root)
         for limit in (17, 9):
             run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",
                  f"-DPATCH_LIMIT={limit}", args.fixture, "-o", str(root / f"{limit}.o")], {0})
