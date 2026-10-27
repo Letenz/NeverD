@@ -15205,8 +15205,10 @@ contains the exact 28-test export, all 135 generated artifact hashes, 60 model
 executions with 63,160 case runs and 153,880 complete comparisons, and 135 native
 fault executions observing 7,895 SP-alignment faults. All 216 actual model C
 projection compile commands retain Wall/Wextra/Werror and fno-strict-aliasing.
-The related eight-label CTest run registered 1,374 cases: 1,367 passed, seven
-explicitly skipped and none failed, under each case's unchanged timeout.
+Acceptance across the eight rebuilt targets covers 1,100 related cases:
+1,094 passed, six explicitly skipped and none failed, under each case's
+unchanged timeout. The root-label selection also ran 274 cached Lift diagnostics;
+the record excludes those from the current-build acceptance count.
 The C execution checker used system Apple Clang after independently observing
 Homebrew Clang 22 link stalls; the NeverSight LLVM backend stayed at r6. The
 record retains both compiler controls and the unqualified signed-unwind probe.

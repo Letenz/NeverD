@@ -21,9 +21,9 @@
     "native_sp_faults": 7895
   },
   "regression": {
-    "registered": 1374,
-    "passed": 1367,
-    "skipped": 7,
+    "registered": 1100,
+    "passed": 1094,
+    "skipped": 6,
     "failed": 0,
     "labels": [
       "NeverDArm64eAnalysisTests",
@@ -51,56 +51,39 @@
     },
     "skipped_cases": [
       {
-        "name": "A64FastClassifyParity.OptionalRealBinaryWalk",
-        "reason": {
-          "message": "SKIP_REGULAR_EXPRESSION_MATCHED"
-        },
-        "output": "Running main() from <neverd-source>/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = A64FastClassifyParity.OptionalRealBinaryWalk\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from A64FastClassifyParity\n[ RUN      ] A64FastClassifyParity.OptionalRealBinaryWalk\n<neverd-source>/unittests/lift/aarch64/AArch64_FastClassifyParityTests.cpp:278: Skipped\nset NEVERD_PARITY_BIN to a raw arm64 code file to enable\n\n[  SKIPPED ] A64FastClassifyParity.OptionalRealBinaryWalk (0 ms)\n[----------] 1 test from A64FastClassifyParity (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] A64FastClassifyParity.OptionalRealBinaryWalk\n"
-      },
-      {
         "name": "AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM",
-        "reason": {
-          "message": "SKIP_REGULAR_EXPRESSION_MATCHED"
-        },
-        "output": "Running main() from <neverd-source>/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64OrderedMemoryNative\n[ RUN      ] AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM\n<neverd-source>/unittests/lift/aarch64/AArch64AddressMemoryTests.cpp:6813: Skipped\nThe execution host does not report the required ordered-memory feature\n\n[  SKIPPED ] AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM (0 ms)\n[----------] 1 test from AArch64OrderedMemoryNative (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM\n"
+        "output": "Running main() from /Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64OrderedMemoryNative\n[ RUN      ] AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM\n/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/unittests/lift/aarch64/AArch64AddressMemoryTests.cpp:6813: Skipped\nThe execution host does not report the required ordered-memory feature\n\n[  SKIPPED ] AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM (0 ms)\n[----------] 1 test from AArch64OrderedMemoryNative (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64OrderedMemoryNative.SIMDFamiliesExecuteBothSourcesAndLLVM\n"
       },
       {
         "name": "AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections",
-        "reason": {
-          "message": "SKIP_REGULAR_EXPRESSION_MATCHED"
-        },
-        "output": "Running main() from <neverd-source>/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64PAuthSemantics\n[ RUN      ] AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections\n<neverd-source>/unittests/lift/aarch64/AArch64PAuthSemanticTests.cpp:1620: Skipped\nthis host cannot execute arm64e with all four active pointer signing keys and generic signatures\n\n[  SKIPPED ] AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections (456 ms)\n[----------] 1 test from AArch64PAuthSemantics (456 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (456 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections\n"
+        "output": "Running main() from /Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64PAuthSemantics\n[ RUN      ] AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections\n/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/unittests/lift/aarch64/AArch64PAuthSemanticTests.cpp:1620: Skipped\nthis host cannot execute arm64e with all four active pointer signing keys and generic signatures\n\n[  SKIPPED ] AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections (456 ms)\n[----------] 1 test from AArch64PAuthSemantics (456 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (456 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64PAuthSemantics.NativeKeysAgreeWithBothCProjections\n"
       },
       {
         "name": "AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections",
-        "reason": {
-          "message": "SKIP_REGULAR_EXPRESSION_MATCHED"
-        },
-        "output": "Running main() from <neverd-source>/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64PAuthLRSemantics\n[ RUN      ] AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections\n<neverd-source>/unittests/lift/aarch64/AArch64PAuthSemanticTests.cpp:1669: Skipped\nthis host cannot execute arm64e PAuth_LR with active keys\n\n[  SKIPPED ] AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections (491 ms)\n[----------] 1 test from AArch64PAuthLRSemantics (491 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (491 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections\n"
+        "output": "Running main() from /Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64PAuthLRSemantics\n[ RUN      ] AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections\n/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/unittests/lift/aarch64/AArch64PAuthSemanticTests.cpp:1669: Skipped\nthis host cannot execute arm64e PAuth_LR with active keys\n\n[  SKIPPED ] AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections (491 ms)\n[----------] 1 test from AArch64PAuthLRSemantics (491 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (491 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64PAuthLRSemantics.NativeTwoModifierKeysAgreeWithBothCProjections\n"
       },
       {
         "name": "AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections",
-        "reason": {
-          "message": "SKIP_REGULAR_EXPRESSION_MATCHED"
-        },
-        "output": "Running main() from <neverd-source>/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64PACMSemantics\n[ RUN      ] AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections\n<neverd-source>/unittests/lift/aarch64/AArch64PAuthSemanticTests.cpp:2520: Skipped\nthis host cannot execute PACM with active IA/IB keys and a second diversifier\n\n[  SKIPPED ] AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections (567 ms)\n[----------] 1 test from AArch64PACMSemantics (567 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (567 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections\n"
+        "output": "Running main() from /Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from AArch64PACMSemantics\n[ RUN      ] AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections\n/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/unittests/lift/aarch64/AArch64PAuthSemanticTests.cpp:2520: Skipped\nthis host cannot execute PACM with active IA/IB keys and a second diversifier\n\n[  SKIPPED ] AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections (567 ms)\n[----------] 1 test from AArch64PACMSemantics (567 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (567 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] AArch64PACMSemantics.NativePrefixModesAgreeWithBothCProjections\n"
       },
       {
         "name": "A64FastClassifyParity.OptionalRealBinaryWalk",
-        "reason": {
-          "message": "SKIP_REGULAR_EXPRESSION_MATCHED"
-        },
-        "output": "Running main() from <neverd-source>/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = A64FastClassifyParity.OptionalRealBinaryWalk\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from A64FastClassifyParity\n[ RUN      ] A64FastClassifyParity.OptionalRealBinaryWalk\n<neverd-source>/unittests/lift/aarch64/AArch64_FastClassifyParityTests.cpp:278: Skipped\nset NEVERD_PARITY_BIN to a raw arm64 code file to enable\n\n[  SKIPPED ] A64FastClassifyParity.OptionalRealBinaryWalk (0 ms)\n[----------] 1 test from A64FastClassifyParity (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] A64FastClassifyParity.OptionalRealBinaryWalk\n"
+        "output": "Running main() from /Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = A64FastClassifyParity.OptionalRealBinaryWalk\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from A64FastClassifyParity\n[ RUN      ] A64FastClassifyParity.OptionalRealBinaryWalk\n/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/unittests/lift/aarch64/AArch64_FastClassifyParityTests.cpp:278: Skipped\nset NEVERD_PARITY_BIN to a raw arm64 code file to enable\n\n[  SKIPPED ] A64FastClassifyParity.OptionalRealBinaryWalk (0 ms)\n[----------] 1 test from A64FastClassifyParity (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] A64FastClassifyParity.OptionalRealBinaryWalk\n"
       },
       {
         "name": "Scratch.DumpRealBinary",
-        "reason": {
-          "message": "SKIP_REGULAR_EXPRESSION_MATCHED"
-        },
-        "output": "Running main() from <neverd-source>/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = Scratch.DumpRealBinary\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from Scratch\n[ RUN      ] Scratch.DumpRealBinary\n<neverd-source>/unittests/lift/language/ScratchRealBinary.cpp:328: Skipped\nset NEVERD_SCRATCH_BINARY\n\n[  SKIPPED ] Scratch.DumpRealBinary (0 ms)\n[----------] 1 test from Scratch (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] Scratch.DumpRealBinary\n"
+        "output": "Running main() from /Users/gmh/.codex/worktrees/apple-arm64e/NeverD/build-arm64e/_deps/googletest-src/googletest/src/gtest_main.cc\nNote: Google Test filter = Scratch.DumpRealBinary\n[==========] Running 1 test from 1 test suite.\n[----------] Global test environment set-up.\n[----------] 1 test from Scratch\n[ RUN      ] Scratch.DumpRealBinary\n/Users/gmh/.codex/worktrees/apple-arm64e/NeverD/unittests/lift/language/ScratchRealBinary.cpp:328: Skipped\nset NEVERD_SCRATCH_BINARY\n\n[  SKIPPED ] Scratch.DumpRealBinary (0 ms)\n[----------] 1 test from Scratch (0 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test suite ran. (0 ms total)\n[  PASSED  ] 0 tests.\n[  SKIPPED ] 1 test, listed below:\n[  SKIPPED ] Scratch.DumpRealBinary\n"
       }
     ],
-    "original_test_timeouts_preserved": true
+    "original_test_timeouts_preserved": true,
+    "additional_cached_diagnostics": {
+      "registered": 274,
+      "passed": 273,
+      "skipped": 1,
+      "included_in_acceptance": false,
+      "reason": "The root CTest label selection also includes a previously built NeverDLiftTests executable; current acceptance counts only the eight explicitly rebuilt targets."
+    },
+    "identity_binding": "JUnit registration order exactly matches every inventory name; executable ownership comes from the corresponding inventory command, including duplicate names."
   },
   "qualification": {
     "generator_revision": "54d3a8fed8c28c524668384f8e4ce0042ef57cd5",
