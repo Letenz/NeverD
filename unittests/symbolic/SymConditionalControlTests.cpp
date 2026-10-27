@@ -47,6 +47,32 @@ TEST(SymConditionalControls, ConstantTagsRecoverThePredicate) {
   }
 }
 
+TEST(SymConditionalControls, ArithmeticTagsRecoverThePredicate) {
+  for (unsigned Width : {8u, 32u, 64u, 128u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto P = C.mkVar("p", 1);
+    auto Bit = C.mkZExt(P, Width);
+    auto Packed = C.mkMul(C.mkConst(Width, 64), Bit);
+    auto Offset = C.mkAdd(C.mkConst(Width, 23), Packed);
+    for (auto Root :
+         {C.mkEq(Packed, C.mkZero(Width)), C.mkEq(Offset, C.mkConst(Width, 23)),
+          C.mkUlt(Packed, C.mkConst(Width, 32))}) {
+      auto Result = simplifyMBADeep(C, Root);
+      EXPECT_EQ(Result.Expr, C.mkNot(P)) << C.toString(Result.Expr);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    }
+    auto Other = C.mkVar("other", Width);
+    auto Root = C.mkEq(Offset, Other);
+    auto Result = simplifyMBADeep(C, Root);
+    neverd::solver::BitVectorSolver Proof(C);
+    EXPECT_EQ(Proof.check(C.mkNe(Root, Result.Expr)),
+              neverd::solver::SatResult::Unsat);
+    EXPECT_EQ(Proof.check(C.mkNe(Root, C.mkNot(P))),
+              neverd::solver::SatResult::Sat);
+  }
+}
+
 TEST(SymConditionalControls, PartialBudgetsMatchAnIndependentTruthTable) {
   SymContext C;
   auto P = C.mkVar("p", 1), Q = C.mkVar("q", 1);
