@@ -5520,6 +5520,18 @@ proofs. Signed and unsigned integer division in a floating-return leaf must
 retain its validated divide guard, floating return carrier and single-TOP
 caller loop. `ImportCalleeTrace` additionally checks partial pointer writes and
 instruction-local temporary identity on x86, x64 and AArch64.
+`KnownContextRequirementSurvivesUnresolvedSiblingCalls` checks a three-level
+x64 wrapper with a context-using callee and either an indirect dispatch or a
+recursive sibling. Both call orders, no-context controls, independent builders
+and warm shared graphs retain the same ownership on ELF, COFF and Mach-O.
+`KnownContextUseCannotBeHiddenByAnUnresolvedSibling` also checks that a raw
+complete-function cache entry cannot bypass the required normalization. These
+are static ownership checks; the unresolved callees do not acquire an executable
+contract from them.
+`SignatureOnlyWin64WrappersKeepLocalStateObservers` checks that signature-only
+Win64 wrappers avoid descendant context proofs while their emitted definitions
+retain transport. Local x87 use, explicit model overrides, repeated builders
+and ELF/Mach-O typed-return boundaries retain ordinary normalization.
 The consuming-helper cases require a separately transported binary80 argument,
 balanced caller loops, preserved lower ST entries and control words, and empty
 callee scratch slots. Counterexamples cover lower-slot reads/writes, missing
@@ -8260,6 +8272,14 @@ Volatile word reads/writes and intervening observer calls must retain their
 values and counts, and caller IR must stay unchanged. Negative and budget cases
 retain freeze, variable/oversized shifts, arithmetic, independent bit sources,
 poison, multi-bit masks and overly deep graphs; shared DAGs remain bounded.
+`IntegerSlicesFollowWideProducersWithoutObservingUpperState` executes narrow
+reads from the low and high portions of 64/80/128-bit payloads at O0/O2 with
+undefined-behavior traps, both with and without preserved LLVM types. Direct
+wide enclosing words and intermediate 64-bit casts use the same bounded proof. Bytewise
+oracles check the result; unrelated unknown register bits must not trap, and
+demanded unknown bits must retain their diagnostic. Caller IR stays unchanged.
+The native FILD and sign-operation owners also cover NoOpt LLVM C paths whose
+narrow status return must not evaluate an unavailable upper register fragment.
 
 ## Interpreter recovery checks
 
