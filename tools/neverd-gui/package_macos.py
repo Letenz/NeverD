@@ -357,7 +357,7 @@ def main() -> None:
     with (bundle / "Contents/Info.plist").open("wb") as stream:
         plistlib.dump(plist, stream)
     version = output(args.qt_dir / "bin/qmake", "-query", "QT_VERSION").strip()
-    kddw_source = args.kddw_source or args.build_dir / "_deps/kddockwidgets-src"
+    kddw_source = args.kddw_source or args.build_dir / "_deps/neverd_docking-src"
     json_license = args.json_license or args.build_dir / "_deps/neverd_worker_json-src/LICENSE.MIT"
     copy_notices(bundle, source, origins, version, args.qt_licenses or source / "licenses" / ("Qt-" + version),
                  kddw_source, json_license, args.engine.parent / "licenses")
