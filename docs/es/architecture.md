@@ -2026,3 +2026,9 @@ La simplificación compartida de indicadores MedIR conserva ambos operandos de l
 Las condiciones enteras que comparan un mismo valor SSA consigo mismo se convierten en constantes booleanas antes de emitir el código fuente, incluido el desbordamiento de resta. Los operandos no especificados siguen siendo explícitos.
 
 Los destinos capturados de llamadas HFA usan la misma firma de origen verificada que la reconstrucción de argumentos y resultados de estructuras. El prototipo conserva el puntero original y los tipos completos, incluidos los grupos de registros descompuestos y los argumentos de pila.
+
+## Declaraciones de funciones seleccionadas
+
+HighC representa un símbolo de función usado solo como dirección y sin firma conocida mediante un alias de bytes con nombre de enlace, sin inventar el retorno. Conserva la conversión del callback tipado y la navegación al símbolo y su dirección. LLVM de fuente reutiliza el lector acotado de funciones omitidas aunque se conozca el número de argumentos. Solo conserva declaraciones fijas de enteros o punteros de tamaño palabra x64/ARM64 si la recuperación no cambia sus portadores ni tipos. Los contratos explícitos prevalecen; no se aportan cuerpos, contratos de excepciones ni permisos de lifting nativo. La caché distingue estas lecturas y mantiene la misma decisión en caliente.
+
+Los metadatos de excepciones conocidos excluyen esta declaración antes de leer el cuerpo; las lecturas ordinarias de firmas no cambian.

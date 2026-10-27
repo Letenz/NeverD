@@ -2033,3 +2033,9 @@ La simplification commune des indicateurs MedIR conserve les deux opérandes de 
 Les conditions entières comparant une même valeur SSA à elle-même deviennent des constantes booléennes avant l’émission du source, y compris le débordement de soustraction. Les opérandes non spécifiés restent explicites.
 
 Les cibles HFA mémorisées utilisent la même signature source vérifiée que la reconstruction des arguments et résultats de structure. Le prototype conserve le pointeur de fonction initial et les types complets, y compris les groupes de registres décomposés et les arguments sur la pile.
+
+## Déclarations des fonctions sélectionnées
+
+HighC représente un symbole de fonction utilisé uniquement comme adresse, sans signature connue, par un alias de tableau d’octets portant son nom de liaison. Aucun type de retour n’est inventé ; les conversions des callbacks typés et la navigation vers le symbole et son adresse restent intactes. LLVM source réutilise le lecteur borné des fonctions omises même si le nombre d’arguments est connu. Il conserve les déclarations fixes d’entiers ou pointeurs de taille mot x64/ARM64 seulement si les supports et types restent inchangés après récupération. Les contrats source explicites priment ; aucun corps, contrat d’exception ou droit de lifting natif n’est ajouté. Le cache distingue ces lectures et conserve la même décision à chaud.
+
+Les métadonnées d’exception connues excluent cette déclaration avant la lecture du corps ; les lectures ordinaires de signature restent inchangées.

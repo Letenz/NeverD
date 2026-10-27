@@ -1650,6 +1650,9 @@ public:
     const HighFunc *Definition = nullptr;
   };
   std::map<va_t, FunctionAddressTarget> FunctionAddressNames;
+  /// Address-only symbols without a callable signature use a byte alias of
+  /// the linker identity. Taking an address cannot invent a return type.
+  std::map<std::string, std::string> FunctionAddressAliases;
   std::string
   functionAddressIdentifier(const FunctionAddressTarget &Target) const;
   /// Linker function names cannot also name definitions of reconstructed data.
