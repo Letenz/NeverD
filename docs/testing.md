@@ -15125,7 +15125,11 @@ duplicate handles, generic/patch-only interleaving, unknown fields and signed-ze
 encoding. Patch-only commits cover every writer boundary before and after file
 replacement, same-session retry, reopened recovery, recovery followed by a newer
 request, equivalent foreign formatting, timestamp/size collisions, strict invalid
-values and full history/journal budgets. Keep full post-commit reloads inside
+values and full history/journal budgets. Cached row formatting is compared with
+the independent full sidecar serializer for nested values, all JSON control
+characters, literal escapes, Unicode, negative zero, deletions and empty arrays;
+an unchanged row's view remains stable across another row's edit.
+Keep full post-commit reloads inside
 commit/undo/redo timings and include first edit plus peak RSS when evaluating
 shared state; row-construction timings alone do not establish the benefit.
 Run the real SDK patch/replica path under ASan as well as the JSON-only mock:
