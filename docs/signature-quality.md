@@ -125,8 +125,9 @@ bytes with the parent. Ambiguous, partial, contextual and newly inferred callees
 cannot supply this proof. In particular, old nominal rows at an address resolved
 by an incoming round do not become independent evidence. Missing source fields
 and alternatives at the supporting site refuse the extension. The existing
-frozen outgoing validation and round budget still apply. An independent-body
-index is constructed only if a short request needs it, once per caller pass.
+frozen outgoing validation and round budget still apply. Independent-body
+checks reuse the frozen settlement address index. Body strength is evaluated
+only at requested targets, and the separate data frontier settles names lazily.
 No descendant can repair its parent's evidence or start an unrooted cycle.
 
 A separate finite code-address fingerprint can identify two short functions
