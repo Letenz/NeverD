@@ -236,10 +236,14 @@ mandatory-reference or incoming-only native records with the same library stem;
 incomplete conflicting records are omitted. Existing mandatory-reference claims
 are omitted when a new source defeats their context. Same-library cohorts with
 identical typed references, incoming queries and metadata remain intact. The
-tool never invents names or aliases. It writes pattern files only: update the affected source manifests
-with the report and qualified output hashes before publication. Verify native
+tool never invents names or aliases. It writes pattern files only: update the
+affected source manifests with the report and qualified output hashes before publication. Verify native
 parsing, report lost/gained correct candidates as well as errors, and measure
 the changed packs with the same consumer and input entries on both sides.
+Independently sufficient single-site clauses preserve alternatives and are
+audited against all raw rivals. Their separate complete incoming declarations
+retain only outgoing fields shared across raw source versions; a pruned clause
+does not supply omitted calls. Jointly necessary sites remain in a full clause.
 
 For primary x64 COFF table context, generate separate unpruned declarations:
 

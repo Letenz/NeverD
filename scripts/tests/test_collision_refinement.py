@@ -43,6 +43,43 @@ class CollisionRefinementTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"required": 1})
         self.assertIn("!refs :0000 first ^0001 original", (self.output / "runtime.npat").read_text())
 
+    def test_unrelated_reference_does_not_become_mandatory(self):
+        body = "E8........E8........C3 00 0000 000B"
+        line = body + " :0000 first ^0001 identity ^0006 shared"
+        source = body + " !evidence :0000 second ^0001 different ^0006 shared"
+        self.run_refinement({"runtime.pat": line}, source)
+        rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
+        rows = [row for row in rows if row]
+        self.assertEqual([row.refs for row in rows if row.require_references], [((1, "identity"),)])
+        self.assertEqual([row.refs for row in rows if row.require_caller],
+                         [((1, "identity"), (6, "shared"))])
+
+    def test_single_clauses_preserve_alternatives_and_complete_source_consensus(self):
+        body = "E8........E8........C3 00 0000 000B"
+        line = body + " :0000 first ^0001 first_a ^0001 first_b ^0006 original"
+        source = body + " !evidence :0000 second ^0001 other ^0006 different\n"
+        source += body + " !evidence :0000 first ^0001 first_a ^0001 first_b"
+        self.run_refinement({"runtime.pat": line}, source)
+        rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
+        rows = [row for row in rows if row]
+        self.assertEqual([row.refs for row in rows if row.require_references],
+                         [((1, "first_a"), (1, "first_b")), ((6, "original"),)])
+        self.assertEqual([row.refs for row in rows if row.require_caller],
+                         [((1, "first_a"), (1, "first_b"))])
+
+    def test_pruned_clause_must_still_distinguish_an_already_loaded_rival(self):
+        body = "E8........E8........C3 00 0000 000B"
+        first = body + " :0000 first ^0001 identity ^0006 shared"
+        second = body + " :0000 second ^0001 identity ^0006 different"
+        source = body + " !evidence :0000 third ^0001 different ^0006 shared\n"
+        source += second.replace(" :0000", " !evidence :0000")
+        self.run_refinement({"runtime.pat": first + "\n" + second}, source)
+        rows = [builder.parse_line(text) for text in (self.output / "runtime.npat").read_text().splitlines()]
+        first_rows = [row for row in rows if row and row.names == (":0000 first",)]
+        self.assertEqual(len(first_rows), 1)
+        self.assertTrue(first_rows[0].require_references)
+        self.assertEqual(first_rows[0].refs, ((1, "identity"), (6, "shared")))
+
     def test_known_same_library_cohorts_survive_across_parts(self):
         body = "E8........C3 00 0000 0006"
         first = body + " :0000 first ^0001 original"

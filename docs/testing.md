@@ -6805,8 +6805,10 @@ preservation of aliases, incoming queries and metadata. They also require
 existing mandatory-reference claims to survive new raw sources, including a
 known rival name with changed references. The generation and supplement
 suites also check byte coverage across leading/tail encodings and require every
-mandatory reference claim to survive hidden CRC counterexamples. Source-driven
-refinement still requires held-out CLI accuracy and performance qualification;
+mandatory reference claim to survive hidden CRC counterexamples. Refinement
+cases retain alternatives in sufficient single-site clauses, jointly necessary
+fields and complete incoming declarations with source-version consensus.
+Source-driven refinement still requires held-out CLI accuracy and performance qualification;
 these unit tests do not establish source identity for a matching body.
 
 `PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.

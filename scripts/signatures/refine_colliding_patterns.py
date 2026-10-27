@@ -20,8 +20,10 @@ import sys
 
 try:
     from . import build_msvc_signatures as builder
+    from . import supplement_patterns as supplement
 except ImportError:
     import build_msvc_signatures as builder
+    import supplement_patterns as supplement
 
 
 def describe(path: Path) -> dict:
@@ -103,18 +105,19 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
                 coverage[row.key] = [key for key in nearby
                                      if shape.covered_by(shapes[key]) or
                                      shape.padding_collision_with(shapes[key], machine=machine)]
-            rivals = [other for key in coverage[row.key] for other in by_key[key]
-                      if builder.another_routine(row.names, other.names)
-                      and not any(set(loaded.names).intersection(other.names)
+            all_rivals = [other for key in coverage[row.key] for other in by_key[key]
+                          if builder.another_routine(row.names, other.names)]
+            rivals = [other for other in all_rivals
+                      if not any(set(loaded.names).intersection(other.names)
                                   and loaded.refs == other.refs
                                   and loaded.data_sites == other.data_sites
                                   and loaded.local_sites == other.local_sites
-                                  for loaded in known[library, key])]
+                                  for loaded in known[library, other.key])]
             if not rivals:
                 kept.append(text)
                 continue
             complete = builder.Shape.of(row.key).fully_verified()
-            if complete and row.refs and all(builder.distinguished([row, other]) for other in rivals):
+            if complete and row.refs and all(builder.distinguished([row, other]) for other in all_rivals):
                 if row.require_references:
                     kept.append(text)
                     continue
@@ -123,14 +126,32 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
                 action, token = "caller", "!caller"
             else:
                 action, token = "omitted", None
-            if token:
+            native_rows = []
+            if token == "!refs":
+                required = row.with_refs(row.refs, require=True)
+                clauses = [variant for variant in supplement.reference_variants(required)[1:]
+                           if all(builder.distinguished([variant, other]) for other in all_rivals)]
+                native_rows = [clause.text for clause in clauses] if clauses else [required.text]
+                # A pruned clause cannot declare its omitted outgoing edges.
+                # Retain a separate complete source query, intersecting fields
+                # across all raw same-name versions before incoming expansion.
+                if clauses and all(name.startswith(":0000 ") for name in row.names):
+                    variants = [other for other in by_key[row.key]
+                                if set(row.names).intersection(other.names)]
+                    source_row = builder.common_refs([row, *variants])
+                    words = source_row.text.split()
+                    words.insert(4, "!caller")
+                    native_rows.append(" ".join(words))
+            elif token:
                 words = row.text.split()
                 words.insert(4, token)
-                native = " ".join(words)
+                native_rows = [" ".join(words)]
+            for native in native_rows:
                 builder.parse_line(native)
                 additions[path.with_suffix(".npat").name].append(native)
             actions.append({"file": path.name, "line": number, "pattern": row.text,
                             "action": action, "rival_count": len(rivals),
+                            "replacement_records": len(native_rows),
                             "rival_example": rivals[0].text})
         changed[path.name] = kept
     for name, rows in additions.items():

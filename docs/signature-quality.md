@@ -326,6 +326,13 @@ when its machine is ARM. Other architectures do not inherit that rule.
 counterclaims to existing ordinary records. A complete conflicting record gains
 mandatory references only when they distinguish every new rival; otherwise it
 becomes an incoming-only query. Incomplete conflicting records are omitted.
+Each independently sufficient single-site clause is checked against every raw
+rival, including already represented ones. Alternatives at one site stay
+together. If several sites are jointly necessary, the full clause stays.
+Pruned clauses retain a separate complete incoming declaration, intersecting
+outgoing fields across raw same-name versions. Unrelated unresolved calls need
+not block a distinguishing clause, and omitted fields cannot be used as if the
+pruned clause declared them.
 Existing same-library byte cohorts remain intact across numbered parts only
 when their typed references also agree with the raw claim. A known name with
 different references or a claim in an independently selected library cannot
