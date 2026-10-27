@@ -143,8 +143,18 @@ bool NdOpEmulator::executeX87Context(const LowOp &Op) {
   // changed on this refusal, including in the lenient switch-tracing mode.
   if (!X87PortableMode && Spec->Waiting && x87HasPendingException(CW, SW))
     return false;
-  if (!X87PortableMode && (State[4] & ~X87PayloadKnown) && !Initialize &&
-      Selector != 0x770f)
+  if (!X87PortableMode && Spec->EmptiesTags) {
+    // These transitions need no host instruction or retained payload values.
+    // FEMMS leaves every payload undefined; empty tags alone cannot authorize
+    // reusing the old bits through MMX reads, environment loads or saves.
+    State[4] = 0;
+    if (Spec->InvalidatesPayloads)
+      X87PayloadKnown = 0;
+    X87ContextState = State;
+    publishX87ContextRegisters();
+    return true;
+  }
+  if (!X87PortableMode && (State[4] & ~X87PayloadKnown) && !Initialize)
     return false;
   // FNSAVE stores every register's retained bits, empty ones included.
   if ((Selector & X87ContextMemory) && Escape == 0xdd && (ModRM >> 3) == 6 &&

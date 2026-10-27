@@ -71,6 +71,7 @@ struct X87ContextInstruction {
   bool ReadsMemory = false, WritesMemory = false;
   bool ReadsFlags = false, WritesFlags = false, WritesAX = false;
   bool Waiting = true;
+  bool EmptiesTags = false, InvalidatesPayloads = false;
 };
 
 // Memory instructions use the opcode's group, never the original ModRM's
@@ -127,7 +128,9 @@ x87ContextInstruction(uint32_t Selector) {
     bool Valid = false;
     switch (Escape) {
     case 0x0f:
-      Valid = Selector == 0x770f;
+      Valid = Selector == 0x770f || Selector == 0x0e0f;
+      Result.EmptiesTags = Valid;
+      Result.InvalidatesPayloads = Selector == 0x0e0f;
       break;
     case 0x9b:
       Valid = ModRM == 0 && Selector == 0x9b;
