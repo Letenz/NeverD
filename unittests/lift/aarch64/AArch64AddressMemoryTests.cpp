@@ -8324,6 +8324,8 @@ TEST(AArch64RawSPLifting, AutomaticCheckedMemoryRetainsEveryOriginalSPWord) {
           EXPECT_EQ(Memory.Inputs[Base + 1],
                     NdVar::reg(a64reg::SP, kScalarBytes));
           EXPECT_EQ(Memory.Inputs[Encoding + 1].Offset, Word);
+          EXPECT_EQ(Memory.Inputs[Encoding + 1].Provenance,
+                    ConstantAddressProvenance::Scalar);
           EXPECT_FALSE(std::any_of(Ops.begin(), Ops.end(), [](const LowOp &O) {
             return O.Opcode == NdOp::LOAD || O.Opcode == NdOp::STORE ||
                    O.Opcode == NdOp::INT_ADD;

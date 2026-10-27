@@ -201,6 +201,8 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
               ? a64reg::SP
               : a64reg::X0 + Instruction->base() * kAddressMemoryPointerBytes,
           kAddressMemoryPointerBytes);
+      const NdVar OriginalWord =
+          NdVar::scalar(Instruction->Word, kAddressMemoryWordBytes);
       const NdVar Index =
           Instruction->index() == kAddressMemoryRegisterMask
               ? NdVar::scalar(0, Instruction->indexBytes())
@@ -217,10 +219,8 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
             S.emit(NdOp::SUBBYTES, Data,
                    {Register, NdVar::scalar(0, kAddressMemoryWordBytes)});
           }
-          S.emitIntrinsic(
-              Instruction->operation().Id, NdVar{},
-              {Base, Index,
-               NdVar::cst(Instruction->Word, kAddressMemoryWordBytes), Data});
+          S.emitIntrinsic(Instruction->operation().Id, NdVar{},
+                          {Base, Index, OriginalWord, Data});
           return true;
         }
         // Publish the encoded B/H/S/D view before its whole-V zero extension.
@@ -228,10 +228,8 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
         // view written before the load.
         const NdVar Data =
             NdVar::reg(Register.Offset, Instruction->accessBytes());
-        S.emitIntrinsic(
-            Instruction->operation().Id, Data,
-            {Base, Index,
-             NdVar::cst(Instruction->Word, kAddressMemoryWordBytes)});
+        S.emitIntrinsic(Instruction->operation().Id, Data,
+                        {Base, Index, OriginalWord});
         if (Data.Size < kAddressMemoryVectorBytes)
           S.emit(NdOp::INT_ZEXT, Register, {Data});
         return true;
@@ -253,9 +251,7 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
           Data = Low;
         }
         S.emitIntrinsic(Instruction->operation().Id, NdVar{},
-                        {Base, Index,
-                         NdVar::cst(Instruction->Word, kAddressMemoryWordBytes),
-                         Data});
+                        {Base, Index, OriginalWord, Data});
         return true;
       }
       const auto Operation = Instruction->operation();
@@ -268,9 +264,7 @@ bool AArch64Lifter::liftMem(LiftState &S, const cs_insn *Insn,
       const NdVar Data = Instruction->accessBytes() == Destination.Size
                              ? Destination
                              : S.makeTemp(Instruction->accessBytes());
-      S.emitIntrinsic(Operation.Id, Data,
-                      {Base, Index,
-                       NdVar::cst(Instruction->Word, kAddressMemoryWordBytes)});
+      S.emitIntrinsic(Operation.Id, Data, {Base, Index, OriginalWord});
       if (Data.Size != Destination.Size)
         S.emit(Operation.Signed ? NdOp::INT_SEXT : NdOp::INT_ZEXT, Destination,
                {Data});
